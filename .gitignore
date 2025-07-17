@@ -4,9 +4,6 @@
 /secrets
 /seeds
 __pycache__
-main.ipynb
-main.py
-plot.py
 /data
 /config
 /experiments
