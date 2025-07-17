@@ -2,7 +2,7 @@ from functools import partial
 import logging
 import torch
 import random
-import api
+import op
 from evox.core import Problem
 
 logger = logging.getLogger("evogit")
@@ -36,16 +36,16 @@ def get_lower_bound(config):
 
 def update_branches(config, pop):
     pop = [array_to_hex(individual) for individual in pop]
-    api.update_branches(config, pop)
-    api.prune_commits(config)
+    op.update_branches(config, pop)
+    op.prune_commits(config)
 
 
 def git_update(config, generation):
     handlers = []
     if config.fetch_every > 0 and generation % config.fetch_every == 0:
-        handlers.extend(api.fetch_remote(config))
+        handlers.extend(op.fetch_remote(config))
     if config.push_every > 0 and generation % config.push_every == 0:
-        handlers.extend(api.push_local_branches(config))
+        handlers.extend(op.push_local_branches(config))
 
     for proc in handlers:
         proc.wait()
@@ -60,14 +60,14 @@ def evogit_git_crossover(config, pop):
         idx1, idx2 = torch.randint(0, pop_size, (2,))
         commit1, commit2 = pop[idx1], pop[idx2]
         while (
-            not api.is_novel_merge(config, commit1, commit2)
+            not op.is_novel_merge(config, commit1, commit2)
             and retry < config.max_merge_retry
         ):
             idx1, idx2 = torch.randint(0, pop_size, (2,))
             commit1, commit2 = pop[idx1], pop[idx2]
             retry += 1
 
-        new_commit = api.git_crossover(
+        new_commit = op.git_crossover(
             config, random.randint(0, 2 << 31), commit1, commit2
         )
         offspring.append(hex_to_array(new_commit))
@@ -86,7 +86,7 @@ def git_crossover(config, pop):
 def evogit_mutation(config, llm_backend, pop):
     seeds = [random.randint(0, 2 << 31) for _ in range(pop.shape[0])]
     commits = [array_to_hex(ind) for ind in pop]
-    new_commits = api.llm_constrained_mutation(config, llm_backend, seeds, commits)
+    new_commits = op.llm_constrained_mutation(config, llm_backend, seeds, commits)
     offspring = [hex_to_array(new_commit) for new_commit in new_commits]
     return torch.stack(offspring)
 
@@ -97,7 +97,7 @@ def evogit_crossover(config, pop):
     for commit1, commit2 in pop:
         commit1 = array_to_hex(commit1)
         commit2 = array_to_hex(commit2)
-        new_commit = api.git_crossover(
+        new_commit = op.git_crossover(
             config, random.randint(0, 2 << 31), commit1, commit2
         )
         offspring.append(hex_to_array(new_commit))
@@ -113,16 +113,16 @@ def evaluate(config, pool, pop):
 
     # 1. prepare worktrees  2. evaluate  3. update notes  4. cleanup worktrees
     unique_pop = list(set(pop))  # deduplicate
-    worktrees = api.prepare_temp_worktrees(config, unique_pop)
-    outputs = list(pool.map(partial(api.evaluate_code, config), unique_pop, worktrees))
-    api.update_notes(config, unique_pop, outputs)
-    api.cleanup_temp_worktrees(config)
+    worktrees = op.prepare_temp_worktrees(config, unique_pop)
+    outputs = list(pool.map(partial(op.evaluate_code, config), unique_pop, worktrees))
+    op.update_notes(config, unique_pop, outputs)
+    op.cleanup_temp_worktrees(config)
 
     illegal_value = 1e8
 
     commit_to_fitness = {}
     for commit_id, output in zip(unique_pop, outputs):
-        performance_cost, time_cost = api.decode_result(output, illegal_value)
+        performance_cost, time_cost = op.decode_result(output, illegal_value)
         commit_to_fitness[commit_id] = [performance_cost, time_cost]
     fitness = [commit_to_fitness[commit_id] for commit_id in pop]
     fitness = torch.tensor(fitness)
@@ -140,16 +140,16 @@ class EvoGitProblem(Problem):
         prev, new = pop
         prev = [array_to_hex(commit) for commit in prev]
         new = [array_to_hex(commit) for commit in new]
-        api.lint_code_base(self.config, new)
+        op.lint_code_base(self.config, new)
         # compare the previous and new commits
         # return True if the new commit is better than the previous one
         seeds = [random.randint(0, 2 << 31) for _ in range(len(prev))]
-        result = api.llm_diff_compare(self.config, self.llm_backend, seeds, prev, new)
+        result = op.llm_diff_compare(self.config, self.llm_backend, seeds, prev, new)
         result = torch.tensor(result)
         return result
 
 
 def init_population(config, pop_size):
-    pop = api.get_initial_branches(config, pop_size)
+    pop = op.get_initial_branches(config, pop_size)
     pop = [hex_to_array(commit) for commit in pop]
     return torch.stack(pop)

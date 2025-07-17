@@ -1,3 +1,5 @@
+"""This module contains high-level operations for EvoGit."""
+
 import json
 import logging
 import io
@@ -267,17 +269,6 @@ def git_rebase(config: EvoGitConfig, commit1: str, commit2: str) -> None:
         git.continue_rebase(config)
 
     assert not git.has_conflict(config)
-
-
-def prepare_llm_backend(llm_name: str, *args, **kwargs) -> Any:
-    if "/" in llm_name:
-        # e.g. meta-llama/Meta-Llama-3-8B-Instruct
-        # which refers to a huggingface model
-        return llm.HuggingfaceModel(llm_name, *args, **kwargs)
-    elif llm_name.lower() == "gemini":
-        return llm.GeminiBackend(*args, **kwargs)
-    elif llm_name.lower() == "tgi":
-        return llm.TGIBackend(*args, **kwargs)
 
 
 CodeInfo = namedtuple("CodeInfo", ["code", "stack_trace", "timeout"])
