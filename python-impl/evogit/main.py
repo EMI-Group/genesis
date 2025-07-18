@@ -9,7 +9,7 @@ from algorithm import EvoGitAlgo
 from config import EvoGitConfig
 from evox_extension import (
     EvoGitProblem,
-    api,
+    op,
     update_branches,
     array_to_hex,
     hex_to_array,
@@ -22,18 +22,33 @@ torch.set_default_device("cpu")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run EvoGit with LLM")
+    parser.add_argument(
+        "path",
+        type=str,
+        help="Path to the git repository. Default to the current working directory.",
+        default=".",
+    )
     parser.add_argument("--host_id", type=int, help="Host ID for the run.", default="0")
     parser.add_argument("--endpoint", type=str, help="Endpoint for the LLM API.")
     parser.add_argument("--api_token", type=str, help="API token for the LLM API.")
     parser.add_argument("--model_name", type=str, help="Name of the LLM to use.")
     parser.add_argument("--remote_repo", type=str, help="Remote repository URL.")
     args = parser.parse_args()
+    repo_dir = os.path.abspath(args.path)
+    if not os.path.exists(repo_dir):
+        raise ValueError(f"Working directory {repo_dir} does not exist")
+
+    working_dir = os.path.join(repo_dir, ".evogit")
+    log_dir = os.path.join(working_dir, "log")
+    stages_dir = os.path.join(working_dir, "stages")
 
     host_id = args.host_id
     logger = logging.getLogger("evogit")
     logger.propagate = False  # Disable the default printing behavior
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    f_handler = logging.FileHandler(f"log/evogit_{timestamp}.log")
+    f_handler = logging.FileHandler(
+        os.path.join(log_dir, f"{timestamp}.log")
+    )
     f_handler.setLevel("DEBUG")
     s_handler = logging.StreamHandler(sys.stdout)
     s_handler.setLevel("WARNING")
@@ -78,7 +93,7 @@ if __name__ == "__main__":
         merge_driver=None,
     )
 
-    api.init_repo(config, "remote", force_create=True)
+    op.init_repo(config, "remote", force_create=True)
     n_iter = 120
     human_feedback_every = 20
 
@@ -92,7 +107,6 @@ if __name__ == "__main__":
     population_history = []
 
     STAGE = 0
-    username = "bchuang"
 
     # check if the directory exists
     if not os.path.exists(stages_dir):
