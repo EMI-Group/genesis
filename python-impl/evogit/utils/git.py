@@ -88,6 +88,31 @@ def delete_remote_notes(config: EvoGitConfig) -> None:
         )
 
 
+def evogit_worktree_init(config: EvoGitConfig) -> None:
+    """Initialize the EvoGit worktree under .evogit directory.
+    EvoGit works along side a normal git repository by creating a worktree under the .evogit directory,
+    and using it to store the EvoGit-specific files.
+    When clean start is True, it will remove the existing .evogit directory if it exists.
+    Otherwise, it will try to reuse the existing .evogit directory.
+    """
+    if not config.clean_start and os.path.exists(config.git_dir):
+        # do nothing, reuse the existing directory
+        return
+
+    working_dir = os.path.join(config.git_dir, ".evogit")
+    # create .evogit
+    subprocess.run(
+        ["git", "worktree", "add", "-q", working_dir, "HEAD"],
+        cwd=config.git_dir,
+    )
+    # set it as the evogit_main branch
+    subprocess.run(["git", "switch", "-c", "evogit_main"], cwd=working_dir)
+    # create a log directory
+    log_dir = os.path.join(working_dir, "log")
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+
 def init_git_repo(config: EvoGitConfig) -> None:
     git_dir = config.git_dir
 
@@ -392,30 +417,31 @@ def commit_changes_in_worktree(
 ):
     """Commit the changes in the specified worktree. Assume that the changes are already staged."""
     if not has_staged_changes(config, worktree):
-        warnings.warn(
-            f"No staged changes in {worktree}. Skipping commit."
-        )
+        warnings.warn(f"No staged changes in {worktree}. Skipping commit.")
         return
 
     commit_message = git_commit_message_pattern.sub("", commit_message)
     commit_message = commit_message[:256]  # truncate the message to 256 characters
-    n_retry = 0
-    while n_retry < 3:
-        n_retry += 1
-        # git commit could fail if no files are staged or due to some race condition
-        proc = subprocess.run(
-            ["git", "commit", "-q", "-m", commit_message],
-            cwd=worktree,
-            capture_output=True,
+
+    commit_cmd = ["git"]
+    # use the given git user name and email if they are set
+    # otherwise git will try to use the global or repo local config
+    if config.git_user_name:
+        commit_cmd += ["-c", f"user.name={config.git_user_name}"]
+    if config.git_user_email:
+        commit_cmd += ["-c", f"user.email={config.git_user_email}"]
+    commit_cmd += ["commit", "-q", "-m", commit_message]
+    proc = subprocess.run(
+        commit_cmd,
+        cwd=worktree,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        stdout = proc.stdout.decode("utf-8")
+        stderr = proc.stderr.decode("utf-8")
+        warnings.warn(
+            f"Failed to commit changes in {worktree}. Status: {proc.returncode}, stdout: {stdout} stderr: {stderr}"
         )
-        if proc.returncode != 0:
-            stdout = proc.stdout.decode("utf-8")
-            stderr = proc.stderr.decode("utf-8")
-            warnings.warn(
-                f"Failed to commit changes in {worktree}. Status: {proc.returncode}, stdout: {stdout} stderr: {stderr}"
-            )
-        else:
-            break
 
 
 def update_file(
@@ -453,9 +479,16 @@ def update_file(
     subprocess.run(["git", "add", filename], cwd=config.git_dir, check=True)
     commit_message = git_commit_message_pattern.sub("", commit_message)
     commit_message = commit_message[:256]  # truncate the message to 256 characters
-    subprocess.run(
-        ["git", "commit", "-q", "-m", commit_message], cwd=config.git_dir, check=True
-    )
+
+    commit_cmd = ["git"]
+    # use the given git user name and email if they are set
+    # otherwise git will try to use the global or repo local config
+    if config.git_user_name:
+        commit_cmd += ["-c", f"user.name={config.git_user_name}"]
+    if config.git_user_email:
+        commit_cmd += ["-c", f"user.email={config.git_user_email}"]
+    commit_cmd += ["commit", "-q", "-m", commit_message]
+    subprocess.run(commit_cmd, cwd=config.git_dir, check=True)
 
 
 def read_file(config: EvoGitConfig, commit: str, mode: str = "text") -> str | bytes:
