@@ -2,21 +2,25 @@
 
 import subprocess
 import logging
-
+from config import EvoGitConfig
 
 logger = logging.getLogger("evogit")
 
 
-def run_checks(project_paths: list[str]):
+def run_checks(config: EvoGitConfig, project_paths: list[str]):
     """Run checks for all project paths in the given list.
 
     Expect two callbacks:
     - `run_check`: a function that takes a project path and returns a subprocess handler.
     - `await_results`: a function that takes a list of handlers and returns their results.
     """
+    if not config.run_check:
+        # if no run_check function is provided, return empty results
+        return [""] * len(project_paths)
+
     handlers = []
     for project_path in project_paths:
-        handler = run_check(project_path)
+        handler = config.run_check(project_path)
         handlers.append(handler)
 
     results = []
