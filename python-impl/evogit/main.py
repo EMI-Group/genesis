@@ -133,8 +133,6 @@ if __name__ == "__main__":
         default=".",
     )
     parser.add_argument("--host_id", type=int, help="Host ID for the run.", default="0")
-    parser.add_argument("--endpoint", type=str, help="Endpoint for the LLM API.")
-    parser.add_argument("--api_token", type=str, help="API token for the LLM API.")
     parser.add_argument("--model_name", type=str, help="Name of the LLM to use.")
     parser.add_argument("--remote-repo", type=str, help="Remote repository URL.")
     parser.add_argument(
