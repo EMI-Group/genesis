@@ -19,6 +19,7 @@ from evox_extension import (
     git_update,
 )
 from utils.llm import LLMBackend
+from utils.git import evogit_worktree_init
 
 torch.set_default_device("cpu")
 
@@ -135,18 +136,21 @@ if __name__ == "__main__":
     parser.add_argument("--endpoint", type=str, help="Endpoint for the LLM API.")
     parser.add_argument("--api_token", type=str, help="API token for the LLM API.")
     parser.add_argument("--model_name", type=str, help="Name of the LLM to use.")
-    parser.add_argument("--remote_repo", type=str, help="Remote repository URL.")
+    parser.add_argument("--remote-repo", type=str, help="Remote repository URL.")
+    parser.add_argument(
+        "--project-type", type=str, help="Project type (e.g., python, slidev, nextjs)."
+    )
     parser.add_argument(
         "--init-stage", type=int, help="Initial stage to start from.", default=0
     )
     args = parser.parse_args()
-    git_dir = os.path.abspath(args.path)
-    if not os.path.exists(git_dir):
-        raise ValueError(f"Working directory {git_dir} does not exist")
+    evogit_worktree_init(args.path, clean_start=True)
 
-    working_dir = os.path.join(git_dir, ".evogit")
+    working_dir = os.path.join(args.path, ".evogit")
     log_dir = os.path.join(working_dir, "log")
     stages_dir = os.path.join(working_dir, "stages")
+    if not os.path.exists(working_dir):
+        raise ValueError(f"Working directory {working_dir} does not exist")
 
     host_id = args.host_id
     logger = logging.getLogger("evogit")
@@ -163,19 +167,31 @@ if __name__ == "__main__":
     llm_backend = LLMBackend(model_name=args.model_name)
     STAGE = read_stage(os.path.join(stages_dir, f"stage_{args.init_stage}.toml"))
 
+    if args.project_type == "nextjs":
+        from presets.npm_nextjs import run_check
+
+        check_fn = run_check
+    elif args.project_type == "python":
+        from presets.uv_pyright import run_check
+
+        check_fn = run_check
+    elif args.project_type == "slidev":
+        from presets.npm_slidev import run_check
+
+        check_fn = run_check
+    else:
+        raise ValueError(f"Unsupported project type: {args.project_type}")
+
     config = EvoGitConfig(
         num_objectives=0,
         git_user_name="Bill Huang",
         git_user_email="bill.huang2001@gmail.com",
         push_every=1,
         fetch_every=0,
-        migrate_every=1,
-        human_every=0,
-        migrate_count=0,
         llm_name=args.model_name,
         llm_backend=llm_backend,
         device_map="auto",
-        git_dir=git_dir,
+        git_dir=working_dir,
         eval_command=None,
         seed_file=None,
         filename=None,
@@ -189,6 +205,7 @@ if __name__ == "__main__":
         prompt_fn=prompt_fn,
         response_fn=response_fn,
         diff_prompt_fn=diff_prompt_fn,
+        check_fn=check_fn,
         max_merge_retry=512,
         clean_start=True,
         project_type="python",
@@ -197,7 +214,6 @@ if __name__ == "__main__":
         merge_driver=None,
     )
 
-    op.init_repo(config, "remote", force_create=True)
     n_iter = 120
     human_feedback_every = 20
 

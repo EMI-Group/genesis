@@ -88,22 +88,22 @@ def delete_remote_notes(config: EvoGitConfig) -> None:
         )
 
 
-def evogit_worktree_init(config: EvoGitConfig) -> None:
+def evogit_worktree_init(git_dir, clean_start) -> None:
     """Initialize the EvoGit worktree under .evogit directory.
     EvoGit works along side a normal git repository by creating a worktree under the .evogit directory,
     and using it to store the EvoGit-specific files.
     When clean start is True, it will remove the existing .evogit directory if it exists.
     Otherwise, it will try to reuse the existing .evogit directory.
     """
-    if not config.clean_start and os.path.exists(config.git_dir):
+    if not clean_start and os.path.exists(git_dir):
         # do nothing, reuse the existing directory
         return
 
-    working_dir = os.path.join(config.git_dir, ".evogit")
+    working_dir = os.path.join(git_dir, ".evogit")
     # create .evogit
     subprocess.run(
         ["git", "worktree", "add", "-q", working_dir, "HEAD"],
-        cwd=config.git_dir,
+        cwd=git_dir,
     )
     # set it as the evogit_main branch
     subprocess.run(["git", "switch", "-c", "evogit_main"], cwd=working_dir)

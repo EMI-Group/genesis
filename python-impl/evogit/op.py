@@ -634,11 +634,7 @@ def lint_code_base(
     # get the lint feedback, the handler is a subprocess.Popen object
     handlers = []
     for worktree in worktrees:
-        handlers.append(
-            get_linter_feedback(
-                worktree, project_type=config.project_type, async_run=True
-            )
-        )
+        handlers.append(config.check_fn(worktree))
 
     results = []
     # wait for these subprocess to end, and get the text output

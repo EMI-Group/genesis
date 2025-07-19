@@ -26,6 +26,7 @@ class EvoGitConfig:
     prompt_fn: Callable
     response_fn: Callable
     diff_prompt_fn: Callable
+    check_fn: Callable
     max_merge_retry: int
     clean_start: bool
     project_type: str
