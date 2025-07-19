@@ -111,6 +111,9 @@ def evogit_worktree_init(config: EvoGitConfig) -> None:
     log_dir = os.path.join(working_dir, "log")
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
+    stage_dir = os.path.join(working_dir, "stages")
+    if not os.path.exists(stage_dir):
+        os.makedirs(stage_dir)
 
 
 def init_git_repo(config: EvoGitConfig) -> None:
