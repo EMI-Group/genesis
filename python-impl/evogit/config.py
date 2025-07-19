@@ -9,9 +9,6 @@ class EvoGitConfig:
     git_user_email: str
     push_every: int
     fetch_every: int
-    migrate_every: int
-    human_every: int
-    migrate_count: int
     llm_name: str
     llm_backend: Any
     device_map: str
@@ -26,10 +23,9 @@ class EvoGitConfig:
     reevaluate: bool
     enable_sandbox: bool
     timeout: int
-    prompt_constructor: Callable
-    respond_extractor: Callable
-    diff_prompt_constructor: Callable
-    fixup_prompt_constructor: Callable
+    prompt_fn: Callable
+    response_fn: Callable
+    diff_prompt_fn: Callable
     max_merge_retry: int
     clean_start: bool
     project_type: str
