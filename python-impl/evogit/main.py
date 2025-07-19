@@ -1,10 +1,13 @@
-import sys
-import logging
-from datetime import datetime
-import os
-import torch
-from evox.workflows import StdWorkflow
 import argparse
+import logging
+import sys
+import os
+import re
+import torch
+import tomllib
+from datetime import datetime
+from typing import NamedTuple, Callable
+from evox.workflows import StdWorkflow
 from algorithm import EvoGitAlgo
 from config import EvoGitConfig
 from evox_extension import (
@@ -20,6 +23,106 @@ from utils.llm import LLMBackend
 torch.set_default_device("cpu")
 
 
+class Stage(NamedTuple):
+    stage_num: int
+    task: str
+    agent_characteristics: str
+    mutation_template: str
+    diff_template: str
+
+
+STAGE = Stage(
+    stage_num=0,
+    task="",
+    agent_characteristics="",
+    mutation_template="",
+    diff_template="",
+)
+
+
+def prompt_fn(file_list, filename, prompt_code, lint_output):
+    global STAGE
+    return STAGE.mutation_template.format(
+        structure=file_list,
+        filename=filename,
+        code=prompt_code,
+        lint=lint_output,
+        current_task=STAGE.task,
+    )
+
+
+code_extract_pattern = re.compile(r"```.*?\n(.*?)```", re.DOTALL)
+filename_pattern = re.compile(r"^`([^`]+)`", re.MULTILINE)
+
+
+class ResponseContent(NamedTuple):
+    code: str
+    filename: str
+    new_file_content: str
+    commit_message: str
+
+
+def response_fn(response: str) -> ResponseContent:
+    try:
+        code_blocks = code_extract_pattern.findall(response)
+        filename_match = filename_pattern.search(response)
+        assert len(code_blocks) == 3, f"Expected 3 code blocks, got {len(code_blocks)}"
+
+        # Extract fields with safe fallbacks
+        code = code_blocks[0].strip() + "\n" if len(code_blocks) > 0 else ""
+        new_file_content = code_blocks[1].strip() + "\n" if len(code_blocks) > 1 else ""
+        commit_message = (
+            code_blocks[2].strip() if len(code_blocks) > 2 else "LLM code update"
+        )
+        commit_message = commit_message[:256]  # Truncate to 256 characters
+
+        filename = filename_match.group(1).strip() if filename_match else "None"
+        return ResponseContent(
+            code=code,
+            filename=filename,
+            new_file_content=new_file_content,
+            commit_message=commit_message,
+        )
+
+    except Exception as e:
+        logger.warning(
+            f"Error in response extraction, original response: {response}; error: {e}."
+        )
+        return ResponseContent(
+            code="",
+            filename="None",
+            new_file_content="",
+            commit_message="LLM code update",
+        )
+
+
+def diff_prompt_fn(file_list, diff, prev_note, new_note):
+    global STAGE
+    return STAGE.diff_template.format(
+        structure=file_list,
+        diff=diff,
+        prev_lint=prev_note,
+        new_lint=new_note,
+        current_task=STAGE.task,
+    )
+
+
+def read_stage(path: str) -> Stage:
+    """
+    Read the stage (a TOML file) from the given path.
+    """
+    with open(path, "r") as f:
+        stage_data = tomllib.load(f)
+
+    return Stage(
+        stage_num=stage_data["stage_num"],
+        task=stage_data["task"],
+        agent_characteristics=stage_data["agent_characteristics"],
+        mutation_template=stage_data["mutation_template"],
+        diff_template=stage_data["diff_template"],
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run EvoGit with LLM")
     parser.add_argument(
@@ -33,12 +136,15 @@ if __name__ == "__main__":
     parser.add_argument("--api_token", type=str, help="API token for the LLM API.")
     parser.add_argument("--model_name", type=str, help="Name of the LLM to use.")
     parser.add_argument("--remote_repo", type=str, help="Remote repository URL.")
+    parser.add_argument(
+        "--init-stage", type=int, help="Initial stage to start from.", default=0
+    )
     args = parser.parse_args()
-    repo_dir = os.path.abspath(args.path)
-    if not os.path.exists(repo_dir):
-        raise ValueError(f"Working directory {repo_dir} does not exist")
+    git_dir = os.path.abspath(args.path)
+    if not os.path.exists(git_dir):
+        raise ValueError(f"Working directory {git_dir} does not exist")
 
-    working_dir = os.path.join(repo_dir, ".evogit")
+    working_dir = os.path.join(git_dir, ".evogit")
     log_dir = os.path.join(working_dir, "log")
     stages_dir = os.path.join(working_dir, "stages")
 
@@ -46,9 +152,7 @@ if __name__ == "__main__":
     logger = logging.getLogger("evogit")
     logger.propagate = False  # Disable the default printing behavior
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    f_handler = logging.FileHandler(
-        os.path.join(log_dir, f"{timestamp}.log")
-    )
+    f_handler = logging.FileHandler(os.path.join(log_dir, f"{timestamp}.log"))
     f_handler.setLevel("DEBUG")
     s_handler = logging.StreamHandler(sys.stdout)
     s_handler.setLevel("WARNING")
@@ -57,6 +161,7 @@ if __name__ == "__main__":
     logger.addHandler(s_handler)
 
     llm_backend = LLMBackend(model_name=args.model_name)
+    STAGE = read_stage(os.path.join(stages_dir, f"stage_{args.init_stage}.toml"))
 
     config = EvoGitConfig(
         num_objectives=0,
@@ -70,7 +175,7 @@ if __name__ == "__main__":
         llm_name=args.model_name,
         llm_backend=llm_backend,
         device_map="auto",
-        git_dir=f"/tmp/evogit/evogit_llm_{args.model_name}_{host_id}",
+        git_dir=git_dir,
         eval_command=None,
         seed_file=None,
         filename=None,
@@ -81,10 +186,9 @@ if __name__ == "__main__":
         reevaluate=False,
         enable_sandbox=False,
         timeout=10,
-        prompt_constructor=prompt_constructor,
-        respond_extractor=respond_extractor,
-        diff_prompt_constructor=diff_prompt_constructor,
-        fixup_prompt_constructor=None,
+        prompt_fn=prompt_fn,
+        response_fn=response_fn,
+        diff_prompt_fn=diff_prompt_fn,
         max_merge_retry=512,
         clean_start=True,
         project_type="python",
