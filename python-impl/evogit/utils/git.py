@@ -7,7 +7,7 @@ import warnings
 import os
 import shutil
 import tempfile
-from phylox.config import EvoGitConfig
+from config import EvoGitConfig
 from typing import Optional, Union
 import re
 
