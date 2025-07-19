@@ -13,8 +13,7 @@ import random
 import numpy as np
 
 from config import EvoGitConfig
-from utils import git, llm
-from utils.prompt import get_linter_feedback
+from utils import git
 
 logger = logging.getLogger("phylox")
 
