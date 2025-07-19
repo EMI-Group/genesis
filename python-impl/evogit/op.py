@@ -279,8 +279,8 @@ def _construct_prompt(config, commits, chunk_size, operation_type) -> str:
     Read the code and the related information (e.g. stack_trace) from the a list of commits.
     Then feed into the prompt constructor.
     The operation_type is either "mutation" or "crossover".
-    The prompt_constructor is a function with the following signature:
-    def prompt_constructor(operation_type: str, code_infos: List[CodeInfo]) -> str
+    The prompt_fn is a function with the following signature:
+    def prompt_fn(operation_type: str, code_infos: List[CodeInfo]) -> str
     """
     code_infos = []
     for commit in commits:
@@ -311,7 +311,7 @@ def _construct_prompt(config, commits, chunk_size, operation_type) -> str:
     for code_info in code_infos:
         chunk.append(code_info)
         if len(chunk) == chunk_size:
-            prompts.append(config.prompt_constructor(operation_type, chunk))
+            prompts.append(config.prompt_fn(operation_type, chunk))
             chunk = []
 
     return prompts
@@ -320,10 +320,10 @@ def _construct_prompt(config, commits, chunk_size, operation_type) -> str:
 def llm_mutation(config, llm_backend, seeds, commits) -> list[str]:
     prompts = _construct_prompt(config, commits, 1, "mutation")
 
-    responds = llm_backend.query(seeds, prompts)
-    responds = [config.respond_extractor(response) for response in responds]
+    responses = llm_backend.query(seeds, prompts)
+    responses = [config.response_fn(response) for response in responses]
     offspring = []
-    for commit, response in zip(commits, responds):
+    for commit, response in zip(commits, responses):
         code, commit_message = response
         git.update_file(config, commit, code, f"{config.llm_name}: {commit_message}")
         offspring.append(git.read_head_commit(config))
@@ -569,18 +569,16 @@ def prune_commits(config: EvoGitConfig) -> None:
 
 
 def _construct_diff_comp_prompt(config, prev_commit, new_commit) -> str:
-    """A helper function to construct the prompt.
-    Read the code and the related information (e.g. stack_trace) from the a list of commits.
-    Then feed into the prompt constructor.
-    The operation_type is either "mutation" or "crossover".
-    The prompt_constructor is a function with the following signature:
-    def prompt_constructor(operation_type: str, code_infos: List[CodeInfo]) -> str
+    """A helper function to construct the diff prompt.
+    Diff prompt is used to compare the changes between two commits.
+    The diff_prompt_fn is a function with the following signature:
+    def diff_prompt_fn(prev_file_list, diff, prev_info, new_info) -> str
     """
     diff = git.diff_view(config, prev_commit, new_commit)
     prev_file_list = git.list_files(config, prev_commit)
     prev_info = git.read_note(config, prev_commit)
     new_info = git.read_note(config, new_commit)
-    prompt = config.diff_prompt_constructor(prev_file_list, diff, prev_info, new_info)
+    prompt = config.diff_prompt_fn(prev_file_list, diff, prev_info, new_info)
     return prompt
 
 
