@@ -422,7 +422,12 @@ def llm_constrained_mutation(config, llm_backend, seeds, commits) -> list[str]:
         prompt_code = "\n".join(prompt_code)
         lint_output = git.read_note(config, info["commit"])
         prompt_text = config.prompt_fn(
-            info["file_list"], info["random_file"], prompt_code, lint_output
+            info["file_list"],
+            info["random_file"],
+            info["random_section_start"],
+            info["random_section_end"],
+            prompt_code,
+            lint_output,
         )
         prompts.append(prompt_text)
 
