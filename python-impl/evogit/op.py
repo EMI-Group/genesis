@@ -319,7 +319,7 @@ def _construct_prompt(config, commits, chunk_size, operation_type) -> str:
 def llm_mutation(config, llm_backend, seeds, commits) -> list[str]:
     prompts = _construct_prompt(config, commits, 1, "mutation")
 
-    responses = llm_backend.query(seeds, prompts)
+    responses = llm_backend.batch_completion(seeds, prompts)
     responses = [config.response_fn(response) for response in responses]
     offspring = []
     for commit, response in zip(commits, responses):
@@ -426,8 +426,8 @@ def llm_constrained_mutation(config, llm_backend, seeds, commits) -> list[str]:
         )
         prompts.append(prompt_text)
 
-    responses = llm_backend.query(seeds, prompts)
-    responses = [config.respond_extractor(response) for response in responses]
+    responses = llm_backend.batch_completion(seeds, prompts)
+    responses = [config.response_fn(response) for response in responses]
     code_changes = [responses.code for responses in responses]
     commit_messages = [responses.commit_message for responses in responses]
     new_file_content = [responses.new_file_content for responses in responses]
@@ -476,7 +476,7 @@ def llm_constrained_mutation(config, llm_backend, seeds, commits) -> list[str]:
 def llm_crossover(config, llm_backend, seeds, commits) -> list[str]:
     prompts = _construct_prompt(config, commits, 2, "crossover")
 
-    responses = llm_backend.query(seeds, prompts)
+    responses = llm_backend.batch_completion(seeds, prompts)
     responses = [config.respond_extractor(response) for response in responses]
     offspring = []
     for commit, response in zip(commits, responses):
@@ -601,7 +601,7 @@ def llm_diff_compare(
             prompts.append(prompt)
             need_compare_idx.append(i)
 
-    responses = llm_backend.query(seeds, prompts)
+    responses = llm_backend.batch_completion(seeds, prompts)
     result = [True] * len(prev_commits)  # default to True for same commits
     for idx, response in zip(need_compare_idx, responses):
         if "good" in response.lower():

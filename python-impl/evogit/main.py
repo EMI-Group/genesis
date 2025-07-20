@@ -132,8 +132,8 @@ if __name__ == "__main__":
         help="Path to the git repository. Default to the current working directory.",
         default=".",
     )
-    parser.add_argument("--host_id", type=int, help="Host ID for the run.", default="0")
-    parser.add_argument("--model_name", type=str, help="Name of the LLM to use.")
+    parser.add_argument("--model-name", type=str, help="Name of the LLM to use.")
+    parser.add_argument("--host-id", type=int, help="Host ID for the run.", default="0")
     parser.add_argument("--remote-repo", type=str, help="Remote repository URL.")
     parser.add_argument(
         "--project-type", type=str, help="Project type (e.g., python, slidev, nextjs)."
