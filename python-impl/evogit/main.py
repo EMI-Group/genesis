@@ -42,11 +42,13 @@ STAGE = Stage(
 )
 
 
-def prompt_fn(file_list, filename, prompt_code, lint_output):
+def prompt_fn(file_list, filename, start_lineno, end_lineno, prompt_code, lint_output):
     global STAGE
     return STAGE.mutation_template.format(
         structure=file_list,
         filename=filename,
+        start_lineno=start_lineno,
+        end_lineno=end_lineno,
         code=prompt_code,
         lint=lint_output,
         current_task=STAGE.task,
@@ -69,16 +71,24 @@ def response_fn(response: str) -> ResponseContent:
     try:
         code_blocks = code_extract_pattern.findall(response)
         filename_match = filename_pattern.search(response)
-        assert len(code_blocks) >= 3, f"Expected 3 code blocks, got {len(code_blocks)}"
+        assert len(code_blocks) >= 2, f"Expected 3 code blocks, got {len(code_blocks)}"
         if len(code_blocks) > 3:
             print("Warning: More than 3 code blocks found, using only the first 3.")
 
         # Extract fields with safe fallbacks
         code = code_blocks[0].strip() + "\n" if len(code_blocks) > 0 else ""
-        new_file_content = code_blocks[1].strip() + "\n" if len(code_blocks) > 1 else ""
-        commit_message = (
-            code_blocks[2].strip() if len(code_blocks) > 2 else "LLM code update"
-        )
+        if len(code_blocks) > 2:
+            new_file_content = (
+                code_blocks[1].strip() + "\n" if len(code_blocks) > 2 else ""
+            )
+            commit_message = (
+                code_blocks[2].strip() if len(code_blocks) > 2 else "LLM code update"
+            )
+        else:
+            new_file_content = ""
+            commit_message = (
+                code_blocks[1].strip() if len(code_blocks) > 1 else "LLM code update"
+            )
         commit_message = commit_message[:256]  # Truncate to 256 characters
 
         filename = filename_match.group(1).strip() if filename_match else "None"
