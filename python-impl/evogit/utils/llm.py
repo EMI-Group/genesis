@@ -58,5 +58,4 @@ class LLMBackend:
             num_retries=self.num_retries,
             **self.params,
         )
-        print(f"LLM responses: {responses}")
         return [response.choices[0].message.content for response in responses]
