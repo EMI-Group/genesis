@@ -3,6 +3,7 @@ import logging
 import sys
 import os
 import re
+import random
 import torch
 import tomllib
 from datetime import datetime
@@ -49,6 +50,7 @@ def prompt_fn(file_list, filename, prompt_code, lint_output):
         code=prompt_code,
         lint=lint_output,
         current_task=STAGE.task,
+        agent_characteristics=random.choice(STAGE.agent_characteristics),
     )
 
 
@@ -67,7 +69,9 @@ def response_fn(response: str) -> ResponseContent:
     try:
         code_blocks = code_extract_pattern.findall(response)
         filename_match = filename_pattern.search(response)
-        assert len(code_blocks) == 3, f"Expected 3 code blocks, got {len(code_blocks)}"
+        assert len(code_blocks) >= 3, f"Expected 3 code blocks, got {len(code_blocks)}"
+        if len(code_blocks) > 3:
+            print("Warning: More than 3 code blocks found, using only the first 3.")
 
         # Extract fields with safe fallbacks
         code = code_blocks[0].strip() + "\n" if len(code_blocks) > 0 else ""
