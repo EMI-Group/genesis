@@ -50,7 +50,7 @@ def update_branches(config: EvoGitConfig, pop: list[str]) -> None:
     hostname = config.hostname if config.hostname is not None else "host0"
 
     for index, _commit in enumerate(pop):
-        branch_names.append(f"{hostname}-individual-{index}")
+        branch_names.append(f"{hostname}-individual{index}")
 
     git.branches_track_commits(config, branch_names, pop)
 
@@ -421,7 +421,7 @@ def llm_constrained_mutation(config, llm_backend, seeds, commits) -> list[str]:
         ]
         prompt_code = "\n".join(prompt_code)
         lint_output = git.read_note(config, info["commit"])
-        prompt_text = config.prompt_constructor(
+        prompt_text = config.prompt_fn(
             info["file_list"], info["random_file"], prompt_code, lint_output
         )
         prompts.append(prompt_text)

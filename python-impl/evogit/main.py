@@ -112,7 +112,7 @@ def read_stage(path: str) -> Stage:
     """
     Read the stage (a TOML file) from the given path.
     """
-    with open(path, "r") as f:
+    with open(path, "rb") as f:
         stage_data = tomllib.load(f)
 
     return Stage(
@@ -208,7 +208,7 @@ if __name__ == "__main__":
         clean_start=True,
         project_type="python",
         remote_repo=args.remote_repo,
-        hostname="host" + host_id,
+        hostname="host" + str(host_id),
         merge_driver=None,
     )
 
@@ -224,15 +224,13 @@ if __name__ == "__main__":
     workflow = StdWorkflow(algorithm, problem)
     population_history = []
 
-    STAGE = 0
-
     # check if the directory exists
     if not os.path.exists(stages_dir):
         raise ValueError(f"Directory {stages_dir} does not exist")
 
     try:
         for i in range(n_iter):
-            logger.warning(f"Iteration {i}    Stage {STAGE}")
+            logger.warning(f"Iteration {i}    Stage {STAGE.stage_num}")
             if i == 0:
                 workflow.init_step()
             else:
@@ -245,8 +243,7 @@ if __name__ == "__main__":
             # save the data every 10 iterations
 
             if (i + 1) % human_feedback_every == 0:
-                STAGE += 1
-                logger.warning(f"Human feedback phase, stage {STAGE}")
+                logger.warning(f"Human feedback phase, stage {STAGE.stage_num}")
                 # pause the program and wait for human feedback
                 # print the current population
                 print("Current population:")
