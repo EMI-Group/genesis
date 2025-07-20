@@ -181,6 +181,10 @@ if __name__ == "__main__":
         from presets.npm_slidev import run_check
 
         check_fn = run_check
+    elif args.project_type == "html":
+        from presets.npm_html import run_check
+
+        check_fn = run_check
     else:
         raise ValueError(f"Unsupported project type: {args.project_type}")
 
