@@ -22,7 +22,7 @@ class LLMBackend:
         self.params = params if params else {}
         self.num_retries = num_retries
 
-    def completion(self, query: str):
+    def completion(self, _seed: int, query: str):
         if self.system_prompt:
             messages = [
                 {"role": "system", "content": self.system_prompt},
@@ -31,14 +31,16 @@ class LLMBackend:
         else:
             messages = [{"role": "user", "content": query}]
 
-        return completion(
+        response = completion(
             model=self.model_name,
             messages=messages,
             num_retries=self.num_retries,
             **self.params,
         )
+        content = response.choices[0].message.content
+        return content
 
-    def batch_completion(self, queries: list):
+    def batch_completion(self, _seeds: list[int], queries: list[str]):
         if self.system_prompt:
             messages = [
                 [
@@ -48,11 +50,13 @@ class LLMBackend:
                 for query in queries
             ]
         else:
-            messages = [{"role": "user", "content": query} for query in queries]
+            messages = [[{"role": "user", "content": query}] for query in queries]
 
-        return batch_completion(
+        responses = batch_completion(
             model=self.model_name,
             messages=messages,
             num_retries=self.num_retries,
             **self.params,
         )
+        print(f"LLM responses: {responses}")
+        return [response.choices[0].message.content for response in responses]
