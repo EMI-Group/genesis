@@ -95,18 +95,28 @@ def evogit_worktree_init(git_dir, clean_start) -> None:
     When clean start is True, it will remove the existing .evogit directory if it exists.
     Otherwise, it will try to reuse the existing .evogit directory.
     """
-    if not clean_start and os.path.exists(git_dir):
-        # do nothing, reuse the existing directory
-        return
-
     working_dir = os.path.join(git_dir, ".evogit")
-    # create .evogit
-    subprocess.run(
-        ["git", "worktree", "add", "-q", working_dir, "HEAD"],
-        cwd=git_dir,
-    )
-    # set it as the evogit_main branch
-    subprocess.run(["git", "switch", "-c", "evogit_main"], cwd=working_dir)
+    if clean_start and os.path.exists(git_dir):
+        # cleanup the existing branches and worktrees then return
+        cleanup_temp_worktrees(None, git_dir=git_dir)
+        evogit_branches = list_branches(None, evogit_only=True, git_dir=git_dir)
+        evogit_branches.remove("evogit-main") # evogit-main is the main branch for EvoGit, do not delete it
+
+        for branch in evogit_branches:
+            subprocess.run(
+                ["git", "branch", "-D", branch],
+                cwd=git_dir,
+                check=True,
+            )
+    else:
+        # create .evogit
+        subprocess.run(
+            ["git", "worktree", "add", "-q", working_dir, "HEAD"],
+            cwd=git_dir,
+        )
+        # set it as the evogit_main branch
+        subprocess.run(["git", "switch", "-c", "evogit-main"], cwd=working_dir)
+
     # create a log directory
     log_dir = os.path.join(working_dir, "log")
     if not os.path.exists(log_dir):
@@ -226,24 +236,28 @@ def read_head_commit(config: EvoGitConfig, worktree: Optional[str] = None) -> st
 
 
 def list_branches(
-    config: EvoGitConfig, list_remote: bool = False, ea_only: bool = True
+    config: EvoGitConfig,
+    list_remote: bool = False,
+    evogit_only: bool = True,
+    git_dir: Optional[str] = None,
 ) -> list[str]:
     """List all branches in this repo.
     Parameters
     ----------
     list_remote:
         If True, list the remote branches. Otherwise, list the local branches.
-    ea_only
-        If True, only return the branches that are related to the EA.
+    evogit_only
+        If True, only return the branches that are related to the EvoGit.
         Master, main and detached head branches will be excluded.
     """
+    git_dir = git_dir if git_dir is not None else config.git_dir
     cmd = ["git", "branch", "--no-color"]
     if list_remote:
         cmd.append("-r")
 
     branches = subprocess.run(
         cmd,
-        cwd=config.git_dir,
+        cwd=git_dir,
         check=True,
         capture_output=True,
     ).stdout.decode("utf-8")
@@ -267,8 +281,8 @@ def list_branches(
             or "HEAD" in branch  # HEAD or remote/origin/HEAD should not be used
         )
 
-    if ea_only:
-        branches = [b for b in branches if is_normal_branch(b)]
+    if evogit_only:
+        branches = [b for b in branches if b.startswith("evogit-")]
 
     if list_remote:
         branches = ["remotes/" + b for b in branches]
@@ -567,7 +581,7 @@ def checkout(config: EvoGitConfig, commit: str) -> None:
 def add_temp_worktree(config: EvoGitConfig, branch: str) -> str:
     """checkout the branch in a new worktree and return the path of the worktree."""
     # make a temporary directory if not exists
-    worktree_dir = os.path.join(config.git_dir, ".phylox_evaluate")
+    worktree_dir = os.path.join(config.git_dir, ".evogit_evaluate")
     if not os.path.exists(worktree_dir):
         # in case we have multiple instances running at the same time
         try:
@@ -595,15 +609,16 @@ def remove_temp_worktree(config: EvoGitConfig, worktree: str) -> None:
     )
 
 
-def cleanup_temp_worktrees(config: EvoGitConfig) -> None:
-    """Remove all the worktrees in the .phylox_evaluate directory."""
-    worktree_dir = os.path.join(config.git_dir, ".phylox_evaluate")
+def cleanup_temp_worktrees(config: EvoGitConfig, git_dir: Optional[str] = None) -> None:
+    """Remove all the worktrees in the .evogit_evaluate directory."""
+    git_dir = git_dir if git_dir is not None else config.git_dir
+    worktree_dir = os.path.join(git_dir, ".evogit_evaluate")
     if os.path.exists(worktree_dir):
         shutil.rmtree(worktree_dir)
 
     subprocess.run(
         ["git", "worktree", "prune"],
-        cwd=config.git_dir,
+        cwd=git_dir,
         check=True,
     )
 
