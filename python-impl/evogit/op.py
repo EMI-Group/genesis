@@ -50,7 +50,7 @@ def update_branches(config: EvoGitConfig, pop: list[str]) -> None:
     hostname = config.hostname if config.hostname is not None else "host0"
 
     for index, _commit in enumerate(pop):
-        branch_names.append(f"{hostname}-individual{index}")
+        branch_names.append(f"evogit-{hostname}-individual{index}")
 
     git.branches_track_commits(config, branch_names, pop)
 
@@ -68,12 +68,13 @@ def get_initial_branches(config: EvoGitConfig, pop_size: int) -> list[str]:
     if config.clean_start:
         # If clean start, start from main branch
         print("Clean start, start from main branch")
-        main_commit_id = git.get_commit_by_branch(config, "main")
+        main_commit_id = git.get_commit_by_branch(config, "evogit-main")
         pop = [main_commit_id for _ in range(pop_size)]
         return pop
 
     # Try to load the branches from the local repository
-    branches = git.list_branches(config)
+    branches = git.list_branches(config, evogit_only=True)
+    branches.remove("evogit-main")  # Remove the main branch from the list
     pop = branches[:pop_size]
     pop = [git.get_commit_by_branch(config, branch) for branch in pop]
 
@@ -331,8 +332,8 @@ def llm_mutation(config, llm_backend, seeds, commits) -> list[str]:
 
 
 def _generate_random_section(n_lines: int) -> Tuple[int, int]:
-    """Generate a random section of the code, 64 - 128 lines long"""
-    random_length = random.randint(64, 128)
+    """Generate a random section of the code, 64 - 256 lines long"""
+    random_length = random.randint(64, 256)
     if random_length > n_lines:
         random_length = n_lines
     random_start = random.randint(0, n_lines - random_length)

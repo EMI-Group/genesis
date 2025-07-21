@@ -69,6 +69,11 @@ class ResponseContent(NamedTuple):
 
 def response_fn(response: str) -> ResponseContent:
     try:
+        if not response.strip().endswith("```"):
+            # If the response does not end with a code block,
+            # try to append a closing code block
+            # This is a workaround for some LLMs that might not format the response correctly.
+            response += "\n```"
         code_blocks = code_extract_pattern.findall(response)
         filename_match = filename_pattern.search(response)
         assert len(code_blocks) >= 2, f"Expected 3 code blocks, got {len(code_blocks)}"
@@ -176,7 +181,7 @@ if __name__ == "__main__":
     logger.addHandler(f_handler)
     logger.addHandler(s_handler)
 
-    llm_backend = LLMBackend(model_name=args.model_name)
+    llm_backend = LLMBackend(model_name=args.model_name, params={"temperature": 0.5, "top_p": 0.7})
     STAGE = read_stage(os.path.join(stages_dir, f"stage_{args.init_stage}.toml"))
 
     if args.project_type == "nextjs":
