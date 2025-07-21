@@ -127,15 +127,33 @@ def diff_prompt_fn(file_list, diff, prev_note, new_note):
     )
 
 
-def read_stage(path: str) -> Stage:
+def read_stage(stage_dir: str, stage_num: int) -> Stage:
     """
     Read the stage (a TOML file) from the given path.
     """
+    path = os.path.join(stage_dir, f"stage_{stage_num}.toml")
+    # check if the directory exists
+    while not os.path.exists(path):
+        user_input = input(
+            (
+                f"Stage {stage_num} does not exist. Expecting a file at {path}. "
+                "Type '(e)xit' to exit or '(s)kip' to skip this stage or (c)ontinue to continue after creating the file: "
+            )
+        )
+        user_input = user_input.lower().strip()
+        if user_input == "e" or user_input == "exit":
+            raise FileNotFoundError(f"Stage {stage_num} file not found at {path}.")
+        elif user_input == "s" or user_input == "skip":
+            print(f"Skipping stage {stage_num}.")
+            return read_stage(stage_dir, stage_num - 1)
+        elif user_input == "c" or user_input == "continue":
+            print(f"Continuing with stage {stage_num}.")
+
     with open(path, "rb") as f:
         stage_data = tomllib.load(f)
 
     return Stage(
-        stage_num=stage_data["stage_num"],
+        stage_num=stage_num,
         task=stage_data["task"],
         agent_characteristics=stage_data["agent_characteristics"],
         mutation_template=stage_data["mutation_template"],
@@ -171,7 +189,7 @@ if __name__ == "__main__":
 
     working_dir = os.path.join(args.path, ".evogit")
     log_dir = os.path.join(working_dir, "log")
-    stages_dir = os.path.join(working_dir, "stages")
+    stage_dir = os.path.join(working_dir, "stages")
     if not os.path.exists(working_dir):
         raise ValueError(f"Working directory {working_dir} does not exist")
 
@@ -196,7 +214,7 @@ if __name__ == "__main__":
             "thinking": {"type": "disabled", "budget_tokens": 0},
         },
     )
-    STAGE = read_stage(os.path.join(stages_dir, f"stage_{args.init_stage}.toml"))
+    STAGE = read_stage(stage_dir, args.init_stage)
 
     if args.project_type == "nextjs":
         from presets.npm_nextjs import run_check
@@ -262,10 +280,6 @@ if __name__ == "__main__":
     workflow = StdWorkflow(algorithm, problem)
     population_history = []
 
-    # check if the directory exists
-    if not os.path.exists(stages_dir):
-        raise ValueError(f"Directory {stages_dir} does not exist")
-
     try:
         for i in range(n_iter):
             logger.warning(f"Iteration {i}    Stage {STAGE.stage_num}")
@@ -314,6 +328,9 @@ if __name__ == "__main__":
                     break
                 elif feedback == "y":
                     logger.warning("Continue")
+
+                STAGE = read_stage(stage_dir, STAGE.stage_num + 1)
+
     except KeyboardInterrupt:
         pass
     finally:
