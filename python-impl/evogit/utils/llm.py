@@ -2,8 +2,9 @@
 Utility functions for the controlling LLM models.
 """
 
-from litellm import completion, batch_completion
+from litellm import completion
 from typing import Optional
+import time
 import logging
 
 
@@ -21,8 +22,12 @@ class LLMBackend:
         self.system_prompt = system_prompt
         self.params = params if params else {}
         self.num_retries = num_retries
+        self.initial_sleep = 20
+        self.sleep_duration = self.initial_sleep
+        self.logger = logging.getLogger("evogit")
 
     def completion(self, _seed: int, query: str):
+        self.logger.info(f"LLM completion for query: {query}")
         if self.system_prompt:
             messages = [
                 {"role": "system", "content": self.system_prompt},
@@ -31,31 +36,28 @@ class LLMBackend:
         else:
             messages = [{"role": "user", "content": query}]
 
-        response = completion(
-            model=self.model_name,
-            messages=messages,
-            num_retries=self.num_retries,
-            **self.params,
-        )
-        content = response.choices[0].message.content
-        return content
+        for _ in range(self.num_retries):
+            try:
+                response = completion(
+                    model=self.model_name,
+                    messages=messages,
+                    **self.params,
+                )
+                content = response.choices[0].message.content
+                self.sleep_duration = self.initial_sleep  # Reset sleep duration after success
+                self.logger.info(f"LLM response: {content}")
+                return content
+            except Exception as e:
+                self.logger.error(f"LLM completion failed: {e}")
+                time.sleep(self.sleep_duration)
+                self.sleep_duration += self.sleep_duration // 2 # *= 1.5
 
-    def batch_completion(self, _seeds: list[int], queries: list[str]):
-        if self.system_prompt:
-            messages = [
-                [
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": query},
-                ]
-                for query in queries
-            ]
-        else:
-            messages = [[{"role": "user", "content": query}] for query in queries]
+    def batch_completion(self, seeds: list[int], queries: list[str]):
+        # litellm has built-in support for batch completions
+        # however, it doesn't handle rate limits well, so we handle it through retries in the completion method
+        responses = []
+        for seed, query in zip(seeds, queries):
+            response = self.completion(seed, query)
+            responses.append(response)
 
-        responses = batch_completion(
-            model=self.model_name,
-            messages=messages,
-            num_retries=self.num_retries,
-            **self.params,
-        )
-        return [response.choices[0].message.content for response in responses]
+        return responses
