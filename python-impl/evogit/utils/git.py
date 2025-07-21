@@ -100,7 +100,9 @@ def evogit_worktree_init(git_dir, clean_start) -> None:
         # cleanup the existing branches and worktrees then return
         cleanup_temp_worktrees(None, git_dir=git_dir)
         evogit_branches = list_branches(None, evogit_only=True, git_dir=git_dir)
-        evogit_branches.remove("evogit-main") # evogit-main is the main branch for EvoGit, do not delete it
+        evogit_branches.remove(
+            "evogit-main"
+        )  # evogit-main is the main branch for EvoGit, do not delete it
 
         for branch in evogit_branches:
             subprocess.run(
@@ -930,16 +932,14 @@ def fetch_notes_from_remote(
         )
 
 
-def diff_view(
-    config: EvoGitConfig, commit1: str, commit2: str, context_lines: int = 8
-) -> None:
+def diff_view(config: EvoGitConfig, commit1: str, commit2: str) -> None:
     """View the diff between two commits."""
     diff = subprocess.run(
         [
             "git",
             "diff",
             "--no-color",
-            f"--unified={str(context_lines)}",
+            f"--unified={str(config.n_context_lines)}",
             commit1,
             commit2,
         ],

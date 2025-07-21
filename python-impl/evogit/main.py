@@ -152,6 +152,7 @@ if __name__ == "__main__":
         default=".",
     )
     parser.add_argument("--model-name", type=str, help="Name of the LLM to use.")
+    parser.add_argument("--n-context-lines", type=int, help="Number of context lines to use.", default=200)
     parser.add_argument("--host-id", type=int, help="Host ID for the run.", default="0")
     parser.add_argument("--remote-repo", type=str, help="Remote repository URL.")
     parser.add_argument(
@@ -223,6 +224,7 @@ if __name__ == "__main__":
         reevaluate=False,
         enable_sandbox=False,
         timeout=10,
+        n_context_lines=args.n_context_lines,
         prompt_fn=prompt_fn,
         response_fn=response_fn,
         diff_prompt_fn=diff_prompt_fn,

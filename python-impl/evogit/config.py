@@ -23,6 +23,7 @@ class EvoGitConfig:
     reevaluate: bool
     enable_sandbox: bool
     timeout: int
+    n_context_lines: int
     prompt_fn: Callable
     response_fn: Callable
     diff_prompt_fn: Callable
