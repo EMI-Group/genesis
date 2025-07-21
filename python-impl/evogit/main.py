@@ -152,7 +152,12 @@ if __name__ == "__main__":
         default=".",
     )
     parser.add_argument("--model-name", type=str, help="Name of the LLM to use.")
-    parser.add_argument("--n-context-lines", type=int, help="Number of context lines to use.", default=200)
+    parser.add_argument(
+        "--n-context-lines",
+        type=int,
+        help="Number of context lines to use.",
+        default=100,
+    )
     parser.add_argument("--host-id", type=int, help="Host ID for the run.", default="0")
     parser.add_argument("--remote-repo", type=str, help="Remote repository URL.")
     parser.add_argument(
@@ -182,7 +187,15 @@ if __name__ == "__main__":
     logger.addHandler(f_handler)
     logger.addHandler(s_handler)
 
-    llm_backend = LLMBackend(model_name=args.model_name, params={"temperature": 0.5, "top_p": 0.7})
+    llm_backend = LLMBackend(
+        model_name=args.model_name,
+        params={
+            "temperature": 0.5,
+            "top_p": 0.7,
+            "reasoning_effort": "disable",
+            "thinking": {"type": "disabled", "budget_tokens": 0},
+        },
+    )
     STAGE = read_stage(os.path.join(stages_dir, f"stage_{args.init_stage}.toml"))
 
     if args.project_type == "nextjs":
