@@ -1,166 +1,31 @@
 import argparse
 import logging
-import sys
 import os
-import re
-import random
-import torch
-import tomllib
+import sys
 from datetime import datetime
-from typing import NamedTuple, Callable
-from evox.workflows import StdWorkflow
+
+import torch
 from algorithm import EvoGitAlgo
-from config import EvoGitConfig
+from evox.workflows import StdWorkflow
 from evox_extension import (
     EvoGitProblem,
-    op,
-    update_branches,
     array_to_hex,
-    hex_to_array,
     git_update,
+    hex_to_array,
+    update_branches,
 )
-from utils.llm import LLMBackend
+from agent import (
+    read_plan,
+    prompt_fn,
+    response_fn,
+    diff_prompt_fn,
+)
 from utils.git import evogit_worktree_init
+from utils.llm import LLMBackend
+
+from config import EvoGitConfig
 
 torch.set_default_device("cpu")
-
-
-class Stage(NamedTuple):
-    stage_num: int
-    task: str
-    agent_characteristics: str
-    mutation_template: str
-    diff_template: str
-
-
-STAGE = Stage(
-    stage_num=0,
-    task="",
-    agent_characteristics="",
-    mutation_template="",
-    diff_template="",
-)
-
-
-def prompt_fn(file_list, filename, start_lineno, end_lineno, prompt_code, lint_output):
-    global STAGE
-    return STAGE.mutation_template.format(
-        structure=file_list,
-        filename=filename,
-        start_lineno=start_lineno,
-        end_lineno=end_lineno,
-        code=prompt_code,
-        lint=lint_output,
-        current_task=STAGE.task,
-        agent_characteristics=random.choice(STAGE.agent_characteristics),
-    )
-
-
-code_extract_pattern = re.compile(r"```.*?\n(.*?)```", re.DOTALL)
-filename_pattern = re.compile(r"^`([^`]+)`", re.MULTILINE)
-
-
-class ResponseContent(NamedTuple):
-    code: str
-    filename: str
-    new_file_content: str
-    commit_message: str
-
-
-def response_fn(response: str) -> ResponseContent:
-    try:
-        if not response.strip().endswith("```"):
-            # If the response does not end with a code block,
-            # try to append a closing code block
-            # This is a workaround for some LLMs that might not format the response correctly.
-            response += "\n```"
-        code_blocks = code_extract_pattern.findall(response)
-        filename_match = filename_pattern.search(response)
-        assert len(code_blocks) >= 2, f"Expected at least 2 code blocks, got {len(code_blocks)}"
-        if len(code_blocks) > 3:
-            logger = logging.getLogger("evogit")
-            logger.warning("More than 3 code blocks found, using only the first 3.")
-
-        # Extract fields with safe fallbacks
-        code = code_blocks[0].strip() + "\n" if len(code_blocks) > 0 else ""
-        if len(code_blocks) > 2:
-            new_file_content = (
-                code_blocks[1].strip() + "\n" if len(code_blocks) > 2 else ""
-            )
-            commit_message = (
-                code_blocks[2].strip() if len(code_blocks) > 2 else "LLM code update"
-            )
-        else:
-            new_file_content = ""
-            commit_message = (
-                code_blocks[1].strip() if len(code_blocks) > 1 else "LLM code update"
-            )
-        commit_message = commit_message[:256]  # Truncate to 256 characters
-
-        filename = filename_match.group(1).strip() if filename_match else "None"
-        return ResponseContent(
-            code=code,
-            filename=filename,
-            new_file_content=new_file_content,
-            commit_message=commit_message,
-        )
-
-    except Exception as e:
-        logger = logging.getLogger("evogit")
-        logger.warning(
-            f"Error in response extraction, original response: {response}; error: {e}."
-        )
-        return ResponseContent(
-            code="",
-            filename="None",
-            new_file_content="",
-            commit_message="LLM code update",
-        )
-
-
-def diff_prompt_fn(file_list, diff, prev_note, new_note):
-    global STAGE
-    return STAGE.diff_template.format(
-        structure=file_list,
-        diff=diff,
-        prev_lint=prev_note,
-        new_lint=new_note,
-        current_task=STAGE.task,
-    )
-
-
-def read_stage(stage_dir: str, stage_num: int) -> Stage:
-    """
-    Read the stage (a TOML file) from the given path.
-    """
-    path = os.path.join(stage_dir, f"stage_{stage_num}.toml")
-    # check if the directory exists
-    while not os.path.exists(path):
-        user_input = input(
-            (
-                f"Stage {stage_num} does not exist. Expecting a file at {path}. "
-                "Type '(e)xit' to exit or '(s)kip' to skip this stage or (c)ontinue to continue after creating the file: "
-            )
-        )
-        user_input = user_input.lower().strip()
-        if user_input == "e" or user_input == "exit":
-            raise FileNotFoundError(f"Stage {stage_num} file not found at {path}.")
-        elif user_input == "s" or user_input == "skip":
-            print(f"Skipping stage {stage_num}.")
-            return read_stage(stage_dir, stage_num - 1)
-        elif user_input == "c" or user_input == "continue":
-            print(f"Continuing with stage {stage_num}.")
-
-    with open(path, "rb") as f:
-        stage_data = tomllib.load(f)
-
-    return Stage(
-        stage_num=stage_num,
-        task=stage_data["task"],
-        agent_characteristics=stage_data["agent_characteristics"],
-        mutation_template=stage_data["mutation_template"],
-        diff_template=stage_data["diff_template"],
-    )
 
 
 if __name__ == "__main__":
@@ -191,7 +56,7 @@ if __name__ == "__main__":
 
     working_dir = os.path.join(args.path, ".evogit")
     log_dir = os.path.join(working_dir, "log")
-    stage_dir = os.path.join(working_dir, "stages")
+    plan_dir = os.path.join(working_dir, "plan")
     if not os.path.exists(working_dir):
         raise ValueError(f"Working directory {working_dir} does not exist")
 
@@ -216,7 +81,7 @@ if __name__ == "__main__":
             "thinking": {"type": "disabled", "budget_tokens": 0},
         },
     )
-    STAGE = read_stage(stage_dir, args.init_stage)
+    plan = read_plan(plan_dir, args.init_stage)
 
     if args.project_type == "nextjs":
         from presets.npm_nextjs import run_check
@@ -284,7 +149,7 @@ if __name__ == "__main__":
 
     try:
         for i in range(n_iter):
-            logger.warning(f"Iteration {i}    Stage {STAGE.stage_num}")
+            logger.warning(f"Iteration {i}    Stage {plan.index}")
             if i == 0:
                 workflow.init_step()
             else:
@@ -297,7 +162,7 @@ if __name__ == "__main__":
             # save the data every 10 iterations
 
             if (i + 1) % human_feedback_every == 0:
-                logger.warning(f"Human feedback phase, stage {STAGE.stage_num}")
+                logger.warning(f"Human feedback phase, stage {plan.index}")
                 # pause the program and wait for human feedback
                 # print the current population
                 print("Current population:")
@@ -331,7 +196,7 @@ if __name__ == "__main__":
                 elif feedback == "y":
                     logger.warning("Continue")
 
-                STAGE = read_stage(stage_dir, STAGE.stage_num + 1)
+                plan = read_plan(plan_dir, plan.index + 1)
 
     except KeyboardInterrupt:
         pass
