@@ -76,9 +76,10 @@ def response_fn(response: str) -> ResponseContent:
             response += "\n```"
         code_blocks = code_extract_pattern.findall(response)
         filename_match = filename_pattern.search(response)
-        assert len(code_blocks) >= 2, f"Expected 3 code blocks, got {len(code_blocks)}"
+        assert len(code_blocks) >= 2, f"Expected at least 2 code blocks, got {len(code_blocks)}"
         if len(code_blocks) > 3:
-            print("Warning: More than 3 code blocks found, using only the first 3.")
+            logger = logging.getLogger("evogit")
+            logger.warning("More than 3 code blocks found, using only the first 3.")
 
         # Extract fields with safe fallbacks
         code = code_blocks[0].strip() + "\n" if len(code_blocks) > 0 else ""
@@ -105,6 +106,7 @@ def response_fn(response: str) -> ResponseContent:
         )
 
     except Exception as e:
+        logger = logging.getLogger("evogit")
         logger.warning(
             f"Error in response extraction, original response: {response}; error: {e}."
         )
