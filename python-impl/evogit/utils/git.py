@@ -88,6 +88,17 @@ def delete_remote_notes(config: EvoGitConfig) -> None:
         )
 
 
+def gitignore_add(git_dir: str, pattern: str) -> None:
+    """Add a pattern to the .gitignore file in the specified git directory."""
+    gitignore_path = os.path.join(git_dir, ".gitignore")
+    if not os.path.exists(gitignore_path):
+        with open(gitignore_path, "w") as f:
+            f.write(pattern + "\n")
+    else:
+        with open(gitignore_path, "a") as f:
+            f.write(pattern + "\n")
+
+
 def evogit_worktree_init(git_dir, clean_start) -> None:
     """Initialize the EvoGit worktree under .evogit directory.
     EvoGit works along side a normal git repository by creating a worktree under the .evogit directory,
@@ -118,12 +129,14 @@ def evogit_worktree_init(git_dir, clean_start) -> None:
         )
         # set it as the evogit_main branch
         subprocess.run(["git", "switch", "-c", "evogit-main"], cwd=working_dir)
+        gitignore_add(working_dir, "/log")
+        gitignore_add(working_dir, "/plan")
 
     # create a log directory
     log_dir = os.path.join(working_dir, "log")
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    stage_dir = os.path.join(working_dir, "stages")
+    stage_dir = os.path.join(working_dir, "plan")
     if not os.path.exists(stage_dir):
         os.makedirs(stage_dir)
 
