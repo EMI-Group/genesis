@@ -16,7 +16,7 @@ class LLMBackend:
         model_name: str,
         system_prompt: Optional[str] = None,
         params: Optional[dict] = None,
-        num_retries: int = 3,
+        num_retries: int = 10,
     ):
         self.model_name = model_name
         self.system_prompt = system_prompt
