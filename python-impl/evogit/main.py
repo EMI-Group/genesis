@@ -20,6 +20,7 @@ from agent import (
     response_fn,
     diff_prompt_fn,
 )
+import agent
 from utils.git import evogit_worktree_init
 from utils.llm import LLMBackend
 
@@ -77,11 +78,9 @@ if __name__ == "__main__":
         params={
             "temperature": 0.5,
             "top_p": 0.7,
-            "reasoning_effort": "disable",
-            "thinking": {"type": "disabled", "budget_tokens": 0},
         },
     )
-    plan = read_plan(plan_dir, args.init_stage)
+    agent.CURRENT_PLAN = read_plan(plan_dir, args.init_stage)
 
     if args.project_type == "nextjs":
         from presets.npm_nextjs import run_check
@@ -149,7 +148,7 @@ if __name__ == "__main__":
 
     try:
         for i in range(n_iter):
-            logger.warning(f"Iteration {i}    Stage {plan.index}")
+            logger.warning(f"Iteration {i}    Stage {agent.CURRENT_PLAN.index}")
             if i == 0:
                 workflow.init_step()
             else:
@@ -162,7 +161,9 @@ if __name__ == "__main__":
             # save the data every 10 iterations
 
             if (i + 1) % human_feedback_every == 0:
-                logger.warning(f"Human feedback phase, stage {plan.index}")
+                logger.warning(
+                    f"Human feedback phase, stage {agent.CURRENT_PLAN.index}"
+                )
                 # pause the program and wait for human feedback
                 # print the current population
                 print("Current population:")
@@ -196,7 +197,7 @@ if __name__ == "__main__":
                 elif feedback == "y":
                     logger.warning("Continue")
 
-                plan = read_plan(plan_dir, plan.index + 1)
+                agent.CURRENT_PLAN = read_plan(plan_dir, agent.CURRENT_PLAN.index + 1)
 
     except KeyboardInterrupt:
         pass
