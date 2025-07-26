@@ -107,7 +107,7 @@ def evogit_worktree_init(git_dir, clean_start) -> None:
     Otherwise, it will try to reuse the existing .evogit directory.
     """
     working_dir = os.path.join(git_dir, ".evogit")
-    if clean_start and os.path.exists(git_dir):
+    if clean_start and os.path.exists(working_dir):
         # cleanup the existing branches and worktrees then return
         cleanup_temp_worktrees(None, git_dir=git_dir)
         evogit_branches = list_branches(None, evogit_only=True, git_dir=git_dir)
