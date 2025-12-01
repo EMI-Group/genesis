@@ -74,9 +74,8 @@ class Project:
         self.name = name
         self.email = email
         self.author = Signature(name, email)
-        self.committer = Signature(
-            name, email
-        )  # for simplicity, use the same as author
+        # because we are only doing incremental commits, author and committer are the same
+        self.committer = Signature(name, email)
         self._nodes = {}
         self.repo = Repository(path)
 
