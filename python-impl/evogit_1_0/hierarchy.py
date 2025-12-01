@@ -3,6 +3,8 @@
 from pygit2 import Repository, Signature
 import os
 
+from .header_comment import format_header_comment
+
 
 class Node:
     def __init__(
@@ -45,21 +47,11 @@ class Node:
 class Action:
     """Represents an action taken by the agent that modifies the repository."""
 
-    def __init__(self, action_type, path, data):
-        self.action_type = action_type
-        assert action_type in ("mkdir", "newfile", "addcontent"), "Invalid action_type"
+    def __init__(self, type, path, data):
+        assert type in ("mkdir", "newfile", "addcontent"), "Invalid action_type"
+        self.type = type
         self.path = path  # file or directory path
         self.data = data  # e.g., file content, etc
-
-    def commit(self, repository, commit_message):
-        """Commit the action: 1. apply changes to the repository 2. create a git commit."""
-        # Placeholder for actual git commit logic
-        if self.action_type == "mkdir":
-            self._mkdir(self.path, self.data)
-        elif self.action_type == "newfile":
-            self._newfile(self.path, self.data)
-        elif self.action_type == "addcontent":
-            self._addcontent(self.path, self.data)
 
 
 class Project:
@@ -111,11 +103,35 @@ class Project:
         The abstract is a high-level description of what the file should contain.
         For example, a module docstring in Python, a comment before DOCTYPE in HTML, a file header comment in C, etc.
         """
+        # create the file with the abstract as a comment
+        header_comment = format_header_comment(abstract, path)
+        with open(path, "w") as f:
+            f.write(header_comment)
+        # add and commit the changes to git via pygit2
+        self.repo.index.add(path)
+        self.repo.index.write()
 
     def _addcontent(self, path, content):
         """Append content to an existing file at the given path.
         This will actually write the main content to the file.
         """
+        with open(path, "a") as f:
+            f.write(content)
+        # add and commit the changes to git via pygit2
+        self.repo.index.add(path)
+        self.repo.index.write()
+
+    def perform(self, action):
+        """Commit the action: 1. apply changes to the repository 2. create a git commit."""
+        # Placeholder for actual git commit logic
+        if action.type == "mkdir":
+            self._mkdir(self.path, self.data)
+        elif action.type == "newfile":
+            self._newfile(self.path, self.data)
+        elif action.type == "addcontent":
+            self._addcontent(self.path, self.data)
+
+        self._commit(f"Performed action: {action.type} on {action.path}")
 
     def add_node(self, node):
         self._nodes[node.node_id] = node
