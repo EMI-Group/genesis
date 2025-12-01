@@ -94,6 +94,4 @@ This means:
 ### Git usage
 
 The EvoGit system interacts with git repositories.
-To manage git operations, we use a dedicated `git.py` module that encapsulates all git-related functionalities.
-This module provides functions to initialize repositories, create commits, branch management, and other git operations.
-Currently the git module uses git commands via subprocess calls, therefore the behavior should be exactly the same as the git CLI and easily understandable by humans.
+To manage git operations, we use libgit2, a C library for git, via its Python bindings, pygit2.
