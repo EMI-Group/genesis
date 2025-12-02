@@ -61,8 +61,9 @@ class Project:
     It also manages the on-disk git repository, mapping the file structure to nodes.
     """
 
-    def __init__(self, path, name, email):
-        self.path = path
+    def __init__(self, max_depth, path, name, email):
+        self.max_depth = max_depth  # maximum depth of the hierarchy
+        self.path = path  # path to the git repository
         self.name = name
         self.email = email
         self.author = Signature(name, email)
@@ -134,7 +135,8 @@ class Project:
         self._commit(f"Performed action: {action.type} on {action.path}")
 
     def add_node(self, node):
-        self._nodes[node.node_id] = node
+        self._nodes[node.path] = node
 
-    def get_node(self, node_id):
-        return self._nodes.get(node_id)
+    def get_node(self, path):
+        # the path is the unique ID
+        return self._nodes.get(path)
