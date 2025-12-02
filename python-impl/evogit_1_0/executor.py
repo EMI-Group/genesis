@@ -39,8 +39,10 @@ class Executor:
 
     def _batch_request(self, requests):
         """Sends a batch of LLM requests and returns the responses."""
+        begin_time = time.time()
         batch_job = self.client.batch_generate_content(
-            [self._to_request_params(req) for req in requests]
+            model=self.model,
+            src=[self._to_request_params(req) for req in requests],
         )
         job_name = batch_job.name
         while True:
@@ -49,8 +51,13 @@ class Executor:
                 break
             time.sleep(self.poll_interval)
 
+        end_time = time.time()
+        duration = end_time - begin_time
         if job.status.name not in good_states:
+            print(f"Batch job failed after {duration:.2f} seconds with status: {job.status.name}")
             raise Exception(f"Batch job failed with status: {job.status.name}")
+        else:
+            print(f"Batch job succeeded in {duration:.2f} seconds.")
 
         responses = []
         for i, inline_response in enumerate(job.dest.inlined_responses, start=1):
