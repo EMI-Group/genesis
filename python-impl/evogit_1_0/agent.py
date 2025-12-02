@@ -3,6 +3,7 @@
 from .hierarchy import Action
 from pydantic import BaseModel, Field
 from typing import List
+import json
 from google.genai import types
 
 
@@ -166,13 +167,38 @@ class Agent:
             return self._node_step1()
 
     def _leaf_step2(self, response):
+        # leaf node will not expand further
         return Action(type="addcontent", path=self.node.path, data=response)
 
     def _penultimate_step2(self, response):
-        return Action(type="newfile", path=self.node.path, data=response)
+        # penultimate node, will expand to leaf files
+        items = json.loads(response).get("items", [])
+        actions = []
+        for item in items:
+            actions.append(
+                Action(
+                    type="newfile",
+                    path=f"{self.node.path}/{item['filename']}",
+                    data=item["abstract"],
+                )
+            )
+
+        return actions
 
     def _node_step2(self, response):
-        return Action(type="mkdir", path=self.node.path, data=response)
+        # non-leaf node, will expand to n children
+        items = json.loads(response).get("items", [])
+        actions = []
+        for item in items:
+            actions.append(
+                Action(
+                    type="mkdir",
+                    path=f"{self.node.path}/{item['dirname']}",
+                    data=item["context"],
+                )
+            )
+
+        return actions
 
     def step2(self, response):
         """
