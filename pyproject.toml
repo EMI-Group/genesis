@@ -9,3 +9,8 @@ dependencies = [
     "pydantic>=2.12.5",
     "pygit2>=1.19.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.7",
+]
