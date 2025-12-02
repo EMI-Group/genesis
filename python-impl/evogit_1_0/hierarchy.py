@@ -124,6 +124,15 @@ class Project:
 
     def perform(self, action):
         """Commit the action: 1. apply changes to the repository 2. create a git commit."""
+        if isinstance(action, list):
+            # pattern matching a list of actions
+            for act in action:
+                # recursively perform each action
+                self.perform(act)
+
+        if not isinstance(action, Action):
+            raise ValueError("Action should be a Action instance, or a list of Action instances.")
+
         # Placeholder for actual git commit logic
         if action.type == "mkdir":
             self._mkdir(self.path, self.data)
