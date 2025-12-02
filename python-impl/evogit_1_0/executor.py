@@ -1,8 +1,10 @@
 """This module defines the Process class used in EvoGit."""
 
 import time
+from typing import List
 from google import genai
-from .agent import LLMRequest
+from .agent import Agent, LLMRequest
+from .hierarchy import Project, Action
 
 completed_states = set(
     [
@@ -25,10 +27,18 @@ class Executor:
     It drives the agents forward, sending LLM requests for them in batches and performing the actions returned.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        project: Project,
+        agents: List[Agent],
+        model: str = "gemini-2.5-flash",
+        poll_interval: int = 30,
+    ):
         self.client = genai.Client()
-        self.poll_interval = 30  # seconds
-        self.model = "gemini-2.5-flash"
+        self.poll_interval = poll_interval
+        self.model = model
+        self.project = project
+        self.agents = agents
 
     def _to_request_params(self, llm_request: LLMRequest):
         """Convert an LLMRequest to genai request parameters."""
@@ -54,7 +64,9 @@ class Executor:
         end_time = time.time()
         duration = end_time - begin_time
         if job.status.name not in good_states:
-            print(f"Batch job failed after {duration:.2f} seconds with status: {job.status.name}")
+            print(
+                f"Batch job failed after {duration:.2f} seconds with status: {job.status.name}"
+            )
             raise Exception(f"Batch job failed with status: {job.status.name}")
         else:
             print(f"Batch job succeeded in {duration:.2f} seconds.")
@@ -77,4 +89,17 @@ class Executor:
         return responses
 
     def step(self):
-        pass
+        requests = []
+        for agent in self.agents:
+            llm_request = agent.step1()
+            requests.append(llm_request)
+
+        responses = self._batch_request(requests)
+
+        actions = []
+        for agent, response in zip(self.agents, responses):
+            action = agent.step2(response)
+            actions.append(action)
+
+        for action in actions:
+            self.project.perform(action)
