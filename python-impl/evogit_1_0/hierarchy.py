@@ -9,15 +9,15 @@ from .header_comment import format_header_comment
 class Node:
     def __init__(
         self,
-        node_id,
+        path,
         node_type,
         name,
         context="",
         metadata=None,
-        parent_id=None,
+        parent_path=None,
         level=None,
     ):
-        self.node_id = node_id  # unique identifier for the node
+        self.path = path  # path of the node in the repository, also serves as unique ID
         self.node_type = node_type  # "directory" or "file"
         assert node_type in ("directory", "file"), (
             "node_type must be 'directory' or 'file'"
@@ -25,15 +25,15 @@ class Node:
         self.name = name  # i.e., filename or directory name
         self.context = context
         self.metadata = metadata if metadata is not None else {}
-        self.parent_id = parent_id  # id pointer to parent node
+        self.parent_path = parent_path  # path pointer to parent node
         if level is None:
             self.level = self.calc_level()
         else:
             self.level = level  # depth in the tree
-        self.children = []  # List of child node_ids
+        self.children = []  # List of child paths
 
     def is_root(self):
-        return self.parent_id is None
+        return self.parent_path is None
 
     def calc_level(self):
         """Calculate the level of the node based on its parent."""
@@ -71,6 +71,14 @@ class Project:
         self.committer = Signature(name, email)
         self._nodes = {}
         self.repo = Repository(path)
+        self.add_node(
+            Node(
+                path="",
+                node_type="directory",
+                name=os.path.basename(path),
+                context=None,  # root directory has no context yet
+            )
+        )
 
     def _commit(self, message):
         """Create a git commit with the given message.
@@ -82,6 +90,19 @@ class Project:
         self.repo.create_commit(
             ref, self.author, self.committer, message, tree, parents
         )
+
+    def _init_proj(self, doc):
+        """Initialize the project repository with a root directory (if needed) and a README file."""
+        os.makedirs(self.path, exist_ok=True)
+        readme_path = os.path.join(self.path, "README.md")
+        with open(readme_path, "w") as f:
+            f.write(doc)
+        # add and commit the changes to git via pygit2
+        self.repo.index.add(readme_path)
+        self.repo.index.write()
+        self._commit("Initial commit with README.md")
+        # set the context of the root node
+        self.get_node("").context = doc
 
     def _mkdir(self, path, doc):
         """Create a directory at the specified path.
@@ -99,6 +120,18 @@ class Project:
         self.repo.index.add(readme_path)
         self.repo.index.write()
 
+        # also add the node
+        self.add_node(
+            Node(
+                path=path,
+                node_type="directory",
+                name=os.path.basename(path),
+                context=doc,
+            )
+        )
+        # README.md is considered as the `context` attribute of the directory node
+        # so it is not added as a separate node
+
     def _newfile(self, path, abstract):
         """Add a file with the specified abstract about its content.
         The abstract is a high-level description of what the file should contain.
@@ -111,6 +144,15 @@ class Project:
         # add and commit the changes to git via pygit2
         self.repo.index.add(path)
         self.repo.index.write()
+
+        self.add_node(
+            Node(
+                path=path,
+                node_type="file",
+                name=os.path.basename(path),
+                context=abstract,
+            )
+        )
 
     def _addcontent(self, path, content):
         """Append content to an existing file at the given path.
@@ -131,7 +173,9 @@ class Project:
                 self.perform(act)
 
         if not isinstance(action, Action):
-            raise ValueError("Action should be a Action instance, or a list of Action instances.")
+            raise ValueError(
+                "Action should be a Action instance, or a list of Action instances."
+            )
 
         # Placeholder for actual git commit logic
         if action.type == "mkdir":
