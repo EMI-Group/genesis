@@ -1,12 +1,57 @@
 """This module defines the Agent class used in EvoGit."""
 
+from .hierarchy import Action
+from pydantic import BaseModel, Field
+from typing import List
+from google.genai import types
+
+
+class DirItem(BaseModel):
+    dirname: str
+    context: str
+
+
+class DirStruct(BaseModel):
+    items: List[DirItem]
+
+
+class LeafDirItem(BaseModel):
+    filename: str
+    abstract: str
+
+
+class LeafDirStruct(BaseModel):
+    items: List[LeafDirItem]
+
+
+class LLMRequest:
+    config: types.GenerateContentConfig
+    content: str  # here we only need a single string
+
+
+common_sys_prompt = """
+You are a coding agent responsible for doing one task in a large codebase.
+You have access to:
+1. the overall project guideline that outlines the coding standards and requirements.
+2. the context of the file (or directory), including the file itself and all the parent directories to the root.
+3. the level (depth) of the file in the project hierarchy.
+
+The project guideline will describe the guide / bound / constraints you should follow for different levels of the hierarchy.
+The level is 0-indexed, with 0 being the root directory matching the top-level hierarchy node in the project guideline.
+
+You are responsible for generating complete code and all related data based on the provided context, guidelines, and the user’s current request.
+You should only return the raw code or the content user requested, without any explanations or wrapper text, like ``` marks.
+"""
+
 
 class Agent:
-    def __init__(self, repository, commit_id, node_id):
-        self.repository = repository
+    def __init__(self, project, commit_id, path):
+        self.project = project
         self.commit_id = commit_id
-        self.node_id = node_id
-        self.node = self.repository.get_node(node_id)
+        self.path = (
+            path  # current node path in the hierarchy, also act as the unique ID
+        )
+        self.node = self.project.get_node(path)
 
     def _info_fn(self, metadata):
         """Helper to format metadata for context."""
@@ -24,7 +69,7 @@ class Agent:
             return self.node.context + self._info_fn(self.node.metadata)
         else:
             # Create a temporary agent for the parent to reuse logic
-            parent_agent = Agent(self.repository, self.commit_id, self.node.parent_id)
+            parent_agent = Agent(self.project, self.commit_id, self.node.parent_id)
             parent_context = parent_agent.gather_context()
             return (
                 parent_context
@@ -33,34 +78,109 @@ class Agent:
                 + self._info_fn(self.node.metadata)
             )
 
-    def _leaf_run(self):
+    def _leaf_step1(self):
         """
         Specialized run method for leaf nodes (files).
         """
         context = self.gather_context()
+        task_prompt = f"""
+        Currently, you are working at level {self.node.level} in the project hierarchy, directly writing a file.
+        Please generate the complete content for the file based on the project guideline and the context provided.
+        Give the raw file content as the output.
+        """
+        request = LLMRequest(
+            config=types.GenerateContentConfig(
+                system_instruction=common_sys_prompt,
+            ),
+            content=context + "\n---\n" + task_prompt,
+        )
+        return request
 
-        # Placeholder for LLM call
-        task_prompt = "Do XYZ"
-        # llm_output = LLM.generate(task_prompt + context)
-        file_content = f"[LLM Placeholder Output for context length {len(context)}]"
+    def _penultimate_step1(self):
+        """
+        Specialized run method for penultimate nodes (directories whose children are files).
+        """
+        context = self.gather_context()
+        task_prompt = f"""
+        Currently, you are working at level {self.node.level} in the project hierarchy.
+        Please create the leaf file structure based on the project guideline and the context provided.
+        Output the filenames and their abstracts in JSON format as specified:
+        {
+            "items": [
+                {
+                "filename": "name_of_file",
+                    "abstract": "A brief description of the file's purpose (header comments)"
+                },
+                ...
+            ]
+        }
+        """
+        request = LLMRequest(
+            config=types.GenerateContentConfig(
+                system_instruction=common_sys_prompt,
+                response_mime_type="application/json",
+                response_schemas=LeafDirStruct.model_json_schema(),
+            ),
+            content=context + "\n---\n" + task_prompt,
+        )
+        return request
 
-        # Return new state (tuple) and action
-        # In a functional style, we return the state for the next step
-        new_state = (self.commit_id, self.node_id)
-        return new_state, action
-
-    def _node_run(self):
+    def _node_step1(self):
         """
         Specialized run method for non-leaf nodes (directories).
         """
-        pass
+        context = self.gather_context()
+        task_prompt = f"""
+        Currently, you are working at level {self.node.level} in the project hierarchy.
+        Please create the next level directory structure based on the project guideline and the context provided.
+        Output the direction names and their context in JSON format as specified:
+        {
+            "items": [
+                {
+                "dirname": "name_of_directory",
+                    "context": "A README.md file inside that directory describing its purpose"
+                },
+                ...
+            ]
+        }
+        """
+        request = LLMRequest(
+            config=types.GenerateContentConfig(
+                system_instruction=common_sys_prompt,
+                response_mime_type="application/json",
+                response_schemas=DirStruct.model_json_schema(),
+            ),
+            content=context + "\n---\n" + task_prompt,
+        )
+        return request
 
-    def run(self):
+    def step1(self):
         """
-        Runs the agent: gathers context, calls LLM, and determines action.
-        Returns a tuple of (new_state, action).
+        Runs the agent: gathers context, and return the request to be made.
         """
-        if self.node.node_type == "file":
-            return self._leaf_run()
+        if self.node.level + 1 == self.project.max_depth:
+            return self._leaf_step1()
+        elif self.node.level + 2 == self.project.max_depth:
+            return self._penultimate_step1()
         else:
-            return self._node_run()
+            return self._node_step1()
+
+    def _leaf_step2(self, response):
+        return Action(type="addcontent", path=self.node.path, data=response)
+
+    def _penultimate_step2(self, response):
+        return Action(type="newfile", path=self.node.path, data=response)
+
+    def _node_step2(self, response):
+        return Action(type="mkdir", path=self.node.path, data=response)
+
+    def step2(self, response):
+        """
+        Get the response from the LLM and convert it into an Action.
+        """
+        if self.node.level + 1 == self.project.max_depth:
+            return self._leaf_step2(response)
+        elif self.node.level + 2 == self.project.max_depth:
+            return self._penultimate_step2(response)
+        else:
+            return self._node_step2(response)
