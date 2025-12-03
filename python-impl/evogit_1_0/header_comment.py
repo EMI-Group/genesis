@@ -2,74 +2,84 @@
 
 import warnings
 import os
+import re
 
 
-# programming languages
+class HeaderCommentStyle:
+    def __init__(self, template, regex_pattern):
+        self.template = template
+        self.regex = re.compile(regex_pattern, re.DOTALL)
 
-# Python wants 2 empty lines after module docstring
-python = """\"\"\"
-{abstract}
-\"\"\"
+    def format(self, abstract):
+        return self.template.format(abstract=abstract)
+
+    def extract(self, content):
+        match = self.regex.search(content)
+        if match:
+            return match.group(1).strip()
+        return None
 
 
-"""
+# Regex patterns
+# Matches """ ... """ at the start of the file
+PYTHON_REGEX = r'^\s*"""(.*?)"""'
+# Matches /* ... */ or /** ... */ at the start of the file
+C_FAMILY_REGEX = r'^\s*/\*+(.*?)\*/'
+# Matches <!-- ... --> at the start of the file
+HTML_REGEX = r'^\s*<!--(.*?)-->'
 
-c = """/*
-{abstract}
-*/"""
+# Define styles
+python_style = HeaderCommentStyle(
+    template='"""\n{abstract}\n"""\n\n\n',
+    regex_pattern=PYTHON_REGEX
+)
 
-cpp = c
+c_style = HeaderCommentStyle(
+    template='/*\n{abstract}\n*/',
+    regex_pattern=C_FAMILY_REGEX
+)
 
-js = """/**
-{abstract}
-*/"""
+javadoc_style = HeaderCommentStyle(
+    template='/**\n{abstract}\n*/',
+    regex_pattern=C_FAMILY_REGEX
+)
 
-java = """/**
-{abstract}
-*/"""
+html_style = HeaderCommentStyle(
+    template='<!--\n{abstract}\n-->',
+    regex_pattern=HTML_REGEX
+)
 
-# markup languages
-html = """<!--
-{abstract}
--->"""
-
-css = """/*
-{abstract}
-*/"""
-
-md = """<!--
-{abstract}
--->"""
-
-templates = {
-    "python": python,
-    "c": c,
-    "cpp": cpp,
-    "js": js,
-    "java": java,
-    "html": html,
-    "css": css,
-    "md": md,
-}
-
-extensions = {
-    ".py": "python",
-    ".c": "c",
-    ".cpp": "cpp",
-    ".js": "js",
-    ".java": "java",
-    ".html": "html",
-    ".css": "css",
-    ".md": "md",
+# Map extensions to styles
+EXTENSION_MAP = {
+    ".py": python_style,
+    ".c": c_style,
+    ".cpp": c_style,
+    ".js": javadoc_style,
+    ".java": javadoc_style,
+    ".css": c_style,
+    ".html": html_style,
+    ".md": html_style,
 }
 
 
 def format_header_comment(abstract, filename):
     """Format the header comment based on the file extension."""
     ext = os.path.splitext(filename)[1]
-    lang = extensions.get(ext)
-    if not lang:
+    style = EXTENSION_MAP.get(ext)
+
+    if not style:
         warnings.warn(f"Unknown file extension '{ext}'. Using default comment format.")
         return f"# {abstract}"  # default to a simple comment
-    template = templates[lang]
-    return template.format(abstract=abstract)
+
+    return style.format(abstract)
+
+
+def extract_header_comment(content, filename):
+    """Extract the header comment from file content based on extension."""
+    ext = os.path.splitext(filename)[1]
+    style = EXTENSION_MAP.get(ext)
+
+    if not style:
+        return None
+
+    return
