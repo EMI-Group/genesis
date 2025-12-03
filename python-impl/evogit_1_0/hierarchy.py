@@ -2,53 +2,85 @@
 
 from pygit2 import Repository, Signature
 import os
+from pathlib import Path
 
 from .header_comment import format_header_comment
 
 
+ATTR_FILES = ["README.md"]
+
+
+def nested_level(path: Path) -> int:
+    """Compute the nested level of a given path.
+    Must be a relative path to the repository root."""
+    # Special case: root itself → level 0
+    if path == Path("."):
+        return 0
+
+    # Count parts
+    return len(path.parts)
+
+
 class Node:
+    """A node in the repository hierarchy tree.
+    It maps to a directory (with a readme file) or a file in the git repository.
+    """
+
     def __init__(
         self,
         path,
-        node_type,
-        name,
-        context="",
+        context=None,
         metadata=None,
-        parent_path=None,
         level=None,
     ):
-        self.path = path  # path of the node in the repository, also serves as unique ID
-        self.node_type = node_type  # "directory" or "file"
-        assert node_type in ("directory", "file"), (
-            "node_type must be 'directory' or 'file'"
-        )
-        self.name = name  # i.e., filename or directory name
-        self.context = context
-        self.metadata = metadata if metadata is not None else {}
-        self.parent_path = parent_path  # path pointer to parent node
-        if level is None:
-            self.level = self.calc_level()
+        if isinstance(path, str):
+            path = Path(path)
+        # path of the node in the repository, also serves as unique ID
+        self._path = path
+        self.level = nested_level(path)
+
+    @property
+    def name(self):
+        return self._path.name
+
+    @property
+    def node_type(self):
+        if self._path.is_dir():
+            return "directory"
+        elif self._path.is_file():
+            return "file"
         else:
-            self.level = level  # depth in the tree
-        self.children = []  # List of child paths
+            raise ValueError("Path is neither a file nor a directory.")
+
+    @property
+    def parent(self):
+        if self.is_root():
+            raise ValueError("Root node has no parent.")
+        return Node(self._path.parent)
+
+    @property
+    def children(self):
+        if self.node_type != "directory":
+            raise ValueError("Only directory nodes can have children.")
+        children = []
+        for child_path in self._path.iterdir():
+            if child_path.name in ATTR_FILES:
+                continue  # skip README.md files, they are considered as attributes of the directory node
+            children.append(Node(child_path))
+        return children
 
     def is_root(self):
-        return self.parent_path is None
+        return self._path == Path(".")
 
-    def calc_level(self):
-        """Calculate the level of the node based on its parent."""
-        if self.is_root():
-            return 0
-        else:
-            # This method assumes that the parent node's level is already set
-            return self.parent.level + 1
+    def is_leaf(self):
+        return self.node_type == "file"
 
 
 class Action:
     """Represents an action taken by the agent that modifies the repository."""
 
     def __init__(self, type, path, data):
-        assert type in ("mkdir", "newfile", "addcontent"), "Invalid action_type"
+        assert type in ("init", "mkdir", "newfile", "addcontent"), "Invalid action_type"
         self.type = type
         self.path = path  # file or directory path
         self.data = data  # e.g., file content, etc
@@ -77,6 +109,7 @@ class Project:
                 node_type="directory",
                 name=os.path.basename(path),
                 context=None,  # root directory has no context yet
+                parent_path=None,
             )
         )
 
@@ -91,7 +124,7 @@ class Project:
             ref, self.author, self.committer, message, tree, parents
         )
 
-    def _init_proj(self, doc):
+    def _init(self, doc):
         """Initialize the project repository with a root directory (if needed) and a README file."""
         os.makedirs(self.path, exist_ok=True)
         readme_path = os.path.join(self.path, "README.md")
@@ -100,9 +133,10 @@ class Project:
         # add and commit the changes to git via pygit2
         self.repo.index.add(readme_path)
         self.repo.index.write()
-        self._commit("Initial commit with README.md")
         # set the context of the root node
-        self.get_node("").context = doc
+        root_node = self.get_node("")
+        root_node.context = doc
+        return root_node
 
     def _mkdir(self, path, doc):
         """Create a directory at the specified path.
@@ -120,17 +154,17 @@ class Project:
         self.repo.index.add(readme_path)
         self.repo.index.write()
 
-        # also add the node
-        self.add_node(
-            Node(
-                path=path,
-                node_type="directory",
-                name=os.path.basename(path),
-                context=doc,
-            )
+        child = Node(
+            path=path,
+            node_type="directory",
+            name=os.path.basename(path),
+            context=doc,
         )
+        # also add the node
+        self.add_node(child)
         # README.md is considered as the `context` attribute of the directory node
         # so it is not added as a separate node
+        return child
 
     def _newfile(self, path, abstract):
         """Add a file with the specified abstract about its content.
@@ -145,14 +179,14 @@ class Project:
         self.repo.index.add(path)
         self.repo.index.write()
 
-        self.add_node(
-            Node(
-                path=path,
-                node_type="file",
-                name=os.path.basename(path),
-                context=abstract,
-            )
+        child = Node(
+            path=path,
+            node_type="file",
+            name=os.path.basename(path),
+            context=abstract,
         )
+        self.add_node(child)
+        return child
 
     def _addcontent(self, path, content):
         """Append content to an existing file at the given path.
@@ -163,6 +197,7 @@ class Project:
         # add and commit the changes to git via pygit2
         self.repo.index.add(path)
         self.repo.index.write()
+        return self.get_node(path)
 
     def perform(self, action):
         """Commit the action: 1. apply changes to the repository 2. create a git commit."""
@@ -178,7 +213,9 @@ class Project:
             )
 
         # Placeholder for actual git commit logic
-        if action.type == "mkdir":
+        if action.type == "init":
+            self._init(action.data)
+        elif action.type == "mkdir":
             self._mkdir(self.path, self.data)
         elif action.type == "newfile":
             self._newfile(self.path, self.data)
@@ -188,7 +225,8 @@ class Project:
         self._commit(f"Performed action: {action.type} on {action.path}")
 
     def add_node(self, node):
-        self._nodes[node.path] = node
+        self._nodes[node._path] = node
+        return node
 
     def get_node(self, path):
         # the path is the unique ID
