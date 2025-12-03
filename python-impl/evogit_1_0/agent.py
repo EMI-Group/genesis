@@ -1,7 +1,7 @@
 """This module defines the Agent class used in EvoGit."""
 
 from .hierarchy import Action
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List
 import json
 import textwrap
