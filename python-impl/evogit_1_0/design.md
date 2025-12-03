@@ -32,7 +32,7 @@ The context is a string that provides additional information for the Agent to us
 An agent is basically a LLM + state + action.
 
 - **LLM**: the language model used to generate content and make decisions.
-- **state**: a tuple (commit_id, node_id). An agent's state is characterized by the commit id it's currently on (temporal) and the node id (spatial) within the repository structure.
+- **state**: a tuple (commit_id, node_id). An agent's state is characterized by the commit id it's currently on (temporal) and the node id (spatial) within the repository structure. Currently, the temporal info (commit_id) is not used yet.
 - **action**: depends on the node type:
   - For directory nodes: The agent can only modify its own node or calling other child nodes to perform actions.
   - For file nodes: The agent can generate or modify the content of the file, or modify its own node (update metadata, context etc).
