@@ -28,11 +28,14 @@ class Node:
 
     def __init__(
         self,
+        project,
         path,
         context=None,
         metadata=None,
         level=None,
     ):
+        # pointer to the project object, which manages the whole repo
+        self.project = project
         if isinstance(path, str):
             path = Path(path)
         # path of the node in the repository, also serves as unique ID
@@ -56,7 +59,7 @@ class Node:
     def parent(self):
         if self.is_root():
             raise ValueError("Root node has no parent.")
-        return Node(self._path.parent)
+        return self.project.get_node(self._path.parent)
 
     @property
     def children(self):
@@ -66,7 +69,7 @@ class Node:
         for child_path in self._path.iterdir():
             if child_path.name in ATTR_FILES:
                 continue  # skip README.md files, they are considered as attributes of the directory node
-            children.append(Node(child_path))
+            children.append(self.project.get_node(child_path))
         return children
 
     def is_root(self):
@@ -103,15 +106,7 @@ class Project:
         self.committer = Signature(name, email)
         self._nodes = {}
         self.repo = Repository(path)
-        self.add_node(
-            Node(
-                path="",
-                node_type="directory",
-                name=os.path.basename(path),
-                context=None,  # root directory has no context yet
-                parent_path=None,
-            )
-        )
+        self.add_node("")
 
     def _commit(self, message):
         """Create a git commit with the given message.
@@ -135,7 +130,6 @@ class Project:
         self.repo.index.write()
         # set the context of the root node
         root_node = self.get_node("")
-        root_node.context = doc
         return root_node
 
     def _mkdir(self, path, doc):
@@ -154,17 +148,10 @@ class Project:
         self.repo.index.add(readme_path)
         self.repo.index.write()
 
-        child = Node(
-            path=path,
-            node_type="directory",
-            name=os.path.basename(path),
-            context=doc,
-        )
         # also add the node
-        self.add_node(child)
         # README.md is considered as the `context` attribute of the directory node
         # so it is not added as a separate node
-        return child
+        return self.add_node(path)
 
     def _newfile(self, path, abstract):
         """Add a file with the specified abstract about its content.
@@ -179,14 +166,7 @@ class Project:
         self.repo.index.add(path)
         self.repo.index.write()
 
-        child = Node(
-            path=path,
-            node_type="file",
-            name=os.path.basename(path),
-            context=abstract,
-        )
-        self.add_node(child)
-        return child
+        return self.add_node(path)
 
     def _addcontent(self, path, content):
         """Append content to an existing file at the given path.
@@ -224,10 +204,17 @@ class Project:
 
         self._commit(f"Performed action: {action.type} on {action.path}")
 
-    def add_node(self, node):
-        self._nodes[node._path] = node
+    def add_node(self, path, exist_ok=True):
+        if isinstance(path, str):
+            path = Path(path)
+        if not exist_ok and path._path in self._nodes:
+            raise ValueError(f"Node at path {path} already exists.")
+        node = Node(path, project=self)
+        self._nodes[path._path] = node
         return node
 
     def get_node(self, path):
+        if isinstance(path, str):
+            path = Path(path)
         # the path is the unique ID
-        return self._nodes.get(path)
+        return self._nodes.get(path._path)
