@@ -24,29 +24,25 @@ class HeaderCommentStyle:
 # Matches """ ... """ at the start of the file
 PYTHON_REGEX = r'^\s*"""(.*?)"""'
 # Matches /* ... */ or /** ... */ at the start of the file
-C_FAMILY_REGEX = r'^\s*/\*+(.*?)\*/'
+C_FAMILY_REGEX = r"^\s*/\*+(.*?)\*/"
 # Matches <!-- ... --> at the start of the file
-HTML_REGEX = r'^\s*<!--(.*?)-->'
+HTML_REGEX = r"^\s*<!--(.*?)-->"
 
 # Define styles
 python_style = HeaderCommentStyle(
-    template='"""\n{abstract}\n"""\n\n\n',
-    regex_pattern=PYTHON_REGEX
+    template='"""\n{abstract}\n"""\n\n\n', regex_pattern=PYTHON_REGEX
 )
 
 c_style = HeaderCommentStyle(
-    template='/*\n{abstract}\n*/',
-    regex_pattern=C_FAMILY_REGEX
+    template="/*\n{abstract}\n*/", regex_pattern=C_FAMILY_REGEX
 )
 
 javadoc_style = HeaderCommentStyle(
-    template='/**\n{abstract}\n*/',
-    regex_pattern=C_FAMILY_REGEX
+    template="/**\n{abstract}\n*/", regex_pattern=C_FAMILY_REGEX
 )
 
 html_style = HeaderCommentStyle(
-    template='<!--\n{abstract}\n-->',
-    regex_pattern=HTML_REGEX
+    template="<!--\n{abstract}\n-->", regex_pattern=HTML_REGEX
 )
 
 # Map extensions to styles
