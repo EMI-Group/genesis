@@ -218,3 +218,8 @@ class Project:
             path = Path(path)
         # the path is the unique ID
         return self._nodes.get(path._path)
+
+    @property
+    def head(self):
+        """Get the HEAD commit id."""
+        return self.repo.head.target
