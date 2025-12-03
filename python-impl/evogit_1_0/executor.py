@@ -39,6 +39,7 @@ class Executor:
         self.model = model
         self.project = project
         self.agents = agents
+        self.batch_req_thres = 5  # Minimum number of requests to use batch API
 
     def _to_request_params(self, llm_request: LLMRequest):
         """Convert an LLMRequest to genai request parameters."""
@@ -47,8 +48,10 @@ class Executor:
             "contents": [{"role": "user", "parts": [{"text": llm_request.content}]}],
         }
 
-    def _batch_request(self, requests):
-        """Sends a batch of LLM requests and returns the responses."""
+    def _batch_request(self, requests: List[LLMRequest]) -> List[str]:
+        """Sends a batch of LLM requests and returns the responses.
+        Use the batch API to send multiple requests in parallel, then poll for completion.
+        """
         begin_time = time.time()
         batch_job = self.client.batch_generate_content(
             model=self.model,
@@ -63,13 +66,16 @@ class Executor:
 
         end_time = time.time()
         duration = end_time - begin_time
+        avg_time = duration / len(requests) if requests else 0
         if job.status.name not in good_states:
             print(
                 f"Batch job failed after {duration:.2f} seconds with status: {job.status.name}"
             )
             raise Exception(f"Batch job failed with status: {job.status.name}")
         else:
-            print(f"Batch job succeeded in {duration:.2f} seconds.")
+            print(
+                f"Batch job succeeded in {duration:.2f} seconds, average {avg_time:.2f} seconds per request."
+            )
 
         responses = []
         for i, inline_response in enumerate(job.dest.inlined_responses, start=1):
@@ -88,13 +94,35 @@ class Executor:
 
         return responses
 
+    def _sequential_request(self, requests: List[LLMRequest]) -> List[str]:
+        """Send a list of requests sequentially, this has less latency but costs more."""
+        begin_time = time.time()
+        responses = []
+        for req in requests:
+            response = self.client.generate_content(
+                model=self.model,
+                config=req.config,
+                contents=req.content,
+            )
+            responses.append(response.text)
+        end_time = time.time()
+        duration = end_time - begin_time
+        avg_time = duration / len(requests) if requests else 0
+        print(
+            f"Sequential request: {len(requests)} requests completed in {duration:.2f} seconds, average {avg_time:.2f} seconds per request."
+        )
+        return responses
+
     def step(self):
         requests = []
         for agent in self.agents:
             llm_request = agent.step1()
             requests.append(llm_request)
 
-        responses = self._batch_request(requests)
+        if len(requests) >= self.batch_req_thres:
+            responses = self._batch_request(requests)
+        else:
+            responses = self._sequential_request(requests)
 
         actions = []
         for agent, response in zip(self.agents, responses):
