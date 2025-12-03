@@ -129,5 +129,10 @@ class Executor:
             action = agent.step2(response)
             actions.append(action)
 
+        new_nodes = []
         for action in actions:
-            self.project.perform(action)
+            new_nodes.append(self.project.perform(action))
+
+        commit_id = self.project.head
+        # update agents with new nodes
+        self.agents = [Agent(self.project, commit_id, node) for node in new_nodes]
