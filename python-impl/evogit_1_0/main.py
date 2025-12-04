@@ -98,7 +98,6 @@ def main():
         "--guideline",
         type=str,
         default="./guideline.md",
-        required=True,
         help="Path to a text file containing the project guidelines/requirements, or the string itself.",
     )
 
