@@ -125,6 +125,7 @@ class Executor:
         )
         action = agent.init_step2(response.text)
         new_node = self.project.perform(action)
+        assert new_node is not None, "Failed to create root node."
         commit_id = self.project.head
         # update agents with new node
         self.agents = [Agent(self.project, commit_id, new_node)]
