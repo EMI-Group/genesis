@@ -210,15 +210,17 @@ class Project:
 
         # Placeholder for actual git commit logic
         if action.type == "init":
-            self._init(action.data)
+            new_node = self._init(action.data)
         elif action.type == "mkdir":
-            self._mkdir(self.path, self.data)
+            new_node = self._mkdir(action.path, action.data)
         elif action.type == "newfile":
-            self._newfile(self.path, self.data)
+            new_node = self._newfile(action.path, action.data)
         elif action.type == "addcontent":
-            self._addcontent(self.path, self.data)
+            new_node = self._addcontent(action.path, action.data)
 
         self._commit(f"Performed action: {action.type} on {action.path}")
+
+        return new_node
 
     def add_node(self, path, exist_ok=True):
         if isinstance(path, str):
