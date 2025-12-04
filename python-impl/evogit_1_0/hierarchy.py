@@ -4,6 +4,8 @@ from pygit2 import Repository, Signature, init_repository
 import os
 import warnings
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Literal
 
 from header_comment import format_header_comment, extract_header_comment
 
@@ -130,8 +132,12 @@ class Node:
         return self.node_type == "file"
 
 
+@dataclass
 class Action:
     """Represents an action taken by the agent that modifies the repository."""
+    type: str
+    path: Path
+    data: str
 
     def __init__(self, type, path, data):
         assert type in ("init", "mkdir", "newfile", "addcontent"), "Invalid action_type"
@@ -170,7 +176,7 @@ class Project:
         self.repo = Repository(path)
         self.add_node("")
 
-    def _commit(self, message):
+    def _commit(self, message: str) -> None:
         """Create a git commit with the given message.
         Currently it does not support signatures.
         """
@@ -187,7 +193,7 @@ class Project:
             ref, self.author, self.committer, message, tree, parents
         )
 
-    def _init(self, doc):
+    def _init(self, doc: str) -> Node:
         """Initialize the project repository with a root directory (if needed) and a README file."""
         filename = "README.md"
         with open(self.path / filename, "w") as f:
@@ -199,20 +205,20 @@ class Project:
         root_node = self.get_node("")
         return root_node
 
-    def _mkdir(self, path, doc):
+    def _mkdir(self, path: Path, doc: str) -> Node:
         """Create a directory at the specified path.
         The doc is a high-level description of the directory's purpose.
         For example, a README.md file describing the directory's contents placed inside the directory.
         """
         # create the directory
-        os.makedirs(path, exist_ok=True)
+        os.makedirs(self.path / path, exist_ok=True)
         # create a README.md file with the doc content
-        readme_path = os.path.join(path, "README.md")
-        with open(readme_path, "w") as f:
+        readme_path = path / "README.md"
+        with open(self.path / readme_path, "w") as f:
             f.write(doc)
 
         # add and commit the changes to git via pygit2
-        self.repo.index.add(readme_path)
+        self.repo.index.add(str(readme_path))
         self.repo.index.write()
 
         # also add the node
@@ -220,33 +226,33 @@ class Project:
         # so it is not added as a separate node
         return self.add_node(path)
 
-    def _newfile(self, path, abstract):
+    def _newfile(self, path: Path, abstract: str) -> Node:
         """Add a file with the specified abstract about its content.
         The abstract is a high-level description of what the file should contain.
         For example, a module docstring in Python, a comment before DOCTYPE in HTML, a file header comment in C, etc.
         """
         # create the file with the abstract as a comment
         header_comment = format_header_comment(abstract, path)
-        with open(path, "w") as f:
+        with open(self.path / path, "w") as f:
             f.write(header_comment)
         # add and commit the changes to git via pygit2
-        self.repo.index.add(path)
+        self.repo.index.add(str(path))
         self.repo.index.write()
 
         return self.add_node(path)
 
-    def _addcontent(self, path, content):
+    def _addcontent(self, path: Path, content: str) -> Node:
         """Append content to an existing file at the given path.
         This will actually write the main content to the file.
         """
-        with open(path, "a") as f:
+        with open(self.path / path, "a") as f:
             f.write(content)
         # add and commit the changes to git via pygit2
-        self.repo.index.add(path)
+        self.repo.index.add(str(path))
         self.repo.index.write()
         return self.get_node(path)
 
-    def perform(self, action):
+    def perform(self, action: Action) -> Node:
         """Commit the action: 1. apply changes to the repository 2. create a git commit."""
         if isinstance(action, list):
             # pattern matching a list of actions
@@ -273,7 +279,7 @@ class Project:
 
         return new_node
 
-    def add_node(self, path, exist_ok=True):
+    def add_node(self, path: Path, exist_ok: bool = True) -> Node:
         if isinstance(path, str):
             path = Path(path)
         if not exist_ok and str(path) in self._nodes:
@@ -282,14 +288,14 @@ class Project:
         self._nodes[str(path)] = node
         return node
 
-    def get_node(self, path):
+    def get_node(self, path: Path) -> Node:
         if isinstance(path, str):
             path = Path(path)
         # the path is the unique ID
         return self._nodes.get(str(path))
 
     @property
-    def head(self):
+    def head(self) -> str:
         """Get the HEAD commit id."""
         # if there is no commit yet, return None
         if self.repo.head_is_unborn:
