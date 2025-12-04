@@ -69,22 +69,18 @@ class Agent:
         # Create a temporary agent for the parent to reuse logic
         parent_agent = Agent(self.project, self.commit_id, self.node.parent_id)
         parent_context = parent_agent.gather_context()
-        return (
-            parent_context
-            + "\n---\n"
-            + self.node.context
-        )
+        return parent_context + "\n---\n" + self.node.context
 
     def _leaf_step1(self):
         """
         Specialized run method for leaf nodes (files).
         """
         context = self.gather_context()
-        task_prompt = textwrap.dedent(f"""
-            Currently, you are working at level {self.node.level} in the project hierarchy, directly writing a file.
+        task_prompt = textwrap.dedent("""
+            Currently, you are working at level {level} in the project hierarchy, directly writing a file.
             Please generate the complete content for the file based on the project guideline and the context provided.
             Give the raw file content as the output.
-        """)
+        """).format(level=self.node.level)
         request = LLMRequest(
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
@@ -98,22 +94,21 @@ class Agent:
         Specialized run method for penultimate nodes (directories whose children are files).
         """
         context = self.gather_context()
-        task_prompt = textwrap.dedent(f"""
-            Currently, you are working at level {
-            self.node.level
-        } in the project hierarchy.
+        task_prompt = textwrap.dedent("""
+            Currently, you are working at level {level} in the project hierarchy.
             Please create the leaf file structure based on the project guideline and the context provided.
             Output the filenames and their abstracts in JSON format as specified:
             {
-            "items": [
+                "items": [
                     {
-                "filename": "name_of_file",
+                        "filename": "name_of_file",
                         "abstract": "A brief description of the file's purpose (header comments)"
                     },
                     ...
                 ]
             }
-        """)
+        """).format(level=self.node.level)
+
         request = LLMRequest(
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
@@ -129,22 +124,20 @@ class Agent:
         Specialized run method for non-leaf nodes (directories).
         """
         context = self.gather_context()
-        task_prompt = textwrap.dedent(f"""
-            Currently, you are working at level {
-            self.node.level
-        } in the project hierarchy.
+        task_prompt = textwrap.dedent("""
+            Currently, you are working at level {level} in the project hierarchy.
             Please create the next level directory structure based on the project guideline and the context provided.
             Output the direction names and their context in JSON format as specified:
             {
-            "items": [
+                "items": [
                     {
-                "dirname": "name_of_directory",
+                        "dirname": "name_of_directory",
                         "context": "A README.md file inside that directory describing its purpose"
                     },
                     ...
                 ]
             }
-        """)
+        """).format(level=self.node.level)
         request = LLMRequest(
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
@@ -216,12 +209,12 @@ class Agent:
         Create the root directory along side the project's README.md file.
         """
         # there is no parent context for root
-        task_prompt = textwrap.dedent(f"""
+        task_prompt = textwrap.dedent("""
             You are initializing the root of a new project based on the following project guideline:
-            {self.project.guideline}
-            Please create the root directory structure and a README.md file describing the project.
-            Output the readme content in raw markdown format.
-        """)
+            {guideline}
+            Please give the detailed design document for the project at the root level.
+            Output the content in raw markdown format.
+        """).format(guideline=self.project.guideline)
         request = LLMRequest(
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
