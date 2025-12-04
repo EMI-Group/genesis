@@ -75,7 +75,8 @@ class Node:
         if self.node_type != "directory":
             raise ValueError("Only directory nodes can have children.")
         children = []
-        for child_path in self._path.iterdir():
+        abspath = self.project.path / self._path  # absolute path
+        for child_path in abspath.iterdir():
             if child_path.name in ATTR_FILES:
                 continue  # skip README.md files, they are considered as attributes of the directory node
             children.append(self.project.get_node(child_path))
@@ -85,7 +86,7 @@ class Node:
         """Get the context of a directory node.
         The context is stored as a file under the directory, e.g., README.md.
         """
-        readme_path = self._path / "README.md"
+        readme_path = self.project.path / self._path / "README.md"
         if readme_path.exists():
             with open(readme_path, "r") as f:
                 return f.read()
