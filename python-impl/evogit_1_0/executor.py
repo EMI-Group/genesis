@@ -113,6 +113,22 @@ class Executor:
         )
         return responses
 
+    def init(self):
+        """Initialize the project by performing the root agent's action."""
+        assert len(self.agents) == 1, "There should be only one root agent."
+        agent = self.agents[0]
+        llm_request = agent.init_step1()
+        response = self.client.generate_content(
+            model=self.model,
+            config=llm_request.config,
+            contents=llm_request.content,
+        )
+        action = agent.init_step2(response.text)
+        new_node = self.project.perform(action)
+        commit_id = self.project.head
+        # update agents with new node
+        self.agents = [Agent(self.project, commit_id, new_node)]
+
     def step(self):
         requests = []
         for agent in self.agents:
