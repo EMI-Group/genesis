@@ -128,7 +128,7 @@ class Executor:
         assert new_node is not None, "Failed to create root node."
         commit_id = self.project.head
         # update agents with new node
-        self.agents = [Agent(self.project, commit_id, new_node)]
+        self.agents = [Agent(self.project, commit_id, new_node.path)]
 
     def step(self):
         requests = []
@@ -152,4 +152,4 @@ class Executor:
 
         commit_id = self.project.head
         # update agents with new nodes
-        self.agents = [Agent(self.project, commit_id, node) for node in new_nodes]
+        self.agents = [Agent(self.project, commit_id, node.path) for node in new_nodes]
