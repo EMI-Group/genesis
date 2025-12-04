@@ -2,9 +2,10 @@
 
 from pygit2 import Repository, Signature, init_repository
 import os
+import warnings
 from pathlib import Path
 
-from header_comment import format_header_comment
+from header_comment import format_header_comment, extract_header_comment
 
 
 ATTR_FILES = ["README.md"]
@@ -79,6 +80,47 @@ class Node:
                 continue  # skip README.md files, they are considered as attributes of the directory node
             children.append(self.project.get_node(child_path))
         return children
+
+    def _dir_context(self):
+        """Get the context of a directory node.
+        The context is stored as a file under the directory, e.g., README.md.
+        """
+        readme_path = self._path / "README.md"
+        if readme_path.exists():
+            with open(readme_path, "r") as f:
+                return f.read()
+
+        warnings.warn(
+            (
+                f"Directory node at {self._path} doesn't have a README.md for context."
+                " Returning empty context."
+                " This behavior is not recommended."
+            )
+        )
+        return ""
+
+    def _file_context(self):
+        """Get the context of a file node.
+        The context is the header comment of the file.
+        """
+        return extract_header_comment(self._path)
+
+    @property
+    def context(self):
+        node_type = self.node_type
+        if node_type == "directory":
+            return self._dir_context()
+        elif node_type == "file":
+            return self._file_context()
+        else:
+            raise ValueError("Path is neither a file nor a directory.")
+
+    @property
+    def metadata(self):
+        """Get metadata of the node.
+        Currently, we don't have any metadata, so return an empty dict.
+        """
+        return {}
 
     def is_root(self):
         return self._path == Path(".")
