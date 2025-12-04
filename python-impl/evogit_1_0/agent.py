@@ -202,7 +202,7 @@ class Agent:
             actions.append(
                 Action(
                     type="newfile",
-                    path=f"{self.node.path}/{item['filename']}",
+                    path=self.node.path / item["filename"],
                     data=item["abstract"],
                 )
             )
@@ -217,7 +217,7 @@ class Agent:
             actions.append(
                 Action(
                     type="mkdir",
-                    path=f"{self.node.path}/{item['dirname']}",
+                    path=self.node.path / item["dirname"],
                     data=item["context"],
                 )
             )
