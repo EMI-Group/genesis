@@ -207,17 +207,17 @@ class Project:
     def add_node(self, path, exist_ok=True):
         if isinstance(path, str):
             path = Path(path)
-        if not exist_ok and path._path in self._nodes:
+        if not exist_ok and str(path) in self._nodes:
             raise ValueError(f"Node at path {path} already exists.")
-        node = Node(path, project=self)
-        self._nodes[path._path] = node
+        node = Node(project=self, path=path)
+        self._nodes[str(path)] = node
         return node
 
     def get_node(self, path):
         if isinstance(path, str):
             path = Path(path)
         # the path is the unique ID
-        return self._nodes.get(path._path)
+        return self._nodes.get(str(path))
 
     @property
     def head(self):
