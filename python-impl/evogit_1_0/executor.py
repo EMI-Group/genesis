@@ -3,8 +3,8 @@
 import time
 from typing import List
 from google import genai
-from .agent import Agent, LLMRequest
-from .hierarchy import Project
+from agent import Agent, LLMRequest
+from hierarchy import Project
 
 completed_states = set(
     [
