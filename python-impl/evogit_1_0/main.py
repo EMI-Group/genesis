@@ -68,6 +68,9 @@ def generate(args):
             executor.step()
         except Exception as e:
             print(f"❌ Execution error: {e}")
+            # print traceback for debugging
+            import traceback
+            traceback.print_exc()
             break
 
         # Optional: heuristic to stop if we are only processing completed leaf nodes
