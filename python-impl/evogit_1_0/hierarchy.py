@@ -1,6 +1,6 @@
 """This module defines the Hierarchy (a tree structure) used in EvoGit."""
 
-from pygit2 import Repository, Signature
+from pygit2 import Repository, Signature, init_repository
 import os
 from pathlib import Path
 
@@ -98,6 +98,10 @@ class Project:
 
     def __init__(self, max_depth, path, name, email):
         self.max_depth = max_depth  # maximum depth of the hierarchy
+        if isinstance(path, str):
+            path = Path(path)
+        # convert to absolute path
+        path = path.resolve()
         self.path = path  # path to the git repository
         self.name = name
         self.email = email
@@ -105,6 +109,13 @@ class Project:
         # because we are only doing incremental commits, author and committer are the same
         self.committer = Signature(name, email)
         self._nodes = {}
+
+        # init the git repository if not already initialized
+        os.makedirs(self.path, exist_ok=True)
+        if not os.path.exists(self.path / ".git"):
+            print("📂 Initializing new git repository...")
+            init_repository(self.path, bare=False)
+
         self.repo = Repository(path)
         self.add_node("")
 
@@ -112,8 +123,14 @@ class Project:
         """Create a git commit with the given message.
         Currently it does not support signatures.
         """
-        ref = self.repo.head.name
-        parents = [self.repo.head.target]
+        if self.repo.head_is_unborn:
+            # initial commit, no parents
+            ref = "HEAD"
+            parents = []
+        else:
+            ref = self.repo.head.name
+            parents = [self.repo.head.target]
+
         tree = self.repo.index.write_tree()
         self.repo.create_commit(
             ref, self.author, self.committer, message, tree, parents
@@ -121,12 +138,11 @@ class Project:
 
     def _init(self, doc):
         """Initialize the project repository with a root directory (if needed) and a README file."""
-        os.makedirs(self.path, exist_ok=True)
-        readme_path = os.path.join(self.path, "README.md")
-        with open(readme_path, "w") as f:
+        filename = "README.md"
+        with open(self.path / filename, "w") as f:
             f.write(doc)
         # add and commit the changes to git via pygit2
-        self.repo.index.add(readme_path)
+        self.repo.index.add("README.md")
         self.repo.index.write()
         # set the context of the root node
         root_node = self.get_node("")
@@ -222,4 +238,7 @@ class Project:
     @property
     def head(self):
         """Get the HEAD commit id."""
+        # if there is no commit yet, return None
+        if self.repo.head_is_unborn:
+            return None
         return self.repo.head.target
