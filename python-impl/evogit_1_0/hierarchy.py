@@ -47,6 +47,14 @@ class Node:
         return self._path.name
 
     @property
+    def path(self):
+        return str(self._path)
+
+    @property
+    def id(self):
+        return self.path
+
+    @property
     def node_type(self):
         if self._path.is_dir():
             return "directory"
