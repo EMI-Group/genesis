@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List
 import json
 import textwrap
+from dataclasses import dataclass
 from google.genai import types
 
 
@@ -26,6 +27,7 @@ class LeafDirStruct(BaseModel):
     items: List[LeafDirItem]
 
 
+@dataclass
 class LLMRequest:
     config: types.GenerateContentConfig
     content: str  # here we only need a single string
