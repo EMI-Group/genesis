@@ -3,8 +3,6 @@
 import argparse
 import os
 import sys
-from google import genai
-from typing import Optional
 
 # Local imports assuming all files are in the same package/directory
 from .hierarchy import Project
@@ -60,22 +58,14 @@ def generate(args):
     # initialize the repository
     executor.init()
 
-    step_count = 0
-    while executor.agents:
-        if step_count >= args.max_steps:
-            print(
-                f"⚠️ Reached maximum step limit ({args.max_steps}). Stopping execution."
-            )
-            break
-
-        print(f"\n--- Step {step_count + 1} ---")
+    for i in range(args.max_depth):
+        print(f"\n--- Depth Level {i} ---")
         print(f"Active Agents: {len(executor.agents)}")
         for ag in executor.agents:
             print(f" - Agent at: '{ag.path}' (Level {ag.node.level})")
 
         try:
             executor.step()
-            step_count += 1
         except Exception as e:
             print(f"❌ Execution error: {e}")
             break
