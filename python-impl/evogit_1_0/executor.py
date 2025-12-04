@@ -53,7 +53,7 @@ class Executor:
         Use the batch API to send multiple requests in parallel, then poll for completion.
         """
         begin_time = time.time()
-        batch_job = self.client.batch_generate_content(
+        batch_job = self.client.batches.create(
             model=self.model,
             src=[self._to_request_params(req) for req in requests],
         )
@@ -99,7 +99,7 @@ class Executor:
         begin_time = time.time()
         responses = []
         for req in requests:
-            response = self.client.generate_content(
+            response = self.client.models.generate_content(
                 model=self.model,
                 config=req.config,
                 contents=req.content,
@@ -118,7 +118,7 @@ class Executor:
         assert len(self.agents) == 1, "There should be only one root agent."
         agent = self.agents[0]
         llm_request = agent.init_step1()
-        response = self.client.generate_content(
+        response = self.client.models.generate_content(
             model=self.model,
             config=llm_request.config,
             contents=llm_request.content,
