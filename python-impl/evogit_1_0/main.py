@@ -5,9 +5,9 @@ import os
 import sys
 
 # Local imports assuming all files are in the same package/directory
-from .hierarchy import Project
-from .agent import Agent
-from .executor import Executor
+from hierarchy import Project
+from agent import Agent
+from executor import Executor
 
 
 def load_guideline(source: str) -> str:
@@ -84,8 +84,15 @@ def main():
 
     # Project Configuration
     parser.add_argument(
+        "path",
         type=str,
         help="Local path where the repository will be generated.",
+    )
+    parser.add_argument(
+        "--max-depth",
+        default=2,
+        type=int,
+        help="Maximum nesting depth of the repository hierarchy.",
     )
     parser.add_argument(
         "--guideline",
@@ -94,19 +101,13 @@ def main():
         required=True,
         help="Path to a text file containing the project guidelines/requirements, or the string itself.",
     )
-    parser.add_argument(
-        "--max-depth",
-        type=int,
-        default=2,
-        help="Maximum nesting depth of the repository hierarchy (0=Root, 1=Dirs, 2=Files).",
-    )
 
     # Git Configuration
     parser.add_argument(
-        "--name", type=str, default="EvoGit Bot", help="Git author name."
+        "--name", type=str, default="EvoGit Agent", help="Git author name."
     )
     parser.add_argument(
-        "--email", type=str, default="bot@evogit.ai", help="Git author email."
+        "--email", type=str, default="agent@evogit.ai", help="Git author email."
     )
 
     # LLM & Execution Configuration

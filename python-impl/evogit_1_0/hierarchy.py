@@ -4,7 +4,7 @@ from pygit2 import Repository, Signature
 import os
 from pathlib import Path
 
-from .header_comment import format_header_comment
+from header_comment import format_header_comment
 
 
 ATTR_FILES = ["README.md"]
