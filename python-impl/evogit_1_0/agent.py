@@ -57,12 +57,6 @@ class Agent:
         )
         self.node = self.project.get_node(path)
 
-    def _info_fn(self, metadata):
-        """Helper to format metadata for context."""
-        if not metadata:
-            return ""
-        return f"\nMetadata: {metadata}"
-
     def gather_context(self):
         """
         Constructs a context based on the current node and all the ancestor nodes
@@ -70,17 +64,16 @@ class Agent:
         """
         # Recursive step: if not root, gather parent context first
         if self.node.is_root():
-            return self.node.context + self._info_fn(self.node.metadata)
-        else:
-            # Create a temporary agent for the parent to reuse logic
-            parent_agent = Agent(self.project, self.commit_id, self.node.parent_id)
-            parent_context = parent_agent.gather_context()
-            return (
-                parent_context
-                + "\n---\n"
-                + self.node.context
-                + self._info_fn(self.node.metadata)
-            )
+            return self.node.context
+
+        # Create a temporary agent for the parent to reuse logic
+        parent_agent = Agent(self.project, self.commit_id, self.node.parent_id)
+        parent_context = parent_agent.gather_context()
+        return (
+            parent_context
+            + "\n---\n"
+            + self.node.context
+        )
 
     def _leaf_step1(self):
         """
