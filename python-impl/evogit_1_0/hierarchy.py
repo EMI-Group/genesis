@@ -55,12 +55,13 @@ class Node:
 
     @property
     def node_type(self):
-        if self.path.is_dir():
+        full_path = self.project.path / self.path  # absolute path
+        if full_path.is_dir():
             return "directory"
-        elif self.path.is_file():
+        elif full_path.is_file():
             return "file"
         else:
-            raise ValueError(f"Path {self.path} is neither a file nor a directory.")
+            raise ValueError(f"Path {full_path} is neither a file nor a directory.")
 
     @property
     def parent(self):
@@ -103,7 +104,8 @@ class Node:
         The context is the header comment of the file.
         """
         ext = self.path.suffix
-        return extract_header_comment(self.path, ext)
+        full_path = self.project.path / self.path
+        return extract_header_comment(full_path, ext)
 
     @property
     def context(self):
