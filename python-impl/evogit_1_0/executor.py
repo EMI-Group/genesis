@@ -78,7 +78,7 @@ class Executor:
             )
 
         responses = []
-        for i, inline_response in enumerate(job.dest.inlined_responses, start=1):
+        for i, inline_response in enumerate(job.dest.inlined_responses):
             # Check for a successful response
             if inline_response.response:
                 # The .text property is a shortcut to the generated text.
@@ -90,7 +90,10 @@ class Executor:
                     if inline_response.error
                     else "Unknown error"
                 )
-                raise Exception(f"Request {i} failed with error: {error_message}")
+                original_req = str(requests[i])
+                raise Exception(
+                    f"Request {i} failed with error: {error_message}, the request was: {original_req}"
+                )
 
         return responses
 
