@@ -58,7 +58,7 @@ def generate(args):
     # initialize the repository
     executor.init()
 
-    for i in range(args.max_depth):
+    for i in range(args.max_depth - 1):
         print(f"\n--- Depth Level {i} ---")
         print(f"Active Agents: {len(executor.agents)}")
         for ag in executor.agents:
