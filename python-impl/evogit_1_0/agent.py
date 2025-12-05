@@ -111,9 +111,8 @@ class Agent:
     def __init__(self, project, commit_id, path):
         self.project = project
         self.commit_id = commit_id
-        self.path = (
-            path  # current node path in the hierarchy, also act as the unique ID
-        )
+        # current node path in the hierarchy, also act as the unique ID
+        self.path = path
         self.node = self.project.get_node(path)
 
     def gather_context(self):
@@ -126,7 +125,8 @@ class Agent:
             return self.node.context
 
         # Create a temporary agent for the parent to reuse logic
-        parent_agent = Agent(self.project, self.commit_id, self.node.parent_id)
+        parent_node = self.node.parent
+        parent_agent = Agent(self.project, self.commit_id, parent_node.id)
         parent_context = parent_agent.gather_context()
         return parent_context + "\n---\n" + self.node.context
 

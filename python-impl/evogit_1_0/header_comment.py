@@ -58,9 +58,8 @@ EXTENSION_MAP = {
 }
 
 
-def format_header_comment(abstract, filename):
+def format_header_comment(abstract, ext):
     """Format the header comment based on the file extension."""
-    ext = os.path.splitext(filename)[1]
     style = EXTENSION_MAP.get(ext)
 
     if not style:
