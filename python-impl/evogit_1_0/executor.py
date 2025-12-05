@@ -4,7 +4,7 @@ import time
 from typing import List
 from google import genai
 from agent import Agent, LLMRequest
-from hierarchy import Project
+from hierarchy import Project, Action
 
 completed_states = set(
     [
@@ -144,11 +144,17 @@ class Executor:
         actions = []
         for agent, response in zip(self.agents, responses):
             action = agent.step2(response)
-            actions.append(action)
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, Action):
+                actions.append(action)
+            else:
+                raise ValueError(
+                    f"step2 should return an Action instance or a list of Action instances, got {type(action)} instead."
+                )
 
-        new_nodes = []
-        for action in actions:
-            new_nodes.append(self.project.perform(action))
+        new_nodes = self.project.perform(actions)
+        print(new_nodes)
 
         commit_id = self.project.head
         # update agents with new nodes

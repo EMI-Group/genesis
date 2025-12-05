@@ -5,7 +5,7 @@ import os
 import warnings
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Literal
+from typing import List
 
 from header_comment import format_header_comment, extract_header_comment
 
@@ -39,29 +39,25 @@ class Node:
     ):
         # pointer to the project object, which manages the whole repo
         self.project = project
-        if isinstance(path, str):
-            path = Path(path)
+        if not isinstance(path, Path):
+            raise ValueError("Path must be a pathlib.Path instance.")
         # path of the node in the repository, also serves as unique ID
-        self._path = path
+        self.path = path
         self.level = nested_level(path)
 
     @property
     def name(self):
-        return self._path.name
-
-    @property
-    def path(self):
-        return str(self._path)
+        return self.path.name
 
     @property
     def id(self):
-        return self.path
+        return str(self.path)
 
     @property
     def node_type(self):
-        if self._path.is_dir():
+        if self.path.is_dir():
             return "directory"
-        elif self._path.is_file():
+        elif self.path.is_file():
             return "file"
         else:
             raise ValueError("Path is neither a file nor a directory.")
@@ -70,14 +66,14 @@ class Node:
     def parent(self):
         if self.is_root():
             raise ValueError("Root node has no parent.")
-        return self.project.get_node(self._path.parent)
+        return self.project.get_node(self.path.parent)
 
     @property
     def children(self):
         if self.node_type != "directory":
             raise ValueError("Only directory nodes can have children.")
         children = []
-        abspath = self.project.path / self._path  # absolute path
+        abspath = self.project.path / self.path  # absolute path
         for child_path in abspath.iterdir():
             if child_path.name in ATTR_FILES:
                 continue  # skip README.md files, they are considered as attributes of the directory node
@@ -88,14 +84,14 @@ class Node:
         """Get the context of a directory node.
         The context is stored as a file under the directory, e.g., README.md.
         """
-        readme_path = self.project.path / self._path / "README.md"
+        readme_path = self.project.path / self.path / "README.md"
         if readme_path.exists():
             with open(readme_path, "r") as f:
                 return f.read()
 
         warnings.warn(
             (
-                f"Directory node at {self._path} doesn't have a README.md for context."
+                f"Directory node at {self.path} doesn't have a README.md for context."
                 " Returning empty context."
                 " This behavior is not recommended."
             )
@@ -106,7 +102,7 @@ class Node:
         """Get the context of a file node.
         The context is the header comment of the file.
         """
-        return extract_header_comment(self._path)
+        return extract_header_comment(self.path)
 
     @property
     def context(self):
@@ -126,7 +122,7 @@ class Node:
         return {}
 
     def is_root(self):
-        return self._path == Path(".")
+        return self.path == Path(".")
 
     def is_leaf(self):
         return self.node_type == "file"
@@ -135,6 +131,7 @@ class Node:
 @dataclass
 class Action:
     """Represents an action taken by the agent that modifies the repository."""
+
     type: str
     path: Path
     data: str
@@ -232,7 +229,8 @@ class Project:
         For example, a module docstring in Python, a comment before DOCTYPE in HTML, a file header comment in C, etc.
         """
         # create the file with the abstract as a comment
-        header_comment = format_header_comment(abstract, path)
+        ext = path.suffix
+        header_comment = format_header_comment(abstract, ext)
         with open(self.path / path, "w") as f:
             f.write(header_comment)
         # add and commit the changes to git via pygit2
@@ -252,17 +250,20 @@ class Project:
         self.repo.index.write()
         return self.get_node(path)
 
-    def perform(self, action: Action) -> Node:
+    def perform(self, action: Action | List[Action]) -> Node:
         """Commit the action: 1. apply changes to the repository 2. create a git commit."""
         if isinstance(action, list):
             # pattern matching a list of actions
+            new_nodes = []
             for act in action:
                 # recursively perform each action
-                self.perform(act)
+                new_nodes.append(self.perform(act))
+
+            return new_nodes
 
         if not isinstance(action, Action):
             raise ValueError(
-                "Action should be a Action instance, or a list of Action instances."
+                f"Action should be a Action instance, or a list of Action instances, got {type(action)} instead."
             )
 
         # Placeholder for actual git commit logic
