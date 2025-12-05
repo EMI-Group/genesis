@@ -102,7 +102,8 @@ class Node:
         """Get the context of a file node.
         The context is the header comment of the file.
         """
-        return extract_header_comment(self.path)
+        ext = self.path.suffix
+        return extract_header_comment(self.path, ext)
 
     @property
     def context(self):
