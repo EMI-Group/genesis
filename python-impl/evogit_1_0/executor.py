@@ -60,18 +60,18 @@ class Executor:
         job_name = batch_job.name
         while True:
             job = self.client.batches.get(name=job_name)
-            if job.status.name in completed_states:
+            if job.state.name in completed_states:
                 break
             time.sleep(self.poll_interval)
 
         end_time = time.time()
         duration = end_time - begin_time
         avg_time = duration / len(requests) if requests else 0
-        if job.status.name not in good_states:
+        if job.state.name not in good_states:
             print(
-                f"Batch job failed after {duration:.2f} seconds with status: {job.status.name}"
+                f"Batch job failed after {duration:.2f} seconds with status: {job.state.name}"
             )
-            raise Exception(f"Batch job failed with status: {job.status.name}")
+            raise Exception(f"Batch job failed with status: {job.state.name}")
         else:
             print(
                 f"Batch job succeeded in {duration:.2f} seconds, average {avg_time:.2f} seconds per request."
