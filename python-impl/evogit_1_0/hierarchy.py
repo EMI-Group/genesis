@@ -60,7 +60,7 @@ class Node:
         elif self.path.is_file():
             return "file"
         else:
-            raise ValueError("Path is neither a file nor a directory.")
+            raise ValueError(f"Path {self.path} is neither a file nor a directory.")
 
     @property
     def parent(self):
