@@ -1,0 +1,29 @@
+{
+  "design": [
+    {
+      "name": "Course level (root)",
+      "metadata": {
+        "Subject Title": "Introduction to Artificial Intelligence",
+        "Subject Code": "COMP5555",
+        "Instructor": "Prof. Cheng",
+        "Target Audience": "Undergraduate students who finished basic programming courses but new to AI."
+      },
+      "Goal": "Define the overall course information, including the course description and the full syllabus.",
+      "guideline": "The course level must define shared metadata, a comprehensive course description including key learning objectives, and a syllabus detailing the number of lectures and their respective topics."
+    },
+    {
+      "name": "Lecture level (subdirectory)",
+      "Goal": "Define lecture-specific descriptions and the outline of slides to be created for that lecture.",
+      "guideline": "Each lecture must include metadata (number and title), a description of key points to cover, and an outline of 20 to 40 slides; this quantitative constraint must be strictly followed."
+    },
+    {
+      "name": "Slide level (files)",
+      "metadata": {
+        "Slide Number": "Variable",
+        "Title": "Variable"
+      },
+      "Goal": "Define the abstract for each slide (including layout and animation) and generate the actual HTML content.",
+      "guideline": "Select from three specific layouts: two-column animated (default), two-column code (for code-only slides), or three-column interactive quiz (for review/concept checks). Generate HTML content based on the abstract following detailed templates."
+    }
+  ]
+}
