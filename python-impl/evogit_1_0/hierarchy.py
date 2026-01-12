@@ -153,8 +153,9 @@ class Project:
     It also manages the on-disk git repository, mapping the file structure to nodes.
     """
 
-    def __init__(self, max_depth, path, name, email):
-        self.max_depth = max_depth  # maximum depth of the hierarchy
+    def __init__(self, init_depth, config, path, name, email):
+        self.init_depth = init_depth  # maximum depth of the hierarchy
+        self.config = config  # project configuration/guideline
         if isinstance(path, str):
             path = Path(path)
         # convert to absolute path

@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+import json
 
 # Local imports assuming all files are in the same package/directory
 from hierarchy import Project
@@ -10,29 +11,28 @@ from agent import Agent
 from executor import Executor
 
 
-def load_guideline(source: str) -> str:
+def load_config(source: str) -> str:
     """Loads the project guideline from a file path or returns the string directly."""
-    if os.path.exists(source):
-        with open(source, "r", encoding="utf-8") as f:
-            return f.read()
-    return source
+    assert os.path.exists(source), f"Config file not found: {source}"
+    # load the json file content
+    with open(source, "r") as f:
+        content = json.load(f)
+
+    return content
 
 
 def generate(args):
     """Runs the executor until done."""
     # 1. Setup Project
-    try:
-        guideline_content = load_guideline(args.guideline)
-    except Exception as e:
-        print(f"Error reading guideline: {e}")
-        sys.exit(1)
+    config = load_config(args.config)
 
     project = Project(
-        max_depth=args.max_depth, path=args.path, name=args.name, email=args.email
+        init_depth=args.init_depth,
+        config=config,
+        path=args.path,
+        name=args.name,
+        email=args.email,
     )
-
-    # Inject guideline into project (required by Agent.init_step1)
-    project.guideline = guideline_content
 
     # Current head commit
     commit_id = project.head
@@ -70,6 +70,7 @@ def generate(args):
             print(f"❌ Execution error: {e}")
             # print traceback for debugging
             import traceback
+
             traceback.print_exc()
             break
 
@@ -92,16 +93,15 @@ def main():
         help="Local path where the repository will be generated.",
     )
     parser.add_argument(
-        "--max-depth",
-        default=2,
+        "--init-depth",
         type=int,
-        help="Maximum nesting depth of the repository hierarchy.",
+        help="The initial depth to bootstrap the project structure. If set to 0, it will expand the project fully, otherwise it will only create the structure up to the specified depth.",
     )
     parser.add_argument(
-        "--guideline",
+        "--config",
         type=str,
-        default="./guideline.md",
-        help="Path to a text file containing the project guidelines/requirements, or the string itself.",
+        default="./config.json",
+        help="Path to a json file containing the project guidelines/requirements.",
     )
 
     # Git Configuration
