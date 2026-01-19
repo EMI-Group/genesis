@@ -115,7 +115,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="gemini-2.5-flash",
+        default="gemini-2.5-flash-lite",
         help="Google GenAI model to use.",
     )
     parser.add_argument(

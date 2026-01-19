@@ -93,14 +93,8 @@ class Agent:
         up to the root.
         """
         # Recursive step: if not root, gather parent context first
-        if self.node.is_root():
-            return self.node.context
-
-        # Create a temporary agent for the parent to reuse logic
-        parent_node = self.node.parent
-        parent_agent = Agent(self.project, self.commit_id, parent_node.id)
-        parent_context = parent_agent.gather_context()
-        return parent_context + "\n---\n" + self.node.context
+        contexts = self.node.full_context
+        return "\n---\n".join(contexts)
 
     def _leaf_step1(self):
         """

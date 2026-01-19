@@ -13,20 +13,23 @@ from header_comment import format_header_comment, extract_header_comment
 ATTR_FILES = ["README.md"]
 
 
-def nested_level(path: Path) -> int:
+def nested_level(path: Path | None) -> int:
     """Compute the nested level of a given path.
     Must be a relative path to the repository root."""
     # Special case: root itself → level 0
-    if path == Path("."):
+    if path is None:
         return 0
 
     # Count parts
-    return len(path.parts)
+    return len(path.parts) + 1
 
 
 class Node:
     """A node in the repository hierarchy tree.
     It maps to a directory (with a readme file) or a file in the git repository.
+    The root node is defined as an uninitialized project root with: path = None, level = 0.
+    For other nodes, the level is determined by the depth of the path in the repository.
+    An initialized project root has path = Path("."), level = 1.
     """
 
     def __init__(
@@ -55,6 +58,9 @@ class Node:
 
     @property
     def node_type(self):
+        if self.is_root():
+            return "root"
+
         full_path = self.project.path / self.path  # absolute path
         if full_path.is_dir():
             return "directory"
@@ -67,6 +73,8 @@ class Node:
     def parent(self):
         if self.is_root():
             raise ValueError("Root node has no parent.")
+        if self.path.parent == Path("."):
+            return self.project.get_node(None)  # root node
         return self.project.get_node(self.path.parent)
 
     @property
@@ -110,12 +118,28 @@ class Node:
     @property
     def context(self):
         node_type = self.node_type
-        if node_type == "directory":
+        if node_type == "root":
+            return ""
+        elif node_type == "directory":
             return self._dir_context()
         elif node_type == "file":
             return self._file_context()
         else:
             raise ValueError("Path is neither a file nor a directory.")
+
+    @property
+    def full_context(self):
+        """Get the full hierarchical context of the node, including parent contexts."""
+        contexts = []
+        current_node = self
+        while current_node is not None:
+            contexts.append(current_node.context)
+            if current_node.is_root():
+                break
+            current_node = current_node.parent
+        # reverse to have root context first
+        contexts.reverse()
+        return contexts
 
     @property
     def metadata(self):
@@ -125,7 +149,7 @@ class Node:
         return {}
 
     def is_root(self):
-        return self.path == Path(".")
+        return self.path is None
 
     def is_leaf(self):
         return self.node_type == "file"
