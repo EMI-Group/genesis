@@ -1,7 +1,7 @@
 """This module defines the Agent class used in EvoGit."""
 
 from hierarchy import Action
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from typing import List
 import json
 import textwrap
@@ -15,17 +15,9 @@ class DirItem(BaseModel):
     context: str
 
 
-class DirStruct(BaseModel):
-    items: List[DirItem]
-
-
 class LeafDirItem(BaseModel):
     filename: str
     abstract: str
-
-
-class LeafDirStruct(BaseModel):
-    items: List[LeafDirItem]
 
 
 @dataclass
@@ -54,30 +46,26 @@ LEAF_PROMPT_TEMPLATE = Template(
 PENULTIMATE_PROMPT_TEMPLATE = Template(
     textwrap.dedent("""
     Output the filenames and their abstracts in JSON format as specified:
-    {
-        "items": [
-            {
-                "filename": "name_of_file",
-                "abstract": "A brief description of the file's purpose (e.g. header comments) as the user instructed"
-            },
-            ...
-        ]
-    }
+    [
+        {
+            "filename": "name_of_file",
+            "abstract": "A brief description of the file's purpose (e.g. header comments) as the user instructed"
+        },
+        ...
+    ]
 """)
 )
 
 NODE_PROMPT_TEMPLATE = Template(
     textwrap.dedent("""
     Output the directory names and their context in JSON format as specified:
-    {
-        "items": [
-            {
-                "dirname": "name_of_directory",
-                "context": "A description file inside that directory describing its purpose as the user instructed"
-            },
-            ...
-        ]
-    }
+    [
+        {
+            "dirname": "name_of_directory",
+            "context": "A description file inside that directory describing its purpose as the user instructed"
+        },
+        ...
+    ]
 """)
 )
 
@@ -158,7 +146,7 @@ class Agent:
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
                 response_mime_type="application/json",
-                response_json_schema=LeafDirStruct.model_json_schema(),
+                response_json_schema=TypeAdapter(List[LeafDirItem]).json_schema(),
             ),
             content="Guideline:\n"
             + guideline
@@ -187,7 +175,7 @@ class Agent:
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
                 response_mime_type="application/json",
-                response_json_schema=DirStruct.model_json_schema(),
+                response_json_schema=TypeAdapter(List[DirItem]).json_schema(),
             ),
             content="Guideline:\n"
             + guideline
@@ -216,7 +204,7 @@ class Agent:
 
     def _penultimate_step2(self, response):
         # penultimate node, will expand to leaf files
-        items = json.loads(response).get("items", [])
+        items = json.loads(response)
         actions = []
         for item in items:
             actions.append(
@@ -231,7 +219,7 @@ class Agent:
 
     def _node_step2(self, response):
         # non-leaf node, will expand to n children
-        items = json.loads(response).get("items", [])
+        items = json.loads(response)
         actions = []
         for item in items:
             actions.append(
