@@ -189,6 +189,13 @@ class Project:
             return design[level].get("guideline", "")
         return ""
 
+    def get_metadata(self, level: int) -> dict:
+        """Get the metadata for a specific level from the config."""
+        design = self.config.get("design", [])
+        if 0 <= level < len(design):
+            return design[level].get("metadata", {})
+        return {}
+
     def _commit(self, message: str) -> None:
         """Create a git commit with the given message.
         Currently it does not support signatures.

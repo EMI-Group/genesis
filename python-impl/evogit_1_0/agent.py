@@ -119,6 +119,11 @@ class Agent:
         Specialized run method for leaf nodes (files).
         """
         guideline = self.project.get_guideline(self.node.level)
+        metadata = self.project.get_metadata(self.node.level)
+        metadata_str = ""
+        if metadata:
+            metadata_str = "Metadata:\n" + json.dumps(metadata, indent=2) + "\n---\n"
+
         context = self.gather_context()
         task_prompt = LEAF_PROMPT_TEMPLATE.substitute(level=self.node.level)
 
@@ -129,6 +134,7 @@ class Agent:
             content="Guideline:\n"
             + guideline
             + "\n---\n"
+            + metadata_str
             + context
             + "\n---\n"
             + task_prompt,
@@ -140,6 +146,11 @@ class Agent:
         Specialized run method for penultimate nodes (directories whose children are files).
         """
         guideline = self.project.get_guideline(self.node.level)
+        metadata = self.project.get_metadata(self.node.level)
+        metadata_str = ""
+        if metadata:
+            metadata_str = "Metadata:\n" + json.dumps(metadata, indent=2) + "\n---\n"
+
         context = self.gather_context()
         task_prompt = PENULTIMATE_PROMPT_TEMPLATE.substitute(level=self.node.level)
 
@@ -152,6 +163,7 @@ class Agent:
             content="Guideline:\n"
             + guideline
             + "\n---\n"
+            + metadata_str
             + context
             + "\n---\n"
             + task_prompt,
@@ -163,6 +175,11 @@ class Agent:
         Specialized run method for non-leaf nodes (directories).
         """
         guideline = self.project.get_guideline(self.node.level)
+        metadata = self.project.get_metadata(self.node.level)
+        metadata_str = ""
+        if metadata:
+            metadata_str = "Metadata:\n" + json.dumps(metadata, indent=2) + "\n---\n"
+
         context = self.gather_context()
         task_prompt = NODE_PROMPT_TEMPLATE.substitute(level=self.node.level)
 
@@ -175,6 +192,7 @@ class Agent:
             content="Guideline:\n"
             + guideline
             + "\n---\n"
+            + metadata_str
             + context
             + "\n---\n"
             + task_prompt,
@@ -242,6 +260,11 @@ class Agent:
         Create the root directory along side the project's README.md file.
         """
         guideline = self.project.get_guideline(0)
+        metadata = self.project.get_metadata(0)
+        metadata_str = ""
+        if metadata:
+            metadata_str = "Metadata:\n" + json.dumps(metadata, indent=2) + "\n---\n"
+
         # there is no parent context for root
         task_prompt = INIT_ROOT_TEMPLATE.substitute(guideline=guideline)
 
@@ -249,7 +272,11 @@ class Agent:
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
             ),
-            content="Guideline:\n" + guideline + "\n---\n" + task_prompt,
+            content="Guideline:\n"
+            + guideline
+            + "\n---\n"
+            + metadata_str
+            + task_prompt,
         )
         return request
 
