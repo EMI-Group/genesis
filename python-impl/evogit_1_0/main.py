@@ -42,7 +42,7 @@ def generate(args):
         print("Error: Root node not found after bootstrap.")
         sys.exit(1)
     # Initialize root agent
-    agents = [Agent(project, commit_id, root_node)]
+    agents = [Agent(project, commit_id, root_node.path)]
     # Initialize Executor
     executor = Executor(
         project=project,
@@ -56,10 +56,9 @@ def generate(args):
         f"🚀 Starting generation loop (Max depth: {project.max_depth}, Max steps: {args.max_steps})..."
     )
     # initialize the repository
-    executor.init()
 
-    for i in range(project.max_depth - 1):
-        print(f"\n--- Depth Level {i} ---")
+    for i in range(project.max_depth):
+        print(f"\n--- Step {i + 1} ---")
         print(f"Active Agents: {len(executor.agents)}")
         for ag in executor.agents:
             print(f" - Agent at: '{ag.path}' (Level {ag.node.level})")
