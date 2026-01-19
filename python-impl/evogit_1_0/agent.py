@@ -126,7 +126,12 @@ class Agent:
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
             ),
-            content="Guideline:\n" + guideline + "\n---\n" + context + "\n---\n" + task_prompt,
+            content="Guideline:\n"
+            + guideline
+            + "\n---\n"
+            + context
+            + "\n---\n"
+            + task_prompt,
         )
         return request
 
@@ -144,7 +149,12 @@ class Agent:
                 response_mime_type="application/json",
                 response_json_schema=LeafDirStruct.model_json_schema(),
             ),
-            content="Guideline:\n" + guideline + "\n---\n" + context + "\n---\n" + task_prompt,
+            content="Guideline:\n"
+            + guideline
+            + "\n---\n"
+            + context
+            + "\n---\n"
+            + task_prompt,
         )
         return request
 
@@ -162,7 +172,12 @@ class Agent:
                 response_mime_type="application/json",
                 response_json_schema=DirStruct.model_json_schema(),
             ),
-            content="Guideline:\n" + guideline + "\n---\n" + context + "\n---\n" + task_prompt,
+            content="Guideline:\n"
+            + guideline
+            + "\n---\n"
+            + context
+            + "\n---\n"
+            + task_prompt,
         )
         return request
 
