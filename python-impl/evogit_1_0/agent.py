@@ -42,8 +42,6 @@ You have access to:
 1. the overall project guideline that outlines the coding standards and requirements.
 2. the context of the file (or directory), including the file itself and all the parent directories to the root.
 
-The project guideline will describe the guide / bound / constraints you should follow for different levels of the hierarchy.
-
 You should only return the raw code or structured content user requested, without any explanations or wrapper text, like ``` marks.
 """
 
@@ -120,6 +118,7 @@ class Agent:
         """
         Specialized run method for leaf nodes (files).
         """
+        guideline = self.project.get_guideline(self.node.level)
         context = self.gather_context()
         task_prompt = LEAF_PROMPT_TEMPLATE.substitute(level=self.node.level)
 
@@ -127,7 +126,7 @@ class Agent:
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
             ),
-            content=context + "\n---\n" + task_prompt,
+            content="Guideline:\n" + guideline + "\n---\n" + context + "\n---\n" + task_prompt,
         )
         return request
 
@@ -135,6 +134,7 @@ class Agent:
         """
         Specialized run method for penultimate nodes (directories whose children are files).
         """
+        guideline = self.project.get_guideline(self.node.level)
         context = self.gather_context()
         task_prompt = PENULTIMATE_PROMPT_TEMPLATE.substitute(level=self.node.level)
 
@@ -144,7 +144,7 @@ class Agent:
                 response_mime_type="application/json",
                 response_json_schema=LeafDirStruct.model_json_schema(),
             ),
-            content=context + "\n---\n" + task_prompt,
+            content="Guideline:\n" + guideline + "\n---\n" + context + "\n---\n" + task_prompt,
         )
         return request
 
@@ -152,6 +152,7 @@ class Agent:
         """
         Specialized run method for non-leaf nodes (directories).
         """
+        guideline = self.project.get_guideline(self.node.level)
         context = self.gather_context()
         task_prompt = NODE_PROMPT_TEMPLATE.substitute(level=self.node.level)
 
@@ -161,7 +162,7 @@ class Agent:
                 response_mime_type="application/json",
                 response_json_schema=DirStruct.model_json_schema(),
             ),
-            content=context + "\n---\n" + task_prompt,
+            content="Guideline:\n" + guideline + "\n---\n" + context + "\n---\n" + task_prompt,
         )
         return request
 
@@ -225,14 +226,15 @@ class Agent:
         """Special case for initializing the root node.
         Create the root directory along side the project's README.md file.
         """
+        guideline = self.project.get_guideline(0)
         # there is no parent context for root
-        task_prompt = INIT_ROOT_TEMPLATE.substitute(guideline=self.project.guideline)
+        task_prompt = INIT_ROOT_TEMPLATE.substitute(guideline=guideline)
 
         request = LLMRequest(
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
             ),
-            content=task_prompt,
+            content="Guideline:\n" + guideline + "\n---\n" + task_prompt,
         )
         return request
 
