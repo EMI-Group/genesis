@@ -41,34 +41,26 @@ You are a coding agent responsible for doing one task in a large codebase.
 You have access to:
 1. the overall project guideline that outlines the coding standards and requirements.
 2. the context of the file (or directory), including the file itself and all the parent directories to the root.
-3. the level (depth) of the file in the project hierarchy.
 
 The project guideline will describe the guide / bound / constraints you should follow for different levels of the hierarchy.
-The level is 0-indexed, with 0 being the root directory matching the top-level hierarchy node in the project guideline.
 
-You should only return the raw code or the content user requested, without any explanations or wrapper text, like ``` marks.
+You should only return the raw code or structured content user requested, without any explanations or wrapper text, like ``` marks.
 """
 
 LEAF_PROMPT_TEMPLATE = Template(
     textwrap.dedent("""
-    Currently, you are working at level ${level} in the project hierarchy, directly writing a file.
-    Please generate the complete content for the file based on the project guideline and the context provided.
-    Please refer to the leaf file's purpose described above for detailed task information.
     Give the raw file content as the output.
 """)
 )
 
 PENULTIMATE_PROMPT_TEMPLATE = Template(
     textwrap.dedent("""
-    Currently, you are working at level ${level} in the project hierarchy.
-    Please create the leaf file structure based on the project guideline and the context provided.
-    Please refer to the guideline and context for detailed task information at this level.
     Output the filenames and their abstracts in JSON format as specified:
     {
         "items": [
             {
                 "filename": "name_of_file",
-                "abstract": "A brief description of the file's purpose (header comments)"
+                "abstract": "A brief description of the file's purpose (e.g. header comments) as the user instructed"
             },
             ...
         ]
@@ -78,15 +70,12 @@ PENULTIMATE_PROMPT_TEMPLATE = Template(
 
 NODE_PROMPT_TEMPLATE = Template(
     textwrap.dedent("""
-    Currently, you are working at level ${level} in the project hierarchy.
-    Please create the next level directory structure based on the project guideline and the context provided.
-    Please refer to the guideline and context for detailed task information at this level.
-    Output the direction names and their context in JSON format as specified:
+    Output the directory names and their context in JSON format as specified:
     {
         "items": [
             {
                 "dirname": "name_of_directory",
-                "context": "A README.md file inside that directory describing its purpose"
+                "context": "A description file inside that directory describing its purpose as the user instructed"
             },
             ...
         ]
@@ -96,9 +85,6 @@ NODE_PROMPT_TEMPLATE = Template(
 
 INIT_ROOT_TEMPLATE = Template(
     textwrap.dedent("""
-    You are initializing the root of a new project based on the following project guideline:
-    ${guideline}
-    Please give the detailed design document for the project at the root level.
     Output the content in raw markdown format.
 """)
 )
