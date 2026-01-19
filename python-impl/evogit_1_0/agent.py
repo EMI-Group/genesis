@@ -209,10 +209,12 @@ class Agent:
         items = json.loads(response)
         actions = []
         for item in items:
+            # sanitize the filename, remove any path separators and limit length
+            filename = item["filename"].strip().replace("/", "_")[:100]
             actions.append(
                 Action(
                     type="newfile",
-                    path=self.node.path / item["filename"],
+                    path=self.node.path / filename,
                     data=item["abstract"],
                 )
             )
@@ -224,10 +226,12 @@ class Agent:
         items = json.loads(response)
         actions = []
         for item in items:
+            # sanitize the dirname, remove any path separators and limit length
+            dirname = item["dirname"].strip().replace("/", "_")[:100]
             actions.append(
                 Action(
                     type="mkdir",
-                    path=self.node.path / item["dirname"],
+                    path=self.node.path / dirname,
                     data=item["context"],
                 )
             )
@@ -269,11 +273,7 @@ class Agent:
             config=types.GenerateContentConfig(
                 system_instruction=common_sys_prompt,
             ),
-            content="Guideline:\n"
-            + guideline
-            + "\n---\n"
-            + metadata_str
-            + task_prompt,
+            content="Guideline:\n" + guideline + "\n---\n" + metadata_str + task_prompt,
         )
         return request
 
