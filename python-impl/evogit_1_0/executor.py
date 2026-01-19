@@ -39,7 +39,7 @@ class Executor:
         self.model = model
         self.project = project
         self.agents = agents
-        self.batch_req_thres = 5  # Minimum number of requests to use batch API
+        self.batch_req_thres = 50000  # Minimum number of requests to use batch API
 
     def _to_request_params(self, llm_request: LLMRequest):
         """Convert an LLMRequest to genai request parameters."""
