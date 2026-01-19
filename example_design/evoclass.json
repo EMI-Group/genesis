@@ -13,12 +13,12 @@
     },
     {
       "name": "Lecture level (subdirectory)",
-      "Goal": "Define lecture-specific descriptions and the outline of slides to be created for that lecture.",
-      "guideline": "Each lecture must include metadata (number and title), a description of key points to cover, and an outline of 20 to 40 slides; this quantitative constraint must be strictly followed."
+      "Goal": "Define how many lectures there are and lecture-specific descriptions and the outline of content for that lecture.",
+      "guideline": "Each lecture must include metadata (number and title, for example Lecture 4 First AI Winter), a description of key points to cover."
     },
     {
       "name": "Slide level (slide design guidelines)",
-      "Goal": "Define the design guidelines for each slide (including layout and animation).",
+      "Goal": "Organize the contents to display into individual slides. Define the design guidelines for each slide (including layout and animation).",
       "guideline": "Select from three specific layouts: two-column animated (default), two-column code (for code-only slides), or three-column interactive quiz (for review/concept checks). Generate the html filename and a brief guideline on how to write the html."
     },
     {
