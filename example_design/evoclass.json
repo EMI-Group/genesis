@@ -17,13 +17,14 @@
       "guideline": "Each lecture must include metadata (number and title), a description of key points to cover, and an outline of 20 to 40 slides; this quantitative constraint must be strictly followed."
     },
     {
-      "name": "Slide level (files)",
-      "metadata": {
-        "Slide Number": "Variable",
-        "Title": "Variable"
-      },
-      "Goal": "Define the abstract for each slide (including layout and animation) and generate the actual HTML content.",
-      "guideline": "Select from three specific layouts: two-column animated (default), two-column code (for code-only slides), or three-column interactive quiz (for review/concept checks). Generate HTML content based on the abstract following detailed templates."
+      "name": "Slide level (slide design guidelines)",
+      "Goal": "Define the design guidelines for each slide (including layout and animation).",
+      "guideline": "Select from three specific layouts: two-column animated (default), two-column code (for code-only slides), or three-column interactive quiz (for review/concept checks). Generate the html filename and a brief guideline on how to write the html."
+    },
+    {
+      "name": "Slide content level (content generation)",
+      "Goal": "Generate the actual content for each slide based on the slide design guidelines.",
+      "guideline": "Generate the full HTML content for each slide, ensuring adherence to the specified layout and animation guidelines provided in the slide design level."
     }
   ]
 }
