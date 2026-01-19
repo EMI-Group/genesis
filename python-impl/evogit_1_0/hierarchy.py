@@ -177,6 +177,18 @@ class Project:
         self.repo = Repository(path)
         self.add_node("")
 
+    @property
+    def max_depth(self):
+        """The maximum depth of the hierarchy, defined by the design config."""
+        return len(self.config.get("design", []))
+
+    def get_guideline(self, level: int) -> str:
+        """Get the guideline for a specific level from the config."""
+        design = self.config.get("design", [])
+        if 0 <= level < len(design):
+            return design[level].get("guideline", "")
+        return ""
+
     def _commit(self, message: str) -> None:
         """Create a git commit with the given message.
         Currently it does not support signatures.

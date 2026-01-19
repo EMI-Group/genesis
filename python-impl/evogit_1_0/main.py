@@ -53,12 +53,12 @@ def generate(args):
 
     # ========= Generation Loop =========
     print(
-        f"🚀 Starting generation loop (Max depth: {args.max_depth}, Max steps: {args.max_steps})..."
+        f"🚀 Starting generation loop (Max depth: {project.max_depth}, Max steps: {args.max_steps})..."
     )
     # initialize the repository
     executor.init()
 
-    for i in range(args.max_depth - 1):
+    for i in range(project.max_depth - 1):
         print(f"\n--- Depth Level {i} ---")
         print(f"Active Agents: {len(executor.agents)}")
         for ag in executor.agents:
