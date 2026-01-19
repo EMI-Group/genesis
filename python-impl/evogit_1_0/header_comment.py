@@ -69,12 +69,13 @@ def format_header_comment(abstract, ext):
     return style.format(abstract)
 
 
-def extract_header_comment(content, filename):
+def extract_header_comment(full_path):
     """Extract the header comment from file content based on extension."""
-    ext = os.path.splitext(filename)[1]
+    ext = full_path.suffix
     style = EXTENSION_MAP.get(ext)
+    assert style is not None, f"Unknown file extension '{ext}'. Cannot extract header comment."
+    with open(full_path, "r") as f:
+        content = f.read()
+        header = style.extract(content)
 
-    if not style:
-        return None
-
-    return
+    return header

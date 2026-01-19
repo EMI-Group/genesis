@@ -111,9 +111,8 @@ class Node:
         """Get the context of a file node.
         The context is the header comment of the file.
         """
-        ext = self.path.suffix
         full_path = self.project.path / self.path
-        return extract_header_comment(full_path, ext)
+        return extract_header_comment(full_path)
 
     @property
     def context(self):
@@ -133,7 +132,9 @@ class Node:
         contexts = []
         current_node = self
         while current_node is not None:
-            contexts.append(current_node.context)
+            context = current_node.context
+            assert context is not None
+            contexts.append(context)
             if current_node.is_root():
                 break
             current_node = current_node.parent
