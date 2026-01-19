@@ -191,11 +191,19 @@ class Agent:
         """
         Runs the agent: gathers context, and return the request to be made.
         """
+        # Check if we need to initialize the root node (create its README)
+        if self.node.is_root() and not self.node.context:
+            print("Step 1: Initializing root node...")
+            return self._init_step1()
+
         if self.node.level + 1 == self.project.max_depth:
+            print("Step 1: Generating content for leaf node...")
             return self._leaf_step1()
         elif self.node.level + 2 == self.project.max_depth:
+            print("Step 1: Generating directory listing for penultimate node...")
             return self._penultimate_step1()
         else:
+            print("Step 1: Generating directory listing for non-leaf node...")
             return self._node_step1()
 
     def _leaf_step2(self, response):
@@ -236,14 +244,21 @@ class Agent:
         """
         Get the response from the LLM and convert it into an Action.
         """
+        if self.node.is_root() and not self.node.context:
+            print("Step 2: Processing initialization for root node...")
+            return self._init_step2(response)
+
         if self.node.level + 1 == self.project.max_depth:
+            print("Step 2: Processing content for leaf node...")
             return self._leaf_step2(response)
         elif self.node.level + 2 == self.project.max_depth:
+            print("Step 2: Processing directory listing for penultimate node...")
             return self._penultimate_step2(response)
         else:
+            print("Step 2: Processing directory listing for non-leaf node...")
             return self._node_step2(response)
 
-    def init_step1(self):
+    def _init_step1(self):
         """Special case for initializing the root node.
         Create the root directory along side the project's README.md file.
         """
@@ -268,7 +283,7 @@ class Agent:
         )
         return request
 
-    def init_step2(self, response):
+    def _init_step2(self, response):
         """Special case for initializing the root node."""
         action = Action(
             type="init",
