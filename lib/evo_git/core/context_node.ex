@@ -43,8 +43,8 @@ defmodule EvoGit.Core.ContextNode do
   @doc """
   Retrieves the full hierarchy of ContextNodes from the project root down to the given path.
   """
-  @spec get_hierarchy(String.t(), String.t()) :: [t()]
-  def get_hierarchy(path, root \\ ".") do
+  @spec hier_context(String.t(), String.t()) :: [t()]
+  def hier_context(path, root \\ ".") do
     abs_path = Path.expand(path)
     abs_root = Path.expand(root)
 
