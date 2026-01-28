@@ -4,7 +4,7 @@ defmodule EvoGit.Core.PhylogeneticGraph do
   """
   defstruct [:current_sha]
 
-  @type t :: %__MODULE__{ 
+  @type t :: %__MODULE__{
           current_sha: String.t()
         }
 
