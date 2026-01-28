@@ -4,7 +4,7 @@ defmodule EvoGit.Core.ContextNodeTest do
 
   @moduletag :tmp_dir
 
-  test "get_hierarchy/2 returns nodes from root to leaf", %{tmp_dir: tmp_dir} do
+  test "hier_context/2 returns nodes from root to leaf", %{tmp_dir: tmp_dir} do
     # Setup structure
     # tmp_dir/
     # ├── CONTEXT.md (Root context)
@@ -18,7 +18,7 @@ defmodule EvoGit.Core.ContextNodeTest do
     File.write!(Path.join(tmp_dir, "lib/my_module.ex"), "defmodule MyModule do end")
 
     target_path = Path.join(tmp_dir, "lib/my_module.ex")
-    hierarchy = ContextNode.get_hierarchy(target_path, tmp_dir)
+    hierarchy = ContextNode.hier_context(target_path, tmp_dir)
 
     assert length(hierarchy) == 3
 
@@ -37,7 +37,7 @@ defmodule EvoGit.Core.ContextNodeTest do
     assert file_node.path == target_path
   end
 
-  test "get_hierarchy/2 handles missing intermediate contexts", %{tmp_dir: tmp_dir} do
+  test "hier_context/2 handles missing intermediate contexts", %{tmp_dir: tmp_dir} do
     # tmp_dir/
     # └── nested/
     #     └── deep/
@@ -47,7 +47,7 @@ defmodule EvoGit.Core.ContextNodeTest do
     target_path = Path.join(tmp_dir, "nested/deep/file.txt")
     # We don't create file, see if load handles it (it should treat as file)
 
-    hierarchy = ContextNode.get_hierarchy(target_path, tmp_dir)
+    hierarchy = ContextNode.hier_context(target_path, tmp_dir)
 
     # root, nested, deep, file
     assert length(hierarchy) == 4
@@ -59,9 +59,9 @@ defmodule EvoGit.Core.ContextNodeTest do
     assert Enum.at(hierarchy, 3).type == :file
   end
 
-  test "get_hierarchy/2 raises on invalid root", %{tmp_dir: tmp_dir} do
+  test "hier_context/2 raises on invalid root", %{tmp_dir: tmp_dir} do
     assert_raise ArgumentError, fn ->
-      ContextNode.get_hierarchy("/etc/passwd", tmp_dir)
+      ContextNode.hier_context("/etc/passwd", tmp_dir)
     end
   end
 end
