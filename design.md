@@ -14,7 +14,10 @@ The system operates on the intersection of two dimensions:
 The codebase is structured as a recursive tree where every node (directory or file) has a specific context.
 
 * **Nodes:** A node represents a hierarchy level. It can be a **Directory Node** (structural) or a **File Node** (leaf/implementation).
-* **Context Contract:** Every Directory Node MUST contain a file named CONTEXT.md. This file acts as the explicit schema for that hierarchy level, strictly defining its **Intent** (purpose), its **API Surface** (exports), and its **Constraints** (rules for children).
+* **Context Contract:**
+  * Every Directory Node MUST contain a file named CONTEXT.md. This file acts as the explicit schema for that hierarchy level, strictly defining its **Intent** (purpose), its **API Surface** (exports), and its **Constraints** (rules for children).
+  * Every code file must include a header comment / module comment or similar that defines its purpose and any relevant constraints.
+  * The context from the parent node is **inherited** by all child nodes, ensuring alignment with high-level goals, thus forming a **Contextual Hierarchy**.
 * **Leaf Nodes:** Source code files (e.g., user.ex, utils.py) are leaf nodes. They do not contain CONTEXT.md; their content is the implementation of their parent's context.
 
 ### **2.2 The Temporal Dimension: "The Phylogenetic Graph"**
@@ -128,6 +131,7 @@ The system presents a final lineup of $M+1$ versions to the user:
   - To use gemini-cli, call the `gemini` command with appropriate parameters. `gemini` can accepts stdin or direct arguments, and can return output via stdout or json, depending on the use case, here are some examples:
     * `cat README.md | gemini --prompt "Summarize this documentation"`
     * `gemini -p "Explain this code" --output-format json`
+  - Context files must be passed in the order of root to leaf, so that the LLM can build the full context hierarchy while keeping a good kv cache hit rate.
 * **Version Control:** **Git**. use the git command line.
 
 The json output looks like this:
