@@ -13,8 +13,31 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
-  def add_worktree(repo_path, worktree_path, base_sha, branch_name) do
-    run(["worktree", "add", "-b", branch_name, worktree_path, base_sha], repo_path)
+  def add_worktree(repo_path, worktree_path, base_sha, branch_name \\ nil) do
+    args =
+      if branch_name do
+        ["worktree", "add", "-b", branch_name, worktree_path, base_sha]
+      else
+        ["worktree", "add", "--detach", worktree_path, base_sha]
+      end
+
+    run(args, repo_path)
+  end
+
+  def prune_worktrees(repo_path) do
+    run(["worktree", "prune"], repo_path)
+  end
+
+  def checkout(path, sha) do
+    run(["checkout", sha], path)
+  end
+
+  def reset_hard(path, sha \\ "HEAD") do
+    run(["reset", "--hard", sha], path)
+  end
+
+  def clean(path) do
+    run(["clean", "-fd"], path)
   end
 
   def add(path, files \\ ".") do
