@@ -1,97 +1,208 @@
-# Introduction
+# **EvoGit 1.0 Design Specification**
 
-This project is EvoGit 1.0, a novel approach to generating large-scale code repositories using a hierarchical approach. The goal is to create a system that can efficiently produce complex codebases by breaking down the generation process into manageable components.
+## **1. Introduction**
 
-## Components
+EvoGit 1.0 is a decentralized, evolutionary software development framework that supersedes the original EvoGit approach. While the original paper focused on the **Temporal Dimension** (a phylogenetic graph of code versions), it lacked structural awareness, treating codebases as flat collections of files.
+EvoGit 1.0 introduces the **Spatial Dimension**—a hierarchical understanding of the codebase. By treating a repository as a semantic tree of "Context Nodes," the system can decompose complex architectural tasks into manageable local evolutions.
 
-### File Hierarchy
+## **2. Core Concepts**
 
-EvoGit is by design hierarchical. The repository structure is represented as a tree where:
+The system operates on the intersection of two dimensions:
 
-A node represents a hierarchy level in the repository (either a directory or a file), and can have child nodes (subdirectories or files) and related metadata attributes attached directly to it. Think xml/HTML tree structure.
+### **2.1 The Spatial Dimension: "The Context Tree"**
 
-Therefore, each node is defined by the following attributes (in pseudo json):
+The codebase is structured as a recursive tree where every node (directory or file) has a specific context.
+
+* **Nodes:** A node represents a hierarchy level. It can be a **Directory Node** (structural) or a **File Node** (leaf/implementation).
+* **Context Contract:** Every Directory Node MUST contain a file named CONTEXT.md. This file acts as the explicit schema for that hierarchy level, strictly defining its **Intent** (purpose), its **API Surface** (exports), and its **Constraints** (rules for children).
+* **Leaf Nodes:** Source code files (e.g., user.ex, utils.py) are leaf nodes. They do not contain CONTEXT.md; their content is the implementation of their parent's context.
+
+### **2.2 The Temporal Dimension: "The Phylogenetic Graph"**
+
+We retain the original EvoGit core: code evolves through a Directed Acyclic Graph (DAG) of Git commits.
+
+* **Strict Partial Order (**$v\_{new} \> v\_{old}$**):** Evolution is directional. A child commit is accepted *if and only if* it is measurably "better" than its parent.
+* **Definition of "Better":** Unlike traditional CI/CD which demands a "Green Build" (passing all tests), EvoGit accepts partial progress. A version is better if:
+  * It passes *more* tests than the ancestor.
+  * It implements a requested feature (verified by an LLM Judge).
+  * It fixes a specific bug, even if other parts of the system are still broken.
+* **Immutable History:** Git commits serve as the immutable record of this evolutionary process.
+
+## **3. The Agent Model**
+
+In EvoGit 1.0, an Agent is not a persistent entity but a **stateless function**.
+
+### **3.1 Definition**
+
+An agent is a process that executes the following functional transformation:
+$$NewState \= Agent(State, Objective)$$
+
+### **3.2 State & Input**
+
+* **State:** A tuple {commit_sha, node_path}.
+  * commit_sha: The specific point in the temporal timeline the agent is branching from.
+  * node_path: The specific location in the spatial hierarchy the agent is allowed to modify.
+* **Objective:** A string input describing the task (e.g., "Fix the race condition in the worker pool" or "Implement the User schema").
+
+### **3.3 Context Construction**
+
+When an agent runs, it constructs its "World View" dynamically:
+
+1. **Local Context:** Reads CONTEXT.md (or file content) at node_path.
+2. **Ancestral Context:** Reads CONTEXT.md of the parent, grandparent, up to the root. This ensures the agent aligns with high-level architectural goals.
+3. **Siblings:** Explicit sibling context is **not** included. The underlying tool (gemini-cli) handles necessary file retrieval/RAG if dependencies are needed.
+
+## **4. Runtime Process**
+
+The system runs in two distinct stages.
+
+### **Stage 1: Genesis (Creation Phase)**
+
+*Goal: Recursively generate the repository skeleton.*
+
+1. **Initialization:** User provides a high-level prompt.
+2. **Root Generation:** The Root Agent creates the top-level CONTEXT.md defining the architecture.
+3. **Recursive Expansion:**
+   * The system monitors the file tree.
+   * For every new directory created defined in a CONTEXT.md, a new Agent is spawned with the state {current_sha, new_dir_path}.
+   * This continues until agents produce Leaf Nodes (actual code files).
+
+### **Stage 2: Optimization (The Evolutionary Loop)**
+
+*Goal: Fix bugs, optimize performance, or add features.*
+This phase uses a **Diagnosis -> Dispatch -> Evolution -> Merge** cycle.
+
+#### **Step A: Diagnosis & Hypothesis**
+
+An **Analyst Agent** (or a human operator) analyzes the current codebase, execution logs, or error reports to identify a weakness (e.g., "Login is slow"). It proposes potential locations (node_path) that might be responsible.
+
+#### **Step B: Strategy Selection**
+
+The system checks the Analyst's output:
+
+1. **High Certainty:** If the Analyst identifies a specific file (e.g., "The SQL query in auth.py is missing an index"), the system dispatches a **Single Agent** to that node.
+2. **Low Certainty (Random Credit Assignment):** If the cause is ambiguous (e.g., "It could be the database, or the API handler, or the frontend cache"), the system triggers **Random Credit Assignment**.
+   * It dispatches $N$ agents in parallel.
+   * Each agent targets a different suspected node_path (different layers of the hierarchy).
+
+#### **Step C: Execution (Parallel Evolution)**
+
+Each dispatched agent:
+
+1. **Forks:** Creates a private Git Worktree branching off the current frontier.
+2. **Acts:** Calls gemini-cli to modify files within its node_path to satisfy the objective.
+3. **Commits:** Saves the changes to its isolated branch.
+
+#### **Step D: Pre-Filtering (Sanity Check)**
+
+Before merging, the system runs a basic validation (Step D from the previous design) to discard completely broken branches. Branches that fail to compile or introduce regression are pruned immediately.
+
+#### **Step E: Iterative Merge & Resolution**
+
+Instead of simply picking one winner, the system attempts to synthesize the best traits of the remaining branches.
+
+1. **Reduction Loop:** The system takes the surviving $N$ branches and iteratively reduces them to a target count $M$ (default $M=2$).
+2. **Pairwise Merge:** In each iteration, two branches are selected.
+3. **The Merge Agent:** An Agent is spawned to resolve the merge. It inspects the diffs of Branch A and Branch B against the Base.
+   * **Inspect:** The agent analyzes the semantic intent of both changes.
+   * **Resolve:** It decides to either:
+     * **Synergize:** Combine non-conflicting, beneficial features from both (taking the "best of both worlds").
+     * **Select:** If changes conflict logically, pick the superior implementation based on the original objective.
+   * **Commit:** A new merged branch is created.
+4. This repeats until only $M$ evolved branches remain.
+
+#### **Step F: Human Finalization**
+
+The system presents a final lineup of $M+1$ versions to the user:
+
+1. **The Candidates:** The $M$ evolved/merged branches.
+2. **The Baseline:** The original version (before any changes).
+3. **Decision:** The human reviews the diffs/logs and selects the winner to become the new commit.
+
+## **5. Implementation Guidelines**
+
+### **5.1 Tech Stack**
+
+* **Main Program:** **Elixir**. Chosen for its robust concurrency (OTP), fault tolerance, and actor model which maps perfectly to independent Agents.
+* **LLM Integration:** **Gemini CLI**. Agents shell out to gemini-cli for intelligence.
+  - To use gemini-cli, call the `gemini` command with appropriate parameters. `gemini` can accepts stdin or direct arguments, and can return output via stdout or json, depending on the use case, here are some examples:
+    * `cat README.md | gemini --prompt "Summarize this documentation"`
+    * `gemini -p "Explain this code" --output-format json`
+* **Version Control:** **Git**. use the git command line.
+
+The json output looks like this:
+
 ```json
 {
-    "node_type": "directory" | "file",
-    "name": "string",
-    "children": [ list of child nodes ],
-    "metadata": { key: value pairs },
-    "context": "string" // additional context information for the Agent
+  "response": "The code does X, Y, Z...",
+  "stats": {
+    "models": {
+      "gemini-2.5-pro": {
+        "api": {
+          "totalRequests": 2,
+          "totalErrors": 0,
+          "totalLatencyMs": 5053
+        },
+        "tokens": {
+          "prompt": 24939,
+          "candidates": 20,
+          "total": 25113,
+          "cached": 21263,
+          "thoughts": 154,
+          "tool": 0
+        }
+      },
+      "gemini-2.5-flash": {
+        ...
+      }
+    },
+    "tools": {
+      "totalCalls": 1,
+      "totalSuccess": 1,
+      "totalFail": 0,
+      "totalDurationMs": 1881,
+      "totalDecisions": {
+        "accept": 0,
+        "reject": 0,
+        "modify": 0,
+        "auto_accept": 1
+      },
+      "byName": {
+        "google_web_search": {
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "durationMs": 1881,
+          "decisions": {
+            "accept": 0,
+            "reject": 0,
+            "modify": 0,
+            "auto_accept": 1
+          }
+        }
+      }
+    },
+    "files": {
+      "totalLinesAdded": 0,
+      "totalLinesRemoved": 0
+    }
+  }
 }
 ```
 
-The node_type indicates whether the node is a directory or a file.
-The name is the name of the directory or file.
-The children is a list of child nodes (empty for files).
-The metadata is a dictionary of key-value pairs that can store additional information about the node.
-The context is a string that provides additional information for the Agent to use during generation at this level and below. Generally speaking, the context is just a README-like description of what this part of the repo is about. For example, in the root node, the context might describe the overall purpose of the repository, while in a subdirectory node, it might describe the specific functionality or API provided by that subdirectory.
+### **5.3 Git Integration Details**
 
-### Agent
+To ensure strict isolation between agents running in parallel:
 
-An agent is basically a LLM + state + action.
+1. **Never modify the main checkout.**
+2. **Worktrees:** Every agent action sequence happens in:
+   .evogit/worktrees/<agent_uuid>/
+3. **Lifecycle:**
+   * git worktree add -b agent/<uuid> .evogit/worktrees/<uuid> <base_sha>
+   * Agent performs edits in that directory.
+   * git commit -am "Agent <uuid>: <objective>"
+   * Evaluation runs in that directory.
 
-- **LLM**: the language model used to generate content and make decisions.
-- **state**: a tuple (commit_id, node_id). An agent's state is characterized by the commit id it's currently on (temporal) and the node id (spatial) within the repository structure. Currently, the temporal info (commit_id) is not used yet.
-- **action**: depends on the node type:
-  - For directory nodes: The agent can only modify its own node or calling other child nodes to perform actions.
-  - For file nodes: The agent can generate or modify the content of the file, or modify its own node (update metadata, context etc).
+### **5.4 CLI Interface**
 
-In EvoGit, we use agents in a functional programming style, meaning we do not think of agents as living objects that move around and change state. Instead, we think of them as functions that take in a state, and as described above, the state is simply a tuple (commit_id, node_id) and can be created on the fly.
-
-When running a agent, it will:
-1. Read the current state (commit_id, node_id).
-2. Construct a context based on the **current node and all the ancestor nodes** up to the root.
-3. Run the LLM with the constructed context and perform an action.
-
-The second step is the core of EvoGit's hierarchical design, where the context is built by a `gather_context(node)` function.
-
-In python-like pseudocode, it looks like this (some details omitted for clarity):
-
-```python
-def gather_context(node):
-    if node.is_root():
-        return node.context + info_fn(node.metadata)
-    else:
-        parent_context = gather_context(node.parent)
-        return parent_context + "\n" + node.context + info_fn(node.metadata)
-```
-
-Then based on the gathered context and the task at hand, the agent can decide what to do next.
-
-```python
-def run_agent(state):
-    context = gather_context(state.node)
-    ...
-    task_prompt = "Do XYZ"
-    ...
-    llm_output = LLM.generate(task_prompt + context)
-    ...
-    return new_state, action
-```
-
-## Runtime Behavior (the generation process)
-
-The overall generation process can be seen as a Dynamic Programming problem, where the state of each agent should be a summation of the states of its child agents (for directory nodes) or the content generated by itself (for file nodes).
-
-In practice, we don't consider the backtracking case for now, and simply generate the repository in a top-down manner, starting from the root node and recursively constructing the repository structure and content.
-
-For the users, they only need to define the repository structure by defining the functionality and boundaries of per node or per level in the hierarchy, and the EvoGit system will take care of the rest.
-If defined per node, the user written context will be used directly to that node but not its children.
-If defined per level, the user written context will be used as a template for all nodes at that level.
-
-## Code Guidelines
-
-### Programming Style
-
-The project itself is implemented in Python.
-So while we say "functional programming style", we do not mean to use a purely functional programming language, but rather to follow functional programming principles in our code design.
-This means:
-- The Agent is implemented as a Class, but its methods are mostly pure functions that take in state (self) and return new state without side effects.
-- The repository structure is represented as a tree of Node objects, where each Node has methods to manipulate its children and metadata in a functional way (returning new nodes instead of modifying existing ones).
-- Use recursion where appropriate, especially for traversing the tree structure, so the code matches with our conceptual model.
-
-### Git usage
-
-The EvoGit system interacts with git repositories.
-To manage git operations, we use libgit2, a C library for git, via its Python bindings, pygit2.
+The evogit is used as a cli tool, so it should provide necessary commands to run the whole system.
