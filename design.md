@@ -206,3 +206,8 @@ To ensure strict isolation between agents running in parallel:
 ### **5.4 CLI Interface**
 
 The evogit is used as a cli tool, so it should provide necessary commands to run the whole system.
+
+### **5.5 Other Considerations**
+
+- Json library: `JSON`, since elixir 1.18, JSON is included in the standard library, it uses the same API as `Jason`, but better.
+- Logging: use `Logger` module from elixir standard library.
