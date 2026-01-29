@@ -47,14 +47,14 @@ defmodule EvoGit.Runtime.Genesis do
       WorkerPool.run(fn worktree_path ->
         abs_node_path = Path.join(worktree_path, node_path)
         type = if File.dir?(abs_node_path), do: :directory, else: :file
-        
+
         # Construct Initial State
         phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
-        
+
         # We need to ensure the context node can be loaded. 
         # Since we are just planning/realizing, we use the path.
         context_node = ContextNode.load(abs_node_path, worktree_path)
-        
+
         state = %{context_node: context_node, phylo_node: phylo_node}
 
         # Step 2: Plan

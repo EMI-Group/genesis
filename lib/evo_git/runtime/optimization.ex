@@ -19,16 +19,16 @@ defmodule EvoGit.Runtime.Optimization do
     Logger.info("Optimization: Diagnosed target path: #{target_path}")
 
     # 2. Dispatch (Single Agent)
-    
-    case WorkerPool.run(fn worktree_path -> 
-        phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
-        abs_target_path = Path.join(worktree_path, target_path)
-        context_node = ContextNode.load(abs_target_path, worktree_path)
-        
-        state = %{context_node: context_node, phylo_node: phylo_node}
-        
-        Agent.mutate(state, objective)
-    end) do
+
+    case WorkerPool.run(fn worktree_path ->
+           phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
+           abs_target_path = Path.join(worktree_path, target_path)
+           context_node = ContextNode.load(abs_target_path, worktree_path)
+
+           state = %{context_node: context_node, phylo_node: phylo_node}
+
+           Agent.mutate(state, objective)
+         end) do
       {:ok, %{phylo_node: updated_node}} ->
         Logger.info(
           "Optimization: Evolution successful. New commit: #{String.slice(updated_node.current_commit, 0, 7)}"

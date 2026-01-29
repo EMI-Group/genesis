@@ -17,7 +17,7 @@ defmodule EvoGit.Agent do
   def mutate(%{context_node: context_node, phylo_node: phylo_node} = state, objective) do
     worktree_path = phylo_node.repo
     sha = phylo_node.current_commit
-    
+
     # Calculate relative path for logging
     node_path = Path.relative_to(context_node.path, worktree_path)
     Logger.info("Agent starting for #{node_path} on #{String.slice(sha, 0, 7)}")
@@ -31,7 +31,7 @@ defmodule EvoGit.Agent do
     # Ensure we use the worktree path as root
     context_nodes = ContextNode.hier_context(context_node.path, worktree_path)
 
-    context_files = 
+    context_files =
       Enum.map(context_nodes, fn node ->
         if node.type == :directory do
           Path.join(node.path, "CONTEXT.md")
@@ -42,10 +42,10 @@ defmodule EvoGit.Agent do
       |> Enum.filter(&File.exists?/1)
 
     # 3. Call Gemini
-    prompt = 
-      "Objective: #{objective}\n" <> 
-        "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <> 
-        "You have access to the files in the current directory.\n" <> 
+    prompt =
+      "Objective: #{objective}\n" <>
+        "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <>
+        "You have access to the files in the current directory.\n" <>
         "Modify the files as needed."
 
     case Gemini.call(prompt, context_files, nil, cd: worktree_path) do
@@ -77,10 +77,10 @@ defmodule EvoGit.Agent do
     {:ok, files} = PhyloGraphNode.list_files(commit_sha)
     file_tree = Enum.join(files, "\n")
 
-    diag_prompt = 
-      "Objective: #{objective}\n" <> 
-        "File Tree:\n#{file_tree}\n" <> 
-        "Identify the single most relevant directory or file path to modify.\n" <> 
+    diag_prompt =
+      "Objective: #{objective}\n" <>
+        "File Tree:\n#{file_tree}\n" <>
+        "Identify the single most relevant directory or file path to modify.\n" <>
         "Return ONLY the path as a JSON string under key 'path'."
 
     # Diagnosis uses Gemini directly on the current context (no worktree needed just for query if we have the file list)
@@ -124,7 +124,7 @@ defmodule EvoGit.Agent do
       ) do
     worktree_path = phylo_node.repo
     current_sha = phylo_node.current_commit
-    
+
     Logger.info(
       "Agent resolving conflict between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
     )
@@ -145,7 +145,7 @@ defmodule EvoGit.Agent do
         # 3. Context
         context_nodes = ContextNode.hier_context(context_node.path, worktree_path)
 
-        context_files = 
+        context_files =
           Enum.map(context_nodes, fn node ->
             if node.type == :directory, do: Path.join(node.path, "CONTEXT.md"), else: node.path
           end)
@@ -157,13 +157,13 @@ defmodule EvoGit.Agent do
         Enum.each(conflicts, fn file ->
           abs_file = Path.join(worktree_path, file)
 
-          prompt = 
-            "Objective: Resolve the merge conflicts in '#{file}'.\n" <> 
-              "The file contains git conflict markers.\n" <> 
-              "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <> 
-              "1. Understand the intent of both branches.\n" <> 
-              "2. Synergize the changes if possible.\n" <> 
-              "3. Select the best implementation if mutually exclusive.\n" <> 
+          prompt =
+            "Objective: Resolve the merge conflicts in '#{file}'.\n" <>
+              "The file contains git conflict markers.\n" <>
+              "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <>
+              "1. Understand the intent of both branches.\n" <>
+              "2. Synergize the changes if possible.\n" <>
+              "3. Select the best implementation if mutually exclusive.\n" <>
               "4. Modify the file to contain ONLY the resolved code (remove markers)."
 
           # Pass absolute path of conflict file as context
@@ -171,7 +171,7 @@ defmodule EvoGit.Agent do
         end)
 
         # 5. Commit
-        msg = 
+        msg =
           "Agent: Resolved conflicts between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
 
         case PhyloGraphNode.add_and_commit(phylo_node, msg) do
