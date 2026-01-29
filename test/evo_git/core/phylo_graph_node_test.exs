@@ -62,7 +62,7 @@ defmodule EvoGit.Core.PhyloGraphNodeTest do
 
     {:ok, new_node} = PhyloGraphNode.add_and_commit(node, "Add new file")
 
-    assert new_node.path == path
+    assert new_node.repo == path
     assert new_node.current_commit != main
 
     {head_sha, _} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
