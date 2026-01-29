@@ -6,7 +6,7 @@ defmodule EvoGit.Runtime.Optimization do
   alias EvoGit.WorkerPool
   require Logger
 
-  def run(objective) do
+  def run(objective, _opts \\ []) do
     Logger.info("Optimization: Starting for objective: #{objective}")
 
     {:ok, current_sha} = PhyloGraphNode.current_head()
