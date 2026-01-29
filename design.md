@@ -92,9 +92,9 @@ The system checks the Analyst's output:
 
 Each dispatched agent:
 
-1. **Forks:** Creates a private Git Worktree branching off the current frontier.
+1. **Forks:** Find a unoccupied worktree, checkout the commit in detached HEAD state.
 2. **Acts:** Calls gemini-cli to modify files within its node_path to satisfy the objective.
-3. **Commits:** Saves the changes to its isolated branch.
+3. **Commits:** Saves the changes by creating a new commit in the worktree.
 
 #### **Step D: Pre-Filtering (Sanity Check)**
 
