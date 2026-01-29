@@ -39,6 +39,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<Your Prompt>"
 
 *   `--file`, `-f`: Read the prompt from a file.
 *   `--concurrency`, `-c`: Number of parallel workers (default: 3).
+*   `--path`, `-p`: Path to the git repository (default: current directory).
 
 **Examples:**
 
@@ -46,8 +47,8 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<Your Prompt>"
 # Direct prompt
 mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Create a Phoenix web app for a Todo list"
 
-# From file
-mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis -f design_doc.md --concurrency 5
+# From file with custom path
+mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis -f design_doc.md --path /path/to/repo
 ```
 
 #### 2. Optimization (Evolution Phase)
@@ -58,16 +59,21 @@ Fixes bugs, optimizes performance, or adds features to an existing project.
 mix run -e 'EvoGit.CLI.main(System.argv())' -- optimize "<Objective>"
 ```
 
+**Options:**
+
+*   `--path`, `-p`: Path to the git repository (default: current directory).
+
 **Examples:**
 
 ```bash
-mix run -e 'EvoGit.CLI.main(System.argv())' -- optimize "Fix the race condition in the worker pool"
+mix run -e 'EvoGit.CLI.main(System.argv())' -- optimize "Fix the race condition in the worker pool" --path /path/to/repo
 ```
 
 ### Configuration Options
 
 *   `--concurrency`, `-c`: Sets the number of concurrent agents/workers (default: 3).
 *   `--retries`, `-r`: Sets the maximum number of retries for failed agents (default: 3).
+*   `--path`, `-p`: Path to the git repository (default: current directory).
 *   `--help`, `-h`: Show help message.
 
 ## Architecture

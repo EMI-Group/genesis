@@ -23,7 +23,7 @@ defmodule EvoGit.WorkerPool do
   def init(opts) do
     max_concurrency = Keyword.get(opts, :max_concurrency, 3)
     max_retries = Keyword.get(opts, :max_retries, 3)
-    repo_root = File.cwd!()
+    repo_root = Application.get_env(:evo_git, :repo_path, File.cwd!()) |> Path.expand()
     worker_base = Path.join(repo_root, ".evogit/workers")
 
     Logger.info("Initializing Gemini Pool with #{max_concurrency} workers at #{worker_base}")
