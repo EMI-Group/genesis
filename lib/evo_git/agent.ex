@@ -6,18 +6,19 @@ defmodule EvoGit.Agent do
   alias EvoGit.Adapters.Gemini
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.WorkerPool
   require Logger
 
   @type state :: %{commit_sha: String.t(), node_path: String.t()}
   @type objective :: String.t()
 
   @doc """
-  Executes the agent logic using the Gemini Pool.
+  Executes the agent logic using the WorkerPool.
   """
   def mutate(%{commit_sha: sha, node_path: node_path} = state, objective) do
     Logger.info("Agent starting for #{node_path} on #{String.slice(sha, 0, 7)}")
 
-    Gemini.Pool.run(fn worktree_path ->
+    WorkerPool.run(fn worktree_path ->
       # 1. Checkout the correct commit in the assigned worktree
       # Clean first to be safe
       Git.clean(worktree_path)
@@ -123,7 +124,7 @@ defmodule EvoGit.Agent do
       "Agent resolving conflict between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
     )
 
-    Gemini.Pool.run(fn worktree_path ->
+    WorkerPool.run(fn worktree_path ->
       # 1. Setup
       Git.clean(worktree_path)
       Git.checkout(worktree_path, current_sha)
