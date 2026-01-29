@@ -63,12 +63,15 @@ The system runs in two distinct stages.
 
 *Goal: Recursively generate the repository skeleton.*
 
-1. **Initialization:** User provides a high-level prompt.
-2. **Root Generation:** The Root Agent creates the top-level CONTEXT.md defining the architecture.
-3. **Recursive Expansion:**
-   * The system monitors the file tree.
-   * For every new directory created defined in a CONTEXT.md, a new Agent is spawned with the state {current_sha, new_dir_path}.
-   * This continues until agents produce Leaf Nodes (actual code files).
+1. **Initialization:** User provides a high-level prompt on how to build the project, what is the goal of the project etc, and initialize the git repository if not already initialized.
+2. **Planning:** Inside the working directory Agent creates the context defining the architecture of that level based on the user's instructions and the context inherited from parent nodes. For directories, this is a CONTEXT.md file. For files, this is a header comment or module comment. The planning includes:
+   * Defining the Intent of the directory / file.
+   * Specifying the API Surface (what modules/files it will contain), and a rough outline of the file structures.
+   * Outlining Constraints for child nodes.
+3. **Realization:** Given the newly created context, the Agent:
+   * For directories, the agent will create the next level of empty subdirectories and files as specified in the context (CONTEXT.md).
+   * For files, the agent will generate the full implementation code that satisfies the context (header comment or module comment).
+5. **Recursion:** For each child node (directory or file), the system spawns a new Agent instance, running from step 2.
 
 ### **Stage 2: Optimization (The Evolutionary Loop)**
 
