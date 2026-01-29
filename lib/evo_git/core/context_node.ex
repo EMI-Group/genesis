@@ -2,20 +2,21 @@ defmodule EvoGit.Core.ContextNode do
   @moduledoc """
   Represents a node in the Spatial Dimension (the Context Tree).
   """
-  @enforce_keys [:path, :type]
-  defstruct [:path, :type, :context_contract]
+  @enforce_keys [:path, :type, :repo]
+  defstruct [:path, :type, :context_contract, :repo]
 
   @type t :: %__MODULE__{
           path: String.t(),
           type: :directory | :file,
-          context_contract: String.t() | nil
+          context_contract: String.t() | nil,
+          repo: String.t()
         }
 
   @doc """
   Loads a ContextNode from a given path on the disk.
   """
-  @spec load(String.t()) :: t()
-  def load(path) do
+  @spec load(String.t(), String.t()) :: t()
+  def load(path, repo) do
     if File.dir?(path) do
       contract_path = Path.join(path, "CONTEXT.md")
 
@@ -29,13 +30,15 @@ defmodule EvoGit.Core.ContextNode do
       %__MODULE__{
         path: path,
         type: :directory,
-        context_contract: contract
+        context_contract: contract,
+        repo: repo
       }
     else
       %__MODULE__{
         path: path,
         type: :file,
-        context_contract: nil
+        context_contract: nil,
+        repo: repo
       }
     end
   end
@@ -63,7 +66,7 @@ defmodule EvoGit.Core.ContextNode do
 
     case relative_path do
       "." ->
-        [load(abs_root)]
+        [load(abs_root, abs_root)]
 
       _ ->
         parts = Path.split(relative_path)
@@ -74,7 +77,7 @@ defmodule EvoGit.Core.ContextNode do
           end)
 
         [abs_root | paths]
-        |> Enum.map(&load/1)
+        |> Enum.map(fn p -> load(p, abs_root) end)
     end
   end
 end
