@@ -27,14 +27,17 @@ defmodule EvoGit.Core.ContextNodeTest do
     assert root_node.type == :directory
     assert root_node.context_contract == "Root Context"
     assert root_node.path == tmp_dir
+    assert root_node.repo == tmp_dir
 
     assert lib_node.type == :directory
     assert lib_node.context_contract == "Lib Context"
     assert lib_node.path == Path.join(tmp_dir, "lib")
+    assert lib_node.repo == tmp_dir
 
     assert file_node.type == :file
     assert file_node.context_contract == nil
     assert file_node.path == target_path
+    assert file_node.repo == tmp_dir
   end
 
   test "hier_context/2 handles missing intermediate contexts", %{tmp_dir: tmp_dir} do
@@ -53,6 +56,7 @@ defmodule EvoGit.Core.ContextNodeTest do
     assert length(hierarchy) == 4
 
     assert Enum.at(hierarchy, 0).path == tmp_dir
+    assert Enum.at(hierarchy, 0).repo == tmp_dir
     assert Enum.at(hierarchy, 1).path == Path.join(tmp_dir, "nested")
     assert Enum.at(hierarchy, 1).context_contract == nil
     assert Enum.at(hierarchy, 3).path == target_path
