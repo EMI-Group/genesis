@@ -74,7 +74,7 @@ defmodule EvoGit.Core.PhyloGraphNodeTest do
     node_feature = PhyloGraphNode.new(path, feature)
 
     # This should conflict on README.md
-    assert {:conflict, _node, files} = PhyloGraphNode.merge(node_main, node_feature)
+    assert {:conflict, _node, files} = PhyloGraphNode.crossover(node_main, node_feature)
     assert "README.md" in files
 
     # Check conflict files again
@@ -99,7 +99,7 @@ defmodule EvoGit.Core.PhyloGraphNodeTest do
     node_main = PhyloGraphNode.new(path, main_sha)
     node_feat = PhyloGraphNode.new(path, feat_sha)
 
-    {:ok, new_node} = PhyloGraphNode.merge(node_main, node_feat)
+    {:ok, new_node} = PhyloGraphNode.crossover(node_main, node_feat)
 
     assert new_node.current_commit != main_sha
     assert File.exists?(Path.join(path, "clean.txt"))

@@ -42,7 +42,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
   If conflicts occur, returns {:conflict, node, conflict_files}.
   If successful, returns {:ok, updated_node}.
   """
-  def merge(%__MODULE__{} = node, %__MODULE__{} = other_node) do
+  def crossover(%__MODULE__{} = node, %__MODULE__{} = other_node) do
     case Git.merge(node.path, other_node.current_commit) do
       {:ok, _output} ->
         {:ok, new_sha} = Git.rev_parse(node.path)
