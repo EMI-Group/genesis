@@ -4,6 +4,7 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Adapters.Git
   alias EvoGit.WorkerPool
+  alias EvoGit.Prompts
   require Logger
 
   def run(root_prompt) do
@@ -41,20 +42,15 @@ defmodule EvoGit.Runtime.Genesis do
   defp evolve_node(current_sha, node_path, context_instruction) do
     Logger.info("Genesis: Evolving #{node_path} from #{String.slice(current_sha, 0, 7)}")
 
-    # Step 2: Plan
-    # Create/Update CONTEXT.md (or file header)
-    plan_objective = """
-    Planning Phase for #{node_path}.
-    Instruction: #{context_instruction}
-    Task:
-    - If '#{node_path}' is a directory, create or update 'CONTEXT.md' inside it.
-      Define Intent, API Surface, and Constraints.
-    - If '#{node_path}' is a file, add a header comment defining its purpose.
-    """
-
     # We use a single worker session for both Plan and Realize steps to avoid excessive checkout/cleanup
     evolution_result =
       WorkerPool.run(fn worktree_path ->
+        abs_node_path = Path.join(worktree_path, node_path)
+        type = if File.dir?(abs_node_path), do: :directory, else: :file
+
+        # Step 2: Plan
+        plan_objective = Prompts.genesis_plan(type, node_path, context_instruction)
+
         with {:ok, plan_state} <-
                Agent.mutate(
                  worktree_path,
@@ -62,15 +58,7 @@ defmodule EvoGit.Runtime.Genesis do
                  plan_objective
                ),
              # Step 3: Realize
-             # Create structure or implementation
-             realize_objective = """
-             Realization Phase for #{node_path}.
-             Context is defined in CONTEXT.md (or header) of this node.
-             Task:
-             - If '#{node_path}' is a directory, create the immediate subdirectories and empty files specified in the context.
-               Do NOT implement the content of the children files yet, just create them.
-             - If '#{node_path}' is a file, implement the full code according to the header.
-             """,
+             realize_objective = Prompts.genesis_realize(type, node_path),
              {:ok, realize_state} <-
                Agent.mutate(worktree_path, plan_state, realize_objective) do
           {:ok, realize_state}
