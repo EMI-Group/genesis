@@ -116,7 +116,11 @@ defmodule EvoGit.Agent do
   @doc """
   Resolves conflicts between the current state and an incoming commit SHA.
   """
-  def resolve_conflict(worktree_path, %{commit_sha: current_sha, node_path: node_path} = state, incoming_sha) do
+  def resolve_conflict(
+        worktree_path,
+        %{commit_sha: current_sha, node_path: node_path} = state,
+        incoming_sha
+      ) do
     Logger.info(
       "Agent resolving conflict between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
     )

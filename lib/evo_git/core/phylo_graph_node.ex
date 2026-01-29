@@ -6,7 +6,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
 
   defstruct [:repo, :current_commit]
 
-  @type t :: %__MODULE__{ 
+  @type t :: %__MODULE__{
           repo: String.t(),
           current_commit: String.t()
         }
@@ -108,7 +108,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
   def list_immediate_children(commit_sha, path, repo \\ File.cwd!()) do
     # git ls-tree --name-only <sha> <path>/
     # Note: if path is ".", use just the sha.
-    args = 
+    args =
       cond do
         path == "." ->
           ["ls-tree", "--name-only", commit_sha]
