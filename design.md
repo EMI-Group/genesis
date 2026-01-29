@@ -63,7 +63,7 @@ The system runs in two distinct stages.
 
 *Goal: Recursively generate the repository skeleton.*
 
-1. **Initialization:** User provides a high-level prompt on how to build the project, what is the goal of the project etc, and initialize the git repository if not already initialized.
+1. **Initialization:** User provides a high-level prompt on how to build the project, what is the goal of the project etc, and initialize the git repository and several worktrees if not already initialized.
 2. **Planning:** Inside the working directory Agent creates the context defining the architecture of that level based on the user's instructions and the context inherited from parent nodes. For directories, this is a CONTEXT.md file. For files, this is a header comment or module comment. The planning includes:
    * Defining the Intent of the directory / file.
    * Specifying the API Surface (what modules/files it will contain), and a rough outline of the file structures.
@@ -71,7 +71,7 @@ The system runs in two distinct stages.
 3. **Realization:** Given the newly created context, the Agent:
    * For directories, the agent will create the next level of empty subdirectories and files as specified in the context (CONTEXT.md).
    * For files, the agent will generate the full implementation code that satisfies the context (header comment or module comment).
-5. **Recursion:** For each child node (directory or file), the system spawns a new Agent instance, running from step 2.
+4. **Recursion:** For each child node (directory or file), the system spawns a new Agent instance, running from step 2.
 
 ### **Stage 2: Optimization (The Evolutionary Loop)**
 
@@ -203,12 +203,17 @@ To ensure strict isolation between agents running in parallel:
 
 1. **Never modify the main checkout.**
 2. **Worktrees:** Every agent action sequence happens in:
-   .evogit/worktrees/<agent_uuid>/
+   .evogit/worktrees/worker_<i>/
 3. **Lifecycle:**
-   * git worktree add -b agent/<uuid> .evogit/worktrees/<uuid> <base_sha>
-   * Agent performs edits in that directory.
-   * git commit -am "Agent <uuid>: <objective>"
-   * Evaluation runs in that directory.
+   A pool manager keeps track of N available worker resources.
+   Each resource is:
+    1. An available worktree slot.
+    2. An available `gemini` cli instance.
+
+   When an agent is dispatched:
+   * Agent performs edits in that worktree.
+   * git commit -am "Agent: <objective>"
+   * Attach the gemini output as git commit notes for traceability.
 
 ### **5.4 CLI Interface**
 
