@@ -53,7 +53,7 @@ defmodule EvoGit.Runtime.Genesis do
         # Construct Initial State
         phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
 
-        # We need to ensure the context node can be loaded. 
+        # We need to ensure the context node can be loaded.
         # Since we are just planning/realizing, we use the path.
         context_node = ContextNode.load(abs_node_path, worktree_path)
 
