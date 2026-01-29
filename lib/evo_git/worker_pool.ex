@@ -21,51 +21,26 @@ defmodule EvoGit.WorkerPool do
 
   @impl true
   def init(opts) do
+    # Lazy initialization: just store config, don't create worktrees yet.
     max_concurrency = Keyword.get(opts, :max_concurrency, 3)
     max_retries = Keyword.get(opts, :max_retries, 3)
-    repo_root = Application.get_env(:evo_git, :repo_path, File.cwd!()) |> Path.expand()
-    worker_base = Path.join(repo_root, ".evogit/workers")
-
-    Logger.info("Initializing Gemini Pool with #{max_concurrency} workers at #{worker_base}")
-
-    # cleanup old workers
-    File.rm_rf!(worker_base)
-    Git.prune_worktrees(repo_root)
-    File.mkdir_p!(worker_base)
-
-    # Resolve HEAD sha
-    {:ok, current_sha} = Git.rev_parse(repo_root)
-
-    workers =
-      for i <- 1..max_concurrency do
-        path = Path.join(worker_base, "worker_#{i}")
-
-        case Git.add_worktree(repo_root, path, current_sha) do
-          {:ok, _} ->
-            path
-
-          {:error, _, msg} ->
-            Logger.error("Failed to create worktree #{path}: #{msg}")
-            nil
-        end
-      end
-      |> Enum.reject(&is_nil/1)
 
     {:ok,
      %{
-       workers: workers,
-       # ref => %{path: path, from: from, fun: fun, retries: int, result_sent: bool}
+       initialized: false,
+       workers: [],
        active: %{},
        queue: :queue.new(),
-       repo_root: repo_root,
-       base_sha: current_sha,
-       max_retries: max_retries
+       repo_root: nil,
+       base_sha: nil,
+       max_retries: max_retries,
+       max_concurrency: max_concurrency
      }}
   end
 
   @impl true
   def handle_call({:run, fun}, from, state) do
-    # New tasks start with 0 retries
+    state = ensure_initialized(state)
     dispatch(fun, from, 0, state)
   end
 
@@ -137,19 +112,55 @@ defmodule EvoGit.WorkerPool do
     end
   end
 
+  defp ensure_initialized(%{initialized: true} = state), do: state
+
+  defp ensure_initialized(state) do
+    repo_root = Application.get_env(:evo_git, :repo_path, File.cwd!()) |> Path.expand()
+    worker_base = Path.join(repo_root, ".evogit/workers")
+    max_concurrency = state.max_concurrency
+
+    Logger.info("Initializing Gemini Pool with #{max_concurrency} workers at #{worker_base}")
+
+    # cleanup old workers
+    File.rm_rf!(worker_base)
+    Git.prune_worktrees(repo_root)
+    File.mkdir_p!(worker_base)
+
+    # Resolve HEAD sha
+    {:ok, current_sha} = Git.rev_parse(repo_root)
+
+    workers =
+      for i <- 1..max_concurrency do
+        path = Path.join(worker_base, "worker_#{i}")
+
+        case Git.add_worktree(repo_root, path, current_sha) do
+          {:ok, _} ->
+            path
+
+          {:error, _, msg} ->
+            Logger.error("Failed to create worktree #{path}: #{msg}")
+            nil
+        end
+      end
+      |> Enum.reject(&is_nil/1)
+
+    %{state | initialized: true, workers: workers, repo_root: repo_root, base_sha: current_sha}
+  end
+
   defp dispatch(fun, from, retries, %{workers: [path | rest], active: active} = state) do
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         fun.(path)
       end)
 
-    meta = %{
-      path: path,
-      from: from,
-      fun: fun,
-      retries: retries,
-      result_sent: false
-    }
+    meta =
+      %{
+        path: path,
+        from: from,
+        fun: fun,
+        retries: retries,
+        result_sent: false
+      }
 
     new_active = Map.put(active, task.ref, meta)
     {:noreply, %{state | workers: rest, active: new_active}}
