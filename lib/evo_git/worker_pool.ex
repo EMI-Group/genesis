@@ -22,6 +22,7 @@ defmodule EvoGit.WorkerPool do
   @impl true
   def init(opts) do
     max_concurrency = Keyword.get(opts, :max_concurrency, 3)
+    max_retries = Keyword.get(opts, :max_retries, 3)
     repo_root = File.cwd!()
     worker_base = Path.join(repo_root, ".evogit/workers")
 
@@ -53,61 +54,115 @@ defmodule EvoGit.WorkerPool do
     {:ok,
      %{
        workers: workers,
-       # ref => path
+       # ref => %{path: path, from: from, fun: fun, retries: int, result_sent: bool}
        active: %{},
-       queue: :queue.new()
+       queue: :queue.new(),
+       repo_root: repo_root,
+       base_sha: current_sha,
+       max_retries: max_retries
      }}
   end
 
   @impl true
   def handle_call({:run, fun}, from, state) do
-    dispatch(fun, from, state)
+    # New tasks start with 0 retries
+    dispatch(fun, from, 0, state)
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    # Worker process finished or crashed
-    case Map.pop(state.active, ref) do
-      {path, new_active} when not is_nil(path) ->
-        # Reclaim worker
-        # Clean it up slightly (optional but good practice)
-        # Git.clean(path)
-        # Git.reset_hard(path)
+  def handle_info({ref, result}, state) when is_reference(ref) do
+    # Task succeeded and returned a result
+    case Map.get(state.active, ref) do
+      %{from: from} = meta ->
+        GenServer.reply(from, result)
+        new_active = Map.put(state.active, ref, %{meta | result_sent: true})
+        {:noreply, %{state | active: new_active}}
 
-        # We put it back in the pool
-        new_state = %{state | active: new_active, workers: [path | state.workers]}
-        process_queue(new_state)
+      nil ->
+        # Received message for unknown task (maybe already processed DOWN?)
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    # Task finished (normal) or crashed
+    case Map.pop(state.active, ref) do
+      {meta, new_active} when not is_nil(meta) ->
+        %{
+          path: path,
+          from: from,
+          fun: fun,
+          retries: retries,
+          result_sent: result_sent
+        } = meta
+
+        if reason == :normal or result_sent do
+          # Success case
+          # Return worker to pool
+          new_state = %{state | active: new_active, workers: [path | state.workers]}
+          process_queue(new_state)
+        else
+          # Crash case
+          Logger.error(
+            "Worker crashed on #{path}: #{inspect(reason)}. Retry #{retries}/#{state.max_retries}"
+          )
+
+          # 1. Reset Worktree
+          reset_worktree(path, state.repo_root, state.base_sha)
+
+          # 2. Retry Logic
+          if retries < state.max_retries do
+            # Re-queue with incremented retries
+            # We treat the reset worker as "available" now.
+            new_state = %{state | active: new_active, workers: [path | state.workers]}
+            # Add to queue
+            queue = :queue.in({fun, from, retries + 1}, state.queue)
+            process_queue(%{new_state | queue: queue})
+          else
+            # Max retries exceeded
+            msg =
+              "Worker failed after #{state.max_retries} retries. Last reason: #{inspect(reason)}"
+
+            Logger.error(msg)
+            # Reply error to caller so they aren't stuck forever?
+            # Or crash the program as requested.
+            GenServer.reply(from, {:error, :max_retries_exceeded})
+            raise RuntimeError, message: msg
+          end
+        end
 
       {nil, _} ->
         {:noreply, state}
     end
   end
 
-  defp dispatch(fun, from, %{workers: [path | rest], active: active} = state) do
-    {_pid, ref} =
-      spawn_monitor(fn ->
-        try do
-          result = fun.(path)
-          GenServer.reply(from, result)
-        catch
-          kind, reason ->
-            Logger.error("Worker crashed: #{inspect(reason)}")
-            GenServer.reply(from, {:error, {kind, reason}})
-        end
+  defp dispatch(fun, from, retries, %{workers: [path | rest], active: active} = state) do
+    task =
+      Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
+        fun.(path)
       end)
 
-    new_active = Map.put(active, ref, path)
+    meta = %{
+      path: path,
+      from: from,
+      fun: fun,
+      retries: retries,
+      result_sent: false
+    }
+
+    new_active = Map.put(active, task.ref, meta)
     {:noreply, %{state | workers: rest, active: new_active}}
   end
 
-  defp dispatch(fun, from, %{workers: [], queue: queue} = state) do
-    {:noreply, %{state | queue: :queue.in({fun, from}, queue)}}
+  defp dispatch(fun, from, retries, %{workers: [], queue: queue} = state) do
+    {:noreply, %{state | queue: :queue.in({fun, from, retries}, queue)}}
   end
 
   defp process_queue(%{workers: [_path | _], queue: queue} = state) do
     case :queue.out(queue) do
-      {{:value, {fun, from}}, new_queue} ->
-        dispatch(fun, from, %{state | queue: new_queue})
+      {{:value, {fun, from, retries}}, new_queue} ->
+        dispatch(fun, from, retries, %{state | queue: new_queue})
 
       {:empty, _} ->
         {:noreply, state}
@@ -115,4 +170,14 @@ defmodule EvoGit.WorkerPool do
   end
 
   defp process_queue(state), do: {:noreply, state}
+
+  defp reset_worktree(path, repo_root, base_sha) do
+    Logger.info("Resetting worktree #{path}...")
+    File.rm_rf!(path)
+    # Prune is global, might affect others?
+    # git worktree prune removes information about missing worktrees.
+    # Since we rm_rf'd it, prune should clean it up.
+    Git.prune_worktrees(repo_root)
+    Git.add_worktree(repo_root, path, base_sha)
+  end
 end
