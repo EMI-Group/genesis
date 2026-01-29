@@ -14,7 +14,7 @@ defmodule EvoGit.Agent do
   @doc """
   Executes the agent logic using the Gemini Pool.
   """
-  def run(%{commit_sha: sha, node_path: node_path} = state, objective) do
+  def mutate(%{commit_sha: sha, node_path: node_path} = state, objective) do
     Logger.info("Agent starting for #{node_path} on #{String.slice(sha, 0, 7)}")
 
     Gemini.Pool.run(fn worktree_path ->
