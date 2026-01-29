@@ -2,6 +2,7 @@ defmodule EvoGit.Runtime.Genesis do
   @moduledoc "Stage 1: Creation Phase"
   alias EvoGit.Agent
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.Core.ContextNode
   alias EvoGit.Adapters.Git
   alias EvoGit.WorkerPool
   alias EvoGit.Prompts
@@ -42,25 +43,27 @@ defmodule EvoGit.Runtime.Genesis do
   defp evolve_node(current_sha, node_path, context_instruction) do
     Logger.info("Genesis: Evolving #{node_path} from #{String.slice(current_sha, 0, 7)}")
 
-    # We use a single worker session for both Plan and Realize steps to avoid excessive checkout/cleanup
     evolution_result =
       WorkerPool.run(fn worktree_path ->
         abs_node_path = Path.join(worktree_path, node_path)
         type = if File.dir?(abs_node_path), do: :directory, else: :file
+        
+        # Construct Initial State
+        phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
+        
+        # We need to ensure the context node can be loaded. 
+        # Since we are just planning/realizing, we use the path.
+        context_node = ContextNode.load(abs_node_path, worktree_path)
+        
+        state = %{context_node: context_node, phylo_node: phylo_node}
 
         # Step 2: Plan
         plan_objective = Prompts.genesis_plan(type, node_path, context_instruction)
 
-        with {:ok, plan_state} <-
-               Agent.mutate(
-                 worktree_path,
-                 %{commit_sha: current_sha, node_path: node_path},
-                 plan_objective
-               ),
+        with {:ok, plan_state} <- Agent.mutate(state, plan_objective),
              # Step 3: Realize
              realize_objective = Prompts.genesis_realize(type, node_path),
-             {:ok, realize_state} <-
-               Agent.mutate(worktree_path, plan_state, realize_objective) do
+             {:ok, realize_state} <- Agent.mutate(plan_state, realize_objective) do
           {:ok, realize_state}
         end
       end)
@@ -68,8 +71,9 @@ defmodule EvoGit.Runtime.Genesis do
     case evolution_result do
       {:ok, realize_state} ->
         # Step 4: Recursion
-        # Find children created/present in realize_state.commit_sha
-        recurse_children(realize_state.commit_sha, node_path)
+        # Find children created/present in the new commit
+        new_sha = realize_state.phylo_node.current_commit
+        recurse_children(new_sha, node_path)
 
       error ->
         error
@@ -89,7 +93,7 @@ defmodule EvoGit.Runtime.Genesis do
           end)
 
         if valid_children == [] do
-          {:ok, %{commit_sha: base_sha, node_path: node_path}}
+          {:ok, base_sha}
         else
           Logger.info(
             "Genesis: Recursing into children of #{node_path}: #{inspect(valid_children)}"
@@ -105,7 +109,6 @@ defmodule EvoGit.Runtime.Genesis do
 
   defp process_children_parallel(base_sha, children) do
     # Use Task.async_stream for parallel agents
-    # Manage resources by limiting concurrency to typical pool size (3)
     results =
       Task.async_stream(
         children,
@@ -117,10 +120,8 @@ defmodule EvoGit.Runtime.Genesis do
       )
 
     # Collect results and merge them sequentially into the base
-    # Note: Each child returns a state with a commit that is (base + child_changes)
-    # We need to merge them all together.
     Enum.reduce_while(results, base_sha, fn
-      {:ok, {:ok, %{commit_sha: child_sha}}}, current_base ->
+      {:ok, {:ok, child_sha}}, current_base ->
         Logger.info(
           "Genesis: Merging child #{String.slice(child_sha, 0, 7)} into #{String.slice(current_base, 0, 7)}"
         )
@@ -138,20 +139,23 @@ defmodule EvoGit.Runtime.Genesis do
     end)
     |> case do
       {:error, _} = err -> err
-      sha when is_binary(sha) -> {:ok, %{commit_sha: sha, node_path: "."}}
+      sha when is_binary(sha) -> {:ok, sha}
     end
   end
 
   defp merge_branch(base_sha, other_sha) do
-    # Use Agent.resolve_conflict to handle the merge (and potential conflicts)
-    # It manages the worktree resource via WorkerPool
-    state = %{commit_sha: base_sha, node_path: "."}
-
     WorkerPool.run(fn worktree_path ->
-      Agent.resolve_conflict(worktree_path, state, other_sha)
+      phylo_node = PhyloGraphNode.new(worktree_path, base_sha)
+      context_node = ContextNode.load(worktree_path, worktree_path)
+      state = %{context_node: context_node, phylo_node: phylo_node}
+
+      case Agent.resolve_conflict(state, other_sha) do
+        {:ok, %{phylo_node: updated_phylo_node}} -> {:ok, updated_phylo_node.current_commit}
+        error -> error
+      end
     end)
     |> case do
-      {:ok, %{commit_sha: new_sha}} -> {:ok, new_sha}
+      {:ok, sha} -> {:ok, sha}
       error -> error
     end
   end
