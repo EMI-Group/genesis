@@ -40,9 +40,9 @@ defmodule EvoGit.Agent do
 
       # 3. Call Gemini
       prompt =
-        "Objective: #{objective}\n" <> 
-          "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <> 
-          "You have access to the files in the current directory.\n" <> 
+        "Objective: #{objective}\n" <>
+          "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <>
+          "You have access to the files in the current directory.\n" <>
           "Modify the files as needed."
 
       case Gemini.call(prompt, context_files, nil, cd: worktree_path) do
@@ -78,9 +78,9 @@ defmodule EvoGit.Agent do
     file_tree = Enum.join(files, "\n")
 
     diag_prompt =
-      "Objective: #{objective}\n" <> 
-        "File Tree:\n#{file_tree}\n" <> 
-        "Identify the single most relevant directory or file path to modify.\n" <> 
+      "Objective: #{objective}\n" <>
+        "File Tree:\n#{file_tree}\n" <>
+        "Identify the single most relevant directory or file path to modify.\n" <>
         "Return ONLY the path as a JSON string under key 'path'."
 
     # Diagnosis uses Gemini directly on the current context (no worktree needed just for query if we have the file list)
@@ -105,9 +105,10 @@ defmodule EvoGit.Agent do
   end
 
   defp validate_path(path, files) do
-    if path == "." or path in files or (path <> "/") in files or Enum.any?(files, &String.starts_with?(&1, path <> "/")) do
-       # It's a valid file or directory (prefix of some file)
-       path
+    if path == "." or path in files or (path <> "/") in files or
+         Enum.any?(files, &String.starts_with?(&1, path <> "/")) do
+      # It's a valid file or directory (prefix of some file)
+      path
     else
       Logger.warning("Agent: Diagnosed path '#{path}' not found in tree, falling back to root.")
       "."
@@ -152,12 +153,12 @@ defmodule EvoGit.Agent do
             abs_file = Path.join(worktree_path, file)
 
             prompt =
-              "Objective: Resolve the merge conflicts in '#{file}'.\n" <> 
-                "The file contains git conflict markers.\n" <> 
-                "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <> 
-                "1. Understand the intent of both branches.\n" <> 
-                "2. Synergize the changes if possible.\n" <> 
-                "3. Select the best implementation if mutually exclusive.\n" <> 
+              "Objective: Resolve the merge conflicts in '#{file}'.\n" <>
+                "The file contains git conflict markers.\n" <>
+                "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <>
+                "1. Understand the intent of both branches.\n" <>
+                "2. Synergize the changes if possible.\n" <>
+                "3. Select the best implementation if mutually exclusive.\n" <>
                 "4. Modify the file to contain ONLY the resolved code (remove markers)."
 
             # Pass absolute path of conflict file as context
