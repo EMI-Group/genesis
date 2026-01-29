@@ -28,7 +28,7 @@
           assign(socket, :val, val)
         end
 
-- Elixir functions can have default arguments using the `arg \\ default` syntax.
+- Elixir functions can have default arguments using the `arg \\ default` syntax. Notice that, when editing with regular expressions, the backslash `\` is a special character and must be escaped as `\\` in order to match it literally, and to match double backslashes you must use `\\\\`.
 - **Never** nest multiple modules in the same file as it can cause cyclic dependencies and compilation errors
 - **Never** use map access syntax (`changeset[:field]`) on structs as they do not implement the Access behaviour by default. For regular structs, you **must** access the fields directly, such as `my_struct.field` or use higher level APIs that are available on the struct if they exist, `Ecto.Changeset.get_field/2` for changesets
 - Elixir's standard library has everything necessary for date and time manipulation. Familiarize yourself with the common `Time`, `Date`, `DateTime`, and `Calendar` interfaces by accessing their documentation as necessary. **Never** install additional dependencies unless asked or for date/time parsing (which you can use the `date_time_parser` package)
