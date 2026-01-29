@@ -52,6 +52,7 @@ defmodule EvoGit.Prompts do
     Instruction: #{instruction}
     Task: Create or update 'CONTEXT.md' inside this directory.
     Define Intent, API Surface, and Constraints for this architectural level.
+    Do NOT implement any files yet. Do NOT modify anything outside this directory.
     """
   end
 
@@ -60,6 +61,7 @@ defmodule EvoGit.Prompts do
     Planning Phase for file '#{node_path}'.
     Instruction: #{instruction}
     Task: Add a header comment / docstring / module doc to this file defining its purpose and constraints.
+    Do NOT implement any files yet. Do NOT modify anything except this file.
     """
   end
 
@@ -72,6 +74,7 @@ defmodule EvoGit.Prompts do
     Context is defined in CONTEXT.md of this node.
     Task: Create the immediate subdirectories and empty files specified in the context.
     Do NOT implement the content of the children files yet, just create them.
+    Do NOT modify anything outside this directory.
     """
   end
 
