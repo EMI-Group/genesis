@@ -8,13 +8,13 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Prompts
   require Logger
 
-  def run(root_prompt) do
+  def run(root_prompt, opts \\ []) do
     Logger.info("Genesis: Starting with root prompt: #{root_prompt}")
 
     with :ok <- ensure_repo(),
          {:ok, head_sha} <- PhyloGraphNode.current_head() do
       # Start recursion from root "."
-      evolve_node(head_sha, ".", root_prompt)
+      evolve_node(head_sha, ".", root_prompt, opts)
     else
       error ->
         Logger.error("Genesis failed to initialize: #{inspect(error)}")
@@ -40,7 +40,7 @@ defmodule EvoGit.Runtime.Genesis do
   end
 
   # The Core Recursive Function
-  defp evolve_node(current_sha, node_path, context_instruction) do
+  defp evolve_node(current_sha, node_path, context_instruction, opts) do
     Logger.info("Genesis: Evolving #{node_path} from #{String.slice(current_sha, 0, 7)}")
 
     evolution_result =
@@ -73,14 +73,14 @@ defmodule EvoGit.Runtime.Genesis do
         # Step 4: Recursion
         # Find children created/present in the new commit
         new_sha = realize_state.phylo_node.current_commit
-        recurse_children(new_sha, node_path)
+        recurse_children(new_sha, node_path, opts)
 
       error ->
         error
     end
   end
 
-  defp recurse_children(base_sha, node_path) do
+  defp recurse_children(base_sha, node_path, opts) do
     case PhyloGraphNode.list_immediate_children(base_sha, node_path) do
       {:ok, children} ->
         # Filter children
@@ -99,7 +99,7 @@ defmodule EvoGit.Runtime.Genesis do
             "Genesis: Recursing into children of #{node_path}: #{inspect(valid_children)}"
           )
 
-          process_children_parallel(base_sha, valid_children)
+          process_children_parallel(base_sha, valid_children, opts)
         end
 
       error ->
@@ -107,16 +107,18 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  defp process_children_parallel(base_sha, children) do
+  defp process_children_parallel(base_sha, children, opts) do
+    max_concurrency = Keyword.get(opts, :max_concurrency, 3)
+
     # Use Task.async_stream for parallel agents
     results =
       Task.async_stream(
         children,
         fn child_path ->
-          evolve_node(base_sha, child_path, "Inherit context from parent")
+          evolve_node(base_sha, child_path, "Inherit context from parent", opts)
         end,
         timeout: :infinity,
-        max_concurrency: 3
+        max_concurrency: max_concurrency
       )
 
     # Collect results and merge them sequentially into the base
