@@ -71,7 +71,7 @@ defmodule EvoGit.Adapters.Gemini.Pool do
       {path, new_active} when not is_nil(path) ->
         # Reclaim worker
         # Clean it up slightly (optional but good practice)
-        # Git.clean(path) 
+        # Git.clean(path)
         # Git.reset_hard(path)
 
         # We put it back in the pool
