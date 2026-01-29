@@ -13,6 +13,10 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
+  def init(path) do
+    run(["init"], path)
+  end
+
   def add_worktree(repo_path, worktree_path, base_sha, branch_name \\ nil) do
     args =
       if branch_name do

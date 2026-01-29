@@ -101,4 +101,39 @@ defmodule EvoGit.Core.PhyloGraphNode do
         error
     end
   end
+
+  @doc """
+  Lists immediate children (files and directories) of a given path in a specific commit.
+  """
+  def list_immediate_children(commit_sha, path, root_path \\ File.cwd!()) do
+    # git ls-tree --name-only <sha> <path>/
+    # Note: if path is ".", use just the sha.
+    args =
+      cond do
+        path == "." ->
+          ["ls-tree", "--name-only", commit_sha]
+
+        String.ends_with?(path, "/") ->
+          ["ls-tree", "--name-only", commit_sha, path]
+
+        true ->
+          ["ls-tree", "--name-only", commit_sha, path <> "/"]
+      end
+
+    case Git.run(args, root_path) do
+      {:ok, output} ->
+        # Output contains paths relative to root.
+        # If we asked for "lib", output is "lib/evo_git.ex", "lib/evo_git" etc.
+        items = String.split(output, "\n", trim: true)
+        {:ok, items}
+
+      {:error, _code, msg} ->
+        # If it fails because it's not a tree (e.g. it's a file), return empty list.
+        if String.contains?(msg, "not a tree object") do
+          {:ok, []}
+        else
+          {:error, msg}
+        end
+    end
+  end
 end

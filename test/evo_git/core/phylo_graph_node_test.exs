@@ -104,4 +104,41 @@ defmodule EvoGit.Core.PhyloGraphNodeTest do
     assert new_node.current_commit != main_sha
     assert File.exists?(Path.join(path, "clean.txt"))
   end
+
+  test "list_immediate_children", %{repo_path: path} do
+    # Create structure:
+    # .
+    # ├── file1.txt
+    # ├── dir1/
+    # │   └── file2.txt
+    # └── dir2/
+    File.write!(Path.join(path, "file1.txt"), "content")
+    File.mkdir!(Path.join(path, "dir1"))
+    File.write!(Path.join(path, "dir1/file2.txt"), "content")
+    File.mkdir!(Path.join(path, "dir2"))
+    # Git only tracks dirs with content usually, let's add .keep
+    File.write!(Path.join(path, "dir2/.keep"), "")
+
+    git_run(path, ["add", "."])
+    git_run(path, ["commit", "-m", "Structure"])
+    {sha, _} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
+    sha = String.trim(sha)
+
+    # Test root
+    {:ok, root_children} = PhyloGraphNode.list_immediate_children(sha, ".", path)
+    # ls-tree returns relative paths
+    assert "file1.txt" in root_children
+    assert "dir1" in root_children
+    assert "dir2" in root_children
+    assert "README.md" in root_children
+    assert "dir1/file2.txt" not in root_children
+
+    # Test dir1
+    {:ok, dir1_children} = PhyloGraphNode.list_immediate_children(sha, "dir1", path)
+    assert "dir1/file2.txt" in dir1_children
+
+    # Test file (should return empty)
+    {:ok, file_children} = PhyloGraphNode.list_immediate_children(sha, "file1.txt", path)
+    assert file_children == []
+  end
 end
