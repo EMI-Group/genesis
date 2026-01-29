@@ -59,7 +59,7 @@ defmodule EvoGit.Prompts do
     """
     Planning Phase for file '#{node_path}'.
     Instruction: #{instruction}
-    Task: Add a header comment to this file defining its purpose and constraints.
+    Task: Add a header comment / docstring / module doc to this file defining its purpose and constraints.
     """
   end
 
@@ -79,7 +79,7 @@ defmodule EvoGit.Prompts do
     """
     Realization Phase for file '#{node_path}'.
     Context is defined in the header comment of this node.
-    Task: Implement the full code according to the header.
+    Task: Implement the full code according to the header comment / docstring / module doc.
     """
   end
 end
