@@ -50,9 +50,10 @@ defmodule EvoGit.Prompts do
     """
     Planning Phase for directory '#{node_path}'.
     Instruction: #{instruction}
-    Task: Create or update 'CONTEXT.md' inside this directory.
+    Task: Create or update 'CONTEXT.md' inside this directory, and run tools to setup any necessary boilerplate or structure.
     Define Intent, API Surface, and Constraints for this architectural level.
-    Do NOT implement any files yet. Do NOT modify anything outside this directory.
+    You can use standard package / environment tools to setup any boilerplate or structure needed.
+    Do NOT directly implement any files yet. Do NOT modify anything outside this directory.
     """
   end
 
@@ -61,7 +62,7 @@ defmodule EvoGit.Prompts do
     Planning Phase for file '#{node_path}'.
     Instruction: #{instruction}
     Task: Add a header comment / docstring / module doc to this file defining its purpose and constraints.
-    Do NOT implement any files yet. Do NOT modify anything except this file.
+    Do NOT directly implement any files yet. Do NOT modify anything except this file.
     """
   end
 
