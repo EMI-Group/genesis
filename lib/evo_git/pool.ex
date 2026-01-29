@@ -1,4 +1,4 @@
-defmodule EvoGit.Adapters.Gemini.Pool do
+defmodule EvoGit.WorkerPool do
   use GenServer
   require Logger
   alias EvoGit.Adapters.Git

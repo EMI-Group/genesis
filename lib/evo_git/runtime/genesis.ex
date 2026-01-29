@@ -138,7 +138,7 @@ defmodule EvoGit.Runtime.Genesis do
 
   defp merge_branch(base_sha, other_sha) do
     # Use Agent.resolve_conflict to handle the merge (and potential conflicts)
-    # It manages the worktree resource via Gemini.Pool
+    # It manages the worktree resource via WorkerPool
     state = %{commit_sha: base_sha, node_path: "."}
 
     case Agent.resolve_conflict(state, other_sha) do
