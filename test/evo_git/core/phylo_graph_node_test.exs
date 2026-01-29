@@ -123,9 +123,10 @@ defmodule EvoGit.Core.PhyloGraphNodeTest do
     git_run(path, ["commit", "-m", "Structure"])
     {sha, _} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
     sha = String.trim(sha)
+    node = PhyloGraphNode.new(path, sha)
 
     # Test root
-    {:ok, root_children} = PhyloGraphNode.list_immediate_children(sha, ".", path)
+    {:ok, root_children} = PhyloGraphNode.list_immediate_children(node, ".")
     # ls-tree returns relative paths
     assert "file1.txt" in root_children
     assert "dir1" in root_children
@@ -134,11 +135,11 @@ defmodule EvoGit.Core.PhyloGraphNodeTest do
     assert "dir1/file2.txt" not in root_children
 
     # Test dir1
-    {:ok, dir1_children} = PhyloGraphNode.list_immediate_children(sha, "dir1", path)
+    {:ok, dir1_children} = PhyloGraphNode.list_immediate_children(node, "dir1")
     assert "dir1/file2.txt" in dir1_children
 
     # Test file (should return empty)
-    {:ok, file_children} = PhyloGraphNode.list_immediate_children(sha, "file1.txt", path)
+    {:ok, file_children} = PhyloGraphNode.list_immediate_children(node, "file1.txt")
     assert file_children == []
   end
 end

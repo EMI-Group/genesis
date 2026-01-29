@@ -83,9 +83,11 @@ defmodule EvoGit.Runtime.Genesis do
   end
 
   defp recurse_children(base_sha, node_path, opts) do
-    Logger.debug("Recursive down to child nodes of #{node_path}")
+    Logger.debug("Recursive down to child nodes of #{base_sha} #{node_path}")
+    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
+    node = PhyloGraphNode.new(repo_path, base_sha)
 
-    case PhyloGraphNode.list_immediate_children(base_sha, node_path) do
+    case PhyloGraphNode.list_immediate_children(node, node_path) do
       {:ok, children} ->
         # Filter children
         valid_children =
