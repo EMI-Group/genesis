@@ -84,7 +84,7 @@ defmodule EvoGit.Adapters.Gemini.Pool do
   end
 
   defp dispatch(fun, from, %{workers: [path | rest], active: active} = state) do
-    {pid, ref} =
+    {_pid, ref} =
       spawn_monitor(fn ->
         try do
           result = fun.(path)
@@ -104,7 +104,7 @@ defmodule EvoGit.Adapters.Gemini.Pool do
     {:noreply, %{state | queue: :queue.in({fun, from}, queue)}}
   end
 
-  defp process_queue(%{workers: [path | _], queue: queue} = state) do
+  defp process_queue(%{workers: [_path | _], queue: queue} = state) do
     case :queue.out(queue) do
       {{:value, {fun, from}}, new_queue} ->
         dispatch(fun, from, %{state | queue: new_queue})
