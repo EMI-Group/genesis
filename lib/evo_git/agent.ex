@@ -26,12 +26,6 @@ defmodule EvoGit.Agent do
       # 2. Construct Context
       abs_node_path = Path.join(worktree_path, node_path)
 
-      # Ensure the path exists (it should, as it's from the commit)
-      # But if we are creating a NEW directory, it might not exist yet?
-      # Genesis phase might ask for a new dir.
-      # "For every new directory created... a new Agent is spawned"
-      # So the directory should exist in the commit.
-
       context_nodes = ContextNode.hier_context(abs_node_path, worktree_path)
 
       context_files =
@@ -46,20 +40,14 @@ defmodule EvoGit.Agent do
 
       # 3. Call Gemini
       prompt =
-        "Objective: #{objective}\n" <>
-          "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <>
-          "You have access to the files in the current directory.\n" <>
+        "Objective: #{objective}\n" <> 
+          "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <> 
+          "You have access to the files in the current directory.\n" <> 
           "Modify the files as needed."
 
       case Gemini.call(prompt, context_files, nil, cd: worktree_path) do
         {:ok, _response} ->
           # 4. Commit changes
-          # We use PhyloGraphNode to encapsulate the "Commit" logic
-          # But PhyloGraphNode.new/2 expects a path and a commit.
-          # Here we are already IN the state.
-
-          # We can just create a node representing this worktree
-          # The SHA is what we started with
           node = PhyloGraphNode.new(worktree_path, sha)
 
           case PhyloGraphNode.add_and_commit(node, "Agent: #{objective}") do
@@ -76,6 +64,54 @@ defmodule EvoGit.Agent do
           {:error, :gemini_failed}
       end
     end)
+  end
+
+  @doc """
+  Identifies the most relevant target path for the given objective in the context of the commit.
+  Acts as an "Analyst Agent".
+  """
+  def diagnose(commit_sha, objective) do
+    Logger.info("Agent diagnosing objective on #{String.slice(commit_sha, 0, 7)}: #{objective}")
+
+    # Use PhyloGraphNode to get the file tree
+    {:ok, files} = PhyloGraphNode.list_files(commit_sha)
+    file_tree = Enum.join(files, "\n")
+
+    diag_prompt =
+      "Objective: #{objective}\n" <> 
+        "File Tree:\n#{file_tree}\n" <> 
+        "Identify the single most relevant directory or file path to modify.\n" <> 
+        "Return ONLY the path as a JSON string under key 'path'."
+
+    # Diagnosis uses Gemini directly on the current context (no worktree needed just for query if we have the file list)
+    # However, Gemini.call expects to run in a directory. We can run in CWD.
+    case Gemini.call(diag_prompt, [], nil, cd: File.cwd!()) do
+      {:ok, %{"path" => path}} ->
+        validate_path(String.trim(path), files)
+
+      {:ok, %{"response" => path}} ->
+        validate_path(String.trim(path), files)
+
+      {:error, :json_decode_error, text} ->
+        # Heuristic extraction
+        path = text |> String.split() |> List.last() |> String.trim()
+        validate_path(path, files)
+
+      error ->
+        Logger.error("Diagnosis failed: #{inspect(error)}")
+        # Fallback to root if diagnosis fails
+        "."
+    end
+  end
+
+  defp validate_path(path, files) do
+    if path == "." or path in files or (path <> "/") in files or Enum.any?(files, &String.starts_with?(&1, path <> "/")) do
+       # It's a valid file or directory (prefix of some file)
+       path
+    else
+      Logger.warning("Agent: Diagnosed path '#{path}' not found in tree, falling back to root.")
+      "."
+    end
   end
 
   @doc """
@@ -116,12 +152,12 @@ defmodule EvoGit.Agent do
             abs_file = Path.join(worktree_path, file)
 
             prompt =
-              "Objective: Resolve the merge conflicts in '#{file}'.\n" <>
-                "The file contains git conflict markers.\n" <>
-                "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <>
-                "1. Understand the intent of both branches.\n" <>
-                "2. Synergize the changes if possible.\n" <>
-                "3. Select the best implementation if mutually exclusive.\n" <>
+              "Objective: Resolve the merge conflicts in '#{file}'.\n" <> 
+                "The file contains git conflict markers.\n" <> 
+                "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <> 
+                "1. Understand the intent of both branches.\n" <> 
+                "2. Synergize the changes if possible.\n" <> 
+                "3. Select the best implementation if mutually exclusive.\n" <> 
                 "4. Modify the file to contain ONLY the resolved code (remove markers)."
 
             # Pass absolute path of conflict file as context

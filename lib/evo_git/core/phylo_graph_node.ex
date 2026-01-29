@@ -63,4 +63,42 @@ defmodule EvoGit.Core.PhyloGraphNode do
   def get_conflict_files(%__MODULE__{} = node) do
     Git.conflict_files(node.path)
   end
+
+  @doc """
+  Returns the current HEAD SHA for a given path.
+  """
+  def current_head(path \\ File.cwd!()) do
+    case Git.rev_parse(path) do
+      {:ok, sha} -> {:ok, sha}
+      error -> error
+    end
+  end
+
+  @doc """
+  Lists all directories in the given commit recursively.
+  """
+  def list_directories(commit_sha, root_path \\ File.cwd!()) do
+    case Git.run(["ls-tree", "-r", "-d", "--name-only", commit_sha], root_path) do
+      {:ok, output} ->
+        dirs = String.split(output, "\n", trim: true)
+        {:ok, dirs}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Lists all files in the given commit recursively.
+  """
+  def list_files(commit_sha, root_path \\ File.cwd!()) do
+    case Git.run(["ls-tree", "-r", "--name-only", commit_sha], root_path) do
+      {:ok, output} ->
+        files = String.split(output, "\n", trim: true)
+        {:ok, files}
+
+      error ->
+        error
+    end
+  end
 end
