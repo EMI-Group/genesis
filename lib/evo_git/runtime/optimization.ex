@@ -2,6 +2,7 @@ defmodule EvoGit.Runtime.Optimization do
   @moduledoc "Stage 2: Evolutionary Loop"
   alias EvoGit.Agent
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.WorkerPool
   require Logger
 
   def run(objective) do
@@ -17,7 +18,7 @@ defmodule EvoGit.Runtime.Optimization do
     # 2. Dispatch (Single Agent)
     state = %{commit_sha: current_sha, node_path: target_path}
 
-    case Agent.mutate(state, objective) do
+    case WorkerPool.run(fn worktree_path -> Agent.mutate(worktree_path, state, objective) end) do
       {:ok, new_state} ->
         Logger.info(
           "Optimization: Evolution successful. New commit: #{String.slice(new_state.commit_sha, 0, 7)}"

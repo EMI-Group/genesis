@@ -3,6 +3,7 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Agent
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Adapters.Git
+  alias EvoGit.WorkerPool
   require Logger
 
   def run(root_prompt) do
@@ -51,22 +52,39 @@ defmodule EvoGit.Runtime.Genesis do
     - If '#{node_path}' is a file, add a header comment defining its purpose.
     """
 
-    with {:ok, plan_state} <-
-           Agent.mutate(%{commit_sha: current_sha, node_path: node_path}, plan_objective),
-         # Step 3: Realize
-         # Create structure or implementation
-         realize_objective = """
-         Realization Phase for #{node_path}.
-         Context is defined in CONTEXT.md (or header) of this node.
-         Task:
-         - If '#{node_path}' is a directory, create the immediate subdirectories and empty files specified in the context.
-           Do NOT implement the content of the children files yet, just create them.
-         - If '#{node_path}' is a file, implement the full code according to the header.
-         """,
-         {:ok, realize_state} <- Agent.mutate(plan_state, realize_objective) do
-      # Step 4: Recursion
-      # Find children created/present in realize_state.commit_sha
-      recurse_children(realize_state.commit_sha, node_path)
+    # We use a single worker session for both Plan and Realize steps to avoid excessive checkout/cleanup
+    evolution_result =
+      WorkerPool.run(fn worktree_path ->
+        with {:ok, plan_state} <-
+               Agent.mutate(
+                 worktree_path,
+                 %{commit_sha: current_sha, node_path: node_path},
+                 plan_objective
+               ),
+             # Step 3: Realize
+             # Create structure or implementation
+             realize_objective = """
+             Realization Phase for #{node_path}.
+             Context is defined in CONTEXT.md (or header) of this node.
+             Task:
+             - If '#{node_path}' is a directory, create the immediate subdirectories and empty files specified in the context.
+               Do NOT implement the content of the children files yet, just create them.
+             - If '#{node_path}' is a file, implement the full code according to the header.
+             """,
+             {:ok, realize_state} <-
+               Agent.mutate(worktree_path, plan_state, realize_objective) do
+          {:ok, realize_state}
+        end
+      end)
+
+    case evolution_result do
+      {:ok, realize_state} ->
+        # Step 4: Recursion
+        # Find children created/present in realize_state.commit_sha
+        recurse_children(realize_state.commit_sha, node_path)
+
+      error ->
+        error
     end
   end
 
@@ -141,7 +159,10 @@ defmodule EvoGit.Runtime.Genesis do
     # It manages the worktree resource via WorkerPool
     state = %{commit_sha: base_sha, node_path: "."}
 
-    case Agent.resolve_conflict(state, other_sha) do
+    WorkerPool.run(fn worktree_path ->
+      Agent.resolve_conflict(worktree_path, state, other_sha)
+    end)
+    |> case do
       {:ok, %{commit_sha: new_sha}} -> {:ok, new_sha}
       error -> error
     end

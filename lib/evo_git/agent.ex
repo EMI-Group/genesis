@@ -6,65 +6,62 @@ defmodule EvoGit.Agent do
   alias EvoGit.Adapters.Gemini
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
-  alias EvoGit.WorkerPool
   require Logger
 
   @type state :: %{commit_sha: String.t(), node_path: String.t()}
   @type objective :: String.t()
 
   @doc """
-  Executes the agent logic using the WorkerPool.
+  Executes the agent logic inside the given worktree.
   """
-  def mutate(%{commit_sha: sha, node_path: node_path} = state, objective) do
+  def mutate(worktree_path, %{commit_sha: sha, node_path: node_path} = state, objective) do
     Logger.info("Agent starting for #{node_path} on #{String.slice(sha, 0, 7)}")
 
-    WorkerPool.run(fn worktree_path ->
-      # 1. Checkout the correct commit in the assigned worktree
-      # Clean first to be safe
-      Git.clean(worktree_path)
-      Git.checkout(worktree_path, sha)
+    # 1. Checkout the correct commit in the assigned worktree
+    # Clean first to be safe
+    Git.clean(worktree_path)
+    Git.checkout(worktree_path, sha)
 
-      # 2. Construct Context
-      abs_node_path = Path.join(worktree_path, node_path)
+    # 2. Construct Context
+    abs_node_path = Path.join(worktree_path, node_path)
 
-      context_nodes = ContextNode.hier_context(abs_node_path, worktree_path)
+    context_nodes = ContextNode.hier_context(abs_node_path, worktree_path)
 
-      context_files =
-        Enum.map(context_nodes, fn node ->
-          if node.type == :directory do
-            Path.join(node.path, "CONTEXT.md")
-          else
-            node.path
-          end
-        end)
-        |> Enum.filter(&File.exists?/1)
+    context_files =
+      Enum.map(context_nodes, fn node ->
+        if node.type == :directory do
+          Path.join(node.path, "CONTEXT.md")
+        else
+          node.path
+        end
+      end)
+      |> Enum.filter(&File.exists?/1)
 
-      # 3. Call Gemini
-      prompt =
-        "Objective: #{objective}\n" <>
-          "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <>
-          "You have access to the files in the current directory.\n" <>
-          "Modify the files as needed."
+    # 3. Call Gemini
+    prompt =
+      "Objective: #{objective}\n" <>
+        "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <>
+        "You have access to the files in the current directory.\n" <>
+        "Modify the files as needed."
 
-      case Gemini.call(prompt, context_files, nil, cd: worktree_path) do
-        {:ok, _response} ->
-          # 4. Commit changes
-          node = PhyloGraphNode.new(worktree_path, sha)
+    case Gemini.call(prompt, context_files, nil, cd: worktree_path) do
+      {:ok, _response} ->
+        # 4. Commit changes
+        node = PhyloGraphNode.new(worktree_path, sha)
 
-          case PhyloGraphNode.add_and_commit(node, "Agent: #{objective}") do
-            {:ok, updated_node} ->
-              {:ok, %{state | commit_sha: updated_node.current_commit}}
+        case PhyloGraphNode.add_and_commit(node, "Agent: #{objective}") do
+          {:ok, updated_node} ->
+            {:ok, %{state | commit_sha: updated_node.current_commit}}
 
-            error ->
-              Logger.error("Agent commit failed: #{inspect(error)}")
-              {:error, :commit_failed}
-          end
+          error ->
+            Logger.error("Agent commit failed: #{inspect(error)}")
+            {:error, :commit_failed}
+        end
 
-        error ->
-          Logger.error("Gemini call failed: #{inspect(error)}")
-          {:error, :gemini_failed}
-      end
-    end)
+      error ->
+        Logger.error("Gemini call failed: #{inspect(error)}")
+        {:error, :gemini_failed}
+    end
   end
 
   @doc """
@@ -119,72 +116,70 @@ defmodule EvoGit.Agent do
   @doc """
   Resolves conflicts between the current state and an incoming commit SHA.
   """
-  def resolve_conflict(%{commit_sha: current_sha, node_path: node_path} = state, incoming_sha) do
+  def resolve_conflict(worktree_path, %{commit_sha: current_sha, node_path: node_path} = state, incoming_sha) do
     Logger.info(
       "Agent resolving conflict between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
     )
 
-    WorkerPool.run(fn worktree_path ->
-      # 1. Setup
-      Git.clean(worktree_path)
-      Git.checkout(worktree_path, current_sha)
+    # 1. Setup
+    Git.clean(worktree_path)
+    Git.checkout(worktree_path, current_sha)
 
-      # 2. Merge
-      case Git.merge(worktree_path, incoming_sha) do
-        {:ok, _} ->
-          # Auto-merge successful
-          {:ok, new_sha} = Git.rev_parse(worktree_path)
-          {:ok, %{state | commit_sha: new_sha}}
+    # 2. Merge
+    case Git.merge(worktree_path, incoming_sha) do
+      {:ok, _} ->
+        # Auto-merge successful
+        {:ok, new_sha} = Git.rev_parse(worktree_path)
+        {:ok, %{state | commit_sha: new_sha}}
 
-        {:conflict, _} ->
-          # 3. Context
-          abs_node_path = Path.join(worktree_path, node_path)
-          context_nodes = ContextNode.hier_context(abs_node_path, worktree_path)
+      {:conflict, _} ->
+        # 3. Context
+        abs_node_path = Path.join(worktree_path, node_path)
+        context_nodes = ContextNode.hier_context(abs_node_path, worktree_path)
 
-          context_files =
-            Enum.map(context_nodes, fn node ->
-              if node.type == :directory, do: Path.join(node.path, "CONTEXT.md"), else: node.path
-            end)
-            |> Enum.filter(&File.exists?/1)
-
-          # 4. Resolve
-          {:ok, conflicts} = Git.conflict_files(worktree_path)
-
-          Enum.each(conflicts, fn file ->
-            abs_file = Path.join(worktree_path, file)
-
-            prompt =
-              "Objective: Resolve the merge conflicts in '#{file}'.\n" <>
-                "The file contains git conflict markers.\n" <>
-                "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <>
-                "1. Understand the intent of both branches.\n" <>
-                "2. Synergize the changes if possible.\n" <>
-                "3. Select the best implementation if mutually exclusive.\n" <>
-                "4. Modify the file to contain ONLY the resolved code (remove markers)."
-
-            # Pass absolute path of conflict file as context
-            Gemini.call(prompt, context_files ++ [abs_file], nil, cd: worktree_path)
+        context_files =
+          Enum.map(context_nodes, fn node ->
+            if node.type == :directory, do: Path.join(node.path, "CONTEXT.md"), else: node.path
           end)
+          |> Enum.filter(&File.exists?/1)
 
-          # 5. Commit
-          node = PhyloGraphNode.new(worktree_path, current_sha)
+        # 4. Resolve
+        {:ok, conflicts} = Git.conflict_files(worktree_path)
 
-          msg =
-            "Agent: Resolved conflicts between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
+        Enum.each(conflicts, fn file ->
+          abs_file = Path.join(worktree_path, file)
 
-          case PhyloGraphNode.add_and_commit(node, msg) do
-            {:ok, updated_node} ->
-              {:ok, %{state | commit_sha: updated_node.current_commit}}
+          prompt =
+            "Objective: Resolve the merge conflicts in '#{file}'.\n" <>
+              "The file contains git conflict markers.\n" <>
+              "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <>
+              "1. Understand the intent of both branches.\n" <>
+              "2. Synergize the changes if possible.\n" <>
+              "3. Select the best implementation if mutually exclusive.\n" <>
+              "4. Modify the file to contain ONLY the resolved code (remove markers)."
 
-            error ->
-              Logger.error("Agent resolve commit failed: #{inspect(error)}")
-              {:error, :commit_failed}
-          end
+          # Pass absolute path of conflict file as context
+          Gemini.call(prompt, context_files ++ [abs_file], nil, cd: worktree_path)
+        end)
 
-        error ->
-          Logger.error("Merge setup failed: #{inspect(error)}")
-          {:error, :merge_failed}
-      end
-    end)
+        # 5. Commit
+        node = PhyloGraphNode.new(worktree_path, current_sha)
+
+        msg =
+          "Agent: Resolved conflicts between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
+
+        case PhyloGraphNode.add_and_commit(node, msg) do
+          {:ok, updated_node} ->
+            {:ok, %{state | commit_sha: updated_node.current_commit}}
+
+          error ->
+            Logger.error("Agent resolve commit failed: #{inspect(error)}")
+            {:error, :commit_failed}
+        end
+
+      error ->
+        Logger.error("Merge setup failed: #{inspect(error)}")
+        {:error, :merge_failed}
+    end
   end
 end
