@@ -4,25 +4,25 @@ defmodule EvoGit.Core.PhyloGraphNode do
   """
   alias EvoGit.Adapters.Git
 
-  defstruct [:path, :current_commit]
+  defstruct [:repo, :current_commit]
 
-  @type t :: %__MODULE__{
-          path: String.t(),
+  @type t :: %__MODULE__{ 
+          repo: String.t(),
           current_commit: String.t()
         }
 
   @doc """
   Initializes the graph representation starting from a specific commit or branch.
   """
-  def new(path, commit \\ "main") do
-    %__MODULE__{path: path, current_commit: commit}
+  def new(repo, commit \\ "main") do
+    %__MODULE__{repo: repo, current_commit: commit}
   end
 
   @doc """
   Finds the common ancestor (merge base) between two nodes.
   """
   def find_merge_base(%__MODULE__{} = node_a, %__MODULE__{} = node_b) do
-    Git.merge_base(node_a.path, node_a.current_commit, node_b.current_commit)
+    Git.merge_base(node_a.repo, node_a.current_commit, node_b.current_commit)
   end
 
   @doc """
@@ -30,9 +30,9 @@ defmodule EvoGit.Core.PhyloGraphNode do
   Returns the updated node with the new commit SHA.
   """
   def add_and_commit(%__MODULE__{} = node, message) do
-    with {:ok, _} <- Git.add(node.path),
-         {:ok, _} <- Git.commit(node.path, message),
-         {:ok, new_sha} <- Git.rev_parse(node.path) do
+    with {:ok, _} <- Git.add(node.repo),
+         {:ok, _} <- Git.commit(node.repo, message),
+         {:ok, new_sha} <- Git.rev_parse(node.repo) do
       {:ok, %{node | current_commit: new_sha}}
     end
   end
@@ -43,13 +43,13 @@ defmodule EvoGit.Core.PhyloGraphNode do
   If successful, returns {:ok, updated_node}.
   """
   def crossover(%__MODULE__{} = node, %__MODULE__{} = other_node) do
-    case Git.merge(node.path, other_node.current_commit) do
+    case Git.merge(node.repo, other_node.current_commit) do
       {:ok, _output} ->
-        {:ok, new_sha} = Git.rev_parse(node.path)
+        {:ok, new_sha} = Git.rev_parse(node.repo)
         {:ok, %{node | current_commit: new_sha}}
 
       {:conflict, _output} ->
-        {:ok, conflicts} = Git.conflict_files(node.path)
+        {:ok, conflicts} = Git.conflict_files(node.repo)
         {:conflict, node, conflicts}
 
       error ->
@@ -61,14 +61,14 @@ defmodule EvoGit.Core.PhyloGraphNode do
   Returns a list of conflicting files in the node's current state.
   """
   def get_conflict_files(%__MODULE__{} = node) do
-    Git.conflict_files(node.path)
+    Git.conflict_files(node.repo)
   end
 
   @doc """
-  Returns the current HEAD SHA for a given path.
+  Returns the current HEAD SHA for a given repo path.
   """
-  def current_head(path \\ File.cwd!()) do
-    case Git.rev_parse(path) do
+  def current_head(repo \\ File.cwd!()) do
+    case Git.rev_parse(repo) do
       {:ok, sha} -> {:ok, sha}
       error -> error
     end
@@ -77,8 +77,8 @@ defmodule EvoGit.Core.PhyloGraphNode do
   @doc """
   Lists all directories in the given commit recursively.
   """
-  def list_directories(commit_sha, root_path \\ File.cwd!()) do
-    case Git.run(["ls-tree", "-r", "-d", "--name-only", commit_sha], root_path) do
+  def list_directories(commit_sha, repo \\ File.cwd!()) do
+    case Git.run(["ls-tree", "-r", "-d", "--name-only", commit_sha], repo) do
       {:ok, output} ->
         dirs = String.split(output, "\n", trim: true)
         {:ok, dirs}
@@ -91,8 +91,8 @@ defmodule EvoGit.Core.PhyloGraphNode do
   @doc """
   Lists all files in the given commit recursively.
   """
-  def list_files(commit_sha, root_path \\ File.cwd!()) do
-    case Git.run(["ls-tree", "-r", "--name-only", commit_sha], root_path) do
+  def list_files(commit_sha, repo \\ File.cwd!()) do
+    case Git.run(["ls-tree", "-r", "--name-only", commit_sha], repo) do
       {:ok, output} ->
         files = String.split(output, "\n", trim: true)
         {:ok, files}
@@ -105,10 +105,10 @@ defmodule EvoGit.Core.PhyloGraphNode do
   @doc """
   Lists immediate children (files and directories) of a given path in a specific commit.
   """
-  def list_immediate_children(commit_sha, path, root_path \\ File.cwd!()) do
+  def list_immediate_children(commit_sha, path, repo \\ File.cwd!()) do
     # git ls-tree --name-only <sha> <path>/
     # Note: if path is ".", use just the sha.
-    args =
+    args = 
       cond do
         path == "." ->
           ["ls-tree", "--name-only", commit_sha]
@@ -120,7 +120,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
           ["ls-tree", "--name-only", commit_sha, path <> "/"]
       end
 
-    case Git.run(args, root_path) do
+    case Git.run(args, repo) do
       {:ok, output} ->
         # Output contains paths relative to root.
         # If we asked for "lib", output is "lib/evo_git.ex", "lib/evo_git" etc.
