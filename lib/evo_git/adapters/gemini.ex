@@ -2,7 +2,6 @@ defmodule EvoGit.Adapters.Gemini do
   @moduledoc """
   Wrapper for Gemini CLI integration.
   """
-  alias EvoGit.Adapters.Gemini.Pool
 
   @doc """
   Calls the Gemini CLI with the given prompt and optional context files/input.
@@ -12,10 +11,7 @@ defmodule EvoGit.Adapters.Gemini do
   """
   def call(prompt, context_files \\ [], input \\ nil, opts \\ []) do
     cd = Keyword.get(opts, :cd, File.cwd!())
-
-    Pool.run(fn ->
-      execute(prompt, context_files, input, cd)
-    end)
+    execute(prompt, context_files, input, cd)
   end
 
   defp execute(prompt, context_files, input, cd) do
