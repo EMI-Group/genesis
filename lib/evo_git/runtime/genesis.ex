@@ -13,8 +13,15 @@ defmodule EvoGit.Runtime.Genesis do
     # Create Root Context
     initial_state = %{commit_sha: head_sha, node_path: "."}
 
-    objective =
-      "Create the top-level CONTEXT.md defining the architecture based on: #{root_prompt}. Create only the CONTEXT.md file and directory structure (empty dirs are fine)."
+    objective = """
+      Create the top-level CONTEXT.md defining the architecture based on: #{root_prompt}.
+      Create only the CONTEXT.md file.
+      The CONTEXT.md should outline the high-level design of the project, including:
+      - The purpose and goals of the project.
+      - The main components or modules, their responsibilities, and how they interact.
+      - The overall architecture and repo structure, e.g. where to put source files, tests, documentation, and where to put the main components.
+      - Any important design decisions or trade-offs made, e.g. choice of programming language, programming style, frameworks, libraries, and tools.
+    """
 
     case Agent.mutate(initial_state, objective) do
       {:ok, root_state} ->
@@ -49,8 +56,10 @@ defmodule EvoGit.Runtime.Genesis do
 
           state = %{commit_sha: current_sha, node_path: next_dir}
 
-          objective =
-            "Implement the context and structure for this directory based on the parent context. Create CONTEXT.md if it is a structural directory, or source files if it is a leaf."
+          objective = """
+            Implement the context and structure for this directory based on the parent context.
+            Create CONTEXT.md if it is a structural directory, or source files if it is a leaf.
+          """
 
           case Agent.mutate(state, objective) do
             {:ok, new_state} ->
