@@ -70,11 +70,11 @@ defmodule EvoGit.Agent do
   Identifies the most relevant target path for the given objective in the context of the commit.
   Acts as an "Analyst Agent".
   """
-  def diagnose(%PhyloGraphNode{current_commit: commit_sha} = _phylo_node, objective) do
+  def diagnose(%PhyloGraphNode{current_commit: commit_sha} = phylo_node, objective) do
     Logger.info("Agent diagnosing objective on #{String.slice(commit_sha, 0, 7)}: #{objective}")
 
     # Use PhyloGraphNode to get the file tree
-    {:ok, files} = PhyloGraphNode.list_files(commit_sha)
+    {:ok, files} = PhyloGraphNode.list_files(phylo_node)
     file_tree = Enum.join(files, "\n")
 
     diag_prompt =

@@ -67,7 +67,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
   @doc """
   Returns the current HEAD SHA for a given repo path.
   """
-  def current_head(repo \\ File.cwd!()) do
+  def current_head(repo) do
     case Git.rev_parse(repo) do
       {:ok, sha} -> {:ok, sha}
       error -> error
@@ -77,8 +77,8 @@ defmodule EvoGit.Core.PhyloGraphNode do
   @doc """
   Lists all directories in the given commit recursively.
   """
-  def list_directories(commit_sha, repo \\ File.cwd!()) do
-    case Git.run(["ls-tree", "-r", "-d", "--name-only", commit_sha], repo) do
+  def list_directories(%__MODULE__{} = node) do
+    case Git.run(["ls-tree", "-r", "-d", "--name-only", node.current_commit], node.repo) do
       {:ok, output} ->
         dirs = String.split(output, "\n", trim: true)
         {:ok, dirs}
@@ -91,8 +91,8 @@ defmodule EvoGit.Core.PhyloGraphNode do
   @doc """
   Lists all files in the given commit recursively.
   """
-  def list_files(commit_sha, repo \\ File.cwd!()) do
-    case Git.run(["ls-tree", "-r", "--name-only", commit_sha], repo) do
+  def list_files(%__MODULE__{} = node) do
+    case Git.run(["ls-tree", "-r", "--name-only", node.current_commit], node.repo) do
       {:ok, output} ->
         files = String.split(output, "\n", trim: true)
         {:ok, files}
@@ -105,22 +105,22 @@ defmodule EvoGit.Core.PhyloGraphNode do
   @doc """
   Lists immediate children (files and directories) of a given path in a specific commit.
   """
-  def list_immediate_children(commit_sha, path, repo \\ File.cwd!()) do
+  def list_immediate_children(%__MODULE__{} = node, path) do
     # git ls-tree --name-only <sha> <path>/
     # Note: if path is ".", use just the sha.
     args =
       cond do
         path == "." ->
-          ["ls-tree", "--name-only", commit_sha]
+          ["ls-tree", "--name-only", node.current_commit]
 
         String.ends_with?(path, "/") ->
-          ["ls-tree", "--name-only", commit_sha, path]
+          ["ls-tree", "--name-only", node.current_commit, path]
 
         true ->
-          ["ls-tree", "--name-only", commit_sha, path <> "/"]
+          ["ls-tree", "--name-only", node.current_commit, path <> "/"]
       end
 
-    case Git.run(args, repo) do
+    case Git.run(args, node.repo) do
       {:ok, output} ->
         # Output contains paths relative to root.
         # If we asked for "lib", output is "lib/evo_git.ex", "lib/evo_git" etc.
