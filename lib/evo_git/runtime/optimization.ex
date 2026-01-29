@@ -6,14 +6,15 @@ defmodule EvoGit.Runtime.Optimization do
   alias EvoGit.WorkerPool
   require Logger
 
-  def run(objective, _opts \\ []) do
+  def run(objective, opts \\ []) do
     Logger.info("Optimization: Starting for objective: #{objective}")
+    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
-    {:ok, current_sha} = PhyloGraphNode.current_head()
+    {:ok, current_sha} = PhyloGraphNode.current_head(repo_path)
 
     # 1. Diagnosis
     # Create a temporary node for diagnosis representing the main repo state
-    current_node = PhyloGraphNode.new(File.cwd!(), current_sha)
+    current_node = PhyloGraphNode.new(repo_path, current_sha)
     target_path = Agent.diagnose(current_node, objective)
 
     Logger.info("Optimization: Diagnosed target path: #{target_path}")

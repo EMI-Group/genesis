@@ -10,9 +10,10 @@ defmodule EvoGit.Runtime.Genesis do
 
   def run(root_prompt, opts \\ []) do
     Logger.info("Genesis: Starting with root prompt: #{root_prompt}")
+    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
-    with :ok <- ensure_repo(),
-         {:ok, head_sha} <- PhyloGraphNode.current_head() do
+    with :ok <- ensure_repo(repo_path),
+         {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do
       # Start recursion from root "."
       evolve_node(head_sha, ".", root_prompt, opts)
     else
@@ -22,17 +23,18 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  defp ensure_repo do
-    if File.dir?(".git") do
+  defp ensure_repo(repo_path) do
+    if File.dir?(Path.join(repo_path, ".git")) do
       :ok
     else
-      Logger.info("Genesis: Initializing Git repository...")
-      Git.init(".")
+      Logger.info("Genesis: Initializing Git repository at #{repo_path}...")
+      File.mkdir_p!(repo_path)
+      Git.init(repo_path)
       # Create initial commit to allow branching
-      File.write!("README.md", "")
-      Git.add(".", "README.md")
+      File.write!(Path.join(repo_path, "README.md"), "")
+      Git.add(repo_path, "README.md")
 
-      case Git.commit(".", "Initial commit") do
+      case Git.commit(repo_path, "Initial commit") do
         {:ok, _} -> :ok
         error -> error
       end

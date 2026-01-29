@@ -13,13 +13,15 @@ defmodule EvoGit.CLI do
           help: :boolean,
           file: :string,
           concurrency: :integer,
-          retries: :integer
+          retries: :integer,
+          path: :string
         ],
         aliases: [
           h: :help,
           f: :file,
           c: :concurrency,
-          r: :retries
+          r: :retries,
+          p: :path
         ]
       )
 
@@ -34,9 +36,15 @@ defmodule EvoGit.CLI do
   defp configure_system(opts) do
     # Update application config if provided
     updated? =
-      Enum.reduce([:concurrency, :retries], false, fn key, acc ->
+      Enum.reduce([:concurrency, :retries, :path], false, fn key, acc ->
         if val = opts[key] do
-          app_key = if key == :concurrency, do: :max_concurrency, else: :max_retries
+          app_key =
+            case key do
+              :concurrency -> :max_concurrency
+              :retries -> :max_retries
+              :path -> :repo_path
+            end
+
           Application.put_env(:evo_git, app_key, val)
           true
         else
@@ -64,6 +72,8 @@ defmodule EvoGit.CLI do
           do: Keyword.put(runtime_opts, :max_concurrency, c),
           else: runtime_opts
 
+      runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
+
       Genesis.run(prompt, runtime_opts)
     else
       IO.puts("Error: Genesis requires a prompt (via argument or --file).")
@@ -75,7 +85,10 @@ defmodule EvoGit.CLI do
     objective = get_input(rest, opts)
 
     if objective do
-      Optimization.run(objective, opts)
+      runtime_opts = []
+      runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
+
+      Optimization.run(objective, runtime_opts)
     else
       IO.puts("Error: Optimize requires an objective (via argument or --file).")
       print_help()
@@ -117,11 +130,12 @@ defmodule EvoGit.CLI do
       -f, --file <path>       Read prompt/objective from a file.
       -c, --concurrency <n>   Set number of concurrent workers (default: 3).
       -r, --retries <n>       Set max retries for failed agents (default: 3).
+      -p, --path <path>       Path to the git repository (default: current directory).
       -h, --help              Show this help message.
 
     Examples:
       evogit genesis "Create a snake game in Python"
-      evogit genesis -f design.md
+      evogit genesis -f design.md -p /path/to/repo
       evogit optimize "Fix the login bug" --concurrency 5
     """)
   end
