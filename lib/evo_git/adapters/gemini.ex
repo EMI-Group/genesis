@@ -13,10 +13,10 @@ defmodule EvoGit.Adapters.Gemini do
   """
   def call(prompt, context_files \\ [], opts \\ []) do
     cd = Keyword.get(opts, :cd, File.cwd!())
-    execute(prompt, context_files, cd)
+    execute(prompt, context_files, cd, opts)
   end
 
-  defp execute(prompt, context_files, cd) do
+  defp execute(prompt, context_files, cd, opts) do
     # 1. Aggregate content
     # Gemini-cli expects the context as "@file1 @file2" in stdin
     content = Enum.map(context_files, &"@#{&1}") |> Enum.join(" ")
@@ -36,14 +36,32 @@ defmodule EvoGit.Adapters.Gemini do
     # `gemini -m <model> -y < tmp_file`
 
     cmd = "gemini"
-    # args was unused
-    # Forcing JSON as the agent likely expects structured response or at least consistent text.
+
+    api_key = opts[:gemini_api_key] || System.get_env("GEMINI_API_KEY")
+    sandbox = opts[:sandbox]
+
+    base_args = "-m #{@model} -y --output-format json"
+
+    args =
+      if sandbox do
+        base_args <> " --sandbox"
+      else
+        base_args
+      end
+
+    env =
+      if api_key do
+        [{"GEMINI_API_KEY", api_key}]
+      else
+        []
+      end
 
     {output, exit_code} =
       System.cmd(
         "sh",
-        ["-c", "#{cmd} -m #{@model} -y --output-format json < #{tmp_path}"],
-        cd: cd
+        ["-c", "#{cmd} #{args} < #{tmp_path}"],
+        cd: cd,
+        env: env
       )
 
     File.rm(tmp_path)

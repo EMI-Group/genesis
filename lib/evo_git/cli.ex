@@ -14,14 +14,18 @@ defmodule EvoGit.CLI do
           file: :string,
           concurrency: :integer,
           retries: :integer,
-          path: :string
+          path: :string,
+          gemini_api_key: :string,
+          sandbox: :boolean
         ],
         aliases: [
           h: :help,
           f: :file,
           c: :concurrency,
           r: :retries,
-          p: :path
+          p: :path,
+          k: :gemini_api_key,
+          s: :sandbox
         ]
       )
 
@@ -74,6 +78,17 @@ defmodule EvoGit.CLI do
 
       runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
 
+      # Pass Gemini opts
+      runtime_opts =
+        if k = opts[:gemini_api_key],
+          do: Keyword.put(runtime_opts, :gemini_api_key, k),
+          else: runtime_opts
+
+      runtime_opts =
+        if opts[:sandbox],
+          do: Keyword.put(runtime_opts, :sandbox, true),
+          else: runtime_opts
+
       Genesis.run(prompt, runtime_opts)
     else
       IO.puts("Error: Genesis requires a prompt (via argument or --file).")
@@ -87,6 +102,17 @@ defmodule EvoGit.CLI do
     if objective do
       runtime_opts = []
       runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
+
+      # Pass Gemini opts
+      runtime_opts =
+        if k = opts[:gemini_api_key],
+          do: Keyword.put(runtime_opts, :gemini_api_key, k),
+          else: runtime_opts
+
+      runtime_opts =
+        if opts[:sandbox],
+          do: Keyword.put(runtime_opts, :sandbox, true),
+          else: runtime_opts
 
       Optimization.run(objective, runtime_opts)
     else
@@ -127,11 +153,13 @@ defmodule EvoGit.CLI do
       evogit optimize [options] <objective>
 
     Options:
-      -f, --file <path>       Read prompt/objective from a file.
-      -c, --concurrency <n>   Set number of concurrent workers (default: 3).
-      -r, --retries <n>       Set max retries for failed agents (default: 3).
-      -p, --path <path>       Path to the git repository (default: current directory).
-      -h, --help              Show this help message.
+      -f, --file <path>           Read prompt/objective from a file.
+      -c, --concurrency <n>       Set number of concurrent workers (default: 3).
+      -r, --retries <n>           Set max retries for failed agents (default: 3).
+      -p, --path <path>           Path to the git repository (default: current directory).
+      -k, --gemini-api-key <key>  Gemini API key (overrides GEMINI_API_KEY env var).
+      -s, --sandbox               Enable sandbox mode for Gemini.
+      -h, --help                  Show this help message.
 
     Examples:
       evogit genesis "Create a snake game in Python"

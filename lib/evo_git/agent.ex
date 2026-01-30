@@ -14,7 +14,7 @@ defmodule EvoGit.Agent do
   @doc """
   Executes the agent logic inside the given worktree.
   """
-  def mutate(%{context_node: context_node, phylo_node: phylo_node} = state, objective) do
+  def mutate(%{context_node: context_node, phylo_node: phylo_node} = state, objective, opts \\ []) do
     worktree_path = phylo_node.repo
     sha = phylo_node.current_commit
 
@@ -48,7 +48,7 @@ defmodule EvoGit.Agent do
         "You have access to the files in the current directory.\n" <>
         "Modify the files as needed."
 
-    case Gemini.call(prompt, context_files, cd: worktree_path) do
+    case Gemini.call(prompt, context_files, [cd: worktree_path] ++ opts) do
       {:ok, _response} ->
         # 4. Commit changes
         case PhyloGraphNode.add_and_commit(phylo_node, "Agent: #{objective}") do
@@ -70,7 +70,7 @@ defmodule EvoGit.Agent do
   Identifies the most relevant target path for the given objective in the context of the commit.
   Acts as an "Analyst Agent".
   """
-  def diagnose(%PhyloGraphNode{current_commit: commit_sha} = phylo_node, objective) do
+  def diagnose(%PhyloGraphNode{current_commit: commit_sha} = phylo_node, objective, opts \\ []) do
     Logger.info("Agent diagnosing objective on #{String.slice(commit_sha, 0, 7)}: #{objective}")
 
     # Use PhyloGraphNode to get the file tree
@@ -85,7 +85,7 @@ defmodule EvoGit.Agent do
 
     # Diagnosis uses Gemini directly on the current context (no worktree needed just for query if we have the file list)
     # However, Gemini.call expects to run in a directory. We can run in CWD.
-    case Gemini.call(diag_prompt, [], cd: File.cwd!()) do
+    case Gemini.call(diag_prompt, [], [cd: File.cwd!()] ++ opts) do
       {:ok, %{"path" => path}} ->
         validate_path(String.trim(path), files)
 
@@ -120,7 +120,8 @@ defmodule EvoGit.Agent do
   """
   def resolve_conflict(
         %{context_node: context_node, phylo_node: phylo_node} = state,
-        incoming_sha
+        incoming_sha,
+        opts \\ []
       ) do
     worktree_path = phylo_node.repo
     current_sha = phylo_node.current_commit
@@ -167,7 +168,7 @@ defmodule EvoGit.Agent do
               "4. Modify the file to contain ONLY the resolved code (remove markers)."
 
           # Pass absolute path of conflict file as context
-          Gemini.call(prompt, context_files ++ [abs_file], cd: worktree_path)
+          Gemini.call(prompt, context_files ++ [abs_file], [cd: worktree_path] ++ opts)
         end)
 
         # 5. Commit
