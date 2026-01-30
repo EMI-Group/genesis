@@ -62,10 +62,10 @@ defmodule EvoGit.Runtime.Genesis do
         # Step 2: Plan
         plan_objective = Prompts.genesis_plan(type, node_path, context_instruction)
 
-        with {:ok, plan_state} <- Agent.mutate(state, plan_objective),
+        with {:ok, plan_state} <- Agent.mutate(state, plan_objective, opts),
              # Step 3: Realize
              realize_objective = Prompts.genesis_realize(type, node_path),
-             {:ok, realize_state} <- Agent.mutate(plan_state, realize_objective) do
+             {:ok, realize_state} <- Agent.mutate(plan_state, realize_objective, opts) do
           {:ok, realize_state}
         end
       end)
@@ -136,7 +136,7 @@ defmodule EvoGit.Runtime.Genesis do
           "Genesis: Merging child #{String.slice(child_sha, 0, 7)} into #{String.slice(current_base, 0, 7)}"
         )
 
-        case merge_branch(current_base, child_sha) do
+        case merge_branch(current_base, child_sha, opts) do
           {:ok, new_base} -> {:cont, new_base}
           error -> {:halt, error}
         end
@@ -153,13 +153,13 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  defp merge_branch(base_sha, other_sha) do
+  defp merge_branch(base_sha, other_sha, opts) do
     WorkerPool.run(fn worktree_path ->
       phylo_node = PhyloGraphNode.new(worktree_path, base_sha)
       context_node = ContextNode.load(worktree_path, worktree_path)
       state = %{context_node: context_node, phylo_node: phylo_node}
 
-      case Agent.resolve_conflict(state, other_sha) do
+      case Agent.resolve_conflict(state, other_sha, opts) do
         {:ok, %{phylo_node: updated_phylo_node}} -> {:ok, updated_phylo_node.current_commit}
         error -> error
       end

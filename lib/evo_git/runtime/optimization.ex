@@ -15,7 +15,7 @@ defmodule EvoGit.Runtime.Optimization do
     # 1. Diagnosis
     # Create a temporary node for diagnosis representing the main repo state
     current_node = PhyloGraphNode.new(repo_path, current_sha)
-    target_path = Agent.diagnose(current_node, objective)
+    target_path = Agent.diagnose(current_node, objective, opts)
 
     Logger.info("Optimization: Diagnosed target path: #{target_path}")
 
@@ -28,7 +28,7 @@ defmodule EvoGit.Runtime.Optimization do
 
            state = %{context_node: context_node, phylo_node: phylo_node}
 
-           Agent.mutate(state, objective)
+           Agent.mutate(state, objective, opts)
          end) do
       {:ok, %{phylo_node: updated_node}} ->
         Logger.info(
