@@ -11,8 +11,7 @@ defmodule EvoGit.Adapters.Gemini do
 
   `context_files`: List of file paths to be read and passed as context (stdin).
   """
-  def call(prompt, context_files \\ [], opts \\ []) do
-    cd = Keyword.get(opts, :cd, File.cwd!())
+  def call(prompt, cd, context_files \\ [], opts \\ []) do
     execute(prompt, context_files, cd, opts)
   end
 
