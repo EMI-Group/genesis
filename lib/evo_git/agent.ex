@@ -48,7 +48,7 @@ defmodule EvoGit.Agent do
         "You have access to the files in the current directory.\n" <>
         "Modify the files as needed."
 
-    case Gemini.call(prompt, context_files, [cd: worktree_path] ++ opts) do
+    case Gemini.call(prompt, worktree_path, context_files, opts) do
       {:ok, _response} ->
         # 4. Commit changes
         case PhyloGraphNode.add_and_commit(phylo_node, "Agent: #{objective}") do
@@ -85,7 +85,7 @@ defmodule EvoGit.Agent do
 
     # Diagnosis uses Gemini directly on the current context (no worktree needed just for query if we have the file list)
     # However, Gemini.call expects to run in a directory. We can run in CWD.
-    case Gemini.call(diag_prompt, [], [cd: File.cwd!()] ++ opts) do
+    case Gemini.call(diag_prompt, File.cwd!(), [], opts) do
       {:ok, %{"path" => path}} ->
         validate_path(String.trim(path), files)
 
@@ -168,7 +168,7 @@ defmodule EvoGit.Agent do
               "4. Modify the file to contain ONLY the resolved code (remove markers)."
 
           # Pass absolute path of conflict file as context
-          Gemini.call(prompt, context_files ++ [abs_file], [cd: worktree_path] ++ opts)
+          Gemini.call(prompt, worktree_path, context_files ++ [abs_file], opts)
         end)
 
         # 5. Commit
