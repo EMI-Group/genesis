@@ -55,6 +55,13 @@ defmodule EvoGit.Adapters.Gemini do
         []
       end
 
+    env =
+      if sandbox && api_key do
+        env ++ [{"SANDBOX_FLAGS", "-e GEMINI_API_KEY #{api_key}"}]
+      else
+        env
+      end
+
     {output, exit_code} =
       System.cmd(
         "sh",
