@@ -53,6 +53,7 @@ defmodule EvoGit.Agent do
         # 4. Commit changes
         case PhyloGraphNode.add_and_commit(phylo_node, "Agent: #{objective}") do
           {:ok, updated_phylo_node} ->
+            Logger.info("Agent: Committed changes")
             {:ok, %{state | phylo_node: updated_phylo_node}}
 
           error ->
