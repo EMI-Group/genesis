@@ -36,4 +36,20 @@ defmodule EvoGit.Adapters.GitTest do
     {:ok, _} = Git.add(tmp_dir, "test_with_changes.txt")
     assert {:ok, _} = Git.commit(tmp_dir, "Second commit with changes")
   end
+
+  test "check_ignore returns ignored files", %{tmp_dir: tmp_dir} do
+    File.write!(Path.join(tmp_dir, ".gitignore"), "ignored.txt\n*.log")
+
+    files = ["normal.txt", "ignored.txt", "some.log", "subdir/another.log"]
+    {:ok, ignored} = Git.check_ignore(tmp_dir, files)
+
+    assert "ignored.txt" in ignored
+    assert "some.log" in ignored
+    assert "subdir/another.log" in ignored
+    assert length(ignored) == 3
+
+    # Test with no ignored files
+    {:ok, ignored} = Git.check_ignore(tmp_dir, ["normal.txt", "other.txt"])
+    assert ignored == []
+  end
 end
