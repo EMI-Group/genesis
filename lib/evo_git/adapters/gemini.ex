@@ -18,6 +18,7 @@ defmodule EvoGit.Adapters.Gemini do
   defp execute(prompt, context_files, cd, opts) do
     # 1. Aggregate content
     # Gemini-cli expects the context as "@file1 @file2" in stdin
+    Logger.debug("Calling Gemini from #{cd} with context files: #{inspect(context_files)}")
     content = Enum.map(context_files, &"@#{&1}") |> Enum.join(" ")
 
     full_input = content <> " " <> prompt
