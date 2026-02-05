@@ -4,7 +4,7 @@ defmodule EvoGit.Adapters.Gemini do
   """
   require Logger
 
-  @model "gemini-3-flash-preview"
+  @model "gemini-2.5-flash-lite"
 
   @doc """
   Calls the Gemini CLI with the given prompt and optional context files/input.

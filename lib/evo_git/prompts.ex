@@ -47,7 +47,7 @@ defmodule EvoGit.Prompts do
   Genesis Stage: Planning Prompt for a Directory.
   """
   def genesis_plan(:directory, node_path, instruction) do
-    """
+    base_prompt = """
     Planning Phase for directory '#{node_path}'.
     Instruction: #{instruction}
     Task: Create or update 'CONTEXT.md' inside this directory, and run tools to setup any necessary boilerplate or structure.
@@ -55,6 +55,14 @@ defmodule EvoGit.Prompts do
     You can use standard package / environment tools to setup any boilerplate or structure needed.
     Do NOT directly implement any files yet. Do NOT modify anything outside this directory.
     """
+
+    # If we are at the root level, we must instructure the LLM to init .gitignore
+    if node_path == "." do
+      base_prompt <>
+        "\nSince this is the root level, init a .gitignore file with standard entries for the project."
+    else
+      base_prompt
+    end
   end
 
   def genesis_plan(:file, node_path, instruction) do
