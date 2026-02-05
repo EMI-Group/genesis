@@ -82,6 +82,8 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
+  @ignored_names [".git", "node_modules", ".venv", "__pycache__", "CONTEXT.md"]
+
   defp recurse_children(base_sha, node_path, opts) do
     Logger.debug("Recursive down to child nodes of #{base_sha} #{node_path}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
@@ -89,14 +91,24 @@ defmodule EvoGit.Runtime.Genesis do
 
     case PhyloGraphNode.list_immediate_children(node, node_path) do
       {:ok, children} ->
-        # Filter children
-        valid_children =
+        # Filter children by hardcoded names and self
+        pre_filtered =
           children
           |> Enum.reject(fn p ->
-            # Remove artifacts and self
             name = Path.basename(p)
-            name == ".git" or name == "CONTEXT.md" or p == node_path
+            name in @ignored_names or p == node_path
           end)
+
+        # Further filter with .gitignore if there are any children left
+        valid_children =
+          if pre_filtered == [] do
+            []
+          else
+            case Git.check_ignore(repo_path, pre_filtered) do
+              {:ok, ignored} -> pre_filtered -- ignored
+              _ -> pre_filtered
+            end
+          end
 
         Logger.debug("Found children of #{node_path}: #{inspect(children)}")
 

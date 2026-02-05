@@ -93,4 +93,14 @@ defmodule EvoGit.Adapters.Git do
   def rev_parse(path, rev \\ "HEAD") do
     run(["rev-parse", rev], path)
   end
+
+  def check_ignore(path, files) when is_list(files) do
+    # git check-ignore returns 0 if any matches, 1 if none.
+    # We want the list of ignored files.
+    case System.cmd("git", ["check-ignore" | files], cd: path, stderr_to_stdout: true) do
+      {output, 0} -> {:ok, String.split(output, "\n", trim: true)}
+      {_output, 1} -> {:ok, []}
+      {output, code} -> {:error, code, String.trim(output)}
+    end
+  end
 end
