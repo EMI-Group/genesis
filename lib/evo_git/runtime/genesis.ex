@@ -82,7 +82,19 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  @ignored_names [".git", "node_modules", ".venv", "__pycache__", "CONTEXT.md"]
+  @ignored_names [
+    ".git",
+    "node_modules",
+    ".venv",
+    "__pycache__",
+    "CONTEXT.md",
+    "package-lock.json",
+    "yarn.lock",
+    "uv.lock"
+  ]
+
+  # We also ignore any paths that start with "." to avoid hidden files/directories
+  @ignore_prefixes "."
 
   defp recurse_children(base_sha, node_path, opts) do
     Logger.debug("Recursive down to child nodes of #{base_sha} #{node_path}")
@@ -96,7 +108,9 @@ defmodule EvoGit.Runtime.Genesis do
           children
           |> Enum.reject(fn p ->
             name = Path.basename(p)
-            name in @ignored_names or p == node_path
+
+            name in @ignored_names or p == node_path or
+              String.starts_with?(name, @ignore_prefixes)
           end)
 
         # Further filter with .gitignore if there are any children left
