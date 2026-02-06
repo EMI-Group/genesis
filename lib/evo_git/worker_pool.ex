@@ -150,6 +150,10 @@ defmodule EvoGit.WorkerPool do
   defp dispatch(fun, from, retries, %{workers: [path | rest], active: active} = state) do
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
+        if retries > 0 do
+          Logger.info("Retrying task on #{path}, attempt #{retries}")
+          Process.sleep(30_000 * retries) # Exponential backoff
+        end
         fun.(path)
       end)
 
