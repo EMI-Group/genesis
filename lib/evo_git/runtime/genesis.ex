@@ -77,7 +77,12 @@ defmodule EvoGit.Runtime.Genesis do
         # Step 2: Plan
         plan_objective = Prompts.genesis_plan(type, node_path, context_instruction)
 
-        agent_opts = Keyword.put_new(opts, :agent_module, EvoGit.Agent.Genesis)
+        agent_module =
+          if type == :directory,
+            do: EvoGit.Agent.Genesis.Directory,
+            else: EvoGit.Agent.Genesis.File
+
+        agent_opts = Keyword.put_new(opts, :agent_module, agent_module)
 
         with {:ok, plan_state, _plan_response} <- Agent.mutate(state, plan_objective, agent_opts),
              # Step 3: Realize
@@ -103,14 +108,22 @@ defmodule EvoGit.Runtime.Genesis do
         children = agent_response
 
         children =
-          if is_binary(children) do
-            case JSON.decode(children) do
-              {:ok, decoded} when is_list(decoded) -> decoded
-              _ -> []
-            end
-          else
-            List.wrap(children)
+          cond do
+            is_binary(children) ->
+              case JSON.decode(children) do
+                {:ok, decoded} when is_list(decoded) -> decoded
+                _ -> []
+              end
+
+            is_list(children) ->
+              children
+
+            true ->
+              []
           end
+
+        # Only keep valid string paths
+        children = Enum.filter(children, &is_binary/1)
 
         # Ensure paths are relative to root if they are just basenames
         children =
@@ -176,9 +189,25 @@ defmodule EvoGit.Runtime.Genesis do
       if pre_filtered == [] do
         []
       else
-        case Git.check_ignore(repo_path, pre_filtered) do
-          {:ok, ignored} -> pre_filtered -- ignored
-          _ -> pre_filtered
+        not_ignored =
+          case Git.check_ignore(repo_path, pre_filtered) do
+            {:ok, ignored} -> pre_filtered -- ignored
+            _ -> pre_filtered
+          end
+
+        if not_ignored == [] do
+          []
+        else
+          args = ["ls-tree", "--name-only", base_sha, "--" | not_ignored]
+
+          case Git.run(args, repo_path) do
+            {:ok, output} ->
+              existing_paths = String.split(output, "\n", trim: true)
+              Enum.filter(not_ignored, &(&1 in existing_paths))
+
+            _ ->
+              []
+          end
         end
       end
 
