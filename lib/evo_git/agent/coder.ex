@@ -91,7 +91,10 @@ defmodule EvoGit.Agent.Coder do
       end
 
       defp do_turn(state) do
-        context = ReqLLM.Context.new([ReqLLM.Context.system(state.system_prompt) | state.history])
+        dynamic_context = build_dynamic_context()
+        full_system_prompt = state.system_prompt <> dynamic_context
+
+        context = ReqLLM.Context.new([ReqLLM.Context.system(full_system_prompt) | state.history])
 
         {:ok, response} =
           ReqLLM.generate_text(
@@ -166,6 +169,41 @@ defmodule EvoGit.Agent.Coder do
       end
 
       # --- Helpers ---
+
+      defp build_dynamic_context do
+        repo_path = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
+        node_path = Process.get(:node_path) || repo_path
+
+        try do
+          context_nodes = EvoGit.Core.ContextNode.hier_context(node_path, repo_path)
+
+          context_files =
+            Enum.map(context_nodes, fn node ->
+              if node.type == :directory do
+                Path.join(node.path, "CONTEXT.md")
+              else
+                node.path
+              end
+            end)
+            |> Enum.filter(&File.exists?/1)
+
+          context_contents =
+            Enum.map_join(context_files, "\n\n", fn file ->
+              case File.read(file) do
+                {:ok, content} -> "File: #{Path.relative_to(file, repo_path)}\n```\n#{content}\n```"
+                _ -> "File: #{Path.relative_to(file, repo_path)} (not found or error reading)"
+              end
+            end)
+
+          if context_contents == "" do
+            ""
+          else
+            "\n\n# Context Tree\n" <> context_contents
+          end
+        rescue
+          _e -> ""
+        end
+      end
 
       defp stream_event(caller_pid, type, data) do
         send(caller_pid, {:subagent_activity, %{type: type, data: data}})

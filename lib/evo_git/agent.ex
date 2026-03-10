@@ -27,37 +27,17 @@ defmodule EvoGit.Agent do
     Git.clean(worktree_path)
     Git.checkout(worktree_path, sha)
 
-    # 2. Construct Context
-    # Ensure we use the worktree path as root
-    context_nodes = ContextNode.hier_context(context_node.path, worktree_path)
-
-    context_files =
-      Enum.map(context_nodes, fn node ->
-        if node.type == :directory do
-          Path.join(node.path, "CONTEXT.md")
-        else
-          node.path
-        end
-      end)
-      |> Enum.filter(&File.exists?/1)
-
+    # 2. Construct Context (delegated to Agent.Coder)
+    # The inner coding agent will dynamically load the Context Tree
     # 3. Call Generalist
-    context_contents =
-      Enum.map_join(context_files, "\n\n", fn file ->
-        case File.read(Path.join(worktree_path, file)) do
-          {:ok, content} -> "File: #{file}\n```\n#{content}\n```"
-          _ -> "File: #{file} (not found or error reading)"
-        end
-      end)
-
     prompt =
       "Objective: #{objective}\n" <>
-        "Context Files:\n#{context_contents}\n" <>
         "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <>
         "You have access to the files in the current directory.\n" <>
         "Modify the files as needed."
 
     Process.put(:repo_path, worktree_path)
+    Process.put(:node_path, context_node.path)
     caller_pid = Keyword.get(opts, :caller_pid, self())
 
     agent_module = Keyword.get(opts, :agent_module, Generalist)
@@ -160,27 +140,14 @@ defmodule EvoGit.Agent do
         {:ok, %{state | phylo_node: updated_phylo_node}}
 
       {:conflict, _} ->
-        # 3. Context
-        context_nodes = ContextNode.hier_context(context_node.path, worktree_path)
-
-        context_files =
-          Enum.map(context_nodes, fn node ->
-            if node.type == :directory, do: Path.join(node.path, "CONTEXT.md"), else: node.path
-          end)
-          |> Enum.filter(&File.exists?/1)
-
-        context_contents =
-          Enum.map_join(context_files, "\n\n", fn file ->
-            case File.read(Path.join(worktree_path, file)) do
-              {:ok, content} -> "File: #{file}\n```\n#{content}\n```"
-              _ -> "File: #{file} (not found or error reading)"
-            end
-          end)
+        # 3. Context (delegated to Agent.Coder)
+        # The inner coding agent will dynamically load the Context Tree
 
         # 4. Resolve
         {:ok, conflicts} = Git.conflict_files(worktree_path)
 
         Process.put(:repo_path, worktree_path)
+        Process.put(:node_path, context_node.path)
         caller_pid = Keyword.get(opts, :caller_pid, self())
 
         Enum.each(conflicts, fn file ->
@@ -194,7 +161,6 @@ defmodule EvoGit.Agent do
 
           prompt =
             "Objective: Resolve the merge conflicts in '#{file}'.\n" <>
-              "Context Files:\n#{context_contents}\n\n" <>
               "Conflicting File Content:\n#{file_content}\n\n" <>
               "The file contains git conflict markers.\n" <>
               "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <>
