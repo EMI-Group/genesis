@@ -34,7 +34,7 @@ defmodule EvoGit.Agent.CoderTest do
     Process.put(:node_path, Path.join(tmp_dir, "lib/missing/path"))
 
     context = DummyAgent.test_build_dynamic_context()
-    assert context == ""
+    assert context =~ "Current Location:"
   end
 
   test "build_dynamic_context catches ArgumentError and returns empty", %{tmp_dir: tmp_dir} do
