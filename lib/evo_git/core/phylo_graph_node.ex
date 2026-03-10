@@ -30,10 +30,22 @@ defmodule EvoGit.Core.PhyloGraphNode do
   Returns the updated node with the new commit SHA.
   """
   def add_and_commit(%__MODULE__{} = node, message) do
-    with {:ok, _} <- Git.add(node.repo),
-         {:ok, _} <- Git.commit(node.repo, message),
-         {:ok, new_sha} <- Git.rev_parse(node.repo) do
-      {:ok, %{node | current_commit: new_sha}}
+    case Git.status(node.repo) do
+      {:ok, ""} ->
+        case Git.rev_parse(node.repo) do
+          {:ok, new_sha} -> {:ok, %{node | current_commit: new_sha}}
+          error -> error
+        end
+
+      {:ok, _changes} ->
+        with {:ok, _} <- Git.add(node.repo),
+             {:ok, _} <- Git.commit(node.repo, message),
+             {:ok, new_sha} <- Git.rev_parse(node.repo) do
+          {:ok, %{node | current_commit: new_sha}}
+        end
+
+      error ->
+        error
     end
   end
 
