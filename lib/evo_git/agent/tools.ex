@@ -67,11 +67,15 @@ defmodule EvoGit.Agent.Tools do
     content = Map.fetch!(args, "content")
 
     # Ensure directory exists
-    File.mkdir_p!(Path.dirname(file_path))
+    case File.mkdir_p(Path.dirname(file_path)) do
+      :ok ->
+        case File.write(file_path, content) do
+          :ok -> "Successfully wrote to #{file_path}"
+          {:error, reason} -> "Error writing file #{file_path}: #{:file.format_error(reason)}"
+        end
 
-    case File.write(file_path, content) do
-      :ok -> "Successfully wrote to #{file_path}"
-      {:error, reason} -> "Error writing file #{file_path}: #{:file.format_error(reason)}"
+      {:error, reason} ->
+        "Error creating directory for #{file_path}: #{:file.format_error(reason)}"
     end
   end
 
@@ -80,11 +84,16 @@ defmodule EvoGit.Agent.Tools do
 
     Enum.map_join(paths, "\n", fn path ->
       full_path = expand_path(path)
-      File.mkdir_p!(Path.dirname(full_path))
 
-      case File.write(full_path, "") do
-        :ok -> "Successfully created file #{path}"
-        {:error, reason} -> "Error creating file #{path}: #{:file.format_error(reason)}"
+      case File.mkdir_p(Path.dirname(full_path)) do
+        :ok ->
+          case File.write(full_path, "") do
+            :ok -> "Successfully created file #{path}"
+            {:error, reason} -> "Error creating file #{path}: #{:file.format_error(reason)}"
+          end
+
+        {:error, reason} ->
+          "Error creating directory for #{path}: #{:file.format_error(reason)}"
       end
     end)
   end
@@ -94,13 +103,18 @@ defmodule EvoGit.Agent.Tools do
 
     Enum.map_join(paths, "\n", fn path ->
       full_path = expand_path(path)
-      File.mkdir_p!(full_path)
 
-      gitkeep_path = Path.join(full_path, ".gitkeep")
+      case File.mkdir_p(full_path) do
+        :ok ->
+          gitkeep_path = Path.join(full_path, ".gitkeep")
 
-      case File.write(gitkeep_path, "") do
-        :ok -> "Successfully created directory #{path} with .gitkeep"
-        {:error, reason} -> "Error creating directory #{path}: #{:file.format_error(reason)}"
+          case File.write(gitkeep_path, "") do
+            :ok -> "Successfully created directory #{path} with .gitkeep"
+            {:error, reason} -> "Error creating directory #{path}: #{:file.format_error(reason)}"
+          end
+
+        {:error, reason} ->
+          "Error creating directory #{path}: #{:file.format_error(reason)}"
       end
     end)
   end
