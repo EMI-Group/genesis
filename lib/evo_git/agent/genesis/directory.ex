@@ -1,6 +1,6 @@
-defmodule EvoGit.Agent.Genesis do
+defmodule EvoGit.Agent.Genesis.Directory do
   @moduledoc """
-  A dedicated agent for the Genesis creation phase.
+  A dedicated agent for the Genesis creation phase of a directory.
   """
   use EvoGit.Agent.Coder
 
