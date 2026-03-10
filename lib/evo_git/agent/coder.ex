@@ -194,6 +194,7 @@ defmodule EvoGit.Agent.Coder do
                 {:ok, content} ->
                   truncated_content =
                     if String.length(content) > 10000 do
+                      Logger.warning("Content truncated for file: #{file}")
                       String.slice(content, 0, 10000) <> "\n... [Content Truncated] ..."
                     else
                       content
@@ -202,7 +203,7 @@ defmodule EvoGit.Agent.Coder do
                   "File: #{Path.relative_to(file, repo_path)}\n```\n#{truncated_content}\n```"
 
                 _ ->
-                  "File: #{Path.relative_to(file, repo_path)} (not found or error reading)"
+                  "#{Path.relative_to(file, repo_path)} doesn't have a context file."
               end
             end)
 
@@ -268,6 +269,7 @@ defmodule EvoGit.Agent.Coder do
         result = EvoGit.Agent.Tools.execute(call.name, call.arguments)
 
         if is_binary(result) and String.length(result) > 20000 do
+          Logger.warning("Output truncated for tool: #{call.name}")
           String.slice(result, 0, 20000) <> "\n... [Output Truncated] ..."
         else
           result
