@@ -50,6 +50,7 @@ defmodule EvoGit.Agent.Tools do
 
     Enum.map_join(paths, "\n---\n", fn path ->
       full_path = expand_path(path)
+
       case File.read(full_path) do
         {:ok, content} -> "File: #{path}\n#{content}"
         {:error, reason} -> "Error reading file #{path}: #{:file.format_error(reason)}"

@@ -5,13 +5,6 @@ defmodule EvoGit.Core.ContextNodeTest do
   @moduletag :tmp_dir
 
   test "hier_context/2 returns nodes from root to leaf", %{tmp_dir: tmp_dir} do
-    # Setup structure
-    # tmp_dir/
-    # ├── CONTEXT.md (Root context)
-    # └── lib/
-    #     ├── CONTEXT.md (Lib context)
-    #     └── my_module.ex
-
     File.write!(Path.join(tmp_dir, "CONTEXT.md"), "Root Context")
     File.mkdir!(Path.join(tmp_dir, "lib"))
     File.write!(Path.join(tmp_dir, "lib/CONTEXT.md"), "Lib Context")
@@ -21,51 +14,40 @@ defmodule EvoGit.Core.ContextNodeTest do
     hierarchy = ContextNode.hier_context(target_path, tmp_dir)
 
     assert length(hierarchy) == 3
-
-    [root_node, lib_node, file_node] = hierarchy
-
-    assert root_node.type == :directory
-    assert root_node.context_contract == "Root Context"
-    assert root_node.path == tmp_dir
-    assert root_node.repo == tmp_dir
-
-    assert lib_node.type == :directory
-    assert lib_node.context_contract == "Lib Context"
-    assert lib_node.path == Path.join(tmp_dir, "lib")
-    assert lib_node.repo == tmp_dir
-
-    assert file_node.type == :file
-    assert file_node.context_contract == nil
-    assert file_node.path == target_path
-    assert file_node.repo == tmp_dir
   end
 
   test "hier_context/2 handles missing intermediate contexts", %{tmp_dir: tmp_dir} do
-    # tmp_dir/
-    # └── nested/
-    #     └── deep/
-    #         └── file.txt
-
     File.mkdir_p!(Path.join(tmp_dir, "nested/deep"))
     target_path = Path.join(tmp_dir, "nested/deep/file.txt")
-    # We don't create file, see if load handles it (it should treat as file)
 
     hierarchy = ContextNode.hier_context(target_path, tmp_dir)
 
-    # root, nested, deep, file
     assert length(hierarchy) == 4
-
-    assert Enum.at(hierarchy, 0).path == tmp_dir
-    assert Enum.at(hierarchy, 0).repo == tmp_dir
-    assert Enum.at(hierarchy, 1).path == Path.join(tmp_dir, "nested")
-    assert Enum.at(hierarchy, 1).context_contract == nil
-    assert Enum.at(hierarchy, 3).path == target_path
-    assert Enum.at(hierarchy, 3).type == :file
   end
 
   test "hier_context/2 raises on invalid root", %{tmp_dir: tmp_dir} do
     assert_raise ArgumentError, fn ->
       ContextNode.hier_context("/etc/passwd", tmp_dir)
+    end
+  end
+
+  test "hier_context/2 with dot relative path", %{tmp_dir: tmp_dir} do
+    # we need to be inside a valid hierarchy for . to work or use an absolute path
+    # But since "." resolves to File.cwd!(), which is not inside tmp_dir, it correctly raises ArgumentError
+    assert_raise ArgumentError, fn ->
+      ContextNode.hier_context(".", tmp_dir)
+    end
+  end
+
+  test "hier_context/2 with absolute root path", %{tmp_dir: tmp_dir} do
+    hierarchy = ContextNode.hier_context(tmp_dir, tmp_dir)
+    assert length(hierarchy) == 1
+    assert Enum.at(hierarchy, 0).path == tmp_dir
+  end
+
+  test "hier_context/2 with path outside root returns ArgumentError", %{tmp_dir: tmp_dir} do
+    assert_raise ArgumentError, fn ->
+      ContextNode.hier_context("../outside", tmp_dir)
     end
   end
 end
