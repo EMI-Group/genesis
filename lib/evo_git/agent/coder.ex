@@ -254,9 +254,16 @@ defmodule EvoGit.Agent.Coder do
           name: @complete_tool,
           description:
             "Call this tool to submit your final findings. This is the ONLY way to finish.",
-          parameters: [
-            result: [type: :string, required: true, doc: "The final result or findings"]
-          ],
+          parameter_schema: %{
+            "type" => "object",
+            "properties" => %{
+              "result" => %{
+                "type" => "string",
+                "description" => "The final result or findings"
+              }
+            },
+            "required" => ["result"]
+          },
           callback: fn _args -> {:ok, "Task finished"} end
         )
       end
@@ -273,7 +280,10 @@ defmodule EvoGit.Agent.Coder do
             "Output truncated for tool: #{call.name}, arguments: #{inspect(call.arguments)}, result length: #{String.length(result)}"
           )
 
-          String.slice(result, 0, 10000) <> "\n... [Output Truncated] ..."
+          truncate_size = 3000
+          first_part = String.slice(result, 0, truncate_size / 2)
+          last_part = String.slice(result, -truncate_size / 2, truncate_size / 2)
+          first_part <> "\n... [Output Truncated, Only 3000 bytes Shown] ...\n" <> last_part
         else
           result
         end
