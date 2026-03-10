@@ -47,6 +47,10 @@ defmodule EvoGit.Runtime.Genesis do
 
     evolution_result =
       WorkerPool.run(fn worktree_path ->
+        # Ensure worktree is at the correct commit before checking if node is a directory
+        Git.clean(worktree_path)
+        Git.checkout(worktree_path, current_sha)
+
         abs_node_path = Path.join(worktree_path, node_path)
         type = if File.dir?(abs_node_path), do: :directory, else: :file
 
@@ -69,6 +73,10 @@ defmodule EvoGit.Runtime.Genesis do
              realize_objective = Prompts.genesis_realize(type, node_path),
              {:ok, realize_state, realize_response} <- Agent.mutate(plan_state, realize_objective, agent_opts) do
           {:ok, realize_state, realize_response}
+        else
+          error ->
+            Logger.error("Genesis: Failed to evolve #{node_path}: #{inspect(error)}")
+            {:error, error}
         end
       end)
 

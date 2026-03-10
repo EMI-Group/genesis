@@ -84,6 +84,7 @@ defmodule EvoGit.Prompts do
     Task: Read the 'CONTEXT.md' file in this directory to understand its intended structure.
     Based on that context, create the immediate subdirectories and empty placeholder files that are supposed to exist inside this directory.
     Important Constraints: Do NOT write any implementation code inside these newly created files yet; just create the empty files. Do NOT modify anything outside of this directory.
+    CRITICAL: Git does not track empty directories! For every subdirectory you create, you MUST create an empty '.gitkeep' file inside it so that it is tracked by version control.
     """
   end
 
