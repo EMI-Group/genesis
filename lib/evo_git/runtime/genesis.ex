@@ -15,7 +15,15 @@ defmodule EvoGit.Runtime.Genesis do
     with :ok <- ensure_repo(repo_path),
          {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do
       # Start recursion from root "."
-      evolve_node(head_sha, ".", root_prompt, opts)
+      case evolve_node(head_sha, ".", root_prompt, opts) do
+        {:ok, final_sha} ->
+          Logger.info("Genesis: Evolution complete. Updating main repository to #{String.slice(final_sha, 0, 7)}")
+          Git.reset_hard(repo_path, final_sha)
+          {:ok, final_sha}
+
+        error ->
+          error
+      end
     else
       error ->
         Logger.error("Genesis failed to initialize: #{inspect(error)}")
