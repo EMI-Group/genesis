@@ -36,7 +36,7 @@ defmodule EvoGit.Agent.Coder do
         state = %{
           caller_pid: caller_pid,
           turn: 0,
-          history: [%{role: "user", content: query}],
+          history: [ReqLLM.Context.user(query)],
           system_prompt: actual_system_prompt,
           in_grace_period: false,
           deadline: System.monotonic_time(:millisecond) + @timeout_ms
@@ -83,7 +83,7 @@ defmodule EvoGit.Agent.Coder do
         You MUST call `#{@complete_tool}` immediately with your best answer. Do not call any other tools.
         """
 
-        new_history = state.history ++ [%{role: "user", content: warning_msg}]
+        new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
         new_deadline = System.monotonic_time(:millisecond) + @grace_period_ms
 
         state = %{state | history: new_history, in_grace_period: true, deadline: new_deadline}
@@ -179,14 +179,11 @@ defmodule EvoGit.Agent.Coder do
           #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
           """
 
-          context = ReqLLM.Context.new([%{role: "user", content: prompt}])
+          context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
           case ReqLLM.generate_text(@model, context) do
             {:ok, response} ->
-              summary_msg = %{
-                role: "user",
-                content: "Summary of previous events:\n" <> (response.text || "")
-              }
+              summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> (response.text || ""))
 
               %{state | history: [first_message, summary_msg | recent_messages]}
 
