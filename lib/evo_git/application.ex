@@ -11,11 +11,7 @@ defmodule EvoGit.Application do
       {Task.Supervisor, name: EvoGit.TaskSupervisor},
       # Starts a worker by calling: EvoGit.Worker.start_link(arg)
       # {EvoGit.Worker, arg}
-      {EvoGit.WorkerPool,
-       [
-         max_concurrency: Application.get_env(:evo_git, :max_concurrency, 3),
-         max_retries: Application.get_env(:evo_git, :max_retries, 3)
-       ]}
+      {EvoGit.WorkerPool, []}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
