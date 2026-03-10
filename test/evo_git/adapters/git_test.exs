@@ -4,7 +4,9 @@ defmodule EvoGit.Adapters.GitTest do
   alias EvoGit.Adapters.Git
 
   setup do
-    tmp_dir = Path.join(System.tmp_dir!(), "evo_git_test_repo_" <> to_string(System.unique_integer()))
+    tmp_dir =
+      Path.join(System.tmp_dir!(), "evo_git_test_repo_" <> to_string(System.unique_integer()))
+
     File.mkdir_p!(tmp_dir)
     Git.init(tmp_dir)
 
