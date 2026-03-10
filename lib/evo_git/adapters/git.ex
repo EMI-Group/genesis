@@ -12,6 +12,7 @@ defmodule EvoGit.Adapters.Git do
   end
 
   defp handle_git_command_result({output, 0}, _args, _cd), do: {:ok, String.trim(output)}
+
   defp handle_git_command_result({output, 1}, ["commit" | _], _cd) do
     # This is a graceful "no changes to commit" scenario for `git commit`
     if String.contains?(output, "nothing to commit, working tree clean") do
@@ -21,11 +22,14 @@ defmodule EvoGit.Adapters.Git do
       {:error, 1, String.trim(output)}
     end
   end
+
   defp handle_git_command_result({output, 1}, _args, _cd) do
     # Default behavior for exit code 1 (e.g., merge conflicts)
     {:conflict, String.trim(output)}
   end
-  defp handle_git_command_result({output, code}, _args, _cd), do: {:error, code, String.trim(output)}
+
+  defp handle_git_command_result({output, code}, _args, _cd),
+    do: {:error, code, String.trim(output)}
 
   def init(path) do
     run(["init"], path)
