@@ -282,8 +282,9 @@ defmodule EvoGit.Agent.Coder do
           )
 
           truncate_size = 3000
-          first_part = String.slice(result, 0, truncate_size / 2)
-          last_part = String.slice(result, -truncate_size / 2, truncate_size / 2)
+          half_size = div(truncate_size, 2)
+          first_part = String.slice(result, 0, half_size)
+          last_part = String.slice(result, -half_size, half_size)
           first_part <> "\n... [Output Truncated, Only 3000 bytes Shown] ...\n" <> last_part
         else
           result
