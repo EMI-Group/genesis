@@ -48,18 +48,18 @@ defmodule EvoGit.Prompts do
   """
   def genesis_plan(:directory, node_path, instruction) do
     base_prompt = """
-    Planning Phase for directory '#{node_path}'.
-    Instruction: #{instruction}
-    Task: Create or update 'CONTEXT.md' inside this directory, and run tools to setup any necessary boilerplate or structure.
-    Define Intent, API Surface, and Constraints for this architectural level.
-    You can use standard package / environment tools to setup any boilerplate or structure needed.
-    Do NOT directly implement any files yet. Do NOT modify anything outside this directory.
+    Target Directory: '#{node_path}'.
+    User Request: #{instruction}
+    Task: Your job is to define the architectural context for this specific directory.
+    1. Create or update a 'CONTEXT.md' file inside this directory. This file must clearly define the Intent (purpose), API Surface (what modules/files it will contain), and Constraints (rules for child files/directories) for this level of the architecture.
+    2. Execute any necessary shell commands to initialize boilerplate or directory structure (e.g., package managers, project generators).
+    Important Constraints: Do NOT implement the actual code or content of any source files yet. Do NOT modify any files or directories outside of '#{node_path}'.
     """
 
     # If we are at the root level, we must instructure the LLM to init .gitignore
     if node_path == "." do
       base_prompt <>
-        "\nSince this is the root level, init a .gitignore file with standard entries for the project."
+        "\nSince this is the root directory, also initialize a .gitignore file with standard entries for the project type."
     else
       base_prompt
     end
@@ -67,10 +67,11 @@ defmodule EvoGit.Prompts do
 
   def genesis_plan(:file, node_path, instruction) do
     """
-    Planning Phase for file '#{node_path}'.
-    Instruction: #{instruction}
-    Task: Add a header comment / docstring / module doc to this file defining its purpose and constraints.
-    Do NOT directly implement any files yet. Do NOT modify anything except this file.
+    Target File: '#{node_path}'.
+    User Request: #{instruction}
+    Task: Your job is to define the context and purpose of this specific file.
+    Write a comprehensive header comment, docstring, or module-level documentation at the top of the file that clearly explains its intent, responsibilities, and any constraints.
+    Important Constraints: Do NOT implement the actual logic or code body yet. Just write the structural documentation/comments. Do NOT modify any other files.
     """
   end
 
@@ -79,19 +80,18 @@ defmodule EvoGit.Prompts do
   """
   def genesis_realize(:directory, node_path) do
     """
-    Realization Phase for directory '#{node_path}'.
-    Context is defined in CONTEXT.md of this node.
-    Task: Create the immediate subdirectories and empty files specified in the context.
-    Do NOT implement the content of the children files yet, just create them.
-    Do NOT modify anything outside this directory.
+    Target Directory: '#{node_path}'.
+    Task: Read the 'CONTEXT.md' file in this directory to understand its intended structure.
+    Based on that context, create the immediate subdirectories and empty placeholder files that are supposed to exist inside this directory.
+    Important Constraints: Do NOT write any implementation code inside these newly created files yet; just create the empty files. Do NOT modify anything outside of this directory.
     """
   end
 
   def genesis_realize(:file, node_path) do
     """
-    Realization Phase for file '#{node_path}'.
-    Context is defined in the header comment of this node.
-    Task: Implement the full code according to the header comment / docstring / module doc.
+    Target File: '#{node_path}'.
+    Task: Read the header comment, docstring, or module documentation at the top of this file.
+    Based on that context and intended purpose, implement the complete code logic for this file. Ensure the implementation fully satisfies the stated responsibilities.
     """
   end
 end
