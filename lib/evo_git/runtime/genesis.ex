@@ -62,20 +62,44 @@ defmodule EvoGit.Runtime.Genesis do
         # Step 2: Plan
         plan_objective = Prompts.genesis_plan(type, node_path, context_instruction)
 
-        with {:ok, plan_state} <- Agent.mutate(state, plan_objective, opts),
+        agent_opts = Keyword.put_new(opts, :agent_module, EvoGit.Agent.Genesis)
+
+        with {:ok, plan_state, _plan_response} <- Agent.mutate(state, plan_objective, agent_opts),
              # Step 3: Realize
              realize_objective = Prompts.genesis_realize(type, node_path),
-             {:ok, realize_state} <- Agent.mutate(plan_state, realize_objective, opts) do
-          {:ok, realize_state}
+             {:ok, realize_state, realize_response} <- Agent.mutate(plan_state, realize_objective, agent_opts) do
+          {:ok, realize_state, realize_response}
         end
       end)
 
     case evolution_result do
-      {:ok, realize_state} ->
+      {:ok, realize_state, agent_response} ->
         # Step 4: Recursion
-        # Find children created/present in the new commit
+        # Find children returned by the agent
         new_sha = realize_state.phylo_node.current_commit
-        recurse_children(new_sha, node_path, opts)
+        children = agent_response
+
+        children =
+          if is_binary(children) do
+            case JSON.decode(children) do
+              {:ok, decoded} when is_list(decoded) -> decoded
+              _ -> []
+            end
+          else
+            List.wrap(children)
+          end
+
+        # Ensure paths are relative to root if they are just basenames
+        children =
+          Enum.map(children, fn child ->
+            if node_path == "." or String.starts_with?(child, node_path <> "/") do
+              child
+            else
+              Path.join(node_path, child)
+            end
+          end)
+
+        recurse_children(new_sha, node_path, children, opts)
 
       error ->
         error
@@ -96,48 +120,41 @@ defmodule EvoGit.Runtime.Genesis do
   # We also ignore any paths that start with "." to avoid hidden files/directories
   @ignore_prefixes "."
 
-  defp recurse_children(base_sha, node_path, opts) do
-    Logger.debug("Recursive down to child nodes of #{base_sha} #{node_path}")
+  defp recurse_children(base_sha, node_path, explicit_children, opts) do
+    Logger.debug("Recursive down to explicitly provided child nodes of #{base_sha} #{node_path}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
-    node = PhyloGraphNode.new(repo_path, base_sha)
 
-    case PhyloGraphNode.list_immediate_children(node, node_path) do
-      {:ok, children} ->
-        # Filter children by hardcoded names and self
-        pre_filtered =
-          children
-          |> Enum.reject(fn p ->
-            name = Path.basename(p)
+    # Filter children by hardcoded names and self
+    pre_filtered =
+      explicit_children
+      |> Enum.reject(fn p ->
+        name = Path.basename(p)
 
-            name in @ignored_names or p == node_path or
-              String.starts_with?(name, @ignore_prefixes)
-          end)
+        name in @ignored_names or p == node_path or
+          String.starts_with?(name, @ignore_prefixes)
+      end)
 
-        # Further filter with .gitignore if there are any children left
-        valid_children =
-          if pre_filtered == [] do
-            []
-          else
-            case Git.check_ignore(repo_path, pre_filtered) do
-              {:ok, ignored} -> pre_filtered -- ignored
-              _ -> pre_filtered
-            end
-          end
-
-        Logger.debug("Found children of #{node_path}: #{inspect(children)}")
-
-        if valid_children == [] do
-          {:ok, base_sha}
-        else
-          Logger.info(
-            "Genesis: Recursing into children of #{node_path}: #{inspect(valid_children)}"
-          )
-
-          process_children_parallel(base_sha, valid_children, opts)
+    # Further filter with .gitignore if there are any children left
+    valid_children =
+      if pre_filtered == [] do
+        []
+      else
+        case Git.check_ignore(repo_path, pre_filtered) do
+          {:ok, ignored} -> pre_filtered -- ignored
+          _ -> pre_filtered
         end
+      end
 
-      error ->
-        error
+    Logger.debug("Found children of #{node_path}: #{inspect(explicit_children)}")
+
+    if valid_children == [] do
+      {:ok, base_sha}
+    else
+      Logger.info(
+        "Genesis: Recursing into explicitly provided children of #{node_path}: #{inspect(valid_children)}"
+      )
+
+      process_children_parallel(base_sha, valid_children, opts)
     end
   end
 

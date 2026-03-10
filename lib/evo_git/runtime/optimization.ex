@@ -30,7 +30,7 @@ defmodule EvoGit.Runtime.Optimization do
 
            Agent.mutate(state, objective, opts)
          end) do
-      {:ok, %{phylo_node: updated_node}} ->
+      {:ok, %{phylo_node: updated_node}, _agent_output} ->
         Logger.info(
           "Optimization: Evolution successful. New commit: #{String.slice(updated_node.current_commit, 0, 7)}"
         )
