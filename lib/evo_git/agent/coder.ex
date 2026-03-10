@@ -21,7 +21,7 @@ defmodule EvoGit.Agent.Coder do
       @doc """
       Runs the agent asynchronously in a Task, returning the Task struct.
       """
-      def run_task(query, caller_pid, system_prompt \\ "") do
+      def run_task(query, caller_pid, system_prompt \\ nil) do
         Task.async(fn ->
           run(query, caller_pid, system_prompt)
         end)
@@ -30,12 +30,14 @@ defmodule EvoGit.Agent.Coder do
       @doc """
       Runs the agent synchronously, blocking until it completes.
       """
-      def run(query, caller_pid, system_prompt \\ "") do
+      def run(query, caller_pid, system_prompt \\ nil) do
+        actual_system_prompt = system_prompt || system_prompt()
+
         state = %{
           caller_pid: caller_pid,
           turn: 0,
           history: [%{role: "user", content: query}],
-          system_prompt: system_prompt,
+          system_prompt: actual_system_prompt,
           in_grace_period: false,
           deadline: System.monotonic_time(:millisecond) + @timeout_ms
         }
@@ -216,8 +218,10 @@ defmodule EvoGit.Agent.Coder do
         EvoGit.Agent.Tools.execute(call.name, call.arguments)
       end
 
+      def system_prompt, do: ""
+
       # Give adopting modules default implementations they can override
-      defoverridable available_tools: 0, execute_tool: 2
+      defoverridable available_tools: 0, execute_tool: 2, system_prompt: 0
     end
   end
 end

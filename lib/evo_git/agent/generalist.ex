@@ -9,18 +9,28 @@ defmodule EvoGit.Agent.Generalist do
     EvoGit.Agent.Tools.schemas() ++ [codebase_investigator_schema(), completion_schema()]
   end
 
+  def system_prompt do
+    """
+    You are a versatile, experienced and world-class software engineering agent.
+    Solve tasks efficiently and write high-quality code.
+    A delegate to the codebase_investigator subagent for any task that requires deep investigation of the codebase, such as:
+    - Understanding complex code, finding where a function is defined, what does a module do, etc.
+    - Analyzing how different parts of the code interact, understanding data flow, etc.
+    """
+  end
+
   defp codebase_investigator_schema do
     ReqLLM.tool(
       name: "codebase_investigator",
       description:
-        "A specialized agent for codebase analysis. Call this to investigate the codebase and return a comprehensive report.",
+        "A specialized agent for codebase analysis. Call this agent with a query to let it investigate the codebase and return a report.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "objective" => %{
             "type" => "string",
             "description" =>
-              "A comprehensive and detailed description of what needs to be investigated."
+              "A clear and specific query describing what you want the codebase investigator to analyze or find out."
           }
         },
         "required" => ["objective"]
@@ -33,11 +43,8 @@ defmodule EvoGit.Agent.Generalist do
   def execute_tool(%{name: "codebase_investigator", arguments: args}, state) do
     query = Map.get(args, "objective")
 
-    system_prompt =
-      "You are an expert codebase investigator. Investigate thoroughly and report your findings."
-
     # Start the subagent synchronously. Pass the actual caller_pid so events flow directly
-    case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid, system_prompt) do
+    case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid) do
       {:ok, result} -> result
       {:error, reason} -> "Error: Subagent failed with reason: #{inspect(reason)}"
     end

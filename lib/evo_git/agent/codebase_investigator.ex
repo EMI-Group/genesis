@@ -17,5 +17,11 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     ]
   end
 
-  # We use the default execute_tool(call, state) implementation from Coder
+  def system_prompt do
+    """
+    You are an expert codebase investigator.
+    Investigate the codebase thoroughly to answer the query.
+    You don't need to write code, just investigate and report your findings.
+    """
+  end
 end
