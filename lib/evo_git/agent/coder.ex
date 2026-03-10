@@ -269,8 +269,11 @@ defmodule EvoGit.Agent.Coder do
         result = EvoGit.Agent.Tools.execute(call.name, call.arguments)
 
         if is_binary(result) and String.length(result) > 20000 do
-          Logger.warning("Output truncated for tool: #{call.name}")
-          String.slice(result, 0, 20000) <> "\n... [Output Truncated] ..."
+          Logger.warning(
+            "Output truncated for tool: #{call.name}, arguments: #{inspect(call.arguments)}, result length: #{String.length(result)}"
+          )
+
+          String.slice(result, 0, 10000) <> "\n... [Output Truncated] ..."
         else
           result
         end

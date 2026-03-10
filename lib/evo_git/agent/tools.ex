@@ -11,6 +11,8 @@ defmodule EvoGit.Agent.Tools do
       read_file_schema(),
       read_many_files_schema(),
       write_file_schema(),
+      create_files_schema(),
+      create_directories_schema(),
       replace_in_file_schema(),
       run_shell_command_schema(),
       rg_schema(),
@@ -26,6 +28,8 @@ defmodule EvoGit.Agent.Tools do
   def schema("read_file"), do: read_file_schema()
   def schema("read_many_files"), do: read_many_files_schema()
   def schema("write_file"), do: write_file_schema()
+  def schema("create_files"), do: create_files_schema()
+  def schema("create_directories"), do: create_directories_schema()
   def schema("replace_in_file"), do: replace_in_file_schema()
   def schema("run_shell_command"), do: run_shell_command_schema()
   def schema("rg"), do: rg_schema()
@@ -69,6 +73,36 @@ defmodule EvoGit.Agent.Tools do
       :ok -> "Successfully wrote to #{file_path}"
       {:error, reason} -> "Error writing file #{file_path}: #{:file.format_error(reason)}"
     end
+  end
+
+  def execute("create_files", args) do
+    paths = Map.fetch!(args, "file_paths")
+
+    Enum.map_join(paths, "\n", fn path ->
+      full_path = expand_path(path)
+      File.mkdir_p!(Path.dirname(full_path))
+
+      case File.write(full_path, "") do
+        :ok -> "Successfully created file #{path}"
+        {:error, reason} -> "Error creating file #{path}: #{:file.format_error(reason)}"
+      end
+    end)
+  end
+
+  def execute("create_directories", args) do
+    paths = Map.fetch!(args, "dir_paths")
+
+    Enum.map_join(paths, "\n", fn path ->
+      full_path = expand_path(path)
+      File.mkdir_p!(full_path)
+
+      gitkeep_path = Path.join(full_path, ".gitkeep")
+
+      case File.write(gitkeep_path, "") do
+        :ok -> "Successfully created directory #{path} with .gitkeep"
+        {:error, reason} -> "Error creating directory #{path}: #{:file.format_error(reason)}"
+      end
+    end)
   end
 
   def execute("replace_in_file", args) do
@@ -222,6 +256,45 @@ defmodule EvoGit.Agent.Tools do
           "content" => %{"type" => "string", "description" => "The content to write to the file"}
         },
         "required" => ["file_path", "content"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  defp create_files_schema do
+    ReqLLM.tool(
+      name: "create_files",
+      description: "Creates multiple empty files, ensuring their parent directories exist.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "file_paths" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" => "List of file paths to create"
+          }
+        },
+        "required" => ["file_paths"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  defp create_directories_schema do
+    ReqLLM.tool(
+      name: "create_directories",
+      description:
+        "Creates multiple empty directories and adds a .gitkeep file to each so they are tracked by version control.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "dir_paths" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" => "List of directory paths to create"
+          }
+        },
+        "required" => ["dir_paths"]
       },
       callback: fn _ -> {:ok, nil} end
     )
