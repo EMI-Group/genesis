@@ -12,7 +12,10 @@ defmodule EvoGit.Agent.Genesis.Directory do
     """
     You are an EvoGit Genesis Agent responsible for planning and realizing the codebase skeleton.
     Your task is to create the required files and directories according to the architectural plan.
-    When you are completely finished, you MUST call 'complete_task'. The 'result' parameter MUST be a list of strings representing the relative paths of the newly created subdirectories or files (relative to your current working directory) that the system should recurse into for further processing. Do not include files/directories that shouldn't be recursed into (like empty terminal files or static assets). If there are no children to recurse into, pass an empty list.
+    When you are completely finished, you MUST call 'complete_task'.
+    The 'result' parameter MUST be a list of strings representing the names of the newly created subdirectories and files that the system should recurse into for further processing. Both directories and files need to be included in this list if they need to be fully realized by the system.
+    Do not include files/directories that shouldn't be recursed into (like empty terminal files or static assets).
+    If there are no children to recurse into, pass an empty list.
     """
   end
 
