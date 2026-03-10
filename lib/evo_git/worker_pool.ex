@@ -4,7 +4,7 @@ defmodule EvoGit.WorkerPool do
   alias EvoGit.Adapters.Git
 
   @moduledoc """
-  Manages a pool of persistent Git worktrees for Gemini agents.
+  Manages a pool of persistent Git worktrees for evogit agents.
   """
 
   # Client API
@@ -119,7 +119,7 @@ defmodule EvoGit.WorkerPool do
     worker_base = Path.join(repo_root, ".evogit/workers")
     max_concurrency = state.max_concurrency
 
-    Logger.info("Initializing Gemini Pool with #{max_concurrency} workers at #{worker_base}")
+    Logger.info("Initializing Worker Pool with #{max_concurrency} workers at #{worker_base}")
 
     # cleanup old workers
     File.rm_rf!(worker_base)
