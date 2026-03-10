@@ -53,7 +53,7 @@ When an agent runs, it constructs its "World View" dynamically:
 
 1. **Local Context:** Reads CONTEXT.md (or file content) at node_path.
 2. **Ancestral Context:** Reads CONTEXT.md of the parent, grandparent, up to the root. This ensures the agent aligns with high-level architectural goals.
-3. **Siblings:** Explicit sibling context is **not** included. The underlying tool (gemini-cli) handles necessary file retrieval/RAG if dependencies are needed.
+3. **Siblings:** Explicit sibling context is **not** necessary.
 
 ## **4. Runtime Process**
 
@@ -96,7 +96,7 @@ The system checks the Analyst's output:
 Each dispatched agent:
 
 1. **Forks:** Find a unoccupied worktree, checkout the commit in detached HEAD state.
-2. **Acts:** Calls gemini-cli to modify files within its node_path to satisfy the objective.
+2. **Acts:** Calls EvoGit.Agent.Generalist to modify files within its node_path to satisfy the objective.
 3. **Commits:** Saves the changes by creating a new commit in the worktree.
 
 #### **Step D: Pre-Filtering (Sanity Check)**
@@ -130,72 +130,7 @@ The system presents a final lineup of $M+1$ versions to the user:
 ### **5.1 Tech Stack**
 
 * **Main Program:** **Elixir**. Chosen for its robust concurrency (OTP), fault tolerance, and actor model which maps perfectly to independent Agents.
-* **LLM Integration:** **Gemini CLI**. Agents shell out to gemini-cli for intelligence.
-  - To use gemini-cli, call the `gemini` command with appropriate parameters. `gemini` can accepts stdin or direct arguments, and can return output via stdout or json, depending on the use case, here are some examples:
-    * `cat README.md | gemini --prompt "Summarize this documentation"`
-    * `gemini -p "Explain this code" --output-format json`
-  - Context files must be passed in the order of root to leaf, so that the LLM can build the full context hierarchy while keeping a good kv cache hit rate.
 * **Version Control:** **Git**. use the git command line.
-
-The json output looks like this:
-
-```json
-{
-  "response": "The code does X, Y, Z...",
-  "stats": {
-    "models": {
-      "gemini-2.5-pro": {
-        "api": {
-          "totalRequests": 2,
-          "totalErrors": 0,
-          "totalLatencyMs": 5053
-        },
-        "tokens": {
-          "prompt": 24939,
-          "candidates": 20,
-          "total": 25113,
-          "cached": 21263,
-          "thoughts": 154,
-          "tool": 0
-        }
-      },
-      "gemini-2.5-flash": {
-        ...
-      }
-    },
-    "tools": {
-      "totalCalls": 1,
-      "totalSuccess": 1,
-      "totalFail": 0,
-      "totalDurationMs": 1881,
-      "totalDecisions": {
-        "accept": 0,
-        "reject": 0,
-        "modify": 0,
-        "auto_accept": 1
-      },
-      "byName": {
-        "google_web_search": {
-          "count": 1,
-          "success": 1,
-          "fail": 0,
-          "durationMs": 1881,
-          "decisions": {
-            "accept": 0,
-            "reject": 0,
-            "modify": 0,
-            "auto_accept": 1
-          }
-        }
-      }
-    },
-    "files": {
-      "totalLinesAdded": 0,
-      "totalLinesRemoved": 0
-    }
-  }
-}
-```
 
 ### **5.3 Git Integration Details**
 
@@ -205,15 +140,12 @@ To ensure strict isolation between agents running in parallel:
 2. **Worktrees:** Every agent action sequence happens in:
    .evogit/worktrees/worker_<i>/
 3. **Lifecycle:**
-   A pool manager keeps track of N available worker resources.
-   Each resource is:
-    1. An available worktree slot.
-    2. An available `gemini` cli instance.
+   A pool manager keeps track of N available worker resources, that is N available worktree slots.
 
    When an agent is dispatched:
    * Agent performs edits in that worktree.
    * git commit -am "Agent: <objective>"
-   * Attach the gemini output as git commit notes for traceability.
+   * Attach other information as git notes for traceability.
 
 ### **5.4 CLI Interface**
 
