@@ -37,7 +37,7 @@ defmodule EvoGit.Agent.Tools do
   Executes a tool by name with the given arguments.
   """
   def execute("read_file", args) do
-    file_path = Map.fetch!(args, "file_path")
+    file_path = Map.fetch!(args, "file_path") |> expand_path()
 
     case File.read(file_path) do
       {:ok, content} -> content
@@ -49,7 +49,8 @@ defmodule EvoGit.Agent.Tools do
     paths = Map.fetch!(args, "file_paths")
 
     Enum.map_join(paths, "\n---\n", fn path ->
-      case File.read(path) do
+      full_path = expand_path(path)
+      case File.read(full_path) do
         {:ok, content} -> "File: #{path}\n#{content}"
         {:error, reason} -> "Error reading file #{path}: #{:file.format_error(reason)}"
       end
@@ -57,7 +58,7 @@ defmodule EvoGit.Agent.Tools do
   end
 
   def execute("write_file", args) do
-    file_path = Map.fetch!(args, "file_path")
+    file_path = Map.fetch!(args, "file_path") |> expand_path()
     content = Map.fetch!(args, "content")
 
     # Ensure directory exists
@@ -70,7 +71,7 @@ defmodule EvoGit.Agent.Tools do
   end
 
   def execute("replace_in_file", args) do
-    file_path = Map.fetch!(args, "file_path")
+    file_path = Map.fetch!(args, "file_path") |> expand_path()
     old_text = Map.fetch!(args, "old_text")
     new_text = Map.fetch!(args, "new_text")
 
@@ -142,12 +143,20 @@ defmodule EvoGit.Agent.Tools do
     pattern = Map.fetch!(args, "pattern")
     cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
 
-    File.cd!(cwd, fn ->
-      case Path.wildcard(pattern, match_dot: true) do
-        [] -> "No files found matching pattern: #{pattern}"
-        paths -> Enum.join(paths, "\n")
-      end
-    end)
+    # Path.wildcard doesn't support a cwd option directly.
+    # To avoid changing the VM's global cwd (which breaks concurrent workers),
+    # we prepend the cwd to the pattern, run wildcard, and then strip the cwd prefix.
+    full_pattern = Path.join(cwd, pattern)
+
+    case Path.wildcard(full_pattern, match_dot: true) do
+      [] ->
+        "No files found matching pattern: #{pattern}"
+
+      paths ->
+        paths
+        |> Enum.map(fn path -> Path.relative_to(path, cwd) end)
+        |> Enum.join("\n")
+    end
   end
 
   def execute("list_directory", args) do
@@ -330,5 +339,10 @@ defmodule EvoGit.Agent.Tools do
       },
       callback: fn _ -> {:ok, nil} end
     )
+  end
+
+  defp expand_path(file_path) do
+    cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
+    Path.expand(file_path, cwd)
   end
 end
