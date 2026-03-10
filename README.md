@@ -17,10 +17,6 @@ It uses AI Agents to recursively build and optimize software, leveraging a "Cont
     mix deps.get
     ```
 
-3.  **Setup Environment:**
-    Ensure you have `git` installed and configured.
-    Ensure you have the `gemini` CLI tool installed and available in your PATH, or configured as per the project requirements.
-
 ## Usage
 
 EvoGit is a CLI tool. You can run it using `mix run` to execute the CLI entry point.
