@@ -14,7 +14,9 @@ defmodule EvoGit.Agent.Tools do
       replace_in_file_schema(),
       run_shell_command_schema(),
       rg_schema(),
-      git_schema()
+      git_schema(),
+      glob_schema(),
+      list_directory_schema()
     ]
   end
 
@@ -120,6 +122,29 @@ defmodule EvoGit.Agent.Tools do
       "Command executed successfully.\nOutput:\n#{output}"
     else
       "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+    end
+  end
+
+  def execute("glob", args) do
+    pattern = Map.fetch!(args, "pattern")
+    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+
+    File.cd!(cwd, fn ->
+      case Path.wildcard(pattern, match_dot: true) do
+        [] -> "No files found matching pattern: #{pattern}"
+        paths -> Enum.join(paths, "\n")
+      end
+    end)
+  end
+
+  def execute("list_directory", args) do
+    dir_path = Map.fetch!(args, "dir_path")
+    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    full_path = Path.expand(dir_path, cwd)
+
+    case File.ls(full_path) do
+      {:ok, files} -> Enum.join(files, "\n")
+      {:error, reason} -> "Error listing directory #{dir_path}: #{:file.format_error(reason)}"
     end
   end
 
@@ -250,6 +275,36 @@ defmodule EvoGit.Agent.Tools do
           }
         },
         "required" => ["args"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  defp glob_schema do
+    ReqLLM.tool(
+      name: "glob",
+      description: "Finds files matching a specific glob pattern.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "pattern" => %{"type" => "string", "description" => "The glob pattern to match against (e.g., 'lib/**/*.ex')"}
+        },
+        "required" => ["pattern"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  defp list_directory_schema do
+    ReqLLM.tool(
+      name: "list_directory",
+      description: "Lists the names of files and subdirectories directly within a specified directory path.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "dir_path" => %{"type" => "string", "description" => "The path to the directory to list (e.g., '.', 'lib', 'test')"}
+        },
+        "required" => ["dir_path"]
       },
       callback: fn _ -> {:ok, nil} end
     )
