@@ -59,7 +59,11 @@ defmodule EvoGit.Prompts do
     # If we are at the root level, we must instructure the LLM to init .gitignore
     if node_path == "." do
       base_prompt <>
-        "\nSince this is the root directory, also initialize a .gitignore file with standard entries for the project type."
+        "\n" <>
+        """
+        Since this is the root directory, also initialize a .gitignore file with standard entries for the project type.
+        In addition, please include project management guidelines in the 'CONTEXT.md', such as how to run tests, linting, or formatters if applicable, and how to run the main entry point if any, etc.
+        """
     else
       base_prompt
     end
