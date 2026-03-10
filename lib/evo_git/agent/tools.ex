@@ -205,7 +205,7 @@ defmodule EvoGit.Agent.Tools do
   defp run_shell_command_schema do
     ReqLLM.tool(
       name: "run_shell_command",
-      description: "Executes a shell command via bash -c.",
+      description: "Executes a shell command via bash -c. Common Linux command line tools and tools used in the project are mostly available.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
