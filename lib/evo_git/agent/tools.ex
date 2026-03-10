@@ -12,7 +12,9 @@ defmodule EvoGit.Agent.Tools do
       read_many_files_schema(),
       write_file_schema(),
       replace_in_file_schema(),
-      run_shell_command_schema()
+      run_shell_command_schema(),
+      rg_schema(),
+      git_schema()
     ]
   end
 
@@ -82,6 +84,36 @@ defmodule EvoGit.Agent.Tools do
     systemd_args = EvoGit.sandbox_args(cwd, "bash", ["-c", command])
 
     # Execute via systemd-run
+    {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+
+    if exit_code == 0 do
+      "Command executed successfully.\nOutput:\n#{output}"
+    else
+      "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+    end
+  end
+
+  def execute("rg", args) do
+    args_list = Map.fetch!(args, "args")
+
+    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    systemd_args = EvoGit.sandbox_args(cwd, "rg", args_list)
+
+    {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+
+    cond do
+      exit_code == 0 -> "Command executed successfully.\nOutput:\n#{output}"
+      exit_code == 1 and output == "" -> "No matches found."
+      true -> "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+    end
+  end
+
+  def execute("git", args) do
+    args_list = Map.fetch!(args, "args")
+
+    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    systemd_args = EvoGit.sandbox_args(cwd, "git", args_list)
+
     {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
 
     if exit_code == 0 do
@@ -180,6 +212,44 @@ defmodule EvoGit.Agent.Tools do
           "command" => %{"type" => "string", "description" => "The bash command to execute"}
         },
         "required" => ["command"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  defp rg_schema do
+    ReqLLM.tool(
+      name: "rg",
+      description: "Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "args" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" => "List of arguments to pass to rg, e.g. ['-n', 'pattern', 'dir']"
+          }
+        },
+        "required" => ["args"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  defp git_schema do
+    ReqLLM.tool(
+      name: "git",
+      description: "Executes a git command. Provide arguments as a list of strings.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "args" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" => "List of arguments to pass to git, e.g. ['status'], ['diff', 'HEAD']"
+          }
+        },
+        "required" => ["args"]
       },
       callback: fn _ -> {:ok, nil} end
     )
