@@ -78,8 +78,11 @@ defmodule EvoGit.Agent.Tools do
   def execute("run_shell_command", args) do
     command = Map.fetch!(args, "command")
 
-    # Execute via bash -c
-    {output, exit_code} = System.cmd("bash", ["-c", command], stderr_to_stdout: true)
+    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    systemd_args = EvoGit.sandbox_args(cwd, "bash", ["-c", command])
+
+    # Execute via systemd-run
+    {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
 
     if exit_code == 0 do
       "Command executed successfully.\nOutput:\n#{output}"
