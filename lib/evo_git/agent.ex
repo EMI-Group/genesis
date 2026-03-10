@@ -60,13 +60,15 @@ defmodule EvoGit.Agent do
     Process.put(:repo_path, worktree_path)
     caller_pid = Keyword.get(opts, :caller_pid, self())
 
-    case Generalist.run(prompt, caller_pid) do
-      {:ok, _response} ->
+    agent_module = Keyword.get(opts, :agent_module, Generalist)
+
+    case agent_module.run(prompt, caller_pid) do
+      {:ok, response} ->
         # 4. Commit changes
         case PhyloGraphNode.add_and_commit(phylo_node, "Agent: #{objective}") do
           {:ok, updated_phylo_node} ->
             Logger.info("Agent: Committed changes")
-            {:ok, %{state | phylo_node: updated_phylo_node}}
+            {:ok, %{state | phylo_node: updated_phylo_node}, response}
 
           error ->
             Logger.error("Agent commit failed: #{inspect(error)}")
