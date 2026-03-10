@@ -174,6 +174,7 @@ defmodule EvoGit.Agent.Coder do
       defp build_dynamic_context do
         repo_path = Process.get(:repo_path)
         node_path = Process.get(:node_path)
+        location_info = "Current Location: '#{node_path}'."
 
         try do
           context_nodes = EvoGit.Core.ContextNode.hier_context(node_path, repo_path)
@@ -208,9 +209,9 @@ defmodule EvoGit.Agent.Coder do
             end)
 
           if context_contents == "" do
-            ""
+            location_info
           else
-            "\n\n# Context Tree\n" <> context_contents
+            location_info <> "\n\n# Context Tree\n" <> context_contents
           end
         rescue
           _e -> ""
