@@ -21,6 +21,19 @@ defmodule EvoGit.Agent.Tools do
   end
 
   @doc """
+  Returns a specific tool schema by name.
+  """
+  def schema("read_file"), do: read_file_schema()
+  def schema("read_many_files"), do: read_many_files_schema()
+  def schema("write_file"), do: write_file_schema()
+  def schema("replace_in_file"), do: replace_in_file_schema()
+  def schema("run_shell_command"), do: run_shell_command_schema()
+  def schema("rg"), do: rg_schema()
+  def schema("git"), do: git_schema()
+  def schema("glob"), do: glob_schema()
+  def schema("list_directory"), do: list_directory_schema()
+
+  @doc """
   Executes a tool by name with the given arguments.
   """
   def execute("read_file", args) do
@@ -230,7 +243,8 @@ defmodule EvoGit.Agent.Tools do
   defp run_shell_command_schema do
     ReqLLM.tool(
       name: "run_shell_command",
-      description: "Executes a shell command via bash -c. Common Linux command line tools and tools used in the project are mostly available.",
+      description:
+        "Executes a shell command via bash -c. Common Linux command line tools and tools used in the project are mostly available.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -245,7 +259,8 @@ defmodule EvoGit.Agent.Tools do
   defp rg_schema do
     ReqLLM.tool(
       name: "rg",
-      description: "Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.",
+      description:
+        "Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -287,7 +302,10 @@ defmodule EvoGit.Agent.Tools do
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "pattern" => %{"type" => "string", "description" => "The glob pattern to match against (e.g., 'lib/**/*.ex')"}
+          "pattern" => %{
+            "type" => "string",
+            "description" => "The glob pattern to match against (e.g., 'lib/**/*.ex')"
+          }
         },
         "required" => ["pattern"]
       },
@@ -298,11 +316,15 @@ defmodule EvoGit.Agent.Tools do
   defp list_directory_schema do
     ReqLLM.tool(
       name: "list_directory",
-      description: "Lists the names of files and subdirectories directly within a specified directory path.",
+      description:
+        "Lists the names of files and subdirectories directly within a specified directory path.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "dir_path" => %{"type" => "string", "description" => "The path to the directory to list (e.g., '.', 'lib', 'test')"}
+          "dir_path" => %{
+            "type" => "string",
+            "description" => "The path to the directory to list (e.g., '.', 'lib', 'test')"
+          }
         },
         "required" => ["dir_path"]
       },
