@@ -71,7 +71,8 @@ defmodule EvoGit.Runtime.Genesis do
         with {:ok, plan_state, _plan_response} <- Agent.mutate(state, plan_objective, agent_opts),
              # Step 3: Realize
              realize_objective = Prompts.genesis_realize(type, node_path),
-             {:ok, realize_state, realize_response} <- Agent.mutate(plan_state, realize_objective, agent_opts) do
+             {:ok, realize_state, realize_response} <-
+               Agent.mutate(plan_state, realize_objective, agent_opts) do
           {:ok, realize_state, realize_response}
         else
           error ->

@@ -108,6 +108,7 @@ defmodule EvoGit.Agent.Coder do
           |> Enum.map(&ReqLLM.ToolCall.from_map/1)
 
         text = ReqLLM.Response.text(response)
+
         if text && text != "" do
           stream_event(state.caller_pid, "THOUGHT_CHUNK", %{text: text})
         end
@@ -171,8 +172,8 @@ defmodule EvoGit.Agent.Coder do
       # --- Helpers ---
 
       defp build_dynamic_context do
-        repo_path = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
-        node_path = Process.get(:node_path) || repo_path
+        repo_path = Process.get(:repo_path)
+        node_path = Process.get(:node_path)
 
         try do
           context_nodes = EvoGit.Core.ContextNode.hier_context(node_path, repo_path)
@@ -190,8 +191,18 @@ defmodule EvoGit.Agent.Coder do
           context_contents =
             Enum.map_join(context_files, "\n\n", fn file ->
               case File.read(file) do
-                {:ok, content} -> "File: #{Path.relative_to(file, repo_path)}\n```\n#{content}\n```"
-                _ -> "File: #{Path.relative_to(file, repo_path)} (not found or error reading)"
+                {:ok, content} ->
+                  truncated_content =
+                    if String.length(content) > 10000 do
+                      String.slice(content, 0, 10000) <> "\n... [Content Truncated] ..."
+                    else
+                      content
+                    end
+
+                  "File: #{Path.relative_to(file, repo_path)}\n```\n#{truncated_content}\n```"
+
+                _ ->
+                  "File: #{Path.relative_to(file, repo_path)} (not found or error reading)"
               end
             end)
 
@@ -254,7 +265,13 @@ defmodule EvoGit.Agent.Coder do
       end
 
       def execute_tool(call, _state) do
-        EvoGit.Agent.Tools.execute(call.name, call.arguments)
+        result = EvoGit.Agent.Tools.execute(call.name, call.arguments)
+
+        if is_binary(result) and String.length(result) > 20000 do
+          String.slice(result, 0, 20000) <> "\n... [Output Truncated] ..."
+        else
+          result
+        end
       end
 
       def system_prompt, do: ""
