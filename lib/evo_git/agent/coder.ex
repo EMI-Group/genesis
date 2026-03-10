@@ -102,8 +102,9 @@ defmodule EvoGit.Agent.Coder do
 
         tool_calls = ReqLLM.Response.tool_calls(response)
 
-        if response.text && response.text != "" do
-          stream_event(state.caller_pid, "THOUGHT_CHUNK", %{text: response.text})
+        text = ReqLLM.Response.text(response)
+        if text && text != "" do
+          stream_event(state.caller_pid, "THOUGHT_CHUNK", %{text: text})
         end
 
         state = %{state | history: state.history ++ [response.message], turn: state.turn + 1}
@@ -183,7 +184,8 @@ defmodule EvoGit.Agent.Coder do
 
           case ReqLLM.generate_text(@model, context) do
             {:ok, response} ->
-              summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> (response.text || ""))
+              text = ReqLLM.Response.text(response)
+              summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> (text || ""))
 
               %{state | history: [first_message, summary_msg | recent_messages]}
 
