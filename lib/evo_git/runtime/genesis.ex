@@ -17,7 +17,10 @@ defmodule EvoGit.Runtime.Genesis do
       # Start recursion from root "."
       case evolve_node(head_sha, ".", root_prompt, opts) do
         {:ok, final_sha} ->
-          Logger.info("Genesis: Evolution complete. Updating main repository to #{String.slice(final_sha, 0, 7)}")
+          Logger.info(
+            "Genesis: Evolution complete. Updating main repository to #{String.slice(final_sha, 0, 7)}"
+          )
+
           Git.reset_hard(repo_path, final_sha)
           {:ok, final_sha}
 
@@ -81,7 +84,10 @@ defmodule EvoGit.Runtime.Genesis do
              realize_objective = Prompts.genesis_realize(type, node_path),
              {:ok, realize_state, realize_response} <-
                Agent.mutate(plan_state, realize_objective, agent_opts) do
-          {:ok, realize_state, realize_response}
+          has_readme? =
+            type == :directory and File.exists?(Path.join(abs_node_path, "README.md"))
+
+          {:ok, realize_state, realize_response, has_readme?}
         else
           error ->
             Logger.error("Genesis: Failed to evolve #{node_path}: #{inspect(error)}")
@@ -90,7 +96,7 @@ defmodule EvoGit.Runtime.Genesis do
       end)
 
     case evolution_result do
-      {:ok, realize_state, agent_response} ->
+      {:ok, realize_state, agent_response, has_readme?} ->
         # Step 4: Recursion
         # Find children returned by the agent
         new_sha = realize_state.phylo_node.current_commit
@@ -115,6 +121,20 @@ defmodule EvoGit.Runtime.Genesis do
               Path.join(node_path, child)
             end
           end)
+
+        children =
+          if has_readme? do
+            readme_path =
+              if node_path == ".", do: "README.md", else: Path.join(node_path, "README.md")
+
+            if readme_path in children do
+              children
+            else
+              [readme_path | children]
+            end
+          else
+            children
+          end
 
         recurse_children(new_sha, node_path, children, opts)
 
