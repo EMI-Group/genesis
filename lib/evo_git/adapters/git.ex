@@ -94,6 +94,10 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
+  def status(path) do
+    run(["status", "--porcelain"], path)
+  end
+
   def rev_parse(path, rev \\ "HEAD") do
     run(["rev-parse", rev], path)
   end
