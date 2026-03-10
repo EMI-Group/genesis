@@ -100,7 +100,9 @@ defmodule EvoGit.Agent.Coder do
             tools: available_tools()
           )
 
-        tool_calls = ReqLLM.Response.tool_calls(response)
+        tool_calls =
+          ReqLLM.Response.tool_calls(response)
+          |> Enum.map(&ReqLLM.ToolCall.from_map/1)
 
         text = ReqLLM.Response.text(response)
         if text && text != "" do
