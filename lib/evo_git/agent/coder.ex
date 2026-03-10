@@ -171,7 +171,7 @@ defmodule EvoGit.Agent.Coder do
             args: call.arguments
           })
 
-          output = DummyToolRegistry.execute(call.name, call.arguments)
+          output = EvoGit.Agent.Tools.execute(call.name, call.arguments)
 
           # 8. Stream Tool End
           stream_event(state.caller_pid, "TOOL_CALL_END", %{name: call.name})
@@ -201,7 +201,7 @@ defmodule EvoGit.Agent.Coder do
     end
   end
 
-  defp available_tools, do: DummyToolRegistry.schemas() ++ [completion_schema()]
+  defp available_tools, do: EvoGit.Agent.Tools.schemas() ++ [completion_schema()]
 
   defp completion_schema do
     ReqLLM.tool(
