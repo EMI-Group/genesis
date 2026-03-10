@@ -1,12 +1,11 @@
 defmodule EvoGit.Agent.Coder do
   @moduledoc """
-  A stateful GenServer template that manages a single agent session,
+  A stateful pure-function loop template that manages a single agent session,
   handling tool loops, timeouts, and graceful recovery.
   """
 
   defmacro __using__(_opts) do
     quote do
-      use GenServer
       require Logger
 
       @max_turns 20
@@ -19,89 +18,75 @@ defmodule EvoGit.Agent.Coder do
 
       # --- Public API ---
 
-      def start_link(query, caller_pid, system_prompt \\ "") do
-        GenServer.start_link(__MODULE__, %{
-          query: query,
-          caller_pid: caller_pid,
-          system_prompt: system_prompt
-        })
+      @doc """
+      Runs the agent asynchronously in a Task, returning the Task struct.
+      """
+      def run_task(query, caller_pid, system_prompt \\ "") do
+        Task.async(fn ->
+          run(query, caller_pid, system_prompt)
+        end)
       end
 
-      # --- GenServer Callbacks ---
-
-      @impl true
-      def init(%{query: query, caller_pid: caller_pid, system_prompt: system_prompt}) do
-        Process.send_after(self(), :deadline_timeout, @timeout_ms)
-
+      @doc """
+      Runs the agent synchronously, blocking until it completes.
+      """
+      def run(query, caller_pid, system_prompt \\ "") do
         state = %{
           caller_pid: caller_pid,
           turn: 0,
           history: [%{role: "user", content: query}],
           system_prompt: system_prompt,
-          in_grace_period: false
+          in_grace_period: false,
+          deadline: System.monotonic_time(:millisecond) + @timeout_ms
         }
 
-        send(self(), :execute_turn)
-
-        {:ok, state}
-      end
-
-      @impl true
-      def handle_info(:execute_turn, state) do
-        state = try_compress_chat(state)
-
-        if state.turn >= @max_turns and not state.in_grace_period do
-          send(self(), {:trigger_recovery, "max turns (\#{@max_turns}) exceeded"})
-          {:noreply, state}
-        else
-          do_turn(state)
-        end
-      end
-
-      @impl true
-      def handle_info(:deadline_timeout, state) do
-        if state.in_grace_period do
-          stream_event(state.caller_pid, "ERROR", %{
-            error: "Grace period timed out. Agent killed."
-          })
-
-          send(state.caller_pid, {:agent_finished, {:error, :timeout}})
-          {:stop, :normal, state}
-        else
-          send(self(), {:trigger_recovery, "10-minute time limit exceeded"})
-          {:noreply, state}
-        end
-      end
-
-      @impl true
-      def handle_info({:trigger_recovery, reason}, state) do
-        stream_event(state.caller_pid, "ERROR", %{
-          error: "Limit reached: \#{reason}. Attempting one final recovery turn."
-        })
-
-        warning_msg = """
-        You have exceeded the execution limit (\#{reason}).
-        You MUST call `\#{@complete_tool}` immediately with your best answer. Do not call any other tools.
-        """
-
-        new_history = state.history ++ [%{role: "user", content: warning_msg}]
-        Process.send_after(self(), :deadline_timeout, @grace_period_ms)
-
-        state = %{state | history: new_history, in_grace_period: true}
-        send(self(), :execute_turn)
-
-        {:noreply, state}
-      end
-
-      # Handle delegated subagent events generically (for Generalist or other agents with subagents)
-      @impl true
-      def handle_info({:subagent_activity, activity}, state) do
-        # Forward subagent events up to the actual UI/caller
-        send(state.caller_pid, {:subagent_activity, activity})
-        {:noreply, state}
+        loop(state)
       end
 
       # --- Internal Execution Logic ---
+
+      defp loop(state) do
+        state = try_compress_chat(state)
+
+        now = System.monotonic_time(:millisecond)
+        time_left = state.deadline - now
+
+        cond do
+          time_left <= 0 and not state.in_grace_period ->
+            trigger_recovery(state, "10-minute time limit exceeded")
+
+          time_left <= 0 and state.in_grace_period ->
+            stream_event(state.caller_pid, "ERROR", %{
+              error: "Grace period timed out. Agent killed."
+            })
+
+            send(state.caller_pid, {:agent_finished, {:error, :timeout}})
+            {:error, :timeout}
+
+          state.turn >= @max_turns and not state.in_grace_period ->
+            trigger_recovery(state, "max turns (#{@max_turns}) exceeded")
+
+          true ->
+            do_turn(state)
+        end
+      end
+
+      defp trigger_recovery(state, reason) do
+        stream_event(state.caller_pid, "ERROR", %{
+          error: "Limit reached: #{reason}. Attempting one final recovery turn."
+        })
+
+        warning_msg = """
+        You have exceeded the execution limit (#{reason}).
+        You MUST call `#{@complete_tool}` immediately with your best answer. Do not call any other tools.
+        """
+
+        new_history = state.history ++ [%{role: "user", content: warning_msg}]
+        new_deadline = System.monotonic_time(:millisecond) + @grace_period_ms
+
+        state = %{state | history: new_history, in_grace_period: true, deadline: new_deadline}
+        loop(state)
+      end
 
       defp do_turn(state) do
         context = ReqLLM.Context.new([ReqLLM.Context.system(state.system_prompt) | state.history])
@@ -124,20 +109,18 @@ defmodule EvoGit.Agent.Coder do
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
             send(state.caller_pid, {:agent_finished, {:ok, final_result}})
-            {:stop, :normal, state}
+            {:ok, final_result}
 
           {:continue, tool_responses} ->
             state = %{state | history: state.history ++ tool_responses}
-            send(self(), :execute_turn)
-            {:noreply, state}
+            loop(state)
 
           {:error, :protocol_violation} ->
             if state.in_grace_period do
               send(state.caller_pid, {:agent_finished, {:error, :recovery_failed}})
-              {:stop, :normal, state}
+              {:error, :recovery_failed}
             else
-              send(self(), {:trigger_recovery, "agent stopped calling tools"})
-              {:noreply, state}
+              trigger_recovery(state, "agent stopped calling tools")
             end
         end
       end
@@ -191,7 +174,7 @@ defmodule EvoGit.Agent.Coder do
           prompt = """
           Please provide a concise summary of the important information discoveries, and context from the following interaction history that are related to the current task.
 
-          \#{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
+          #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
           """
 
           context = ReqLLM.Context.new([%{role: "user", content: prompt}])
