@@ -74,8 +74,8 @@ defmodule EvoGit.Agent do
         end
 
       error ->
-        Logger.error("Gemini call failed: #{inspect(error)}")
-        {:error, :gemini_failed}
+        Logger.error("Agent call failed: #{inspect(error)}")
+        {:error, :agent_call_failed}
     end
   end
 
