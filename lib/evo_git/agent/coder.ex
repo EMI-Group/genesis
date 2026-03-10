@@ -194,8 +194,29 @@ defmodule EvoGit.Agent.Coder do
     # If the history gets too large (e.g., after `cat`ing a huge file),
     # summarize the older messages to save tokens.
     if length(state.history) > 15 do
-      summarized_history = MockCompressionService.compress(state.history)
-      %{state | history: summarized_history}
+      [first_message | rest_history] = state.history
+      {older_messages, recent_messages} = Enum.split(rest_history, -5)
+
+      prompt = """
+      Please provide a concise summary of the important information discoveries, and context from the following interaction history that are related to the current task.
+
+      #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
+      """
+
+      context = ReqLLM.Context.new([%{role: "user", content: prompt}])
+
+      case ReqLLM.generate_text(@model, context) do
+        {:ok, response} ->
+          summary_msg = %{
+            role: "user",
+            content: "Summary of previous events:\n" <> (response.text || "")
+          }
+
+          %{state | history: [first_message, summary_msg | recent_messages]}
+
+        _error ->
+          state
+      end
     else
       state
     end
