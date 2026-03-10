@@ -14,14 +14,14 @@ defmodule EvoGit.CLI do
           file: :string,
           concurrency: :integer,
           retries: :integer,
-          path: :string,
+          path: :string
         ],
         aliases: [
           h: :help,
           f: :file,
           c: :concurrency,
           r: :retries,
-          p: :path,
+          p: :path
         ]
       )
 

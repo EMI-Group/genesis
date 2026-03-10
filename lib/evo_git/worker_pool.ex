@@ -22,8 +22,11 @@ defmodule EvoGit.WorkerPool do
   @impl true
   def init(opts) do
     # Lazy initialization: just store config, don't create worktrees yet.
-    max_concurrency = Keyword.get(opts, :max_concurrency) || Application.get_env(:evo_git, :max_concurrency, 3)
-    max_retries = Keyword.get(opts, :max_retries) || Application.get_env(:evo_git, :max_retries, 3)
+    max_concurrency =
+      Keyword.get(opts, :max_concurrency) || Application.get_env(:evo_git, :max_concurrency, 3)
+
+    max_retries =
+      Keyword.get(opts, :max_retries) || Application.get_env(:evo_git, :max_retries, 3)
 
     {:ok,
      %{
