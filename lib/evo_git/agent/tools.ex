@@ -95,7 +95,7 @@ defmodule EvoGit.Agent.Tools do
   def execute("run_shell_command", args) do
     command = Map.fetch!(args, "command")
 
-    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
     systemd_args = EvoGit.sandbox_args(cwd, "bash", ["-c", command])
 
     # Execute via systemd-run
@@ -111,7 +111,7 @@ defmodule EvoGit.Agent.Tools do
   def execute("rg", args) do
     args_list = Map.fetch!(args, "args")
 
-    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
     systemd_args = EvoGit.sandbox_args(cwd, "rg", args_list)
 
     {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
@@ -126,7 +126,7 @@ defmodule EvoGit.Agent.Tools do
   def execute("git", args) do
     args_list = Map.fetch!(args, "args")
 
-    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
     systemd_args = EvoGit.sandbox_args(cwd, "git", args_list)
 
     {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
@@ -140,7 +140,7 @@ defmodule EvoGit.Agent.Tools do
 
   def execute("glob", args) do
     pattern = Map.fetch!(args, "pattern")
-    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
 
     File.cd!(cwd, fn ->
       case Path.wildcard(pattern, match_dot: true) do
@@ -152,7 +152,7 @@ defmodule EvoGit.Agent.Tools do
 
   def execute("list_directory", args) do
     dir_path = Map.fetch!(args, "dir_path")
-    cwd = Application.get_env(:evo_git, :repo_path, File.cwd!())
+    cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
     full_path = Path.expand(dir_path, cwd)
 
     case File.ls(full_path) do

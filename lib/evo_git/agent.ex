@@ -3,7 +3,7 @@ defmodule EvoGit.Agent do
   An Agent is a stateless function: NewState = Agent(State, Objective).
   """
   alias EvoGit.Adapters.Git
-  alias EvoGit.Adapters.Gemini
+  alias EvoGit.Agent.Generalist
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
   require Logger
@@ -41,14 +41,26 @@ defmodule EvoGit.Agent do
       end)
       |> Enum.filter(&File.exists?/1)
 
-    # 3. Call Gemini
+    # 3. Call Generalist
+    context_contents =
+      Enum.map_join(context_files, "\n\n", fn file ->
+        case File.read(Path.join(worktree_path, file)) do
+          {:ok, content} -> "File: #{file}\n```\n#{content}\n```"
+          _ -> "File: #{file} (not found or error reading)"
+        end
+      end)
+
     prompt =
       "Objective: #{objective}\n" <>
+        "Context Files:\n#{context_contents}\n" <>
         "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <>
         "You have access to the files in the current directory.\n" <>
         "Modify the files as needed."
 
-    case Gemini.call(prompt, worktree_path, context_files, opts) do
+    Process.put(:repo_path, worktree_path)
+    caller_pid = Keyword.get(opts, :caller_pid, self())
+
+    case Generalist.run(prompt, caller_pid) do
       {:ok, _response} ->
         # 4. Commit changes
         case PhyloGraphNode.add_and_commit(phylo_node, "Agent: #{objective}") do
@@ -84,16 +96,18 @@ defmodule EvoGit.Agent do
         "Identify the single most relevant directory or file path to modify.\n" <>
         "Return ONLY the path as a JSON string under key 'path'."
 
-    # Diagnosis uses Gemini directly on the current context (no worktree needed just for query if we have the file list)
-    # However, Gemini.call expects to run in a directory. We can run in CWD.
-    case Gemini.call(diag_prompt, File.cwd!(), [], opts) do
+    # Diagnosis uses Generalist directly on the current context
+    caller_pid = Keyword.get(opts, :caller_pid, self())
+    Process.put(:repo_path, File.cwd!())
+
+    case Generalist.run(diag_prompt, caller_pid) do
       {:ok, %{"path" => path}} ->
         validate_path(String.trim(path), files)
 
       {:ok, %{"response" => path}} ->
         validate_path(String.trim(path), files)
 
-      {:error, :json_decode_error, text} ->
+      {:ok, text} when is_binary(text) ->
         # Heuristic extraction
         path = text |> String.split() |> List.last() |> String.trim()
         validate_path(path, files)
@@ -153,14 +167,33 @@ defmodule EvoGit.Agent do
           end)
           |> Enum.filter(&File.exists?/1)
 
+        context_contents =
+          Enum.map_join(context_files, "\n\n", fn file ->
+            case File.read(Path.join(worktree_path, file)) do
+              {:ok, content} -> "File: #{file}\n```\n#{content}\n```"
+              _ -> "File: #{file} (not found or error reading)"
+            end
+          end)
+
         # 4. Resolve
         {:ok, conflicts} = Git.conflict_files(worktree_path)
+
+        Process.put(:repo_path, worktree_path)
+        caller_pid = Keyword.get(opts, :caller_pid, self())
 
         Enum.each(conflicts, fn file ->
           abs_file = Path.join(worktree_path, file)
 
+          file_content =
+            case File.read(abs_file) do
+              {:ok, content} -> "File: #{abs_file}\n```\n#{content}\n```"
+              _ -> ""
+            end
+
           prompt =
             "Objective: Resolve the merge conflicts in '#{file}'.\n" <>
+              "Context Files:\n#{context_contents}\n\n" <>
+              "Conflicting File Content:\n#{file_content}\n\n" <>
               "The file contains git conflict markers.\n" <>
               "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <>
               "1. Understand the intent of both branches.\n" <>
@@ -168,8 +201,7 @@ defmodule EvoGit.Agent do
               "3. Select the best implementation if mutually exclusive.\n" <>
               "4. Modify the file to contain ONLY the resolved code (remove markers)."
 
-          # Pass absolute path of conflict file as context
-          Gemini.call(prompt, worktree_path, context_files ++ [abs_file], opts)
+          Generalist.run(prompt, caller_pid)
         end)
 
         # 5. Commit
