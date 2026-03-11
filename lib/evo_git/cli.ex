@@ -14,14 +14,16 @@ defmodule EvoGit.CLI do
           file: :string,
           concurrency: :integer,
           retries: :integer,
-          path: :string
+          path: :string,
+          model: :string
         ],
         aliases: [
           h: :help,
           f: :file,
           c: :concurrency,
           r: :retries,
-          p: :path
+          p: :path,
+          m: :model
         ]
       )
 
@@ -36,13 +38,14 @@ defmodule EvoGit.CLI do
   defp configure_system(opts) do
     # Update application config if provided
     updated? =
-      Enum.reduce([:concurrency, :retries, :path], false, fn key, acc ->
+      Enum.reduce([:concurrency, :retries, :path, :model], false, fn key, acc ->
         if val = opts[key] do
           app_key =
             case key do
               :concurrency -> :max_concurrency
               :retries -> :max_retries
               :path -> :repo_path
+              :model -> :llm_model
             end
 
           Application.put_env(:evo_git, app_key, val)
@@ -131,6 +134,7 @@ defmodule EvoGit.CLI do
       -c, --concurrency <n>       Set number of concurrent workers (default: 3).
       -r, --retries <n>           Set max retries for failed agents (default: 3).
       -p, --path <path>           Path to the git repository (default: current directory).
+      -m, --model <model>         Override the default LLM model.
       -h, --help                  Show this help message.
 
     Examples:
