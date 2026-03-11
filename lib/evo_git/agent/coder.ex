@@ -14,7 +14,10 @@ defmodule EvoGit.Agent.Coder do
       # 1 minute
       @grace_period_ms 60 * 1000
       @complete_tool "complete_task"
-      @model Application.compile_env(:evo_git, :llm_model, "google:gemini-3.1-flash-lite-preview")
+
+      defp current_model do
+        Application.get_env(:evo_git, :llm_model, "google:gemini-3.1-flash-lite-preview")
+      end
 
       # --- Public API ---
 
@@ -98,7 +101,7 @@ defmodule EvoGit.Agent.Coder do
 
         {:ok, response} =
           ReqLLM.generate_text(
-            @model,
+            current_model(),
             context,
             tools: available_tools()
           )
@@ -235,7 +238,7 @@ defmodule EvoGit.Agent.Coder do
 
           context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
-          case ReqLLM.generate_text(@model, context) do
+          case ReqLLM.generate_text(current_model(), context) do
             {:ok, response} ->
               text = ReqLLM.Response.text(response)
               summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> (text || ""))
