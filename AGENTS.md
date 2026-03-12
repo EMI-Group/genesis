@@ -204,5 +204,6 @@ The evogit is used as a cli tool, so it should provide necessary commands to run
 
 ### **5.5 Other Considerations**
 
-- Json library: `JSON`, since elixir 1.18, JSON is included in the standard library, it uses the same API as `Jason`, but better.
-- Logging: use `Logger` module from elixir standard library.
+- Json library: By default, please use `JSON`, since elixir 1.18, JSON is included in the standard library, it uses the same API as `Jason`, but better. Use `Jason` only if you need to do pretty printing of JSON, since `JSON` does not support that.
+- Logging: use `Logger` module from elixir standard library, and log at appropriate levels (debug, info, warn, error) depending on the importance of the message.
+- Sandbox: the project come with a simple sandbox environment for running tools for the LLM. Specifically, it uses systemd-run to create a sandboxed environment read-write access to the codebase path, but read-only access to the rest of the system, and with limited CPU, memory resources and limited system calls. This is to prevent malicious or buggy code from doing harm to the system. Please note that this is a simple sandbox to prevent misbehaving commands from doing too much damage, but it is not a full security sandbox that can prevent malicious agents.
