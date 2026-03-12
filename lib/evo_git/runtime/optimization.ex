@@ -4,42 +4,73 @@ defmodule EvoGit.Runtime.Optimization do
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
   alias EvoGit.WorkerPool
+  alias EvoGit.Adapters.Git
   require Logger
 
   def run(objective, opts \\ []) do
     Logger.info("Optimization: Starting for objective: #{objective}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
-    {:ok, current_sha} = PhyloGraphNode.current_head(repo_path)
+    with :ok <- ensure_repo(repo_path),
+         {:ok, current_sha} <- PhyloGraphNode.current_head(repo_path) do
+      # 1. Diagnosis
+      # Create a temporary node for diagnosis representing the main repo state
+      current_node = PhyloGraphNode.new(repo_path, current_sha)
+      target_path = Agent.diagnose(current_node, objective, opts)
 
-    # 1. Diagnosis
-    # Create a temporary node for diagnosis representing the main repo state
-    current_node = PhyloGraphNode.new(repo_path, current_sha)
-    target_path = Agent.diagnose(current_node, objective, opts)
+      Logger.info("Optimization: Diagnosed target path: #{target_path}")
 
-    Logger.info("Optimization: Diagnosed target path: #{target_path}")
+      # 2. Dispatch (Single Agent)
+      case WorkerPool.run(fn worktree_path ->
+             # Ensure worktree is at the correct commit before ContextNode.load
+             Git.clean(worktree_path)
+             Git.checkout(worktree_path, current_sha)
 
-    # 2. Dispatch (Single Agent)
+             phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
 
-    case WorkerPool.run(fn worktree_path ->
-           phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
-           abs_target_path = Path.join(worktree_path, target_path)
-           context_node = ContextNode.load(abs_target_path, worktree_path)
+             # ContextNode.load expects a relative path
+             context_node = ContextNode.load(target_path, worktree_path)
 
-           state = %{context_node: context_node, phylo_node: phylo_node}
+             state = %{context_node: context_node, phylo_node: phylo_node}
 
-           Agent.mutate(state, objective, opts)
-         end) do
-      {:ok, %{phylo_node: updated_node}, _agent_output} ->
-        Logger.info(
-          "Optimization: Evolution successful. New commit: #{String.slice(updated_node.current_commit, 0, 7)}"
-        )
+             Agent.mutate(state, objective, opts)
+           end) do
+        {:ok, %{phylo_node: updated_node}, _agent_output} ->
+          final_sha = updated_node.current_commit
 
-        {:ok, updated_node.current_commit}
+          Logger.info(
+            "Optimization: Evolution successful. Updating main repository to #{String.slice(final_sha, 0, 7)}"
+          )
 
+          Git.reset_hard(repo_path, final_sha)
+          {:ok, final_sha}
+
+        error ->
+          Logger.error("Optimization: Agent failed: #{inspect(error)}")
+          error
+      end
+    else
       error ->
-        Logger.error("Optimization: Agent failed: #{inspect(error)}")
+        Logger.error("Optimization failed to initialize: #{inspect(error)}")
         error
+    end
+  end
+
+  defp ensure_repo(repo_path) do
+    if File.dir?(Path.join(repo_path, ".git")) do
+      :ok
+    else
+      Logger.info("Optimization: Initializing Git repository at #{repo_path}...")
+      File.mkdir_p!(repo_path)
+      Git.init(repo_path)
+      # Create initial commit to allow branching
+      File.write!(Path.join(repo_path, "README.md"), "")
+      Git.add(repo_path, "README.md")
+
+      case Git.commit(repo_path, "Initial commit") do
+        {:ok, _} -> :ok
+        error -> error
+      end
     end
   end
 end
