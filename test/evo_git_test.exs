@@ -6,7 +6,8 @@ defmodule EvoGitTest do
     args = EvoGit.sandbox_args(cwd, "bash", ["-c", "ls"])
     assert Enum.take(args, 3) == ["--user", "--wait", "--pipe"]
     assert "-p" in args
-    assert "ReadWritePaths=/my/project" in args
+    assert "PrivatePIDs=yes" in args
+    assert "ProtectProc=invisible" in args
     assert List.last(args) == "ls"
   end
 end

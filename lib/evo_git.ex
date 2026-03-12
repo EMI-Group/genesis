@@ -7,6 +7,23 @@ defmodule EvoGit do
   Generates systemd-run arguments to execute a command inside a cheap sandbox.
   """
   def sandbox_args(cwd, executable, args \\ []) do
+    home = System.user_home!()
+
+    inaccessible_args =
+      [
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".kube",
+        ".config/sops",
+        ".npmrc",
+        ".git-credentials",
+        ".netrc"
+      ]
+      |> Enum.flat_map(fn dir ->
+        ["-p", "InaccessiblePaths=-#{Path.join(home, dir)}"]
+      end)
+
     [
       "--user",
       "--wait",
@@ -25,6 +42,10 @@ defmodule EvoGit do
       "-p",
       "NoNewPrivileges=yes",
       "-p",
+      "PrivatePIDs=yes",
+      "-p",
+      "ProtectProc=invisible",
+      "-p",
       "SystemCallArchitectures=native",
       "-p",
       "SystemCallErrorNumber=EPERM",
@@ -33,8 +54,7 @@ defmodule EvoGit do
       "-p",
       "CPUQuota=400%",
       "-p",
-      "MemoryMax=16G",
-      executable
-    ] ++ args
+      "MemoryMax=16G"
+    ] ++ inaccessible_args ++ [executable | args]
   end
 end
