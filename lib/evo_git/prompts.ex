@@ -51,7 +51,7 @@ defmodule EvoGit.Prompts do
     Target Directory: '#{node_path}'.
     User Request: #{instruction}
     Task: Your job is to define the architectural context for this specific directory.
-    1. Create or update a 'CONTEXT.md' file inside this directory. This file must clearly define the Intent (purpose), API Surface (what modules/files it will contain), and Constraints (rules for child files/directories) for this level of the architecture.
+    1. Create or update a 'CONTEXT.md' file inside this directory (i.e. at '#{if node_path == ".", do: "", else: node_path <> "/"}CONTEXT.md'). This file must clearly define the Intent (purpose), API Surface (what modules/files it will contain), and Constraints (rules for child files/directories) for this level of the architecture.
     2. Execute any necessary shell commands to initialize boilerplate or directory structure (e.g., package managers, project generators).
     Important Constraints: Do NOT implement the actual code or content of any source files yet. Do NOT modify any files or directories outside of '#{node_path}'.
     """
@@ -74,7 +74,7 @@ defmodule EvoGit.Prompts do
     Target File: '#{node_path}'.
     User Request: #{instruction}
     Task: Your job is to define the context and purpose of this specific file.
-    Write a comprehensive header comment, docstring, or module-level documentation at the top of the file that clearly explains its intent, responsibilities, and any constraints.
+    Write a comprehensive header comment, docstring, or module-level documentation at the top of the file (located at '#{node_path}') that clearly explains its intent, responsibilities, and any constraints.
     Important Constraints: Do NOT implement the actual logic or code body yet. Just write the structural documentation/comments. Do NOT modify any other files.
     """
   end
@@ -85,9 +85,9 @@ defmodule EvoGit.Prompts do
   def genesis_realize(:directory, node_path) do
     """
     Target Directory: '#{node_path}'.
-    Task: Read the 'CONTEXT.md' file in this directory to understand its intended structure.
+    Task: Read the 'CONTEXT.md' file in this directory (i.e. '#{if node_path == ".", do: "", else: node_path <> "/"}CONTEXT.md') to understand its intended structure.
     Based on that context, create the immediate subdirectories and empty placeholder files that are supposed to exist inside this directory.
-    Important Constraints: Do NOT write any implementation code inside these newly created files yet; just create the empty files. Do NOT modify anything outside of this directory.
+    Important Constraints: Do NOT write any implementation code inside these newly created files yet; just create the empty files. Do NOT modify anything outside of this directory. Remember to prepend your target directory path ('#{if node_path == ".", do: "", else: node_path <> "/"}') to all files and directories you create!
     CRITICAL: Git does not track empty directories! For every subdirectory you create, you MUST create an empty '.gitkeep' file inside it so that it is tracked by version control.
     """
   end
@@ -95,7 +95,7 @@ defmodule EvoGit.Prompts do
   def genesis_realize(:file, node_path) do
     """
     Target File: '#{node_path}'.
-    Task: Read the header comment, docstring, or module documentation at the top of this file.
+    Task: Read the header comment, docstring, or module documentation at the top of this file (located at '#{node_path}').
     Based on that context and intended purpose, implement the complete code logic for this file. Ensure the implementation fully satisfies the stated responsibilities.
     """
   end

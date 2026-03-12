@@ -177,7 +177,12 @@ defmodule EvoGit.Agent.Coder do
       defp build_dynamic_context do
         repo_path = Process.get(:repo_path)
         node_path = Process.get(:node_path)
-        location_info = "Current Location: '#{node_path}'."
+        relative_node_path = Path.relative_to(node_path, repo_path)
+
+        location_info = """
+        Current Target Node: '#{relative_node_path}'.
+        IMPORTANT: Your working directory is the repository root ('.'). All file paths provided to tools MUST be relative to the repository root. For example, if your target node is 'src/foo', you must write to 'src/foo/CONTEXT.md', NOT just 'CONTEXT.md'. If you need to run shell commands inside your target directory, you must `cd` into it first (e.g., `cd src/foo && npm init -y`).
+        """
 
         try do
           context_nodes = EvoGit.Core.ContextNode.hier_context(node_path, repo_path)
