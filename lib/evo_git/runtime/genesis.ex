@@ -70,7 +70,7 @@ defmodule EvoGit.Runtime.Genesis do
 
         # We need to ensure the context node can be loaded.
         # Since we are just planning/realizing, we use the path.
-        context_node = ContextNode.load(abs_node_path, worktree_path)
+        context_node = ContextNode.load(node_path, worktree_path)
 
         state = %{context_node: context_node, phylo_node: phylo_node}
 
@@ -265,7 +265,7 @@ defmodule EvoGit.Runtime.Genesis do
   defp merge_branch(base_sha, other_sha, opts) do
     WorkerPool.run(fn worktree_path ->
       phylo_node = PhyloGraphNode.new(worktree_path, base_sha)
-      context_node = ContextNode.load(worktree_path, worktree_path)
+      context_node = ContextNode.load(".", worktree_path)
       state = %{context_node: context_node, phylo_node: phylo_node}
 
       case Agent.resolve_conflict(state, other_sha, opts) do

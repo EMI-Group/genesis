@@ -13,12 +13,16 @@ defmodule EvoGit.Core.ContextNode do
         }
 
   @doc """
-  Loads a ContextNode from a given path on the disk.
+  Loads a ContextNode from a given relative path within a repository.
+  `relative_path` must be relative to `repo_path` (or "." for root).
+  `repo_path` must be the absolute path to the repository root.
   """
   @spec load(String.t(), String.t()) :: t()
-  def load(path, repo) do
-    if File.dir?(path) do
-      contract_path = Path.join(path, "CONTEXT.md")
+  def load(relative_path, repo_path) do
+    abs_path = Path.expand(relative_path, repo_path)
+
+    if File.dir?(abs_path) do
+      contract_path = Path.join(abs_path, "CONTEXT.md")
 
       contract =
         if File.exists?(contract_path) do
@@ -28,56 +32,47 @@ defmodule EvoGit.Core.ContextNode do
         end
 
       %__MODULE__{
-        path: path,
+        path: relative_path,
         type: :directory,
         context_contract: contract,
-        repo: repo
+        repo: repo_path
       }
     else
       %__MODULE__{
-        path: path,
+        path: relative_path,
         type: :file,
         context_contract: nil,
-        repo: repo
+        repo: repo_path
       }
     end
   end
 
   @doc """
-  Retrieves the full hierarchy of ContextNodes from the project root down to the given path.
+  Retrieves the full hierarchy of ContextNodes from the project root down to the given relative path.
+  `relative_path` must be relative to the root of the repository.
+  `repo_path` must be the absolute path to the repository root.
   """
   @spec hier_context(String.t(), String.t()) :: [t()]
-  def hier_context(path, root \\ ".") do
-    abs_path = Path.expand(path)
-    abs_root = Path.expand(root)
-
-    relative_path = Path.relative_to(abs_path, abs_root)
-
-    # Check if path is actually inside root
-    # 1. Must be relative (not absolute path returned as-is)
-    # 2. Must not start with ".."
+  def hier_context(relative_path, repo_path) do
     valid_hierarchy? =
       Path.type(relative_path) == :relative and
         not String.starts_with?(relative_path, "..")
 
     if not valid_hierarchy? do
-      raise ArgumentError, "Path #{path} is not inside root #{root}"
+      raise ArgumentError, "Path \#{relative_path} must be relative to the repo root"
     end
 
     case relative_path do
       "." ->
-        [load(abs_root, abs_root)]
+        [load(".", repo_path)]
 
       _ ->
         parts = Path.split(relative_path)
 
-        paths =
-          Enum.scan(parts, abs_root, fn part, acc ->
-            Path.join(acc, part)
-          end)
+        paths = Enum.scan(parts, &Path.join(&2, &1))
 
-        [abs_root | paths]
-        |> Enum.map(fn p -> load(p, abs_root) end)
+        ["." | paths]
+        |> Enum.map(fn p -> load(p, repo_path) end)
     end
   end
 end

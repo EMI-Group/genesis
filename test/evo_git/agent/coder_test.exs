@@ -16,7 +16,7 @@ defmodule EvoGit.Agent.CoderTest do
     tmp_dir: tmp_dir
   } do
     Process.put(:repo_path, tmp_dir)
-    Process.put(:node_path, Path.join(tmp_dir, "lib"))
+    Process.put(:node_path, "lib")
 
     File.mkdir_p!(Path.join(tmp_dir, "lib"))
     File.write!(Path.join(tmp_dir, "CONTEXT.md"), "Root context")
@@ -31,10 +31,10 @@ defmodule EvoGit.Agent.CoderTest do
 
   test "build_dynamic_context with missing files returns empty string", %{tmp_dir: tmp_dir} do
     Process.put(:repo_path, tmp_dir)
-    Process.put(:node_path, Path.join(tmp_dir, "lib/missing/path"))
+    Process.put(:node_path, "lib/missing/path")
 
     context = DummyAgent.test_build_dynamic_context()
-    assert context =~ "Current Location:"
+    assert context =~ "Current Target Node:"
   end
 
   test "build_dynamic_context catches ArgumentError and returns empty", %{tmp_dir: tmp_dir} do

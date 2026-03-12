@@ -18,9 +18,7 @@ defmodule EvoGit.Agent do
     worktree_path = phylo_node.repo
     sha = phylo_node.current_commit
 
-    # Calculate relative path for logging
-    node_path = Path.relative_to(context_node.path, worktree_path)
-    Logger.info("Agent starting for #{node_path} on #{String.slice(sha, 0, 7)}")
+    Logger.info("Agent starting for #{context_node.path} on #{String.slice(sha, 0, 7)}")
 
     # 1. Checkout the correct commit in the assigned worktree
     # Clean first to be safe
