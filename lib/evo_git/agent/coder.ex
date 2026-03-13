@@ -211,7 +211,7 @@ defmodule EvoGit.Agent.Coder do
                   "File: #{Path.relative_to(file, repo_path)}\n```\n#{truncated_content}\n```"
 
                 _ ->
-                  "#{Path.relative_to(file, repo_path)} doesn't have a context file."
+                  ""
               end
             end)
 
