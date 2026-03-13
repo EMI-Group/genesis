@@ -1,6 +1,5 @@
 defmodule EvoGit.Runtime.Optimization do
   @moduledoc "Stage 2: Evolutionary Loop"
-  alias EvoGit.Agent
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
   alias EvoGit.WorkerPool
@@ -16,7 +15,7 @@ defmodule EvoGit.Runtime.Optimization do
       # 1. Diagnosis
       # Create a temporary node for diagnosis representing the main repo state
       current_node = PhyloGraphNode.new(repo_path, current_sha)
-      target_path = Agent.diagnose(current_node, objective, opts)
+      target_path = EvoGit.Task.diagnose(current_node, objective, opts)
 
       Logger.info("Optimization: Diagnosed target path: #{target_path}")
 
@@ -33,7 +32,7 @@ defmodule EvoGit.Runtime.Optimization do
 
              state = %{context_node: context_node, phylo_node: phylo_node}
 
-             Agent.mutate(state, objective, opts)
+             EvoGit.Task.mutate(state, objective, opts)
            end) do
         {:ok, %{phylo_node: updated_node}, _agent_output} ->
           final_sha = updated_node.current_commit
