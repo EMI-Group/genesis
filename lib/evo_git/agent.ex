@@ -4,6 +4,11 @@ defmodule EvoGit.Agent do
   handling tool loops, timeouts, and graceful recovery.
   """
 
+  alias EvoGit.Core.ContextNode
+  alias EvoGit.Core.PhyloGraphNode
+
+  @type state :: %{context_node: ContextNode.t(), phylo_node: PhyloGraphNode.t()}
+
   defmacro __using__(_opts) do
     quote do
       require Logger
@@ -94,7 +99,7 @@ defmodule EvoGit.Agent do
       end
 
       defp do_turn(state) do
-        dynamic_context = build_dynamic_context()
+        dynamic_context = build_dynamic_context(state)
         full_system_prompt = state.system_prompt <> dynamic_context
 
         context = ReqLLM.Context.new([ReqLLM.Context.system(full_system_prompt) | state.history])
@@ -174,9 +179,9 @@ defmodule EvoGit.Agent do
 
       # --- Helpers ---
 
-      defp build_dynamic_context do
-        repo_path = Process.get(:repo_path)
-        node_path = Process.get(:node_path)
+      defp build_dynamic_context(state) do
+        repo_path = state.repo_path
+        node_path = state.node_path
 
         location_info = """
         Current Target Node: '#{node_path}'.

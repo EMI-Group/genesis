@@ -4,11 +4,10 @@ defmodule EvoGit.Task do
   """
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Generalist
-  alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
   require Logger
 
-  @type state :: %{context_node: ContextNode.t(), phylo_node: PhyloGraphNode.t()}
+  @type state :: EvoGit.Agent.state()
   @type objective :: String.t()
 
   @doc """
@@ -34,13 +33,12 @@ defmodule EvoGit.Task do
         "You have access to the files in the current directory.\n" <>
         "Modify the files as needed."
 
-    Process.put(:repo_path, worktree_path)
-    Process.put(:node_path, context_node.path)
     caller_pid = Keyword.get(opts, :caller_pid, self())
+    agent_opts = Keyword.merge(opts, repo_path: worktree_path, node_path: context_node.path)
 
     agent_module = Keyword.get(opts, :agent_module, Generalist)
 
-    case agent_module.run(prompt, caller_pid) do
+    case agent_module.run(prompt, caller_pid, agent_opts) do
       {:ok, response} ->
         # 4. Commit changes
         case PhyloGraphNode.add_and_commit(phylo_node, "Agent: #{objective}") do
@@ -78,9 +76,9 @@ defmodule EvoGit.Task do
 
     # Diagnosis uses Generalist directly on the current context
     caller_pid = Keyword.get(opts, :caller_pid, self())
-    Process.put(:repo_path, File.cwd!())
+    agent_opts = Keyword.merge(opts, repo_path: File.cwd!(), node_path: ".")
 
-    case Generalist.run(diag_prompt, caller_pid) do
+    case Generalist.run(diag_prompt, caller_pid, agent_opts) do
       {:ok, %{"path" => path}} ->
         validate_path(String.trim(path), files)
 
@@ -144,9 +142,8 @@ defmodule EvoGit.Task do
         # 4. Resolve
         {:ok, conflicts} = Git.conflict_files(worktree_path)
 
-        Process.put(:repo_path, worktree_path)
-        Process.put(:node_path, context_node.path)
         caller_pid = Keyword.get(opts, :caller_pid, self())
+        agent_opts = Keyword.merge(opts, repo_path: worktree_path, node_path: context_node.path)
 
         Enum.each(conflicts, fn file ->
           abs_file = Path.join(worktree_path, file)
@@ -167,7 +164,7 @@ defmodule EvoGit.Task do
               "3. Select the best implementation if mutually exclusive.\n" <>
               "4. Modify the file to contain ONLY the resolved code (remove markers)."
 
-          Generalist.run(prompt, caller_pid)
+          Generalist.run(prompt, caller_pid, agent_opts)
         end)
 
         # 5. Commit

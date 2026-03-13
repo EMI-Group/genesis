@@ -1,6 +1,5 @@
 defmodule EvoGit.Runtime.Genesis do
   @moduledoc "Stage 1: Creation Phase"
-  alias EvoGit.Agent
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
   alias EvoGit.Adapters.Git
@@ -84,11 +83,11 @@ defmodule EvoGit.Runtime.Genesis do
 
         agent_opts = Keyword.put_new(opts, :agent_module, agent_module)
 
-        with {:ok, plan_state, _plan_response} <- Agent.mutate(state, plan_objective, agent_opts),
+        with {:ok, plan_state, _plan_response} <- EvoGit.Task.mutate(state, plan_objective, agent_opts),
              # Step 3: Realize
              realize_objective = Prompts.genesis_realize(type, node_path),
              {:ok, realize_state, realize_response} <-
-               Agent.mutate(plan_state, realize_objective, agent_opts) do
+               EvoGit.Task.mutate(plan_state, realize_objective, agent_opts) do
           has_readme? =
             type == :directory and File.exists?(Path.join(abs_node_path, "README.md"))
 
@@ -268,7 +267,7 @@ defmodule EvoGit.Runtime.Genesis do
       context_node = ContextNode.load(".", worktree_path)
       state = %{context_node: context_node, phylo_node: phylo_node}
 
-      case Agent.resolve_conflict(state, other_sha, opts) do
+      case EvoGit.Task.resolve_conflict(state, other_sha, opts) do
         {:ok, %{phylo_node: updated_phylo_node}} -> {:ok, updated_phylo_node.current_commit}
         error -> error
       end
