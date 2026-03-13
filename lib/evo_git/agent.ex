@@ -1,191 +1,307 @@
 defmodule EvoGit.Agent do
   @moduledoc """
-  An Agent is a stateless function: NewState = Agent(State, Objective).
+  A stateful pure-function loop template that manages a single agent session,
+  handling tool loops, timeouts, and graceful recovery.
   """
-  alias EvoGit.Adapters.Git
-  alias EvoGit.Agent.Generalist
-  alias EvoGit.Core.ContextNode
-  alias EvoGit.Core.PhyloGraphNode
-  require Logger
 
-  @type state :: %{context_node: ContextNode.t(), phylo_node: PhyloGraphNode.t()}
-  @type objective :: String.t()
+  defmacro __using__(_opts) do
+    quote do
+      require Logger
 
-  @doc """
-  Executes the agent logic inside the given worktree.
-  """
-  def mutate(%{context_node: context_node, phylo_node: phylo_node} = state, objective, opts \\ []) do
-    worktree_path = phylo_node.repo
-    sha = phylo_node.current_commit
+      @max_turns 20
+      # 10 minutes
+      @timeout_ms 10 * 60 * 1000
+      # 1 minute
+      @grace_period_ms 60 * 1000
+      @complete_tool "complete_task"
 
-    Logger.info("Agent starting for #{context_node.path} on #{String.slice(sha, 0, 7)}")
+      defp current_model do
+        Application.get_env(:evo_git, :llm_model, "google:gemini-3.1-flash-lite-preview")
+      end
 
-    # 1. Checkout the correct commit in the assigned worktree
-    # Clean first to be safe
-    Git.clean(worktree_path)
-    Git.checkout(worktree_path, sha)
+      # --- Public API ---
 
-    # 2. Construct Context (delegated to Agent.Coder)
-    # The inner coding agent will dynamically load the Context Tree
-    # 3. Call Generalist
-    prompt =
-      "Objective: #{objective}\n" <>
-        "You are an EvoGit Agent. Your task is to modify the code to satisfy the objective.\n" <>
-        "You have access to the files in the current directory.\n" <>
-        "Modify the files as needed."
-
-    Process.put(:repo_path, worktree_path)
-    Process.put(:node_path, context_node.path)
-    caller_pid = Keyword.get(opts, :caller_pid, self())
-
-    agent_module = Keyword.get(opts, :agent_module, Generalist)
-
-    case agent_module.run(prompt, caller_pid) do
-      {:ok, response} ->
-        # 4. Commit changes
-        case PhyloGraphNode.add_and_commit(phylo_node, "Agent: #{objective}") do
-          {:ok, updated_phylo_node} ->
-            Logger.info("Agent: Committed changes")
-            {:ok, %{state | phylo_node: updated_phylo_node}, response}
-
-          error ->
-            Logger.error("Agent commit failed: #{inspect(error)}")
-            {:error, :commit_failed}
-        end
-
-      error ->
-        Logger.error("Agent call failed: #{inspect(error)}")
-        {:error, :agent_call_failed}
-    end
-  end
-
-  @doc """
-  Identifies the most relevant target path for the given objective in the context of the commit.
-  Acts as an "Analyst Agent".
-  """
-  def diagnose(%PhyloGraphNode{current_commit: commit_sha} = phylo_node, objective, opts \\ []) do
-    Logger.info("Agent diagnosing objective on #{String.slice(commit_sha, 0, 7)}: #{objective}")
-
-    # Use PhyloGraphNode to get the file tree
-    {:ok, files} = PhyloGraphNode.list_files(phylo_node)
-    file_tree = Enum.join(files, "\n")
-
-    diag_prompt =
-      "Objective: #{objective}\n" <>
-        "File Tree:\n#{file_tree}\n" <>
-        "Identify the single most relevant directory or file path to modify.\n" <>
-        "Return ONLY the path as a JSON string under key 'path'."
-
-    # Diagnosis uses Generalist directly on the current context
-    caller_pid = Keyword.get(opts, :caller_pid, self())
-    Process.put(:repo_path, File.cwd!())
-
-    case Generalist.run(diag_prompt, caller_pid) do
-      {:ok, %{"path" => path}} ->
-        validate_path(String.trim(path), files)
-
-      {:ok, %{"response" => path}} ->
-        validate_path(String.trim(path), files)
-
-      {:ok, text} when is_binary(text) ->
-        # Heuristic extraction
-        path = text |> String.split() |> List.last() |> String.trim()
-        validate_path(path, files)
-
-      error ->
-        Logger.error("Diagnosis failed: #{inspect(error)}")
-        # Fallback to root if diagnosis fails
-        "."
-    end
-  end
-
-  defp validate_path(path, files) do
-    if path == "." or path in files or (path <> "/") in files or
-         Enum.any?(files, &String.starts_with?(&1, path <> "/")) do
-      # It's a valid file or directory (prefix of some file)
-      path
-    else
-      Logger.warning("Agent: Diagnosed path '#{path}' not found in tree, falling back to root.")
-      "."
-    end
-  end
-
-  @doc """
-  Resolves conflicts between the current state and an incoming commit SHA.
-  """
-  def resolve_conflict(
-        %{context_node: context_node, phylo_node: phylo_node} = state,
-        incoming_sha,
-        opts \\ []
-      ) do
-    worktree_path = phylo_node.repo
-    current_sha = phylo_node.current_commit
-
-    Logger.info(
-      "Agent resolving conflict between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
-    )
-
-    # 1. Setup
-    Git.clean(worktree_path)
-    Git.checkout(worktree_path, current_sha)
-
-    # 2. Merge
-    case Git.merge(worktree_path, incoming_sha) do
-      {:ok, _} ->
-        # Auto-merge successful
-        {:ok, new_sha} = Git.rev_parse(worktree_path)
-        updated_phylo_node = PhyloGraphNode.new(worktree_path, new_sha)
-        {:ok, %{state | phylo_node: updated_phylo_node}}
-
-      {:conflict, _} ->
-        # 3. Context (delegated to Agent.Coder)
-        # The inner coding agent will dynamically load the Context Tree
-
-        # 4. Resolve
-        {:ok, conflicts} = Git.conflict_files(worktree_path)
-
-        Process.put(:repo_path, worktree_path)
-        Process.put(:node_path, context_node.path)
-        caller_pid = Keyword.get(opts, :caller_pid, self())
-
-        Enum.each(conflicts, fn file ->
-          abs_file = Path.join(worktree_path, file)
-
-          file_content =
-            case File.read(abs_file) do
-              {:ok, content} -> "File: #{abs_file}\n```\n#{content}\n```"
-              _ -> ""
-            end
-
-          prompt =
-            "Objective: Resolve the merge conflicts in '#{file}'.\n" <>
-              "Conflicting File Content:\n#{file_content}\n\n" <>
-              "The file contains git conflict markers.\n" <>
-              "You are an expert software architect. Analyze the divergent changes and unify them logically.\n" <>
-              "1. Understand the intent of both branches.\n" <>
-              "2. Synergize the changes if possible.\n" <>
-              "3. Select the best implementation if mutually exclusive.\n" <>
-              "4. Modify the file to contain ONLY the resolved code (remove markers)."
-
-          Generalist.run(prompt, caller_pid)
+      @doc """
+      Runs the agent asynchronously in a Task, returning the Task struct.
+      """
+      def run_task(query, caller_pid, system_prompt \\ nil) do
+        Task.async(fn ->
+          run(query, caller_pid, system_prompt)
         end)
+      end
 
-        # 5. Commit
-        msg =
-          "Agent: Resolved conflicts between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
+      @doc """
+      Runs the agent synchronously, blocking until it completes.
+      """
+      def run(query, caller_pid, system_prompt \\ nil) do
+        actual_system_prompt = system_prompt || system_prompt()
 
-        case PhyloGraphNode.add_and_commit(phylo_node, msg) do
-          {:ok, updated_phylo_node} ->
-            {:ok, %{state | phylo_node: updated_phylo_node}}
+        state = %{
+          caller_pid: caller_pid,
+          turn: 0,
+          history: [ReqLLM.Context.user(query)],
+          system_prompt: actual_system_prompt,
+          in_grace_period: false,
+          deadline: System.monotonic_time(:millisecond) + @timeout_ms
+        }
 
-          error ->
-            Logger.error("Agent resolve commit failed: #{inspect(error)}")
-            {:error, :commit_failed}
+        loop(state)
+      end
+
+      # --- Internal Execution Logic ---
+
+      defp loop(state) do
+        state = try_compress_chat(state)
+
+        now = System.monotonic_time(:millisecond)
+        time_left = state.deadline - now
+
+        cond do
+          time_left <= 0 and not state.in_grace_period ->
+            trigger_recovery(state, "10-minute time limit exceeded")
+
+          time_left <= 0 and state.in_grace_period ->
+            stream_event(state.caller_pid, "ERROR", %{
+              error: "Grace period timed out. Agent killed."
+            })
+
+            send(state.caller_pid, {:agent_finished, {:error, :timeout}})
+            {:error, :timeout}
+
+          state.turn >= @max_turns and not state.in_grace_period ->
+            trigger_recovery(state, "max turns (#{@max_turns}) exceeded")
+
+          true ->
+            do_turn(state)
+        end
+      end
+
+      defp trigger_recovery(state, reason) do
+        stream_event(state.caller_pid, "ERROR", %{
+          error: "Limit reached: #{reason}. Attempting one final recovery turn."
+        })
+
+        warning_msg = """
+        You have exceeded the execution limit (#{reason}).
+        You MUST call `#{@complete_tool}` immediately with your best answer. Do not call any other tools.
+        """
+
+        new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
+        new_deadline = System.monotonic_time(:millisecond) + @grace_period_ms
+
+        state = %{state | history: new_history, in_grace_period: true, deadline: new_deadline}
+        loop(state)
+      end
+
+      defp do_turn(state) do
+        dynamic_context = build_dynamic_context()
+        full_system_prompt = state.system_prompt <> dynamic_context
+
+        context = ReqLLM.Context.new([ReqLLM.Context.system(full_system_prompt) | state.history])
+
+        {:ok, response} =
+          ReqLLM.generate_text(
+            current_model(),
+            context,
+            tools: available_tools()
+          )
+
+        tool_calls =
+          ReqLLM.Response.tool_calls(response)
+          |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+
+        text = ReqLLM.Response.text(response)
+
+        if text && text != "" do
+          stream_event(state.caller_pid, "THOUGHT_CHUNK", %{text: text})
         end
 
-      error ->
-        Logger.error("Merge setup failed: #{inspect(error)}")
-        {:error, :merge_failed}
+        state = %{state | history: state.history ++ [response.message], turn: state.turn + 1}
+
+        case process_tool_calls(tool_calls, state) do
+          {:complete, final_result} ->
+            send(state.caller_pid, {:agent_finished, {:ok, final_result}})
+            {:ok, final_result}
+
+          {:continue, tool_responses} ->
+            state = %{state | history: state.history ++ tool_responses}
+            loop(state)
+
+          {:error, :protocol_violation} ->
+            if state.in_grace_period do
+              send(state.caller_pid, {:agent_finished, {:error, :recovery_failed}})
+              {:error, :recovery_failed}
+            else
+              trigger_recovery(state, "agent stopped calling tools")
+            end
+        end
+      end
+
+      defp process_tool_calls([], _state), do: {:error, :protocol_violation}
+
+      defp process_tool_calls(tool_calls, state) do
+        complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
+
+        if complete_call do
+          stream_event(state.caller_pid, "TOOL_CALL_END", %{
+            name: @complete_tool,
+            status: "success"
+          })
+
+          result =
+            Map.get(complete_call.arguments, "result") ||
+              Map.get(complete_call.arguments, :result, "Task finished.")
+
+          {:complete, result}
+        else
+          results =
+            Enum.map(tool_calls, fn call ->
+              stream_event(state.caller_pid, "TOOL_CALL_START", %{
+                name: call.name,
+                args: call.arguments
+              })
+
+              output = execute_tool(call, state)
+
+              stream_event(state.caller_pid, "TOOL_CALL_END", %{name: call.name})
+              tool_call_id = Map.get(call, :id, call.name)
+              ReqLLM.Context.tool_result(tool_call_id, call.name, output)
+            end)
+
+          {:continue, results}
+        end
+      end
+
+      # --- Helpers ---
+
+      defp build_dynamic_context do
+        repo_path = Process.get(:repo_path)
+        node_path = Process.get(:node_path)
+
+        location_info = """
+        Current Target Node: '#{node_path}'.
+        IMPORTANT: Your working directory is the repository root ('.'). All file paths provided to tools MUST be relative to the repository root. For example, if your target node is 'src/foo', you must write to 'src/foo/CONTEXT.md', NOT just 'CONTEXT.md'. If you need to run shell commands inside your target directory, you must `cd` into it first (e.g., `cd src/foo && npm init -y`).
+        """
+
+        try do
+          context_nodes = EvoGit.Core.ContextNode.hier_context(node_path, repo_path)
+
+          context_files =
+            Enum.map(context_nodes, fn node ->
+              if node.type == :directory do
+                Path.join([repo_path, node.path, "CONTEXT.md"])
+              else
+                Path.join(repo_path, node.path)
+              end
+            end)
+            |> Enum.filter(&File.exists?/1)
+
+          context_contents =
+            Enum.map_join(context_files, "\n\n", fn file ->
+              case File.read(file) do
+                {:ok, content} ->
+                  truncated_content =
+                    if String.length(content) > 10000 do
+                      Logger.warning("Content truncated for file: #{file}")
+                      String.slice(content, 0, 10000) <> "\n... [Content Truncated] ..."
+                    else
+                      content
+                    end
+
+                  "File: #{Path.relative_to(file, repo_path)}\n```\n#{truncated_content}\n```"
+
+                _ ->
+                  ""
+              end
+            end)
+
+          if context_contents == "" do
+            location_info
+          else
+            location_info <> "\n\n# Context Tree\n" <> context_contents
+          end
+        rescue
+          _e -> ""
+        end
+      end
+
+      defp stream_event(caller_pid, type, data) do
+        send(caller_pid, {:subagent_activity, %{type: type, data: data}})
+      end
+
+      defp try_compress_chat(state) do
+        if length(state.history) > 15 do
+          [first_message | rest_history] = state.history
+          {older_messages, recent_messages} = Enum.split(rest_history, -5)
+
+          prompt = """
+          Please provide a concise summary of the important information discoveries, and context from the following interaction history that are related to the current task.
+
+          #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
+          """
+
+          context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
+
+          case ReqLLM.generate_text(current_model(), context) do
+            {:ok, response} ->
+              text = ReqLLM.Response.text(response)
+              summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> (text || ""))
+
+              %{state | history: [first_message, summary_msg | recent_messages]}
+
+            _error ->
+              state
+          end
+        else
+          state
+        end
+      end
+
+      defp completion_schema do
+        ReqLLM.tool(
+          name: @complete_tool,
+          description:
+            "Call this tool to submit your final findings. This is the ONLY way to finish.",
+          parameter_schema: %{
+            "type" => "object",
+            "properties" => %{
+              "result" => %{
+                "type" => "string",
+                "description" => "The final result or findings"
+              }
+            },
+            "required" => ["result"]
+          },
+          callback: fn _args -> {:ok, "Task finished"} end
+        )
+      end
+
+      def available_tools do
+        EvoGit.Agent.Tools.schemas() ++ [completion_schema()]
+      end
+
+      def execute_tool(call, _state) do
+        result = EvoGit.Agent.Tools.execute(call.name, call.arguments)
+
+        if is_binary(result) and String.length(result) > 20000 do
+          Logger.warning(
+            "Output truncated for tool: #{call.name}, arguments: #{inspect(call.arguments)}, result length: #{String.length(result)}"
+          )
+
+          truncate_size = 3000
+          half_size = div(truncate_size, 2)
+          first_part = String.slice(result, 0, half_size)
+          last_part = String.slice(result, -half_size, half_size)
+          first_part <> "\n... [Output Truncated, Only 3000 bytes Shown] ...\n" <> last_part
+        else
+          result
+        end
+      end
+
+      def system_prompt, do: ""
+
+      # Give adopting modules default implementations they can override
+      defoverridable available_tools: 0, execute_tool: 2, system_prompt: 0
     end
   end
 end
