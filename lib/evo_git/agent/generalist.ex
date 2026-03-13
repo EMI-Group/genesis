@@ -2,7 +2,7 @@ defmodule EvoGit.Agent.Generalist do
   @moduledoc """
   A generalist agent with the ability to delegate tasks to a codebase_investigator subagent.
   """
-  use EvoGit.Agent.Coder
+  use EvoGit.Agent
 
   # Override available_tools to include all standard tools plus the subagent tool
   def available_tools do

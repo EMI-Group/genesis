@@ -2,7 +2,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
   @moduledoc """
   A specialized agent for codebase investigation, possessing read-only and search tools.
   """
-  use EvoGit.Agent.Coder
+  use EvoGit.Agent
 
   # Override available_tools to restrict to read-only/search tools
   def available_tools do

@@ -2,7 +2,7 @@ defmodule EvoGit.Agent.Genesis.Directory do
   @moduledoc """
   A dedicated agent for the Genesis creation phase of a directory.
   """
-  use EvoGit.Agent.Coder
+  use EvoGit.Agent
 
   def available_tools do
     EvoGit.Agent.Tools.schemas() ++ [genesis_completion_schema()]
