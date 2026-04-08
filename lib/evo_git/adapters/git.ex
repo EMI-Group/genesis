@@ -111,4 +111,43 @@ defmodule EvoGit.Adapters.Git do
       {output, code} -> {:error, code, String.trim(output)}
     end
   end
+
+  @doc """
+  Returns the commit log.
+  """
+  def log(path, args \\ []) do
+    run(["log" | args], path)
+  end
+
+  @doc """
+  Returns the commit history for a specific file.
+  """
+  def file_history(path, file_path, args \\ []) do
+    run(["log" | args] ++ ["--", file_path], path)
+  end
+
+  @doc """
+  Shows the content of an object (commit, tree, blob, etc.).
+  """
+  def show(path, args) when is_list(args) do
+    run(["show" | args], path)
+  end
+
+  def show(path, object_name) when is_binary(object_name) do
+    run(["show", object_name], path)
+  end
+
+  @doc """
+  Returns the diff between two commits.
+  """
+  def diff(path, commit_a, commit_b, args \\ []) do
+    run(["diff" | args] ++ [commit_a, commit_b], path)
+  end
+
+  @doc """
+  Returns the diff for a specific file between two commits.
+  """
+  def file_diff(path, file_path, commit_a, commit_b, args \\ []) do
+    run(["diff" | args] ++ [commit_a, commit_b, "--", file_path], path)
+  end
 end
