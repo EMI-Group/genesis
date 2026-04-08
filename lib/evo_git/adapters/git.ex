@@ -150,4 +150,32 @@ defmodule EvoGit.Adapters.Git do
   def file_diff(path, file_path, commit_a, commit_b, args \\ []) do
     run(["diff" | args] ++ [commit_a, commit_b, "--", file_path], path)
   end
+
+  @doc """
+  Adds a note to a given object (usually a commit).
+  """
+  def add_note(path, object, message, args \\ []) do
+    run(["notes", "add"] ++ args ++ ["-m", message, object], path)
+  end
+
+  @doc """
+  Removes a note from a given object.
+  """
+  def remove_note(path, object, args \\ []) do
+    run(["notes", "remove"] ++ args ++ [object], path)
+  end
+
+  @doc """
+  Shows the note for a given object.
+  """
+  def show_note(path, object, args \\ []) do
+    run(["notes", "show"] ++ args ++ [object], path)
+  end
+
+  @doc """
+  Lists all notes.
+  """
+  def list_notes(path, args \\ []) do
+    run(["notes", "list" | args], path)
+  end
 end
