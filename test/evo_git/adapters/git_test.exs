@@ -103,4 +103,29 @@ defmodule EvoGit.Adapters.GitTest do
     assert String.contains?(file_diff_output, "-initial content")
     assert String.contains?(file_diff_output, "+updated content")
   end
+
+  test "git notes", %{tmp_dir: tmp_dir} do
+    File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+    Git.add(tmp_dir, "test.txt")
+    Git.commit(tmp_dir, "Initial commit")
+
+    {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+    # Add note
+    assert {:ok, _} = Git.add_note(tmp_dir, commit_sha, "My test note")
+
+    # Show note
+    assert {:ok, note_content} = Git.show_note(tmp_dir, commit_sha)
+    assert String.trim(note_content) == "My test note"
+
+    # List notes
+    assert {:ok, notes_list} = Git.list_notes(tmp_dir)
+    assert String.contains?(notes_list, commit_sha)
+
+    # Remove note
+    assert {:ok, _} = Git.remove_note(tmp_dir, commit_sha)
+
+    # Show note again, should fail because note doesn't exist
+    assert {:conflict, _} = Git.show_note(tmp_dir, commit_sha)
+  end
 end
