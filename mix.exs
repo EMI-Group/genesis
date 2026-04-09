@@ -22,7 +22,7 @@ defmodule EvoGit.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:req_llm, "~> 1.6"}
+      {:req_llm, "~> 1.9"}
     ]
   end
 end
