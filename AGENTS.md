@@ -75,7 +75,7 @@ The codebase is structured as a recursive tree where every node (directory or fi
 
 We retain the original EvoGit core: code evolves through a Directed Acyclic Graph (DAG) of Git commits.
 
-* **Strict Partial Order (**$v\_{new} \> v\_{old}$**):** Evolution is directional. A child commit is accepted *if and only if* it is measurably "better" than its parent.
+* **Strict Partial Order:** ($v\_{new} \> v\_{old}$), Evolution is directional. A child commit is accepted *if and only if* it is measurably "better" than its parent.
 * **Definition of "Better":** Unlike traditional CI/CD which demands a "Green Build" (passing all tests), EvoGit accepts partial progress. A version is better if:
   * It passes *more* tests than the ancestor.
   * It implements a requested feature (verified by an LLM Judge).
@@ -93,7 +93,7 @@ $$NewState \= Agent(State, Objective)$$
 
 ### **3.2 State & Input**
 
-* **State:** A tuple {commit_sha, node_path}.
+* **State:** A tuple `{commit_sha, node_path}`.
   * commit_sha: The specific point in the temporal timeline the agent is branching from.
   * node_path: The specific location in the spatial hierarchy the agent is allowed to modify.
 * **Objective:** A string input describing the task (e.g., "Fix the race condition in the worker pool" or "Implement the User schema").
@@ -112,9 +112,9 @@ The system runs in two distinct stages.
 
 ### **Stage 1: Genesis (Creation Phase)**
 
-*Goal: Recursively generate the repository skeleton.*
+**Goal**: Recursively generate the repository skeleton based on the user's high-level instructions and prior-knowledge.
 
-1. **Initialization:** User provides a high-level prompt on how to build the project, what is the goal of the project etc, and initialize the git repository and several worktrees if not already initialized.
+1. **Initialization:** User provides a high-level prompt on how to build the project, what is the goal of the project, what are the major components, and initialize the git repository and several worktrees if not already initialized.
 2. **Planning:** Inside the working directory Agent creates the context defining the architecture of that level based on the user's instructions and the context inherited from parent nodes. For directories, this is a CONTEXT.md file. For files, this is a header comment or module comment. The planning includes:
    * Defining the Intent of the directory / file.
    * Specifying the API Surface (what modules/files it will contain), and a rough outline of the file structures.
@@ -124,64 +124,25 @@ The system runs in two distinct stages.
    * For files, the agent will generate the full implementation code that satisfies the context (header comment or module comment).
 4. **Recursion:** For each child node (directory or file), the system spawns a new Agent instance, running from step 2.
 
-### **Stage 2: Optimization (The Evolutionary Loop)**
+### **Stage 2: Evolution**
 
-*Goal: Fix bugs, optimize performance, or add features.*
-This phase uses a **Diagnosis -> Dispatch -> Evolution -> Merge** cycle.
+**Goal**: Given a high-level objective, evolve the codebase from the skeleton created in Stage 1 or from any existing state.
 
-#### **Step A: Diagnosis & Hypothesis**
+It has several variations:
+- Differential Evolution: Given a list of references (good examples), evolve rest of the codebase to apply that pattern. This is useful for optimizing a series of similar components, where the human only need to optimize a few of them, and the system can generalize the pattern to the rest of the components.
+  - Take one of the referencs, get history of that module.
+  - Study the optimizations made in that module.
+  - Try to apply the same optimizations to the rest of the modules, and see if it works.
+  - If it works, accept the change, if it doesn't work, reject the change and try again with a different optimization.
 
-An **Analyst Agent** (or a human operator) analyzes the current codebase, execution logs, or error reports to identify a weakness (e.g., "Login is slow"). It proposes potential locations (node_path) that might be responsible.
-
-#### **Step B: Strategy Selection**
-
-The system checks the Analyst's output:
-
-1. **High Certainty:** If the Analyst identifies a specific file (e.g., "The SQL query in auth.py is missing an index"), the system dispatches a **Single Agent** to that node.
-2. **Low Certainty (Random Credit Assignment):** If the cause is ambiguous (e.g., "It could be the database, or the API handler, or the frontend cache"), the system triggers **Random Credit Assignment**.
-   * It dispatches $N$ agents in parallel.
-   * Each agent targets a different suspected node_path (different layers of the hierarchy).
-
-#### **Step C: Execution (Parallel Evolution)**
-
-Each dispatched agent:
-
-1. **Forks:** Find a unoccupied worktree, checkout the commit in detached HEAD state.
-2. **Acts:** Calls EvoGit.Agent.Generalist to modify files within its node_path to satisfy the objective.
-3. **Commits:** Saves the changes by creating a new commit in the worktree.
-
-#### **Step D: Pre-Filtering (Sanity Check)**
-
-Before merging, the system runs a basic validation (Step D from the previous design) to discard completely broken branches. Branches that fail to compile or introduce regression are pruned immediately.
-
-#### **Step E: Iterative Merge & Resolution**
-
-Instead of simply picking one winner, the system attempts to synthesize the best traits of the remaining branches.
-
-1. **Reduction Loop:** The system takes the surviving $N$ branches and iteratively reduces them to a target count $M$ (default $M=2$).
-2. **Pairwise Merge:** In each iteration, two branches are selected.
-3. **The Merge Agent:** An Agent is spawned to resolve the merge. It inspects the diffs of Branch A and Branch B against the Base.
-   * **Inspect:** The agent analyzes the semantic intent of both changes.
-   * **Resolve:** It decides to either:
-     * **Synergize:** Combine non-conflicting, beneficial features from both (taking the "best of both worlds").
-     * **Select:** If changes conflict logically, pick the superior implementation based on the original objective.
-   * **Commit:** A new merged branch is created.
-4. This repeats until only $M$ evolved branches remain.
-
-#### **Step F: Human Finalization**
-
-The system presents a final lineup of $M+1$ versions to the user:
-
-1. **The Candidates:** The $M$ evolved/merged branches.
-2. **The Baseline:** The original version (before any changes).
-3. **Decision:** The human reviews the diffs/logs and selects the winner to become the new commit.
+    This is called "differential evolution" because it is similar to the concept of differential evolution in optimization, where we are essentially computing $a + F * (b - c)$, where $a$ is the current module we want to optimize, $b$ and $c$ are different versions of the reference modules, and $F$ is a transformation function that computes the difference between the reference modules and applies it to the current module.
 
 ## **5. Implementation Guidelines**
 
 ### **5.1 Tech Stack**
 
 * **Main Program:** **Elixir**. Chosen for its robust concurrency (OTP), fault tolerance, and actor model which maps perfectly to independent Agents.
-* **Version Control:** **Git**. use the git command line.
+* **Version Control:** **Git**. Use the git command line tool for now.
 
 ### **5.3 Git Integration Details**
 
@@ -189,7 +150,7 @@ To ensure strict isolation between agents running in parallel:
 
 1. **Never modify the main checkout.**
 2. **Worktrees:** Every agent action sequence happens in:
-   .evogit/worktrees/worker_<i>/
+   `.evogit/worktrees/worker_<i>/`
 3. **Lifecycle:**
    A pool manager keeps track of N available worker resources, that is N available worktree slots.
 
@@ -200,10 +161,12 @@ To ensure strict isolation between agents running in parallel:
 
 ### **5.4 CLI Interface**
 
-The evogit is used as a cli tool, so it should provide necessary commands to run the whole system.
+The evogit is used as a cli tool, so it should provide necessary commands to run the whole tool.
 
 ### **5.5 Other Considerations**
 
-- Json library: By default, please use `JSON`, since elixir 1.18, JSON is included in the standard library, it uses the same API as `Jason`, but better. Use `Jason` only if you need to do pretty printing of JSON, since `JSON` does not support that.
-- Logging: use `Logger` module from elixir standard library, and log at appropriate levels (debug, info, warn, error) depending on the importance of the message.
+- Json library: By default, please use `JSON`, since elixir 1.18, JSON is included in the standard library, it uses the same API as `Jason`, but faster. Use `Jason` only if you need to do pretty printing of JSON, since `JSON` does not support pretty printing.
+- Logging:
+  - use `Logger` module from elixir standard library, and log at appropriate levels (debug, info, warn, error) depending on the importance of the message.
+  - use `git notes` to attach important information about the agent's actions to the commit, such as the objective, the context, and any relevant metadata. This is important for traceability and debugging.
 - Sandbox: the project come with a simple sandbox environment for running tools for the LLM. Specifically, it uses systemd-run to create a sandboxed environment read-write access to the codebase path, but read-only access to the rest of the system, and with limited CPU, memory resources and limited system calls. This is to prevent malicious or buggy code from doing harm to the system. Please note that this is a simple sandbox to prevent misbehaving commands from doing too much damage, but it is not a full security sandbox that can prevent malicious agents.
