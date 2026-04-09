@@ -64,12 +64,24 @@ The system operates on the intersection of two dimensions:
 
 The codebase is structured as a recursive tree where every node (directory or file) has a specific context.
 
-* **Nodes:** A node represents a hierarchy level. It can be a **Directory Node** (structural) or a **File Node** (leaf/implementation).
-* **Context Contract:**
-  * Every Directory Node MUST contain a file named CONTEXT.md. This file acts as the explicit schema for that hierarchy level, strictly defining its **Intent** (purpose), its **API Surface** (exports), and its **Constraints** (rules for children).
+**Nodes:** A node represents a hierarchy level. It can be a `Directory Node` (structural) or a `File Node` (leaf/implementation). A node has three key attributes:
+  - **Path**: The location of the node in the repository (e.g., `doc/`, `lib/a.py`).
+  - **Context**: The semantic meaning and rules associated with the node. For directories, this is defined in the CONTEXT.md file. For files, this is defined in the header comment or module comment.
+  - **Content**: For directories, this is the list of child nodes. For files, this is the source code.
+
+**Important Contract:**
+  * Every `Directory Node` contains a file named CONTEXT.md. This file is considered as the part of the context attribute of the directory node, and does NOT count as a normal file. The file acts as the explicit schema for that hierarchy level, strictly defining its **Intent** (purpose), its **API Surface** (exports), and its **Constraints** (rules for children).
   * Every code file must include a header comment / module comment or similar that defines its purpose and any relevant constraints.
-  * The context from the parent node is **inherited** by all child nodes, ensuring alignment with high-level goals, thus forming a **Contextual Hierarchy**.
-* **Leaf Nodes:** Source code files (e.g., user.ex, utils.py) are leaf nodes. They do not contain CONTEXT.md; their content is the implementation of their parent's context.
+  * The context from the parent node can be **inherited** by all child nodes, ensuring alignment with high-level goals, thus forming a **Contextual Hierarchy**.
+  * Source code files (e.g., user.ex, utils.py) are considered as `leaf nodes`. They do not contain CONTEXT.md.
+
+For example, consider a simple python project, and we are dealing with the `src/foo/bar.py` file. The context for this file is constructed as follows:
+  * The root node (`/`) has a CONTEXT.md that defines the overall project goal and architecture.
+  * The `src/` directory has a CONTEXT.md that states that it is responsible for the implementation of the main application code.
+  * The `src/foo/` directory has a CONTEXT.md that states that it is responsible for the implementation of the "foo" module.
+  * The `src/foo/bar.py` file has a header comment that states that it is responsible for the implementation of the "bar" functionality within the "foo" module.
+
+So the agent will by default inherit the context from the root, then from `src/`, then from `src/foo/`, and finally the specific context of `src/foo/bar.py`, and it will use all of this context to understand the role of `src/foo/bar.py` in the overall project, and to make sure that any changes it makes to `src/foo/bar.py` are consistent with the high-level goals and constraints defined in the parent nodes.
 
 ### **2.2 The Temporal Dimension: "The Phylogenetic Graph"**
 
@@ -113,6 +125,7 @@ The system runs in two distinct stages.
 ### **Stage 1: Genesis (Creation Phase)**
 
 **Goal**: Recursively generate the repository skeleton based on the user's high-level instructions and prior-knowledge.
+This stage is used to bootstrap the project structure, when the user trys to create a new project from scratch.
 
 1. **Initialization:** User provides a high-level prompt on how to build the project, what is the goal of the project, what are the major components, and initialize the git repository and several worktrees if not already initialized.
 2. **Planning:** Inside the working directory Agent creates the context defining the architecture of that level based on the user's instructions and the context inherited from parent nodes. For directories, this is a CONTEXT.md file. For files, this is a header comment or module comment. The planning includes:
