@@ -180,7 +180,10 @@ defmodule EvoGit.Agent do
       # --- Helpers ---
 
       defp build_dynamic_context(state) do
-        EvoGit.Core.ContextNode.build_context(state.node_path, state.repo_path)
+        case EvoGit.Core.ContextNode.build_context(state.node_path, state.repo_path) do
+          {:ok, context} -> context
+          {:error, _} -> "Current Target Node: '#{state.node_path}'."
+        end
       end
 
       defp stream_event(caller_pid, type, data) do

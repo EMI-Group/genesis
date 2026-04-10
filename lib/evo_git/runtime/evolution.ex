@@ -28,7 +28,7 @@ defmodule EvoGit.Runtime.Evolution do
              phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
 
              # ContextNode.load expects a relative path
-             context_node = ContextNode.load(target_path, worktree_path)
+             context_node = ContextNode.load!(target_path, worktree_path)
 
              state = %{context_node: context_node, phylo_node: phylo_node}
 
