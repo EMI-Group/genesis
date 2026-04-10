@@ -83,7 +83,8 @@ defmodule EvoGit.Runtime.Genesis do
 
         agent_opts = Keyword.put_new(opts, :agent_module, agent_module)
 
-        with {:ok, plan_state, _plan_response} <- EvoGit.Task.mutate(state, plan_objective, agent_opts),
+        with {:ok, plan_state, _plan_response} <-
+               EvoGit.Task.mutate(state, plan_objective, agent_opts),
              # Step 3: Realize
              realize_objective = Prompts.genesis_realize(type, node_path),
              {:ok, realize_state, realize_response} <-
