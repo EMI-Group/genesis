@@ -1,4 +1,4 @@
-defmodule EvoGit.Runtime.Optimization do
+defmodule EvoGit.Runtime.Evolution do
   @moduledoc "Stage 2: Evolutionary Loop"
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
@@ -7,7 +7,7 @@ defmodule EvoGit.Runtime.Optimization do
   require Logger
 
   def run(objective, opts \\ []) do
-    Logger.info("Optimization: Starting for objective: #{objective}")
+    Logger.info("Evolution: Starting for objective: #{objective}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
     with :ok <- ensure_repo(repo_path),
@@ -17,7 +17,7 @@ defmodule EvoGit.Runtime.Optimization do
       current_node = PhyloGraphNode.new(repo_path, current_sha)
       target_path = EvoGit.Task.diagnose(current_node, objective, opts)
 
-      Logger.info("Optimization: Diagnosed target path: #{target_path}")
+      Logger.info("Evolution: Diagnosed target path: #{target_path}")
 
       # 2. Dispatch (Single Agent)
       case WorkerPool.run(fn worktree_path ->
@@ -38,19 +38,19 @@ defmodule EvoGit.Runtime.Optimization do
           final_sha = updated_node.current_commit
 
           Logger.info(
-            "Optimization: Evolution successful. Updating main repository to #{String.slice(final_sha, 0, 7)}"
+            "Evolution: Evolution successful. Updating main repository to #{String.slice(final_sha, 0, 7)}"
           )
 
           Git.reset_hard(repo_path, final_sha)
           {:ok, final_sha}
 
         error ->
-          Logger.error("Optimization: Agent failed: #{inspect(error)}")
+          Logger.error("Evolution: Agent failed: #{inspect(error)}")
           error
       end
     else
       error ->
-        Logger.error("Optimization failed to initialize: #{inspect(error)}")
+        Logger.error("Evolution failed to initialize: #{inspect(error)}")
         error
     end
   end
@@ -59,7 +59,7 @@ defmodule EvoGit.Runtime.Optimization do
     if File.dir?(Path.join(repo_path, ".git")) do
       :ok
     else
-      Logger.info("Optimization: Initializing Git repository at #{repo_path}...")
+      Logger.info("Evolution: Initializing Git repository at #{repo_path}...")
       File.mkdir_p!(repo_path)
       Git.init(repo_path)
       # Create initial commit to allow branching

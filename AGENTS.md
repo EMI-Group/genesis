@@ -149,6 +149,8 @@ It has several variations:
   - If it works, accept the change, if it doesn't work, reject the change and try again with a different optimization.
 
     This is called "differential evolution" because it is similar to the concept of differential evolution in optimization, where we are essentially computing $a + F * (b - c)$, where $a$ is the current module we want to optimize, $b$ and $c$ are different versions of the reference modules, and $F$ is a transformation function that computes the difference between the reference modules and applies it to the current module.
+- Co-evolution: Given a high-level objective, evolve multiple modules together to achieve the objective. This is useful for optimizing a series of interdependent components, where the human only need to specify the high-level objective, and the system can figure out how to evolve the different components together to achieve that objective.
+  - For example, if we want to optimize the performance of a web application, we might need to evolve both the backend and the frontend together, since they are interdependent. The system can analyze the context of both the backend and the frontend independently, and then figure out how to evolve them together to achieve the performance optimization objective.
 
 ## **5. Implementation Guidelines**
 

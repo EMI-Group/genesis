@@ -47,12 +47,12 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Create a Phoenix web app
 mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis -f design_doc.md --path /path/to/repo
 ```
 
-#### 2. Optimization (Evolution Phase)
+#### 2. Evolution Phase
 
 Fixes bugs, optimizes performance, or adds features to an existing project.
 
 ```bash
-mix run -e 'EvoGit.CLI.main(System.argv())' -- optimize "<Objective>"
+mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<Objective>"
 ```
 
 **Options:**
@@ -62,7 +62,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- optimize "<Objective>"
 **Examples:**
 
 ```bash
-mix run -e 'EvoGit.CLI.main(System.argv())' -- optimize "Fix the race condition in the worker pool" --path /path/to/repo
+mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Fix the race condition in the worker pool" --path /path/to/repo
 ```
 
 ### Configuration Options

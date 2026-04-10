@@ -3,7 +3,7 @@ defmodule EvoGit.CLI do
   Entry point for the EvoGit CLI.
   """
   alias EvoGit.Runtime.Genesis
-  alias EvoGit.Runtime.Optimization
+  alias EvoGit.Runtime.Evolution
   require Logger
 
   def main(args) do
@@ -84,16 +84,16 @@ defmodule EvoGit.CLI do
     end
   end
 
-  defp dispatch(["optimize" | rest], opts) do
+  defp dispatch(["evolve" | rest], opts) do
     objective = get_input(rest, opts)
 
     if objective do
       runtime_opts = []
       runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
 
-      Optimization.run(objective, runtime_opts)
+      Evolution.run(objective, runtime_opts)
     else
-      IO.puts("Error: Optimize requires an objective (via argument or --file).")
+      IO.puts("Error: Evolve requires an objective (via argument or --file).")
       print_help()
     end
   end
@@ -127,7 +127,7 @@ defmodule EvoGit.CLI do
 
     Usage:
       evogit genesis [options] <prompt>
-      evogit optimize [options] <objective>
+      evogit evolve [options] <objective>
 
     Options:
       -f, --file <path>           Read prompt/objective from a file.
@@ -140,7 +140,7 @@ defmodule EvoGit.CLI do
     Examples:
       evogit genesis "Create a snake game in Python"
       evogit genesis -f design.md -p /path/to/repo
-      evogit optimize "Fix the login bug" --concurrency 5
+      evogit evolve "Fix the login bug" --concurrency 5
     """)
   end
 end
