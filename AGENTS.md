@@ -71,7 +71,7 @@ The codebase is structured as a recursive tree where every node (directory or fi
 
 **Important Contract:**
   * Every `Directory Node` contains a file named CONTEXT.md. This file is considered as the part of the context attribute of the directory node, and does NOT count as a normal file. The file acts as the explicit schema for that hierarchy level, strictly defining its **Intent** (purpose), its **API Surface** (exports), and its **Constraints** (rules for children).
-  * Every code file must include a header comment / module comment or similar that defines its purpose and any relevant constraints.
+  * Every code file includes a header comment / module comment or similar that defines its purpose and any relevant constraints.
   * The context from the parent node can be **inherited** by all child nodes, ensuring alignment with high-level goals, thus forming a **Contextual Hierarchy**.
   * Source code files (e.g., user.ex, utils.py) are considered as `leaf nodes`. They do not contain CONTEXT.md.
 
