@@ -180,54 +180,7 @@ defmodule EvoGit.Agent do
       # --- Helpers ---
 
       defp build_dynamic_context(state) do
-        repo_path = state.repo_path
-        node_path = state.node_path
-
-        location_info = """
-        Current Target Node: '#{node_path}'.
-        IMPORTANT: Your working directory is the repository root ('.'). All file paths provided to tools MUST be relative to the repository root. For example, if your target node is 'src/foo', you must write to 'src/foo/CONTEXT.md', NOT just 'CONTEXT.md'. If you need to run shell commands inside your target directory, you must `cd` into it first (e.g., `cd src/foo && npm init -y`).
-        """
-
-        try do
-          context_nodes = EvoGit.Core.ContextNode.hier_context(node_path, repo_path)
-
-          context_files =
-            Enum.map(context_nodes, fn node ->
-              if node.type == :directory do
-                Path.join([repo_path, node.path, "CONTEXT.md"])
-              else
-                Path.join(repo_path, node.path)
-              end
-            end)
-            |> Enum.filter(&File.exists?/1)
-
-          context_contents =
-            Enum.map_join(context_files, "\n\n", fn file ->
-              case File.read(file) do
-                {:ok, content} ->
-                  truncated_content =
-                    if String.length(content) > 10000 do
-                      Logger.warning("Content truncated for file: #{file}")
-                      String.slice(content, 0, 10000) <> "\n... [Content Truncated] ..."
-                    else
-                      content
-                    end
-
-                  "File: #{Path.relative_to(file, repo_path)}\n```\n#{truncated_content}\n```"
-
-                _ ->
-                  ""
-              end
-            end)
-
-          if context_contents == "" do
-            location_info
-          else
-            location_info <> "\n\n# Context Tree\n" <> context_contents
-          end
-        rescue
-          _e -> ""
-        end
+        EvoGit.Core.ContextNode.build_context(state.node_path, state.repo_path)
       end
 
       defp stream_event(caller_pid, type, data) do
