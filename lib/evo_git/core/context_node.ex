@@ -89,7 +89,7 @@ defmodule EvoGit.Core.ContextNode do
   end
 
   @doc """
-  Reads the context contract for a given directory node.
+  Reads the context contract for a given directory node, or the file content for a file node.
   """
   @spec read_context(t()) :: {:ok, String.t()} | {:error, term()}
   def read_context(%__MODULE__{type: :directory} = node) do
@@ -99,12 +99,13 @@ defmodule EvoGit.Core.ContextNode do
     File.read(contract_path)
   end
 
-  def read_context(%__MODULE__{type: :file}) do
-    {:error, :not_a_directory}
+  def read_context(%__MODULE__{type: :file} = node) do
+    abs_path = Path.expand(node.path, node.repo)
+    File.read(abs_path)
   end
 
   @doc """
-  Reads the context contract for a given directory node, raising on error.
+  Reads the context contract for a given directory or file node, raising on error.
   """
   @spec read_context!(t()) :: String.t()
   def read_context!(%__MODULE__{} = node) do
@@ -115,14 +116,63 @@ defmodule EvoGit.Core.ContextNode do
   end
 
   @doc """
+  Returns the relative path to the file that provides the context for a node.
+  """
+  @spec context_file_path(t()) :: String.t()
+  def context_file_path(%__MODULE__{type: :directory} = node) do
+    Path.join(node.path, "CONTEXT.md")
+  end
+
+  def context_file_path(%__MODULE__{type: :file} = node) do
+    node.path
+  end
+
+  @doc """
   Builds the string context representation for the AI by traversing the context tree.
   """
   @spec build_context(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def build_context(relative_path, repo_path) do
-    try do
-      {:ok, build_context!(relative_path, repo_path)}
-    rescue
-      e -> {:error, e}
+    location_info =
+      """
+      Current Target Node: '#{relative_path}'.
+      IMPORTANT: Your working directory is the repository root ('.'). All file paths provided to tools MUST be relative to the repository root. For example, if your target node is 'src/foo', you must write to 'src/foo/CONTEXT.md', NOT just 'CONTEXT.md'. If you need to run shell commands inside your target directory, you must `cd` into it first (e.g., `cd src/foo && npm init -y`).
+      """
+      |> String.trim_trailing()
+
+    case hierarchy_nodes(relative_path, repo_path) do
+      {:ok, nodes} ->
+        context_contents =
+          nodes
+          |> Enum.map(fn node ->
+            content =
+              case read_context(node) do
+                {:ok, c} -> c
+                _ -> ""
+              end
+
+            file = context_file_path(node)
+
+            truncated_content =
+              if String.length(content) > 10000 do
+                require Logger
+                Logger.warning("Content truncated for file: #{file}")
+                String.slice(content, 0, 10000) <> "\n... [Content Truncated] ..."
+              else
+                content
+              end
+
+            "File: #{file}\n```\n#{truncated_content}\n```"
+          end)
+          |> Enum.join("\n\n")
+
+        if context_contents == "" do
+          {:ok, location_info}
+        else
+          {:ok, location_info <> "\n\n# Context Tree\n" <> context_contents}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -131,63 +181,10 @@ defmodule EvoGit.Core.ContextNode do
   """
   @spec build_context!(String.t(), String.t()) :: String.t()
   def build_context!(relative_path, repo_path) do
-    location_info =
-      """
-      Current Target Node: '#{relative_path}'.
-      IMPORTANT: Your working directory is the repository root ('.'). All file paths provided to tools MUST be relative to the repository root. For example, if your target node is 'src/foo', you must write to 'src/foo/CONTEXT.md', NOT just 'CONTEXT.md'. If you need to run shell commands inside your target directory, you must `cd` into it first (e.g., `cd src/foo && npm init -y`).
-      """
-      |> String.trim_trailing()
-
-    nodes = hierarchy_nodes!(relative_path, repo_path)
-
-    context_contents =
-      nodes
-      |> Enum.map(fn node ->
-        content =
-          case node.type do
-            :directory ->
-              case read_context(node) do
-                {:ok, c} -> c
-                _ -> nil
-              end
-
-            :file ->
-              file_path = Path.join(repo_path, node.path)
-              case File.read(file_path) do
-                {:ok, c} -> c
-                _ -> nil
-              end
-          end
-
-        if content do
-          file =
-            if node.type == :directory do
-              Path.join([repo_path, node.path, "CONTEXT.md"])
-            else
-              Path.join(repo_path, node.path)
-            end
-
-          truncated_content =
-            if String.length(content) > 10000 do
-              require Logger
-              Logger.warning("Content truncated for file: #{file}")
-              String.slice(content, 0, 10000) <> "\n... [Content Truncated] ..."
-            else
-              content
-            end
-
-          "File: #{Path.relative_to(file, repo_path)}\n```\n#{truncated_content}\n```"
-        else
-          nil
-        end
-      end)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.join("\n\n")
-
-    if context_contents == "" do
-      location_info
-    else
-      location_info <> "\n\n# Context Tree\n" <> context_contents
+    case build_context(relative_path, repo_path) do
+      {:ok, result} -> result
+      {:error, %{__exception__: true} = e} -> raise e
+      {:error, reason} -> raise "Failed to build context: #{inspect(reason)}"
     end
   end
 end
