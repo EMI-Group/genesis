@@ -18,32 +18,24 @@ defmodule EvoGit.Core.ContextNode do
   """
   @spec load(String.t(), String.t()) :: {:ok, t()} | {:error, term()}
   def load(relative_path, repo_path) do
-    try do
-      {:ok, load!(relative_path, repo_path)}
-    rescue
-      e -> {:error, e}
-    end
-  end
-
-  @doc """
-  Loads a ContextNode, raising on error.
-  """
-  @spec load!(String.t(), String.t()) :: t()
-  def load!(relative_path, repo_path) do
     abs_path = Path.expand(relative_path, repo_path)
 
-    if File.dir?(abs_path) do
-      %__MODULE__{
-        path: relative_path,
-        type: :directory,
-        repo: repo_path
-      }
+    if File.exists?(abs_path) do
+      type =
+        if File.dir?(abs_path) do
+          :directory
+        else
+          :file
+        end
+
+      {:ok,
+       %__MODULE__{
+         path: relative_path,
+         type: type,
+         repo: repo_path
+       }}
     else
-      %__MODULE__{
-        path: relative_path,
-        type: :file,
-        repo: repo_path
-      }
+      {:error, :enoent}
     end
   end
 
@@ -51,41 +43,36 @@ defmodule EvoGit.Core.ContextNode do
   Retrieves the full hierarchy of ContextNodes from the project root down to the given relative path.
   `relative_path` must be relative to the root of the repository.
   `repo_path` must be the absolute path to the repository root.
+  Nodes that do not exist in the filesystem are excluded from the result list.
   """
   @spec hierarchy_nodes(String.t(), String.t()) :: {:ok, [t()]} | {:error, term()}
-  def hierarchy_nodes(relative_path, repo_path) do
-    try do
-      {:ok, hierarchy_nodes!(relative_path, repo_path)}
-    rescue
-      e -> {:error, e}
+  def hierarchy_nodes(relative_path, repo_path) when is_binary(relative_path) and is_binary(repo_path) do
+    if Path.type(relative_path) == :relative and not String.starts_with?(relative_path, "..") do
+      paths =
+        if relative_path == "." do
+          ["."]
+        else
+          ["." | Enum.scan(Path.split(relative_path), &Path.join(&2, &1))]
+        end
+
+      nodes =
+        paths
+        |> Enum.reduce([], fn p, acc ->
+          case load(p, repo_path) do
+            {:ok, node} -> [node | acc]
+            _ -> acc
+          end
+        end)
+        |> Enum.reverse()
+
+      {:ok, nodes}
+    else
+      {:error, :invalid_path}
     end
   end
 
-  @doc """
-  Retrieves the full hierarchy of ContextNodes, raising on error.
-  """
-  @spec hierarchy_nodes!(String.t(), String.t()) :: [t()]
-  def hierarchy_nodes!(relative_path, repo_path) do
-    valid_hierarchy? =
-      Path.type(relative_path) == :relative and
-        not String.starts_with?(relative_path, "..")
-
-    if not valid_hierarchy? do
-      raise ArgumentError, "Path #{relative_path} must be relative to the repo root"
-    end
-
-    case relative_path do
-      "." ->
-        [load!(".", repo_path)]
-
-      _ ->
-        parts = Path.split(relative_path)
-
-        paths = Enum.scan(parts, &Path.join(&2, &1))
-
-        ["." | paths]
-        |> Enum.map(fn p -> load!(p, repo_path) end)
-    end
+  def hierarchy_nodes(_relative_path, _repo_path) do
+    {:error, :invalid_path}
   end
 
   @doc """
@@ -183,7 +170,6 @@ defmodule EvoGit.Core.ContextNode do
   def build_context!(relative_path, repo_path) do
     case build_context(relative_path, repo_path) do
       {:ok, result} -> result
-      {:error, %{__exception__: true} = e} -> raise e
       {:error, reason} -> raise "Failed to build context: #{inspect(reason)}"
     end
   end
