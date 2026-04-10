@@ -265,7 +265,7 @@ defmodule EvoGit.Runtime.Genesis do
   defp merge_branch(base_sha, other_sha, opts) do
     WorkerPool.run(fn worktree_path ->
       phylo_node = PhyloGraphNode.new(worktree_path, base_sha)
-      context_node = ContextNode.load!(".", worktree_path)
+      {:ok, context_node} = ContextNode.load(".", worktree_path)
       state = %{context_node: context_node, phylo_node: phylo_node}
 
       case EvoGit.Task.resolve_conflict(state, other_sha, opts) do
