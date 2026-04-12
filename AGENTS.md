@@ -54,11 +54,11 @@
 ## **1. Introduction**
 
 EvoGit 1.0 is a decentralized, evolutionary software development framework that supersedes the original EvoGit approach. While the original paper focused on the **Temporal Dimension** (a phylogenetic graph of code versions), it lacked structural awareness, treating codebases as flat collections of files.
-EvoGit 1.0 introduces the **Spatial Dimension**—a hierarchical understanding of the codebase. By treating a repository as a semantic tree of "Context Nodes," the system can decompose complex architectural tasks into manageable local evolutions.
+EvoGit 1.0 introduces the **Spatial Dimension**—a hierarchical understanding of the codebase. By treating a repository as a semantic tree of "Context Nodes," the system can decompose complex architectural tasks into manageable local evolutions. Therefore, all agents states are essentially persistent memory either in the spatial dimension (context tree) or in the temporal dimension (phylogenetic graph), and the agent itself is a stateless function that can be invoked with any state in the spatial or temporal dimension to perform a transformation. This design allows for more efficient and scalable evolution, as agents can be spawn anywhere, anytime, and in any order. There won't be memory corruption issues since the states are immutable, it's very easy to rollback to any previous state.
 
 ## **2. Core Concepts**
 
-The system operates on the intersection of two dimensions:
+The system operates on the intersection of two dimensions, the **Spatial Dimension** (the structure of the codebase) and the **Temporal Dimension** (the evolution of code versions).
 
 ### **2.1 The Spatial Dimension: "The Context Tree"**
 
@@ -87,16 +87,22 @@ So the agent will by default inherit the context from the root, then from `src/`
 
 We retain the original EvoGit core: code evolves through a Directed Acyclic Graph (DAG) of Git commits.
 
-* **Strict Partial Order:** ($v\_{new} \> v\_{old}$), Evolution is directional. A child commit is accepted *if and only if* it is measurably "better" than its parent.
-* **Definition of "Better":** Unlike traditional CI/CD which demands a "Green Build" (passing all tests), EvoGit accepts partial progress. A version is better if:
+* **Partial Order:** ($v\_{new} \> v\_{old}$), Evolution is directional. A child commit is accepted *if and only if* it is measurably "better" than its parent. There are two levels of comparisons, shorter range comparisons between neighboring commits, and longer range comparisons between major versions (across branches, or tags).
+  * Neighboring commits are compared loosely, not requiring a strict "Green Build". The comparisons are mostly done by simple tests or even inspecting the diff alone. This allows for incremental progress and partial improvements.
+  * Long range comparisons over major versions are more strict, requiring running test suites, comparing code metrics etc to ensure that the new version is indeed better than the old version.
+* **Definition of "Better":** Unlike traditional CI/CD which demands a "Green Build" (passing all tests), EvoGit accepts partial progress. A version is considered "better" than its ancestor as long as it shows any improvement, even if it is not a complete improvement. For example:
   * It passes *more* tests than the ancestor.
   * It implements a requested feature (verified by an LLM Judge).
   * It fixes a specific bug, even if other parts of the system are still broken.
+  * It improves code style or readability, even if it does not add new features or fix bugs.
+  * It optimizes performance for a specific module, even if it does not optimize the entire system.
 * **Immutable History:** Git commits serve as the immutable record of this evolutionary process.
 
 ## **3. The Agent Model**
 
 In EvoGit 1.0, an Agent is not a persistent entity but a **stateless function**.
+The agent itself does not maintain any memory, except for very short-term session memory that is discarded after the agent finishes its task.
+Instead, it relies on Context Tree and the Phylogenetic Graph for all necessary information and history, so the agent can still be using "memory" in a sense to make informed decisions.
 
 ### **3.1 Definition**
 
@@ -125,7 +131,7 @@ The system runs in two distinct stages.
 ### **Stage 1: Genesis (Creation Phase)**
 
 **Goal**: Recursively generate the repository skeleton based on the user's high-level instructions and prior-knowledge.
-This stage is used to bootstrap the project structure, when the user trys to create a new project from scratch.
+This stage is used to bootstrap the project structure, when the user tries to create a new project from scratch.
 
 1. **Initialization:** User provides a high-level prompt on how to build the project, what is the goal of the project, what are the major components, and initialize the git repository and several worktrees if not already initialized.
 2. **Planning:** Inside the working directory Agent creates the context defining the architecture of that level based on the user's instructions and the context inherited from parent nodes. For directories, this is a CONTEXT.md file. For files, this is a header comment or module comment. The planning includes:
@@ -143,7 +149,7 @@ This stage is used to bootstrap the project structure, when the user trys to cre
 
 It has several variations:
 - Differential Evolution: Given a list of references (good examples), evolve rest of the codebase to apply that pattern. This is useful for optimizing a series of similar components, where the human only need to optimize a few of them, and the system can generalize the pattern to the rest of the components.
-  - Take one of the referencs, get history of that module.
+  - Take one of the references, get history of that module.
   - Study the optimizations made in that module.
   - Try to apply the same optimizations to the rest of the modules, and see if it works.
   - If it works, accept the change, if it doesn't work, reject the change and try again with a different optimization.
