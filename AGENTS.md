@@ -147,7 +147,30 @@ This stage is used to bootstrap the project structure, when the user tries to cr
 
 **Goal**: Given a high-level objective, evolve the codebase from the skeleton created in Stage 1 or from any existing state.
 
-It has several variations:
+Depending on the nature of the task, there are two major scenarios for evolution:
+
+- The task is clear, and the plan is straightforward. This scenario is common for day-to-day software development tasks, such as:
+  * Refactoring a specific module to improve code quality.
+  * Fixing a known bug with a clear reproduction case.
+  * Rewrite a specific module in a different programming language.
+  * Add tests and documentation to a specific module.
+  * Add a new feature to a specific module with a clear end goal.
+  * Analyze the codebase and document to find out how to implement a specific feature, and then implement that feature.
+
+  The important point is that, while those tasks might be complex and require multiple steps, the overall plan is clear and straightforward, overall there is one clear path to achieve the task. Most day-to-day software development tasks fall into this category because they are usually well defined and have a clear end goal, only requiring us to take time to achieve that goal step by step.
+  In these cases, the focus is more on the execution. A top-down approach is usually more suitable, where we start from the high-level objective, directly plan the overall steps, and then execute those steps one by one, and we can adjust the plan along the way if needed, but overall it's a top-down approach because we already have a clear plan to achieve the task, and we just need to execute that plan.
+
+- The task is ambiguous or the plan is not straightforward, and we don't know exactly how to achieve the task. This scenario is common for more complex, ambiguous, or open-ended tasks, such as:
+  * Optimize the performance of the entire system or a large module, without a understanding of the bottlenecks or the optimization opportunities.
+  * Refactor a large amount of code to improve code quality, without a clear way of doing it.
+  * Add a whole new feature that requires massive changes across the codebase, without a clear design or implementation plan.
+
+  The important point is that, in those cases, we don't have a clear plan or a clear path to achieve the task, for example, for large refactors, there could be multiple ways of doing it, and each way has its own tradeoffs, which then leads to more uncertainty on which way is better. For performance optimization, we might not even know where the bottlenecks are, or how to optimize them.
+  In these cases, the focus is more on searching. A bottom-up approach is usually more suitable, where we start from the low-level details, make small changes, and then evaluate the changes to see if we are moving in the right direction, and then adjust our approach based on the feedback. This is more of a trial-and-error approach, where we are essentially searching for the best way to achieve the task, and we are using the feedback from each change to guide our search. Planning is less important in this scenario because we never have a clear plan to begin with.
+
+We call the first scenario "Simple Evolution", and the second scenario "Complex Evolution".
+
+To handle the second scenario, it has several variations:
 - Differential Evolution: Given a list of references (good examples), evolve rest of the codebase to apply that pattern. This is useful for optimizing a series of similar components, where the human only need to optimize a few of them, and the system can generalize the pattern to the rest of the components.
   - Take one of the references, get history of that module.
   - Study the optimizations made in that module.
@@ -157,6 +180,9 @@ It has several variations:
     This is called "differential evolution" because it is similar to the concept of differential evolution in optimization, where we are essentially computing $a + F * (b - c)$, where $a$ is the current module we want to optimize, $b$ and $c$ are different versions of the reference modules, and $F$ is a transformation function that computes the difference between the reference modules and applies it to the current module.
 - Co-evolution: Given a high-level objective, evolve multiple modules together to achieve the objective. This is useful for optimizing a series of interdependent components, where the human only need to specify the high-level objective, and the system can figure out how to evolve the different components together to achieve that objective.
   - For example, if we want to optimize the performance of a web application, we might need to evolve both the backend and the frontend together, since they are interdependent. The system can analyze the context of both the backend and the frontend independently, and then figure out how to evolve them together to achieve the performance optimization objective.
+
+To be better integrated, the agents will be encouraged to make small, incremental improvements that fit in individual commits.
+And when an agent calls a sub-agent, that sub-agent is expected to make a small changes, report back the result, and the latest commit sha to the parent agent, so the parent agent can decide whether to accept or reject that change, and then decide how to proceed with the next steps.
 
 ## **5. Implementation Guidelines**
 
