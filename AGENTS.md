@@ -179,6 +179,8 @@ To ensure strict isolation between agents running in parallel:
    * Agent performs edits in that worktree.
    * git commit -am "Agent: <objective>"
    * Attach other information as git notes for traceability.
+4. **User Interaction:**
+   Most of the time, the agents will be running in the background with separate worktrees, after the agents have done their work, we will notify the user and then run a `git merge --no-commit` to the current checkout (the user's working directory) and let the user review the changes, and then the user can decide to commit or not.
 
 ### **5.4 CLI Interface**
 
