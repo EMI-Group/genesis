@@ -55,11 +55,11 @@ defmodule EvoGit.CLI do
         end
       end)
 
-    # Restart WorkerPool if config changed
+    # Restart AgentScheduler if config changed
     if updated? do
-      Logger.info("Reconfiguring WorkerPool with opts: #{inspect(opts)}")
-      Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.WorkerPool)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.WorkerPool)
+      Logger.info("Reconfiguring AgentScheduler with opts: #{inspect(opts)}")
+      Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
     end
   end
 

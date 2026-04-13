@@ -2,6 +2,10 @@ defmodule EvoGit.Agent do
   @moduledoc """
   A stateful pure-function loop template that manages a single agent session,
   handling tool loops, timeouts, and graceful recovery.
+
+  Agent state follows the design spec:
+  - `context_node` (spatial): the node in the Context Tree
+  - `phylo_node` (temporal): git commit state with `base_commit` and `current_commit`
   """
 
   alias EvoGit.Core.ContextNode
@@ -43,6 +47,7 @@ defmodule EvoGit.Agent do
 
         state = %{
           caller_pid: caller_pid,
+          agent_id: EvoGit.AgentScheduler.current_agent_id(),
           turn: 0,
           history: [ReqLLM.Context.user(query)],
           system_prompt: actual_system_prompt,
