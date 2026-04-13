@@ -159,7 +159,11 @@ To guarantee strict isolation for parallel agent executions:
 3.  **Agent Lifecycle:** * Agents are dispatched to an available worktree slot.
     * Modifications are committed with semantic messages: `Agent: <objective>`.
     * Metadata (Context, LLM reasoning) is attached via `git notes` for traceability.
-4.  **User Handoff:** Once an evolutionary branch is complete, the user is notified. A `git merge --no-commit` is executed against the main working directory, allowing the user to review and finalize the transaction.
+4.  **Agent Actions:** Agents can execute most of the Git CLI commands within their worktree, except for certain commands that would affect the global repository state or move the current workspace to a different commit, those commands include:
+    * `git push` and `git pull` (to prevent agents from modifying the remote repository or pulling changes that could cause conflicts)
+    * `git checkout` and `git reset` (to prevent agents from moving to a different commit than the one they were assigned to)
+    * `git rebase` (to prevent agents from rebasing branches, which should be done by the parent agent after evaluating the results of the child agent)
+5.  **User Handoff:** Once an evolutionary branch is complete, the user is notified. A `git merge --no-commit` is executed against the main working directory, allowing the user to review and finalize the transaction.
 
 ### **5.3 Tooling & Security**
 * **JSON Handling:** Utilize Elixir 1.18+'s standard `JSON` library for speed. Only fall back to `Jason` if pretty-printing is explicitly required.
