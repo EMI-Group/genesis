@@ -13,6 +13,12 @@ defmodule EvoGit.Agent do
 
   @type state :: %{context_node: ContextNode.t(), phylo_node: PhyloGraphNode.t()}
 
+  @doc """
+  Extracts the tool name from a tool schema struct.
+  """
+  def tool_name(%{name: name}), do: name
+  def tool_name(_), do: nil
+
   defmacro __using__(_opts) do
     quote do
       require Logger
@@ -110,11 +116,13 @@ defmodule EvoGit.Agent do
 
         context = ReqLLM.Context.new([ReqLLM.Context.system(full_system_prompt) | state.history])
 
+        tools = effective_tools(state)
+
         {:ok, response} =
           ReqLLM.generate_text(
             current_model(),
             context,
-            tools: available_tools()
+            tools: tools
           )
 
         tool_calls =
@@ -247,6 +255,33 @@ defmodule EvoGit.Agent do
         EvoGit.Agent.Tools.schemas() ++ [completion_schema()]
       end
 
+      @doc """
+      Returns a list of tool name strings that represent sub-agent invocations.
+      These tools are automatically filtered out when the agent is at maximum
+      recursion depth, preventing the LLM from seeing or calling them.
+
+      Override this in your agent module to declare sub-agent tools.
+      """
+      def subagent_tools, do: []
+
+      defp effective_tools(state) do
+        if at_max_depth?(state) do
+          excluded = MapSet.new(subagent_tools())
+
+          available_tools()
+          |> Enum.reject(fn tool ->
+            name = EvoGit.Agent.tool_name(tool)
+            name && MapSet.member?(excluded, name)
+          end)
+        else
+          available_tools()
+        end
+      end
+
+      defp at_max_depth?(state) do
+        state.depth >= EvoGit.AgentScheduler.max_depth()
+      end
+
       def execute_tool(call, _state) do
         result = EvoGit.Agent.Tools.execute(call.name, call.arguments)
 
@@ -268,7 +303,7 @@ defmodule EvoGit.Agent do
       def system_prompt, do: ""
 
       # Give adopting modules default implementations they can override
-      defoverridable available_tools: 0, execute_tool: 2, system_prompt: 0
+      defoverridable available_tools: 0, execute_tool: 2, system_prompt: 0, subagent_tools: 0
     end
   end
 end
