@@ -124,7 +124,17 @@ In step 2 and 3, if the agent doesn't commit, the system will automatically comm
 ## **4. Runtime Execution Phases**
 
 ### **4.1 Phase 1: Genesis (Bootstrapping)**
-**Goal:** Recursively generate the repository skeleton based on user prompts and prior knowledge.
+**Goal:** Initialize the Context Tree and Phylogenetic Graph. The system can either start from an existing codebase or generate a new one from scratch based on user prompts.
+
+**Mode A: Existing Codebase**
+
+Generate the Context Tree by recursively analyzing the directory structure and file contents.
+1. **Root Initialization:** The system starts at the repository root, creating the first investigator agent with the initial state pointing to the root node and the latest commit.
+2. **Recursive Analysis:** The agent can spawn sub-agents for each child node (subdirectory or file). Each agent analyzes its assigned node, extracting context (e.g., from `CONTEXT.md` or file headers) and building the tree structure.
+
+**Mode B: New Codebase**
+
+Recursively generate the repository skeleton based on user prompts and prior knowledge.
 
 1.  **Initialization:** The system ingests the high-level prompt, initializes the Git repo, and provisions worktrees.
 2.  **Planning:** Inside the current node, the Agent writes the context (e.g., `CONTEXT.md`), outlining Intent, API Surface, and Constraints for that specific level.
