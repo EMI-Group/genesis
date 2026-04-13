@@ -131,6 +131,7 @@ In step 2 and 3, if the agent doesn't commit, the system will automatically comm
 Generate the Context Tree by recursively analyzing the directory structure and file contents.
 1. **Root Initialization:** The system starts at the repository root, creating the first investigator agent with the initial state pointing to the root node and the latest commit.
 2. **Recursive Analysis:** The agent can spawn sub-agents for each child node (subdirectory or file). Each agent analyzes its assigned node, extracting context (e.g., from `CONTEXT.md` or file headers) and building the tree structure.
+3. **Fixed Point Convergence:** After the child directors/files are processed, the parent agent aggregates the context and write down the context for its node. Then based on the aggregated context, the parent agent will decide if the child nodes need to be modified (e.g., if the context of a child node is wrong), if so, the parent agent will spawn sub-agents again to modify the child nodes, this process will repeat until reaching a fixed point where no agent thinks that the context of its node or its child nodes need to be modified.
 
 **Mode B: New Codebase**
 
