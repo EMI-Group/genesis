@@ -9,9 +9,7 @@ defmodule EvoGit.Application do
   def start(_type, _args) do
     children = [
       {Task.Supervisor, name: EvoGit.TaskSupervisor},
-      # Starts a worker by calling: EvoGit.Worker.start_link(arg)
-      # {EvoGit.Worker, arg}
-      {EvoGit.WorkerPool, []}
+      {EvoGit.AgentScheduler, []}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
