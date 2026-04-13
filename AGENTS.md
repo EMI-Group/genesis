@@ -49,6 +49,8 @@
 - Use relative paths inside the repository (relative to the repo root).
 - If not specifically needed, the code should use assertive code that expects the path to follow these rules.
 
+---
+
 # **EvoGit 1.0 Design Specification**
 
 ## **1. Introduction**
@@ -118,18 +120,20 @@ Initialize the Context Tree and Phylogenetic Graph, starting from either an exis
 **Mode A: Existing Codebase**
 * **Root Initialization:** The system spawns an investigator agent at the repository root on the latest commit.
 * **Recursive Analysis:** The agent spawns sub-agents for child directories/files to extract existing context and build the semantic tree structure. *(Note: File-level extraction is minimal, relying mostly on existing code comments).*
-* **Fixed Point Convergence:** The parent agent aggregates the context. If discrepancies exist, it spawns sub-agents to modify the child nodes. This loop repeats until a "fixed point" is reached where no agent detects a need to modify its node or its children.
+* **Fixed Point Convergence:** The parent agent aggregates the context. If discrepancies exist, it spawns sub-agents to modify the child nodes. This loop repeats until a "fixed point" is reached.
+    * **Convergence Circuit Breaker:** To prevent infinite loops of subjective semantic tweaking by the LLM, agents are strictly instructed to evaluate context changes based *only* on functional API surface modifications, not phrasing. Additionally, the system enforces a hard limit on iterations (e.g., maximum 3 passes per node) to guarantee mathematical termination.
 
 **Mode B: New Codebase**
 * **Planning:** An agent interprets the user's prompt at the root node and drafts the initial architectural plan in the root `CONTEXT.md`.
 * **Recursive Realization:** The agent spawns sub-agents to physically create the planned directory structures, child `CONTEXT.md` files, and initial leaf-node code files.
-* **Fixed Point Convergence:** Identical to Mode A, the system evaluates the generated structure and recursively adjusts it until all contexts align perfectly with the root objective.
+* **Fixed Point Convergence:** Identical to Mode A, utilizing the same Convergence Circuit Breaker to ensure the generated structure finalizes efficiently.
 
 ### **4.2 Phase 2: Evolution**
 Mutate the codebase based on task ambiguity.
 
 * **Mode A: Simple Evolution (Top-Down):** Used for clear tasks (e.g., fixing reproducible bugs). The top-level agent maps the spatial context, drafts a step-by-step plan, and dispatches `executor` sub-agents to write code, followed by `evaluator` sub-agents to verify diffs.
 * **Mode B: Complex Evolution (Bottom-Up):** Used for open-ended tasks (e.g., system-wide optimization). Planning is bypassed. The parent defines a "Search Space" and spawns concurrent sub-agents to test different local file changes.
+    * **Parallel Branching and Merge Resolution:** When multiple sub-agents succeed concurrently, creating parallel branches in the Git DAG, the parent agent executes a sequential merge strategy. It first selects the single *best* performing branch to establish as the new baseline. It then attempts to merge the remaining successful branches one by one into this baseline. If an improvement merges cleanly and adds value, it is accepted. If it results in conflicts or cannot be incorporated (i.e., parallel improvements that contradict each other), the conflicting branch is discarded.
     * *Differential Evolution:* Extracts a transformation pattern from a successful reference module and applies it across similar components, keeping only the permutations that work.
     * *Co-evolution:* Mutates interdependent systems (e.g., frontend/backend) concurrently to reach a shared performance goal.
 
@@ -142,11 +146,11 @@ Mutate the codebase based on task ambiguity.
 * **Version Control:** **Git CLI**. Libgit bindings are explicitly avoided to minimize complexity, dependencies, and to ease debugging.
 
 ### **5.2 The Agent Scheduler & Git Isolation**
-EvoGit manages execution through an internal **Agent Scheduler**, analogous to OS process or thread scheduling. The constrained system resource is a fixed pool of $N$ `git worktree` slots located at `.evogit/worktrees/worker_<i>/`. 
+EvoGit manages execution through an internal **Agent Scheduler**, analogous to OS process or thread scheduling. The constrained system resource is a fixed pool of $N$ `git worktree` slots located at `.evogit/worktrees/worker_<i>/`.
 
 1. **Immutability:** The main user checkout is *never* directly modified by an agent.
 2. **Execution Lifecycle:** All agents are initially spawned by the scheduler into a `waiting` state. When a worktree slot becomes available, the scheduler assigns it to a waiting agent, **checks out the exact `current_commit` (not the `base_commit`)** specified in the agent's temporal state, and begins execution. This ensures resuming agents do not overwrite unyielded progress.
-3. **Cooperative Multitasking (Yielding):** Worktrees cannot be locked idle. When an agent needs to call sub-agents, it must *yield* execution. 
+3. **Cooperative Multitasking (Yielding):** Worktrees cannot be locked idle. When an agent needs to call sub-agents, it must *yield* execution.
     * Before yielding, the agent must clean its workspace (committing any pending changes, or relying on the auto-commit fallback detailed in Section 3.4).
     * The parent agent is then transitioned back to the `waiting` state.
     * The worktree is instantly released back to the scheduler to execute other queued agents (including the newly spawned sub-agents).
