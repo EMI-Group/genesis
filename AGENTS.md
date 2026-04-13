@@ -66,117 +66,101 @@ Crucially, **Agents are stateless functions**. All persistent memory exists eith
 ### **2.1 The Spatial Dimension: "The Context Tree"**
 The codebase is a recursive tree where every node (directory or file) maintains a specific, inherited context.
 
-* **Nodes:** Represent a hierarchy level. They can be a `Directory Node` (structural) or a `File Node` (leaf/implementation).
-    * **Path:** Repository location (e.g., `doc/`, `lib/a.py`).
-    * **Context:** Semantic rules. Defined by `CONTEXT.md` for directories, and header/module comments for files. Mostly we care about the context of directories.
-    * **Content:** Child nodes (for directories) or source code (for files).
-* **The Spatial Contract:**
-    * Every `Directory Node` *must* contain a `CONTEXT.md` file. Crucially, **this file is not treated as a normal file within the Git repository**. Instead, it is conceptually bound to the directory as an intrinsic attribute—functioning much like an extended filesystem attribute (xattr), but implemented as a standard text file so it does not require specialized OS-level `xattr` support. It acts as the directory's schema, defining its **Intent** (purpose), **API Surface** (exports), and **Constraints** (rules for children).
-    * Every `File Node` (leaf) *must* include a header/module comment defining its role. Leaf nodes do not contain `CONTEXT.md` files.
-* **Contextual Inheritance:** Agents dynamically build their "World View" by inheriting context top-down. For `src/foo/bar.py`, the agent aggregates goals and constraints from the Root `CONTEXT.md` $\rightarrow$ `src/ CONTEXT.md` $\rightarrow$ `src/foo/ CONTEXT.md` $\rightarrow$ `bar.py`'s header.
+* **Nodes:** Represent a hierarchy level as either a `Directory Node` (structural) or a `File Node` (leaf/implementation). Nodes contain a path, context rules, and content.
+* **The Spatial Contract (Directory):** Every `Directory Node` *must* contain a `CONTEXT.md` file. This file is not treated as a normal code file within the Git repository. It is conceptually bound to the directory as an intrinsic attribute (similar to an `xattr`) acting as the directory's schema to define its **Intent**, **API Surface**, and **Constraints**.
+* **The Boundary of Explicit Context (File Level):** While a single code file technically contains its own internal hierarchy of context (module-level docstrings, class/function docstrings, and inline comments), EvoGit 1.0 **does not explicitly model or enforce this sub-file context**. Modern LLMs natively excel at comprehending implicit, file-level context from standard code structures. Therefore, the formal, system-managed Context Hierarchy applies only down to the directory level. Once an agent targets a `File Node`, it relies entirely on the LLM's natural code comprehension to navigate the file's internal logic.
+* **Contextual Inheritance:** Agents dynamically build their "World View" by inheriting context top-down. For `src/foo/bar.py`, the agent aggregates the explicit, system-managed context from the Root `CONTEXT.md` $\rightarrow$ `src/ CONTEXT.md` $\rightarrow$ `src/foo/ CONTEXT.md`, and then relies on its innate abilities to parse `bar.py`'s internal code comments.
 
 ### **2.2 The Temporal Dimension: "The Phylogenetic Graph"**
 Code evolves through a Directed Acyclic Graph (DAG) of immutable Git commits.
 
-* **Directional Evolution ($v_{new} > v_{old}$):** A child commit is accepted *if and only if* it is measurably "better" than its parent.
-* **Definition of "Better" (Partial Progress):** Unlike traditional CI/CD requiring a "Green Build," EvoGit accepts incremental improvements. A version is accepted if it passes more tests, implements a specific feature (verified by an LLM Judge), fixes an isolated bug, or improves readability—even if other system parts remain broken.
-* **Evaluation Ranges:** * *Short-range (Neighboring Commits):* Loosely evaluated via diff inspection or basic tests to allow rapid, partial progress.
-    * *Long-range (Major Versions/Tags):* Strictly evaluated via full test suites and code metrics to ensure overall systemic improvement.
+* **Directional Evolution:** ($v_{new} > v_{old}$) A child commit is accepted *if and only if* it is measurably "better" than its parent.
+* **Partial Progress Acceptance:** Unlike traditional CI/CD requiring a "Green Build," EvoGit accepts incremental improvements. A version is accepted if it passes more tests, implements a feature, or improves readability—even if other system parts remain broken.
+* **Evaluation Ranges:** Neighboring commits are loosely evaluated (diff inspection, basic tests) to allow rapid progress. Major versions or tags are strictly evaluated (full test suites, metrics) to ensure systemic improvement.
 
 ---
 
 ## **3. The Stateless Agent Model**
 
-In EvoGit 1.0, Agents do not maintain long-term memory. They are transient processes utilizing only short-term session memory, relying entirely on the Context Tree and Phylogenetic Graph for historical and structural awareness.
+In EvoGit 1.0, Agents do not maintain long-term memory. They are transient processes utilizing short-term session memory, relying entirely on the Context Tree and Phylogenetic Graph for historical and structural awareness.
 
 ### **3.1 Definition & State**
 An agent executes a functional transformation defined as:
 $$NewState = Agent(State, Objective)$$
 
-* **State:** A `{spatial, temporal}` tuple.
-    * `spatial`: The node in the Context Tree where the agent operates, i.e., the directory or file path (e.g., `src/foo/` or `src/foo/bar.py`).
-    * `temporal`: The Git commit SHA representing the code version, including two parts:
-      * `base_commit`: The commit SHA the agent starts from.
-      * `current_commit`: The commit SHA the agent is currently working on (initially the same as `base_commit`).
-* **Objective:** A natural language directive (e.g., "Implement the User schema", "Investigate how to use this library").
+The `State` is defined by the following attributes:
+* **Spatial State:** The specific node path in the Context Tree where the agent is authorized to operate (e.g., `src/foo/`).
+* **Temporal State (Base Commit):** The commit SHA the agent branches from.
+* **Temporal State (Current Commit):** The commit SHA the agent is currently working on (initially matches the Base Commit).
+* **Objective:** A natural language directive (e.g., "Implement the User schema").
 
-### **3.2 Sub-Agent Delegation & Parallelism**
-To prevent context bloat, agents heavily utilize recursive decomposition. A top-level agent spawns sub-agents with specific `State` and `Objective` parameters to handle individual modules or files.
-* Sub-agents operate independently, returning text results, diff stats, and auto-generated commit SHAs to the parent.
-* A sub-agent's context footprint does *not* count against the parent agent's session limits.
+### **3.2 Sub-Agent Delegation**
+To prevent context bloat, agents recursively decompose tasks. A top-level agent spawns sub-agents with distinct `State` and `Objective` parameters to handle specific modules. Sub-agents return text results, diff stats, and auto-generated commit SHAs to the parent. Their context footprint does *not* count against the parent's session limits.
 
-### **3.3 Execution Constraints (Forcing Micro-Evolutions)**
-To guarantee small, reviewable, and incremental improvements, agents operate under strict lifecycle limits:
-* **Session Length Limits:** Agents possess a maximum number of iterative loops.
-* **Warning Triggers:** At 50% and 80% of their session limit, agents receive system prompts urging them to finalize tasks and report back.
-* **Hard Termination:** Upon hitting the limit, the agent must yield to the parent agent, which then evaluates the partial progress and dictates the next evolutionary step.
+### **3.3 Execution Constraints**
+* **Session Limits:** Agents possess a strict maximum number of iterative loops.
+* **Warning Triggers:** At 50% and 80% of their session limit, agents receive system prompts urging them to report back.
+* **Hard Termination:** Upon hitting the limit, the agent must yield to the parent, which evaluates the progress and dictates the next step.
 
-### **3.4 Worktree Interactions & Git Commits**
-The agents run in isolated `git worktree` environments.
-1. Each agent starts with a clean checkout of the commit specified in its `State`.
-2. Agents need to make sure to keep the worktree clean when calling sub-agents, that is, before calling a sub-agent, the parent agent must commit any changes it has made.
-3. Upon completion, agents must commit their changes.
-
-In step 2 and 3, if the agent doesn't commit, the system will automatically commit the changes with a message like `Agent: <objective> (auto-commit)` (except for files ignored by `.gitignore`, those will be discarded). This also ensure that we can put agents to sleep and wake them up later with the same state, as the state is always represented by a commit SHA and a node path.
+### **3.4 Worktree Interactions & Auto-Commits**
+Agents run in isolated Git worktrees and must maintain clean states:
+* **Pre-Delegation Cleanliness:** Before calling a sub-agent, a parent agent *must* commit any pending changes it has made.
+* **Completion Cleanliness:** Upon finishing a task, agents must commit their final changes.
+* **Auto-Commit Fallback:** If an agent fails to commit in either scenario, the system automatically commits the changes using `Agent: <objective> (auto-commit)`, discarding `.gitignore` files. This guarantees that an agent can be put to sleep and cleanly resurrected later using just its commit SHA and node path.
 
 ---
 
 ## **4. Runtime Execution Phases**
 
 ### **4.1 Phase 1: Genesis (Bootstrapping)**
-**Goal:** Initialize the Context Tree and Phylogenetic Graph. The system can either start from an existing codebase or generate a new one from scratch based on user prompts.
+Initialize the Context Tree and Phylogenetic Graph, starting from either an existing codebase or a blank slate.
 
 **Mode A: Existing Codebase**
-
-Generate the Context Tree (CONTEXT.md files) by recursively analyzing the directory structure. File-level context is ignored in this phase, as most files already contain their own context in the form of code comments and docstrings anyway.
-1. **Root Initialization:** The system starts at the repository root, creating the first investigator agent with the initial state pointing to the root node and the latest commit.
-2. **Recursive Analysis:** The agent can spawn sub-agents for each child node (subdirectory or file). Each agent analyzes its assigned node, extracting context (e.g., from `CONTEXT.md` or file headers) and building the tree structure.
-3. **Fixed Point Convergence:** After the child directors/files are processed, the parent agent aggregates the context and write down the context for its node. Then based on the aggregated context, the parent agent will decide if the child nodes need to be modified (e.g., if the context of a child node is wrong), if so, the parent agent will spawn sub-agents again to modify the child nodes, this process will repeat until reaching a fixed point where no agent thinks that the context of its node or its child nodes need to be modified.
+* **Root Initialization:** The system spawns an investigator agent at the repository root on the latest commit.
+* **Recursive Analysis:** The agent spawns sub-agents for child directories/files to extract existing context and build the semantic tree structure. *(Note: File-level extraction is minimal, relying mostly on existing code comments).*
+* **Fixed Point Convergence:** The parent agent aggregates the context. If discrepancies exist, it spawns sub-agents to modify the child nodes. This loop repeats until a "fixed point" is reached where no agent detects a need to modify its node or its children.
 
 **Mode B: New Codebase**
-
-Recursively generate the repository skeleton based on user prompts and prior knowledge.
-1. **Planning:** The agent starts at the root node, interpreting the user's high-level objective, and creates a plan and write it down in the root directory's context.
-2. **Recursive Realization:** For each planned child node, the agent spawns sub-agents to create the corresponding directory structure and context. This process continues recursively until reaching the leaf nodes, where the agents generate the initial code files with header comments / docstrings defining their context.
-3. **Fixed Point Convergence:** Similar to Mode A, after the child directors/files are processed, the parent agent aggregates the context and write down the context for its node. Then based on the aggregated context, the parent agent will decide if the child nodes need to be modified, if so, the parent agent will spawn sub-agents again to modify the child nodes, this process will repeat until reaching a fixed point where no agent thinks that the context of its node or its child nodes need to be modified.
+* **Planning:** An agent interprets the user's prompt at the root node and drafts the initial architectural plan in the root `CONTEXT.md`.
+* **Recursive Realization:** The agent spawns sub-agents to physically create the planned directory structures, child `CONTEXT.md` files, and initial leaf-node code files.
+* **Fixed Point Convergence:** Identical to Mode A, the system evaluates the generated structure and recursively adjusts it until all contexts align perfectly with the root objective.
 
 ### **4.2 Phase 2: Evolution**
-**Goal:** Mutate the codebase from the Genesis skeleton or an existing temporal state. The system dynamically selects an approach based on task ambiguity.
+Mutate the codebase based on task ambiguity.
 
-**Mode A: Simple Evolution (Top-Down Execution)**
-Used for clear, well-defined tasks (e.g., refactoring a specific module, fixing a reproducible bug, adding docs).
-* **Flow:** The top-level agent deploys `investigator` sub-agents to map the necessary spatial context. With a clear map, it outlines a step-by-step plan. It then dispatches `executor` sub-agents to perform the writes, followed by `evaluator` sub-agents to verify the diffs before accepting the changes.
-
-**Mode B: Complex Evolution (Bottom-Up Search)**
-Used for ambiguous, open-ended tasks (e.g., system-wide optimization, massive structural refactors). Planning is discarded in favor of parallelized trial-and-error.
-* **Flow:** The parent agent defines a "Search Space" of potential solutions. It spawns concurrent sub-agents to test these directions via local file changes. Based on the sub-agents' feedback, the parent prunes failed branches and heavily parallelizes the successful ones.
-* **Strategy - Differential Evolution:** The system analyzes a human-optimized "reference" module, extracts the transformation pattern, and applies it sequentially across similar codebase modules, accepting only the permutations that yield improvements.
-* **Strategy - Co-evolution:** For interdependent systems (e.g., frontend and backend APIs), the system concurrently mutates both nodes, evaluating the joint state against the high-level objective.
+* **Mode A: Simple Evolution (Top-Down):** Used for clear tasks (e.g., fixing reproducible bugs). The top-level agent maps the spatial context, drafts a step-by-step plan, and dispatches `executor` sub-agents to write code, followed by `evaluator` sub-agents to verify diffs.
+* **Mode B: Complex Evolution (Bottom-Up):** Used for open-ended tasks (e.g., system-wide optimization). Planning is bypassed. The parent defines a "Search Space" and spawns concurrent sub-agents to test different local file changes.
+    * *Differential Evolution:* Extracts a transformation pattern from a successful reference module and applies it across similar components, keeping only the permutations that work.
+    * *Co-evolution:* Mutates interdependent systems (e.g., frontend/backend) concurrently to reach a shared performance goal.
 
 ---
 
 ## **5. Implementation Specifications**
 
 ### **5.1 Core Technology**
-* **Runtime:** **Elixir**. Selected for its robust concurrency (OTP), fault tolerance, and actor model, which maps flawlessly to independent, stateless Agents.
-* **VCS:** **Git CLI**. Currently we don't use libgit bindings, because the cli provides all necessary functionality and it's easier to debug and maintain. We can consider libgit bindings in the future, but right now we want to minimize complexity and dependencies.
+* **Runtime:** **Elixir**. Selected for OTP concurrency, fault tolerance, and its actor model perfectly mirroring stateless Agents.
+* **Version Control:** **Git CLI**. Libgit bindings are explicitly avoided to minimize complexity, dependencies, and to ease debugging.
 
-### **5.2 Git Isolation & Worktrees**
-To guarantee strict isolation for parallel agent executions:
-1.  **Immutability:** The main user checkout is *never* directly modified by an agent.
-2.  **Pool Management:** The system maintains a pool of $N$ available `git worktree` slots located at `.evogit/worktrees/worker_<i>/`.
-3.  **Agent Lifecycle:** * Agents are dispatched to an available worktree slot.
-    * Modifications are committed with semantic messages: `Agent: <objective>`.
-    * Metadata (Context, LLM reasoning) is attached via `git notes` for traceability.
-    * The agents' depth are also tracked in the runtime, while this is not part of the core design, we need a way to track the depth of the sub-agent calls, after reaching a certain depth, the sub-agents will no longer be able to call new sub-agents.
-4.  **Agent Actions:** Agents can execute most of the Git CLI commands within their worktree, except for certain commands that would affect the global repository state or move the current workspace to a different commit, those commands include:
-    * `git push` and `git pull` (to prevent agents from modifying the remote repository or pulling changes that could cause conflicts)
-    * `git checkout` and `git reset` (to prevent agents from moving to a different commit than the one they were assigned to)
-    * `git rebase` (to prevent agents from rebasing branches, which should be done by the parent agent after evaluating the results of the child agent)
-5.  **User Handoff:** Once an evolutionary branch is complete, the user is notified. A `git merge --no-commit` is executed against the main working directory, allowing the user to review and finalize the transaction.
+### **5.2 The Agent Scheduler & Git Isolation**
+EvoGit manages execution through an internal **Agent Scheduler**, analogous to OS process or thread scheduling. The constrained system resource is a fixed pool of $N$ `git worktree` slots located at `.evogit/worktrees/worker_<i>/`. 
+
+1. **Immutability:** The main user checkout is *never* directly modified by an agent.
+2. **Execution Lifecycle:** All agents are initially spawned by the scheduler into a `waiting` state. When a worktree slot becomes available, the scheduler assigns it to a waiting agent, **checks out the exact `current_commit` (not the `base_commit`)** specified in the agent's temporal state, and begins execution. This ensures resuming agents do not overwrite unyielded progress.
+3. **Cooperative Multitasking (Yielding):** Worktrees cannot be locked idle. When an agent needs to call sub-agents, it must *yield* execution. 
+    * Before yielding, the agent must clean its workspace (committing any pending changes, or relying on the auto-commit fallback detailed in Section 3.4).
+    * The parent agent is then transitioned back to the `waiting` state.
+    * The worktree is instantly released back to the scheduler to execute other queued agents (including the newly spawned sub-agents).
+    * Once the sub-agents complete, the parent agent is re-queued for a worktree to resume its evaluation.
+4. **Data Tracing:** Agents commit semantic messages (`Agent: <objective>`) and attach metadata (Context, LLM reasoning) via `git notes`.
+5. **Depth Limits:** The runtime tracks the recursive depth of agent delegation. Upon reaching a configured maximum depth, agents are blocked from spawning further sub-agents.
+6. **Command Restrictions:** Agents are prohibited from executing commands that alter global state or break temporal tracking:
+    * **No `push` or `pull`:** Prevents remote modification or conflict ingestion.
+    * **No `checkout` or `reset`:** Prevents agents from abandoning their assigned temporal state.
+    * **No `rebase`:** History manipulation is strictly reserved for the parent agent evaluating child results.
+7. **User Handoff:** Upon completion of a high-level objective, the system alerts the user and runs `git merge --no-commit` into the main directory for human review.
 
 ### **5.3 Tooling & Security**
-* **JSON Handling:** Utilize Elixir 1.18+'s standard `JSON` library for speed. Only fall back to `Jason` if pretty-printing is explicitly required.
-* **Telemetry:** Use Elixir's standard `Logger` with appropriate strict log levels.
-* **Sandboxing:** LLM code execution is jailed using `systemd-run`. This grants read/write access to the `.evogit/worktrees/worker_<i>/` path, but enforces strict read-only access to the host OS, alongside hard CPU, memory, and syscall limitations. *(Note: This mitigates buggy scripts, but is not a bulletproof security sandbox against intentionally malicious agents).*
-* **Interface:** EvoGit operates entirely as a Command Line Interface (CLI) tool.
+* **JSON Parsing:** Elixir 1.18+ standard `JSON` library is required for speed; `Jason` is permitted only for pretty-printing.
+* **Logging:** Elixir standard `Logger` utilizing strict hierarchical levels.
+* **Sandboxing:** Code generated by LLMs is jailed using `systemd-run`, granting read/write to the assigned worktree but enforcing strict read-only access to the host OS, with hard CPU, memory, and syscall caps.
+* **Interface:** Strictly Command Line Interface (CLI).
