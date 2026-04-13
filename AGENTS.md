@@ -53,190 +53,106 @@
 
 ## **1. Introduction**
 
-EvoGit 1.0 is a decentralized, evolutionary software development framework that supersedes the original EvoGit approach. While the original paper focused on the **Temporal Dimension** (a phylogenetic graph of code versions), it lacked structural awareness, treating codebases as flat collections of files.
-EvoGit 1.0 introduces the **Spatial Dimension**—a hierarchical understanding of the codebase. By treating a repository as a semantic tree of "Context Nodes," the system can decompose complex architectural tasks into manageable local evolutions. Therefore, all agents states are essentially persistent memory either in the spatial dimension (context tree) or in the temporal dimension (phylogenetic graph), and the agent itself is a stateless function that can be invoked with any state in the spatial or temporal dimension to perform a transformation. This design allows for more efficient and scalable evolution, as agents can be spawn anywhere, anytime, and in any order. There won't be memory corruption issues since the states are immutable, it's very easy to rollback to any previous state.
+EvoGit 1.0 is a decentralized, evolutionary software development framework. While the original EvoGit approach focused purely on the **Temporal Dimension** (a phylogenetic graph of code versions), it lacked structural awareness, treating codebases as flat collections of files.
 
-## **2. Core Concepts**
+EvoGit 1.0 introduces the **Spatial Dimension**—a hierarchical understanding of the codebase represented as a semantic tree. By intersecting these two dimensions, the system decomposes complex architectural tasks into manageable local evolutions.
 
-The system operates on the intersection of two dimensions, the **Spatial Dimension** (the structure of the codebase) and the **Temporal Dimension** (the evolution of code versions).
+Crucially, **Agents are stateless functions**. All persistent memory exists either in the spatial dimension (the context tree) or the temporal dimension (the Git history). Agents can be invoked with any state across these dimensions to perform a transformation, eliminating memory corruption issues and enabling seamless state rollbacks and parallelization.
+
+---
+
+## **2. The Dual-Dimension Architecture**
 
 ### **2.1 The Spatial Dimension: "The Context Tree"**
+The codebase is a recursive tree where every node (directory or file) maintains a specific, inherited context.
 
-The codebase is structured as a recursive tree where every node (directory or file) has a specific context.
-
-**Nodes:** A node represents a hierarchy level. It can be a `Directory Node` (structural) or a `File Node` (leaf/implementation). A node has three key attributes:
-  - **Path**: The location of the node in the repository (e.g., `doc/`, `lib/a.py`).
-  - **Context**: The semantic meaning and rules associated with the node. For directories, this is defined in the CONTEXT.md file. For files, this is defined in the header comment or module comment.
-  - **Content**: For directories, this is the list of child nodes. For files, this is the source code.
-
-**Important Contract:**
-  * Every `Directory Node` contains a file named CONTEXT.md. This file is considered as the part of the context attribute of the directory node, and does NOT count as a normal file. The file acts as the explicit schema for that hierarchy level, strictly defining its **Intent** (purpose), its **API Surface** (exports), and its **Constraints** (rules for children).
-  * Every code file includes a header comment / module comment or similar that defines its purpose and any relevant constraints.
-  * The context from the parent node can be **inherited** by all child nodes, ensuring alignment with high-level goals, thus forming a **Contextual Hierarchy**.
-  * Source code files (e.g., user.ex, utils.py) are considered as `leaf nodes`. They do not contain CONTEXT.md.
-
-For example, consider a simple python project, and we are dealing with the `src/foo/bar.py` file. The context for this file is constructed as follows:
-  * The root node (`/`) has a CONTEXT.md that defines the overall project goal and architecture.
-  * The `src/` directory has a CONTEXT.md that states that it is responsible for the implementation of the main application code.
-  * The `src/foo/` directory has a CONTEXT.md that states that it is responsible for the implementation of the "foo" module.
-  * The `src/foo/bar.py` file has a header comment that states that it is responsible for the implementation of the "bar" functionality within the "foo" module.
-
-So the agent will by default inherit the context from the root, then from `src/`, then from `src/foo/`, and finally the specific context of `src/foo/bar.py`, and it will use all of this context to understand the role of `src/foo/bar.py` in the overall project, and to make sure that any changes it makes to `src/foo/bar.py` are consistent with the high-level goals and constraints defined in the parent nodes.
+* **Nodes:** Represent a hierarchy level. They can be a `Directory Node` (structural) or a `File Node` (leaf/implementation).
+    * **Path:** Repository location (e.g., `doc/`, `lib/a.py`).
+    * **Context:** Semantic rules. Defined by `CONTEXT.md` for directories, and header/module comments for files.
+    * **Content:** Child nodes (for directories) or source code (for files).
+* **The Spatial Contract:**
+    * Every `Directory Node` *must* contain a `CONTEXT.md` file. Crucially, **this file is not treated as a normal file within the Git repository**. Instead, it is conceptually bound to the directory as an intrinsic attribute—functioning much like an extended filesystem attribute (xattr), but implemented as a standard text file so it does not require specialized OS-level `xattr` support. It acts as the directory's schema, defining its **Intent** (purpose), **API Surface** (exports), and **Constraints** (rules for children).
+    * Every `File Node` (leaf) *must* include a header/module comment defining its role. Leaf nodes do not contain `CONTEXT.md` files.
+* **Contextual Inheritance:** Agents dynamically build their "World View" by inheriting context top-down. For `src/foo/bar.py`, the agent aggregates goals and constraints from the Root `CONTEXT.md` $\rightarrow$ `src/ CONTEXT.md` $\rightarrow$ `src/foo/ CONTEXT.md` $\rightarrow$ `bar.py`'s header.
 
 ### **2.2 The Temporal Dimension: "The Phylogenetic Graph"**
+Code evolves through a Directed Acyclic Graph (DAG) of immutable Git commits.
 
-We retain the original EvoGit core: code evolves through a Directed Acyclic Graph (DAG) of Git commits.
+* **Directional Evolution ($v_{new} > v_{old}$):** A child commit is accepted *if and only if* it is measurably "better" than its parent.
+* **Definition of "Better" (Partial Progress):** Unlike traditional CI/CD requiring a "Green Build," EvoGit accepts incremental improvements. A version is accepted if it passes more tests, implements a specific feature (verified by an LLM Judge), fixes an isolated bug, or improves readability—even if other system parts remain broken.
+* **Evaluation Ranges:** * *Short-range (Neighboring Commits):* Loosely evaluated via diff inspection or basic tests to allow rapid, partial progress.
+    * *Long-range (Major Versions/Tags):* Strictly evaluated via full test suites and code metrics to ensure overall systemic improvement.
 
-* **Partial Order:** ($v\_{new} \> v\_{old}$), Evolution is directional. A child commit is accepted *if and only if* it is measurably "better" than its parent. There are two levels of comparisons, shorter range comparisons between neighboring commits, and longer range comparisons between major versions (across branches, or tags).
-  * Neighboring commits are compared loosely, not requiring a strict "Green Build". The comparisons are mostly done by simple tests or even inspecting the diff alone. This allows for incremental progress and partial improvements.
-  * Long range comparisons over major versions are more strict, requiring running test suites, comparing code metrics etc to ensure that the new version is indeed better than the old version.
-* **Definition of "Better":** Unlike traditional CI/CD which demands a "Green Build" (passing all tests), EvoGit accepts partial progress. A version is considered "better" than its ancestor as long as it shows any improvement, even if it is not a complete improvement. For example:
-  * It passes *more* tests than the ancestor.
-  * It implements a requested feature (verified by an LLM Judge).
-  * It fixes a specific bug, even if other parts of the system are still broken.
-  * It improves code style or readability, even if it does not add new features or fix bugs.
-  * It optimizes performance for a specific module, even if it does not optimize the entire system.
-* **Immutable History:** Git commits serve as the immutable record of this evolutionary process.
+---
 
-## **3. The Agent Model**
+## **3. The Stateless Agent Model**
 
-In EvoGit 1.0, an Agent is not a persistent entity but a **stateless function**.
-The agent itself does not maintain any memory, except for very short-term session memory that is discarded after the agent finishes its task.
-Instead, it relies on Context Tree and the Phylogenetic Graph for all necessary information and history, so the agent can still be using "memory" in a sense to make informed decisions.
+In EvoGit 1.0, Agents do not maintain long-term memory. They are transient processes utilizing only short-term session memory, relying entirely on the Context Tree and Phylogenetic Graph for historical and structural awareness.
 
-### **3.1 Definition**
+### **3.1 Definition & State**
+An agent executes a functional transformation defined as:
+$$NewState = Agent(State, Objective)$$
 
-An agent is a process that executes the following functional transformation:
-$$NewState \= Agent(State, Objective)$$
+* **State:** A `{commit_sha, node_path}` tuple.
+    * `commit_sha`: The temporal branch point.
+    * `node_path`: The spatial location the agent is authorized to modify.
+* **Objective:** A natural language directive (e.g., "Implement the User schema").
 
-### **3.2 State & Input**
+### **3.2 Sub-Agent Delegation & Parallelism**
+To prevent context bloat, agents heavily utilize recursive decomposition. A top-level agent spawns sub-agents with specific `State` and `Objective` parameters to handle individual modules or files.
+* Sub-agents operate independently, returning text results, diff stats, and auto-generated commit SHAs to the parent.
+* A sub-agent's context footprint does *not* count against the parent agent's session limits.
 
-* **State:** A tuple `{commit_sha, node_path}`.
-  * commit_sha: The specific point in the temporal timeline the agent is branching from.
-  * node_path: The specific location in the spatial hierarchy the agent is allowed to modify.
-* **Objective:** A string input describing the task (e.g., "Fix the race condition in the worker pool" or "Implement the User schema").
+### **3.3 Execution Constraints (Forcing Micro-Evolutions)**
+To guarantee small, reviewable, and incremental improvements, agents operate under strict lifecycle limits:
+* **Session Length Limits:** Agents possess a maximum number of iterative loops.
+* **Warning Triggers:** At 50% and 80% of their session limit, agents receive system prompts urging them to finalize tasks and report back.
+* **Hard Termination:** Upon hitting the limit, the agent must yield to the parent agent, which then evaluates the partial progress and dictates the next evolutionary step.
 
-### **3.3 Context Construction**
+---
 
-When an agent runs, it constructs its "World View" dynamically:
+## **4. Runtime Execution Phases**
 
-1. **Local Context:** Reads CONTEXT.md (or file content) at node_path.
-2. **Ancestral Context:** Reads CONTEXT.md of the parent, grandparent, up to the root. This ensures the agent aligns with high-level architectural goals.
-3. **Siblings:** Explicit sibling context is **not** necessary.
+### **4.1 Phase 1: Genesis (Bootstrapping)**
+**Goal:** Recursively generate the repository skeleton based on user prompts and prior knowledge.
 
-### **3.4 Sub-Agents**
+1.  **Initialization:** The system ingests the high-level prompt, initializes the Git repo, and provisions worktrees.
+2.  **Planning:** Inside the current node, the Agent writes the context (e.g., `CONTEXT.md`), outlining Intent, API Surface, and Constraints for that specific level.
+3.  **Realization:** The Agent creates empty subdirectories/files matching the new context (if a directory) or generates source code (if a leaf file).
+4.  **Recursion:** The system spawns new Agent instances for every child node created, repeating the process down the tree.
 
-Sub-agents can be spawned with new state and objective, allowing for recursive decomposition of tasks. For example, a top-level agent responsible for implementing a feature might spawn sub-agents to handle specific modules or files, each with their own context and objectives.
-But do keep in mind that, the sub-agents are also stateless functions, they only have access to their short-term session memory, and also rely on the context tree and the phylogenetic graph for any necessary information. The sub-agents will work on their own specific task and then report back the result in text as well as the latest commit sha and the diff stats (the commit sha and the diff stats are auto generated by the system based on the changes made by the sub-agent, no need to call the LLM for that).
+### **4.2 Phase 2: Evolution**
+**Goal:** Mutate the codebase from the Genesis skeleton or an existing temporal state. The system dynamically selects an approach based on task ambiguity.
 
-## **4. Runtime Process**
+**Mode A: Simple Evolution (Top-Down Execution)**
+Used for clear, well-defined tasks (e.g., refactoring a specific module, fixing a reproducible bug, adding docs).
+* **Flow:** The top-level agent deploys `investigator` sub-agents to map the necessary spatial context. With a clear map, it outlines a step-by-step plan. It then dispatches `executor` sub-agents to perform the writes, followed by `evaluator` sub-agents to verify the diffs before accepting the changes.
 
-The system runs in two distinct stages.
+**Mode B: Complex Evolution (Bottom-Up Search)**
+Used for ambiguous, open-ended tasks (e.g., system-wide optimization, massive structural refactors). Planning is discarded in favor of parallelized trial-and-error.
+* **Flow:** The parent agent defines a "Search Space" of potential solutions. It spawns concurrent sub-agents to test these directions via local file changes. Based on the sub-agents' feedback, the parent prunes failed branches and heavily parallelizes the successful ones.
+* **Strategy - Differential Evolution:** The system analyzes a human-optimized "reference" module, extracts the transformation pattern, and applies it sequentially across similar codebase modules, accepting only the permutations that yield improvements.
+* **Strategy - Co-evolution:** For interdependent systems (e.g., frontend and backend APIs), the system concurrently mutates both nodes, evaluating the joint state against the high-level objective.
 
-### **Stage 1: Genesis (Creation Phase)**
+---
 
-**Goal**: Recursively generate the repository skeleton based on the user's high-level instructions and prior-knowledge.
-This stage is used to bootstrap the project structure, when the user tries to create a new project from scratch.
+## **5. Implementation Specifications**
 
-1. **Initialization:** User provides a high-level prompt on how to build the project, what is the goal of the project, what are the major components, and initialize the git repository and several worktrees if not already initialized.
-2. **Planning:** Inside the working directory Agent creates the context defining the architecture of that level based on the user's instructions and the context inherited from parent nodes. For directories, this is a CONTEXT.md file. For files, this is a header comment or module comment. The planning includes:
-   * Defining the Intent of the directory / file.
-   * Specifying the API Surface (what modules/files it will contain), and a rough outline of the file structures.
-   * Outlining Constraints for child nodes.
-3. **Realization:** Given the newly created context, the Agent:
-   * For directories, the agent will create the next level of empty subdirectories and files as specified in the context (CONTEXT.md).
-   * For files, the agent will generate the full implementation code that satisfies the context (header comment or module comment).
-4. **Recursion:** For each child node (directory or file), the system spawns a new Agent instance, running from step 2.
+### **5.1 Core Technology**
+* **Runtime:** **Elixir**. Selected for its robust concurrency (OTP), fault tolerance, and actor model, which maps flawlessly to independent, stateless Agents.
+* **VCS:** **Git CLI**.
 
-### **Stage 2: Evolution**
+### **5.2 Git Isolation & Worktrees**
+To guarantee strict isolation for parallel agent executions:
+1.  **Immutability:** The main user checkout is *never* directly modified by an agent.
+2.  **Pool Management:** The system maintains a pool of $N$ available `git worktree` slots located at `.evogit/worktrees/worker_<i>/`.
+3.  **Agent Lifecycle:** * Agents are dispatched to an available worktree slot.
+    * Modifications are committed with semantic messages: `Agent: <objective>`.
+    * Metadata (Context, LLM reasoning) is attached via `git notes` for traceability.
+4.  **User Handoff:** Once an evolutionary branch is complete, the user is notified. A `git merge --no-commit` is executed against the main working directory, allowing the user to review and finalize the transaction.
 
-**Goal**: Given a high-level objective, evolve the codebase from the skeleton created in Stage 1 or from any existing state.
-
-Depending on the nature of the task, there are two major scenarios for evolution:
-
-- The task is clear, and the plan is straightforward. This scenario is common for day-to-day software development tasks, such as:
-  * Refactoring a specific module to improve code quality.
-  * Fixing a known bug with a clear reproduction case.
-  * Rewrite a specific module in a different programming language.
-  * Add tests and documentation to a specific module.
-  * Add a new feature to a specific module with a clear end goal.
-  * Analyze the codebase and document to find out how to implement a specific feature, and then implement that feature.
-
-  The important point is that, while those tasks might be complex and require multiple steps, the overall plan is clear and straightforward, overall there is one clear path to achieve the task. Most day-to-day software development tasks fall into this category because they are usually well defined and have a clear end goal, only requiring us to take time to achieve that goal step by step.
-  In these cases, the focus is more on the execution. A top-down approach is usually more suitable, where we start from the high-level objective, directly plan the overall steps, and then execute those steps one by one, and we can adjust the plan along the way if needed, but overall it's a top-down approach because we already have a clear plan to achieve the task, and we just need to execute that plan.
-
-- The task is ambiguous or the plan is not straightforward, and we don't know exactly how to achieve the task. This scenario is common for more complex, ambiguous, or open-ended tasks, such as:
-  * Optimize the performance of the entire system or a large module, without a understanding of the bottlenecks or the optimization opportunities.
-  * Refactor a large amount of code to improve code quality, without a clear way of doing it.
-  * Add a whole new feature that requires massive changes across the codebase, without a clear design or implementation plan.
-
-  The important point is that, in those cases, we don't have a clear plan or a clear path to achieve the task, for example, for large refactors, there could be multiple ways of doing it, and each way has its own tradeoffs, which then leads to more uncertainty on which way is better. For performance optimization, we might not even know where the bottlenecks are, or how to optimize them.
-  In these cases, the focus is more on searching. A bottom-up approach is usually more suitable, where we start from the low-level details, make small changes, and then evaluate the changes to see if we are moving in the right direction, and then adjust our approach based on the feedback. This is more of a trial-and-error approach, where we are essentially searching for the best way to achieve the task, and we are using the feedback from each change to guide our search. Planning is less important in this scenario because we never have a clear plan to begin with.
-
-We call the first scenario "Simple Evolution", and the second scenario "Complex Evolution".
-In both scenarios, the system will be encouraged to make small, incremental improvements that fit in individual commits.
-To be better integrated, the agents will be encouraged to make small, incremental improvements that fit in individual commits.
-And when an agent calls a sub-agent, that sub-agent is expected to make a small changes, report back the result, and the latest commit sha to the parent agent, so the parent agent can decide whether to accept or reject that change, and then decide how to proceed with the next steps.
-This design is the core of the EvoGit system, as it allows us to have a very fine-grained control over the evolution process, and differs significantly from traditional agent systems where the agent is a persistent entity that maintains its own state and memory.
-
-To handle the first scenario, the system can use a top-down approach
-- The top level agents get the task, then recursively call the `investigator` sub-agents to analyze the context (the sub-agents can also call other sub-agents to analyze the context of other nodes), then the top level agent will have a good understanding of the context, and then it can directly plan the steps.
-- Then the top level agent can call the `executor` sub-agents to execute the plan step by step, the executor agents will be responsible for executing the specific steps, and they can also call other sub-agents to help with the execution of those steps.
-- The top level agent can also call the `evaluator` sub-agents to evaluate the changes made by the executor agents, and then decide whether to accept or reject those changes, and then adjust the plan accordingly.
-
-
-To handle the second scenario, it has several variations, but all are "bottom-up".
-After the top level agent gets the task, it will first get the context of the full context and an understanding of the codebase as usual, then instead of directly planning the steps, it will first give a "search space", that is, a list of potential directions to explore, and then it will spawn multiple sub-agents to explore those directions in parallel. Then the sub-agents will recurse down to individual file level, and make small changes to those files, and then report back the result to the parent agent, and then the parent agent will decide which direction is better based on the feedback from the sub-agents, and then spawn more sub-agents to further explore that direction, and so on. This is essentially a search process where we are exploring different directions in parallel, and using the feedback from each direction to guide our search.
-
-Regarding the search process, there are several variations of how to do it, and we can experiment with different approaches to see which one works better for different types of tasks. Here are two examples:
-- Differential Evolution: Given a list of references (good examples), evolve rest of the codebase to apply that pattern. This is useful for optimizing a series of similar components, where the human only need to optimize a few of them, and the system can generalize the pattern to the rest of the components.
-  - Take one of the references, get history of that module.
-  - Study the optimizations made in that module.
-  - Try to apply the same optimizations to the rest of the modules, and see if it works.
-  - If it works, accept the change, if it doesn't work, reject the change and try again with a different optimization.
-
-    This is called "differential evolution" because it is similar to the concept of differential evolution in optimization, where we are essentially computing $a + F * (b - c)$, where $a$ is the current module we want to optimize, $b$ and $c$ are different versions of the reference modules, and $F$ is a transformation function that computes the difference between the reference modules and applies it to the current module.
-- Co-evolution: Given a high-level objective, evolve multiple modules together to achieve the objective. This is useful for optimizing a series of interdependent components, where the human only need to specify the high-level objective, and the system can figure out how to evolve the different components together to achieve that objective.
-  - For example, if we want to optimize the performance of a web application, we might need to evolve both the backend and the frontend together, since they are interdependent. The system can analyze the context of both the backend and the frontend independently, and then figure out how to evolve them together to achieve the performance optimization objective.
-
-To encourage small, incremental improvements, we make the following design choices:
-- Limit the number of iterations an agent can run before it must report back to the parent agent (limit the session length).
-  - Sub-agents' context doesn't count towards the session memory of the parent agent, so the parent agent are encouraged to spawn more sub-agents to do the heavy lifting over doing a lot of work by itself
-  - When reaching 50%, and 80% of the session length, we will notify the agent that it is approaching the limit, and encourage it to report back soon.
-  - When reaching the session length limit, the agent must report back to the parent agent, and the parent agent will decide whether to accept or reject the changes made by the sub-agent, and then decide how to proceed with the next steps.
-
-## **5. Implementation Guidelines**
-
-### **5.1 Tech Stack**
-
-* **Main Program:** **Elixir**. Chosen for its robust concurrency (OTP), fault tolerance, and actor model which maps perfectly to independent Agents.
-* **Version Control:** **Git**. Use the git command line tool for now.
-
-### **5.3 Git Integration Details**
-
-To ensure strict isolation between agents running in parallel:
-
-1. **Never modify the main checkout.**
-2. **Worktrees:** Every agent action sequence happens in:
-   `.evogit/worktrees/worker_<i>/`
-3. **Lifecycle:**
-   A pool manager keeps track of N available worker resources, that is N available worktree slots.
-
-   When an agent is dispatched:
-   * Agent performs edits in that worktree.
-   * git commit -am "Agent: <objective>"
-   * Attach other information as git notes for traceability.
-4. **User Interaction:**
-   Most of the time, the agents will be running in the background with separate worktrees, after the agents have done their work, we will notify the user and then run a `git merge --no-commit` to the current checkout (the user's working directory) and let the user review the changes, and then the user can decide to commit or not.
-
-### **5.4 CLI Interface**
-
-The evogit is used as a cli tool, so it should provide necessary commands to run the whole tool.
-
-### **5.5 Other Considerations**
-
-- Json library: By default, please use `JSON`, since elixir 1.18, JSON is included in the standard library, it uses the same API as `Jason`, but faster. Use `Jason` only if you need to do pretty printing of JSON, since `JSON` does not support pretty printing.
-- Logging:
-  - use `Logger` module from elixir standard library, and log at appropriate levels (debug, info, warn, error) depending on the importance of the message.
-  - use `git notes` to attach important information about the agent's actions to the commit, such as the objective, the context, and any relevant metadata. This is important for traceability and debugging.
-- Sandbox: the project come with a simple sandbox environment for running tools for the LLM. Specifically, it uses systemd-run to create a sandboxed environment read-write access to the codebase path, but read-only access to the rest of the system, and with limited CPU, memory resources and limited system calls. This is to prevent malicious or buggy code from doing harm to the system. Please note that this is a simple sandbox to prevent misbehaving commands from doing too much damage, but it is not a full security sandbox that can prevent malicious agents.
+### **5.3 Tooling & Security**
+* **JSON Handling:** Utilize Elixir 1.18+'s standard `JSON` library for speed. Only fall back to `Jason` if pretty-printing is explicitly required.
+* **Telemetry:** Use Elixir's standard `Logger` with appropriate strict log levels.
+* **Sandboxing:** LLM code execution is jailed using `systemd-run`. This grants read/write access to the `.evogit/worktrees/worker_<i>/` path, but enforces strict read-only access to the host OS, alongside hard CPU, memory, and syscall limitations. *(Note: This mitigates buggy scripts, but is not a bulletproof security sandbox against intentionally malicious agents).*
+* **Interface:** EvoGit operates entirely as a Command Line Interface (CLI) tool.
