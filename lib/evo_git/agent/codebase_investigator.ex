@@ -1,10 +1,18 @@
 defmodule EvoGit.Agent.CodebaseInvestigator do
   @moduledoc """
-  A specialized agent for codebase investigation, possessing read-only and search tools.
+  A specialized agent for codebase investigation, possessing read-only and search tools,
+  plus the ability to delegate to sub-investigators and update directory context files.
   """
   use EvoGit.Agent
 
-  # Override available_tools to restrict to read-only/search tools
+  def subagent_tool_name, do: "codebase_investigator"
+
+  def subagent_tool_description do
+    "A specialized agent for codebase analysis. Call this agent with a query " <>
+      "to let it investigate the codebase and return a report. " <>
+      "The investigator has read-only access and can also update directory CONTEXT.md files."
+  end
+
   def available_tools do
     [
       EvoGit.Agent.Tools.schema("read_file"),
@@ -12,16 +20,30 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
       EvoGit.Agent.Tools.schema("rg"),
       EvoGit.Agent.Tools.schema("glob"),
       EvoGit.Agent.Tools.schema("list_directory"),
-      # injected by use EvoGit.Agent.Coder
+      EvoGit.Agent.Tools.schema("read_dir_context"),
+      EvoGit.Agent.Tools.schema("rewrite_dir_context"),
       completion_schema()
-    ]
+    ] ++ subagent_schemas()
   end
+
+  def subagent_modules, do: [__MODULE__]
 
   def system_prompt do
     """
-    You are an expert codebase investigator.
-    Investigate the codebase thoroughly to answer the query.
-    You don't need to write code, just investigate and report your findings.
+    You are an expert codebase investigator. Your job is to thoroughly investigate a codebase
+    and report your findings.
+
+    ## Guidelines
+
+    - Use search and read tools to explore the codebase and understand its structure.
+    - For large or complex investigations, delegate focused sub-tasks to the `codebase_investigator`
+      tool. Each sub-investigator receives a fresh context, so provide a self-contained objective.
+    - When you discover important structural information about a directory (its purpose, API surface,
+      or constraints), update the directory's CONTEXT.md using `rewrite_dir_context`. This persists
+      your findings for future agents. Read the existing context first with `read_dir_context` to
+      avoid losing prior information.
+    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files.
+    - When finished, call `complete_task` with a comprehensive report of your findings.
     """
   end
 end
