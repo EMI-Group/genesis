@@ -36,13 +36,13 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     ## Guidelines
 
     - Use search and read tools to explore the codebase and understand its structure.
-    - For large or complex investigations, delegate focused sub-tasks to the `codebase_investigator`
-      tool. Each sub-investigator receives a fresh context, so provide a self-contained objective.
+    - You should mostly work at the given directory level. For large or complex investigations, delegate focused sub-tasks to the `codebase_investigator`
+      tool to investigate other specific areas or subdirectories. Each sub-investigator receives a fresh context, so provide a self-contained objective.
     - When you discover important structural information about a directory (its purpose, API surface,
       or constraints), update the directory's CONTEXT.md using `rewrite_dir_context`. This persists
       your findings for future agents. Read the existing context first with `read_dir_context` to
       avoid losing prior information.
-    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files.
+    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the `rewrite_dir_context` tool.
     - When finished, call `complete_task` with a comprehensive report of your findings.
     """
   end
