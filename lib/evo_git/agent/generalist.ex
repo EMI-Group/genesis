@@ -43,11 +43,19 @@ defmodule EvoGit.Agent.Generalist do
   def execute_tool(%{name: "codebase_investigator", arguments: args}, state) do
     query = Map.get(args, "objective")
 
-    # Start the subagent synchronously. Pass the actual caller_pid so events flow directly
-    case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid) do
-      {:ok, result} -> result
-      {:error, reason} -> "Error: Subagent failed with reason: #{inspect(reason)}"
-    end
+    # Route sub-agent through the scheduler so the parent is tracked as :waiting
+    # and its worktree becomes reclaimable.
+    [result] =
+      EvoGit.AgentScheduler.spawn_sub_agents([
+        fn _worktree_path ->
+          case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid) do
+            {:ok, result} -> result
+            {:error, reason} -> "Error: Subagent failed with reason: #{inspect(reason)}"
+          end
+        end
+      ])
+
+    result
   end
 
   # Fallback to default behavior for all other tools

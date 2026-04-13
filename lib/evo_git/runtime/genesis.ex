@@ -3,7 +3,7 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
   alias EvoGit.Adapters.Git
-  alias EvoGit.WorkerPool
+  alias EvoGit.AgentScheduler
   alias EvoGit.Prompts
   require Logger
 
@@ -56,7 +56,7 @@ defmodule EvoGit.Runtime.Genesis do
     Logger.info("Genesis: Evolving #{node_path} from #{String.slice(current_sha, 0, 7)}")
 
     evolution_result =
-      WorkerPool.run(fn worktree_path ->
+      AgentScheduler.run_agent(fn worktree_path ->
         # Ensure worktree is at the correct commit before checking if node is a directory
         Git.clean(worktree_path)
         Git.checkout(worktree_path, current_sha)
@@ -225,22 +225,28 @@ defmodule EvoGit.Runtime.Genesis do
   end
 
   defp process_children_parallel(base_sha, children, opts) do
-    max_concurrency = Keyword.get(opts, :max_concurrency, 3)
-
-    # Use Task.async_stream for parallel agents
-    results =
-      Task.async_stream(
-        children,
-        fn child_path ->
+    # Build sub-agent functions for each child
+    funs =
+      Enum.map(children, fn child_path ->
+        fn _worktree_path ->
           evolve_node(base_sha, child_path, "Inherit context from parent", opts)
-        end,
-        timeout: :infinity,
-        max_concurrency: max_concurrency
-      )
+        end
+      end)
+
+    # Spawn all children through the scheduler.
+    # The parent agent becomes :waiting, its worktree is reclaimable.
+    results =
+      if AgentScheduler.current_agent_id() do
+        AgentScheduler.spawn_sub_agents(funs)
+      else
+        # Fallback for top-level calls not inside a scheduled agent:
+        # run each as a top-level agent
+        Enum.map(funs, fn fun -> AgentScheduler.run_agent(fun) end)
+      end
 
     # Collect results and merge them sequentially into the base
     Enum.reduce_while(results, base_sha, fn
-      {:ok, {:ok, child_sha}}, current_base ->
+      {:ok, child_sha}, current_base ->
         Logger.info(
           "Genesis: Merging child #{String.slice(child_sha, 0, 7)} into #{String.slice(current_base, 0, 7)}"
         )
@@ -250,10 +256,7 @@ defmodule EvoGit.Runtime.Genesis do
           error -> {:halt, error}
         end
 
-      {:ok, {:error, reason}}, _ ->
-        {:halt, {:error, reason}}
-
-      {:exit, reason}, _ ->
+      {:error, reason}, _ ->
         {:halt, {:error, reason}}
     end)
     |> case do
@@ -263,7 +266,7 @@ defmodule EvoGit.Runtime.Genesis do
   end
 
   defp merge_branch(base_sha, other_sha, opts) do
-    WorkerPool.run(fn worktree_path ->
+    AgentScheduler.run_agent(fn worktree_path ->
       phylo_node = PhyloGraphNode.new(worktree_path, base_sha)
       {:ok, context_node} = ContextNode.load(".", worktree_path)
       state = %{context_node: context_node, phylo_node: phylo_node}
