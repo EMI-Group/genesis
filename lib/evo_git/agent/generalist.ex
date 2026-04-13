@@ -45,17 +45,20 @@ defmodule EvoGit.Agent.Generalist do
 
     # Route sub-agent through the scheduler so the parent is tracked as :waiting
     # and its worktree becomes reclaimable.
-    [result] =
-      EvoGit.AgentScheduler.spawn_sub_agents([
-        fn _worktree_path ->
-          case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid) do
-            {:ok, result} -> result
-            {:error, reason} -> "Error: Subagent failed with reason: #{inspect(reason)}"
-          end
-        end
-      ])
+    case EvoGit.AgentScheduler.spawn_sub_agents([
+           fn _worktree_path ->
+             case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid) do
+               {:ok, result} -> result
+               {:error, reason} -> "Error: Subagent failed with reason: #{inspect(reason)}"
+             end
+           end
+         ]) do
+      {:error, :max_depth_exceeded} ->
+        "Error: Maximum sub-agent recursion depth reached. Cannot spawn investigator."
 
-    result
+      [result] ->
+        result
+    end
   end
 
   # Fallback to default behavior for all other tools

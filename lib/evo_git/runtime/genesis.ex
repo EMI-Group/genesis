@@ -237,31 +237,44 @@ defmodule EvoGit.Runtime.Genesis do
     # The parent agent becomes :waiting, its worktree is reclaimable.
     results =
       if AgentScheduler.current_agent_id() do
-        AgentScheduler.spawn_sub_agents(funs)
+        case AgentScheduler.spawn_sub_agents(funs) do
+          {:error, :max_depth_exceeded} ->
+            Logger.warning("Genesis: Max agent depth reached, cannot recurse into children")
+            {:error, :max_depth_exceeded}
+
+          sub_results ->
+            sub_results
+        end
       else
         # Fallback for top-level calls not inside a scheduled agent:
         # run each as a top-level agent
         Enum.map(funs, fn fun -> AgentScheduler.run_agent(fun) end)
       end
 
-    # Collect results and merge them sequentially into the base
-    Enum.reduce_while(results, base_sha, fn
-      {:ok, child_sha}, current_base ->
-        Logger.info(
-          "Genesis: Merging child #{String.slice(child_sha, 0, 7)} into #{String.slice(current_base, 0, 7)}"
-        )
+    case results do
+      {:error, _} = err ->
+        err
 
-        case merge_branch(current_base, child_sha, opts) do
-          {:ok, new_base} -> {:cont, new_base}
-          error -> {:halt, error}
+      results when is_list(results) ->
+        # Collect results and merge them sequentially into the base
+        Enum.reduce_while(results, base_sha, fn
+          {:ok, child_sha}, current_base ->
+            Logger.info(
+              "Genesis: Merging child #{String.slice(child_sha, 0, 7)} into #{String.slice(current_base, 0, 7)}"
+            )
+
+            case merge_branch(current_base, child_sha, opts) do
+              {:ok, new_base} -> {:cont, new_base}
+              error -> {:halt, error}
+            end
+
+          {:error, reason}, _ ->
+            {:halt, {:error, reason}}
+        end)
+        |> case do
+          {:error, _} = err -> err
+          sha when is_binary(sha) -> {:ok, sha}
         end
-
-      {:error, reason}, _ ->
-        {:halt, {:error, reason}}
-    end)
-    |> case do
-      {:error, _} = err -> err
-      sha when is_binary(sha) -> {:ok, sha}
     end
   end
 

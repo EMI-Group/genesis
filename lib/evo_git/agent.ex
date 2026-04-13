@@ -48,6 +48,7 @@ defmodule EvoGit.Agent do
         state = %{
           caller_pid: caller_pid,
           agent_id: EvoGit.AgentScheduler.current_agent_id(),
+          depth: EvoGit.AgentScheduler.current_depth(),
           turn: 0,
           history: [ReqLLM.Context.user(query)],
           system_prompt: actual_system_prompt,
