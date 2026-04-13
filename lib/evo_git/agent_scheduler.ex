@@ -83,7 +83,8 @@ defmodule EvoGit.AgentScheduler do
       Keyword.get(opts, :max_retries) || Application.get_env(:evo_git, :max_retries, 3)
 
     max_depth =
-      Keyword.get(opts, :max_depth) || Application.get_env(:evo_git, :max_agent_depth, @default_max_depth)
+      Keyword.get(opts, :max_depth) ||
+        Application.get_env(:evo_git, :max_agent_depth, @default_max_depth)
 
     {:ok,
      %{
@@ -453,7 +454,9 @@ defmodule EvoGit.AgentScheduler do
 
       if agent.parent_id do
         # Sub-agent max retries: store error as result
-        state = store_sub_result(state, agent.parent_id, agent_id, {:error, :max_retries_exceeded})
+        state =
+          store_sub_result(state, agent.parent_id, agent_id, {:error, :max_retries_exceeded})
+
         state = maybe_resume_parent(state, agent.parent_id)
         state = process_queue(state)
         {:noreply, state}
