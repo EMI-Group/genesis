@@ -140,7 +140,7 @@ Used for ambiguous, open-ended tasks (e.g., system-wide optimization, massive st
 
 ### **5.1 Core Technology**
 * **Runtime:** **Elixir**. Selected for its robust concurrency (OTP), fault tolerance, and actor model, which maps flawlessly to independent, stateless Agents.
-* **VCS:** **Git CLI**.
+* **VCS:** **Git CLI**. Currently we don't use libgit bindings, because the cli provides all necessary functionality and it's easier to debug and maintain. We can consider libgit bindings in the future, but right now we want to minimize complexity and dependencies.
 
 ### **5.2 Git Isolation & Worktrees**
 To guarantee strict isolation for parallel agent executions:
