@@ -2,7 +2,7 @@ defmodule EvoGit.Runtime.Evolution do
   @moduledoc "Stage 2: Evolutionary Loop"
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
-  alias EvoGit.WorkerPool
+  alias EvoGit.AgentScheduler
   alias EvoGit.Adapters.Git
   require Logger
 
@@ -20,7 +20,7 @@ defmodule EvoGit.Runtime.Evolution do
       Logger.info("Evolution: Diagnosed target path: #{target_path}")
 
       # 2. Dispatch (Single Agent)
-      case WorkerPool.run(fn worktree_path ->
+      case AgentScheduler.run_agent(fn worktree_path ->
              # Ensure worktree is at the correct commit before ContextNode.load
              Git.clean(worktree_path)
              Git.checkout(worktree_path, current_sha)
