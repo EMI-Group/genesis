@@ -252,17 +252,66 @@ defmodule EvoGit.Agent do
       end
 
       def available_tools do
-        EvoGit.Agent.Tools.schemas() ++ [completion_schema()]
+        EvoGit.Agent.Tools.schemas() ++ subagent_schemas() ++ [completion_schema()]
       end
 
       @doc """
-      Returns a list of tool name strings that represent sub-agent invocations.
-      These tools are automatically filtered out when the agent is at maximum
-      recursion depth, preventing the LLM from seeing or calling them.
-
-      Override this in your agent module to declare sub-agent tools.
+      Returns the tool name used when this agent is spawned as a sub-agent.
+      Override this in your agent module.
       """
-      def subagent_tools, do: []
+      def subagent_tool_name, do: nil
+
+      @doc """
+      Returns the tool description used when this agent is spawned as a sub-agent.
+      Override this in your agent module.
+      """
+      def subagent_tool_description, do: ""
+
+      @doc """
+      Returns a list of agent modules that can be spawned as sub-agents.
+      The framework automatically generates tool schemas and execution logic
+      from each module's `subagent_tool_name/0` and `subagent_tool_description/0`.
+
+      Override this in your agent module to declare sub-agents.
+
+      ## Example
+
+          def subagent_modules do
+            [EvoGit.Agent.CodebaseInvestigator]
+          end
+      """
+      def subagent_modules, do: []
+
+      @doc false
+      def subagent_tools do
+        Enum.map(subagent_modules(), & &1.subagent_tool_name())
+      end
+
+      defp subagent_schemas do
+        Enum.map(subagent_modules(), fn mod ->
+          ReqLLM.tool(
+            name: mod.subagent_tool_name(),
+            description: mod.subagent_tool_description(),
+            parameter_schema: %{
+              "type" => "object",
+              "properties" => %{
+                "objective" => %{
+                  "type" => "string",
+                  "description" =>
+                    "A clear, self-contained objective for the sub-agent. " <>
+                      "Include any relevant paths or context since it starts with a fresh context."
+                }
+              },
+              "required" => ["objective"]
+            },
+            callback: fn _args -> {:ok, nil} end
+          )
+        end)
+      end
+
+      defp subagent_module_for(tool_name) do
+        Enum.find(subagent_modules(), fn mod -> mod.subagent_tool_name() == tool_name end)
+      end
 
       defp effective_tools(state) do
         if at_max_depth?(state) do
@@ -282,7 +331,30 @@ defmodule EvoGit.Agent do
         state.depth >= EvoGit.AgentScheduler.max_depth()
       end
 
-      def execute_tool(call, _state) do
+      def execute_tool(call, state) do
+        case subagent_module_for(call.name) do
+          nil -> execute_standard_tool(call)
+          mod -> execute_subagent(mod, call, state)
+        end
+      end
+
+      defp execute_subagent(mod, call, state) do
+        query = Map.get(call.arguments, "objective")
+
+        [result] =
+          EvoGit.AgentScheduler.spawn_sub_agents([
+            fn _worktree_path ->
+              case mod.run(query, state.caller_pid) do
+                {:ok, result} -> result
+                {:error, reason} -> "Error: Sub-agent failed: #{inspect(reason)}"
+              end
+            end
+          ])
+
+        result
+      end
+
+      defp execute_standard_tool(call) do
         result = EvoGit.Agent.Tools.execute(call.name, call.arguments)
 
         if is_binary(result) and String.length(result) > 20000 do
@@ -303,7 +375,12 @@ defmodule EvoGit.Agent do
       def system_prompt, do: ""
 
       # Give adopting modules default implementations they can override
-      defoverridable available_tools: 0, execute_tool: 2, system_prompt: 0, subagent_tools: 0
+      defoverridable available_tools: 0,
+                     execute_tool: 2,
+                     system_prompt: 0,
+                     subagent_tool_name: 0,
+                     subagent_tool_description: 0,
+                     subagent_modules: 0
     end
   end
 end

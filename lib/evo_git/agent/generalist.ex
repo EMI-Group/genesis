@@ -4,12 +4,16 @@ defmodule EvoGit.Agent.Generalist do
   """
   use EvoGit.Agent
 
-  # Override available_tools to include all standard tools plus the subagent tool
-  def available_tools do
-    EvoGit.Agent.Tools.schemas() ++ [codebase_investigator_schema(), completion_schema()]
+  def subagent_tool_name, do: "generalist"
+
+  def subagent_tool_description do
+    "A versatile software engineering agent that can read, write, and modify code. " <>
+      "Delegate tasks that require code changes, refactoring, or implementation work."
   end
 
-  def subagent_tools, do: ["codebase_investigator"]
+  def subagent_modules do
+    [EvoGit.Agent.CodebaseInvestigator]
+  end
 
   def system_prompt do
     """
@@ -19,51 +23,5 @@ defmodule EvoGit.Agent.Generalist do
     - Understanding complex code, finding where a function is defined, what does a module do, etc.
     - Analyzing how different parts of the code interact, understanding data flow, etc.
     """
-  end
-
-  defp codebase_investigator_schema do
-    ReqLLM.tool(
-      name: "codebase_investigator",
-      description:
-        "A specialized agent for codebase analysis. Call this agent with a query to let it investigate the codebase and return a report.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "objective" => %{
-            "type" => "string",
-            "description" =>
-              "A clear and specific query describing what you want the codebase investigator to analyze or find out."
-          }
-        },
-        "required" => ["objective"]
-      },
-      callback: fn _args -> {:ok, nil} end
-    )
-  end
-
-  # Override execute_tool to handle the specific "codebase_investigator" tool call.
-  # Note: this tool is already filtered out by the Agent framework at max depth,
-  # so the LLM will never see it when depth is exceeded.
-  def execute_tool(%{name: "codebase_investigator", arguments: args}, state) do
-    query = Map.get(args, "objective")
-
-    # Route sub-agent through the scheduler so the parent is tracked as :waiting
-    # and its worktree becomes reclaimable.
-    [result] =
-      EvoGit.AgentScheduler.spawn_sub_agents([
-        fn _worktree_path ->
-          case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid) do
-            {:ok, result} -> result
-            {:error, reason} -> "Error: Subagent failed with reason: #{inspect(reason)}"
-          end
-        end
-      ])
-
-    result
-  end
-
-  # Fallback to default behavior for all other tools
-  def execute_tool(call, state) do
-    super(call, state)
   end
 end
