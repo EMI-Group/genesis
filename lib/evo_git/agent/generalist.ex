@@ -9,6 +9,8 @@ defmodule EvoGit.Agent.Generalist do
     EvoGit.Agent.Tools.schemas() ++ [codebase_investigator_schema(), completion_schema()]
   end
 
+  def subagent_tools, do: ["codebase_investigator"]
+
   def system_prompt do
     """
     You are a versatile, experienced and world-class software engineering agent.
@@ -39,26 +41,25 @@ defmodule EvoGit.Agent.Generalist do
     )
   end
 
-  # Override execute_tool to handle the specific "codebase_investigator" tool call
+  # Override execute_tool to handle the specific "codebase_investigator" tool call.
+  # Note: this tool is already filtered out by the Agent framework at max depth,
+  # so the LLM will never see it when depth is exceeded.
   def execute_tool(%{name: "codebase_investigator", arguments: args}, state) do
     query = Map.get(args, "objective")
 
     # Route sub-agent through the scheduler so the parent is tracked as :waiting
     # and its worktree becomes reclaimable.
-    case EvoGit.AgentScheduler.spawn_sub_agents([
-           fn _worktree_path ->
-             case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid) do
-               {:ok, result} -> result
-               {:error, reason} -> "Error: Subagent failed with reason: #{inspect(reason)}"
-             end
-           end
-         ]) do
-      {:error, :max_depth_exceeded} ->
-        "Error: Maximum sub-agent recursion depth reached. Cannot spawn investigator."
+    [result] =
+      EvoGit.AgentScheduler.spawn_sub_agents([
+        fn _worktree_path ->
+          case EvoGit.Agent.CodebaseInvestigator.run(query, state.caller_pid) do
+            {:ok, result} -> result
+            {:error, reason} -> "Error: Subagent failed with reason: #{inspect(reason)}"
+          end
+        end
+      ])
 
-      [result] ->
-        result
-    end
+    result
   end
 
   # Fallback to default behavior for all other tools

@@ -65,6 +65,13 @@ defmodule EvoGit.AgentScheduler do
     Process.get(:evogit_agent_depth, 0)
   end
 
+  @doc """
+  Returns the configured maximum agent recursion depth.
+  """
+  def max_depth do
+    Application.get_env(:evo_git, :max_agent_depth, @default_max_depth)
+  end
+
   # --- Server Callbacks ---
 
   @impl true
