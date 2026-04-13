@@ -138,11 +138,13 @@ defmodule EvoGit.Task do
       {:ok, _} ->
         # Auto-merge successful
         {:ok, new_sha} = Git.rev_parse(worktree_path)
+
         updated_phylo_node = %PhyloGraphNode{
           repo: worktree_path,
           base_commit: phylo_node.base_commit,
           current_commit: new_sha
         }
+
         {:ok, %{state | phylo_node: updated_phylo_node}}
 
       {:conflict, _} ->

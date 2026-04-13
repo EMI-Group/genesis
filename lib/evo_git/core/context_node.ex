@@ -46,7 +46,8 @@ defmodule EvoGit.Core.ContextNode do
   Nodes that do not exist in the filesystem are excluded from the result list.
   """
   @spec hierarchy_nodes(String.t(), String.t()) :: {:ok, [t()]} | {:error, term()}
-  def hierarchy_nodes(relative_path, repo_path) when is_binary(relative_path) and is_binary(repo_path) do
+  def hierarchy_nodes(relative_path, repo_path)
+      when is_binary(relative_path) and is_binary(repo_path) do
     if Path.type(relative_path) == :relative and not String.starts_with?(relative_path, "..") do
       paths =
         if relative_path == "." do
