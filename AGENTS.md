@@ -68,7 +68,7 @@ The codebase is a recursive tree where every node (directory or file) maintains 
 
 * **Nodes:** Represent a hierarchy level. They can be a `Directory Node` (structural) or a `File Node` (leaf/implementation).
     * **Path:** Repository location (e.g., `doc/`, `lib/a.py`).
-    * **Context:** Semantic rules. Defined by `CONTEXT.md` for directories, and header/module comments for files.
+    * **Context:** Semantic rules. Defined by `CONTEXT.md` for directories, and header/module comments for files. Mostly we care about the context of directories.
     * **Content:** Child nodes (for directories) or source code (for files).
 * **The Spatial Contract:**
     * Every `Directory Node` *must* contain a `CONTEXT.md` file. Crucially, **this file is not treated as a normal file within the Git repository**. Instead, it is conceptually bound to the directory as an intrinsic attribute—functioning much like an extended filesystem attribute (xattr), but implemented as a standard text file so it does not require specialized OS-level `xattr` support. It acts as the directory's schema, defining its **Intent** (purpose), **API Surface** (exports), and **Constraints** (rules for children).
@@ -128,7 +128,7 @@ In step 2 and 3, if the agent doesn't commit, the system will automatically comm
 
 **Mode A: Existing Codebase**
 
-Generate the Context Tree by recursively analyzing the directory structure and file contents.
+Generate the Context Tree (CONTEXT.md files) by recursively analyzing the directory structure. File-level context is ignored in this phase, as most files already contain their own context in the form of code comments and docstrings anyway.
 1. **Root Initialization:** The system starts at the repository root, creating the first investigator agent with the initial state pointing to the root node and the latest commit.
 2. **Recursive Analysis:** The agent can spawn sub-agents for each child node (subdirectory or file). Each agent analyzes its assigned node, extracting context (e.g., from `CONTEXT.md` or file headers) and building the tree structure.
 3. **Fixed Point Convergence:** After the child directors/files are processed, the parent agent aggregates the context and write down the context for its node. Then based on the aggregated context, the parent agent will decide if the child nodes need to be modified (e.g., if the context of a child node is wrong), if so, the parent agent will spawn sub-agents again to modify the child nodes, this process will repeat until reaching a fixed point where no agent thinks that the context of its node or its child nodes need to be modified.
@@ -136,11 +136,9 @@ Generate the Context Tree by recursively analyzing the directory structure and f
 **Mode B: New Codebase**
 
 Recursively generate the repository skeleton based on user prompts and prior knowledge.
-
-1.  **Initialization:** The system ingests the high-level prompt, initializes the Git repo, and provisions worktrees.
-2.  **Planning:** Inside the current node, the Agent writes the context (e.g., `CONTEXT.md`), outlining Intent, API Surface, and Constraints for that specific level.
-3.  **Realization:** The Agent creates empty subdirectories/files matching the new context (if a directory) or generates source code (if a leaf file).
-4.  **Recursion:** The system spawns new Agent instances for every child node created, repeating the process down the tree.
+1. **Planning:** The agent starts at the root node, interpreting the user's high-level objective, and creates a plan and write it down in the root directory's context.
+2. **Recursive Realization:** For each planned child node, the agent spawns sub-agents to create the corresponding directory structure and context. This process continues recursively until reaching the leaf nodes, where the agents generate the initial code files with header comments / docstrings defining their context.
+3. **Fixed Point Convergence:** Similar to Mode A, after the child directors/files are processed, the parent agent aggregates the context and write down the context for its node. Then based on the aggregated context, the parent agent will decide if the child nodes need to be modified, if so, the parent agent will spawn sub-agents again to modify the child nodes, this process will repeat until reaching a fixed point where no agent thinks that the context of its node or its child nodes need to be modified.
 
 ### **4.2 Phase 2: Evolution**
 **Goal:** Mutate the codebase from the Genesis skeleton or an existing temporal state. The system dynamically selects an approach based on task ambiguity.
