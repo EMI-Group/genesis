@@ -4,18 +4,23 @@ defmodule EvoGit.Core.PhyloGraphNode do
   """
   alias EvoGit.Adapters.Git
 
-  defstruct [:repo, :current_commit]
+  defstruct [:repo, :base_commit, :current_commit]
 
   @type t :: %__MODULE__{
           repo: String.t(),
+          base_commit: String.t(),
           current_commit: String.t()
         }
 
   @doc """
   Initializes the graph representation starting from a specific commit or branch.
+
+  Both `base_commit` and `current_commit` are set to the given commit.
+  As the agent works, `current_commit` advances while `base_commit` remains
+  fixed, enabling diff-based evaluation of partial progress.
   """
   def new(repo, commit \\ "main") do
-    %__MODULE__{repo: repo, current_commit: commit}
+    %__MODULE__{repo: repo, base_commit: commit, current_commit: commit}
   end
 
   @doc """
