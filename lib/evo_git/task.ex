@@ -12,12 +12,18 @@ defmodule EvoGit.Task do
 
   @doc """
   Executes the agent logic inside the given worktree.
+
+  The phylo_node's base_commit is preserved across mutations. Only current_commit
+  advances as the agent commits changes.
   """
   def mutate(%{context_node: context_node, phylo_node: phylo_node} = state, objective, opts \\ []) do
     worktree_path = phylo_node.repo
     sha = phylo_node.current_commit
 
-    Logger.info("Agent starting for #{context_node.path} on #{String.slice(sha, 0, 7)}")
+    Logger.info(
+      "Agent starting for #{context_node.path} on #{String.slice(sha, 0, 7)}" <>
+        " (base: #{String.slice(phylo_node.base_commit, 0, 7)})"
+    )
 
     # 1. Checkout the correct commit in the assigned worktree
     # Clean first to be safe
@@ -132,7 +138,11 @@ defmodule EvoGit.Task do
       {:ok, _} ->
         # Auto-merge successful
         {:ok, new_sha} = Git.rev_parse(worktree_path)
-        updated_phylo_node = PhyloGraphNode.new(worktree_path, new_sha)
+        updated_phylo_node = %PhyloGraphNode{
+          repo: worktree_path,
+          base_commit: phylo_node.base_commit,
+          current_commit: new_sha
+        }
         {:ok, %{state | phylo_node: updated_phylo_node}}
 
       {:conflict, _} ->
