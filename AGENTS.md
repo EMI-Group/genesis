@@ -117,7 +117,7 @@ The agents run in isolated `git worktree` environments.
 2. Agents need to make sure to keep the worktree clean when calling sub-agents, that is, before calling a sub-agent, the parent agent must commit any changes it has made.
 3. Upon completion, agents must commit their changes.
 
-In step 2 and 3, if the agent doesn't commit, the system will automatically commit the changes with a message like `Agent: <objective> (auto-commit)`. This also ensure that we can put agents to sleep and wake them up later with the same state, as the state is always represented by a commit SHA and a node path.
+In step 2 and 3, if the agent doesn't commit, the system will automatically commit the changes with a message like `Agent: <objective> (auto-commit)` (except for files ignored by `.gitignore`, those will be discarded). This also ensure that we can put agents to sleep and wake them up later with the same state, as the state is always represented by a commit SHA and a node path.
 
 ---
 
