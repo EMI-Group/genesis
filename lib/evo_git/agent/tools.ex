@@ -11,9 +11,12 @@ defmodule EvoGit.Agent.Tools do
       read_file_schema(),
       read_many_files_schema(),
       write_file_schema(),
+      rewrite_file_schema(),
       create_files_schema(),
       create_directories_schema(),
       replace_in_file_schema(),
+      read_dir_context_schema(),
+      rewrite_dir_context_schema(),
       run_shell_command_schema(),
       rg_schema(),
       git_schema(),
@@ -28,9 +31,12 @@ defmodule EvoGit.Agent.Tools do
   def schema("read_file"), do: read_file_schema()
   def schema("read_many_files"), do: read_many_files_schema()
   def schema("write_file"), do: write_file_schema()
+  def schema("rewrite_file"), do: rewrite_file_schema()
   def schema("create_files"), do: create_files_schema()
   def schema("create_directories"), do: create_directories_schema()
   def schema("replace_in_file"), do: replace_in_file_schema()
+  def schema("read_dir_context"), do: read_dir_context_schema()
+  def schema("rewrite_dir_context"), do: rewrite_dir_context_schema()
   def schema("run_shell_command"), do: run_shell_command_schema()
   def schema("rg"), do: rg_schema()
   def schema("git"), do: git_schema()
@@ -76,6 +82,20 @@ defmodule EvoGit.Agent.Tools do
 
       {:error, reason} ->
         "Error creating directory for #{file_path}: #{:file.format_error(reason)}"
+    end
+  end
+
+  def execute("rewrite_file", args) do
+    file_path = Map.fetch!(args, "file_path") |> expand_path()
+    content = Map.fetch!(args, "content")
+
+    if File.regular?(file_path) do
+      case File.write(file_path, content) do
+        :ok -> "Successfully rewrote #{file_path}"
+        {:error, reason} -> "Error writing file #{file_path}: #{:file.format_error(reason)}"
+      end
+    else
+      "Error: '#{file_path}' does not exist or is not a regular file"
     end
   end
 
@@ -139,6 +159,50 @@ defmodule EvoGit.Agent.Tools do
 
       {:error, reason} ->
         "Error reading file #{file_path}: #{:file.format_error(reason)}"
+    end
+  end
+
+  def execute("read_dir_context", args) do
+    dir_path = Map.fetch!(args, "dir_path")
+    full_dir = expand_path(dir_path)
+
+    cond do
+      not File.exists?(full_dir) ->
+        "Error: directory '#{dir_path}' does not exist"
+
+      not File.dir?(full_dir) ->
+        "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
+
+      true ->
+        context_path = Path.join(full_dir, "CONTEXT.md")
+
+        case File.read(context_path) do
+          {:ok, content} -> content
+          {:error, :enoent} -> "No CONTEXT.md found in directory '#{dir_path}'"
+          {:error, reason} -> "Error reading CONTEXT.md: #{:file.format_error(reason)}"
+        end
+    end
+  end
+
+  def execute("rewrite_dir_context", args) do
+    dir_path = Map.fetch!(args, "dir_path")
+    content = Map.fetch!(args, "content")
+    full_dir = expand_path(dir_path)
+
+    cond do
+      not File.exists?(full_dir) ->
+        "Error: directory '#{dir_path}' does not exist"
+
+      not File.dir?(full_dir) ->
+        "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
+
+      true ->
+        context_path = Path.join(full_dir, "CONTEXT.md")
+
+        case File.write(context_path, content) do
+          :ok -> "Successfully updated CONTEXT.md for directory '#{dir_path}'"
+          {:error, reason} -> "Error writing CONTEXT.md: #{:file.format_error(reason)}"
+        end
     end
   end
 
@@ -275,6 +339,31 @@ defmodule EvoGit.Agent.Tools do
     )
   end
 
+  defp rewrite_file_schema do
+    ReqLLM.tool(
+      name: "rewrite_file",
+      description:
+        "Completely replaces the entire content of an existing file. " <>
+          "The file must already exist. Use this instead of replace_in_file when you need to " <>
+          "rewrite the whole file rather than making a targeted substitution.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "file_path" => %{
+            "type" => "string",
+            "description" => "The path to the existing file to rewrite"
+          },
+          "content" => %{
+            "type" => "string",
+            "description" => "The complete new content for the file"
+          }
+        },
+        "required" => ["file_path", "content"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
   defp create_files_schema do
     ReqLLM.tool(
       name: "create_files",
@@ -332,6 +421,57 @@ defmodule EvoGit.Agent.Tools do
           }
         },
         "required" => ["file_path", "old_text", "new_text"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  defp read_dir_context_schema do
+    ReqLLM.tool(
+      name: "read_dir_context",
+      description:
+        "Reads the CONTEXT.md file of a directory node. " <>
+          "CONTEXT.md defines the directory's semantic contract (Intent, API Surface, Constraints). " <>
+          "Returns the content if it exists, or a message indicating no CONTEXT.md was found.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "dir_path" => %{
+            "type" => "string",
+            "description" =>
+              "The relative path to the directory whose CONTEXT.md should be read (e.g., '.', 'lib', 'src/foo')"
+          }
+        },
+        "required" => ["dir_path"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  defp rewrite_dir_context_schema do
+    ReqLLM.tool(
+      name: "rewrite_dir_context",
+      description:
+        "Creates or updates the CONTEXT.md file for a directory node. " <>
+          "CONTEXT.md defines the directory's semantic contract: its Intent (purpose), " <>
+          "API Surface (exports), and Constraints (rules for children). " <>
+          "Use this tool whenever you need to establish or revise a directory's context. " <>
+          "For file-level context (header/module comments), use normal code editing tools instead.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "dir_path" => %{
+            "type" => "string",
+            "description" =>
+              "The relative path to the directory whose CONTEXT.md should be updated (e.g., '.', 'lib', 'src/foo')"
+          },
+          "content" => %{
+            "type" => "string",
+            "description" =>
+              "The full markdown content for the CONTEXT.md file. Should include Intent, API Surface, and Constraints sections."
+          }
+        },
+        "required" => ["dir_path", "content"]
       },
       callback: fn _ -> {:ok, nil} end
     )
