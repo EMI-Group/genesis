@@ -14,6 +14,8 @@ defmodule EvoGit.AgentScheduler do
   require Logger
   alias EvoGit.Adapters.Git
 
+  @default_max_depth 5
+
   # --- Client API ---
 
   def start_link(opts \\ []) do
@@ -34,6 +36,9 @@ defmodule EvoGit.AgentScheduler do
   Blocks until all sub-agents complete. Returns a list of results in the
   same order as the input functions.
 
+  Returns `{:error, :max_depth_exceeded}` if the calling agent has reached
+  the maximum recursion depth and cannot spawn further sub-agents.
+
   Each function in `funs` receives a worktree path.
   """
   def spawn_sub_agents(funs, timeout \\ :infinity) do
@@ -53,6 +58,13 @@ defmodule EvoGit.AgentScheduler do
     Process.get(:evogit_agent_id)
   end
 
+  @doc """
+  Returns the current agent's call depth, or 0 if not in a scheduled agent.
+  """
+  def current_depth do
+    Process.get(:evogit_agent_depth, 0)
+  end
+
   # --- Server Callbacks ---
 
   @impl true
@@ -63,6 +75,9 @@ defmodule EvoGit.AgentScheduler do
     max_retries =
       Keyword.get(opts, :max_retries) || Application.get_env(:evo_git, :max_retries, 3)
 
+    max_depth =
+      Keyword.get(opts, :max_depth) || Application.get_env(:evo_git, :max_agent_depth, @default_max_depth)
+
     {:ok,
      %{
        initialized: false,
@@ -70,6 +85,7 @@ defmodule EvoGit.AgentScheduler do
        base_sha: nil,
        max_concurrency: max_concurrency,
        max_retries: max_retries,
+       max_depth: max_depth,
        next_agent_id: 1,
        available_worktrees: [],
        agents: %{},
@@ -81,7 +97,7 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:run_agent, fun}, from, state) do
     state = ensure_initialized(state)
-    {agent_id, state} = register_agent(state, fun, from, _parent_id = nil)
+    {agent_id, state} = register_agent(state, fun, from, _parent_id = nil, _depth = 0)
     state = try_dispatch(state, agent_id)
     {:noreply, state}
   end
@@ -89,33 +105,44 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:spawn_sub_agents, parent_id, funs}, from, state) do
     state = ensure_initialized(state)
-
-    # Mark parent as :waiting
-    state = update_agent(state, parent_id, :waiting)
-
-    # Register each sub-agent
-    {sub_ids, state} =
-      Enum.map_reduce(funs, state, fn fun, acc ->
-        {id, acc} = register_agent(acc, fun, _from = nil, parent_id)
-        {id, acc}
-      end)
-
-    # Track pending sub-agents on the parent
     parent = state.agents[parent_id]
 
-    parent = %{
-      parent
-      | sub_agent_from: from,
-        pending_sub_agents: MapSet.new(sub_ids),
-        sub_agent_results: %{}
-    }
+    # Enforce recursion depth limit
+    if parent.depth >= state.max_depth do
+      Logger.warning(
+        "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id} " <>
+          "(depth #{parent.depth} >= max #{state.max_depth})"
+      )
 
-    state = put_in(state.agents[parent_id], parent)
+      {:reply, {:error, :max_depth_exceeded}, state}
+    else
+      # Mark parent as :waiting
+      state = update_agent(state, parent_id, :waiting)
 
-    # Dispatch all sub-agents
-    state = Enum.reduce(sub_ids, state, &try_dispatch(&2, &1))
+      # Register each sub-agent (depth = parent.depth + 1)
+      {sub_ids, state} =
+        Enum.map_reduce(funs, state, fn fun, acc ->
+          {id, acc} = register_agent(acc, fun, _from = nil, parent_id, parent.depth + 1)
+          {id, acc}
+        end)
 
-    {:noreply, state}
+      # Track pending sub-agents on the parent
+      parent = state.agents[parent_id]
+
+      parent = %{
+        parent
+        | sub_agent_from: from,
+          pending_sub_agents: MapSet.new(sub_ids),
+          sub_agent_results: %{}
+      }
+
+      state = put_in(state.agents[parent_id], parent)
+
+      # Dispatch all sub-agents
+      state = Enum.reduce(sub_ids, state, &try_dispatch(&2, &1))
+
+      {:noreply, state}
+    end
   end
 
   # Task returned a result
@@ -210,11 +237,12 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Agent Registry ---
 
-  defp register_agent(state, fun, from, parent_id) do
+  defp register_agent(state, fun, from, parent_id, depth) do
     id = state.next_agent_id
 
     agent = %{
       id: id,
+      depth: depth,
       status: :pending,
       worktree: nil,
       task_ref: nil,
@@ -242,6 +270,7 @@ defmodule EvoGit.AgentScheduler do
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
+        Process.put(:evogit_agent_depth, agent.depth)
 
         if retries > 0 do
           Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
