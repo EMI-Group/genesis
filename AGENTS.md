@@ -93,10 +93,12 @@ In EvoGit 1.0, Agents do not maintain long-term memory. They are transient proce
 An agent executes a functional transformation defined as:
 $$NewState = Agent(State, Objective)$$
 
-* **State:** A `{commit_sha, node_path}` tuple.
-    * `commit_sha`: The temporal branch point.
-    * `node_path`: The spatial location the agent is authorized to modify.
-* **Objective:** A natural language directive (e.g., "Implement the User schema").
+* **State:** A `{spatial, temporal}` tuple.
+    * `spatial`: The node in the Context Tree where the agent operates, i.e., the directory or file path (e.g., `src/foo/` or `src/foo/bar.py`).
+    * `temporal`: The Git commit SHA representing the code version, including two parts:
+      * `base_commit`: The commit SHA the agent starts from.
+      * `current_commit`: The commit SHA the agent is currently working on (initially the same as `base_commit`).
+* **Objective:** A natural language directive (e.g., "Implement the User schema", "Investigate how to use this library").
 
 ### **3.2 Sub-Agent Delegation & Parallelism**
 To prevent context bloat, agents heavily utilize recursive decomposition. A top-level agent spawns sub-agents with specific `State` and `Objective` parameters to handle individual modules or files.
@@ -108,6 +110,14 @@ To guarantee small, reviewable, and incremental improvements, agents operate und
 * **Session Length Limits:** Agents possess a maximum number of iterative loops.
 * **Warning Triggers:** At 50% and 80% of their session limit, agents receive system prompts urging them to finalize tasks and report back.
 * **Hard Termination:** Upon hitting the limit, the agent must yield to the parent agent, which then evaluates the partial progress and dictates the next evolutionary step.
+
+### **3.4 Worktree Interactions & Git Commits**
+The agents run in isolated `git worktree` environments.
+1. Each agent starts with a clean checkout of the commit specified in its `State`.
+2. Agents need to make sure to keep the worktree clean when calling sub-agents, that is, before calling a sub-agent, the parent agent must commit any changes it has made.
+3. Upon completion, agents must commit their changes.
+
+In step 2 and 3, if the agent doesn't commit, the system will automatically commit the changes with a message like `Agent: <objective> (auto-commit)`. This also ensure that we can put agents to sleep and wake them up later with the same state, as the state is always represented by a commit SHA and a node path.
 
 ---
 
