@@ -7,6 +7,7 @@ defmodule EvoGit.Task do
   """
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Generalist
+  alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
   require Logger
 
@@ -43,13 +44,9 @@ defmodule EvoGit.Task do
     agent_module = Keyword.get(opts, :agent_module, Generalist)
     caller_pid = Keyword.get(opts, :caller_pid, self())
 
-    EvoGit.AgentScheduler.run_agent(
-      context_node,
-      phylo_node,
-      agent_module,
-      prompt,
-      caller_pid: caller_pid
-    )
+    spec = AgentSpec.new(context_node, phylo_node, agent_module, prompt, caller_pid: caller_pid)
+
+    EvoGit.AgentScheduler.run_agent(spec)
   end
 
   @doc """
@@ -73,13 +70,8 @@ defmodule EvoGit.Task do
     {:ok, context_node} = EvoGit.Core.ContextNode.load(".", phylo_node.repo)
 
     result =
-      EvoGit.AgentScheduler.run_agent(
-        context_node,
-        phylo_node,
-        Generalist,
-        diag_prompt,
-        caller_pid: caller_pid
-      )
+      AgentSpec.new(context_node, phylo_node, Generalist, diag_prompt, caller_pid: caller_pid)
+      |> EvoGit.AgentScheduler.run_agent()
 
     case result do
       {:ok, %{"path" => path}} ->
@@ -166,13 +158,8 @@ defmodule EvoGit.Task do
 
           conflict_phylo = PhyloGraphNode.new(worktree_path, current_sha)
 
-          EvoGit.AgentScheduler.run_agent(
-            context_node,
-            conflict_phylo,
-            Generalist,
-            prompt,
-            caller_pid: caller_pid
-          )
+          AgentSpec.new(context_node, conflict_phylo, Generalist, prompt, caller_pid: caller_pid)
+          |> EvoGit.AgentScheduler.run_agent()
         end)
 
         # 5. Commit

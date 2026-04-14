@@ -27,6 +27,7 @@ defmodule EvoGit.AgentScheduler do
   use GenServer
   require Logger
   alias EvoGit.Adapters.Git
+  alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
 
   @default_max_depth 5
@@ -41,32 +42,14 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Spawns a top-level agent. Blocks the caller until the agent completes.
 
-  Accepts a structured agent specification:
-  - `context_node` — the spatial state (ContextNode)
-  - `phylo_node` — the temporal state (PhyloGraphNode)
-  - `agent_module` — the module implementing `use EvoGit.Agent`
-  - `objective` — a natural language directive string
-  - `opts` — keyword list of options (e.g., `caller_pid`)
+  Accepts an `%AgentSpec{}` struct containing the spatial state (ContextNode),
+  temporal state (PhyloGraphNode), agent module, objective, and options.
 
   The scheduler handles worktree preparation (clean + checkout) and stores
   the agent's full record in ETS for the agent process to read.
   """
-  def run_agent(
-        context_node,
-        phylo_node,
-        agent_module,
-        objective,
-        opts \\ [],
-        timeout \\ :infinity
-      ) do
-    spec = %{
-      context_node: context_node,
-      phylo_node: phylo_node,
-      agent_module: agent_module,
-      objective: objective,
-      opts: opts
-    }
-
+  @spec run_agent(AgentSpec.t(), timeout()) :: term()
+  def run_agent(%AgentSpec{} = spec, timeout \\ :infinity) do
     GenServer.call(__MODULE__, {:run_agent, spec}, timeout)
   end
 
@@ -79,9 +62,9 @@ defmodule EvoGit.AgentScheduler do
   Returns `{:error, :max_depth_exceeded}` if the calling agent has reached
   the maximum recursion depth and cannot spawn further sub-agents.
 
-  Each spec is a map with keys: `:context_node`, `:phylo_node`,
-  `:agent_module`, `:objective`, and optional `:opts`.
+  Each spec must be an `%AgentSpec{}` struct.
   """
+  @spec spawn_sub_agents([AgentSpec.t()], timeout()) :: [term()] | {:error, :max_depth_exceeded}
   def spawn_sub_agents(specs, timeout \\ :infinity) do
     parent_id = current_agent_id()
 

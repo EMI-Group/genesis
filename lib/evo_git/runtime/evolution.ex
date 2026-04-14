@@ -3,6 +3,7 @@ defmodule EvoGit.Runtime.Evolution do
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
   alias EvoGit.AgentScheduler
+  alias EvoGit.AgentSpec
   alias EvoGit.Adapters.Git
   require Logger
 
@@ -24,13 +25,10 @@ defmodule EvoGit.Runtime.Evolution do
 
       agent_module = Keyword.get(opts, :agent_module, EvoGit.Agent.Generalist)
 
-      case AgentScheduler.run_agent(
-             context_node,
-             phylo_node,
-             agent_module,
-             objective,
+      case AgentSpec.new(context_node, phylo_node, agent_module, objective,
              caller_pid: Keyword.get(opts, :caller_pid, self())
-           ) do
+           )
+           |> AgentScheduler.run_agent() do
         {:ok, _agent_output} ->
           {:ok, final_sha} = Git.rev_parse(repo_path)
 
