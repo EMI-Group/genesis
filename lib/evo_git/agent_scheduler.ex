@@ -193,6 +193,9 @@ defmodule EvoGit.AgentScheduler do
 
       {:reply, {:error, :max_depth_exceeded}, state}
     else
+      # Pre-Delegation Cleanliness
+      parent = auto_commit_fallback(parent_id, parent)
+
       # Mark parent as :waiting
       put_sched_meta(parent_id, %{parent | status: :waiting})
 
@@ -229,6 +232,10 @@ defmodule EvoGit.AgentScheduler do
 
       agent_id ->
         {:ok, meta} = get_sched_meta(agent_id)
+
+        # Completion Cleanliness
+        meta = auto_commit_fallback(agent_id, meta)
+
         put_sched_meta(agent_id, %{meta | result_sent: true})
 
         if meta.parent_id do
@@ -471,6 +478,49 @@ defmodule EvoGit.AgentScheduler do
         :none
     end
   end
+
+  # --- Auto-Commit Fallback ---
+
+  defp auto_commit_fallback(agent_id, %{status: :running, worktree: wt} = meta) when not is_nil(wt) do
+    case Git.status(wt) do
+      {:ok, ""} ->
+        meta
+
+      {:ok, _changes} ->
+        Logger.info("AgentScheduler: Auto-committing pending changes for agent #{agent_id}")
+
+        # "discarding .gitignore files"
+        Path.join(wt, "**/.gitignore")
+        |> Path.wildcard(match_dot: true)
+        |> Enum.each(&File.rm/1)
+
+        Git.run(["add", "--all"], wt)
+        objective = meta.spec.objective || "task"
+        Git.commit(wt, "Agent: #{objective} (auto-commit)")
+
+        case Git.rev_parse(wt) do
+          {:ok, new_sha} ->
+            {:ok, agent_state} = get_agent_state(agent_id)
+            updated_phylo = %{agent_state.phylo_node | current_commit: new_sha}
+
+            put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
+
+            updated_spec = %{meta.spec | phylo_node: updated_phylo}
+            updated_meta = %{meta | spec: updated_spec}
+            put_sched_meta(agent_id, updated_meta)
+
+            updated_meta
+
+          _ ->
+            meta
+        end
+
+      _ ->
+        meta
+    end
+  end
+
+  defp auto_commit_fallback(_agent_id, meta), do: meta
 
   # --- Queue Processing ---
 
