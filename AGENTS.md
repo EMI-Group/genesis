@@ -90,7 +90,7 @@ Mutate the codebase based on task ambiguity.
 
 ### **5.1 Core Technology**
 * **Runtime:** **Elixir**. Selected for OTP concurrency, lightweight processes, fault tolerance, and its actor model perfectly mirroring our stateless agent design.
-* **Version Control:** **Git CLI**. Libgit bindings are explicitly avoided to minimize complexity, dependencies, and to ease debugging.
+* **Version Control:** **Git CLI**. The libgit2 bindings are explicitly avoided to minimize complexity, dependencies, and to ease debugging.
 
 ### **5.2 The Agent Scheduler & Git Isolation**
 EvoGit manages execution through an internal **Agent Scheduler**, analogous to OS process or thread scheduling. The constrained system resource is a fixed pool of $N$ `git worktree` slots located at `.evogit/worktrees/worker_<i>/`.
