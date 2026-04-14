@@ -35,7 +35,7 @@ defmodule EvoGit.Runtime.Genesis do
 
       result =
         AgentSpec.new(context_node, phylo_node, agent_module, objective,
-          caller_pid: Keyword.get(opts, :caller_pid, self())
+          event_sink: Keyword.get(opts, :event_sink, self())
         )
         |> AgentScheduler.run_agent()
 

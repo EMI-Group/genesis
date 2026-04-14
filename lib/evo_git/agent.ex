@@ -45,9 +45,9 @@ defmodule EvoGit.Agent do
       @doc """
       Runs the agent asynchronously in a Task, returning the Task struct.
       """
-      def run_task(query, caller_pid, system_prompt \\ nil) do
+      def run_task(query) do
         Task.async(fn ->
-          run(query, caller_pid, system_prompt)
+          run(query)
         end)
       end
 
@@ -56,13 +56,13 @@ defmodule EvoGit.Agent do
 
       The agent reads its spatial/temporal state from ETS every turn via
       `load_ets_state/1`, ensuring it always has the correct worktree path.
+      Event streaming is routed through the scheduler's `event_sink` field
+      in the ETS agent record.
       """
-      def run(query, caller_pid, system_prompt \\ nil) do
-        actual_system_prompt = system_prompt || system_prompt()
+      def run(query) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
 
         state = %{
-          caller_pid: caller_pid,
           agent_id: agent_id,
           depth: EvoGit.AgentScheduler.current_depth(),
           # Loaded from ETS each turn — see load_ets_state/1
@@ -70,7 +70,6 @@ defmodule EvoGit.Agent do
           repo_path: nil,
           turn: 0,
           history: [ReqLLM.Context.user(query)],
-          system_prompt: actual_system_prompt,
           in_grace_period: false,
           deadline: System.monotonic_time(:millisecond) + @timeout_ms
         }
@@ -111,11 +110,10 @@ defmodule EvoGit.Agent do
             trigger_recovery(state, "10-minute time limit exceeded")
 
           time_left <= 0 and state.in_grace_period ->
-            stream_event(state.caller_pid, "ERROR", %{
+            stream_event(state.agent_id, "ERROR", %{
               error: "Grace period timed out. Agent killed."
             })
 
-            send(state.caller_pid, {:agent_finished, {:error, :timeout}})
             {:error, :timeout}
 
           state.turn >= @max_turns and not state.in_grace_period ->
@@ -127,7 +125,7 @@ defmodule EvoGit.Agent do
       end
 
       defp trigger_recovery(state, reason) do
-        stream_event(state.caller_pid, "ERROR", %{
+        stream_event(state.agent_id, "ERROR", %{
           error: "Limit reached: #{reason}. Attempting one final recovery turn."
         })
 
@@ -145,7 +143,7 @@ defmodule EvoGit.Agent do
 
       defp do_turn(state) do
         dynamic_context = build_dynamic_context(state)
-        full_system_prompt = state.system_prompt <> dynamic_context
+        full_system_prompt = system_prompt() <> dynamic_context
 
         context = ReqLLM.Context.new([ReqLLM.Context.system(full_system_prompt) | state.history])
 
@@ -165,14 +163,13 @@ defmodule EvoGit.Agent do
         text = ReqLLM.Response.text(response)
 
         if text && text != "" do
-          stream_event(state.caller_pid, "THOUGHT_CHUNK", %{text: text})
+          stream_event(state.agent_id, "THOUGHT_CHUNK", %{text: text})
         end
 
         state = %{state | history: state.history ++ [response.message], turn: state.turn + 1}
 
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
-            send(state.caller_pid, {:agent_finished, {:ok, final_result}})
             {:ok, final_result}
 
           {:continue, tool_responses} ->
@@ -181,7 +178,6 @@ defmodule EvoGit.Agent do
 
           {:error, :protocol_violation} ->
             if state.in_grace_period do
-              send(state.caller_pid, {:agent_finished, {:error, :recovery_failed}})
               {:error, :recovery_failed}
             else
               trigger_recovery(state, "agent stopped calling tools")
@@ -195,7 +191,7 @@ defmodule EvoGit.Agent do
         complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
 
         if complete_call do
-          stream_event(state.caller_pid, "TOOL_CALL_END", %{
+          stream_event(state.agent_id, "TOOL_CALL_END", %{
             name: @complete_tool,
             status: "success"
           })
@@ -208,14 +204,14 @@ defmodule EvoGit.Agent do
         else
           results =
             Enum.map(tool_calls, fn call ->
-              stream_event(state.caller_pid, "TOOL_CALL_START", %{
+              stream_event(state.agent_id, "TOOL_CALL_START", %{
                 name: call.name,
                 args: call.arguments
               })
 
               output = execute_tool(call, state)
 
-              stream_event(state.caller_pid, "TOOL_CALL_END", %{name: call.name})
+              stream_event(state.agent_id, "TOOL_CALL_END", %{name: call.name})
               tool_call_id = Map.get(call, :id, call.name)
               ReqLLM.Context.tool_result(tool_call_id, call.name, output)
             end)
@@ -233,8 +229,14 @@ defmodule EvoGit.Agent do
         end
       end
 
-      defp stream_event(caller_pid, type, data) do
-        send(caller_pid, {:subagent_activity, %{type: type, data: data}})
+      defp stream_event(agent_id, type, data) do
+        case EvoGit.AgentScheduler.get_event_sink(agent_id) do
+          pid when is_pid(pid) ->
+            send(pid, {:agent_event, %{agent_id: agent_id, type: type, data: data}})
+
+          _ ->
+            :ok
+        end
       end
 
       defp try_compress_chat(state) do
@@ -382,8 +384,7 @@ defmodule EvoGit.Agent do
             parent_ets.context_node,
             parent_ets.phylo_node,
             mod,
-            objective,
-            caller_pid: state.caller_pid
+            objective
           )
 
         [result] = EvoGit.AgentScheduler.spawn_sub_agents([sub_spec])

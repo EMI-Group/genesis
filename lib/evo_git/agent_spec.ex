@@ -9,7 +9,7 @@ defmodule EvoGit.AgentSpec do
   - `phylo_node` — the temporal state (PhyloGraphNode)
   - `agent_module` — the module implementing `use EvoGit.Agent`
   - `objective` — a natural language directive string
-  - `opts` — keyword list of options (e.g., `caller_pid`)
+  - `opts` — keyword list of options (e.g., `event_sink` pid for streaming UI events)
   """
 
   alias EvoGit.Core.ContextNode
