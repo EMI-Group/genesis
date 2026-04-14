@@ -42,9 +42,9 @@ defmodule EvoGit.Task do
         "Modify the files as needed."
 
     agent_module = Keyword.get(opts, :agent_module, Generalist)
-    caller_pid = Keyword.get(opts, :caller_pid, self())
+    event_sink = Keyword.get(opts, :event_sink, self())
 
-    spec = AgentSpec.new(context_node, phylo_node, agent_module, prompt, caller_pid: caller_pid)
+    spec = AgentSpec.new(context_node, phylo_node, agent_module, prompt, event_sink: event_sink)
 
     EvoGit.AgentScheduler.run_agent(spec)
   end
@@ -66,11 +66,11 @@ defmodule EvoGit.Task do
         "Identify the single most relevant directory or file path to modify.\n" <>
         "Return ONLY the path as a JSON string under key 'path'."
 
-    caller_pid = Keyword.get(opts, :caller_pid, self())
+    event_sink = Keyword.get(opts, :event_sink, self())
     {:ok, context_node} = EvoGit.Core.ContextNode.load(".", phylo_node.repo)
 
     result =
-      AgentSpec.new(context_node, phylo_node, Generalist, diag_prompt, caller_pid: caller_pid)
+      AgentSpec.new(context_node, phylo_node, Generalist, diag_prompt, event_sink: event_sink)
       |> EvoGit.AgentScheduler.run_agent()
 
     case result do
@@ -135,7 +135,7 @@ defmodule EvoGit.Task do
 
       {:conflict, _} ->
         {:ok, conflicts} = Git.conflict_files(worktree_path)
-        caller_pid = Keyword.get(opts, :caller_pid, self())
+        event_sink = Keyword.get(opts, :event_sink, self())
 
         Enum.each(conflicts, fn file ->
           abs_file = Path.join(worktree_path, file)
@@ -158,7 +158,7 @@ defmodule EvoGit.Task do
 
           conflict_phylo = PhyloGraphNode.new(worktree_path, current_sha)
 
-          AgentSpec.new(context_node, conflict_phylo, Generalist, prompt, caller_pid: caller_pid)
+          AgentSpec.new(context_node, conflict_phylo, Generalist, prompt, event_sink: event_sink)
           |> EvoGit.AgentScheduler.run_agent()
         end)
 

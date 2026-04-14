@@ -117,6 +117,17 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Returns the event_sink pid for the given agent, or nil if not set.
+  Agents use this to stream UI events (thoughts, tool calls, etc.).
+  """
+  def get_event_sink(agent_id) do
+    case get_agent(agent_id) do
+      {:ok, %{event_sink: sink}} -> sink
+      _ -> nil
+    end
+  end
+
+  @doc """
   Updates the phylo_node for the given agent in ETS.
   Called by agents after they commit changes to keep the scheduler in sync.
   """
@@ -322,6 +333,24 @@ defmodule EvoGit.AgentScheduler do
   defp register_agent(state, spec, from, parent_id, depth) do
     id = state.next_agent_id
 
+    # Resolve event_sink: explicit in opts, inherited from parent, or nil
+    event_sink =
+      case spec.opts do
+        opts when is_list(opts) -> Keyword.get(opts, :event_sink)
+        opts when is_map(opts) -> Map.get(opts, :event_sink)
+        _ -> nil
+      end
+
+    event_sink =
+      if is_nil(event_sink) and parent_id do
+        case get_agent(parent_id) do
+          {:ok, parent_agent} -> parent_agent.event_sink
+          _ -> nil
+        end
+      else
+        event_sink
+      end
+
     agent = %{
       id: id,
       depth: depth,
@@ -330,6 +359,7 @@ defmodule EvoGit.AgentScheduler do
       task_ref: nil,
       from: from,
       parent_id: parent_id,
+      event_sink: event_sink,
       spec: spec,
       retries: 0,
       result_sent: false,
@@ -376,14 +406,7 @@ defmodule EvoGit.AgentScheduler do
           Process.sleep(30_000 * retries)
         end
 
-        caller_pid =
-          case spec.opts do
-            opts when is_list(opts) -> Keyword.get(opts, :caller_pid, self())
-            opts when is_map(opts) -> Map.get(opts, :caller_pid, self())
-            _ -> self()
-          end
-
-        spec.agent_module.run(spec.objective, caller_pid)
+        spec.agent_module.run(spec.objective)
       end)
 
     # Update agent record in ETS with worktree assignment and core state
