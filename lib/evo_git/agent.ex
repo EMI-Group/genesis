@@ -6,6 +6,12 @@ defmodule EvoGit.Agent do
   Agent state follows the design spec:
   - `context_node` (spatial): the node in the Context Tree
   - `phylo_node` (temporal): git commit state with `base_commit` and `current_commit`
+
+  The agent reads its core spatial/temporal state from the ETS table managed
+  by `EvoGit.AgentScheduler`. Crucially, `node_path` and `repo_path` (worktree)
+  are re-read from ETS at the start of **every turn**, not cached at init time.
+  This ensures correctness when an agent is rescheduled to a different worktree
+  after yielding (e.g., during sub-agent delegation).
   """
 
   alias EvoGit.Core.ContextNode
@@ -47,14 +53,21 @@ defmodule EvoGit.Agent do
 
       @doc """
       Runs the agent synchronously, blocking until it completes.
+
+      The agent reads its spatial/temporal state from ETS every turn via
+      `load_ets_state/1`, ensuring it always has the correct worktree path.
       """
       def run(query, caller_pid, system_prompt \\ nil) do
         actual_system_prompt = system_prompt || system_prompt()
+        agent_id = EvoGit.AgentScheduler.current_agent_id()
 
         state = %{
           caller_pid: caller_pid,
-          agent_id: EvoGit.AgentScheduler.current_agent_id(),
+          agent_id: agent_id,
           depth: EvoGit.AgentScheduler.current_depth(),
+          # Loaded from ETS each turn — see load_ets_state/1
+          node_path: nil,
+          repo_path: nil,
           turn: 0,
           history: [ReqLLM.Context.user(query)],
           system_prompt: actual_system_prompt,
@@ -67,7 +80,27 @@ defmodule EvoGit.Agent do
 
       # --- Internal Execution Logic ---
 
+      defp load_ets_state(state) do
+        case EvoGit.AgentScheduler.get_agent(state.agent_id) do
+          {:ok, %{context_node: ctx, worktree: wt}} when not is_nil(wt) ->
+            # Update process dict so tools use the correct worktree
+            Process.put(:repo_path, wt)
+            %{state | node_path: ctx.path, repo_path: wt}
+
+          {:ok, %{context_node: ctx, phylo_node: phylo}} when not is_nil(phylo) ->
+            Process.put(:repo_path, phylo.repo)
+            %{state | node_path: ctx.path, repo_path: phylo.repo}
+
+          _ ->
+            Logger.warning("Agent #{inspect(state.agent_id)}: No ETS state found, using defaults")
+            fallback = Process.get(:repo_path, File.cwd!())
+            %{state | node_path: state.node_path || ".", repo_path: state.repo_path || fallback}
+        end
+      end
+
       defp loop(state) do
+        # Re-read worktree/node from ETS every turn
+        state = load_ets_state(state)
         state = try_compress_chat(state)
 
         now = System.monotonic_time(:millisecond)
@@ -339,19 +372,27 @@ defmodule EvoGit.Agent do
       end
 
       defp execute_subagent(mod, call, state) do
-        query = Map.get(call.arguments, "objective")
+        objective = Map.get(call.arguments, "objective")
 
-        [result] =
-          EvoGit.AgentScheduler.spawn_sub_agents([
-            fn _worktree_path ->
-              case mod.run(query, state.caller_pid) do
-                {:ok, result} -> result
-                {:error, reason} -> "Error: Sub-agent failed: #{inspect(reason)}"
-              end
-            end
-          ])
+        # Read the parent's current state from ETS to pass to the sub-agent
+        {:ok, parent_ets} = EvoGit.AgentScheduler.get_agent(state.agent_id)
 
-        result
+        sub_spec = %{
+          context_node: parent_ets.context_node,
+          phylo_node: parent_ets.phylo_node,
+          agent_module: mod,
+          objective: objective,
+          opts: [caller_pid: state.caller_pid]
+        }
+
+        [result] = EvoGit.AgentScheduler.spawn_sub_agents([sub_spec])
+
+        case result do
+          {:ok, text} -> text
+          {:error, reason} -> "Error: Sub-agent failed: #{inspect(reason)}"
+          text when is_binary(text) -> text
+          other -> inspect(other)
+        end
       end
 
       defp execute_standard_tool(call) do
