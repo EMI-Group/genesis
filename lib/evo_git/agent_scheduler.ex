@@ -481,10 +481,11 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Auto-Commit Fallback ---
 
-  defp auto_commit_fallback(agent_id, %{status: :running, worktree: wt} = meta) when not is_nil(wt) do
+  defp auto_commit_fallback(agent_id, %{status: :running, worktree: wt} = meta)
+       when not is_nil(wt) do
     case Git.status(wt) do
       {:ok, ""} ->
-        meta
+        sync_current_commit(agent_id, meta)
 
       {:ok, _changes} ->
         Logger.info("AgentScheduler: Auto-committing pending changes for agent #{agent_id}")
@@ -498,22 +499,7 @@ defmodule EvoGit.AgentScheduler do
         objective = meta.spec.objective || "task"
         Git.commit(wt, "Agent: #{objective} (auto-commit)")
 
-        case Git.rev_parse(wt) do
-          {:ok, new_sha} ->
-            {:ok, agent_state} = get_agent_state(agent_id)
-            updated_phylo = %{agent_state.phylo_node | current_commit: new_sha}
-
-            put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
-
-            updated_spec = %{meta.spec | phylo_node: updated_phylo}
-            updated_meta = %{meta | spec: updated_spec}
-            put_sched_meta(agent_id, updated_meta)
-
-            updated_meta
-
-          _ ->
-            meta
-        end
+        sync_current_commit(agent_id, meta)
 
       _ ->
         meta
@@ -521,6 +507,29 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp auto_commit_fallback(_agent_id, meta), do: meta
+
+  defp sync_current_commit(agent_id, %{worktree: wt} = meta) do
+    case Git.rev_parse(wt) do
+      {:ok, current_sha} ->
+        {:ok, agent_state} = get_agent_state(agent_id)
+
+        if agent_state.phylo_node.current_commit != current_sha do
+          updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
+          put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
+
+          updated_spec = %{meta.spec | phylo_node: updated_phylo}
+          updated_meta = %{meta | spec: updated_spec}
+          put_sched_meta(agent_id, updated_meta)
+
+          updated_meta
+        else
+          meta
+        end
+
+      _ ->
+        meta
+    end
+  end
 
   # --- Queue Processing ---
 
