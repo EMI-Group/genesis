@@ -10,7 +10,7 @@ defmodule EvoGit.Agent do
   The agent reads its spatial/temporal state from the `:evogit_agent_state` ETS
   table managed by `EvoGit.AgentScheduler`. The worktree path lives inside
   `phylo_node.repo` and is re-read at the start of **every turn** via
-  `load_ets_state/1`. This ensures correctness when an agent is rescheduled
+  `load_worktree_path/1`. This ensures correctness when an agent is rescheduled
   to a different worktree after yielding (e.g., during sub-agent delegation).
 
   Scheduling metadata (status, worktree assignment, parent tracking) lives in
@@ -59,18 +59,24 @@ defmodule EvoGit.Agent do
       Runs the agent synchronously, blocking until it completes.
 
       The agent reads its spatial/temporal state from ETS every turn via
-      `load_ets_state/1`, ensuring it always has the correct worktree path.
+      `load_worktree_path/1`, ensuring it always has the correct worktree path.
       Event streaming is routed through the scheduler's `event_sink` field
       in the ETS agent record.
       """
       def run(query) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
 
+        node_path =
+          case EvoGit.AgentScheduler.get_agent_state(agent_id) do
+            {:ok, agent_state} -> agent_state.context_node.path
+            _ -> "."
+          end
+
         state = %{
           agent_id: agent_id,
           depth: EvoGit.AgentScheduler.current_depth(),
-          # Loaded from ETS each turn — see load_ets_state/1
-          node_path: nil,
+          node_path: node_path,
+          # Loaded from ETS each turn — see load_worktree_path/1
           repo_path: nil,
           turn: 0,
           history: [ReqLLM.Context.user(query)],
@@ -83,24 +89,24 @@ defmodule EvoGit.Agent do
 
       # --- Internal Execution Logic ---
 
-      defp load_ets_state(state) do
+      defp load_worktree_path(state) do
         alias EvoGit.AgentScheduler.AgentState
 
         case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
-          {:ok, %AgentState{context_node: ctx, phylo_node: %{repo: wt}}} when not is_nil(wt) ->
+          {:ok, %AgentState{phylo_node: %{repo: wt}}} when not is_nil(wt) ->
             Process.put(:repo_path, wt)
-            %{state | node_path: ctx.path, repo_path: wt}
+            %{state | repo_path: wt}
 
           _ ->
             Logger.warning("Agent #{inspect(state.agent_id)}: No ETS state found, using defaults")
             fallback = Process.get(:repo_path, File.cwd!())
-            %{state | node_path: state.node_path || ".", repo_path: state.repo_path || fallback}
+            %{state | repo_path: state.repo_path || fallback}
         end
       end
 
       defp loop(state) do
-        # Re-read worktree/node from ETS every turn
-        state = load_ets_state(state)
+        # Re-read worktree from ETS every turn
+        state = load_worktree_path(state)
         state = try_compress_chat(state)
 
         now = System.monotonic_time(:millisecond)
