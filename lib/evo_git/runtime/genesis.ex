@@ -4,6 +4,7 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
+  alias EvoGit.AgentSpec
   alias EvoGit.Agent.CodebaseArchitect
   alias EvoGit.Agent.CodebaseInvestigator
   alias EvoGit.Runtime.Prompts
@@ -33,13 +34,10 @@ defmodule EvoGit.Runtime.Genesis do
       {:ok, context_node} = ContextNode.load(".", repo_path)
 
       result =
-        AgentScheduler.run_agent(
-          context_node,
-          phylo_node,
-          agent_module,
-          objective,
+        AgentSpec.new(context_node, phylo_node, agent_module, objective,
           caller_pid: Keyword.get(opts, :caller_pid, self())
         )
+        |> AgentScheduler.run_agent()
 
       case result do
         {:ok, _agent_output} ->

@@ -377,13 +377,14 @@ defmodule EvoGit.Agent do
         # Read the parent's current state from ETS to pass to the sub-agent
         {:ok, parent_ets} = EvoGit.AgentScheduler.get_agent(state.agent_id)
 
-        sub_spec = %{
-          context_node: parent_ets.context_node,
-          phylo_node: parent_ets.phylo_node,
-          agent_module: mod,
-          objective: objective,
-          opts: [caller_pid: state.caller_pid]
-        }
+        sub_spec =
+          EvoGit.AgentSpec.new(
+            parent_ets.context_node,
+            parent_ets.phylo_node,
+            mod,
+            objective,
+            caller_pid: state.caller_pid
+          )
 
         [result] = EvoGit.AgentScheduler.spawn_sub_agents([sub_spec])
 
