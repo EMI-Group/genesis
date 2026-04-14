@@ -8,30 +8,35 @@ defmodule EvoGit.AgentScheduler do
 
   - Managing the worktree pool (creation, assignment, reclamation)
   - Preparing worktrees (Git clean/checkout) before agent execution
-  - Storing all agent records in ETS so both agent processes and the scheduler
-    can access them
   - Spawning and tracking agents (both top-level and sub-agents)
   - Transitioning agents between :running and :waiting states
   - Lazy reclamation of worktrees from waiting agents when the pool is exhausted
 
-  ## ETS Agent Record
+  ## ETS Tables
 
-  Each agent record in the `:evogit_agent_state` ETS table contains both
-  scheduler metadata (id, depth, status, worktree, task_ref, from, etc.) and
-  core state (context_node, phylo_node). The agent process reads its
-  `context_node` and `phylo_node` from ETS at the start of **every turn**,
-  ensuring it always sees the correct worktree path even after being
-  rescheduled to a different worktree.
+  Agent data is split across two ETS tables with clear ownership:
+
+  - **`:evogit_agent_state`** — Owned by agent processes. Contains the agent's
+    live spatial/temporal state (`context_node`, `phylo_node`) and `event_sink`.
+    The scheduler writes initial values on dispatch; agents update `phylo_node`
+    after each commit via `update_phylo_node/2`.
+
+  - **`:evogit_sched_meta`** — Owned by the scheduler process. Contains all
+    scheduling bookkeeping: status, worktree assignment, task refs, parent/child
+    tracking, retry counts, etc. Agents do not write to this table.
   """
 
   use GenServer
   require Logger
   alias EvoGit.Adapters.Git
+  alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
 
   @default_max_depth 5
-  @ets_table :evogit_agent_state
+  @agent_table :evogit_agent_state
+  @sched_table :evogit_sched_meta
 
   # --- Client API ---
 
@@ -46,7 +51,7 @@ defmodule EvoGit.AgentScheduler do
   temporal state (PhyloGraphNode), agent module, objective, and options.
 
   The scheduler handles worktree preparation (clean + checkout) and stores
-  the agent's full record in ETS for the agent process to read.
+  the agent's state in ETS for the agent process to read.
   """
   @spec run_agent(AgentSpec.t(), timeout()) :: term()
   def run_agent(%AgentSpec{} = spec, timeout \\ :infinity) do
@@ -97,22 +102,14 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Reads the full agent record from ETS for the given agent_id.
+  Reads the agent's live state from the agent state table.
+  Called by agent processes every turn.
   """
-  def get_agent(agent_id) do
-    case :ets.lookup(@ets_table, agent_id) do
-      [{^agent_id, agent}] -> {:ok, agent}
+  @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t()} | :error
+  def get_agent_state(agent_id) do
+    case :ets.lookup(@agent_table, agent_id) do
+      [{^agent_id, %AgentState{} = agent_state}] -> {:ok, agent_state}
       [] -> :error
-    end
-  end
-
-  @doc """
-  Reads the full agent record from ETS for the calling process's agent.
-  """
-  def get_current_agent do
-    case current_agent_id() do
-      nil -> :error
-      id -> get_agent(id)
     end
   end
 
@@ -121,20 +118,21 @@ defmodule EvoGit.AgentScheduler do
   Agents use this to stream UI events (thoughts, tool calls, etc.).
   """
   def get_event_sink(agent_id) do
-    case get_agent(agent_id) do
+    case get_agent_state(agent_id) do
       {:ok, %{event_sink: sink}} -> sink
       _ -> nil
     end
   end
 
   @doc """
-  Updates the phylo_node for the given agent in ETS.
-  Called by agents after they commit changes to keep the scheduler in sync.
+  Updates the phylo_node for the given agent in the agent state table.
+  Called by agents after they commit changes to keep state in sync.
   """
+  @spec update_phylo_node(pos_integer(), PhyloGraphNode.t()) :: :ok | :error
   def update_phylo_node(agent_id, %PhyloGraphNode{} = phylo_node) do
-    case :ets.lookup(@ets_table, agent_id) do
-      [{^agent_id, agent}] ->
-        :ets.insert(@ets_table, {agent_id, %{agent | phylo_node: phylo_node}})
+    case :ets.lookup(@agent_table, agent_id) do
+      [{^agent_id, %AgentState{} = agent_state}] ->
+        :ets.insert(@agent_table, {agent_id, %AgentState{agent_state | phylo_node: phylo_node}})
         :ok
 
       [] ->
@@ -146,7 +144,8 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def init(opts) do
-    :ets.new(@ets_table, [:named_table, :public, :set, read_concurrency: true])
+    :ets.new(@agent_table, [:named_table, :public, :set, read_concurrency: true])
+    :ets.new(@sched_table, [:named_table, :public, :set, read_concurrency: true])
 
     max_concurrency =
       Keyword.get(opts, :max_concurrency) || Application.get_env(:evo_git, :max_concurrency, 3)
@@ -184,7 +183,7 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:spawn_sub_agents, parent_id, specs}, from, state) do
     state = ensure_initialized(state)
-    {:ok, parent} = get_agent(parent_id)
+    {:ok, parent} = get_sched_meta(parent_id)
 
     if parent.depth >= state.max_depth do
       Logger.warning(
@@ -195,7 +194,7 @@ defmodule EvoGit.AgentScheduler do
       {:reply, {:error, :max_depth_exceeded}, state}
     else
       # Mark parent as :waiting
-      put_agent(parent_id, %{parent | status: :waiting})
+      put_sched_meta(parent_id, %{parent | status: :waiting})
 
       # Register each sub-agent (depth = parent.depth + 1)
       {sub_ids, state} =
@@ -205,9 +204,9 @@ defmodule EvoGit.AgentScheduler do
         end)
 
       # Track pending sub-agents on the parent
-      {:ok, parent} = get_agent(parent_id)
+      {:ok, parent} = get_sched_meta(parent_id)
 
-      put_agent(parent_id, %{
+      put_sched_meta(parent_id, %{
         parent
         | sub_agent_from: from,
           pending_sub_agents: MapSet.new(sub_ids),
@@ -229,15 +228,15 @@ defmodule EvoGit.AgentScheduler do
         {:noreply, state}
 
       agent_id ->
-        {:ok, agent} = get_agent(agent_id)
-        put_agent(agent_id, %{agent | result_sent: true})
+        {:ok, meta} = get_sched_meta(agent_id)
+        put_sched_meta(agent_id, %{meta | result_sent: true})
 
-        if agent.parent_id do
-          store_sub_result(agent.parent_id, agent_id, result)
-          state = maybe_resume_parent(state, agent.parent_id)
+        if meta.parent_id do
+          store_sub_result(meta.parent_id, agent_id, result)
+          state = maybe_resume_parent(state, meta.parent_id)
           {:noreply, state}
         else
-          GenServer.reply(agent.from, result)
+          GenServer.reply(meta.from, result)
           {:noreply, state}
         end
     end
@@ -252,9 +251,9 @@ defmodule EvoGit.AgentScheduler do
 
       {agent_id, ref_to_agent} ->
         state = %{state | ref_to_agent: ref_to_agent}
-        {:ok, agent} = get_agent(agent_id)
+        {:ok, meta} = get_sched_meta(agent_id)
 
-        if reason == :normal or agent.result_sent do
+        if reason == :normal or meta.result_sent do
           state = recycle_agent(state, agent_id)
           state = process_queue(state)
           {:noreply, state}
@@ -307,22 +306,45 @@ defmodule EvoGit.AgentScheduler do
     }
   end
 
-  # --- ETS Helpers ---
+  # --- ETS Helpers (Agent State Table) ---
 
-  defp put_agent(agent_id, agent) do
-    :ets.insert(@ets_table, {agent_id, agent})
+  defp put_agent_state(agent_id, agent_state) do
+    :ets.insert(@agent_table, {agent_id, agent_state})
   end
 
-  defp delete_agent(agent_id) do
-    :ets.delete(@ets_table, agent_id)
+  defp delete_agent_state(agent_id) do
+    :ets.delete(@agent_table, agent_id)
+  end
+
+  # --- ETS Helpers (Scheduler Metadata Table) ---
+
+  defp get_sched_meta(agent_id) do
+    case :ets.lookup(@sched_table, agent_id) do
+      [{^agent_id, %SchedMeta{} = meta}] -> {:ok, meta}
+      [] -> :error
+    end
+  end
+
+  defp put_sched_meta(agent_id, meta) do
+    :ets.insert(@sched_table, {agent_id, meta})
+  end
+
+  defp delete_sched_meta(agent_id) do
+    :ets.delete(@sched_table, agent_id)
   end
 
   defp find_waiting_agent_with_worktree do
+    # Use a plain map with __struct__ for the ETS match spec — struct literals
+    # require all @enforce_keys which doesn't work in match patterns.
     match_spec = [
-      {{:"$1", %{status: :waiting, worktree: :"$2"}}, [{:"/=", :"$2", nil}], [{{:"$1", :"$2"}}]}
+      {
+        {:"$1", %{__struct__: SchedMeta, status: :waiting, worktree: :"$2"}},
+        [{:"/=", :"$2", nil}],
+        [{{:"$1", :"$2"}}]
+      }
     ]
 
-    case :ets.select(@ets_table, match_spec, 1) do
+    case :ets.select(@sched_table, match_spec, 1) do
       {[{agent_id, worktree}], _cont} -> {agent_id, worktree}
       :"$end_of_table" -> nil
     end
@@ -343,36 +365,31 @@ defmodule EvoGit.AgentScheduler do
 
     event_sink =
       if is_nil(event_sink) and parent_id do
-        case get_agent(parent_id) do
-          {:ok, parent_agent} -> parent_agent.event_sink
+        case get_agent_state(parent_id) do
+          {:ok, %{event_sink: sink}} -> sink
           _ -> nil
         end
       else
         event_sink
       end
 
-    agent = %{
+    # Agent state table: live spatial/temporal state for the agent process
+    put_agent_state(id, %AgentState{
+      context_node: spec.context_node,
+      phylo_node: nil,
+      event_sink: event_sink
+    })
+
+    # Scheduler metadata table: scheduling bookkeeping
+    put_sched_meta(id, %SchedMeta{
       id: id,
       depth: depth,
       status: :pending,
-      worktree: nil,
-      task_ref: nil,
       from: from,
       parent_id: parent_id,
-      event_sink: event_sink,
-      spec: spec,
-      retries: 0,
-      result_sent: false,
-      # Sub-agent tracking (used when this agent is a parent)
-      sub_agent_from: nil,
-      pending_sub_agents: MapSet.new(),
-      sub_agent_results: %{},
-      # Core state (populated on dispatch)
-      context_node: spec.context_node,
-      phylo_node: nil
-    }
+      spec: spec
+    })
 
-    put_agent(id, agent)
     state = %{state | next_agent_id: id + 1}
     {id, state}
   end
@@ -380,9 +397,9 @@ defmodule EvoGit.AgentScheduler do
   # --- Dispatch ---
 
   defp try_dispatch(%{available_worktrees: [wt | rest]} = state, agent_id) do
-    {:ok, agent} = get_agent(agent_id)
-    retries = agent.retries
-    spec = agent.spec
+    {:ok, meta} = get_sched_meta(agent_id)
+    retries = meta.retries
+    spec = meta.spec
 
     # Prepare the worktree: clean and checkout to the agent's temporal state
     commit_sha = spec.phylo_node.current_commit
@@ -399,7 +416,7 @@ defmodule EvoGit.AgentScheduler do
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
-        Process.put(:evogit_agent_depth, agent.depth)
+        Process.put(:evogit_agent_depth, meta.depth)
 
         if retries > 0 do
           Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
@@ -409,13 +426,16 @@ defmodule EvoGit.AgentScheduler do
         spec.agent_module.run(spec.objective)
       end)
 
-    # Update agent record in ETS with worktree assignment and core state
-    put_agent(agent_id, %{
-      agent
+    # Update agent state with worktree-bound phylo_node
+    {:ok, agent_state} = get_agent_state(agent_id)
+    put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
+
+    # Update scheduler metadata with worktree assignment and running status
+    put_sched_meta(agent_id, %{
+      meta
       | status: :running,
         worktree: wt,
-        task_ref: task.ref,
-        phylo_node: wt_phylo_node
+        task_ref: task.ref
     })
 
     %{
@@ -443,8 +463,8 @@ defmodule EvoGit.AgentScheduler do
           "AgentScheduler: Reclaiming worktree #{worktree} from waiting agent #{donor_id}"
         )
 
-        {:ok, donor} = get_agent(donor_id)
-        put_agent(donor_id, %{donor | worktree: nil})
+        {:ok, donor} = get_sched_meta(donor_id)
+        put_sched_meta(donor_id, %{donor | worktree: nil})
         {:ok, worktree, state}
 
       nil ->
@@ -471,13 +491,13 @@ defmodule EvoGit.AgentScheduler do
   # --- Sub-Agent Result Tracking ---
 
   defp store_sub_result(parent_id, sub_id, result) do
-    {:ok, parent} = get_agent(parent_id)
+    {:ok, parent} = get_sched_meta(parent_id)
     results = Map.put(parent.sub_agent_results, sub_id, result)
-    put_agent(parent_id, %{parent | sub_agent_results: results})
+    put_sched_meta(parent_id, %{parent | sub_agent_results: results})
   end
 
   defp maybe_resume_parent(state, parent_id) do
-    {:ok, parent} = get_agent(parent_id)
+    {:ok, parent} = get_sched_meta(parent_id)
     pending = parent.pending_sub_agents
 
     all_done? =
@@ -491,7 +511,7 @@ defmodule EvoGit.AgentScheduler do
 
       GenServer.reply(parent.sub_agent_from, results)
 
-      put_agent(parent_id, %{
+      put_sched_meta(parent_id, %{
         parent
         | status: :running,
           sub_agent_from: nil,
@@ -508,47 +528,52 @@ defmodule EvoGit.AgentScheduler do
   # --- Agent Lifecycle ---
 
   defp recycle_agent(state, agent_id) do
-    {:ok, agent} = get_agent(agent_id)
+    {:ok, meta} = get_sched_meta(agent_id)
 
     state =
-      if agent.worktree do
-        reset_worktree(agent.worktree, state.repo_root, state.base_sha)
-        %{state | available_worktrees: [agent.worktree | state.available_worktrees]}
+      if meta.worktree do
+        reset_worktree(meta.worktree, state.repo_root, state.base_sha)
+        %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
       else
         state
       end
 
-    delete_agent(agent_id)
+    delete_agent_state(agent_id)
+    delete_sched_meta(agent_id)
     state
   end
 
   defp handle_agent_crash(state, agent_id, reason) do
-    {:ok, agent} = get_agent(agent_id)
+    {:ok, meta} = get_sched_meta(agent_id)
 
     Logger.error(
       "AgentScheduler: Agent #{agent_id} crashed: #{inspect(reason)}. " <>
-        "Retry #{agent.retries}/#{state.max_retries}"
+        "Retry #{meta.retries}/#{state.max_retries}"
     )
 
-    if agent.worktree do
-      reset_worktree(agent.worktree, state.repo_root, state.base_sha)
+    if meta.worktree do
+      reset_worktree(meta.worktree, state.repo_root, state.base_sha)
     end
 
-    if agent.retries < state.max_retries do
+    if meta.retries < state.max_retries do
       state =
-        if agent.worktree do
-          %{state | available_worktrees: [agent.worktree | state.available_worktrees]}
+        if meta.worktree do
+          %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
         else
           state
         end
 
-      put_agent(agent_id, %{
-        agent
-        | retries: agent.retries + 1,
+      # Reset scheduler metadata for retry
+      put_sched_meta(agent_id, %{
+        meta
+        | retries: meta.retries + 1,
           worktree: nil,
-          task_ref: nil,
-          phylo_node: nil
+          task_ref: nil
       })
+
+      # Reset agent state phylo_node (will be re-set on dispatch)
+      {:ok, agent_state} = get_agent_state(agent_id)
+      put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil})
 
       state = try_dispatch(state, agent_id)
       state = process_queue(state)
@@ -560,21 +585,22 @@ defmodule EvoGit.AgentScheduler do
       Logger.error("AgentScheduler: #{msg}")
 
       state =
-        if agent.worktree do
-          %{state | available_worktrees: [agent.worktree | state.available_worktrees]}
+        if meta.worktree do
+          %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
         else
           state
         end
 
-      delete_agent(agent_id)
+      delete_agent_state(agent_id)
+      delete_sched_meta(agent_id)
 
-      if agent.parent_id do
-        store_sub_result(agent.parent_id, agent_id, {:error, :max_retries_exceeded})
-        state = maybe_resume_parent(state, agent.parent_id)
+      if meta.parent_id do
+        store_sub_result(meta.parent_id, agent_id, {:error, :max_retries_exceeded})
+        state = maybe_resume_parent(state, meta.parent_id)
         state = process_queue(state)
         {:noreply, state}
       else
-        GenServer.reply(agent.from, {:error, :max_retries_exceeded})
+        GenServer.reply(meta.from, {:error, :max_retries_exceeded})
         state = process_queue(state)
         {:noreply, state}
       end
