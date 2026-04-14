@@ -29,28 +29,24 @@ defmodule EvoGit.Runtime.Genesis do
           Prompts.genesis_existing_codebase(root_prompt)
         end
 
+      phylo_node = PhyloGraphNode.new(repo_path, head_sha)
+      {:ok, context_node} = ContextNode.load(".", repo_path)
+
       result =
-        AgentScheduler.run_agent(fn worktree_path ->
-          Git.clean(worktree_path)
-          Git.checkout(worktree_path, head_sha)
-
-          phylo_node = PhyloGraphNode.new(worktree_path, head_sha)
-          {:ok, context_node} = ContextNode.load(".", worktree_path)
-
-          state = %{context_node: context_node, phylo_node: phylo_node}
-
-          EvoGit.Task.mutate(state, objective, Keyword.put(opts, :agent_module, agent_module))
-        end)
+        AgentScheduler.run_agent(
+          context_node,
+          phylo_node,
+          agent_module,
+          objective,
+          caller_pid: Keyword.get(opts, :caller_pid, self())
+        )
 
       case result do
-        {:ok, %{phylo_node: updated_node}, _agent_output} ->
-          final_sha = updated_node.current_commit
+        {:ok, _agent_output} ->
+          {:ok, final_sha} = Git.rev_parse(repo_path)
 
-          Logger.info(
-            "Genesis: Evolution complete. Updating main repository to #{String.slice(final_sha, 0, 7)}"
-          )
+          Logger.info("Genesis: Evolution complete. Final SHA: #{String.slice(final_sha, 0, 7)}")
 
-          Git.reset_hard(repo_path, final_sha)
           {:ok, final_sha}
 
         error ->
@@ -83,8 +79,6 @@ defmodule EvoGit.Runtime.Genesis do
   end
 
   defp new_codebase?(repo_path) do
-    # A codebase is considered new if it has almost no files tracked/present
-    # Ignore .git and README.md
     files =
       case File.ls(repo_path) do
         {:ok, items} -> items -- [".git", "README.md"]

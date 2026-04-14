@@ -13,35 +13,31 @@ defmodule EvoGit.Runtime.Evolution do
     with :ok <- ensure_repo(repo_path),
          {:ok, current_sha} <- PhyloGraphNode.current_head(repo_path) do
       # 1. Diagnosis
-      # Create a temporary node for diagnosis representing the main repo state
       current_node = PhyloGraphNode.new(repo_path, current_sha)
       target_path = EvoGit.Task.diagnose(current_node, objective, opts)
 
       Logger.info("Evolution: Diagnosed target path: #{target_path}")
 
-      # 2. Dispatch (Single Agent)
-      case AgentScheduler.run_agent(fn worktree_path ->
-             # Ensure worktree is at the correct commit before ContextNode.load
-             Git.clean(worktree_path)
-             Git.checkout(worktree_path, current_sha)
+      # 2. Dispatch via structured AgentScheduler API
+      phylo_node = PhyloGraphNode.new(repo_path, current_sha)
+      {:ok, context_node} = ContextNode.load(target_path, repo_path)
 
-             phylo_node = PhyloGraphNode.new(worktree_path, current_sha)
+      agent_module = Keyword.get(opts, :agent_module, EvoGit.Agent.Generalist)
 
-             # ContextNode.load expects a relative path
-             {:ok, context_node} = ContextNode.load(target_path, worktree_path)
-
-             state = %{context_node: context_node, phylo_node: phylo_node}
-
-             EvoGit.Task.mutate(state, objective, opts)
-           end) do
-        {:ok, %{phylo_node: updated_node}, _agent_output} ->
-          final_sha = updated_node.current_commit
+      case AgentScheduler.run_agent(
+             context_node,
+             phylo_node,
+             agent_module,
+             objective,
+             caller_pid: Keyword.get(opts, :caller_pid, self())
+           ) do
+        {:ok, _agent_output} ->
+          {:ok, final_sha} = Git.rev_parse(repo_path)
 
           Logger.info(
-            "Evolution: Evolution successful. Updating main repository to #{String.slice(final_sha, 0, 7)}"
+            "Evolution: Evolution successful. Final SHA: #{String.slice(final_sha, 0, 7)}"
           )
 
-          Git.reset_hard(repo_path, final_sha)
           {:ok, final_sha}
 
         error ->
@@ -62,7 +58,6 @@ defmodule EvoGit.Runtime.Evolution do
       Logger.info("Evolution: Initializing Git repository at #{repo_path}...")
       File.mkdir_p!(repo_path)
       Git.init(repo_path)
-      # Create initial commit to allow branching
       File.write!(Path.join(repo_path, "README.md"), "")
       Git.add(repo_path, "README.md")
 
