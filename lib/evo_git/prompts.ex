@@ -56,7 +56,7 @@ defmodule EvoGit.Prompts do
     Important Constraints: Do NOT implement the actual code or content of any source files yet. Do NOT modify any files or directories outside of '#{node_path}'.
     """
 
-    # If we are at the root level, we must instructure the LLM to init .gitignore
+    # If we are at the root level, we must instruct the LLM to init .gitignore
     if node_path == "." do
       base_prompt <>
         "\n" <>
