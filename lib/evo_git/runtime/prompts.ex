@@ -1,4 +1,4 @@
-defmodule EvoGit.Prompts do
+defmodule EvoGit.Runtime.Prompts do
   @moduledoc """
   Centralized repository for all LLM prompts used in EvoGit.
   """
@@ -97,6 +97,38 @@ defmodule EvoGit.Prompts do
     Target File: '#{node_path}'.
     Task: Read the header comment, docstring, or module documentation at the top of this file (located at '#{node_path}').
     Based on that context and intended purpose, implement the complete code logic for this file. Ensure the implementation fully satisfies the stated responsibilities.
+    """
+  end
+
+  @doc """
+  Genesis Stage: Mode B (New Codebase) Prompt.
+  """
+  def genesis_new_codebase(objective) do
+    """
+    Objective: #{objective}
+    The goal is to initialize the codebase from scratch and establish a context tree.
+    The codebase is represented as a recursive tree where every directory node must contain a 'CONTEXT.md' file.
+    This file acts as the directory's schema, defining its Intent, API Surface, and Constraints.
+
+    1. Interpret the objective and draft the initial architectural plan in the root CONTEXT.md.
+    2. Recursively spawn sub-agents to physically create the planned directory structures, child CONTEXT.md files, and initial leaf-node code files.
+    3. Ensure the generated structure finalizes efficiently and is fully documented.
+    """
+  end
+
+  @doc """
+  Genesis Stage: Mode A (Existing Codebase) Prompt.
+  """
+  def genesis_existing_codebase(objective) do
+    """
+    Objective: #{objective}
+    The goal is to analyze the existing codebase and initialize a context tree.
+    The codebase is represented as a recursive tree where every directory node must contain a 'CONTEXT.md' file.
+    This file acts as the directory's schema, defining its Intent, API Surface, and Constraints.
+
+    1. Spawn sub-agents for child directories/files to extract existing context and build the semantic tree structure.
+    2. Update CONTEXT.md files to reflect the extracted context using the rewrite_dir_context tool.
+    3. Aggregate the context and ensure convergence (maximum 3 passes per node).
     """
   end
 end
