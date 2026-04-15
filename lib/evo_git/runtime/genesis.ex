@@ -6,7 +6,7 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
   alias EvoGit.Agent.CodebaseArchitect
-  alias EvoGit.Agent.CodebaseInvestigator
+  alias EvoGit.Agent.ContextExtractor
   alias EvoGit.Runtime.Prompts
   require Logger
 
@@ -21,7 +21,7 @@ defmodule EvoGit.Runtime.Genesis do
       mode = if is_new, do: "Mode B (New Codebase)", else: "Mode A (Existing Codebase)"
       Logger.info("Genesis: Detected #{mode}")
 
-      agent_module = if is_new, do: CodebaseArchitect, else: CodebaseInvestigator
+      agent_module = if is_new, do: CodebaseArchitect, else: ContextExtractor
 
       objective =
         if is_new do

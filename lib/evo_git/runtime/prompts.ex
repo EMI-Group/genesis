@@ -126,7 +126,7 @@ defmodule EvoGit.Runtime.Prompts do
     The codebase is represented as a recursive tree where every directory node must contain a 'CONTEXT.md' file.
     This file acts as the directory's schema, defining its Intent, API Surface, and Constraints.
 
-    1. Spawn sub-agents for child directories/files to extract existing context and build the semantic tree structure.
+    1. Spawn sub-agents using `subagent_context_extractor` for child directories/files to extract existing context and build the semantic tree structure.
     2. Update CONTEXT.md files to reflect the extracted context using the rewrite_dir_context tool.
     3. Aggregate the context and ensure convergence (maximum 3 passes per node).
     """
