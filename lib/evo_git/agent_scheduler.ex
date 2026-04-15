@@ -67,9 +67,14 @@ defmodule EvoGit.AgentScheduler do
   Returns `{:error, :max_depth_exceeded}` if the calling agent has reached
   the maximum recursion depth and cannot spawn further sub-agents.
 
+  Returns `{:error, :path_ignored}` if the calling agent is in a directory
+  that is ignored by git (e.g., .venv, node_modules). This prevents infinite
+  recursion in large ignored folders.
+
   Each spec must be an `%AgentSpec{}` struct.
   """
-  @spec spawn_sub_agents([AgentSpec.t()], timeout()) :: [term()] | {:error, :max_depth_exceeded}
+  @spec spawn_sub_agents([AgentSpec.t()], timeout()) ::
+          [term()] | {:error, :max_depth_exceeded | :path_ignored}
   def spawn_sub_agents(specs, timeout \\ :infinity) do
     parent_id = current_agent_id()
 
@@ -186,6 +191,23 @@ defmodule EvoGit.AgentScheduler do
     state = ensure_initialized(state)
     {:ok, parent} = get_sched_meta(parent_id)
 
+    # Check if parent is in an ignored folder
+    case get_agent_state(parent_id) do
+      {:ok, agent_state} when is_struct(agent_state) ->
+        if EvoGit.Core.ContextNode.is_ignored?(agent_state.context_node) do
+          Logger.warning(
+            "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id} " <>
+              "in ignored path '#{agent_state.context_node.path}'"
+          )
+
+          {:reply, {:error, :path_ignored}, state}
+        end
+
+      _ ->
+        # If we can't get agent state, proceed with spawn (backward compatibility)
+        :ok
+    end
+
     if parent.depth >= state.max_depth do
       Logger.warning(
         "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id} " <>
@@ -198,7 +220,10 @@ defmodule EvoGit.AgentScheduler do
       parent = auto_commit_fallback(parent_id, parent)
 
       # Mark parent as :waiting
-      Logger.info("AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} sub-agents")
+      Logger.info(
+        "AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} sub-agents"
+      )
+
       put_sched_meta(parent_id, %{parent | status: :waiting})
 
       # Register each sub-agent (depth = parent.depth + 1)

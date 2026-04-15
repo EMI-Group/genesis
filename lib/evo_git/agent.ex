@@ -411,10 +411,20 @@ defmodule EvoGit.Agent do
         [result] = EvoGit.AgentScheduler.spawn_sub_agents([sub_spec])
 
         case result do
-          {:ok, text} -> text
-          {:error, reason} -> "Error: Sub-agent failed: #{inspect(reason)}"
-          text when is_binary(text) -> text
-          other -> inspect(other)
+          {:ok, text} ->
+            text
+
+          {:error, :path_ignored} ->
+            "Error: Cannot spawn sub-agent in an ignored folder. The current working directory is ignored by git."
+
+          {:error, reason} ->
+            "Error: Sub-agent failed: #{inspect(reason)}"
+
+          text when is_binary(text) ->
+            text
+
+          other ->
+            inspect(other)
         end
       end
 
