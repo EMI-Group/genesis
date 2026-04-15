@@ -176,6 +176,7 @@ defmodule EvoGit.AgentScheduler do
   def handle_call({:run_agent, spec}, from, state) do
     state = ensure_initialized(state)
     {agent_id, state} = register_agent(state, spec, from, _parent_id = nil, _depth = 0)
+    Logger.info("AgentScheduler: Spawning top-level agent #{agent_id}")
     state = try_dispatch(state, agent_id)
     {:noreply, state}
   end
@@ -197,6 +198,7 @@ defmodule EvoGit.AgentScheduler do
       parent = auto_commit_fallback(parent_id, parent)
 
       # Mark parent as :waiting
+      Logger.info("AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} sub-agents")
       put_sched_meta(parent_id, %{parent | status: :waiting})
 
       # Register each sub-agent (depth = parent.depth + 1)
@@ -428,6 +430,8 @@ defmodule EvoGit.AgentScheduler do
         if retries > 0 do
           Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
           Process.sleep(30_000 * retries)
+        else
+          Logger.info("AgentScheduler: Agent #{agent_id} starting execution in worktree #{wt}")
         end
 
         spec.agent_module.run(spec.objective)
@@ -459,6 +463,7 @@ defmodule EvoGit.AgentScheduler do
         try_dispatch(state, agent_id)
 
       :none ->
+        Logger.info("AgentScheduler: Queueing agent #{agent_id} (no available worktrees)")
         %{state | queue: :queue.in(agent_id, state.queue)}
     end
   end
@@ -565,6 +570,7 @@ defmodule EvoGit.AgentScheduler do
       end)
 
     if all_done? do
+      Logger.info("AgentScheduler: Agent #{parent_id} resuming, all sub-agents completed")
       ordered_ids = pending |> MapSet.to_list() |> Enum.sort()
       results = Enum.map(ordered_ids, &parent.sub_agent_results[&1])
 
