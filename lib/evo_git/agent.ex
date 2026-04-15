@@ -244,7 +244,7 @@ defmodule EvoGit.Agent do
       defp build_dynamic_context(state) do
         case EvoGit.Core.ContextNode.build_context(state.node_path, state.repo_path) do
           {:ok, context} -> context
-          {:error, _} -> "Current Target Node: '#{state.node_path}'."
+          {:error, _} -> "Current Path: '#{state.node_path}'."
         end
       end
 
