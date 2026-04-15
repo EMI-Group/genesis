@@ -122,8 +122,9 @@ defmodule EvoGit.Core.ContextNode do
   def build_context(relative_path, repo_path) do
     location_info =
       """
-      Current Target Node: '#{relative_path}'.
-      IMPORTANT: Your working directory is the repository root ('.'). All file paths provided to tools MUST be relative to the repository root. For example, if your target node is 'src/foo', you must write to 'src/foo/CONTEXT.md', NOT just 'CONTEXT.md'. If you need to run shell commands inside your target directory, you must `cd` into it first (e.g., `cd src/foo && npm init -y`).
+      Current Path: '#{relative_path}'.
+      IMPORTANT: Your working directory is the repository root ('.').
+      All file paths provided to tools MUST be relative to the repository root.
       """
       |> String.trim_trailing()
 

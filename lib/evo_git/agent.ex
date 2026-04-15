@@ -16,6 +16,12 @@ defmodule EvoGit.Agent do
   Scheduling metadata (status, worktree assignment, parent tracking) lives in
   a separate `:evogit_sched_meta` table owned by the scheduler — agents never
   read or write that table.
+
+  ## Prompting Rules
+  - **System Prompt:** Used STRICTLY to define the agent's behavior, rules, and persona.
+    It must not contain the objective or the context tree.
+  - **User Prompt:** The framework automatically injects the current Context Tree and
+    the user's objective (the query) as user prompts.
   """
 
   alias EvoGit.Core.ContextNode
@@ -150,9 +156,15 @@ defmodule EvoGit.Agent do
 
       defp do_turn(state) do
         dynamic_context = build_dynamic_context(state)
-        full_system_prompt = system_prompt() <> dynamic_context
 
-        context = ReqLLM.Context.new([ReqLLM.Context.system(full_system_prompt) | state.history])
+        context_msg = ReqLLM.Context.user("Current Context Tree:\n" <> dynamic_context)
+
+        context =
+          ReqLLM.Context.new([
+            ReqLLM.Context.system(system_prompt()),
+            context_msg
+            | state.history
+          ])
 
         tools = effective_tools(state)
 
@@ -422,6 +434,14 @@ defmodule EvoGit.Agent do
         end
       end
 
+      @doc """
+      Returns the system prompt that defines the agent's core behavior, persona, and rules.
+
+      IMPORTANT: The system prompt MUST NOT contain dynamic state, the context tree,
+      or the specific objective/query. System prompts are strictly for defining
+      the agent's behavior. The objective and context tree are automatically
+      provided to the agent as user prompts.
+      """
       def system_prompt, do: ""
 
       # Give adopting modules default implementations they can override
