@@ -143,7 +143,10 @@ defmodule EvoGit.CLI do
   end
 
   defp confirm_non_empty_dir do
-    response = IO.gets("Warning: The target directory is not empty. Genesis in 'new' mode may overwrite files. Continue? [y/N] ")
+    response =
+      IO.gets(
+        "Warning: The target directory is not empty. Genesis in 'new' mode may overwrite files. Continue? [y/N] "
+      )
 
     if response do
       answer = response |> String.trim() |> String.downcase()

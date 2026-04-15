@@ -5,11 +5,48 @@ defmodule EvoGit.Core.ContextNode do
   @enforce_keys [:path, :type, :repo]
   defstruct [:path, :type, :repo]
 
+  alias EvoGit.Adapters.Git
+
   @type t :: %__MODULE__{
           path: String.t(),
           type: :directory | :file,
           repo: String.t()
         }
+
+  @doc """
+  Checks if the given node's path is ignored by git (according to .gitignore).
+  Returns true if the path or any parent directory is ignored.
+  """
+  @spec is_ignored?(t()) :: boolean()
+  def is_ignored?(%__MODULE__{path: path, repo: repo_path}) do
+    check_path_ignored(path, repo_path)
+  end
+
+  # Check if a path (and all its parent components) is ignored by git
+  defp check_path_ignored(path, repo_path) when is_binary(path) and path != "." do
+    abs_path = Path.expand(path, repo_path)
+
+    # First, check the current path
+    case Git.check_ignore(repo_path, [abs_path]) do
+      {:ok, [_ | _]} ->
+        true
+
+      {:ok, []} ->
+        # If current path is not ignored, check parent directory recursively
+        parent = Path.dirname(path)
+
+        if parent == "." do
+          false
+        else
+          check_path_ignored(parent, repo_path)
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp check_path_ignored(_, _), do: false
 
   @doc """
   Loads a ContextNode from a given relative path within a repository.
