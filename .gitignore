@@ -24,3 +24,5 @@ evo_git-*.tar
 
 # EvoGit runtime artifacts
 /.evogit/
+# Ignore local config files
+*.local.exs
