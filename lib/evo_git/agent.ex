@@ -47,7 +47,9 @@ defmodule EvoGit.Agent do
       @complete_tool "complete_task"
 
       defp current_model do
-        Application.get_env(:evo_git, :llm_model, "google:gemini-3.1-flash-lite-preview")
+        model = Application.get_env(:evo_git, :llm_model, "google:gemini-3.1-flash-lite-preview")
+        Logger.debug("Using LLM model: #{model}")
+        model
       end
 
       # --- Public API ---
