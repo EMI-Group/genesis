@@ -14,6 +14,10 @@ defmodule EvoDashWeb.DashboardLive do
           Manage your evolutionary software development tasks
         </:subtitle>
         <:actions>
+          <a href="/agents" class="btn btn-sm btn-ghost">
+            <.icon name="hero-server" class="size-4" />
+            Agents
+          </a>
           <a href="https://github.com/your-repo/evogit" class="btn btn-sm btn-ghost" target="_blank">
             <.icon name="hero-document-text" class="size-4" />
             Docs
