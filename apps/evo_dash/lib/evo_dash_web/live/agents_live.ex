@@ -101,10 +101,10 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   # Helper functions for the template
-  defp status_color(:pending), do: "text-gray-500"
-  defp status_color(:running), do: "text-green-500"
-  defp status_color(:waiting), do: "text-yellow-500"
-  defp status_color(_), do: "text-gray-500"
+  defp status_color(:pending), do: "text-gray-500 dark:text-gray-400"
+  defp status_color(:running), do: "text-green-500 dark:text-green-400"
+  defp status_color(:waiting), do: "text-yellow-500 dark:text-yellow-400"
+  defp status_color(_), do: "text-gray-500 dark:text-gray-400"
 
   defp status_icon(:pending), do: "hero-clock"
   defp status_icon(:running), do: "hero-play-circle"
