@@ -234,7 +234,7 @@ defmodule EvoDashWeb.DashboardComponents do
               </p>
               <div class="flex items-center gap-4 mt-2 text-xs text-base-content/60">
                 <span><.icon name="hero-clock" class="size-3 inline" /> Started: <%= format_datetime(@task.started_at) %></span>
-                <%= if @task.finished_at do %>
+                <%= if Map.get(@task, :finished_at) do %>
                   <span><.icon name="hero-check-circle" class="size-3 inline" /> Finished: <%= format_datetime(@task.finished_at) %></span>
                 <% end %>
               </div>
@@ -273,7 +273,7 @@ defmodule EvoDashWeb.DashboardComponents do
               <h4 class="text-sm font-semibold mb-2">Options</h4>
               <pre class="text-xs bg-base-200 p-2 rounded overflow-x-auto"><%= inspect(@task.opts, pretty: true) %></pre>
             </div>
-            <%= if @task.result do %>
+            <%= if Map.get(@task, :result) do %>
               <div>
                 <h4 class="text-sm font-semibold mb-2">Result</h4>
                 <pre class="text-xs bg-base-200 p-2 rounded overflow-x-auto"><%= inspect(@task.result, pretty: true) %></pre>
