@@ -3,6 +3,7 @@ defmodule EvoDashWeb.AgentsLive do
 
   @agent_state_table :evogit_agent_state
   @sched_meta_table :evogit_sched_meta
+  @history_table :evogit_agent_history
 
   @impl true
   def mount(_params, _session, socket) do
@@ -53,6 +54,7 @@ defmodule EvoDashWeb.AgentsLive do
     |> Enum.map(fn {id, meta} ->
       agent_state = Map.get(agent_states, id)
       children = find_children(id, sched_metas)
+      history = load_agent_history(id)
 
       %{
         id: id,
@@ -71,10 +73,21 @@ defmodule EvoDashWeb.AgentsLive do
         pending_sub_agents: MapSet.to_list(meta.pending_sub_agents),
         sub_agent_results: meta.sub_agent_results,
         task_ref: meta.task_ref,
-        result_sent: meta.result_sent
+        result_sent: meta.result_sent,
+        history: history
       }
     end)
     |> Enum.sort_by(&{&1.depth, &1.id})
+  end
+
+  defp load_agent_history(agent_id) do
+    case :ets.whereis(@history_table) do
+      :undefined -> []
+      _ -> :ets.tab2list(@history_table)
+    end
+    |> Enum.filter(fn {id, _entry} -> id == agent_id end)
+    |> Enum.map(fn {_id, entry} -> entry end)
+    |> Enum.sort_by(& &1.timestamp)
   end
 
   defp find_children(parent_id, sched_metas) do
@@ -93,18 +106,31 @@ defmodule EvoDashWeb.AgentsLive do
   defp status_color(:waiting), do: "text-yellow-500"
   defp status_color(_), do: "text-gray-500"
 
-  defp status_bg(:pending), do: "bg-gray-100 dark:bg-gray-800"
-  defp status_bg(:running), do: "bg-green-100 dark:bg-green-900"
-  defp status_bg(:waiting), do: "bg-yellow-100 dark:bg-yellow-900"
-  defp status_bg(_), do: "bg-gray-100 dark:bg-gray-800"
-
-  defp status_border(:pending), do: "border-gray-300"
-  defp status_border(:running), do: "border-green-500"
-  defp status_border(:waiting), do: "border-yellow-500"
-  defp status_border(_), do: "border-gray-300"
-
   defp status_icon(:pending), do: "hero-clock"
   defp status_icon(:running), do: "hero-play-circle"
   defp status_icon(:waiting), do: "hero-pause-circle"
   defp status_icon(_), do: "hero-question-mark-circle"
+
+  defp history_entry_icon("USER_PROMPT"), do: "hero-chat-bubble-left-ellipsis"
+  defp history_entry_icon("CONTEXT_TREE"), do: "hero-squares-2x2"
+  defp history_entry_icon("THOUGHT_CHUNK"), do: "hero-light-bulb"
+  defp history_entry_icon("TOOL_CALL_START"), do: "hero-cog-6-tooth"
+  defp history_entry_icon("TOOL_CALL_END"), do: "hero-check-circle"
+  defp history_entry_icon("COMPLETE"), do: "hero-flag-checkered"
+  defp history_entry_icon("ERROR"), do: "hero-exclamation-triangle"
+  defp history_entry_icon(_), do: "hero-document-text"
+
+  defp history_entry_color("USER_PROMPT"), do: "text-blue-600 dark:text-blue-400"
+  defp history_entry_color("CONTEXT_TREE"), do: "text-purple-600 dark:text-purple-400"
+  defp history_entry_color("THOUGHT_CHUNK"), do: "text-yellow-600 dark:text-yellow-400"
+  defp history_entry_color("TOOL_CALL_START"), do: "text-orange-600 dark:text-orange-400"
+  defp history_entry_color("TOOL_CALL_END"), do: "text-green-600 dark:text-green-400"
+  defp history_entry_color("COMPLETE"), do: "text-emerald-600 dark:text-emerald-400"
+  defp history_entry_color("ERROR"), do: "text-red-600 dark:text-red-400"
+  defp history_entry_color(_), do: "text-gray-600 dark:text-gray-400"
+
+  defp format_timestamp(timestamp_ms) do
+    datetime = DateTime.from_unix!(timestamp_ms, :millisecond)
+    Calendar.strftime(datetime, "%H:%M:%S")
+  end
 end

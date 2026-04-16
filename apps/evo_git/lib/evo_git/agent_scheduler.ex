@@ -37,6 +37,7 @@ defmodule EvoGit.AgentScheduler do
   @default_max_depth 5
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
+  @history_table :evogit_agent_history
 
   # --- Client API ---
 
@@ -151,6 +152,7 @@ defmodule EvoGit.AgentScheduler do
   def init(opts) do
     :ets.new(@agent_table, [:named_table, :public, :set, read_concurrency: true])
     :ets.new(@sched_table, [:named_table, :public, :set, read_concurrency: true])
+    :ets.new(@history_table, [:named_table, :public, :bag, read_concurrency: true])
 
     max_concurrency =
       Keyword.get(opts, :max_concurrency) || Application.get_env(:evo_git, :max_concurrency, 3)
@@ -365,6 +367,47 @@ defmodule EvoGit.AgentScheduler do
 
   defp delete_sched_meta(agent_id) do
     :ets.delete(@sched_table, agent_id)
+  end
+
+  # --- ETS Helpers (Agent History Table) ---
+
+  @doc """
+  Appends a history entry to the agent's history.
+  The history table is a bag to allow multiple entries per agent.
+  """
+  @spec append_history(pos_integer(), String.t(), map()) :: :ok
+  def append_history(agent_id, type, data) do
+    entry = %{
+      timestamp: System.monotonic_time(:millisecond),
+      type: type,
+      data: data
+    }
+    :ets.insert(@history_table, {agent_id, entry})
+    :ok
+  end
+
+  @doc """
+  Retrieves all history entries for a given agent, sorted by timestamp.
+  Returns an empty list if no history exists.
+  """
+  @spec get_history(pos_integer()) :: [map()]
+  def get_history(agent_id) do
+    case :ets.lookup(@history_table, agent_id) do
+      [] -> []
+      entries ->
+        entries
+        |> Enum.map(fn {_id, entry} -> entry end)
+        |> Enum.sort_by(& &1.timestamp)
+    end
+  end
+
+  @doc """
+  Clears all history entries for a given agent.
+  """
+  @spec clear_history(pos_integer()) :: :ok
+  def clear_history(agent_id) do
+    :ets.delete(@history_table, agent_id)
+    :ok
   end
 
   defp find_waiting_agent_with_worktree do
@@ -630,6 +673,7 @@ defmodule EvoGit.AgentScheduler do
 
     delete_agent_state(agent_id)
     delete_sched_meta(agent_id)
+    clear_history(agent_id)
     state
   end
 
@@ -683,6 +727,7 @@ defmodule EvoGit.AgentScheduler do
 
       delete_agent_state(agent_id)
       delete_sched_meta(agent_id)
+      clear_history(agent_id)
 
       if meta.parent_id do
         store_sub_result(meta.parent_id, agent_id, {:error, :max_retries_exceeded})
