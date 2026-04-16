@@ -7,7 +7,15 @@ defmodule EvoGit.Umbrella.MixProject do
       version: "0.1.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      listeners: [Phoenix.CodeReloader]
+      listeners: [Phoenix.CodeReloader],
+      releases: [
+        evogit: [
+          applications: [
+            evo_git: :permanent,
+            evo_dash: :permanent
+          ]
+        ]
+      ]
     ]
   end
 
