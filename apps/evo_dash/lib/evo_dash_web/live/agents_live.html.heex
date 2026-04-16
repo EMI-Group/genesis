@@ -213,6 +213,71 @@
                     <span class="text-sm text-base-content/50">None</span>
                   <% end %>
                 </div>
+
+                <!-- Chat History -->
+                <div class="mt-6">
+                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-2">
+                    Chat History / Session Memory
+                  </h4>
+                  <%= if agent.history && agent.history != [] do %>
+                    <div class="bg-base-200 rounded-lg max-h-96 overflow-y-auto">
+                      <div class="divide-y divide-base-300">
+                        <%= for entry <- agent.history do %>
+                          <div class="p-3 hover:bg-base-300/50">
+                            <div class="flex items-center gap-2 mb-1">
+                              <.icon
+                                name={history_entry_icon(entry.type)}
+                                class="size-4 shrink-0"
+                              />
+                              <span class={["text-xs font-semibold", history_entry_color(entry.type)]}>
+                                <%= entry.type %>
+                              </span>
+                              <span class="text-xs text-base-content/40 ml-auto">
+                                <%= format_timestamp(entry.timestamp) %>
+                              </span>
+                            </div>
+                            <%= case entry.type do %>
+                              <% "USER_PROMPT" -> %>
+                                <div class="text-sm mt-1 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
+                                  <%= entry.data.content %>
+                                </div>
+                              <% "THOUGHT_CHUNK" -> %>
+                                <div class="text-sm mt-1">
+                                  <%= entry.data.text %>
+                                </div>
+                              <% "TOOL_CALL_START" -> %>
+                                <div class="text-xs mt-1 bg-orange-50 dark:bg-orange-900/20 p-2 rounded">
+                                  <div class="font-semibold"><%= entry.data.name %></div>
+                                  <pre class="mt-1 overflow-x-auto"><%= inspect(entry.data.args, limit: :infinity) %></pre>
+                                </div>
+                              <% "COMPLETE" -> %>
+                                <div class="text-sm mt-1 bg-emerald-50 dark:bg-emerald-900/20 p-2 rounded">
+                                  <%= String.slice(entry.data.result, 0, 500) %><%= if String.length(entry.data.result) > 500, do: "..." %>
+                                </div>
+                              <% "ERROR" -> %>
+                                <div class="text-sm mt-1 bg-red-50 dark:bg-red-900/20 p-2 rounded text-red-700 dark:text-red-400">
+                                  <%= entry.data.error %>
+                                </div>
+                              <% "CONTEXT_TREE" -> %>
+                                <details class="text-xs mt-1">
+                                  <summary class="cursor-pointer text-purple-600 dark:text-purple-400">
+                                    View Context (Turn <%= entry.data.turn %>)
+                                  </summary>
+                                  <pre class="mt-2 bg-purple-50 dark:bg-purple-900/20 p-2 rounded overflow-x-auto"><%= entry.data.content %></pre>
+                                </details>
+                              <% _ -> %>
+                                <pre class="text-xs mt-1 overflow-x-auto"><%= inspect(entry.data, limit: :infinity) %></pre>
+                            <% end %>
+                          </div>
+                        <% end %>
+                      </div>
+                    </div>
+                  <% else %>
+                    <div class="text-sm text-base-content/50 bg-base-200 p-4 rounded-lg text-center">
+                      No history recorded yet
+                    </div>
+                  <% end %>
+                </div>
               </div>
             <% else %>
               <p class="text-base-content/50">Agent not found</p>

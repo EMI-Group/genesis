@@ -92,6 +92,9 @@ defmodule EvoGit.Agent do
           deadline: System.monotonic_time(:millisecond) + @timeout_ms
         }
 
+        # Log the initial user prompt to history
+        append_history(agent_id, "USER_PROMPT", %{content: query})
+
         loop(state)
       end
 
@@ -159,6 +162,16 @@ defmodule EvoGit.Agent do
       defp do_turn(state) do
         dynamic_context = build_dynamic_context(state)
 
+        # Log context tree to history (truncated for display)
+        context_preview =
+          if String.length(dynamic_context) > 1000 do
+            String.slice(dynamic_context, 0, 1000) <> "... (truncated)"
+          else
+            dynamic_context
+          end
+
+        append_history(state.agent_id, "CONTEXT_TREE", %{turn: state.turn, content: context_preview})
+
         context_msg = ReqLLM.Context.user("Current Context Tree:\n" <> dynamic_context)
 
         context =
@@ -191,6 +204,7 @@ defmodule EvoGit.Agent do
 
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
+            append_history(state.agent_id, "COMPLETE", %{result: final_result})
             {:ok, final_result}
 
           {:continue, tool_responses} ->
@@ -251,6 +265,9 @@ defmodule EvoGit.Agent do
       end
 
       defp stream_event(agent_id, type, data) do
+        # Also write to history ETS table for dashboard visualization
+        append_history(agent_id, type, data)
+
         case EvoGit.AgentScheduler.get_event_sink(agent_id) do
           pid when is_pid(pid) ->
             send(pid, {:agent_event, %{agent_id: agent_id, type: type, data: data}})
@@ -258,6 +275,10 @@ defmodule EvoGit.Agent do
           _ ->
             :ok
         end
+      end
+
+      defp append_history(agent_id, type, data) do
+        EvoGit.AgentScheduler.append_history(agent_id, type, data)
       end
 
       defp try_compress_chat(state) do
