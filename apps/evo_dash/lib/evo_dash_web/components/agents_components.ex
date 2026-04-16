@@ -1,5 +1,5 @@
 defmodule EvoDashWeb.AgentsComponents do
-  use Phoenix.Component
+  use EvoDashWeb, :html
 
   attr :agents, :list, required: true
   attr :parent_id, :any, default: nil
@@ -31,15 +31,15 @@ defmodule EvoDashWeb.AgentsComponents do
           <!-- Expand/collapse icon if has children -->
           <div class="w-5 flex items-center justify-center">
             <%= if agent.has_children do %>
-              <<.icon name="hero-chevron-right" class="size-3" />
+              <.icon name="hero-chevron-right" class="size-3" />
             <% else %>
-              <<.icon name="hero-minus" class="size-3 opacity-0" />
+              <.icon name="hero-minus" class="size-3 opacity-0" />
             <% end %>
           </div>
 
           <!-- Status icon -->
           <div class="w-6 h-6 rounded-full flex items-center justify-center">
-            <<.icon name={agent_status_icon(agent.status)} class={"size-4 #{agent_status_color(agent.status)}"} />
+            <.icon name={agent_status_icon(agent.status)} class={"size-4 #{agent_status_color(agent.status)}"} />
           </div>
 
           <!-- Agent info -->
