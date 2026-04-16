@@ -18,6 +18,7 @@ defmodule EvoDashWeb.Router do
     pipe_through :browser
 
     live "/", DashboardLive, :index
+    live "/agents", AgentsLive, :index
   end
 
   # Other scopes may use custom stacks.
