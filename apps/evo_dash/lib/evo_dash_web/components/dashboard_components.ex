@@ -1,5 +1,5 @@
 defmodule EvoDashWeb.DashboardComponents do
-  use Phoenix.Component
+  use EvoDashWeb, :html
 
   attr :path, :string, default: ""
   attr :prompt, :string, default: ""
@@ -323,10 +323,4 @@ defmodule EvoDashWeb.DashboardComponents do
 
   defp format_datetime(datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
   defp format_datetime(datetime, :time), do: datetime.time |> Time.to_string() |> String.slice(0..7)
-
-  defp icon(assigns) do
-    ~H"""
-    <span class={[@name, @class]} />
-    """
-  end
 end
