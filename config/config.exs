@@ -54,10 +54,9 @@ config :phoenix, :json_library, Jason
 config :evo_git,
   max_concurrency: 3,
   max_retries: 3,
-  # repo_path: nil,  # Will be set per-task
-  llm_model: nil
+  # repo_path: Will be set per-task
+  llm_model: "zai_coding_plan:glm-5"
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
-
