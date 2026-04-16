@@ -1,7 +1,7 @@
 defmodule EvoDash.TaskRegistry do
   @moduledoc """
   Registry for tracking running EvoGit tasks.
-  Tasks are identified by unique IDs and their state is persisted.
+  Tasks are identified by unique IDs and tracked in-memory via ETS.
   """
   use GenServer
 
@@ -42,12 +42,8 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def init(_opts) do
-    # Create ETS table for persistence across process restarts
+    # Create ETS table for in-memory task tracking
     :ets.new(@table_name, [:named_table, :public, :set])
-
-    # Load any persisted tasks
-    load_tasks_from_disk()
-
     {:ok, %{}}
   end
 
@@ -68,8 +64,6 @@ defmodule EvoDash.TaskRegistry do
     }
 
     :ets.insert(@table_name, {task_id, task})
-    save_tasks_to_disk()
-
     {:reply, {:ok, task}, state}
   end
 
@@ -96,7 +90,6 @@ defmodule EvoDash.TaskRegistry do
           Process.exit(pid, :cancelled)
           updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
           :ets.insert(@table_name, {task_id, updated})
-          save_tasks_to_disk()
           :ok
         else
           {:error, :not_running}
@@ -118,7 +111,6 @@ defmodule EvoDash.TaskRegistry do
           |> Map.put(:result, result)
           |> Map.put(:finished_at, DateTime.utc_now())
         :ets.insert(@table_name, {task_id, updated})
-        save_tasks_to_disk()
       _ -> :ok
     end
     {:noreply, state}
@@ -210,34 +202,4 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_info(_msg, state), do: {:noreply, state}
-
-  defp save_tasks_to_disk do
-    data = :ets.tab2list(@table_name)
-    path = get_persistence_path()
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, :erlang.term_to_binary(data))
-  end
-
-  defp load_tasks_from_disk do
-    path = get_persistence_path()
-    if File.exists?(path) do
-      case File.read!(path) |> :erlang.binary_to_term() do
-        data when is_list(data) ->
-          Enum.each(data, fn {id, task} ->
-            # Reset status of running tasks to failed
-            task = if task.status == :running do
-              %{task | status: :failed, finished_at: DateTime.utc_now(), result: {:error, "Interrupted"}}
-            else
-              task
-            end
-            :ets.insert(@table_name, {id, task})
-          end)
-        _ -> :ok
-      end
-    end
-  end
-
-  defp get_persistence_path do
-    Path.join([System.tmp_dir!(), "evo_dash", "tasks.dat"])
-  end
 end
