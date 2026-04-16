@@ -11,6 +11,7 @@ defmodule EvoDash.Application do
       EvoDashWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:evo_dash, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: EvoDash.PubSub},
+      EvoDash.TaskRegistry,
       # Start a worker by calling: EvoDash.Worker.start_link(arg)
       # {EvoDash.Worker, arg},
       # Start to serve requests, typically the last entry

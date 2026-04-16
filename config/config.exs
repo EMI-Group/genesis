@@ -51,7 +51,11 @@ config :logger, :default_formatter,
 config :phoenix, :json_library, Jason
 
 # Configures the application
-# config :evo_git, key: :value
+config :evo_git,
+  max_concurrency: 3,
+  max_retries: 3,
+  repo_path: nil,
+  llm_model: nil
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
