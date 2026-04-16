@@ -54,7 +54,7 @@ config :phoenix, :json_library, Jason
 config :evo_git,
   max_concurrency: 3,
   max_retries: 3,
-  repo_path: nil,
+  # repo_path: nil,  # Will be set per-task
   llm_model: nil
 
 # Import environment specific config. This must remain at the bottom

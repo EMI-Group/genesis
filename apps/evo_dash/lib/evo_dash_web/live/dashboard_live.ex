@@ -86,9 +86,12 @@ defmodule EvoDashWeb.DashboardLive do
       :timer.send_interval(1000, self(), :refresh_tasks)
     end
 
+    tasks = TaskRegistry.list_tasks()
+    |> Enum.map(&Map.put(&1, :show_details, false))
+
     socket =
       socket
-      |> assign(:tasks, TaskRegistry.list_tasks())
+      |> assign(:tasks, tasks)
       |> assign(:selected_tab, :genesis)
       |> assign_form_defaults()
 
@@ -108,7 +111,17 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_info(:refresh_tasks, socket) do
-    {:noreply, assign(socket, :tasks, TaskRegistry.list_tasks())}
+    new_tasks = TaskRegistry.list_tasks()
+
+    # Preserve show_details state from existing tasks
+    tasks_with_state = Enum.map(new_tasks, fn new_task ->
+      case Enum.find(socket.assigns.tasks, &(&1.id == new_task.id)) do
+        nil -> Map.put(new_task, :show_details, false)
+        old_task -> Map.put(new_task, :show_details, Map.get(old_task, :show_details, false))
+      end
+    end)
+
+    {:noreply, assign(socket, tasks: tasks_with_state)}
   end
 
   @impl true
