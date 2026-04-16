@@ -1,4 +1,4 @@
-defmodule EvoGit.MixProject do
+defmodule EvoGit.Umbrella.MixProject do
   use Mix.Project
 
   def project do
