@@ -141,10 +141,13 @@ defmodule EvoDashWeb.DashboardLive do
 
     case TaskRegistry.start_task(:genesis, opts) do
       {:ok, task} ->
+        tasks = TaskRegistry.list_tasks()
+        |> Enum.map(&Map.put(&1, :show_details, false))
+
         {:noreply,
          socket
          |> put_flash(:info, "Genesis task started with ID: #{task.id}")
-         |> assign(:tasks, TaskRegistry.list_tasks())
+         |> assign(:tasks, tasks)
          |> assign(:genesis_prompt, "")
          |> assign(:genesis_mode, "new")}
 
@@ -165,10 +168,13 @@ defmodule EvoDashWeb.DashboardLive do
 
     case TaskRegistry.start_task(:evolve, opts) do
       {:ok, task} ->
+        tasks = TaskRegistry.list_tasks()
+        |> Enum.map(&Map.put(&1, :show_details, false))
+
         {:noreply,
          socket
          |> put_flash(:info, "Evolve task started with ID: #{task.id}")
-         |> assign(:tasks, TaskRegistry.list_tasks())
+         |> assign(:tasks, tasks)
          |> assign(:evolve_objective, "")
          |> assign(:evolve_mode, "simple")}
 
