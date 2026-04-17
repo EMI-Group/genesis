@@ -40,8 +40,8 @@ defmodule EvoGit.Agent do
       require Logger
 
       @max_turns 20
-      # 10 minutes
-      @timeout_ms 10 * 60 * 1000
+      # 15 minutes
+      @timeout_ms 15 * 60 * 1000
       # 1 minute
       @grace_period_ms 60 * 1000
       @complete_tool "complete_task"
