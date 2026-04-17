@@ -157,8 +157,9 @@ defmodule EvoGit.AgentScheduler do
     max_concurrency =
       Keyword.get(opts, :max_concurrency) || Application.get_env(:evo_git, :max_concurrency, 3)
 
-    max_retries =
-      Keyword.get(opts, :max_retries) || Application.get_env(:evo_git, :max_retries, 3)
+    agent_max_retries =
+      Keyword.get(opts, :agent_max_retries) ||
+        Application.get_env(:evo_git, :agent_max_retries, 3)
 
     max_depth =
       Keyword.get(opts, :max_depth) ||
@@ -170,7 +171,7 @@ defmodule EvoGit.AgentScheduler do
        repo_root: nil,
        base_sha: nil,
        max_concurrency: max_concurrency,
-       max_retries: max_retries,
+       agent_max_retries: agent_max_retries,
        max_depth: max_depth,
        next_agent_id: 1,
        available_worktrees: [],
@@ -694,14 +695,14 @@ defmodule EvoGit.AgentScheduler do
 
     Logger.error(
       "AgentScheduler: Agent #{agent_id} crashed: #{inspect(reason)}. " <>
-        "Retry #{meta.retries}/#{state.max_retries}"
+        "Retry #{meta.retries}/#{state.agent_max_retries}"
     )
 
     if meta.worktree do
       reset_worktree(meta.worktree, state.repo_root, state.base_sha)
     end
 
-    if meta.retries < state.max_retries do
+    if meta.retries < state.agent_max_retries do
       state =
         if meta.worktree do
           %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
@@ -733,7 +734,7 @@ defmodule EvoGit.AgentScheduler do
       {:noreply, state}
     else
       msg =
-        "Agent #{agent_id} failed after #{state.max_retries} retries. Last: #{inspect(reason)}"
+        "Agent #{agent_id} failed after #{state.agent_max_retries} retries. Last: #{inspect(reason)}"
 
       Logger.error("AgentScheduler: #{msg}")
 
@@ -749,12 +750,12 @@ defmodule EvoGit.AgentScheduler do
       clear_history(agent_id)
 
       if meta.parent_id do
-        store_sub_result(meta.parent_id, agent_id, {:error, :max_retries_exceeded})
+        store_sub_result(meta.parent_id, agent_id, {:error, :agent_max_retries_exceeded})
         state = maybe_resume_parent(state, meta.parent_id)
         state = process_queue(state)
         {:noreply, state}
       else
-        GenServer.reply(meta.from, {:error, :max_retries_exceeded})
+        GenServer.reply(meta.from, {:error, :agent_max_retries_exceeded})
         state = process_queue(state)
         {:noreply, state}
       end
