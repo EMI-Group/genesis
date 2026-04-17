@@ -95,7 +95,9 @@ defmodule EvoGit.Agent do
           turn: 0,
           history: [ReqLLM.Context.user(combined_prompt)],
           in_grace_period: false,
-          deadline: System.monotonic_time(:millisecond) + @timeout_ms
+          deadline: System.monotonic_time(:millisecond) + @timeout_ms,
+          # Track accumulated LLM time only
+          llm_time_ms: 0
         }
 
         # Log the conversation messages in order
@@ -127,21 +129,24 @@ defmodule EvoGit.Agent do
         state = load_worktree_path(state)
         state = try_compress_chat(state)
 
-        now = System.monotonic_time(:millisecond)
-        time_left = state.deadline - now
-
         cond do
-          time_left <= 0 and not state.in_grace_period ->
-            trigger_recovery(state, "10-minute time limit exceeded")
+          state.llm_time_ms >= @timeout_ms and not state.in_grace_period ->
+            trigger_recovery(state, "15-minute LLM time limit exceeded")
 
-          time_left <= 0 and state.in_grace_period ->
-            stream_event(state.agent_id, "ERROR", %{
-              error: "Grace period timed out. Agent killed."
-            })
+          state.in_grace_period ->
+            now = System.monotonic_time(:millisecond)
+            time_left = state.deadline - now
 
-            {:error, :timeout}
+            if time_left <= 0 do
+              stream_event(state.agent_id, "ERROR", %{
+                error: "Grace period timed out. Agent killed."
+              })
+              {:error, :timeout}
+            else
+              do_turn(state)
+            end
 
-          state.turn >= @max_turns and not state.in_grace_period ->
+          state.turn >= @max_turns ->
             trigger_recovery(state, "max turns (#{@max_turns}) exceeded")
 
           true ->
@@ -179,12 +184,18 @@ defmodule EvoGit.Agent do
 
         tools = effective_tools(state)
 
+        # Track LLM time
+        llm_start = System.monotonic_time(:millisecond)
+
         {:ok, response} =
           ReqLLM.generate_text(
             current_model(),
             context,
             tools: tools
           )
+
+        llm_end = System.monotonic_time(:millisecond)
+        state = %{state | llm_time_ms: state.llm_time_ms + (llm_end - llm_start)}
 
         tool_calls =
           ReqLLM.Response.tool_calls(response)
