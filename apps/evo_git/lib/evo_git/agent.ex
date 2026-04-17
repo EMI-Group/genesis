@@ -239,117 +239,136 @@ defmodule EvoGit.Agent do
         complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
 
         if complete_call do
-          stream_event(state.agent_id, "TOOL_CALL_END", %{
-            name: @complete_tool,
-            status: "success"
-          })
-
-          result =
-            Map.get(complete_call.arguments, "result") ||
-              Map.get(complete_call.arguments, :result, "Task finished.")
-
-          {:complete, result}
+          handle_complete_call(complete_call, state)
         else
-          # Index, Split, Batch, Re-sort Pattern:
-          # 1. Index: Attach index to each call
-          indexed_calls = Enum.with_index(tool_calls)
-
-          # Stream start events for all calls
-          Enum.each(tool_calls, fn call ->
-            stream_event(state.agent_id, "TOOL_CALL_START", %{
-              name: call.name,
-              args: call.arguments
-            })
-          end)
-
-          # 2. Split: Partition into sub-agent and standard calls
-          {indexed_subagent_calls, indexed_standard_calls} =
-            Enum.split_with(indexed_calls, fn {call, _index} ->
-              subagent_module_for(call.name) != nil
-            end)
-
-          # 3. Batch: Process each batch
-          indexed_standard_results = Enum.map(indexed_standard_calls, fn {call, index} ->
-            output = execute_standard_tool(call)
-
-            stream_event(state.agent_id, "TOOL_CALL_END", %{name: call.name})
-
-            append_history(state.agent_id, "TOOL_RESULT", %{
-              tool_name: call.name,
-              content: output
-            })
-
-            tool_call_id = Map.get(call, :id, call.name)
-            {index, tool_call_id, call.name, output}
-          end)
-
-          indexed_subagent_results =
-            if indexed_subagent_calls == [] do
-              []
-            else
-              subagent_specs =
-                Enum.map(indexed_subagent_calls, fn {call, _index} ->
-                  mod = subagent_module_for(call.name)
-                  path = Map.get(call.arguments, "path")
-                  objective = Map.get(call.arguments, "objective")
-
-                  {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
-
-                  {:ok, sub_context_node} =
-                    EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
-
-                  sub_phylo_node = %EvoGit.Core.PhyloGraphNode{
-                    repo: parent_state.phylo_node.repo,
-                    base_commit: parent_state.phylo_node.current_commit,
-                    current_commit: parent_state.phylo_node.current_commit
-                  }
-
-                  EvoGit.AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective)
-                end)
-
-              results = EvoGit.AgentScheduler.spawn_sub_agents(subagent_specs)
-
-              Enum.zip(indexed_subagent_calls, results)
-              |> Enum.map(fn {{call, index}, result} ->
-                stream_event(state.agent_id, "TOOL_CALL_END", %{name: call.name})
-
-                output =
-                  case result do
-                    {:error, :path_ignored} ->
-                      "Error: Cannot spawn sub-agent in an ignored folder. The current working directory is ignored by git."
-
-                    {:error, reason} ->
-                      "Error: Sub-agent failed: #{inspect(reason)}"
-
-                    text when is_binary(text) ->
-                      text
-
-                    other ->
-                      inspect(other)
-                  end
-
-                append_history(state.agent_id, "TOOL_RESULT", %{
-                  tool_name: call.name,
-                  content: output
-                })
-
-                tool_call_id = Map.get(call, :id, call.name)
-                {index, tool_call_id, call.name, output}
-              end)
-            end
-
-          # 4. Re-sort: Merge and sort by index to restore original order
-          all_indexed_results = indexed_subagent_results ++ indexed_standard_results
-          sorted_results = Enum.sort_by(all_indexed_results, &elem(&1, 0))
-
-          all_results =
-            Enum.map(sorted_results, fn {_index, tool_call_id, name, output} ->
-              ReqLLM.Context.tool_result(tool_call_id, name, output)
-            end)
-
-          {:continue, all_results}
+          process_regular_tool_calls(tool_calls, state)
         end
       end
+
+      defp handle_complete_call(complete_call, state) do
+        stream_event(state.agent_id, "TOOL_CALL_END", %{
+          name: @complete_tool,
+          status: "success"
+        })
+
+        result =
+          Map.get(complete_call.arguments, "result") ||
+            Map.get(complete_call.arguments, :result, "Task finished.")
+
+        {:complete, result}
+      end
+
+      defp process_regular_tool_calls(tool_calls, state) do
+        # 1. Index: Attach index to each call
+        indexed_calls = Enum.with_index(tool_calls)
+
+        # 2. Stream start events for all calls
+        stream_start_events(tool_calls, state)
+
+        # 3. Split: Partition into sub-agent and standard calls
+        {indexed_subagent_calls, indexed_standard_calls} =
+          Enum.split_with(indexed_calls, fn {call, _index} ->
+            subagent_module_for(call.name) != nil
+          end)
+
+        # 4. Batch: Process each batch
+        indexed_standard_results = process_standard_calls(indexed_standard_calls, state)
+        indexed_subagent_results = process_subagent_calls(indexed_subagent_calls, state)
+
+        # 5. Re-sort: Merge and sort by index to restore original order
+        all_indexed_results = indexed_subagent_results ++ indexed_standard_results
+        sorted_results = Enum.sort_by(all_indexed_results, &elem(&1, 0))
+
+        all_results =
+          Enum.map(sorted_results, fn {_index, tool_call_id, name, output} ->
+            ReqLLM.Context.tool_result(tool_call_id, name, output)
+          end)
+
+        {:continue, all_results}
+      end
+
+      defp stream_start_events(tool_calls, state) do
+        Enum.each(tool_calls, fn call ->
+          stream_event(state.agent_id, "TOOL_CALL_START", %{
+            name: call.name,
+            args: call.arguments
+          })
+        end)
+      end
+
+      defp process_standard_calls(indexed_calls, state) do
+        Enum.map(indexed_calls, fn {call, index} ->
+          output = execute_standard_tool(call)
+
+          stream_event(state.agent_id, "TOOL_CALL_END", %{name: call.name})
+
+          append_history(state.agent_id, "TOOL_RESULT", %{
+            tool_name: call.name,
+            content: output
+          })
+
+          tool_call_id = Map.get(call, :id, call.name)
+          {index, tool_call_id, call.name, output}
+        end)
+      end
+
+      defp process_subagent_calls([], _state), do: []
+
+      defp process_subagent_calls(indexed_calls, state) do
+        subagent_specs = build_subagent_specs(indexed_calls, state)
+        results = EvoGit.AgentScheduler.spawn_sub_agents(subagent_specs)
+
+        Enum.zip(indexed_calls, results)
+        |> Enum.map(fn {{call, index}, result} ->
+          process_subagent_result(call, index, result, state)
+        end)
+      end
+
+      defp build_subagent_specs(indexed_calls, state) do
+        Enum.map(indexed_calls, fn {call, _index} ->
+          mod = subagent_module_for(call.name)
+          path = Map.get(call.arguments, "path")
+          objective = Map.get(call.arguments, "objective")
+
+          {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
+
+          {:ok, sub_context_node} =
+            EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
+
+          sub_phylo_node = %EvoGit.Core.PhyloGraphNode{
+            repo: parent_state.phylo_node.repo,
+            base_commit: parent_state.phylo_node.current_commit,
+            current_commit: parent_state.phylo_node.current_commit
+          }
+
+          EvoGit.AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective)
+        end)
+      end
+
+      defp process_subagent_result(call, index, result, state) do
+        stream_event(state.agent_id, "TOOL_CALL_END", %{name: call.name})
+
+        output = format_subagent_result(result)
+
+        append_history(state.agent_id, "TOOL_RESULT", %{
+          tool_name: call.name,
+          content: output
+        })
+
+        tool_call_id = Map.get(call, :id, call.name)
+        {index, tool_call_id, call.name, output}
+      end
+
+      defp format_subagent_result({:error, :path_ignored}) do
+        "Error: Cannot spawn sub-agent in an ignored folder. The current working directory is ignored by git."
+      end
+
+      defp format_subagent_result({:error, reason}) do
+        "Error: Sub-agent failed: #{inspect(reason)}"
+      end
+
+      defp format_subagent_result(text) when is_binary(text), do: text
+      defp format_subagent_result(other), do: inspect(other)
 
       # --- Helpers ---
 
