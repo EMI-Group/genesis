@@ -282,7 +282,16 @@ defmodule EvoGit.Agent do
       end
 
       defp try_compress_chat(state) do
-        if length(state.history) > 15 do
+        # Calculate total byte length of history messages
+        total_bytes =
+          Enum.reduce(state.history, 0, fn msg, acc ->
+            acc + estimate_message_bytes(msg)
+          end)
+
+        # Compress if total exceeds 100KB
+        compression_threshold_bytes = 100 * 1024
+
+        if total_bytes > compression_threshold_bytes do
           [first_message | rest_history] = state.history
           {older_messages, recent_messages} = Enum.split(rest_history, -5)
 
@@ -306,6 +315,27 @@ defmodule EvoGit.Agent do
           end
         else
           state
+        end
+      end
+
+      defp estimate_message_bytes(msg) when is_binary(msg), do: byte_size(msg)
+
+      defp estimate_message_bytes(msg) when is_struct(msg) do
+        try do
+          msg
+          |> Map.from_struct()
+          |> inspect(limit: :infinity, printable_limit: :infinity)
+          |> byte_size()
+        rescue
+          _ -> 0
+        end
+      end
+
+      defp estimate_message_bytes(msg) do
+        try do
+          inspect(msg, limit: :infinity, printable_limit: :infinity) |> byte_size()
+        rescue
+          _ -> 0
         end
       end
 
