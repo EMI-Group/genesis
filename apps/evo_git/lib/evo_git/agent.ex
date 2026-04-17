@@ -301,7 +301,7 @@ defmodule EvoGit.Agent do
         repo_root = Process.get(:evogit_repo_root)
 
         # Batch execute all tools in parallel
-        indexed_results = EvoGit.AgentScheduler.batch_execute_tools(indexed_calls, :infinity, repo_root)
+        indexed_results = batch_execute_tools(indexed_calls, :infinity, repo_root)
 
         # Stream end events for all calls
         Enum.each(indexed_results, fn {_index, _tool_call_id, name, _output} ->
@@ -310,6 +310,58 @@ defmodule EvoGit.Agent do
 
         indexed_results
       end
+
+      defp batch_execute_tools(indexed_calls, timeout \\ :infinity, repo_root \\ nil) do
+        agent_id = EvoGit.AgentScheduler.current_agent_id()
+
+        tasks =
+          Enum.map(indexed_calls, fn {call, index} ->
+            {index, call.name, call, Task.async(fn ->
+              EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_root)
+            end)}
+          end)
+
+        # Wait for all tasks to complete with timeout
+        results =
+          Enum.map(tasks, fn {index, name, call, task} ->
+            tool_call_id = Map.get(call, :id, call.name)
+            output =
+              case Task.await(task, timeout) do
+                {:error, reason} -> "Error: #{inspect(reason)}"
+                result -> truncate_large_output(result, name, call.arguments)
+              end
+            {index, tool_call_id, name, output}
+          end)
+
+        # Log all tool results in parallel
+        Enum.each(results, fn {_index, _tool_call_id, name, output} ->
+          append_history(agent_id, "TOOL_RESULT", %{
+            tool_name: name,
+            content: output
+          })
+        end)
+
+        results
+      end
+
+      # Truncates large tool outputs (>20000 bytes) to prevent history bloat
+      defp truncate_large_output(result, name, args) when is_binary(result) do
+        if String.length(result) > 20000 do
+          Logger.warning(
+            "Output truncated for tool: #{name}, arguments: #{inspect(args)}, result length: #{String.length(result)}"
+          )
+
+          truncate_size = 3000
+          half_size = div(truncate_size, 2)
+          first_part = String.slice(result, 0, half_size)
+          last_part = String.slice(result, -half_size, half_size)
+          first_part <> "\n... [Output Truncated, Only 3000 bytes Shown] ...\n" <> last_part
+        else
+          result
+        end
+      end
+
+      defp truncate_large_output(result, _name, _args), do: result
 
       defp process_subagent_calls([], _state), do: []
 
