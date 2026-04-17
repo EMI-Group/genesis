@@ -187,6 +187,7 @@ defmodule EvoGit.Agent.Tools do
   def execute("rewrite_dir_context", args) do
     dir_path = Map.fetch!(args, "dir_path")
     content = Map.fetch!(args, "content")
+    commit = Map.get(args, "commit", true)
     full_dir = expand_path(dir_path)
 
     cond do
@@ -200,8 +201,31 @@ defmodule EvoGit.Agent.Tools do
         context_path = Path.join(full_dir, "CONTEXT.md")
 
         case File.write(context_path, content) do
-          :ok -> "Successfully updated CONTEXT.md for directory '#{dir_path}'"
-          {:error, reason} -> "Error writing CONTEXT.md: #{:file.format_error(reason)}"
+          :ok ->
+            result_msg = "Successfully updated CONTEXT.md for directory '#{dir_path}'"
+
+            if commit do
+              cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
+              relative_path = Path.join(dir_path, "CONTEXT.md")
+              systemd_add_args = EvoGit.sandbox_args(cwd, "git", ["add", relative_path])
+              systemd_commit_args =
+                EvoGit.sandbox_args(cwd, "git", [
+                  "commit",
+                  "-m",
+                  "Update CONTEXT.md for #{dir_path}"
+                ])
+
+              add_output = elem(System.cmd("systemd-run", systemd_add_args, stderr_to_stdout: true), 0)
+              commit_output = elem(System.cmd("systemd-run", systemd_commit_args, stderr_to_stdout: true), 0)
+
+              result_msg <>
+                "\n\nCommitted:\n#{add_output}#{commit_output}"
+            else
+              result_msg
+            end
+
+          {:error, reason} ->
+            "Error writing CONTEXT.md: #{:file.format_error(reason)}"
         end
     end
   end
@@ -469,6 +493,12 @@ defmodule EvoGit.Agent.Tools do
             "type" => "string",
             "description" =>
               "The full markdown content for the CONTEXT.md file. Should include Intent, API Surface, and Constraints sections."
+          },
+          "commit" => %{
+            "type" => "boolean",
+            "description" =>
+              "Whether to commit the CONTEXT.md file after writing. Defaults to true. When true, only the CONTEXT.md file is committed.",
+            "default" => true
           }
         },
         "required" => ["dir_path", "content"]
