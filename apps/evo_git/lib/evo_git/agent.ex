@@ -297,8 +297,11 @@ defmodule EvoGit.Agent do
       end
 
       defp process_standard_calls(indexed_calls, state) do
+        # Get repo_root from process dictionary for git worktree database access
+        repo_root = Process.get(:evogit_repo_root)
+
         # Batch execute all tools in parallel
-        indexed_results = EvoGit.AgentScheduler.batch_execute_tools(indexed_calls)
+        indexed_results = EvoGit.AgentScheduler.batch_execute_tools(indexed_calls, :infinity, repo_root)
 
         # Stream end events for all calls
         Enum.each(indexed_results, fn {_index, _tool_call_id, name, _output} ->
@@ -562,8 +565,9 @@ defmodule EvoGit.Agent do
 
       def execute_tool(call, _state) do
         # Execute a single tool (kept for backward compatibility with overridable)
+        repo_root = Process.get(:evogit_repo_root)
         [{_index, _tool_call_id, _name, output}] =
-          EvoGit.AgentScheduler.batch_execute_tools([{call, 0}])
+          EvoGit.AgentScheduler.batch_execute_tools([{call, 0}], :infinity, repo_root)
         output
       end
 

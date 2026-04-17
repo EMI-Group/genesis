@@ -45,8 +45,21 @@ defmodule EvoGit.Agent.Tools do
 
   @doc """
   Executes a tool by name with the given arguments.
+
+  ## Parameters
+
+  - `tool_name` - The name of the tool to execute
+  - `args` - The arguments to pass to the tool
+  - `repo_root` - Optional path to the git repository root. If provided,
+    this is passed to sandbox operations to allow write access to the shared
+    git database (needed for git worktrees).
+
   """
-  def execute("read_file", args) do
+  def execute(tool_name, args, repo_root \\ nil) do
+    execute_tool(tool_name, args, repo_root)
+  end
+
+  defp execute_tool("read_file", args, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path()
 
     case File.read(file_path) do
@@ -55,7 +68,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("read_many_files", args) do
+  defp execute_tool("read_many_files", args, _repo_root) do
     paths = Map.fetch!(args, "file_paths")
 
     Enum.map_join(paths, "\n---\n", fn path ->
@@ -68,7 +81,7 @@ defmodule EvoGit.Agent.Tools do
     end)
   end
 
-  def execute("write_file", args) do
+  defp execute_tool("write_file", args, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path()
     content = Map.fetch!(args, "content")
 
@@ -85,7 +98,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("rewrite_file", args) do
+  defp execute_tool("rewrite_file", args, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path()
     content = Map.fetch!(args, "content")
 
@@ -99,7 +112,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("create_files", args) do
+  defp execute_tool("create_files", args, _repo_root) do
     paths = Map.fetch!(args, "file_paths")
 
     Enum.map_join(paths, "\n", fn path ->
@@ -118,7 +131,7 @@ defmodule EvoGit.Agent.Tools do
     end)
   end
 
-  def execute("create_directories", args) do
+  defp execute_tool("create_directories", args, _repo_root) do
     paths = Map.fetch!(args, "dir_paths")
 
     Enum.map_join(paths, "\n", fn path ->
@@ -139,7 +152,7 @@ defmodule EvoGit.Agent.Tools do
     end)
   end
 
-  def execute("replace_in_file", args) do
+  defp execute_tool("replace_in_file", args, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path()
     old_text = Map.fetch!(args, "old_text")
     new_text = Map.fetch!(args, "new_text")
@@ -162,7 +175,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("read_dir_context", args) do
+  defp execute_tool("read_dir_context", args, _repo_root) do
     dir_path = Map.fetch!(args, "dir_path")
     full_dir = expand_path(dir_path)
 
@@ -184,7 +197,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("rewrite_dir_context", args) do
+  defp execute_tool("rewrite_dir_context", args, repo_root) do
     dir_path = Map.fetch!(args, "dir_path")
     content = Map.fetch!(args, "content")
     commit = Map.get(args, "commit", true)
@@ -207,13 +220,13 @@ defmodule EvoGit.Agent.Tools do
             if commit do
               cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
               relative_path = Path.join(dir_path, "CONTEXT.md")
-              systemd_add_args = EvoGit.sandbox_args(cwd, "git", ["add", relative_path])
+              systemd_add_args = EvoGit.sandbox_args(cwd, "git", ["add", relative_path], repo_root)
               systemd_commit_args =
                 EvoGit.sandbox_args(cwd, "git", [
                   "commit",
                   "-m",
                   "Update CONTEXT.md for #{dir_path}"
-                ])
+                ], repo_root)
 
               add_output = elem(System.cmd("systemd-run", systemd_add_args, stderr_to_stdout: true), 0)
               commit_output = elem(System.cmd("systemd-run", systemd_commit_args, stderr_to_stdout: true), 0)
@@ -230,11 +243,11 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("run_shell_command", args) do
+  defp execute_tool("run_shell_command", args, repo_root) do
     command = Map.fetch!(args, "command")
 
     cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
-    systemd_args = EvoGit.sandbox_args(cwd, "bash", ["-c", command])
+    systemd_args = EvoGit.sandbox_args(cwd, "bash", ["-c", command], repo_root)
 
     # Execute via systemd-run
     {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
@@ -246,11 +259,11 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("rg", args) do
+  defp execute_tool("rg", args, repo_root) do
     args_list = Map.fetch!(args, "args")
 
     cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
-    systemd_args = EvoGit.sandbox_args(cwd, "rg", args_list)
+    systemd_args = EvoGit.sandbox_args(cwd, "rg", args_list, repo_root)
 
     {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
 
@@ -261,11 +274,11 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("git", args) do
+  defp execute_tool("git", args, repo_root) do
     args_list = Map.fetch!(args, "args")
 
     cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
-    systemd_args = EvoGit.sandbox_args(cwd, "git", args_list)
+    systemd_args = EvoGit.sandbox_args(cwd, "git", args_list, repo_root)
 
     {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
 
@@ -276,7 +289,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("glob", args) do
+  defp execute_tool("glob", args, _repo_root) do
     pattern = Map.fetch!(args, "pattern")
     cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
 
@@ -296,7 +309,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute("list_directory", args) do
+  defp execute_tool("list_directory", args, _repo_root) do
     dir_path = Map.fetch!(args, "dir_path")
     cwd = Process.get(:repo_path) || Application.get_env(:evo_git, :repo_path, File.cwd!())
     full_path = Path.expand(dir_path, cwd)
@@ -307,7 +320,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  def execute(unknown_tool, _args) do
+  defp execute_tool(unknown_tool, _args, _repo_root) do
     "Error: Unknown tool '#{unknown_tool}'"
   end
 
