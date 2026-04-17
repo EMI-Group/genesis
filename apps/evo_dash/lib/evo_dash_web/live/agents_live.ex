@@ -118,6 +118,9 @@ defmodule EvoDashWeb.AgentsLive do
   defp history_entry_icon("TOOL_CALL_END"), do: "hero-check-circle"
   defp history_entry_icon("COMPLETE"), do: "hero-flag-checkered"
   defp history_entry_icon("ERROR"), do: "hero-exclamation-triangle"
+  defp history_entry_icon("RETRY"), do: "hero-arrow-path"
+  defp history_entry_icon("RETRY_DISPATCH"), do: "hero-arrow-clockwise"
+  defp history_entry_icon("QUEUED"), do: "hero-clock"
   defp history_entry_icon(_), do: "hero-document-text"
 
   defp history_entry_color("USER_PROMPT"), do: "text-blue-600 dark:text-blue-400"
@@ -127,6 +130,9 @@ defmodule EvoDashWeb.AgentsLive do
   defp history_entry_color("TOOL_CALL_END"), do: "text-green-600 dark:text-green-400"
   defp history_entry_color("COMPLETE"), do: "text-emerald-600 dark:text-emerald-400"
   defp history_entry_color("ERROR"), do: "text-red-600 dark:text-red-400"
+  defp history_entry_color("RETRY"), do: "text-orange-600 dark:text-orange-400"
+  defp history_entry_color("RETRY_DISPATCH"), do: "text-amber-600 dark:text-amber-400"
+  defp history_entry_color("QUEUED"), do: "text-gray-600 dark:text-gray-400"
   defp history_entry_color(_), do: "text-gray-600 dark:text-gray-400"
 
   defp format_timestamp(timestamp_ms) do
