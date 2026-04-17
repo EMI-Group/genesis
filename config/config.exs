@@ -53,7 +53,8 @@ config :phoenix, :json_library, Jason
 # Configures the application
 config :evo_git,
   max_concurrency: 3,
-  max_retries: 3,
+  max_retries: 15,
+  agent_max_retries: 3,
   # repo_path: Will be set per-task
   llm_model: "zai_coding_plan:glm-5"
 
