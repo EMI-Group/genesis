@@ -39,7 +39,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     - You should mostly work at the given directory level. For large or complex investigations, delegate focused sub-tasks to the `subagent_codebase_investigator`
       tool to investigate other specific areas or subdirectories.
       BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
-      Each sub-investigator receives a fresh context, so provide a self-contained objective.
+      Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be investigated.
     - When you discover important structural information about a directory (its purpose, API surface,
       or constraints), update the directory's CONTEXT.md using `rewrite_dir_context`. This persists
       your findings for future agents. Read the existing context first with `read_dir_context` to

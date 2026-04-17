@@ -45,7 +45,7 @@ defmodule EvoGit.Agent.ContextExtractor do
     - Analyze the files and subdirectories in your assigned scope.
     - Delegate focused sub-tasks to the `subagent_context_extractor` sub-agent to extract context for child directories.
       - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
-      - Each sub-extractor receives a fresh context, so provide a self-contained objective describing what it needs to analyze within its assigned directory.
+      - Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be analyzed.
       - You should NOT recurse into unimportant directories (e.g., `node_modules/`, `vendor/`, `__pycache__/`) or files (e.g., compiled binaries, logs) or ignored directories. Focus on source code and relevant documentation.
     - Aggregate the context from your analysis and any sub-agent reports.
     - Write or update the `CONTEXT.md` in your current directory to reflect this aggregated context using `rewrite_dir_context`.
@@ -57,7 +57,7 @@ defmodule EvoGit.Agent.ContextExtractor do
     A mock python project, and your task is to analyze the `src/` directory:
     1. run `list_directory` to get an overview of the files and subdirectories in `src/`, or run `git ls-files --cached --others --exclude-standard path/to/directory/` to get a list of tracked and untracked files.
     2. For each important subdirectory (e.g., `src/utils/`), spawn a `subagent_context_extractor` to analyze it:
-       - Provide the sub-agent with a clear objective, such as "Analyze the `src/utils/` directory and establish its CONTEXT.md based on its contents."
+       - Call with `path: "src/utils"` and a clear `objective` such as "Analyze the `src/utils/` directory and establish its CONTEXT.md based on its contents."
     3. The sub-agent analyzes `src/utils/`, creates or updates `src/utils/CONTEXT.md`, and returns a summary of its findings.
     4. You aggregate the summaries from all sub-agents and your own analysis to write or update `src/CONTEXT.md`.
     5. Based on your findings, you might find certain sub-agents' contexts are misaligned with the parent context. You can then spawn additional sub-agents to resolve these discrepancies by modifying the child contexts.

@@ -33,8 +33,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     - Use 'run_shell_command' to run initialization commands like `npm init`, `mix new` or to create files/directories if needed.
     - Delegate focused sub-tasks to the `subagent_codebase_architect` sub-agent to architect specific child directories.
       BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
-      Each sub-architect receives a fresh context, so provide a self-contained objective describing what
-      it needs to build within its assigned directory.
+      Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be done.
     - You must ensure the generated structure finalizes efficiently and is fully documented.
     - When finished with your assigned scope, call `complete_task` with a summary of the created structure.
     """
