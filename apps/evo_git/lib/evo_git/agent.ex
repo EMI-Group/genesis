@@ -417,14 +417,19 @@ defmodule EvoGit.Agent do
             parameter_schema: %{
               "type" => "object",
               "properties" => %{
+                "path" => %{
+                  "type" => "string",
+                  "description" =>
+                    "The relative path from the repository root where the sub-agent should operate."
+                },
                 "objective" => %{
                   "type" => "string",
                   "description" =>
                     "A clear, self-contained objective for the sub-agent. " <>
-                      "Include any relevant paths or context since it starts with a fresh context."
+                      "Include any relevant context since it starts with a fresh context."
                 }
               },
-              "required" => ["objective"]
+              "required" => ["path", "objective"]
             },
             callback: fn _args -> {:ok, nil} end
           )
@@ -461,15 +466,27 @@ defmodule EvoGit.Agent do
       end
 
       defp execute_subagent(mod, call, state) do
+        path = Map.get(call.arguments, "path")
         objective = Map.get(call.arguments, "objective")
 
         # Read the parent's current state from the agent state table
         {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
 
+        # Create a new context node for the specified path
+        {:ok, sub_context_node} =
+          EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
+
+        # Subagent inherits temporal state from parent's current commit
+        sub_phylo_node = %EvoGit.Core.PhyloGraphNode{
+          repo: parent_state.phylo_node.repo,
+          base_commit: parent_state.phylo_node.current_commit,
+          current_commit: parent_state.phylo_node.current_commit
+        }
+
         sub_spec =
           EvoGit.AgentSpec.new(
-            parent_state.context_node,
-            parent_state.phylo_node,
+            sub_context_node,
+            sub_phylo_node,
             mod,
             objective
           )
