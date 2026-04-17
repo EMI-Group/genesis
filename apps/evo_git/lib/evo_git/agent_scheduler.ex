@@ -114,16 +114,24 @@ defmodule EvoGit.AgentScheduler do
   {index, tool_call_id, name, output} results sorted by index.
 
   Each tool is executed in a separate task to allow true parallelism.
+
+  ## Parameters
+
+  - `indexed_calls` - List of indexed tool calls {call, index}
+  - `timeout` - Timeout for each tool execution (default: :infinity)
+  - `repo_root` - Optional path to the git repository root. If provided,
+    this is passed to Tools.execute for sandbox operations that need
+    access to the shared git database.
   """
-  @spec batch_execute_tools([{map(), non_neg_integer()}], timeout()) ::
+  @spec batch_execute_tools([{map(), non_neg_integer()}], timeout(), String.t() | nil) ::
           [{non_neg_integer(), String.t(), String.t(), String.t()}]
-  def batch_execute_tools(indexed_calls, timeout \\ :infinity) do
+  def batch_execute_tools(indexed_calls, timeout \\ :infinity, repo_root \\ nil) do
     agent_id = current_agent_id()
 
     tasks =
       Enum.map(indexed_calls, fn {call, index} ->
         {index, call.name, call, Task.async(fn ->
-          EvoGit.Agent.Tools.execute(call.name, call.arguments)
+          EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_root)
         end)}
       end)
 
@@ -566,6 +574,7 @@ defmodule EvoGit.AgentScheduler do
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
         Process.put(:evogit_agent_depth, meta.depth)
+        Process.put(:evogit_repo_root, state.repo_root)
 
         if retries > 0 do
           Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
