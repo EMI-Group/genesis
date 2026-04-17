@@ -34,6 +34,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     - Delegate focused sub-tasks to the `subagent_codebase_architect` sub-agent to architect specific child directories.
       BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
       Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be done.
+    - You can run tools, including subagents in parallel, to efficiently design the architecture.
     - You must ensure the generated structure finalizes efficiently and is fully documented.
     - When finished with your assigned scope, call `complete_task` with a summary of the created structure.
     """
