@@ -297,19 +297,15 @@ defmodule EvoGit.Agent do
       end
 
       defp process_standard_calls(indexed_calls, state) do
-        Enum.map(indexed_calls, fn {call, index} ->
-          output = execute_standard_tool(call)
+        # Batch execute all tools in parallel
+        indexed_results = EvoGit.AgentScheduler.batch_execute_tools(indexed_calls)
 
-          stream_event(state.agent_id, "TOOL_CALL_END", %{name: call.name})
-
-          append_history(state.agent_id, "TOOL_RESULT", %{
-            tool_name: call.name,
-            content: output
-          })
-
-          tool_call_id = Map.get(call, :id, call.name)
-          {index, tool_call_id, call.name, output}
+        # Stream end events for all calls
+        Enum.each(indexed_results, fn {_index, _tool_call_id, name, _output} ->
+          stream_event(state.agent_id, "TOOL_CALL_END", %{name: name})
         end)
+
+        indexed_results
       end
 
       defp process_subagent_calls([], _state), do: []
@@ -565,25 +561,10 @@ defmodule EvoGit.Agent do
       end
 
       def execute_tool(call, _state) do
-        execute_standard_tool(call)
-      end
-
-      defp execute_standard_tool(call) do
-        result = EvoGit.Agent.Tools.execute(call.name, call.arguments)
-
-        if is_binary(result) and String.length(result) > 20000 do
-          Logger.warning(
-            "Output truncated for tool: #{call.name}, arguments: #{inspect(call.arguments)}, result length: #{String.length(result)}"
-          )
-
-          truncate_size = 3000
-          half_size = div(truncate_size, 2)
-          first_part = String.slice(result, 0, half_size)
-          last_part = String.slice(result, -half_size, half_size)
-          first_part <> "\n... [Output Truncated, Only 3000 bytes Shown] ...\n" <> last_part
-        else
-          result
-        end
+        # Execute a single tool (kept for backward compatibility with overridable)
+        [{_index, _tool_call_id, _name, output}] =
+          EvoGit.AgentScheduler.batch_execute_tools([{call, 0}])
+        output
       end
 
       @doc """
