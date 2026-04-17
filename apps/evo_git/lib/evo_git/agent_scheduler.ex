@@ -490,6 +490,15 @@ defmodule EvoGit.AgentScheduler do
       current_commit: spec.phylo_node.current_commit
     }
 
+    # Log dispatch event for dashboard visibility
+    if retries > 0 do
+      append_history(agent_id, "RETRY_DISPATCH", %{
+        attempt: retries,
+        backoff_seconds: 30 * retries,
+        worktree: wt
+      })
+    end
+
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
@@ -532,6 +541,9 @@ defmodule EvoGit.AgentScheduler do
 
       :none ->
         Logger.info("AgentScheduler: Queueing agent #{agent_id} (no available worktrees)")
+        append_history(agent_id, "QUEUED", %{
+          message: "Waiting for available worktree"
+        })
         %{state | queue: :queue.in(agent_id, state.queue)}
     end
   end
@@ -697,10 +709,17 @@ defmodule EvoGit.AgentScheduler do
           state
         end
 
-      # Reset scheduler metadata for retry
+      # Log retry event to history for dashboard visibility
+      append_history(agent_id, "RETRY", %{
+        attempt: meta.retries + 1,
+        reason: inspect(reason)
+      })
+
+      # Reset scheduler metadata for retry - status set to :pending to indicate waiting for worktree
       put_sched_meta(agent_id, %{
         meta
         | retries: meta.retries + 1,
+          status: :pending,
           worktree: nil,
           task_ref: nil
       })

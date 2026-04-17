@@ -258,6 +258,20 @@
                                 <div class="text-sm mt-1 bg-red-50 dark:bg-red-900/20 p-2 rounded text-red-700 dark:text-red-400">
                                   <%= entry.data.error %>
                                 </div>
+                              <% "RETRY" -> %>
+                                <div class="text-sm mt-1 bg-orange-50 dark:bg-orange-900/20 p-2 rounded">
+                                  <div class="font-semibold">Retry attempt <%= entry.data.attempt %></div>
+                                  <div class="text-xs mt-1"><%= String.slice(entry.data.reason, 0, 200) %><%= if String.length(entry.data.reason) > 200, do: "..." %></div>
+                                </div>
+                              <% "RETRY_DISPATCH" -> %>
+                                <div class="text-sm mt-1 bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
+                                  <div class="font-semibold">Retry #<%= entry.data.attempt %> - Starting with <%= entry.data.backoff_seconds %>s backoff</div>
+                                  <div class="text-xs mt-1">Worktree: <%= Path.basename(entry.data.worktree) %></div>
+                                </div>
+                              <% "QUEUED" -> %>
+                                <div class="text-sm mt-1 bg-gray-100 dark:bg-gray-800 p-2 rounded">
+                                  <%= entry.data.message %>
+                                </div>
                               <% "CONTEXT_TREE" -> %>
                                 <details class="text-xs mt-1">
                                   <summary class="cursor-pointer text-purple-600 dark:text-purple-400">
