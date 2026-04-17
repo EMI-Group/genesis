@@ -26,6 +26,10 @@ defmodule EvoGit.Agent do
 
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.Adapters.Git
+  alias EvoGit.AgentScheduler
+
 
   @type state :: %{context_node: ContextNode.t(), phylo_node: PhyloGraphNode.t()}
 
@@ -110,7 +114,6 @@ defmodule EvoGit.Agent do
       # --- Internal Execution Logic ---
 
       defp load_worktree_path(state) do
-        alias EvoGit.AgentScheduler.AgentState
 
         case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
           {:ok, %AgentState{phylo_node: %{repo: wt}}} when not is_nil(wt) ->
@@ -125,9 +128,6 @@ defmodule EvoGit.Agent do
       end
 
       defp sync_current_commit_after_tools(state) do
-        alias EvoGit.Adapters.Git
-        alias EvoGit.AgentScheduler
-
         # Get the current worktree path
         repo_path = Process.get(:repo_path)
 
@@ -155,6 +155,57 @@ defmodule EvoGit.Agent do
               :ok
           end
         end
+      end
+
+      # Syncs current commit and returns the SHA (for use in completion)
+      defp sync_and_get_current_commit(state) do
+        # Get the current worktree path
+        repo_path = Process.get(:repo_path)
+
+        if repo_path do
+          case Git.rev_parse(repo_path) do
+            {:ok, current_sha} ->
+              case AgentScheduler.get_agent_state(state.agent_id) do
+                {:ok, agent_state} ->
+                  # Update if commit changed
+                  if agent_state.phylo_node.current_commit != current_sha do
+                    updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
+                    AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
+
+                    # Stream event for dashboard visibility
+                    stream_event(state.agent_id, "COMMIT_UPDATED", %{
+                      new_commit: current_sha
+                    })
+                  end
+
+                  current_sha
+
+                _error ->
+                  # Fallback: get SHA directly from git
+                  current_sha
+              end
+
+            _error ->
+              nil
+          end
+        else
+          nil
+        end
+      end
+
+      # Wraps the result with commit information in a structured format
+      defp wrap_result_with_commit(result, commit_sha) do
+        formatted = """
+        # Result
+        #{result}
+
+        # Final Commit
+        #{commit_sha || "No commit"}
+        """
+        |> String.trim()
+        |> String.replace_prefix("", "")
+
+        formatted
       end
 
       defp loop(state) do
@@ -284,11 +335,23 @@ defmodule EvoGit.Agent do
           status: "success"
         })
 
+        # Sync the current commit before completing
+        commit_sha = sync_and_get_current_commit(state)
+
         result =
           Map.get(complete_call.arguments, "result") ||
             Map.get(complete_call.arguments, :result, "Task finished.")
 
-        {:complete, result}
+        # Wrap result with commit information
+        final_result = wrap_result_with_commit(result, commit_sha)
+
+        # Log commit info separately for dashboard querying
+        append_history(state.agent_id, "AGENT_COMPLETED", %{
+          final_commit: commit_sha,
+          result_length: String.length(result)
+        })
+
+        {:complete, final_result}
       end
 
       defp process_regular_tool_calls(tool_calls, state) do
@@ -654,14 +717,6 @@ defmodule EvoGit.Agent do
         state.depth >= EvoGit.AgentScheduler.max_depth()
       end
 
-      def execute_tool(call, _state) do
-        # Execute a single tool (kept for backward compatibility with overridable)
-        repo_root = Process.get(:evogit_repo_root)
-        [{_index, _tool_call_id, _name, output}] =
-          EvoGit.AgentScheduler.batch_execute_tools([{call, 0}], :infinity, repo_root)
-        output
-      end
-
       @doc """
       Returns the system prompt that defines the agent's core behavior, persona, and rules.
 
@@ -674,7 +729,6 @@ defmodule EvoGit.Agent do
 
       # Give adopting modules default implementations they can override
       defoverridable available_tools: 0,
-                     execute_tool: 2,
                      system_prompt: 0,
                      subagent_tool_name: 0,
                      subagent_tool_description: 0,
