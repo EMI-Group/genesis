@@ -80,6 +80,21 @@ defmodule EvoGit.Agent do
             _ -> "."
           end
 
+        # Build context tree and merge into first user prompt
+        repo_path = Process.get(:repo_path, File.cwd!())
+        context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
+
+        # Log context tree once to dashboard
+        context_preview =
+          if String.length(context_tree) > 1000 do
+            String.slice(context_tree, 0, 1000) <> "... (truncated)"
+          else
+            context_tree
+          end
+        append_history(agent_id, "CONTEXT_TREE", %{turn: 0, content: context_preview})
+
+        combined_prompt = "Current Context Tree:\n#{context_tree}\n\nYour Task:\n#{query}"
+
         state = %{
           agent_id: agent_id,
           depth: EvoGit.AgentScheduler.current_depth(),
@@ -87,13 +102,13 @@ defmodule EvoGit.Agent do
           # Loaded from ETS each turn — see load_worktree_path/1
           repo_path: nil,
           turn: 0,
-          history: [ReqLLM.Context.user(query)],
+          history: [ReqLLM.Context.user(combined_prompt)],
           in_grace_period: false,
           deadline: System.monotonic_time(:millisecond) + @timeout_ms
         }
 
         # Log the initial user prompt to history
-        append_history(agent_id, "USER_PROMPT", %{content: query})
+        append_history(agent_id, "USER_PROMPT", %{content: combined_prompt})
 
         loop(state)
       end
@@ -160,24 +175,9 @@ defmodule EvoGit.Agent do
       end
 
       defp do_turn(state) do
-        dynamic_context = build_dynamic_context(state)
-
-        # Log context tree to history (truncated for display)
-        context_preview =
-          if String.length(dynamic_context) > 1000 do
-            String.slice(dynamic_context, 0, 1000) <> "... (truncated)"
-          else
-            dynamic_context
-          end
-
-        append_history(state.agent_id, "CONTEXT_TREE", %{turn: state.turn, content: context_preview})
-
-        context_msg = ReqLLM.Context.user("Current Context Tree:\n" <> dynamic_context)
-
         context =
           ReqLLM.Context.new([
-            ReqLLM.Context.system(system_prompt()),
-            context_msg
+            ReqLLM.Context.system(system_prompt())
             | state.history
           ])
 
