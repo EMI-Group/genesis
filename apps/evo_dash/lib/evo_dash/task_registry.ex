@@ -146,6 +146,9 @@ defmodule EvoDash.TaskRegistry do
     repo_path = Keyword.get(opts, :path, File.cwd!())
     prompt = Keyword.get(opts, :prompt, "")
     mode = Keyword.get(opts, :mode, :new)
+    concurrency = Keyword.get(opts, :concurrency, 3)
+    retries = Keyword.get(opts, :retries, 3)
+    agent_max_retries = Keyword.get(opts, :agent_max_retries, 3)
 
     # Ensure evo_git app is started
     Application.ensure_all_started(:evo_git)
@@ -153,6 +156,9 @@ defmodule EvoDash.TaskRegistry do
     runtime_opts = [
       repo_path: repo_path,
       mode: String.to_atom(mode),
+      concurrency: concurrency,
+      retries: retries,
+      agent_max_retries: agent_max_retries,
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
 
@@ -170,12 +176,18 @@ defmodule EvoDash.TaskRegistry do
     repo_path = Keyword.get(opts, :path, File.cwd!())
     objective = Keyword.get(opts, :objective, "")
     mode = Keyword.get(opts, :mode, "simple")
+    concurrency = Keyword.get(opts, :concurrency, 3)
+    retries = Keyword.get(opts, :retries, 3)
+    agent_max_retries = Keyword.get(opts, :agent_max_retries, 3)
 
     Application.ensure_all_started(:evo_git)
 
     runtime_opts = [
       repo_path: repo_path,
       mode: String.to_atom(mode),
+      concurrency: concurrency,
+      retries: retries,
+      agent_max_retries: agent_max_retries,
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
 
