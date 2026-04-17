@@ -124,6 +124,39 @@ defmodule EvoGit.Agent do
         end
       end
 
+      defp sync_current_commit_after_tools(state) do
+        alias EvoGit.Adapters.Git
+        alias EvoGit.AgentScheduler
+
+        # Get the current worktree path
+        repo_path = Process.get(:repo_path)
+
+        if repo_path do
+          case Git.rev_parse(repo_path) do
+            {:ok, current_sha} ->
+              case AgentScheduler.get_agent_state(state.agent_id) do
+                {:ok, agent_state} ->
+                  # Only update if commit changed
+                  if agent_state.phylo_node.current_commit != current_sha do
+                    updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
+                    AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
+
+                    # Stream event for dashboard visibility
+                    stream_event(state.agent_id, "COMMIT_UPDATED", %{
+                      new_commit: current_sha
+                    })
+                  end
+
+                _error ->
+                  :ok
+              end
+
+            _error ->
+              :ok
+          end
+        end
+      end
+
       defp loop(state) do
         # Re-read worktree from ETS every turn
         state = load_worktree_path(state)
@@ -303,6 +336,9 @@ defmodule EvoGit.Agent do
         # Batch execute all tools in parallel
         indexed_results = batch_execute_tools(indexed_calls, :infinity, repo_root)
 
+        # Sync current_commit after tool execution for dashboard visibility
+        sync_current_commit_after_tools(state)
+
         # Stream end events for all calls
         Enum.each(indexed_results, fn {_index, _tool_call_id, name, _output} ->
           stream_event(state.agent_id, "TOOL_CALL_END", %{name: name})
@@ -368,6 +404,9 @@ defmodule EvoGit.Agent do
       defp process_subagent_calls(indexed_calls, state) do
         subagent_specs = build_subagent_specs(indexed_calls, state)
         results = EvoGit.AgentScheduler.spawn_sub_agents(subagent_specs)
+
+        # Sync current_commit after sub-agents complete (parent worktree state may have changed)
+        sync_current_commit_after_tools(state)
 
         Enum.zip(indexed_calls, results)
         |> Enum.map(fn {{call, index}, result} ->
