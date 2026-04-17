@@ -51,6 +51,7 @@ defmodule EvoDashWeb.DashboardLive do
           mode={@genesis_mode}
           concurrency={@genesis_concurrency}
           retries={@genesis_retries}
+          agent_max_retries={@genesis_agent_max_retries}
         />
       <% else %>
         <EvoDashWeb.DashboardComponents.evolve_form
@@ -59,6 +60,7 @@ defmodule EvoDashWeb.DashboardLive do
           mode={@evolve_mode}
           concurrency={@evolve_concurrency}
           retries={@evolve_retries}
+          agent_max_retries={@evolve_agent_max_retries}
         />
       <% end %>
 
@@ -130,13 +132,14 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("genesis_submit", %{"path" => path, "prompt" => prompt, "mode" => mode, "concurrency" => concurrency, "retries" => retries}, socket) do
+  def handle_event("genesis_submit", %{"path" => path, "prompt" => prompt, "mode" => mode, "concurrency" => concurrency, "retries" => retries, "agent_max_retries" => agent_max_retries}, socket) do
     opts = [
       path: path,
       prompt: prompt,
       mode: mode,
       concurrency: String.to_integer(concurrency),
-      retries: String.to_integer(retries)
+      retries: String.to_integer(retries),
+      agent_max_retries: String.to_integer(agent_max_retries)
     ]
 
     case TaskRegistry.start_task(:genesis, opts) do
@@ -149,7 +152,10 @@ defmodule EvoDashWeb.DashboardLive do
          |> put_flash(:info, "Genesis task started with ID: #{task.id}")
          |> assign(:tasks, tasks)
          |> assign(:genesis_prompt, "")
-         |> assign(:genesis_mode, "new")}
+         |> assign(:genesis_mode, mode)
+         |> assign(:genesis_concurrency, concurrency)
+         |> assign(:genesis_retries, retries)
+         |> assign(:genesis_agent_max_retries, agent_max_retries)}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
@@ -157,13 +163,14 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("evolve_submit", %{"path" => path, "objective" => objective, "mode" => mode, "concurrency" => concurrency, "retries" => retries}, socket) do
+  def handle_event("evolve_submit", %{"path" => path, "objective" => objective, "mode" => mode, "concurrency" => concurrency, "retries" => retries, "agent_max_retries" => agent_max_retries}, socket) do
     opts = [
       path: path,
       objective: objective,
       mode: mode,
       concurrency: String.to_integer(concurrency),
-      retries: String.to_integer(retries)
+      retries: String.to_integer(retries),
+      agent_max_retries: String.to_integer(agent_max_retries)
     ]
 
     case TaskRegistry.start_task(:evolve, opts) do
@@ -176,7 +183,10 @@ defmodule EvoDashWeb.DashboardLive do
          |> put_flash(:info, "Evolve task started with ID: #{task.id}")
          |> assign(:tasks, tasks)
          |> assign(:evolve_objective, "")
-         |> assign(:evolve_mode, "simple")}
+         |> assign(:evolve_mode, mode)
+         |> assign(:evolve_concurrency, concurrency)
+         |> assign(:evolve_retries, retries)
+         |> assign(:evolve_agent_max_retries, agent_max_retries)}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
@@ -219,10 +229,12 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:genesis_mode, "new")
     |> assign(:genesis_concurrency, "3")
     |> assign(:genesis_retries, "3")
+    |> assign(:genesis_agent_max_retries, "3")
     |> assign(:evolve_path, File.cwd!())
     |> assign(:evolve_objective, "")
     |> assign(:evolve_mode, "simple")
     |> assign(:evolve_concurrency, "3")
     |> assign(:evolve_retries, "3")
+    |> assign(:evolve_agent_max_retries, "3")
   end
 end

@@ -6,6 +6,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :mode, :string, default: "new"
   attr :concurrency, :string, default: "3"
   attr :retries, :string, default: "3"
+  attr :agent_max_retries, :string, default: "3"
 
   def genesis_form(assigns) do
     ~H"""
@@ -67,7 +68,7 @@ defmodule EvoDashWeb.DashboardComponents do
           </label>
         </div>
 
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-3 gap-4">
           <div class="form-control">
             <label class="label">
               <span class="label-text">Concurrency</span>
@@ -94,6 +95,19 @@ defmodule EvoDashWeb.DashboardComponents do
               class="input input-bordered"
             />
           </div>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">Agent Max Retries</span>
+            </label>
+            <input
+              type="number"
+              name="agent_max_retries"
+              value={@agent_max_retries}
+              min="1"
+              max="10"
+              class="input input-bordered"
+            />
+          </div>
         </div>
 
         <div class="card-actions justify-end mt-4">
@@ -112,6 +126,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :mode, :string, default: "simple"
   attr :concurrency, :string, default: "3"
   attr :retries, :string, default: "3"
+  attr :agent_max_retries, :string, default: "3"
 
   def evolve_form(assigns) do
     ~H"""
@@ -168,7 +183,7 @@ defmodule EvoDashWeb.DashboardComponents do
           ><%= @objective %></textarea>
         </div>
 
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-3 gap-4">
           <div class="form-control">
             <label class="label">
               <span class="label-text">Concurrency</span>
@@ -190,6 +205,19 @@ defmodule EvoDashWeb.DashboardComponents do
               type="number"
               name="retries"
               value={@retries}
+              min="1"
+              max="10"
+              class="input input-bordered"
+            />
+          </div>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">Agent Max Retries</span>
+            </label>
+            <input
+              type="number"
+              name="agent_max_retries"
+              value={@agent_max_retries}
               min="1"
               max="10"
               class="input input-bordered"
