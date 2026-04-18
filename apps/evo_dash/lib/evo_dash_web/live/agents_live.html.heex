@@ -253,8 +253,9 @@
                                   <pre class="mt-1 overflow-x-auto"><%= inspect(entry.data.args, limit: :infinity) %></pre>
                                 </div>
                               <% "COMPLETE" -> %>
+                                <% result_text = if is_map(entry.data.result), do: entry.data.result.result, else: entry.data.result %>
                                 <div class="text-sm mt-1 bg-success/10 p-2 rounded text-success">
-                                  <%= String.slice(entry.data.result, 0, 500) %><%= if String.length(entry.data.result) > 500, do: "..." %>
+                                  <%= String.slice(result_text, 0, 500) %><%= if String.length(result_text) > 500, do: "..." %>
                                 </div>
                               <% "ERROR" -> %>
                                 <div class="text-sm mt-1 bg-error/10 p-2 rounded text-error">
