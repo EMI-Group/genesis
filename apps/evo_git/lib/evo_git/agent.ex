@@ -528,6 +528,18 @@ defmodule EvoGit.Agent do
               """
           end
 
+        # Remove the tags created by subagents to prevent GC before the merge
+        successful_tags =
+          Enum.map(results, fn
+            {:ok, %{tag: tag}} when is_binary(tag) -> tag
+            _ -> nil
+          end)
+          |> Enum.reject(&is_nil/1)
+
+        Enum.each(successful_tags, fn tag ->
+          EvoGit.Adapters.Git.delete_tag(repo_path, tag)
+        end)
+
         append_history(state.agent_id, "SYSTEM_NOTE", %{content: merge_message})
 
         # Sync current_commit after sub-agents complete (parent worktree state may have changed)
@@ -591,10 +603,7 @@ defmodule EvoGit.Agent do
         #{result}
 
         # Final Commit
-        #{commit_sha || "No commit"}
-
-        # Tag
-        #{tag || "No tag"}
+        #{commit_sha}
         """
         |> String.trim()
       end
