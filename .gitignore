@@ -22,6 +22,7 @@ evo_git-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+/apps/evo_git/tmp
 
 # EvoGit runtime artifacts
 /.evogit/
