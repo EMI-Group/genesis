@@ -216,12 +216,6 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply, assign(socket, tasks: tasks)}
   end
 
-  @impl true
-  def handle_event("browse_path", _params, socket) do
-    # In a real app, you might open a file dialog or show a directory picker
-    {:noreply, socket}
-  end
-
   defp assign_form_defaults(socket) do
     socket
     |> assign(:genesis_path, File.cwd!())
