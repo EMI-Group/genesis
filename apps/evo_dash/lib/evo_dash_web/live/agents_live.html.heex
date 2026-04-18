@@ -123,33 +123,35 @@
                   </code>
                 </div>
 
-                <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Depth</h4>
-                  <span class="text-sm"><%= agent.depth %></span>
-                </div>
-
-                <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Retries</h4>
-                  <span class="text-sm"><%= agent.retries %></span>
-                </div>
-
-                <%= if agent.current_commit do %>
+                <div class="grid grid-cols-2 gap-4">
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Current Commit</h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded">
-                      <%= String.slice(agent.current_commit, 0, 7) %>
-                    </code>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Depth</h4>
+                    <span class="text-sm"><%= agent.depth %></span>
                   </div>
-                <% end %>
 
-                <%= if agent.base_commit do %>
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Base Commit</h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded">
-                      <%= String.slice(agent.base_commit, 0, 7) %>
-                    </code>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Retries</h4>
+                    <span class="text-sm"><%= agent.retries %></span>
                   </div>
-                <% end %>
+
+                  <%= if agent.current_commit do %>
+                    <div>
+                      <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Current Commit</h4>
+                      <code class="text-xs bg-base-200 px-2 py-1 rounded">
+                        <%= String.slice(agent.current_commit, 0, 7) %>
+                      </code>
+                    </div>
+                  <% end %>
+
+                  <%= if agent.base_commit do %>
+                    <div>
+                      <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Base Commit</h4>
+                      <code class="text-xs bg-base-200 px-2 py-1 rounded">
+                        <%= String.slice(agent.base_commit, 0, 7) %>
+                      </code>
+                    </div>
+                  <% end %>
+                </div>
 
                 <%= if agent.parent_id do %>
                   <div>
