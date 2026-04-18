@@ -435,11 +435,13 @@ defmodule EvoGit.Agent do
 
       defp batch_execute_tools(indexed_calls, timeout \\ :infinity, repo_root \\ nil) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
+        repo_path = Process.get(:repo_path)
 
         tasks =
           Enum.map(indexed_calls, fn {call, index} ->
             {index, call.name, call,
              Task.async(fn ->
+               if repo_path, do: Process.put(:repo_path, repo_path)
                EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_root)
              end)}
           end)
