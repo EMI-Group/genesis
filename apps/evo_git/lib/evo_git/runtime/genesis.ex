@@ -40,12 +40,23 @@ defmodule EvoGit.Runtime.Genesis do
         |> AgentScheduler.run_agent()
 
       case result do
-        {:ok, _agent_output} ->
-          {:ok, final_sha} = Git.rev_parse(repo_path)
+        {:ok, agent_output} ->
+          final_sha = Map.get(agent_output, :commit_sha)
 
-          Logger.info("Genesis: Evolution complete. Final SHA: #{String.slice(final_sha, 0, 7)}")
+          if final_sha do
+            Logger.info("Genesis: Merging agent changes back to main workspace...")
+            case System.cmd("git", ["merge", "--no-commit", final_sha], cd: repo_path, stderr_to_stdout: true) do
+              {output, 0} ->
+                Logger.info("Genesis: User handoff merge successful.\n#{output}")
+              {output, code} ->
+                Logger.warning("Genesis: User handoff merge finished (exit code #{code}).\n#{output}")
+            end
+          end
 
-          {:ok, final_sha}
+          {:ok, head_now} = Git.rev_parse(repo_path)
+          Logger.info("Genesis: Evolution complete. Current HEAD: #{String.slice(head_now, 0, 7)}")
+
+          {:ok, final_sha || head_now}
 
         error ->
           Logger.error("Genesis failed: #{inspect(error)}")
