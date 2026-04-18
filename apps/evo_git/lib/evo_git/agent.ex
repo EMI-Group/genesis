@@ -194,18 +194,12 @@ defmodule EvoGit.Agent do
       end
 
       # Wraps the result with commit information in a structured format
-      defp wrap_result_with_commit(result, commit_sha) do
-        formatted = """
-        # Result
-        #{result}
-
-        # Final Commit
-        #{commit_sha || "No commit"}
-        """
-        |> String.trim()
-        |> String.replace_prefix("", "")
-
-        formatted
+      defp wrap_result_with_commit(result, commit_sha, tag) do
+        %{
+          result: result,
+          commit_sha: commit_sha,
+          tag: tag
+        }
       end
 
       defp loop(state) do
@@ -342,12 +336,17 @@ defmodule EvoGit.Agent do
           Map.get(complete_call.arguments, "result") ||
             Map.get(complete_call.arguments, :result, "Task finished.")
 
+        tag_name = "subagent_#{state.agent_id}}"
+        repo_path = Process.get(:repo_path)
+        Git.tag(repo_path, tag_name, commit_sha)
+
         # Wrap result with commit information
-        final_result = wrap_result_with_commit(result, commit_sha)
+        final_result = wrap_result_with_commit(result, commit_sha, tag_name)
 
         # Log commit info separately for dashboard querying
         append_history(state.agent_id, "AGENT_COMPLETED", %{
           final_commit: commit_sha,
+          tag: tag_name,
           result_length: String.length(result)
         })
 
@@ -518,6 +517,20 @@ defmodule EvoGit.Agent do
 
       defp format_subagent_result({:error, reason}) do
         "Error: Sub-agent failed: #{inspect(reason)}"
+      end
+
+      defp format_subagent_result({:ok, %{result: result, commit_sha: commit_sha, tag: tag}}) do
+        """
+        # Result
+        #{result}
+
+        # Final Commit
+        #{commit_sha || "No commit"}
+
+        # Tag
+        #{tag || "No tag"}
+        """
+        |> String.trim()
       end
 
       defp format_subagent_result(text) when is_binary(text), do: text
