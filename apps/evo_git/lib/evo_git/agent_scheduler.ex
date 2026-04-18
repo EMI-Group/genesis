@@ -108,6 +108,24 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Updates scheduler configuration at runtime without restarting the process.
+
+  Accepts a keyword list with any of: `:max_concurrency`, `:agent_max_retries`,
+  `:max_depth`. Only provided keys are updated; others remain unchanged.
+
+  If `:max_concurrency` changes and the worktree pool is already initialized,
+  the pool is torn down and will be lazily re-created on the next `run_agent/2`
+  call. This is only safe when no agents are running — returns
+  `{:error, :agents_running}` if active agents exist.
+
+  Returns `:ok` on success.
+  """
+  @spec update_config(keyword()) :: :ok | {:error, :agents_running}
+  def update_config(opts) when is_list(opts) do
+    GenServer.call(__MODULE__, {:update_config, opts})
+  end
+
+  @doc """
   Reads the agent's live state from the agent state table.
   Called by agent processes every turn.
   """
@@ -187,6 +205,37 @@ defmodule EvoGit.AgentScheduler do
     Logger.info("AgentScheduler: Spawning top-level agent #{agent_id}")
     state = try_dispatch(state, agent_id)
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_call({:update_config, opts}, _from, state) do
+    has_active_agents = state.ref_to_agent != %{} or not :queue.is_empty(state.queue)
+    concurrency_changed = Keyword.has_key?(opts, :max_concurrency) and
+      Keyword.get(opts, :max_concurrency) != state.max_concurrency
+
+    if concurrency_changed and has_active_agents do
+      {:reply, {:error, :agents_running}, state}
+    else
+      state =
+        state
+        |> maybe_update(:max_concurrency, opts)
+        |> maybe_update(:agent_max_retries, opts)
+        |> maybe_update(:max_depth, opts)
+
+      # If concurrency changed, tear down the pool so it's lazily re-created
+      state = if concurrency_changed and state.initialized do
+        teardown_worktrees(state)
+      else
+        state
+      end
+
+      Logger.info(
+        "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
+          "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
+      )
+
+      {:reply, :ok, state}
+    end
   end
 
   @impl true
@@ -341,6 +390,22 @@ defmodule EvoGit.AgentScheduler do
         repo_root: repo_root,
         base_sha: current_sha
     }
+  end
+
+  defp teardown_worktrees(%{repo_root: repo_root} = state) when is_binary(repo_root) do
+    worker_base = Path.join(repo_root, ".evogit/workers")
+    File.rm_rf!(worker_base)
+    Git.prune_worktrees(repo_root)
+    %{state | initialized: false, available_worktrees: []}
+  end
+
+  defp teardown_worktrees(state), do: %{state | initialized: false, available_worktrees: []}
+
+  defp maybe_update(state, key, opts) do
+    case Keyword.fetch(opts, key) do
+      {:ok, value} -> Map.put(state, key, value)
+      :error -> state
+    end
   end
 
   # --- ETS Helpers (Agent State Table) ---
