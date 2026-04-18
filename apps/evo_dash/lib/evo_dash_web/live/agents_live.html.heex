@@ -248,12 +248,12 @@
                                   <%= entry.data.text %>
                                 </div>
                               <% "TOOL_CALL_START" -> %>
-                                <div class="text-xs mt-1 bg-orange-50 dark:bg-orange-900/20 p-2 rounded">
+                                <div class="text-xs mt-1 bg-orange-50 dark:bg-orange-900/20 p-2 rounded text-orange-900 dark:text-orange-200">
                                   <div class="font-semibold"><%= entry.data.name %></div>
                                   <pre class="mt-1 overflow-x-auto"><%= inspect(entry.data.args, limit: :infinity) %></pre>
                                 </div>
                               <% "COMPLETE" -> %>
-                                <div class="text-sm mt-1 bg-emerald-50 dark:bg-emerald-900/20 p-2 rounded">
+                                <div class="text-sm mt-1 bg-emerald-50 dark:bg-emerald-900/20 p-2 rounded text-emerald-900 dark:text-emerald-200">
                                   <%= String.slice(entry.data.result, 0, 500) %><%= if String.length(entry.data.result) > 500, do: "..." %>
                                 </div>
                               <% "ERROR" -> %>
@@ -261,17 +261,17 @@
                                   <%= entry.data.error %>
                                 </div>
                               <% "RETRY" -> %>
-                                <div class="text-sm mt-1 bg-orange-50 dark:bg-orange-900/20 p-2 rounded">
+                                <div class="text-sm mt-1 bg-orange-50 dark:bg-orange-900/20 p-2 rounded text-orange-900 dark:text-orange-200">
                                   <div class="font-semibold">Retry attempt <%= entry.data.attempt %></div>
                                   <div class="text-xs mt-1"><%= String.slice(entry.data.reason, 0, 200) %><%= if String.length(entry.data.reason) > 200, do: "..." %></div>
                                 </div>
                               <% "RETRY_DISPATCH" -> %>
-                                <div class="text-sm mt-1 bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
+                                <div class="text-sm mt-1 bg-amber-50 dark:bg-amber-900/20 p-2 rounded text-amber-900 dark:text-amber-200">
                                   <div class="font-semibold">Retry #<%= entry.data.attempt %> - Starting with <%= entry.data.backoff_seconds %>s backoff</div>
                                   <div class="text-xs mt-1">Worktree: <%= Path.basename(entry.data.worktree) %></div>
                                 </div>
                               <% "QUEUED" -> %>
-                                <div class="text-sm mt-1 bg-gray-100 dark:bg-gray-800 p-2 rounded">
+                                <div class="text-sm mt-1 bg-gray-100 dark:bg-gray-800/60 p-2 rounded">
                                   <%= entry.data.message %>
                                 </div>
                               <% "CONTEXT_TREE" -> %>
@@ -279,10 +279,10 @@
                                   <summary class="cursor-pointer text-purple-600 dark:text-purple-400">
                                     View Context (Turn <%= entry.data.turn %>)
                                   </summary>
-                                  <pre class="mt-2 bg-purple-50 dark:bg-purple-900/20 p-2 rounded overflow-x-auto"><%= entry.data.content %></pre>
+                                  <pre class="mt-2 bg-purple-50 dark:bg-purple-900/20 p-2 rounded overflow-x-auto text-purple-900 dark:text-purple-200"><%= entry.data.content %></pre>
                                 </details>
                               <% _ -> %>
-                                <pre class="text-xs mt-1 overflow-x-auto"><%= inspect(entry.data, limit: :infinity) %></pre>
+                                <pre class="text-xs mt-1 overflow-x-auto bg-base-200 dark:bg-base-300 p-2 rounded"><%= inspect(entry.data, limit: :infinity) %></pre>
                             <% end %>
                           </div>
                         <% end %>
