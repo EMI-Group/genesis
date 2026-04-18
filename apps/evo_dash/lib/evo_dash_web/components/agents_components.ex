@@ -86,20 +86,20 @@ defmodule EvoDashWeb.AgentsComponents do
     """
   end
 
-  defp agent_status_color(:pending), do: "text-gray-600 dark:text-gray-400"
-  defp agent_status_color(:running), do: "text-green-600 dark:text-green-400"
-  defp agent_status_color(:waiting), do: "text-yellow-600 dark:text-yellow-400"
-  defp agent_status_color(_), do: "text-gray-600 dark:text-gray-400"
+  defp agent_status_color(:pending), do: "text-base-content/70"
+  defp agent_status_color(:running), do: "text-success"
+  defp agent_status_color(:waiting), do: "text-warning"
+  defp agent_status_color(_), do: "text-base-content/70"
 
-  defp agent_status_bg(:pending), do: "bg-gray-50 dark:bg-gray-800/50"
-  defp agent_status_bg(:running), do: "bg-green-50 dark:bg-green-900/40"
-  defp agent_status_bg(:waiting), do: "bg-yellow-50 dark:bg-yellow-900/40"
-  defp agent_status_bg(_), do: "bg-gray-50 dark:bg-gray-800/50"
+  defp agent_status_bg(:pending), do: "bg-base-100"
+  defp agent_status_bg(:running), do: "bg-success/10"
+  defp agent_status_bg(:waiting), do: "bg-warning/10"
+  defp agent_status_bg(_), do: "bg-base-100"
 
-  defp agent_status_border(:pending), do: "border-gray-300 dark:border-gray-700"
-  defp agent_status_border(:running), do: "border-green-400 dark:border-green-700"
-  defp agent_status_border(:waiting), do: "border-yellow-400 dark:border-yellow-700"
-  defp agent_status_border(_), do: "border-gray-300 dark:border-gray-700"
+  defp agent_status_border(:pending), do: "border-base-300"
+  defp agent_status_border(:running), do: "border-success/30"
+  defp agent_status_border(:waiting), do: "border-warning/30"
+  defp agent_status_border(_), do: "border-base-300"
 
   defp agent_status_icon(:pending), do: "hero-clock"
   defp agent_status_icon(:running), do: "hero-play-circle"

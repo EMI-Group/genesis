@@ -49,15 +49,15 @@
           <h4 class="font-semibold text-sm mb-3">Status Legend</h4>
           <div class="flex flex-wrap gap-4 text-sm">
             <div class="flex items-center gap-2">
-              <span class="w-3 h-3 rounded-full bg-gray-400 dark:bg-gray-600"></span>
+              <span class="w-3 h-3 rounded-full bg-base-content/20"></span>
               <span>Pending</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="w-3 h-3 rounded-full bg-green-500 dark:bg-green-600"></span>
+              <span class="w-3 h-3 rounded-full bg-success"></span>
               <span>Running</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="w-3 h-3 rounded-full bg-yellow-500 dark:bg-yellow-600"></span>
+              <span class="w-3 h-3 rounded-full bg-warning"></span>
               <span>Waiting (for sub-agents)</span>
             </div>
           </div>
@@ -96,28 +96,28 @@
               <!-- Details -->
               <div class="space-y-4">
                 <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Agent Module</h4>
-                  <code class="text-xs bg-base-200 px-2 py-1 rounded">
+                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Agent Module</h4>
+                  <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
                     <%= inspect(agent.agent_module) %>
                   </code>
                 </div>
 
                 <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Objective</h4>
+                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Objective</h4>
                   <p class="text-sm bg-base-200 p-3 rounded">
                     <%= String.slice(agent.objective, 0, 150) %><%= if String.length(agent.objective) > 150, do: "..." %>
                   </p>
                 </div>
 
                 <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Context Path</h4>
+                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Context Path</h4>
                   <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
                     <%= agent.context_path || "N/A" %>
                   </code>
                 </div>
 
                 <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Worktree</h4>
+                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Worktree</h4>
                   <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
                     <%= agent.worktree || "Not assigned" %>
                   </code>
@@ -136,7 +136,7 @@
 
                   <%= if agent.current_commit do %>
                     <div>
-                      <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Current Commit</h4>
+                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Current Commit</h4>
                       <code class="text-xs bg-base-200 px-2 py-1 rounded">
                         <%= String.slice(agent.current_commit, 0, 7) %>
                       </code>
@@ -145,7 +145,7 @@
 
                   <%= if agent.base_commit do %>
                     <div>
-                      <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Base Commit</h4>
+                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Base Commit</h4>
                       <code class="text-xs bg-base-200 px-2 py-1 rounded">
                         <%= String.slice(agent.base_commit, 0, 7) %>
                       </code>
@@ -155,7 +155,7 @@
 
                 <%= if agent.parent_id do %>
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Parent Agent</h4>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Parent Agent</h4>
                     <button
                       class="btn btn-sm btn-ghost btn-xs"
                       phx-click="select_agent"
@@ -168,7 +168,7 @@
 
                 <%= if agent.pending_sub_agents != [] do %>
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Pending Sub-Agents</h4>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Pending Sub-Agents</h4>
                     <div class="flex flex-wrap gap-1 mt-1">
                       <%= for sub_id <- agent.pending_sub_agents do %>
                         <button
@@ -185,7 +185,7 @@
 
                 <%= if map_size(agent.sub_agent_results) > 0 do %>
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Sub-Agent Results</h4>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Sub-Agent Results</h4>
                     <div class="text-xs bg-base-200 p-2 rounded max-h-32 overflow-y-auto">
                       <%= for {sub_id, result} <- agent.sub_agent_results do %>
                         <div class="mb-1">
@@ -198,7 +198,7 @@
                 <% end %>
 
                 <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">Children</h4>
+                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Children</h4>
                   <%= if agent.has_children do %>
                     <div class="flex flex-wrap gap-1 mt-1">
                       <%= for {child_id, child_status} <- agent.children do %>
@@ -218,7 +218,7 @@
 
                 <!-- Chat History -->
                 <div class="mt-6">
-                  <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-2">
+                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">
                     Chat History / Session Memory
                   </h4>
                   <%= if agent.history && agent.history != [] do %>
@@ -240,7 +240,7 @@
                             </div>
                             <%= case entry.type do %>
                               <% "USER_PROMPT" -> %>
-                                <div class="text-sm mt-1 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
+                                <div class="text-sm mt-1 bg-info/10 p-2 rounded">
                                   <%= entry.data.content %>
                                 </div>
                               <% "THOUGHT_CHUNK" -> %>
@@ -248,48 +248,48 @@
                                   <%= entry.data.text %>
                                 </div>
                               <% "TOOL_CALL_START" -> %>
-                                <div class="text-xs mt-1 bg-orange-50 dark:bg-orange-900/20 p-2 rounded text-orange-900 dark:text-orange-200">
+                                <div class="text-xs mt-1 bg-accent/10 p-2 rounded text-accent">
                                   <div class="font-semibold"><%= entry.data.name %></div>
                                   <pre class="mt-1 overflow-x-auto"><%= inspect(entry.data.args, limit: :infinity) %></pre>
                                 </div>
                               <% "COMPLETE" -> %>
-                                <div class="text-sm mt-1 bg-emerald-50 dark:bg-emerald-900/20 p-2 rounded text-emerald-900 dark:text-emerald-200">
+                                <div class="text-sm mt-1 bg-success/10 p-2 rounded text-success">
                                   <%= String.slice(entry.data.result, 0, 500) %><%= if String.length(entry.data.result) > 500, do: "..." %>
                                 </div>
                               <% "ERROR" -> %>
-                                <div class="text-sm mt-1 bg-red-50 dark:bg-red-900/20 p-2 rounded text-red-700 dark:text-red-400">
+                                <div class="text-sm mt-1 bg-error/10 p-2 rounded text-error">
                                   <%= entry.data.error %>
                                 </div>
                               <% "RETRY" -> %>
-                                <div class="text-sm mt-1 bg-orange-50 dark:bg-orange-900/20 p-2 rounded text-orange-900 dark:text-orange-200">
+                                <div class="text-sm mt-1 bg-warning/10 p-2 rounded text-warning">
                                   <div class="font-semibold">Retry attempt <%= entry.data.attempt %></div>
                                   <div class="text-xs mt-1"><%= String.slice(entry.data.reason, 0, 200) %><%= if String.length(entry.data.reason) > 200, do: "..." %></div>
                                 </div>
                               <% "RETRY_DISPATCH" -> %>
-                                <div class="text-sm mt-1 bg-amber-50 dark:bg-amber-900/20 p-2 rounded text-amber-900 dark:text-amber-200">
+                                <div class="text-sm mt-1 bg-warning/10 p-2 rounded text-warning">
                                   <div class="font-semibold">Retry #<%= entry.data.attempt %> - Starting with <%= entry.data.backoff_seconds %>s backoff</div>
                                   <div class="text-xs mt-1">Worktree: <%= Path.basename(entry.data.worktree) %></div>
                                 </div>
                               <% "QUEUED" -> %>
-                                <div class="text-sm mt-1 bg-gray-100 dark:bg-gray-800/60 p-2 rounded">
+                                <div class="text-sm mt-1 bg-base-200 p-2 rounded">
                                   <%= entry.data.message %>
                                 </div>
                               <% "CONTEXT_TREE" -> %>
                                 <details class="text-xs mt-1">
-                                  <summary class="cursor-pointer text-purple-600 dark:text-purple-400">
+                                  <summary class="cursor-pointer text-secondary">
                                     View Context (Turn <%= entry.data.turn %>)
                                   </summary>
-                                  <pre class="mt-2 bg-purple-50 dark:bg-purple-900/20 p-2 rounded overflow-x-auto text-purple-900 dark:text-purple-200"><%= entry.data.content %></pre>
+                                  <pre class="mt-2 bg-secondary/10 p-2 rounded overflow-x-auto text-secondary"><%= entry.data.content %></pre>
                                 </details>
                               <% _ -> %>
-                                <pre class="text-xs mt-1 overflow-x-auto bg-base-200 dark:bg-base-300 p-2 rounded"><%= inspect(entry.data, limit: :infinity) %></pre>
+                                <pre class="text-xs mt-1 overflow-x-auto bg-base-200 p-2 rounded"><%= inspect(entry.data, limit: :infinity) %></pre>
                             <% end %>
                           </div>
                         <% end %>
                       </div>
                     </div>
                   <% else %>
-                    <div class="text-sm text-base-content/50 bg-base-200 p-4 rounded-lg text-center">
+                    <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center">
                       No history recorded yet
                     </div>
                   <% end %>
