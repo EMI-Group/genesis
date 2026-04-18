@@ -101,10 +101,10 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   # Helper functions for the template
-  defp status_color(:pending), do: "text-gray-600 dark:text-gray-400"
-  defp status_color(:running), do: "text-green-600 dark:text-green-400"
-  defp status_color(:waiting), do: "text-yellow-600 dark:text-yellow-400"
-  defp status_color(_), do: "text-gray-600 dark:text-gray-400"
+  defp status_color(:pending), do: "badge-ghost"
+  defp status_color(:running), do: "badge-success badge-outline border-success/30 bg-success/10"
+  defp status_color(:waiting), do: "badge-warning badge-outline border-warning/30 bg-warning/10"
+  defp status_color(_), do: "badge-ghost"
 
   defp status_icon(:pending), do: "hero-clock"
   defp status_icon(:running), do: "hero-play-circle"
@@ -123,17 +123,17 @@ defmodule EvoDashWeb.AgentsLive do
   defp history_entry_icon("QUEUED"), do: "hero-clock"
   defp history_entry_icon(_), do: "hero-document-text"
 
-  defp history_entry_color("USER_PROMPT"), do: "text-blue-600 dark:text-blue-400"
-  defp history_entry_color("CONTEXT_TREE"), do: "text-purple-600 dark:text-purple-400"
-  defp history_entry_color("THOUGHT_CHUNK"), do: "text-yellow-600 dark:text-yellow-400"
-  defp history_entry_color("TOOL_CALL_START"), do: "text-orange-600 dark:text-orange-400"
-  defp history_entry_color("TOOL_CALL_END"), do: "text-green-600 dark:text-green-400"
-  defp history_entry_color("COMPLETE"), do: "text-emerald-600 dark:text-emerald-400"
-  defp history_entry_color("ERROR"), do: "text-red-600 dark:text-red-400"
-  defp history_entry_color("RETRY"), do: "text-orange-600 dark:text-orange-400"
-  defp history_entry_color("RETRY_DISPATCH"), do: "text-amber-600 dark:text-amber-400"
-  defp history_entry_color("QUEUED"), do: "text-gray-600 dark:text-gray-400"
-  defp history_entry_color(_), do: "text-gray-600 dark:text-gray-400"
+  defp history_entry_color("USER_PROMPT"), do: "text-info"
+  defp history_entry_color("CONTEXT_TREE"), do: "text-secondary"
+  defp history_entry_color("THOUGHT_CHUNK"), do: "text-warning"
+  defp history_entry_color("TOOL_CALL_START"), do: "text-accent"
+  defp history_entry_color("TOOL_CALL_END"), do: "text-success"
+  defp history_entry_color("COMPLETE"), do: "text-success"
+  defp history_entry_color("ERROR"), do: "text-error"
+  defp history_entry_color("RETRY"), do: "text-warning"
+  defp history_entry_color("RETRY_DISPATCH"), do: "text-warning"
+  defp history_entry_color("QUEUED"), do: "text-base-content/50"
+  defp history_entry_color(_), do: "text-base-content/50"
 
   defp format_timestamp(timestamp_ms) do
     datetime = DateTime.from_unix!(timestamp_ms, :millisecond)
