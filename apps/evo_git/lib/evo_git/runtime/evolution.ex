@@ -29,14 +29,25 @@ defmodule EvoGit.Runtime.Evolution do
              event_sink: Keyword.get(opts, :event_sink, self())
            )
            |> AgentScheduler.run_agent() do
-        {:ok, _agent_output} ->
-          {:ok, final_sha} = Git.rev_parse(repo_path)
+        {:ok, agent_output} ->
+          final_sha = Map.get(agent_output, :commit_sha)
 
+          if final_sha do
+            Logger.info("Evolution: Merging agent changes back to main workspace...")
+            case System.cmd("git", ["merge", "--no-commit", final_sha], cd: repo_path, stderr_to_stdout: true) do
+              {output, 0} ->
+                Logger.info("Evolution: User handoff merge successful.\n#{output}")
+              {output, code} ->
+                Logger.warning("Evolution: User handoff merge finished (exit code #{code}).\n#{output}")
+            end
+          end
+
+          {:ok, head_now} = Git.rev_parse(repo_path)
           Logger.info(
-            "Evolution: Evolution successful. Final SHA: #{String.slice(final_sha, 0, 7)}"
+            "Evolution: Evolution successful. Current HEAD: #{String.slice(head_now, 0, 7)}"
           )
 
-          {:ok, final_sha}
+          {:ok, final_sha || head_now}
 
         error ->
           Logger.error("Evolution: Agent failed: #{inspect(error)}")
