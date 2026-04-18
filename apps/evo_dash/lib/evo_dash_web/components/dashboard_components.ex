@@ -21,19 +21,13 @@ defmodule EvoDashWeb.DashboardComponents do
           <label class="label">
             <span class="label-text font-semibold">Repository Path</span>
           </label>
-          <div class="join w-full">
-            <input
-              type="text"
-              name="path"
-              value={@path || File.cwd!()}
-              class="input input-bordered join-item flex-1"
-              placeholder="/path/to/your/repo"
-            />
-            <button type="button" class="btn btn-primary join-item" phx-click="browse_path">
-              <.icon name="hero-folder" class="size-4" />
-              Browse
-            </button>
-          </div>
+          <input
+            type="text"
+            name="path"
+            value={@path || File.cwd!()}
+            class="input input-bordered w-full"
+            placeholder="/path/to/your/repo"
+          />
           <label class="label">
             <span class="label-text-alt">The path to the git repository to work on</span>
           </label>
@@ -141,19 +135,13 @@ defmodule EvoDashWeb.DashboardComponents do
           <label class="label">
             <span class="label-text font-semibold">Repository Path</span>
           </label>
-          <div class="join w-full">
-            <input
-              type="text"
-              name="path"
-              value={@path || File.cwd!()}
-              class="input input-bordered join-item flex-1"
-              placeholder="/path/to/your/repo"
-            />
-            <button type="button" class="btn btn-primary join-item" phx-click="browse_path">
-              <.icon name="hero-folder" class="size-4" />
-              Browse
-            </button>
-          </div>
+          <input
+            type="text"
+            name="path"
+            value={@path || File.cwd!()}
+            class="input input-bordered w-full"
+            placeholder="/path/to/your/repo"
+          />
         </div>
 
         <div class="form-control">
