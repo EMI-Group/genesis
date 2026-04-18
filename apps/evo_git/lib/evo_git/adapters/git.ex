@@ -78,6 +78,14 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
+  def merge_octopus(path, commit_shas) when is_list(commit_shas) do
+    case System.cmd("git", ["merge" | commit_shas], cd: path, stderr_to_stdout: true) do
+      {output, 0} -> {:ok, String.trim(output)}
+      {output, 1} -> {:conflict, String.trim(output)}
+      {output, code} -> {:error, code, String.trim(output)}
+    end
+  end
+
   def merge_base(path, commit_a, commit_b) do
     run(["merge-base", commit_a, commit_b], path)
   end
