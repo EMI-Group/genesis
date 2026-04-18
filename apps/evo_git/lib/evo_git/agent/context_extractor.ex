@@ -39,11 +39,10 @@ defmodule EvoGit.Agent.ContextExtractor do
     2. API Surface: What modules/files it contains and exposes, and basic examples of how to use them.
     3. Code Style: Rules for child files and subdirectories, such as naming conventions, coding standards etc.
     4. Design Guidelines: General architectural patterns, principles etc.
-    Everything that belongs to that directory should be described in its context.
+    These are just examples, in practice you don't need strictly follow this format, as long as the context file effectively communicates the necessary information about the directory.
     The context file should be simple and concise but comprehensive enough to give a clear understanding of the directory's role.
 
     ## Guidelines
-
     - Analyze the files and subdirectories in your assigned scope.
     - Delegate focused sub-tasks to the `subagent_context_extractor` sub-agent to extract context for child directories.
       - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
