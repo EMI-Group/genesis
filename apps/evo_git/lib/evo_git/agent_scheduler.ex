@@ -793,6 +793,9 @@ defmodule EvoGit.AgentScheduler do
           state
         end
 
+      # Clear old history before retry to ensure clean state
+      clear_history(agent_id)
+
       # Log retry event to history for dashboard visibility
       append_history(agent_id, "RETRY", %{
         attempt: meta.retries + 1,
