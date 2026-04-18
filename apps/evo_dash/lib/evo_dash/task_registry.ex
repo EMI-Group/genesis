@@ -153,15 +153,11 @@ defmodule EvoDash.TaskRegistry do
     # Ensure evo_git app is started
     Application.ensure_all_started(:evo_git)
 
-    # Reconfigure and restart AgentScheduler BEFORE running
-    Application.put_env(:evo_git, :max_concurrency, concurrency)
-    Application.put_env(:evo_git, :max_retries, retries)
-    Application.put_env(:evo_git, :agent_max_retries, agent_max_retries)
-
-    require Logger
-    Logger.info("Reconfiguring AgentScheduler with max_concurrency: #{concurrency}, agent_max_retries: #{agent_max_retries}")
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
-    Supervisor.restart_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
+    # Update scheduler config at runtime (no restart needed)
+    EvoGit.AgentScheduler.update_config(
+      max_concurrency: concurrency,
+      agent_max_retries: agent_max_retries
+    )
 
     runtime_opts = [
       repo_path: repo_path,
@@ -192,15 +188,11 @@ defmodule EvoDash.TaskRegistry do
 
     Application.ensure_all_started(:evo_git)
 
-    # Reconfigure and restart AgentScheduler BEFORE running
-    Application.put_env(:evo_git, :max_concurrency, concurrency)
-    Application.put_env(:evo_git, :max_retries, retries)
-    Application.put_env(:evo_git, :agent_max_retries, agent_max_retries)
-
-    require Logger
-    Logger.info("Reconfiguring AgentScheduler with max_concurrency: #{concurrency}, agent_max_retries: #{agent_max_retries}")
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
-    Supervisor.restart_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
+    # Update scheduler config at runtime (no restart needed)
+    EvoGit.AgentScheduler.update_config(
+      max_concurrency: concurrency,
+      agent_max_retries: agent_max_retries
+    )
 
     runtime_opts = [
       repo_path: repo_path,
