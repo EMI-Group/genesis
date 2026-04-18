@@ -193,4 +193,11 @@ defmodule EvoGit.Adapters.Git do
   def tag(path, tag_name, commit_sha \\ "HEAD") do
     run(["tag", tag_name, commit_sha], path)
   end
+
+  @doc """
+  Deletes a tag.
+  """
+  def delete_tag(path, tag_name) do
+    run(["tag", "-d", tag_name], path)
+  end
 end
