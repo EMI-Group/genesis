@@ -52,7 +52,9 @@ defmodule EvoGit.Agent do
       @complete_tool "complete_task"
 
       defp current_model do
-        model = Application.get_env(:evo_git, :llm_model, "google:gemini-3.1-flash-lite-preview")
+        agent_id = EvoGit.AgentScheduler.current_agent_id()
+        {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
+        model = agent_state.llm_model
         Logger.debug("Using LLM model: #{model}")
         model
       end
@@ -266,7 +268,8 @@ defmodule EvoGit.Agent do
         # Track LLM time
         llm_start = System.monotonic_time(:millisecond)
 
-        max_retries = Application.get_env(:evo_git, :max_retries, 3)
+        {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
+        max_retries = agent_state.max_retries
 
         {ok, response} =
           retry with:
@@ -803,7 +806,8 @@ defmodule EvoGit.Agent do
       end
 
       defp at_max_depth?(state) do
-        state.depth >= EvoGit.AgentScheduler.max_depth()
+        {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
+        state.depth >= agent_state.max_depth
       end
 
       @doc """

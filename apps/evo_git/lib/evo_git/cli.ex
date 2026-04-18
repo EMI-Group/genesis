@@ -4,6 +4,7 @@ defmodule EvoGit.CLI do
   """
   alias EvoGit.Runtime.Genesis
   alias EvoGit.Runtime.Evolution
+  alias EvoGit.Defaults
   require Logger
 
   def main(args) do
@@ -32,38 +33,26 @@ defmodule EvoGit.CLI do
     if opts[:help] do
       print_help()
     else
-      configure_system(opts)
+      configure_scheduler(opts)
       dispatch(argv, opts)
     end
   end
 
-  defp configure_system(opts) do
-    # Update application config if provided
-    updated? =
-      Enum.reduce([:concurrency, :retries, :path, :model], false, fn key, acc ->
-        if val = opts[key] do
-          app_key =
-            case key do
-              :concurrency -> :max_concurrency
-              :retries -> :max_retries
-              :path -> :repo_path
-              :model -> :llm_model
-            end
+  defp configure_scheduler(opts) do
+    scheduler_opts =
+      []
+      |> maybe_put(:max_concurrency, opts[:concurrency])
+      |> maybe_put(:max_retries, opts[:retries])
+      |> maybe_put(:llm_model, opts[:model])
 
-          Application.put_env(:evo_git, app_key, val)
-          true
-        else
-          acc
-        end
-      end)
-
-    # Restart AgentScheduler if config changed
-    if updated? do
-      Logger.info("Reconfiguring AgentScheduler with opts: #{inspect(opts)}")
-      Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
+    if scheduler_opts != [] do
+      Logger.info("Reconfiguring AgentScheduler with opts: #{inspect(scheduler_opts)}")
+      EvoGit.AgentScheduler.update_config(scheduler_opts)
     end
   end
+
+  defp maybe_put(keyword, _key, nil), do: keyword
+  defp maybe_put(keyword, key, val), do: Keyword.put(keyword, key, val)
 
   defp dispatch(["genesis" | rest], opts) do
     mode = opts[:mode] || "new"
@@ -194,10 +183,10 @@ defmodule EvoGit.CLI do
 
     Options:
       -f, --file <path>           Read prompt/objective from a file.
-      -c, --concurrency <n>       Set number of concurrent workers (default: 3).
-      -r, --retries <n>           Set max retries for failed agents (default: 3).
+      -c, --concurrency <n>       Set number of concurrent workers (default: #{Defaults.max_concurrency()}).
+      -r, --retries <n>           Set max retries for failed agents (default: #{Defaults.agent_max_retries()}).
       -p, --path <path>           Path to the git repository (default: current directory).
-      -m, --model <model>         Override the default LLM model.
+      -m, --model <model>         Override the default LLM model (default: #{Defaults.llm_model()}).
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).
       -h, --help                  Show this help message.
 

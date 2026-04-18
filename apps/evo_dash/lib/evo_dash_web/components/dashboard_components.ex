@@ -1,12 +1,16 @@
 defmodule EvoDashWeb.DashboardComponents do
   use EvoDashWeb, :html
 
+  @default_concurrency to_string(EvoGit.Defaults.max_concurrency())
+  @default_retries to_string(EvoGit.Defaults.max_retries())
+  @default_agent_max_retries to_string(EvoGit.Defaults.agent_max_retries())
+
   attr :path, :string, default: ""
   attr :prompt, :string, default: ""
   attr :mode, :string, default: "new"
-  attr :concurrency, :string, default: "3"
-  attr :retries, :string, default: "3"
-  attr :agent_max_retries, :string, default: "3"
+  attr :concurrency, :string, default: @default_concurrency
+  attr :retries, :string, default: @default_retries
+  attr :agent_max_retries, :string, default: @default_agent_max_retries
 
   def genesis_form(assigns) do
     ~H"""
@@ -118,9 +122,9 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :path, :string, default: ""
   attr :objective, :string, default: ""
   attr :mode, :string, default: "simple"
-  attr :concurrency, :string, default: "3"
-  attr :retries, :string, default: "3"
-  attr :agent_max_retries, :string, default: "3"
+  attr :concurrency, :string, default: @default_concurrency
+  attr :retries, :string, default: @default_retries
+  attr :agent_max_retries, :string, default: @default_agent_max_retries
 
   def evolve_form(assigns) do
     ~H"""

@@ -73,9 +73,6 @@ config :phoenix_live_view,
   # Enable helpful, but potentially expensive runtime checks
   enable_expensive_runtime_checks: true
 
-config :evo_git,
-  llm_model: "zai_coding_plan:glm-5"
-
 # For development, we disable any cache and enable
 # debugging and code reloading.
 #

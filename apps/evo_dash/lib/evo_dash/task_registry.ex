@@ -143,12 +143,12 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp execute_task(:genesis, opts, _parent, task_id) do
-    repo_path = Keyword.get(opts, :path, File.cwd!())
+    repo_path = Keyword.fetch!(opts, :path)
     prompt = Keyword.get(opts, :prompt, "")
     mode = Keyword.get(opts, :mode, :new)
-    concurrency = Keyword.get(opts, :concurrency, 3)
-    retries = Keyword.get(opts, :retries, 15)
-    agent_max_retries = Keyword.get(opts, :agent_max_retries, 3)
+    concurrency = Keyword.fetch!(opts, :concurrency)
+    retries = Keyword.fetch!(opts, :retries)
+    agent_max_retries = Keyword.fetch!(opts, :agent_max_retries)
 
     # Ensure evo_git app is started
     Application.ensure_all_started(:evo_git)
@@ -179,12 +179,12 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp execute_task(:evolve, opts, _parent, task_id) do
-    repo_path = Keyword.get(opts, :path, File.cwd!())
+    repo_path = Keyword.fetch!(opts, :path)
     objective = Keyword.get(opts, :objective, "")
     mode = Keyword.get(opts, :mode, "simple")
-    concurrency = Keyword.get(opts, :concurrency, 3)
-    retries = Keyword.get(opts, :retries, 3)
-    agent_max_retries = Keyword.get(opts, :agent_max_retries, 3)
+    concurrency = Keyword.fetch!(opts, :concurrency)
+    retries = Keyword.fetch!(opts, :retries)
+    agent_max_retries = Keyword.fetch!(opts, :agent_max_retries)
 
     Application.ensure_all_started(:evo_git)
 
