@@ -37,10 +37,15 @@ defmodule EvoGit do
     # Build ReadWritePaths - always include cwd, and repo_root/.git if provided
     read_write_paths =
       if repo_root do
-        "#{cwd}:#{Path.join(repo_root, ".git")}"
+        [cwd, Path.join(repo_root, ".git")]
       else
-        cwd
+        [cwd]
       end
+
+    read_write_args =
+      Enum.flat_map(read_write_paths, fn path ->
+        ["-p", "ReadWritePaths=#{path}"]
+      end)
 
     [
       "--user",
@@ -53,8 +58,6 @@ defmodule EvoGit do
       "ProtectSystem=strict",
       "-p",
       "ProtectHome=read-only",
-      "-p",
-      "ReadWritePaths=#{read_write_paths}",
       "-p",
       "PrivateTmp=yes",
       "-p",
@@ -73,6 +76,8 @@ defmodule EvoGit do
       "CPUQuota=400%",
       "-p",
       "MemoryMax=16G"
-    ] ++ inaccessible_args ++ [executable | args]
+    ] ++
+      read_write_args ++
+      inaccessible_args ++ [executable | args]
   end
 end
