@@ -268,22 +268,23 @@ defmodule EvoGit.Agent do
 
         max_retries = Application.get_env(:evo_git, :max_retries, 3)
 
-        response =
-          retry_while with:
-                        exponential_backoff(1_000)
-                        |> randomize()
-                        |> cap(60_000)
-                        |> Stream.take(max_retries) do
-            case ReqLLM.generate_text(current_model(), context, tools: tools) do
-              {:ok, response} ->
-                response
-
+        {ok, response} =
+          retry with:
+                  exponential_backoff(1_000)
+                  |> randomize()
+                  |> cap(60_000)
+                  |> Stream.take(max_retries) do
+            ReqLLM.generate_text(current_model(), context, tools: tools)
+            |> tap(fn
+              # Log the error and retry if LLM call fails
               {:error, reason} ->
                 Logger.warning(
                   "Agent #{state.agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
                 )
-                {:error, reason}
-            end
+
+              _ ->
+                :ok
+            end)
           end
 
         llm_end = System.monotonic_time(:millisecond)
