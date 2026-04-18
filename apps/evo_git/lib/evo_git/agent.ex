@@ -419,8 +419,8 @@ defmodule EvoGit.Agent do
         # Get repo_root from process dictionary for git worktree database access
         repo_root = Process.get(:evogit_repo_root)
 
-        # Batch execute all tools in parallel
-        indexed_results = batch_execute_tools(indexed_calls, :infinity, repo_root)
+        # Batch execute all tools in parallel with 30s timeout
+        indexed_results = batch_execute_tools(indexed_calls, 30_000, repo_root)
 
         # Sync current_commit after tool execution for dashboard visibility
         sync_current_commit_after_tools(state)
