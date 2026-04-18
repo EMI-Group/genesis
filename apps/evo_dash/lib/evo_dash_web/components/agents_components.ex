@@ -8,18 +8,23 @@ defmodule EvoDashWeb.AgentsComponents do
 
   def agent_tree(assigns) do
     ~H"""
-    <%= for agent <- Enum.filter(@agents, &(&1.parent_id == @parent_id)) do %>
+    <% filtered_agents = Enum.filter(@agents, &(&1.parent_id == @parent_id)) %>
+    <% total_agents = length(filtered_agents) %>
+    <%= for {agent, index} <- Enum.with_index(filtered_agents) do %>
+      <% is_last = index == total_agents - 1 %>
       <div class={["relative", @depth > 0 && "ml-6"]}>
         <!-- Tree connector lines for nested items -->
         <%= if @depth > 0 do %>
-          <div class="absolute -left-6 top-6 bottom-0 w-px bg-base-300"></div>
-          <div class="absolute -left-6 top-6 w-6 h-px bg-base-300"></div>
+          <!-- Vertical line -->
+          <div class={["absolute -left-3 border-l-2 border-base-300 z-0", is_last && "top-0 h-8", !is_last && "top-0 bottom-0"]}></div>
+          <!-- Horizontal line -->
+          <div class="absolute -left-3 top-8 w-3 border-t-2 border-base-300 z-0"></div>
         <% end %>
 
         <!-- Agent row -->
         <div
           class={[
-            "relative flex items-center gap-3 p-3 rounded-lg border-2 transition-all cursor-pointer hover:bg-base-200 my-1",
+            "relative z-10 flex items-center gap-3 p-3 rounded-lg border-2 transition-all cursor-pointer hover:bg-base-200 my-1",
             agent_status_bg(agent.status),
             agent_status_border(agent.status),
             @selected_id == agent.id && "ring-2 ring-primary ring-offset-1"
@@ -27,11 +32,6 @@ defmodule EvoDashWeb.AgentsComponents do
           phx-click="select_agent"
           phx-value-id={agent.id}
         >
-          <!-- Tree node indicator (for visual alignment) -->
-          <%= if @depth > 0 do %>
-            <div class="absolute -left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-base-400"></div>
-          <% end %>
-
           <!-- Expand/collapse icon if has children -->
           <div class="w-6 flex items-center justify-center shrink-0">
             <%= if agent.has_children do %>
@@ -72,7 +72,7 @@ defmodule EvoDashWeb.AgentsComponents do
 
         <!-- Children container with proper spacing -->
         <%= if agent.has_children do %>
-          <div class="ml-4 mt-1 space-y-1">
+          <div class="mt-1 space-y-1 relative">
             <EvoDashWeb.AgentsComponents.agent_tree
               agents={@agents}
               parent_id={agent.id}
