@@ -178,4 +178,11 @@ defmodule EvoGit.Adapters.Git do
   def list_notes(path, args \\ []) do
     run(["notes", "list" | args], path)
   end
+
+  @doc """
+  Creates a tag on a specific commit.
+  """
+  def tag(path, tag_name, commit_sha \\ "HEAD") do
+    run(["tag", tag_name, commit_sha], path)
+  end
 end
