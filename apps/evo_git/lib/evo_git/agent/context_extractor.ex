@@ -37,7 +37,8 @@ defmodule EvoGit.Agent.ContextExtractor do
     Every directory (node) in the project is linked to a short `CONTEXT.md` file. This file acts as the directory's schema, documentation, for example:
     1. Intent: The purpose of the directory.
     2. API Surface: What modules/files it contains and exposes, and basic examples of how to use them.
-    3. Constraints: Rules for child files and subdirectories, such as naming conventions, coding standards etc.
+    3. Code Style: Rules for child files and subdirectories, such as naming conventions, coding standards etc.
+    4. Design Guidelines: General architectural patterns, principles etc.
     Everything that belongs to that directory should be described in its context.
     The context file should be simple and concise but comprehensive enough to give a clear understanding of the directory's role.
 
