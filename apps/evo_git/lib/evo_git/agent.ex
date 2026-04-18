@@ -351,7 +351,7 @@ defmodule EvoGit.Agent do
           Map.get(complete_call.arguments, "result") ||
             Map.get(complete_call.arguments, :result, "Task finished.")
 
-        tag_name = "subagent_#{state.agent_id}}"
+        tag_name = "subagent_#{state.agent_id}"
         repo_path = Process.get(:repo_path)
         Git.tag(repo_path, tag_name, commit_sha)
 
