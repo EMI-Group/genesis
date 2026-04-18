@@ -151,7 +151,7 @@ defmodule EvoDashWeb.DashboardLive do
          socket
          |> put_flash(:info, "Genesis task started with ID: #{task.id}")
          |> assign(:tasks, tasks)
-         |> assign(:genesis_prompt, "")
+         |> assign(:genesis_prompt, prompt)
          |> assign(:genesis_mode, mode)
          |> assign(:genesis_concurrency, concurrency)
          |> assign(:genesis_retries, retries)
@@ -182,7 +182,7 @@ defmodule EvoDashWeb.DashboardLive do
          socket
          |> put_flash(:info, "Evolve task started with ID: #{task.id}")
          |> assign(:tasks, tasks)
-         |> assign(:evolve_objective, "")
+         |> assign(:evolve_objective, objective)
          |> assign(:evolve_mode, mode)
          |> assign(:evolve_concurrency, concurrency)
          |> assign(:evolve_retries, retries)
