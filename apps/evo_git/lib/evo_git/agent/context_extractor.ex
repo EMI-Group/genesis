@@ -34,11 +34,12 @@ defmodule EvoGit.Agent.ContextExtractor do
 
     ## Context Tree Definition
     The Context Tree is a spatial, recursive representation of the codebase structure.
-    Every directory (node) in the project is linked to a `CONTEXT.md` file. This file acts as the directory's schema, documentation, for example:
+    Every directory (node) in the project is linked to a short `CONTEXT.md` file. This file acts as the directory's schema, documentation, for example:
     1. Intent: The purpose of the directory.
     2. API Surface: What modules/files it contains and exposes, and basic examples of how to use them.
     3. Constraints: Rules for child files and subdirectories, such as naming conventions, coding standards etc.
     Everything that belongs to that directory should be described in its context.
+    The context file should be simple and concise but comprehensive enough to give a clear understanding of the directory's role.
 
     ## Guidelines
 
@@ -62,8 +63,8 @@ defmodule EvoGit.Agent.ContextExtractor do
        - Call with `path: "src/components"` and a clear `objective` etc.
        - Call with `path: "src/services"` and a clear `objective` etc.
     3. The sub-agent analyzes `src/utils/`, creates or updates `src/utils/CONTEXT.md`, and returns a summary of its findings.
-    4. You aggregate the summaries from all sub-agents and your own analysis to write or update `src/CONTEXT.md`.
-    5. Based on your findings, you might find certain sub-agents' contexts are misaligned with the parent context. You can then spawn additional sub-agents to resolve these discrepancies by modifying the child contexts.
+    4. You aggregate the summaries from all sub-agents and your own analysis to write or update the context in `src/`.
+    5. Based on your findings, you might find certain sub-agents' contexts are misaligned with the parent context. You can then spawn sub-agents again to resolve these discrepancies by modifying the child contexts.
     """
   end
 end
