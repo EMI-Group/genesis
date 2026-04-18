@@ -368,7 +368,7 @@ defmodule EvoGit.Agent do
 
         # 4. Batch: Process each batch
         indexed_standard_results = process_standard_calls(indexed_standard_calls, state)
-        indexed_subagent_results = process_subagent_calls(indexed_subagent_calls, state)
+        {indexed_subagent_results, merge_message} = process_subagent_calls(indexed_subagent_calls, state)
 
         # 5. Re-sort: Merge and sort by index to restore original order
         all_indexed_results = indexed_subagent_results ++ indexed_standard_results
@@ -378,6 +378,13 @@ defmodule EvoGit.Agent do
           Enum.map(sorted_results, fn {_index, tool_call_id, name, output} ->
             ReqLLM.Context.tool_result(tool_call_id, name, output)
           end)
+
+        all_results =
+          if merge_message do
+            all_results ++ [ReqLLM.Context.user(merge_message)]
+          else
+            all_results
+          end
 
         {:continue, all_results}
       end
@@ -461,19 +468,57 @@ defmodule EvoGit.Agent do
 
       defp truncate_large_output(result, _name, _args), do: result
 
-      defp process_subagent_calls([], _state), do: []
+      defp process_subagent_calls([], _state), do: {[], nil}
 
       defp process_subagent_calls(indexed_calls, state) do
         subagent_specs = build_subagent_specs(indexed_calls, state)
         results = EvoGit.AgentScheduler.spawn_sub_agents(subagent_specs)
 
+        successful_shas =
+          Enum.map(results, fn {:ok, %{commit_sha: sha}} when is_binary(sha) -> sha end)
+
+        repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
+
+        merge_message =
+          case EvoGit.Adapters.Git.merge_octopus(repo_path, successful_shas) do
+            {:ok, output} ->
+              """
+              System Note: Successfully auto-merged changes from subagents.
+              Merge output:
+              #{output}
+              """
+
+            {:conflict, output} ->
+              {:ok, files} = EvoGit.Adapters.Git.conflict_files(repo_path)
+              """
+              System Note: Auto-merging subagent changes resulted in conflicts.
+              Merge output:
+              #{output}
+
+              Conflicting files:
+              #{Enum.join(files, "\n")}
+              """
+
+            {:error, code, output} ->
+              """
+              System Note: Failed to auto-merge subagent changes (exit code #{code}).
+              Merge output:
+              #{output}
+              """
+          end
+
+        append_history(state.agent_id, "SYSTEM_NOTE", %{content: merge_message})
+
         # Sync current_commit after sub-agents complete (parent worktree state may have changed)
         sync_current_commit_after_tools(state)
 
-        Enum.zip(indexed_calls, results)
-        |> Enum.map(fn {{call, index}, result} ->
-          process_subagent_result(call, index, result, state)
-        end)
+        indexed_results =
+          Enum.zip(indexed_calls, results)
+          |> Enum.map(fn {{call, index}, result} ->
+            process_subagent_result(call, index, result, state)
+          end)
+
+        {indexed_results, merge_message}
       end
 
       defp build_subagent_specs(indexed_calls, state) do
