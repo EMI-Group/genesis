@@ -221,6 +221,32 @@ defmodule EvoGit.Agent.ToolsTest do
   end
 
   describe "execute/4 - rewrite_dir_context" do
+    test "writes CONTEXT.md and commits in systemd-run sandbox", %{tmp_dir: tmp_dir} do
+      # Initialize a git repository
+      System.cmd("git", ["init"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
+
+      # Create an initial commit so we have a HEAD
+      File.write!(Path.join(tmp_dir, "README.md"), "init")
+      System.cmd("git", ["add", "README.md"], cd: tmp_dir)
+      System.cmd("git", ["commit", "-m", "init commit"], cd: tmp_dir)
+
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+
+      # Pass repo_root as tmp_dir as well so that systemd-run has access to .git
+      result = Tools.execute("rewrite_dir_context", %{"dir_path" => "lib", "content" => "new context", "commit" => true}, tmp_dir, tmp_dir)
+      assert result =~ "Successfully updated CONTEXT.md for directory 'lib'"
+      assert result =~ "Committed:"
+
+      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "new context"
+
+      # Check git log
+      {log, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
+      assert log =~ "Update CONTEXT.md for lib"
+    end
+
     test "writes CONTEXT.md without committing", %{tmp_dir: tmp_dir} do
       dir_path = Path.join(tmp_dir, "lib")
       File.mkdir_p!(dir_path)
