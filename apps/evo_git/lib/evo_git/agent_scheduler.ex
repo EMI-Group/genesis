@@ -9,7 +9,7 @@ defmodule EvoGit.AgentScheduler do
   - Managing the worktree pool (creation, assignment, reclamation)
   - Preparing worktrees (Git clean/checkout) before agent execution
   - Spawning and tracking agents (both top-level and sub-agents)
-  - Transitioning agents between :running and :waiting states
+  - Transitioning agents between :pending, :running, :waiting, and :ready states
   - Lazy reclamation of worktrees from waiting agents when the pool is exhausted
 
   ## ETS Tables
@@ -210,8 +210,10 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:update_config, opts}, _from, state) do
     has_active_agents = state.ref_to_agent != %{} or not :queue.is_empty(state.queue)
-    concurrency_changed = Keyword.has_key?(opts, :max_concurrency) and
-      Keyword.get(opts, :max_concurrency) != state.max_concurrency
+
+    concurrency_changed =
+      Keyword.has_key?(opts, :max_concurrency) and
+        Keyword.get(opts, :max_concurrency) != state.max_concurrency
 
     if concurrency_changed and has_active_agents do
       {:reply, {:error, :agents_running}, state}
@@ -223,11 +225,12 @@ defmodule EvoGit.AgentScheduler do
         |> maybe_update(:max_depth, opts)
 
       # If concurrency changed, tear down the pool so it's lazily re-created
-      state = if concurrency_changed and state.initialized do
-        teardown_worktrees(state)
-      else
-        state
-      end
+      state =
+        if concurrency_changed and state.initialized do
+          teardown_worktrees(state)
+        else
+          state
+        end
 
       Logger.info(
         "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
@@ -448,6 +451,7 @@ defmodule EvoGit.AgentScheduler do
       type: type,
       data: data
     }
+
     :ets.insert(@history_table, {agent_id, entry})
     :ok
   end
@@ -459,7 +463,9 @@ defmodule EvoGit.AgentScheduler do
   @spec get_history(pos_integer()) :: [map()]
   def get_history(agent_id) do
     case :ets.lookup(@history_table, agent_id) do
-      [] -> []
+      [] ->
+        []
+
       entries ->
         entries
         |> Enum.map(fn {_id, entry} -> entry end)
@@ -608,9 +614,11 @@ defmodule EvoGit.AgentScheduler do
 
       :none ->
         Logger.info("AgentScheduler: Queueing agent #{agent_id} (no available worktrees)")
+
         append_history(agent_id, "QUEUED", %{
           message: "Waiting for available worktree"
         })
+
         %{state | queue: :queue.in(agent_id, state.queue)}
     end
   end
@@ -689,8 +697,22 @@ defmodule EvoGit.AgentScheduler do
     case :queue.out(queue) do
       {{:value, agent_id}, new_queue} ->
         state = %{state | queue: new_queue}
-        state = try_dispatch(state, agent_id)
-        process_queue(state)
+
+        case get_sched_meta(agent_id) do
+          {:ok, %{status: :ready} = meta} ->
+            # Ready parent needs worktree + reply, not a fresh dispatch
+            state = dispatch_ready_parent(state, agent_id, meta)
+            process_queue(state)
+
+          {:ok, _meta} ->
+            state = try_dispatch(state, agent_id)
+            process_queue(state)
+
+          :error ->
+            # Agent was already recycled; skip stale queue entry
+            Logger.debug("AgentScheduler: Skipping stale queue entry for agent #{agent_id}")
+            process_queue(state)
+        end
 
       {:empty, _} ->
         state
@@ -698,6 +720,41 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp process_queue(state), do: state
+
+  # Resumes a waiting parent that was queued because no worktree was available
+  # when its sub-agents completed. Assigns a worktree and unblocks the parent's
+  # blocked GenServer.call.
+  defp dispatch_ready_parent(%{available_worktrees: [wt | rest]} = state, agent_id, meta) do
+    {:ok, agent_state} = get_agent_state(agent_id)
+    commit_sha = agent_state.phylo_node.current_commit
+
+    Git.clean(wt)
+    Git.checkout(wt, commit_sha)
+
+    updated_phylo_node = %{agent_state.phylo_node | repo: wt}
+    put_agent_state(agent_id, %AgentState{agent_state | phylo_node: updated_phylo_node})
+
+    # Compute ordered results from the accumulated sub_agent_results
+    ordered_ids = meta.pending_sub_agents |> MapSet.to_list() |> Enum.sort()
+    results = Enum.map(ordered_ids, &meta.sub_agent_results[&1])
+
+    GenServer.reply(meta.sub_agent_from, results)
+
+    put_sched_meta(agent_id, %{
+      meta
+      | status: :running,
+        worktree: wt,
+        sub_agent_from: nil,
+        pending_sub_agents: MapSet.new(),
+        sub_agent_results: %{}
+    })
+
+    Logger.info(
+      "AgentScheduler: Waiting agent #{agent_id} resumed with worktree #{wt} at commit #{commit_sha}"
+    )
+
+    %{state | available_worktrees: rest}
+  end
 
   # --- Sub-Agent Result Tracking ---
 
@@ -717,105 +774,13 @@ defmodule EvoGit.AgentScheduler do
       end)
 
     if all_done? do
-      Logger.info("AgentScheduler: Agent #{parent_id} resuming, all sub-agents completed")
-      ordered_ids = pending |> MapSet.to_list() |> Enum.sort()
-      results = Enum.map(ordered_ids, &parent.sub_agent_results[&1])
+      Logger.info("AgentScheduler: Agent #{parent_id} ready to resume, all sub-agents completed")
 
-      # Re-assign worktree to parent for resume
-      state = resume_parent_with_worktree(state, parent_id, parent)
-
-      # Now that worktree is assigned, unblock the parent
-      {:ok, updated_parent} = get_sched_meta(parent_id)
-      GenServer.reply(updated_parent.sub_agent_from, results)
-
-      put_sched_meta(parent_id, %{
-        updated_parent
-        | status: :running,
-          sub_agent_from: nil,
-          pending_sub_agents: MapSet.new(),
-          sub_agent_results: %{}
-      })
-
-      state
+      # Mark as :ready and queue for worktree assignment via process_queue
+      put_sched_meta(parent_id, %{parent | status: :ready})
+      %{state | queue: :queue.in(parent_id, state.queue)}
     else
       state
-    end
-  end
-
-  # Assigns a worktree to a resuming parent agent and prepares it with the parent's current_commit
-  defp resume_parent_with_worktree(state, parent_id, parent) do
-    case try_assign_worktree(state, parent_id, parent) do
-      {:ok, worktree, state} ->
-        # Get the parent's agent state to retrieve current_commit
-        {:ok, agent_state} = get_agent_state(parent_id)
-        commit_sha = agent_state.phylo_node.current_commit
-
-        # Prepare the worktree: clean and checkout to parent's current_commit
-        Git.clean(worktree)
-        Git.checkout(worktree, commit_sha)
-
-        # Update agent state with new worktree path
-        updated_phylo_node = %{agent_state.phylo_node | repo: worktree}
-        put_agent_state(parent_id, %{agent_state | phylo_node: updated_phylo_node})
-
-        # Update scheduler metadata with worktree assignment
-        put_sched_meta(parent_id, %{parent | worktree: worktree})
-
-        Logger.info(
-          "AgentScheduler: Agent #{parent_id} resumed with worktree #{worktree} at commit #{commit_sha}"
-        )
-
-        # Process queue in case any agents were waiting
-        process_queue(state)
-
-      {:queued, state} ->
-        Logger.info("AgentScheduler: Agent #{parent_id} queued, waiting for available worktree")
-        state
-    end
-  end
-
-  # Tries to assign a worktree to an agent. Returns {:ok, worktree, state} or {:queued, state}
-  defp try_assign_worktree(%{available_worktrees: [wt | rest]} = state, agent_id, meta) do
-    # Get the agent's current_commit from its spec or agent state
-    commit_sha =
-      case get_agent_state(agent_id) do
-        {:ok, %{phylo_node: %{current_commit: sha}}} when not is_nil(sha) -> sha
-        _ -> meta.spec.phylo_node.current_commit || state.base_sha
-      end
-
-    # Prepare the worktree: clean and checkout to the agent's current_commit
-    Git.clean(wt)
-    Git.checkout(wt, commit_sha)
-
-    # Build the worktree-bound phylo_node (repo points to worktree, not original)
-    wt_phylo_node = %PhyloGraphNode{
-      repo: wt,
-      base_commit: meta.spec.phylo_node.base_commit,
-      current_commit: commit_sha
-    }
-
-    # Update agent state with worktree-bound phylo_node
-    {:ok, agent_state} = get_agent_state(agent_id)
-    put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
-
-    # Update scheduler metadata with worktree assignment
-    put_sched_meta(agent_id, %{meta | worktree: wt})
-
-    {:ok, wt, %{state | available_worktrees: rest}}
-  end
-
-  defp try_assign_worktree(%{available_worktrees: []} = state, agent_id, _meta) do
-    case find_reclaimable_worktree(state) do
-      {:ok, worktree, state} ->
-        state = %{state | available_worktrees: [worktree]}
-        {:ok, worktree, state}
-
-      :none ->
-        # Queue the agent
-        append_history(agent_id, "QUEUED", %{
-          message: "Waiting for available worktree"
-        })
-        {:queued, %{state | queue: :queue.in(agent_id, state.queue)}}
     end
   end
 
