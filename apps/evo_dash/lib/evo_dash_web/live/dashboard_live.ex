@@ -222,7 +222,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:genesis_prompt, "")
     |> assign(:genesis_mode, "new")
     |> assign(:genesis_concurrency, "3")
-    |> assign(:genesis_retries, "3")
+    |> assign(:genesis_retries, "15")
     |> assign(:genesis_agent_max_retries, "3")
     |> assign(:evolve_path, File.cwd!())
     |> assign(:evolve_objective, "")
