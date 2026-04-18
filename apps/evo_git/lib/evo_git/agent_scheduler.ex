@@ -200,7 +200,9 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:run_agent, spec}, from, state) do
-    state = ensure_initialized(state)
+    # Extract repo_path from the spec's phylo_node
+    repo_path = spec.phylo_node.repo
+    state = ensure_initialized(state, repo_path)
     {agent_id, state} = register_agent(state, spec, from, _parent_id = nil, _depth = 0)
     Logger.info("AgentScheduler: Spawning top-level agent #{agent_id}")
     state = try_dispatch(state, agent_id)
@@ -354,10 +356,25 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Initialization ---
 
-  defp ensure_initialized(%{initialized: true} = state), do: state
+  defp ensure_initialized(state, repo_path \\ nil)
 
-  defp ensure_initialized(state) do
-    repo_root = Application.get_env(:evo_git, :repo_path, File.cwd!()) |> Path.expand()
+  defp ensure_initialized(%{initialized: true, repo_root: repo_root} = state, new_repo_path)
+       when repo_root == new_repo_path do
+    state
+  end
+
+  defp ensure_initialized(%{initialized: true} = state, new_repo_path) do
+    Logger.info("AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing...")
+    state = teardown_worktrees(state)
+    do_initialize(state, new_repo_path)
+  end
+
+  defp ensure_initialized(state, repo_path) do
+    repo_root = (repo_path || Application.get_env(:evo_git, :repo_path, File.cwd!())) |> Path.expand()
+    do_initialize(state, repo_root)
+  end
+
+  defp do_initialize(state, repo_root) do
     worker_base = Path.join(repo_root, ".evogit/workers")
     max_concurrency = state.max_concurrency
 
