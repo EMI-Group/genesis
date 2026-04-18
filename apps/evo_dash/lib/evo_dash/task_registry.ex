@@ -147,7 +147,7 @@ defmodule EvoDash.TaskRegistry do
     prompt = Keyword.get(opts, :prompt, "")
     mode = Keyword.get(opts, :mode, :new)
     concurrency = Keyword.get(opts, :concurrency, 3)
-    retries = Keyword.get(opts, :retries, 3)
+    retries = Keyword.get(opts, :retries, 15)
     agent_max_retries = Keyword.get(opts, :agent_max_retries, 3)
 
     # Ensure evo_git app is started
