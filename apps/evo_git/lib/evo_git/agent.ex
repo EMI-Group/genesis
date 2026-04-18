@@ -30,7 +30,6 @@ defmodule EvoGit.Agent do
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
 
-
   @type state :: %{context_node: ContextNode.t(), phylo_node: PhyloGraphNode.t()}
 
   @doc """
@@ -42,7 +41,9 @@ defmodule EvoGit.Agent do
   defmacro __using__(_opts) do
     quote do
       require Logger
+      use Retry
 
+      @max_tries 3
       @max_turns 20
       # 15 minutes
       @timeout_ms 15 * 60 * 1000
@@ -114,7 +115,6 @@ defmodule EvoGit.Agent do
       # --- Internal Execution Logic ---
 
       defp load_worktree_path(state) do
-
         case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
           {:ok, %AgentState{phylo_node: %{repo: wt}}} when not is_nil(wt) ->
             Process.put(:repo_path, wt)
@@ -219,6 +219,7 @@ defmodule EvoGit.Agent do
               stream_event(state.agent_id, "ERROR", %{
                 error: "Grace period timed out. Agent killed."
               })
+
               {:error, :timeout}
             else
               do_turn(state)
@@ -265,12 +266,25 @@ defmodule EvoGit.Agent do
         # Track LLM time
         llm_start = System.monotonic_time(:millisecond)
 
-        {:ok, response} =
-          ReqLLM.generate_text(
-            current_model(),
-            context,
-            tools: tools
-          )
+        max_retries = Application.get_env(:evo_git, :max_retries, 3)
+
+        response =
+          retry_while with:
+                        exponential_backoff(1_000)
+                        |> randomize()
+                        |> cap(60_000)
+                        |> Stream.take(max_retries) do
+            case ReqLLM.generate_text(current_model(), context, tools: tools) do
+              {:ok, response} ->
+                response
+
+              {:error, reason} ->
+                Logger.warning(
+                  "Agent #{state.agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
+                )
+                {:error, reason}
+            end
+          end
 
         llm_end = System.monotonic_time(:millisecond)
         state = %{state | llm_time_ms: state.llm_time_ms + (llm_end - llm_start)}
@@ -368,7 +382,9 @@ defmodule EvoGit.Agent do
 
         # 4. Batch: Process each batch
         indexed_standard_results = process_standard_calls(indexed_standard_calls, state)
-        {indexed_subagent_results, merge_message} = process_subagent_calls(indexed_subagent_calls, state)
+
+        {indexed_subagent_results, merge_message} =
+          process_subagent_calls(indexed_subagent_calls, state)
 
         # 5. Re-sort: Merge and sort by index to restore original order
         all_indexed_results = indexed_subagent_results ++ indexed_standard_results
@@ -421,20 +437,23 @@ defmodule EvoGit.Agent do
 
         tasks =
           Enum.map(indexed_calls, fn {call, index} ->
-            {index, call.name, call, Task.async(fn ->
-              EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_root)
-            end)}
+            {index, call.name, call,
+             Task.async(fn ->
+               EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_root)
+             end)}
           end)
 
         # Wait for all tasks to complete with timeout
         results =
           Enum.map(tasks, fn {index, name, call, task} ->
             tool_call_id = Map.get(call, :id, call.name)
+
             output =
               case Task.await(task, timeout) do
                 {:error, reason} -> "Error: #{inspect(reason)}"
                 result -> truncate_large_output(result, name, call.arguments)
               end
+
             {index, tool_call_id, name, output}
           end)
 
@@ -490,6 +509,7 @@ defmodule EvoGit.Agent do
 
             {:conflict, output} ->
               {:ok, files} = EvoGit.Adapters.Git.conflict_files(repo_path)
+
               """
               System Note: Auto-merging subagent changes resulted in conflicts.
               Merge output:
