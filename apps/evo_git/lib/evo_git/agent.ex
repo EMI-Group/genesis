@@ -441,8 +441,7 @@ defmodule EvoGit.Agent do
           Enum.map(indexed_calls, fn {call, index} ->
             {index, call.name, call,
              Task.async(fn ->
-               if repo_path, do: Process.put(:repo_path, repo_path)
-               EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_root)
+               EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_path, repo_root)
              end)}
           end)
 
