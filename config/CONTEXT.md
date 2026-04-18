@@ -10,7 +10,7 @@ This directory contains all configuration files for the **EvoGit** umbrella Elix
 
 | File | Purpose |
 |---|---|
-| `config.exs` | **Base configuration** — loaded first for all environments. Sets up EvoDash endpoint (Bandit adapter, LiveView signing salt), esbuild/tailwind asset builders, logger format, Jason as JSON library, and core `evo_git` settings (`max_concurrency: 3`, `max_concurrency: 15`, `agent_max_retries: 3`, `llm_model`). Imports the environment-specific file at the bottom. |
+| `config.exs` | **Base configuration** — loaded first for all environments. Sets up EvoDash endpoint (Bandit adapter, LiveView signing salt), esbuild/tailwind asset builders, logger format, and Jason as JSON library. Imports the environment-specific file at the bottom. |
 | `dev.exs` | **Development overrides** — HTTP port 4100 (overridable via `PORT` env), code reloader enabled, esbuild/tailwind watchers with `--watch`, debug errors, LiveView debug annotations, dev routes enabled, warning-level logger. Optionally imports `dev.local.exs` if present (git-ignored). |
 | `test.exs` | **Test overrides** — HTTP port 4002, server disabled, warning-level logger, runtime plug init mode, LiveView expensive runtime checks enabled. |
 | `prod.exs` | **Production compile-time overrides** — static asset cache manifest, info-level logger. Runtime secrets are handled in `runtime.exs`. |
@@ -18,11 +18,14 @@ This directory contains all configuration files for the **EvoGit** umbrella Elix
 
 ### Key Configuration Values
 
-**evo_git settings** (in `config.exs`, overridable per-env):
+**evo_git settings** (defined in `EvoGit.Defaults`, passed via opts at runtime):
 - `max_concurrency: 3` — Max parallel tasks
 - `max_retries: 15` — Maximum retry attempts for operations
 - `agent_max_retries: 3` — Maximum retries for agent-specific operations
-- `llm_model` — Default: `"zai_coding_plan:glm-5"` (also set in `dev.exs`)
+- `max_agent_depth: 5` — Maximum agent recursion depth
+- `llm_model` — Default: `"zai_coding_plan:glm-5"`
+
+These values are no longer stored in Application config. They are defined in `EvoGit.Defaults` and passed explicitly through opts/state to all modules.
 
 **evo_dash endpoint** (EvoDashWeb.Endpoint):
 - Adapter: `Bandit.PhoenixAdapter`

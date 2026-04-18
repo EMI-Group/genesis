@@ -33,8 +33,8 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.Defaults
 
-  @default_max_depth 5
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
   @history_table :evogit_agent_history
@@ -104,7 +104,7 @@ defmodule EvoGit.AgentScheduler do
   Returns the configured maximum agent recursion depth.
   """
   def max_depth do
-    Application.get_env(:evo_git, :max_agent_depth, @default_max_depth)
+    GenServer.call(__MODULE__, :get_max_depth)
   end
 
   @doc """
@@ -173,15 +173,19 @@ defmodule EvoGit.AgentScheduler do
     :ets.new(@history_table, [:named_table, :public, :bag, read_concurrency: true])
 
     max_concurrency =
-      Keyword.get(opts, :max_concurrency) || Application.get_env(:evo_git, :max_concurrency, 3)
+      Keyword.get(opts, :max_concurrency, Defaults.max_concurrency())
 
     agent_max_retries =
-      Keyword.get(opts, :agent_max_retries) ||
-        Application.get_env(:evo_git, :agent_max_retries, 3)
+      Keyword.get(opts, :agent_max_retries, Defaults.agent_max_retries())
 
     max_depth =
-      Keyword.get(opts, :max_depth) ||
-        Application.get_env(:evo_git, :max_agent_depth, @default_max_depth)
+      Keyword.get(opts, :max_depth, Defaults.max_agent_depth())
+
+    llm_model =
+      Keyword.get(opts, :llm_model, Defaults.llm_model())
+
+    max_retries =
+      Keyword.get(opts, :max_retries, Defaults.max_retries())
 
     {:ok,
      %{
@@ -191,11 +195,18 @@ defmodule EvoGit.AgentScheduler do
        max_concurrency: max_concurrency,
        agent_max_retries: agent_max_retries,
        max_depth: max_depth,
+       llm_model: llm_model,
+       max_retries: max_retries,
        next_agent_id: 1,
        available_worktrees: [],
        ref_to_agent: %{},
        queue: :queue.new()
      }}
+  end
+
+  @impl true
+  def handle_call(:get_max_depth, _from, state) do
+    {:reply, state.max_depth, state}
   end
 
   @impl true
@@ -225,6 +236,8 @@ defmodule EvoGit.AgentScheduler do
         |> maybe_update(:max_concurrency, opts)
         |> maybe_update(:agent_max_retries, opts)
         |> maybe_update(:max_depth, opts)
+        |> maybe_update(:llm_model, opts)
+        |> maybe_update(:max_retries, opts)
 
       # If concurrency changed, tear down the pool so it's lazily re-created
       state =
@@ -370,7 +383,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp ensure_initialized(state, repo_path) do
-    repo_root = (repo_path || Application.get_env(:evo_git, :repo_path, File.cwd!())) |> Path.expand()
+    repo_root = Path.expand(repo_path)
     do_initialize(state, repo_root)
   end
 
@@ -543,7 +556,10 @@ defmodule EvoGit.AgentScheduler do
     put_agent_state(id, %AgentState{
       context_node: spec.context_node,
       phylo_node: nil,
-      event_sink: event_sink
+      event_sink: event_sink,
+      llm_model: state.llm_model,
+      max_retries: state.max_retries,
+      max_depth: state.max_depth
     })
 
     # Scheduler metadata table: scheduling bookkeeping
