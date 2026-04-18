@@ -371,6 +371,8 @@ defmodule EvoGit.AgentScheduler do
 
   defp ensure_initialized(state, repo_path \\ nil)
 
+  defp ensure_initialized(%{initialized: true} = state, nil), do: state
+
   defp ensure_initialized(%{initialized: true, repo_root: repo_root} = state, new_repo_path)
        when repo_root == new_repo_path do
     state
@@ -380,6 +382,10 @@ defmodule EvoGit.AgentScheduler do
     Logger.info("AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing...")
     state = teardown_worktrees(state)
     do_initialize(state, new_repo_path)
+  end
+
+  defp ensure_initialized(_state, nil) do
+    raise ArgumentError, "repo_path is required for initial AgentScheduler initialization"
   end
 
   defp ensure_initialized(state, repo_path) do
