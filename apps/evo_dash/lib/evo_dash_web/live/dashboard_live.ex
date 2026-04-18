@@ -234,7 +234,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:evolve_objective, "")
     |> assign(:evolve_mode, "simple")
     |> assign(:evolve_concurrency, "3")
-    |> assign(:evolve_retries, "3")
+    |> assign(:evolve_retries, "15")
     |> assign(:evolve_agent_max_retries, "3")
   end
 end

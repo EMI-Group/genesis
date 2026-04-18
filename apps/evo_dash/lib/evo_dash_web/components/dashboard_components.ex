@@ -78,7 +78,7 @@ defmodule EvoDashWeb.DashboardComponents do
               name="concurrency"
               value={@concurrency}
               min="1"
-              max="10"
+              max="10000"
               class="input input-bordered"
             />
           </div>
@@ -91,7 +91,7 @@ defmodule EvoDashWeb.DashboardComponents do
               name="retries"
               value={@retries}
               min="1"
-              max="10"
+              max="10000"
               class="input input-bordered"
             />
           </div>
@@ -104,7 +104,7 @@ defmodule EvoDashWeb.DashboardComponents do
               name="agent_max_retries"
               value={@agent_max_retries}
               min="1"
-              max="10"
+              max="100"
               class="input input-bordered"
             />
           </div>
@@ -193,7 +193,7 @@ defmodule EvoDashWeb.DashboardComponents do
               name="concurrency"
               value={@concurrency}
               min="1"
-              max="10"
+              max="10000"
               class="input input-bordered"
             />
           </div>
@@ -206,7 +206,7 @@ defmodule EvoDashWeb.DashboardComponents do
               name="retries"
               value={@retries}
               min="1"
-              max="10"
+              max="10000"
               class="input input-bordered"
             />
           </div>
@@ -219,7 +219,7 @@ defmodule EvoDashWeb.DashboardComponents do
               name="agent_max_retries"
               value={@agent_max_retries}
               min="1"
-              max="10"
+              max="100"
               class="input input-bordered"
             />
           </div>
