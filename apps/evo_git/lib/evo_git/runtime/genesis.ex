@@ -7,11 +7,10 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.AgentSpec
   alias EvoGit.Agent.CodebaseArchitect
   alias EvoGit.Agent.ContextExtractor
-  alias EvoGit.Runtime.Prompts
   require Logger
 
-  def run(root_prompt, opts \\ []) do
-    Logger.info("Genesis: Starting with root prompt: #{root_prompt}")
+  def run(objective, opts \\ []) do
+    Logger.info("Genesis: Starting with objective: #{objective}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
     with :ok <- ensure_repo(repo_path),
@@ -22,13 +21,6 @@ defmodule EvoGit.Runtime.Genesis do
       Logger.info("Genesis: Detected #{mode}")
 
       agent_module = if is_new, do: CodebaseArchitect, else: ContextExtractor
-
-      objective =
-        if is_new do
-          Prompts.genesis_new_codebase(root_prompt)
-        else
-          Prompts.genesis_existing_codebase(root_prompt)
-        end
 
       phylo_node = PhyloGraphNode.new(repo_path, head_sha)
       {:ok, context_node} = ContextNode.load(".", repo_path)
