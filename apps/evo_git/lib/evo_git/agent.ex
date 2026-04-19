@@ -51,6 +51,13 @@ defmodule EvoGit.Agent do
       @grace_period_ms 60 * 1000
       @complete_tool "complete_task"
 
+      # Context compression thresholds
+      @compression_threshold_bytes 100 * 1024
+      @compression_keep_recent 5
+      # Tool output truncation thresholds
+      @tool_output_max_bytes 20_000
+      @tool_output_truncate_size 3000
+
       defp current_model do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
@@ -484,18 +491,17 @@ defmodule EvoGit.Agent do
         results
       end
 
-      # Truncates large tool outputs (>20000 bytes) to prevent history bloat
+      # Truncates large tool outputs to prevent history bloat
       defp truncate_large_output(result, name, args) when is_binary(result) do
-        if String.length(result) > 20000 do
+        if String.length(result) > @tool_output_max_bytes do
           Logger.warning(
             "Output truncated for tool: #{name}, arguments: #{inspect(args)}, result length: #{String.length(result)}"
           )
 
-          truncate_size = 3000
-          half_size = div(truncate_size, 2)
+          half_size = div(@tool_output_truncate_size, 2)
           first_part = String.slice(result, 0, half_size)
           last_part = String.slice(result, -half_size, half_size)
-          first_part <> "\n... [Output Truncated, Only 3000 bytes Shown] ...\n" <> last_part
+          first_part <> "\n... [Output Truncated, Only #{@tool_output_truncate_size} bytes Shown] ...\n" <> last_part
         else
           result
         end
@@ -659,12 +665,10 @@ defmodule EvoGit.Agent do
             acc + estimate_message_bytes(msg)
           end)
 
-        # Compress if total exceeds 100KB
-        compression_threshold_bytes = 100 * 1024
-
-        if total_bytes > compression_threshold_bytes do
+        # Compress if total exceeds threshold
+        if total_bytes > @compression_threshold_bytes do
           [first_message | rest_history] = state.history
-          {older_messages, recent_messages} = Enum.split(rest_history, -5)
+          {older_messages, recent_messages} = Enum.split(rest_history, -@compression_keep_recent)
 
           prompt = """
           Please provide a concise summary of the important information discoveries, and context from the following interaction history that are related to the current task.
