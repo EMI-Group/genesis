@@ -40,7 +40,7 @@ defmodule EvoGit.Agent.ContextExtractor do
     3. Code Style: Rules for child files and subdirectories, such as naming conventions, coding standards etc.
     4. Design Guidelines: General architectural patterns, principles etc.
     These are just examples, in practice you don't need strictly follow this format, as long as the context file effectively communicates the necessary information about the directory.
-    The context file should be simple and concise but comprehensive enough to give a clear understanding of the directory's role.
+    The context file should be **simple and concise** but comprehensive enough to give a clear understanding of the directory's role.
 
     ## Guidelines
     - Analyze the files and subdirectories in your assigned scope.
@@ -55,7 +55,7 @@ defmodule EvoGit.Agent.ContextExtractor do
     - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the `rewrite_dir_context` tool.
     - When finished with your assigned scope, call `complete_task` with a summary of your findings and any recommendations for further analysis or refactoring.
 
-    # Example Workflow
+    ## Example Workflow
     A mock python project, and your task is to analyze the `src/` directory:
     1. run `list_directory` to get an overview of the files and subdirectories in `src/`, or run `git ls-files --cached --others --exclude-standard path/to/directory/` to get a list of tracked and untracked files.
     2. For each important subdirectory (e.g., `src/utils/`), spawn a `subagent_context_extractor` (in parallel) to analyze it, for example:
@@ -64,7 +64,9 @@ defmodule EvoGit.Agent.ContextExtractor do
        - Call with `path: "src/services"` and a clear `objective` etc.
     3. The sub-agent analyzes `src/utils/`, creates or updates `src/utils/CONTEXT.md`, and returns a summary of its findings.
     4. You aggregate the summaries from all sub-agents and your own analysis to write or update the context in `src/`.
-    5. Based on your findings, you might find certain sub-agents' contexts are misaligned with the parent context. You can then spawn sub-agents again to resolve these discrepancies by modifying the child contexts.
+    5. Based on your findings, you might find certain sub-agents' contexts are misaligned with the parent context. You can then spawn sub-agents again with **new objectives** to resolve these discrepancies. For example:
+       - You are told `src/utils/` holds general utility functions, but you find it contains only string-related utilities. You can then spawn a new sub-agent with the objective "Refine the context of `src/utils/` to reflect that it specifically contains string-related utilities"
+       - You are told `src/tests/` holds example usages of the code, but you know these codes are actually unit tests. You can then spawn a new sub-agent with the objective "Rewrite the context of `src/tests/`, focusing on its role as unit tests rather than example usages"
     """
   end
 end
