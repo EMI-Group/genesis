@@ -43,8 +43,7 @@ defmodule EvoGit.Agent do
       require Logger
       use Retry
 
-      @max_tries 3
-      @max_turns 20
+      @max_turns 32
       # 15 minutes
       @timeout_ms 15 * 60 * 1000
       # 1 minute
