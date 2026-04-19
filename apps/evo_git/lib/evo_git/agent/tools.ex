@@ -60,6 +60,30 @@ defmodule EvoGit.Agent.Tools do
     execute_tool(tool_name, args, repo_path, repo_root)
   end
 
+  # Validates and sanitizes an array argument to ensure all elements are binaries.
+  # Returns {:ok, sanitized_list} or :error with a descriptive message.
+  defp validate_string_array(array) when is_list(array) do
+    Enum.reduce_while(array, {:ok, []}, fn item, {:ok, acc} ->
+      case to_string_binary(item) do
+        {:ok, binary} -> {:cont, {:ok, [binary | acc]}}
+        :error -> {:halt, {:error, "Arguments contains non-string value: #{inspect(item)}"}}
+      end
+    end)
+    |> case do
+      {:ok, list} -> {:ok, Enum.reverse(list)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp validate_string_array(_), do: {:error, "The arguments must be an array"}
+
+  # Converts a value to a string binary if possible.
+  defp to_string_binary(value) when is_binary(value), do: {:ok, value}
+  defp to_string_binary(value) when is_integer(value), do: {:ok, Integer.to_string(value)}
+  defp to_string_binary(value) when is_float(value), do: {:ok, Float.to_string(value)}
+  defp to_string_binary(value) when is_atom(value), do: {:ok, Atom.to_string(value)}
+  defp to_string_binary(_), do: :error
+
   defp execute_tool("read_file", args, repo_path, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path(repo_path)
 
@@ -220,16 +244,27 @@ defmodule EvoGit.Agent.Tools do
 
             if commit do
               relative_path = Path.join(dir_path, "CONTEXT.md")
-              systemd_add_args = EvoGit.sandbox_args(repo_path, "git", ["add", relative_path], repo_root)
-              systemd_commit_args =
-                EvoGit.sandbox_args(repo_path, "git", [
-                  "commit",
-                  "-m",
-                  "Update CONTEXT.md for #{dir_path}"
-                ], repo_root)
 
-              add_output = elem(System.cmd("systemd-run", systemd_add_args, stderr_to_stdout: true), 0)
-              commit_output = elem(System.cmd("systemd-run", systemd_commit_args, stderr_to_stdout: true), 0)
+              systemd_add_args =
+                EvoGit.sandbox_args(repo_path, "git", ["add", relative_path], repo_root)
+
+              systemd_commit_args =
+                EvoGit.sandbox_args(
+                  repo_path,
+                  "git",
+                  [
+                    "commit",
+                    "-m",
+                    "Update CONTEXT.md for #{dir_path}"
+                  ],
+                  repo_root
+                )
+
+              add_output =
+                elem(System.cmd("systemd-run", systemd_add_args, stderr_to_stdout: true), 0)
+
+              commit_output =
+                elem(System.cmd("systemd-run", systemd_commit_args, stderr_to_stdout: true), 0)
 
               result_msg <>
                 "\n\nCommitted:\n#{add_output}#{commit_output}"
@@ -259,27 +294,41 @@ defmodule EvoGit.Agent.Tools do
 
   defp execute_tool("rg", args, repo_path, repo_root) do
     args_list = Map.fetch!(args, "args")
-    systemd_args = EvoGit.sandbox_args(repo_path, "rg", args_list, repo_root)
 
-    {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+    case validate_string_array(args_list) do
+      {:ok, sanitized_args} ->
+        systemd_args = EvoGit.sandbox_args(repo_path, "rg", sanitized_args, repo_root)
 
-    cond do
-      exit_code == 0 -> "Command executed successfully.\nOutput:\n#{output}"
-      exit_code == 1 and output == "" -> "No matches found."
-      true -> "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+        {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+
+        cond do
+          exit_code == 0 -> "Command executed successfully.\nOutput:\n#{output}"
+          exit_code == 1 and output == "" -> "No matches found."
+          true -> "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+        end
+
+      {:error, message} ->
+        "Error: #{message}"
     end
   end
 
   defp execute_tool("git", args, repo_path, repo_root) do
     args_list = Map.fetch!(args, "args")
-    systemd_args = EvoGit.sandbox_args(repo_path, "git", args_list, repo_root)
 
-    {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+    case validate_string_array(args_list) do
+      {:ok, sanitized_args} ->
+        systemd_args = EvoGit.sandbox_args(repo_path, "git", sanitized_args, repo_root)
 
-    if exit_code == 0 do
-      "Command executed successfully.\nOutput:\n#{output}"
-    else
-      "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+        {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+
+        if exit_code == 0 do
+          "Command executed successfully.\nOutput:\n#{output}"
+        else
+          "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+        end
+
+      {:error, message} ->
+        "Error: #{message}"
     end
   end
 
@@ -604,7 +653,14 @@ defmodule EvoGit.Agent.Tools do
     )
   end
 
-  defp expand_path(file_path, repo_path) do
+  defp expand_path(file_path, repo_path) when is_binary(file_path) do
     Path.expand(file_path, repo_path)
+  end
+
+  defp expand_path(file_path, repo_path) do
+    # Gracefully handle non-string inputs by converting to string
+    file_path
+    |> to_string()
+    |> then(&Path.expand(&1, repo_path))
   end
 end
