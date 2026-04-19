@@ -55,8 +55,8 @@ defmodule EvoGit.Agent do
       @compression_threshold_bytes 100 * 1024
       @compression_keep_recent 5
       # Tool output truncation thresholds
-      @tool_output_max_bytes 20_000
-      @tool_output_truncate_size 3000
+      @tool_output_max_bytes 65536
+      @tool_output_truncate_size 4096
 
       defp current_model do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
@@ -501,7 +501,16 @@ defmodule EvoGit.Agent do
           half_size = div(@tool_output_truncate_size, 2)
           first_part = String.slice(result, 0, half_size)
           last_part = String.slice(result, -half_size, half_size)
-          first_part <> "\n... [Output Truncated, Only #{@tool_output_truncate_size} bytes Shown] ...\n" <> last_part
+
+          """
+          [WARNING: Output exceeded #{@tool_output_max_bytes} bytes and was truncated to #{@tool_output_truncate_size} bytes]
+          The output from '#{name}' was too large. Consider using more specific arguments
+          or alternative tools to retrieve only the relevant portion of data.
+          #{first_part}
+          ... [#{String.length(result) - @tool_output_truncate_size} bytes omitted] ...
+          #{last_part}
+          """
+          |> String.trim()
         else
           result
         end
