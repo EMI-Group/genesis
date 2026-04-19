@@ -50,8 +50,9 @@ defmodule EvoGit.Agent do
       @grace_period_ms 60 * 1000
       @complete_tool "complete_task"
 
-      # Context compression thresholds
-      @compression_threshold_bytes 100 * 1024
+      # Context compression thresholds in bytes
+      # usually a token is roughly 4 bytes, so roughly 100k tokens before compression
+      @compression_threshold_bytes 400_000
       @compression_keep_recent 5
       # Tool output truncation thresholds
       @tool_output_max_bytes 65536
@@ -765,7 +766,27 @@ defmodule EvoGit.Agent do
           {older_messages, recent_messages} = Enum.split(rest_history, -@compression_keep_recent)
 
           prompt = """
-          Please provide a concise summary of the important information discoveries, and context from the following interaction history that are related to the current task.
+          Compress the following interaction history into a dense, structured summary to be passed to the next agent iteration.
+
+          Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
+
+          Output your summary strictly using the following format:
+
+          1. Current Progress:
+          [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
+
+          2. Key Findings & Decisions:
+          [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
+
+          3. Sub-Agent Ledger:
+          [List previously spawned sub-agents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
+
+          4. Pending / Next Steps:
+          [What specifically needs to be executed next to advance the Current Objective.]
+
+          ---
+
+          [INTERACTION HISTORY BEGIN]
 
           #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
           """
