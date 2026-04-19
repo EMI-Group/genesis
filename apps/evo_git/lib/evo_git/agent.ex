@@ -454,9 +454,19 @@ defmodule EvoGit.Agent do
             tool_call_id = Map.get(call, :id, call.name)
 
             output =
-              case Task.await(task, timeout) do
-                {:error, reason} -> "Error: #{inspect(reason)}"
-                result -> truncate_large_output(result, name, call.arguments)
+              case Task.yield(task, timeout) || Task.shutdown(task) do
+                {:ok, result} ->
+                  case result do
+                    {:error, reason} -> "Error: #{inspect(reason)}"
+                    result -> truncate_large_output(result, name, call.arguments)
+                  end
+
+                {:exit, reason} ->
+                  "Error: Tool task crashed: #{inspect(reason)}"
+
+                nil ->
+                  timeout_sec = div(timeout, 1000)
+                  "Error: Tool execution timed out after #{timeout_sec} seconds"
               end
 
             {index, tool_call_id, name, output}
