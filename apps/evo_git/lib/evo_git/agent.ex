@@ -78,7 +78,7 @@ defmodule EvoGit.Agent do
       Event streaming is routed through the scheduler's `event_sink` field
       in the ETS agent record.
       """
-      def run(query) do
+      def run(objective) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
 
         node_path =
@@ -91,7 +91,8 @@ defmodule EvoGit.Agent do
         repo_path = Process.get(:repo_path, File.cwd!())
         context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
 
-        combined_prompt = "Current Context Tree:\n#{context_tree}\n\nYour Task:\n#{query}"
+        objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
+        combined_prompt = "Current Context Tree:\n#{context_tree}\n\n#{objective_prompt}"
 
         state = %{
           agent_id: agent_id,
