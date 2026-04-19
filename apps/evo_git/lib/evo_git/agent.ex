@@ -111,7 +111,10 @@ defmodule EvoGit.Agent do
           in_grace_period: false,
           deadline: System.monotonic_time(:millisecond) + @timeout_ms,
           # Track accumulated LLM time only
-          llm_time_ms: 0
+          llm_time_ms: 0,
+          # Warning tracking: last percentage warned (starts at 0)
+          last_warned_time_percent: 0,
+          last_warned_turns_percent: 0
         }
 
         # Log the conversation messages in order
@@ -211,10 +214,93 @@ defmodule EvoGit.Agent do
         }
       end
 
+      # Checks and sends warnings when approaching time/turn limits
+      # Warning thresholds: 50%, 80%
+      defp check_limit_warnings(state) do
+        state
+        |> maybe_warn_limit(:time, 50, 80)
+        |> maybe_warn_limit(:turns, 50, 80)
+      end
+
+      defp maybe_warn_limit(state, :time, threshold_a, threshold_b) do
+        percentage_used = div(state.llm_time_ms * 100, @timeout_ms)
+        last_warned = state.last_warned_time_percent
+
+        thresholds = [threshold_a, threshold_b]
+        {should_warn, new_last_warned} = check_thresholds(percentage_used, last_warned, thresholds)
+
+        if should_warn do
+          time_used_min = Float.round(state.llm_time_ms / 60_000, 1)
+          time_limit_min = Float.round(@timeout_ms / 60_000, 1)
+
+          warning_msg = """
+          [NOTICE] You have used approximately #{percentage_used}% of your time budget (#{time_used_min} / #{time_limit_min} minutes).
+          Consider accelerating your work by focusing on the most critical aspects of the task.
+          """
+
+          stream_event(state.agent_id, "BUDGET_WARNING", %{
+            type: :llm_time,
+            percentage: percentage_used,
+            time_used_ms: state.llm_time_ms,
+            time_limit_ms: @timeout_ms
+          })
+
+          new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
+          append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
+
+          %{state | history: new_history, last_warned_time_percent: new_last_warned}
+        else
+          state
+        end
+      end
+
+      defp maybe_warn_limit(state, :turns, threshold_a, threshold_b) do
+        percentage_used = div(state.turn * 100, @max_turns)
+        last_warned = state.last_warned_turns_percent
+
+        thresholds = [threshold_a, threshold_b]
+        {should_warn, new_last_warned} = check_thresholds(percentage_used, last_warned, thresholds)
+
+        if should_warn do
+          warning_msg = """
+          [NOTICE] You have used approximately #{percentage_used}% of your available turns (#{state.turn} / #{@max_turns}).
+          Consider accelerating your work by focusing on the most critical aspects of the task.
+          """
+
+          stream_event(state.agent_id, "BUDGET_WARNING", %{
+            type: :turns,
+            percentage: percentage_used,
+            turns_used: state.turn,
+            max_turns: @max_turns
+          })
+
+          new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
+          append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
+
+          %{state | history: new_history, last_warned_turns_percent: new_last_warned}
+        else
+          state
+        end
+      end
+
+      # Returns {should_warn, new_last_warned}
+      defp check_thresholds(current_percent, last_warned, thresholds) do
+        passed_thresholds =
+          thresholds
+          |> Enum.filter(&(&1 > last_warned and &1 <= current_percent))
+          |> Enum.sort()
+
+        case passed_thresholds do
+          [] -> {false, last_warned}
+          [h | _] -> {true, h}
+        end
+      end
+
       defp loop(state) do
         # Re-read worktree from ETS every turn
         state = load_worktree_path(state)
         state = try_compress_chat(state)
+        state = check_limit_warnings(state)
 
         cond do
           state.llm_time_ms >= @timeout_ms and not state.in_grace_period ->
