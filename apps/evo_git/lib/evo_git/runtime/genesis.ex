@@ -37,10 +37,12 @@ defmodule EvoGit.Runtime.Genesis do
 
           if final_sha do
             Logger.info("Genesis: Merging agent changes back to main workspace...")
-            case System.cmd("git", ["merge", "--no-commit", final_sha], cd: repo_path, stderr_to_stdout: true) do
-              {output, 0} ->
+            case Git.merge_no_commit(repo_path, final_sha) do
+              {:ok, output} ->
                 Logger.info("Genesis: User handoff merge successful.\n#{output}")
-              {output, code} ->
+              {:conflict, output} ->
+                Logger.warning("Genesis: User handoff merge has conflicts.\n#{output}")
+              {:error, code, output} ->
                 Logger.warning("Genesis: User handoff merge finished (exit code #{code}).\n#{output}")
             end
           end
