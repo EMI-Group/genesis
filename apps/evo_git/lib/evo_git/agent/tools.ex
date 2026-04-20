@@ -21,7 +21,9 @@ defmodule EvoGit.Agent.Tools do
       rg_schema(),
       git_schema(),
       glob_schema(),
-      list_directory_schema()
+      list_directory_schema(),
+      web_search_schema(),
+      web_read_schema()
     ]
   end
 
@@ -42,6 +44,8 @@ defmodule EvoGit.Agent.Tools do
   def schema("git"), do: git_schema()
   def schema("glob"), do: glob_schema()
   def schema("list_directory"), do: list_directory_schema()
+  def schema("web_search"), do: web_search_schema()
+  def schema("web_read"), do: web_read_schema()
 
   @doc """
   Executes a tool by name with the given arguments.
@@ -361,6 +365,91 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
+  # Web Search using Z.AI (zhipu.ai/chat.z.ai) - NOT Google Search
+  defp execute_tool("web_search", args, _repo_path, _repo_root) do
+    search_query = Map.fetch!(args, "search_query")
+    count = Map.get(args, "count", 10)
+    search_domain_filter = Map.get(args, "search_domain_filter")
+    search_recency_filter = Map.get(args, "search_recency_filter", "noLimit")
+
+    api_key = System.get_env("ZAI_API_KEY")
+
+    if is_nil(api_key) do
+      "Error: ZAI_API_KEY environment variable is not set"
+    else
+      url = "https://api.z.ai/api/paas/v4/web-search"
+
+      body =
+        %{
+          search_query: search_query,
+          count: count,
+          search_recency_filter: search_recency_filter
+        }
+        |> then(fn base ->
+          if search_domain_filter do
+            Map.put(base, :search_domain_filter, search_domain_filter)
+          else
+            base
+          end
+        end)
+
+      case Req.post(url,
+             json: body,
+             auth: {:bearer, api_key},
+             receive_timeout: 30_000
+           ) do
+        {:ok, %{status: 200, body: response_body}} ->
+          format_web_search_response(response_body)
+
+        {:ok, %{status: status, body: response_body}} ->
+          "Error: Web search failed with status #{status}. #{inspect(response_body)}"
+
+        {:error, reason} ->
+          "Error: Web search request failed: #{inspect(reason)}"
+      end
+    end
+  end
+
+  # Web Read using Z.AI (zhipu.ai/chat.z.ai) Web Reader API
+  defp execute_tool("web_read", args, _repo_path, _repo_root) do
+    url = Map.fetch!(args, "url")
+    timeout = Map.get(args, "timeout", 20)
+    no_cache = Map.get(args, "no_cache", false)
+    return_format = Map.get(args, "return_format", "markdown")
+    retain_images = Map.get(args, "retain_images", true)
+
+    api_key = System.get_env("ZAI_API_KEY")
+
+    if is_nil(api_key) do
+      "Error: ZAI_API_KEY environment variable is not set"
+    else
+      reader_url = "https://api.z.ai/api/paas/v4/reader"
+
+      body = %{
+        url: url,
+        timeout: timeout * 1000,
+        no_cache: no_cache,
+        return_format: return_format,
+        retain_images: retain_images
+      }
+
+      case Req.post(reader_url,
+             json: body,
+             auth: {:bearer, api_key},
+             receive_timeout: :timer.seconds(timeout + 10)
+           ) do
+        {:ok, %{status: 200, body: response_body}} ->
+          format_web_read_response(response_body)
+
+        {:ok, %{status: status, body: response_body}} ->
+          "Error: Web read failed with status #{status}. #{inspect(response_body)}"
+
+        {:error, reason} ->
+          "Error: Web read request failed: #{inspect(reason)}"
+      end
+    end
+  end
+
   defp execute_tool(unknown_tool, _args, _repo_path, _repo_root) do
     "Error: Unknown tool '#{unknown_tool}'"
   end
@@ -653,6 +742,86 @@ defmodule EvoGit.Agent.Tools do
     )
   end
 
+  # Web Search tool using Z.AI's Web Search API
+  # Note: This is NOT Google Search. Z.AI (zhipu.ai/chat.z.ai) is a Chinese AI service provider.
+  defp web_search_schema do
+    ReqLLM.tool(
+      name: "web_search",
+      description:
+        "Searches the web for information. " <>
+          "Returns structured search results including titles, URLs, summaries, site names, and publication dates.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "search_query" => %{
+            "type" => "string",
+            "description" => "The search query string"
+          },
+          "count" => %{
+            "type" => "integer",
+            "description" => "Number of results to return (1-50, default 10)",
+            "default" => 10
+          },
+          "search_domain_filter" => %{
+            "type" => "string",
+            "description" =>
+              "Optional domain filter (e.g., 'www.example.com') to only search within a specific domain"
+          },
+          "search_recency_filter" => %{
+            "type" => "string",
+            "description" =>
+              "Time filter for search results (e.g., 'noLimit', '1d', '1w', '1m', '1y')",
+            "default" => "noLimit"
+          }
+        },
+        "required" => ["search_query"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  # Web Read tool using Z.AI's Web Reader API
+  # Note: Z.AI (zhipu.ai/chat.z.ai) is a Chinese AI service provider.
+  defp web_read_schema do
+    ReqLLM.tool(
+      name: "web_read",
+      description:
+        "Reads and parses the content of a web page. " <>
+          "Returns the page content in markdown or text format.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "url" => %{
+            "type" => "string",
+            "description" => "The URL to retrieve"
+          },
+          "timeout" => %{
+            "type" => "integer",
+            "description" => "Request timeout in seconds (default 20)",
+            "default" => 20
+          },
+          "no_cache" => %{
+            "type" => "boolean",
+            "description" => "Whether to disable caching (default false)",
+            "default" => false
+          },
+          "return_format" => %{
+            "type" => "string",
+            "description" => "Return format: 'markdown' or 'text' (default markdown)",
+            "default" => "markdown"
+          },
+          "retain_images" => %{
+            "type" => "boolean",
+            "description" => "Whether to retain images in the output (default true)",
+            "default" => true
+          }
+        },
+        "required" => ["url"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
   defp expand_path(file_path, repo_path) when is_binary(file_path) do
     Path.expand(file_path, repo_path)
   end
@@ -662,5 +831,52 @@ defmodule EvoGit.Agent.Tools do
     file_path
     |> to_string()
     |> then(&Path.expand(&1, repo_path))
+  end
+
+  # Formats the web search API response into a readable string
+  defp format_web_search_response(%{"search_result" => results}) when is_list(results) do
+    formatted =
+      Enum.map(results, fn result ->
+        title = result["title"] || "Untitled"
+        link = result["link"] || ""
+        content = result["content"] || ""
+        media = result["media"] || ""
+        publish_date = result["publish_date"] || ""
+
+        date_str = if publish_date != "", do: " (#{publish_date})", else: ""
+        media_str = if media != "", do: " - #{media}", else: ""
+
+        "## #{title}#{date_str}#{media_str}\n#{link}\n\n#{content}\n"
+      end)
+      |> Enum.join("\n---\n\n")
+
+    "Found #{length(results)} results:\n\n#{formatted}"
+  end
+
+  defp format_web_search_response(response) do
+    "Search response (unexpected format): #{inspect(response)}"
+  end
+
+  # Formats the web read API response into a readable string
+  defp format_web_read_response(%{"reader_result" => result}) do
+    title = result["title"] || "Untitled"
+    url = result["url"] || ""
+    content = result["content"] || ""
+    description = result["description"] || ""
+
+    header = "# #{title}\n\nSource: #{url}\n"
+
+    description_str =
+      if description != "" do
+        "#{description}\n\n"
+      else
+        ""
+      end
+
+    header <> description_str <> content
+  end
+
+  defp format_web_read_response(response) do
+    "Read response (unexpected format): #{inspect(response)}"
   end
 end
