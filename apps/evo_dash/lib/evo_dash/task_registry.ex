@@ -227,7 +227,7 @@ defmodule EvoDash.TaskRegistry do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
     # Task process exited - handle unexpected failures
     {:noreply, state}
   end
