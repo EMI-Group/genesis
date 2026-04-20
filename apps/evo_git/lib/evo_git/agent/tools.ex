@@ -30,22 +30,22 @@ defmodule EvoGit.Agent.Tools do
   @doc """
   Returns a specific tool schema by name.
   """
-  def schema("read_file"), do: read_file_schema()
-  def schema("read_many_files"), do: read_many_files_schema()
-  def schema("write_file"), do: write_file_schema()
-  def schema("rewrite_file"), do: rewrite_file_schema()
-  def schema("create_files"), do: create_files_schema()
-  def schema("create_directories"), do: create_directories_schema()
-  def schema("replace_in_file"), do: replace_in_file_schema()
-  def schema("read_dir_context"), do: read_dir_context_schema()
-  def schema("rewrite_dir_context"), do: rewrite_dir_context_schema()
-  def schema("run_shell_command"), do: run_shell_command_schema()
-  def schema("rg"), do: rg_schema()
-  def schema("git"), do: git_schema()
-  def schema("glob"), do: glob_schema()
-  def schema("list_directory"), do: list_directory_schema()
-  def schema("web_search"), do: web_search_schema()
-  def schema("web_read"), do: web_read_schema()
+  def schema(:read_file), do: read_file_schema()
+  def schema(:read_many_files), do: read_many_files_schema()
+  def schema(:write_file), do: write_file_schema()
+  def schema(:rewrite_file), do: rewrite_file_schema()
+  def schema(:create_files), do: create_files_schema()
+  def schema(:create_directories), do: create_directories_schema()
+  def schema(:replace_in_file), do: replace_in_file_schema()
+  def schema(:read_dir_context), do: read_dir_context_schema()
+  def schema(:rewrite_dir_context), do: rewrite_dir_context_schema()
+  def schema(:run_shell_command), do: run_shell_command_schema()
+  def schema(:rg), do: rg_schema()
+  def schema(:git), do: git_schema()
+  def schema(:glob), do: glob_schema()
+  def schema(:list_directory), do: list_directory_schema()
+  def schema(:web_search), do: web_search_schema()
+  def schema(:web_read), do: web_read_schema()
 
   @doc """
   Executes a tool by name with the given arguments.

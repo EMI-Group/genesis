@@ -4,6 +4,7 @@ defmodule EvoGit.Agent.ContextExtractor do
   and building a hierarchical semantic tree (Context Tree).
   """
   use EvoGit.Agent
+  alias EvoGit.Agent.Tools
 
   def subagent_tool_name, do: "subagent_context_extractor"
 
@@ -16,13 +17,15 @@ defmodule EvoGit.Agent.ContextExtractor do
 
   def available_tools do
     [
-      EvoGit.Agent.Tools.schema("read_file"),
-      EvoGit.Agent.Tools.schema("read_many_files"),
-      EvoGit.Agent.Tools.schema("rg"),
-      EvoGit.Agent.Tools.schema("glob"),
-      EvoGit.Agent.Tools.schema("list_directory"),
-      EvoGit.Agent.Tools.schema("read_dir_context"),
-      EvoGit.Agent.Tools.schema("rewrite_dir_context"),
+      Tools.schema(:read_file),
+      Tools.schema(:read_many_files),
+      Tools.schema(:rg),
+      Tools.schema(:glob),
+      Tools.schema(:list_directory),
+      Tools.schema(:read_dir_context),
+      Tools.schema(:rewrite_dir_context),
+      Tools.schema(:web_search),
+      Tools.schema(:web_read),
       completion_schema()
     ] ++ subagent_schemas()
   end
