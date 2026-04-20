@@ -1,5 +1,6 @@
 defmodule EvoDashWeb.Router do
   use EvoDashWeb, :router
+  import Phoenix.LiveDashboard.Router
 
   pipeline :browser do
     plug :accepts, ["html"]
@@ -19,6 +20,7 @@ defmodule EvoDashWeb.Router do
 
     live "/", DashboardLive, :index
     live "/agents", AgentsLive, :index
+    live_dashboard "/dashboard"
   end
 
   # Other scopes may use custom stacks.
