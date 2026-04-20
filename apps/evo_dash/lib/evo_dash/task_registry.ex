@@ -49,15 +49,20 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:start_task, task_id, task_type, opts}, _from, state) do
-    # Start the task in a separate process
-    task_pid = start_task_process(task_id, task_type, opts)
+    # Start the task under the Task.Supervisor
+    task_ref = Task.Supervisor.async_nolink(
+      EvoDash.TaskSupervisor,
+      __MODULE__,
+      :execute_task,
+      [task_type, opts, task_id]
+    )
 
     task = %{
       id: task_id,
       type: task_type,
       status: :running,
       opts: opts,
-      pid: task_pid,
+      ref: task_ref,
       started_at: DateTime.utc_now(),
       logs: [],
       result: nil
@@ -85,9 +90,9 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call({:cancel_task, task_id}, _from, state) do
     result = case :ets.lookup(@table_name, task_id) do
-      [{^task_id, %{status: :running, pid: pid} = task}] ->
+      [{^task_id, %{status: :running, ref: %Task{pid: pid} = task_ref} = task}] ->
         if Process.alive?(pid) do
-          Process.exit(pid, :cancelled)
+          Task.shutdown(task_ref, :brutal_kill)
           updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
           :ets.insert(@table_name, {task_id, updated})
           :ok
@@ -127,22 +132,12 @@ defmodule EvoDash.TaskRegistry do
     {:noreply, state}
   end
 
-  ## Private Functions
+  ## Public Task Functions
 
-  defp generate_id do
-    :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-  end
-
-  defp start_task_process(task_id, task_type, opts) do
-    parent = self()
-
-    spawn_link(fn ->
-      result = execute_task(task_type, opts, parent, task_id)
-      send(parent, {:task_complete, task_id, result})
-    end)
-  end
-
-  defp execute_task(:genesis, opts, _parent, task_id) do
+  @doc """
+  Execute a task. This function runs in a separate process under Task.Supervisor.
+  """
+  def execute_task(:genesis, opts, task_id) do
     repo_path = Keyword.fetch!(opts, :path)
     prompt = Keyword.get(opts, :prompt, "")
     mode = Keyword.get(opts, :mode, :new)
@@ -168,17 +163,10 @@ defmodule EvoDash.TaskRegistry do
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
 
-    try do
-      result = EvoGit.Runtime.Genesis.run(prompt, runtime_opts)
-      {:ok, result}
-    rescue
-      e -> {:error, Exception.message(e)}
-    catch
-      kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-    end
+    EvoGit.Runtime.Genesis.run(prompt, runtime_opts)
   end
 
-  defp execute_task(:evolve, opts, _parent, task_id) do
+  def execute_task(:evolve, opts, task_id) do
     repo_path = Keyword.fetch!(opts, :path)
     objective = Keyword.get(opts, :objective, "")
     mode = Keyword.get(opts, :mode, "simple")
@@ -203,24 +191,44 @@ defmodule EvoDash.TaskRegistry do
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
 
-    try do
-      result = EvoGit.Runtime.Evolution.run(objective, runtime_opts)
-      {:ok, result}
-    rescue
-      e -> {:error, Exception.message(e)}
-    catch
-      kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-    end
+    EvoGit.Runtime.Evolution.run(objective, runtime_opts)
+  end
+
+  ## Private Functions
+
+  defp generate_id do
+    :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
   end
 
   @impl true
-  def handle_info({:task_complete, task_id, result}, state) do
-    status = case result do
-      {:ok, _} -> :completed
-      {:error, _} -> :failed
-      _ -> :failed
+  def handle_info({ref, result}, state) when is_reference(ref) do
+    # Find the task with this ref
+    task_id = case :ets.tab2list(@table_name) |> Enum.find(fn {_id, task} ->
+      match?(%{ref: %{ref: ^ref}}, task)
+    end) do
+      {id, _task} -> id
+      nil -> nil
     end
-    update_task_status(task_id, status, result)
+
+    if task_id do
+      status = case result do
+        {:ok, _} -> :completed
+        {:error, _} -> :failed
+        {:exit, _} -> :failed
+        _ -> :failed
+      end
+      update_task_status(task_id, status, result)
+    end
+
+    # Clean up the demonitor (Task async_nolink doesn't auto-demonitor on reply)
+    Process.demonitor(ref, [:flush])
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
+    # Task process exited - handle unexpected failures
     {:noreply, state}
   end
 
