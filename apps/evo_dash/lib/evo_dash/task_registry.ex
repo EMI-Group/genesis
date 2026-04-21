@@ -7,6 +7,35 @@ defmodule EvoDash.TaskRegistry do
 
   @table_name :evo_dash_tasks
 
+  defmodule TaskInfo do
+    @moduledoc """
+    Struct representing a task in the registry.
+    """
+    defstruct [
+      :id,
+      :type,
+      :opts,
+      :ref,
+      :started_at,
+      :finished_at,
+      status: :pending,
+      logs: [],
+      result: nil
+    ]
+
+    @type t :: %__MODULE__{
+      id: String.t() | nil,
+      type: atom() | nil,
+      status: :pending | :running | :completed | :failed | :cancelled,
+      opts: keyword() | nil,
+      ref: Task.t() | nil,
+      started_at: DateTime.t() | nil,
+      finished_at: DateTime.t() | nil,
+      logs: [String.t()],
+      result: term()
+    }
+  end
+
   ## Client API
 
   def start_link(opts \\ []) do
@@ -57,13 +86,14 @@ defmodule EvoDash.TaskRegistry do
       [task_type, opts, task_id]
     )
 
-    task = %{
+    task = %TaskInfo{
       id: task_id,
       type: task_type,
       status: :running,
       opts: opts,
       ref: task_ref,
       started_at: DateTime.utc_now(),
+      finished_at: nil,
       logs: [],
       result: nil
     }
@@ -90,7 +120,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call({:cancel_task, task_id}, _from, state) do
     result = case :ets.lookup(@table_name, task_id) do
-      [{^task_id, %{status: :running, ref: %Task{pid: pid} = task_ref} = task}] ->
+      [{^task_id, %TaskInfo{status: :running, ref: %Task{pid: pid} = task_ref} = task}] ->
         if Process.alive?(pid) do
           Task.shutdown(task_ref, :brutal_kill)
           updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
@@ -99,7 +129,7 @@ defmodule EvoDash.TaskRegistry do
         else
           {:error, :not_running}
         end
-      [{^task_id, _}] ->
+      [{^task_id, %TaskInfo{}}] ->
         {:error, :not_running}
       [] ->
         {:error, :not_found}
@@ -110,11 +140,8 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_cast({:update_status, task_id, status, result}, state) do
     case :ets.lookup(@table_name, task_id) do
-      [{^task_id, task}] ->
-        updated = task
-          |> Map.put(:status, status)
-          |> Map.put(:result, result)
-          |> Map.put(:finished_at, DateTime.utc_now())
+      [{^task_id, %TaskInfo{} = task}] ->
+        updated = %{task | status: status, result: result, finished_at: DateTime.utc_now()}
         :ets.insert(@table_name, {task_id, updated})
       _ -> :ok
     end
@@ -124,8 +151,8 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_cast({:append_log, task_id, log_entry}, state) do
     case :ets.lookup(@table_name, task_id) do
-      [{^task_id, task}] ->
-        updated = update_in(task.logs, fn logs -> [log_entry | logs] end)
+      [{^task_id, %TaskInfo{logs: logs} = task}] ->
+        updated = %{task | logs: [log_entry | logs]}
         :ets.insert(@table_name, {task_id, updated})
       _ -> :ok
     end
@@ -204,7 +231,7 @@ defmodule EvoDash.TaskRegistry do
   def handle_info({ref, result}, state) when is_reference(ref) do
     # Find the task with this ref
     task_id = case :ets.tab2list(@table_name) |> Enum.find(fn {_id, task} ->
-      match?(%{ref: %{ref: ^ref}}, task)
+      match?(%TaskInfo{ref: %{ref: ^ref}}, task)
     end) do
       {id, _task} -> id
       nil -> nil
