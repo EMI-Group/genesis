@@ -615,6 +615,7 @@ defmodule EvoGit.AgentScheduler do
         Process.put(:evogit_agent_id, agent_id)
         Process.put(:evogit_agent_depth, meta.depth)
         Process.put(:evogit_repo_root, state.repo_root)
+        Process.put(:repo_path, wt)
 
         if retries > 0 do
           Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")

@@ -95,7 +95,12 @@ defmodule EvoGit.Agent do
           end
 
         # Build context tree and merge into first user prompt
-        repo_path = Process.get(:repo_path, File.cwd!())
+        # Use :repo_path (set by scheduler to worktree path), falling back to
+        # :evogit_repo_root (the original repo root), and only then to CWD.
+        repo_path =
+          Process.get(:repo_path) ||
+            Process.get(:evogit_repo_root) ||
+            File.cwd!()
         context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
 
         objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
@@ -135,7 +140,11 @@ defmodule EvoGit.Agent do
 
           _ ->
             Logger.warning("Agent #{inspect(state.agent_id)}: No ETS state found, using defaults")
-            fallback = Process.get(:repo_path, File.cwd!())
+            fallback =
+              Process.get(:repo_path) ||
+                Process.get(:evogit_repo_root) ||
+                File.cwd!()
+
             %{state | repo_path: state.repo_path || fallback}
         end
       end
