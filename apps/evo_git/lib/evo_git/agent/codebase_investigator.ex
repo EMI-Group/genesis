@@ -38,6 +38,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
 
     ## Guidelines
     - Use search and read tools to explore the codebase and understand its structure.
+    - If there is nothing related to the investigation task in your assigned node, return immediately with a short message explaining the situation.
     - For large, complex investigations, delegate focused sub-agents to investigate other specific areas or subdirectories.
       Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be investigated.
       If you need to investigate a historical state of the codebase, you can also spawn a subagent with an optional commit SHA or branch name parameter, and the subagent will check out that state in a temporary workspace to perform the investigation.
@@ -49,7 +50,8 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     - When finished, call `complete_task` with a comprehensive report of your findings.
 
     ## Example
-    For example, if your task is to investigate the "API of the database access layer" of an application, and you're in the root `/` directory:
+
+    ### Example 1: investigate the "API of the database access layer" of an application, and you're in the root `/` directory:
     1. Check your current context tree and identify the relevant directory node(s), use relevant tools (e.g. list_directory, rg) to search for relevant files.
     2. Let's say you find some relevant files, `lib/app/db/repo.py`, `lib/app/db/models.py`, `docs/db/access.md` and `docs/db/connection.md`.
       - If you are very certain that these files directly contain the information you need, then you can read them directly and extract the information you need.
@@ -57,6 +59,11 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
         - Subagent 1 in path `lib/app/db` with the objective "Investigate the database access layer implementation and API, use repo.py and models.py as a starting point".
         - Subagent 2 in path `docs/db` with the objective "Investigate the documentation related to database access".
     3. Summarize your findings and call `complete_task` with the report.
+
+    ### Example 2: investigate "Modules and functions that use the function `user_auth(user_id)`"
+    1. Run `rg` tool to search for `user_auth(...)` in your assigned node, but there is zero match.
+    2. Try `rg` again to search for `user_auth` without the args, again zero match.
+    3. Immediately return with a short message "No module or function in this directory calls `user_auth`" because there is no relevant information in your assigned node.
     """
   end
 end
