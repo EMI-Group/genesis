@@ -74,7 +74,10 @@ defmodule EvoDashWeb.DashboardLive do
           </div>
         <% else %>
           <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
-            <EvoDashWeb.DashboardComponents.task_card task={task} />
+            <EvoDashWeb.DashboardComponents.task_card
+              task={task}
+              show_details={MapSet.member?(@expanded_task_ids, task.id)}
+            />
           <% end %>
         <% end %>
       </div>
@@ -89,11 +92,11 @@ defmodule EvoDashWeb.DashboardLive do
     end
 
     tasks = TaskRegistry.list_tasks()
-    |> Enum.map(&Map.put(&1, :show_details, false))
 
     socket =
       socket
       |> assign(:tasks, tasks)
+      |> assign(:expanded_task_ids, MapSet.new())
       |> assign(:selected_tab, :genesis)
       |> assign_form_defaults()
 
@@ -114,16 +117,7 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_info(:refresh_tasks, socket) do
     new_tasks = TaskRegistry.list_tasks()
-
-    # Preserve show_details state from existing tasks
-    tasks_with_state = Enum.map(new_tasks, fn new_task ->
-      case Enum.find(socket.assigns.tasks, &(&1.id == new_task.id)) do
-        nil -> Map.put(new_task, :show_details, false)
-        old_task -> Map.put(new_task, :show_details, Map.get(old_task, :show_details, false))
-      end
-    end)
-
-    {:noreply, assign(socket, tasks: tasks_with_state)}
+    {:noreply, assign(socket, :tasks, new_tasks)}
   end
 
   @impl true
@@ -144,13 +138,10 @@ defmodule EvoDashWeb.DashboardLive do
 
     case TaskRegistry.start_task(:genesis, opts) do
       {:ok, task} ->
-        tasks = TaskRegistry.list_tasks()
-        |> Enum.map(&Map.put(&1, :show_details, false))
-
         {:noreply,
          socket
          |> put_flash(:info, "Genesis task started with ID: #{task.id}")
-         |> assign(:tasks, tasks)
+         |> assign(:tasks, TaskRegistry.list_tasks())
          |> assign(:genesis_prompt, prompt)
          |> assign(:genesis_mode, mode)
          |> assign(:genesis_concurrency, concurrency)
@@ -175,13 +166,10 @@ defmodule EvoDashWeb.DashboardLive do
 
     case TaskRegistry.start_task(:evolve, opts) do
       {:ok, task} ->
-        tasks = TaskRegistry.list_tasks()
-        |> Enum.map(&Map.put(&1, :show_details, false))
-
         {:noreply,
          socket
          |> put_flash(:info, "Evolve task started with ID: #{task.id}")
-         |> assign(:tasks, tasks)
+         |> assign(:tasks, TaskRegistry.list_tasks())
          |> assign(:evolve_objective, objective)
          |> assign(:evolve_mode, mode)
          |> assign(:evolve_concurrency, concurrency)
@@ -197,7 +185,11 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event("cancel_task", %{"task_id" => task_id}, socket) do
     case TaskRegistry.cancel_task(task_id) do
       :ok ->
-        {:noreply, assign(socket, :tasks, TaskRegistry.list_tasks())}
+        expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+        {:noreply,
+         socket
+         |> assign(:tasks, TaskRegistry.list_tasks())
+         |> assign(:expanded_task_ids, expanded)}
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to cancel task: #{inspect(reason)}")}
     end
@@ -205,15 +197,13 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("toggle_task_details", %{"task_id" => task_id}, socket) do
-    tasks = Enum.map(socket.assigns.tasks, fn task ->
-      if task.id == task_id do
-        Map.update(task, :show_details, false, &(!&1))
-      else
-        Map.put(task, :show_details, false)
-      end
-    end)
+    expanded = if MapSet.member?(socket.assigns.expanded_task_ids, task_id) do
+      MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+    else
+      MapSet.put(socket.assigns.expanded_task_ids, task_id)
+    end
 
-    {:noreply, assign(socket, tasks: tasks)}
+    {:noreply, assign(socket, :expanded_task_ids, expanded)}
   end
 
   defp assign_form_defaults(socket) do

@@ -229,6 +229,7 @@ defmodule EvoDashWeb.DashboardComponents do
   end
 
   attr :task, :map, required: true
+  attr :show_details, :boolean, default: false
 
   def task_card(assigns) do
     ~H"""
@@ -277,7 +278,7 @@ defmodule EvoDashWeb.DashboardComponents do
               phx-click="toggle_task_details"
               phx-value-task_id={@task.id}
             >
-              <%= if @task.show_details do %>
+              <%= if @show_details do %>
                 <.icon name="hero-chevron-up" class="size-4" />
               <% else %>
                 <.icon name="hero-chevron-down" class="size-4" />
@@ -286,7 +287,7 @@ defmodule EvoDashWeb.DashboardComponents do
           </div>
         </div>
 
-        <%= if @task.show_details do %>
+        <%= if @show_details do %>
           <div class="divider my-2"></div>
           <div class="space-y-2">
             <div>
