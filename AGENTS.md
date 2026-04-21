@@ -78,11 +78,17 @@ Initialize the Context Tree and Phylogenetic Graph, starting from either an exis
 ### **4.2 Phase 2: Evolution**
 Mutate the codebase based on task ambiguity.
 
-* **Mode A: Simple Evolution (Top-Down):** Used for clear tasks (e.g., fixing reproducible bugs). The top-level agent maps the spatial context, drafts a step-by-step plan, and dispatches `executor` sub-agents to write code, followed by `evaluator` sub-agents to verify diffs.
+* **Mode A: Simple Evolution (Top-Down):** Used for clear tasks (e.g., fixing reproducible bugs). The top-level agent (generalist) maps the spatial context, then analyzes the objective to identify the steps needed to achieve it. It can spawn codebase_investigator sub-agents to gather additional context if needed. Then it handle the editing of files within their assigned node level and spawns generalist sub-agents to execute each step in child nodes.
+    * **Recursive Realization:** The steps are also executed recursively, meaning the agents should only be editing / investigating files within their assigned node level, and delegate to sub-agents for any child nodes.
+    * **Fixed Point Convergence:** The parent agent evaluates the results of its sub-agents. If the objective is not met, it spawns new sub-agents to continue iterating until the task is complete or the session limit is reached.
 * **Mode B: Complex Evolution (Bottom-Up):** Used for open-ended tasks (e.g., system-wide optimization). Planning is bypassed. The parent defines a "Search Space" and spawns concurrent sub-agents to test different local file changes.
     * **Parallel Branching and Merge Resolution:** When multiple sub-agents succeed concurrently, creating parallel branches in the Git DAG, the parent agent executes a sequential merge strategy. It first selects the single *best* performing branch to establish as the new baseline. It then attempts to merge the remaining successful branches one by one into this baseline. If an improvement merges cleanly and adds value, it is accepted. If it results in conflicts or cannot be incorporated (i.e., parallel improvements that contradict each other), the conflicting branch is discarded.
     * *Differential Evolution:* Extracts a transformation pattern from a successful reference module and applies it across similar components, keeping only the permutations that work.
     * *Co-evolution:* Mutates interdependent systems (e.g., frontend/backend) concurrently to reach a shared performance goal.
+
+Please note that "simple" doesn't necessarily mean the code change is small or trivial, and "complex" doesn't necessarily mean the code change is large. The distinction is based on the clarity and the understanding of the task rather than its size. For example:
+* A "simple" evolution could involve a significant code change if the task is well-defined and the path to the solution is clear, e.g., build a static website using a specific framework that has feature A, B and C, and the agent can decompose the task into clear steps and execute them. Therefore, even if it requires thousands or tens of thousands of lines of code, it is still considered "simple".
+* A "complex" evolution could involve a small code change if the task is ambiguous and requires exploration, e.g., optimize the latency of this algorithm, where neither the agent nor the user know how to achieve this, and the agent needs to experiment with different approaches and learn from the results. Maybe there exists a one-line change that can significantly improve the performance, but we don't know what it is.
 
 ---
 
