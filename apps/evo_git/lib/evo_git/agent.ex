@@ -95,12 +95,8 @@ defmodule EvoGit.Agent do
           end
 
         # Build context tree and merge into first user prompt
-        # Use :repo_path (set by scheduler to worktree path), falling back to
-        # :evogit_repo_root (the original repo root), and only then to CWD.
-        repo_path =
-          Process.get(:repo_path) ||
-            Process.get(:evogit_repo_root) ||
-            File.cwd!()
+        # Use :repo_path (set by scheduler to worktree path)
+        repo_path = Process.get(:repo_path)
         context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
 
         objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
