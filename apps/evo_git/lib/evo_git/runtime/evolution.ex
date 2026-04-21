@@ -28,16 +28,16 @@ defmodule EvoGit.Runtime.Evolution do
 
   # Mode A: Top-Down Evolution (Simple)
   # Used for clear tasks with well-defined objectives.
-  # The Planner agent orchestrates the entire process.
+  # The Generalist agent handles the entire task, delegating investigation to CodebaseInvestigator.
   defp run_simple_mode(objective, repo_path, current_sha, opts) do
     Logger.info("Evolution: Running Mode A (Top-Down)")
 
-    # Use Planner agent as the orchestrator for Mode A
+    # Use Generalist agent for Mode A
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     {:ok, context_node} = ContextNode.load(".", repo_path)
 
-    # Planner spawns executors and evaluator via sub-agent delegation
-    case AgentSpec.new(context_node, phylo_node, EvoGit.Agent.Planner, objective,
+    # Generalist handles the task, delegating investigation to CodebaseInvestigator
+    case AgentSpec.new(context_node, phylo_node, EvoGit.Agent.Generalist, objective,
            event_sink: Keyword.get(opts, :event_sink, self())
          )
          |> AgentScheduler.run_agent() do
