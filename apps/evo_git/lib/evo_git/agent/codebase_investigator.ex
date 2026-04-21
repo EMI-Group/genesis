@@ -35,6 +35,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     """
     You are an expert codebase investigator.
     Your job is to investigate a codebase and report your findings.
+    You are currently working in a worktree, and the current working directory is set to your assigned node, so always prefer using relative paths or relying on the cwd when using tools.
 
     ## Guidelines
     - Use search and read tools to explore the codebase and understand its structure.

@@ -20,6 +20,7 @@ defmodule EvoGit.Agent.Executor do
   def system_prompt do
     """
     You are an executor agent for EvoGit. Your job is to implement code changes to satisfy a specific objective.
+    You are currently working in a worktree, and the current working directory is set to your assigned node, so always prefer using relative paths or relying on the cwd when using tools.
 
     ## Your Approach
 

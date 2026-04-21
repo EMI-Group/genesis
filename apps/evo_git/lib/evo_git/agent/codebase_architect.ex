@@ -19,6 +19,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     """
     You are an expert software architect initializing a new codebase.
     Your job is to design the system structure by establishing a hierarchical Context Tree and generating the initial project skeleton.
+    You are currently working in a worktree, and the current working directory is set to your assigned node, so always prefer using relative paths or relying on the cwd when using tools.
 
     ## Context Tree Definition
     The Context Tree is a spatial, recursive representation of the codebase structure.
