@@ -12,13 +12,14 @@ defmodule EvoGit.Agent.ToolsTest do
 
       names = Enum.map(schemas, & &1.name)
       assert "read_file" in names
-      assert "write_file" in names
+      assert "file_write" in names
+      assert "file_edit" in names
     end
   end
 
   describe "schema/1" do
     test "returns a specific schema by name" do
-      schema = Tools.schema("read_file")
+      schema = Tools.schema(:read_file)
       assert schema.name == "read_file"
       assert is_map(schema.parameter_schema)
     end
@@ -52,11 +53,11 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  describe "execute/4 - write_file" do
+  describe "execute/4 - file_write" do
     test "writes to a new file and creates directory", %{tmp_dir: tmp_dir} do
       result =
         Tools.execute(
-          "write_file",
+          "file_write",
           %{"file_path" => "new_dir/test.txt", "content" => "new content"},
           tmp_dir
         )
@@ -67,86 +68,85 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  describe "execute/4 - rewrite_file" do
-    test "rewrites an existing file", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "test.txt")
-      File.write!(file_path, "old content")
-
-      result =
-        Tools.execute(
-          "rewrite_file",
-          %{"file_path" => "test.txt", "content" => "new content"},
-          tmp_dir
-        )
-
-      assert result =~ "Successfully rewrote"
-
-      assert File.read!(file_path) == "new content"
-    end
-
-    test "returns error if file does not exist", %{tmp_dir: tmp_dir} do
-      result =
-        Tools.execute(
-          "rewrite_file",
-          %{"file_path" => "missing.txt", "content" => "content"},
-          tmp_dir
-        )
-
-      assert result =~ "does not exist or is not a regular file"
-    end
-  end
-
-  describe "execute/4 - create_files" do
-    test "creates multiple empty files", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("create_files", %{"file_paths" => ["f1.txt", "dir/f2.txt"]}, tmp_dir)
-      assert result =~ "Successfully created file f1.txt"
-      assert result =~ "Successfully created file dir/f2.txt"
-
-      assert File.read!(Path.join(tmp_dir, "f1.txt")) == ""
-      assert File.read!(Path.join([tmp_dir, "dir", "f2.txt"])) == ""
-    end
-  end
-
-  describe "execute/4 - create_directories" do
-    test "creates directories with .gitkeep", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("create_directories", %{"dir_paths" => ["d1", "d2/sub"]}, tmp_dir)
-      assert result =~ "Successfully created directory d1"
-      assert result =~ "Successfully created directory d2/sub"
-
-      assert File.exists?(Path.join([tmp_dir, "d1", ".gitkeep"]))
-      assert File.exists?(Path.join([tmp_dir, "d2", "sub", ".gitkeep"]))
-    end
-  end
-
-  describe "execute/4 - replace_in_file" do
+  describe "execute/4 - file_edit" do
     test "replaces exact text in file", %{tmp_dir: tmp_dir} do
       file_path = Path.join(tmp_dir, "test.txt")
       File.write!(file_path, "hello world 123")
 
       result =
         Tools.execute(
-          "replace_in_file",
-          %{"file_path" => "test.txt", "old_text" => "world", "new_text" => "elixir"},
+          "file_edit",
+          %{"file_path" => "test.txt", "old_string" => "world", "new_string" => "elixir"},
           tmp_dir
         )
 
-      assert result =~ "Successfully replaced text"
-
+      assert result =~ "has been updated successfully"
       assert File.read!(file_path) == "hello elixir 123"
     end
 
-    test "returns error if old text not found", %{tmp_dir: tmp_dir} do
+    test "replaces all occurrences when replace_all is true", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "test.txt")
+      File.write!(file_path, "hello world hello world")
+
+      result =
+        Tools.execute(
+          "file_edit",
+          %{
+            "file_path" => "test.txt",
+            "old_string" => "hello",
+            "new_string" => "hi",
+            "replace_all" => true
+          },
+          tmp_dir
+        )
+
+      assert result =~ "All occurrences were successfully replaced"
+      assert File.read!(file_path) == "hi world hi world"
+    end
+
+    test "returns error if multiple matches found without replace_all", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "test.txt")
+      File.write!(file_path, "hello world hello world")
+
+      result =
+        Tools.execute(
+          "file_edit",
+          %{"file_path" => "test.txt", "old_string" => "hello", "new_string" => "hi"},
+          tmp_dir
+        )
+
+      assert result =~ "Found 2 matches"
+      assert result =~ "Set replace_all=true"
+      assert File.read!(file_path) == "hello world hello world"
+    end
+
+    test "strips trailing whitespace from new_string", %{tmp_dir: tmp_dir} do
       file_path = Path.join(tmp_dir, "test.txt")
       File.write!(file_path, "hello world")
 
       result =
         Tools.execute(
-          "replace_in_file",
-          %{"file_path" => "test.txt", "old_text" => "missing", "new_text" => "elixir"},
+          "file_edit",
+          %{"file_path" => "test.txt", "old_string" => "world", "new_string" => "elixir   \n\n"},
           tmp_dir
         )
 
-      assert result =~ "not found in file"
+      assert result =~ "has been updated successfully"
+      assert File.read!(file_path) == "hello elixir"
+    end
+
+    test "returns error if old_string not found", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "test.txt")
+      File.write!(file_path, "hello world")
+
+      result =
+        Tools.execute(
+          "file_edit",
+          %{"file_path" => "test.txt", "old_string" => "missing", "new_string" => "elixir"},
+          tmp_dir
+        )
+
+      assert result =~ "old_string not found in file"
     end
   end
 

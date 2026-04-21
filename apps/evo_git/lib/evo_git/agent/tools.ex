@@ -10,11 +10,8 @@ defmodule EvoGit.Agent.Tools do
     [
       read_file_schema(),
       read_many_files_schema(),
-      write_file_schema(),
-      rewrite_file_schema(),
-      create_files_schema(),
-      create_directories_schema(),
-      replace_in_file_schema(),
+      file_write_schema(),
+      file_edit_schema(),
       read_dir_context_schema(),
       rewrite_dir_context_schema(),
       run_shell_command_schema(),
@@ -32,11 +29,8 @@ defmodule EvoGit.Agent.Tools do
   """
   def schema(:read_file), do: read_file_schema()
   def schema(:read_many_files), do: read_many_files_schema()
-  def schema(:write_file), do: write_file_schema()
-  def schema(:rewrite_file), do: rewrite_file_schema()
-  def schema(:create_files), do: create_files_schema()
-  def schema(:create_directories), do: create_directories_schema()
-  def schema(:replace_in_file), do: replace_in_file_schema()
+  def schema(:file_write), do: file_write_schema()
+  def schema(:file_edit), do: file_edit_schema()
   def schema(:read_dir_context), do: read_dir_context_schema()
   def schema(:rewrite_dir_context), do: rewrite_dir_context_schema()
   def schema(:run_shell_command), do: run_shell_command_schema()
@@ -88,6 +82,61 @@ defmodule EvoGit.Agent.Tools do
   defp to_string_binary(value) when is_atom(value), do: {:ok, Atom.to_string(value)}
   defp to_string_binary(_), do: :error
 
+  # Finds the actual string in file content, handling quote normalization
+  # LLMs output straight quotes, but files may contain curly quotes
+  defp find_actual_string(file_content, search_string) do
+    if String.contains?(file_content, search_string) do
+      search_string
+    else
+      # Try quote normalization (curly quotes → straight quotes)
+      normalized_search = normalize_quotes(search_string)
+      normalized_file = normalize_quotes(file_content)
+
+      if String.contains?(normalized_file, normalized_search) do
+        # Find the position in normalized content
+        case :binary.match(normalized_file, normalized_search) do
+          {start_pos, _length} ->
+            # Extract original string with curly quotes from file
+            byte_len = byte_size(search_string)
+            binary_part(file_content, start_pos, byte_len)
+
+          :nomatch ->
+            nil
+        end
+      else
+        nil
+      end
+    end
+  end
+
+  # Normalizes curly quotes to straight quotes for matching
+  # U+2018 ' → ', U+2019 ' → ', U+201C " → ", U+201D " → "
+  defp normalize_quotes(str) do
+    str
+    |> String.replace("\u2018", "'")
+    |> String.replace("\u2019", "'")
+    |> String.replace("\u201C", "\"")
+    |> String.replace("\u201D", "\"")
+  end
+
+  defp count_occurrences(content, pattern) do
+    content
+    |> String.split(pattern)
+    |> length()
+    |> Kernel.-(1)
+  end
+
+  defp apply_edit(content, old_string, new_string, replace_all) do
+    # Strip trailing whitespace from new_string
+    trimmed_new = String.trim_trailing(new_string)
+
+    if replace_all do
+      String.replace(content, old_string, trimmed_new)
+    else
+      String.replace(content, old_string, trimmed_new, global: false)
+    end
+  end
+
   defp execute_tool("read_file", args, repo_path, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path(repo_path)
 
@@ -110,7 +159,7 @@ defmodule EvoGit.Agent.Tools do
     end)
   end
 
-  defp execute_tool("write_file", args, repo_path, _repo_root) do
+  defp execute_tool("file_write", args, repo_path, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path(repo_path)
     content = Map.fetch!(args, "content")
 
@@ -127,68 +176,41 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  defp execute_tool("rewrite_file", args, repo_path, _repo_root) do
+  defp execute_tool("file_edit", args, repo_path, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path(repo_path)
-    content = Map.fetch!(args, "content")
-
-    if File.regular?(file_path) do
-      case File.write(file_path, content) do
-        :ok -> "Successfully rewrote #{file_path}"
-        {:error, reason} -> "Error writing file #{file_path}: #{:file.format_error(reason)}"
-      end
-    else
-      "Error: '#{file_path}' does not exist or is not a regular file"
-    end
-  end
-
-  defp execute_tool("create_files", args, repo_path, _repo_root) do
-    paths = Map.fetch!(args, "file_paths")
-
-    Enum.map_join(paths, "\n", fn path ->
-      full_path = expand_path(path, repo_path)
-
-      case File.mkdir_p(Path.dirname(full_path)) do
-        :ok ->
-          case File.write(full_path, "") do
-            :ok -> "Successfully created file #{path}"
-            {:error, reason} -> "Error creating file #{path}: #{:file.format_error(reason)}"
-          end
-
-        {:error, reason} ->
-          "Error creating directory for #{path}: #{:file.format_error(reason)}"
-      end
-    end)
-  end
-
-  defp execute_tool("create_directories", args, repo_path, _repo_root) do
-    paths = Map.fetch!(args, "dir_paths")
-
-    Enum.map_join(paths, "\n", fn path ->
-      full_path = expand_path(path, repo_path)
-
-      case File.mkdir_p(full_path) do
-        :ok -> "Successfully created directory #{path}"
-        {:error, reason} -> "Error creating directory #{path}: #{:file.format_error(reason)}"
-      end
-    end)
-  end
-
-  defp execute_tool("replace_in_file", args, repo_path, _repo_root) do
-    file_path = Map.fetch!(args, "file_path") |> expand_path(repo_path)
-    old_text = Map.fetch!(args, "old_text")
-    new_text = Map.fetch!(args, "new_text")
+    old_string = Map.fetch!(args, "old_string")
+    new_string = Map.fetch!(args, "new_string")
+    replace_all = Map.get(args, "replace_all", false)
 
     case File.read(file_path) do
       {:ok, content} ->
-        if String.contains?(content, old_text) do
-          updated_content = String.replace(content, old_text, new_text)
+        # Quote normalization: find actual string in file (may have curly quotes)
+        actual_old = find_actual_string(content, old_string)
 
-          case File.write(file_path, updated_content) do
-            :ok -> "Successfully replaced text in #{file_path}"
-            {:error, reason} -> "Error writing file #{file_path}: #{:file.format_error(reason)}"
-          end
+        if is_nil(actual_old) do
+          "Error: old_string not found in file #{file_path}"
         else
-          "Error: old_text not found in file #{file_path}"
+          # Count matches
+          match_count = count_occurrences(content, actual_old)
+
+          if match_count > 1 and not replace_all do
+            "Error: Found #{match_count} matches of old_string in file. Set replace_all=true or provide more context."
+          else
+            # Apply replacement
+            updated_content = apply_edit(content, actual_old, new_string, replace_all)
+
+            case File.write(file_path, updated_content) do
+              :ok ->
+                if replace_all do
+                  "The file #{file_path} has been updated. All occurrences were successfully replaced."
+                else
+                  "The file #{file_path} has been updated successfully."
+                end
+
+              {:error, reason} ->
+                "Error writing file #{file_path}: #{:file.format_error(reason)}"
+            end
+          end
         end
 
       {:error, reason} ->
@@ -482,10 +504,16 @@ defmodule EvoGit.Agent.Tools do
     )
   end
 
-  defp write_file_schema do
+  defp file_write_schema do
     ReqLLM.tool(
-      name: "write_file",
-      description: "Writes content to a file, creating it if it doesn't exist.",
+      name: "file_write",
+      description:
+        "Writes a file to the local filesystem. " <>
+          "Usage: " <>
+          "- This tool will overwrite the existing file if there is one at the provided path. " <>
+          "- If this is an existing file, you MUST use the read_file tool first to read the file's contents. " <>
+          "- Prefer the file_edit tool for modifying existing files — it only sends the diff. " <>
+          "Only use this tool to create new files or for complete rewrites.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -498,88 +526,38 @@ defmodule EvoGit.Agent.Tools do
     )
   end
 
-  defp rewrite_file_schema do
+  defp file_edit_schema do
     ReqLLM.tool(
-      name: "rewrite_file",
+      name: "file_edit",
       description:
-        "Completely replaces the entire content of an existing file. " <>
-          "The file must already exist. Use this instead of replace_in_file when you need to " <>
-          "rewrite the whole file rather than making a targeted substitution.",
+        "Performs exact string replacements in files. " <>
+          "Usage: " <>
+          "- You must use your `read_file` tool at least once in the conversation before editing. " <>
+          "- When editing text from Read tool output, ensure you preserve the exact indentation " <>
+          "(tabs/spaces) as it appears AFTER the line number prefix. " <>
+          "- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required. " <>
+          "- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger " <>
+          "string with more surrounding context to make it unique or use `replace_all` to change " <>
+          "every instance of `old_string`.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "file_path" => %{
+          "file_path" => %{"type" => "string", "description" => "The path to the file to modify"},
+          "old_string" => %{
             "type" => "string",
-            "description" => "The path to the existing file to rewrite"
+            "description" => "The exact text to replace"
           },
-          "content" => %{
+          "new_string" => %{
             "type" => "string",
-            "description" => "The complete new content for the file"
-          }
-        },
-        "required" => ["file_path", "content"]
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
-
-  defp create_files_schema do
-    ReqLLM.tool(
-      name: "create_files",
-      description: "Creates multiple empty files, ensuring their parent directories exist.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "file_paths" => %{
-            "type" => "array",
-            "items" => %{"type" => "string"},
-            "description" => "List of file paths to create"
-          }
-        },
-        "required" => ["file_paths"]
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
-
-  defp create_directories_schema do
-    ReqLLM.tool(
-      name: "create_directories",
-      description:
-        "Creates multiple empty directories.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "dir_paths" => %{
-            "type" => "array",
-            "items" => %{"type" => "string"},
-            "description" => "List of directory paths to create"
-          }
-        },
-        "required" => ["dir_paths"]
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
-
-  defp replace_in_file_schema do
-    ReqLLM.tool(
-      name: "replace_in_file",
-      description: "Replaces exactly matching text in a file with new text.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "file_path" => %{"type" => "string", "description" => "The path to the file"},
-          "old_text" => %{
-            "type" => "string",
-            "description" => "The exact literal text to replace"
+            "description" => "The replacement text"
           },
-          "new_text" => %{
-            "type" => "string",
-            "description" => "The exact literal text to replace old_text with"
+          "replace_all" => %{
+            "type" => "boolean",
+            "description" => "Replace all occurrences (default: false)",
+            "default" => false
           }
         },
-        "required" => ["file_path", "old_text", "new_text"]
+        "required" => ["file_path", "old_string", "new_string"]
       },
       callback: fn _ -> {:ok, nil} end
     )
