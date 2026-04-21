@@ -675,16 +675,20 @@ defmodule EvoGit.Agent do
           mod = subagent_module_for(call.name)
           path = Map.get(call.arguments, "path")
           objective = Map.get(call.arguments, "objective")
+          commit_id = Map.get(call.arguments, "commit_id")
 
           {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
 
           {:ok, sub_context_node} =
             EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
 
+          # Use specified commit_id, or default to current commit
+          base_commit = commit_id || parent_state.phylo_node.current_commit
+
           sub_phylo_node = %EvoGit.Core.PhyloGraphNode{
             repo: parent_state.phylo_node.repo,
-            base_commit: parent_state.phylo_node.current_commit,
-            current_commit: parent_state.phylo_node.current_commit
+            base_commit: base_commit,
+            current_commit: base_commit
           }
 
           EvoGit.AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective)
@@ -908,6 +912,12 @@ defmodule EvoGit.Agent do
                   "description" =>
                     "A clear, self-contained objective for the sub-agent. " <>
                       "Include any relevant context since it starts with a fresh context."
+                },
+                "commit_id" => %{
+                  "type" => "string",
+                  "description" =>
+                    "Optional: The commit SHA to spawn the sub-agent on. " <>
+                      "Defaults to the current commit if not specified."
                 }
               },
               "required" => ["path", "objective"]
