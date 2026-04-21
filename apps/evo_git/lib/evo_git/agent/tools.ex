@@ -511,7 +511,6 @@ defmodule EvoGit.Agent.Tools do
         "Writes a file to the local filesystem. " <>
           "Usage: " <>
           "- This tool will overwrite the existing file if there is one at the provided path. " <>
-          "- If this is an existing file, you MUST use the read_file tool first to read the file's contents. " <>
           "- Prefer the file_edit tool for modifying existing files — it only sends the diff. " <>
           "Only use this tool to create new files or for complete rewrites.",
       parameter_schema: %{
@@ -532,7 +531,6 @@ defmodule EvoGit.Agent.Tools do
       description:
         "Performs exact string replacements in files. " <>
           "Usage: " <>
-          "- You must use your `read_file` tool at least once in the conversation before editing. " <>
           "- When editing text from Read tool output, ensure you preserve the exact indentation " <>
           "(tabs/spaces) as it appears AFTER the line number prefix. " <>
           "- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required. " <>
