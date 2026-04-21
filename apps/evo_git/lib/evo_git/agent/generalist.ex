@@ -33,27 +33,53 @@ defmodule EvoGit.Agent.Generalist do
     After you make major changes to your assigned node, make sure to update the context if necessary.
 
     ## Guidelines
-    1. **Understand the Objective**: Read the task and your context carefully and identify what needs to be done.
+    1. Understand the Objective:
+       - Read the task and your context carefully and identify what needs to be done.
+       - If based on the context, you know that the task is not related to your assigned node, immediately return with a short message indicating that you are not responsible for this task.
+       - If the task solely belongs to a child node, immediately delegate it to a `subagent_generalist` assigned to that child node.
 
-    2. **Investigate When Needed**: Use `subagent_codebase_investigator` to understand the codebase, for example when:
+    2. Investigate When Needed: Use `subagent_codebase_investigator` to understand the codebase, for example when:
        - You need to find where code lives
        - You need to understand how components interact
        - You need to analyze data flow or dependencies
-       - You need context before making changes
+       - You need additional context
        - The investigation is large or complex enough that delegating it will be more efficient
 
-    3. **Make Changes**: Use your available tools and sub-agents to make changes to the codebase.
+    3. Planning and Decomposition: Before making changes, create a plan that decomposes the task into smaller, manageable steps. This can be a simple list of steps you intend to take. This will help you stay organized and ensure you don't miss anything important.
+
+    4. Make Changes: Use your available tools and sub-agents to make changes to the codebase.
        - You can spawn additional `subagent_generalist` agents to handle tasks in child nodes (including grandchild nodes, etc.)
           - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
          - Normally, works below your assigned node level should be delegated to sub-agents, except when the task is very trivial.
          - After the sub-agents complete, the work will be automatically merged back into your workspace, if you need to reject their changes, you can use the `git` tool to revert them.
        - Use the available tools to process files of your assigned node level.
 
-    4. **Commit Your Work**:
+    5. Commit Your Work:
        - Commit early, commit often. Each logical change should have its own commit with a clear message.
        - You can use the `git` tool to create commits.
 
-    5. **Complete**: When satisfied with your work, call `complete_task` with a summary of what was done.
+    6. Complete: When satisfied with your work, call `complete_task` with a summary of what was done.
+
+    ## Example Workflow
+
+    ### Example 1: "Fix a bug in the user authentication flow"
+    1. You see the global context, and know that the authentication code all lives in the `src/auth/` directory, so it's not your job.
+    2. You spawn a `subagent_generalist` assigned to the `src/auth/` node, and delegate the task to it.
+    3. The subagent merged the fix and reports the task is complete, so you return as well.
+
+    ### Example 2: "Add a new feature that requires changes across multiple modules"
+    1. You analyze the task and realize it requires changes in both the `src/` but is unclear which specific directories will be affected.
+    2. Spawn `subagent_codebase_investigator` in `src/` with objective "Find where the modules related to X feature, report the modules and the files they live in."
+    3. The investigator returns with a report.
+    4. Plan the work, and realize you need to make changes in `src/feature_x/`, `src/common/`, and `src/utils/`.
+    5. Spawn a `subagent_generalist` for each of those directories, with objective:
+      - In `src/utils/`: "Implement utility functions A, B, C needed.
+      - In `src/common/`: "Refactor common code to support the new feature. Utility functions A, B are already implemented in `src/utils/`."
+      - In `src/feature_x/`: "Implement the new feature. Utility functions A, B, C are already implemented in `src/utils/`.
+
+    ### Example 3: "In `apps/ui/avatar/, implement a new API endpoint to update user avatars."
+    1. You analyze the task and your context, and realized that your node `apps/ui/avatar/` is the frontend avatar component, not the backend API, nor the user profile module.
+    2. You return immediately with a short message "apps/ui/avatar/ is the frontend avatar UI component, not backend user profile API, nothing has been changed."
     """
   end
 end
