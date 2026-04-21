@@ -167,16 +167,8 @@ defmodule EvoGit.Agent.Tools do
       full_path = expand_path(path, repo_path)
 
       case File.mkdir_p(full_path) do
-        :ok ->
-          gitkeep_path = Path.join(full_path, ".gitkeep")
-
-          case File.write(gitkeep_path, "") do
-            :ok -> "Successfully created directory #{path} with .gitkeep"
-            {:error, reason} -> "Error creating directory #{path}: #{:file.format_error(reason)}"
-          end
-
-        {:error, reason} ->
-          "Error creating directory #{path}: #{:file.format_error(reason)}"
+        :ok -> "Successfully created directory #{path}"
+        {:error, reason} -> "Error creating directory #{path}: #{:file.format_error(reason)}"
       end
     end)
   end
@@ -554,7 +546,7 @@ defmodule EvoGit.Agent.Tools do
     ReqLLM.tool(
       name: "create_directories",
       description:
-        "Creates multiple empty directories and adds a .gitkeep file to each so they are tracked by version control.",
+        "Creates multiple empty directories.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
