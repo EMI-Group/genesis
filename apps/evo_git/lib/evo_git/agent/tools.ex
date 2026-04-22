@@ -14,7 +14,7 @@ defmodule EvoGit.Agent.Tools do
       file_edit_schema(),
       read_dir_context_schema(),
       rewrite_dir_context_schema(),
-      run_shell_command_schema(),
+      bash_schema(),
       rg_schema(),
       git_schema(),
       glob_schema(),
@@ -33,7 +33,7 @@ defmodule EvoGit.Agent.Tools do
   def schema(:file_edit), do: file_edit_schema()
   def schema(:read_dir_context), do: read_dir_context_schema()
   def schema(:rewrite_dir_context), do: rewrite_dir_context_schema()
-  def schema(:run_shell_command), do: run_shell_command_schema()
+  def schema(:bash), do: bash_schema()
   def schema(:rg), do: rg_schema()
   def schema(:git), do: git_schema()
   def schema(:glob), do: glob_schema()
@@ -296,7 +296,7 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  defp execute_tool("run_shell_command", args, repo_path, repo_root) do
+  defp execute_tool("bash", args, repo_path, repo_root) do
     command = Map.fetch!(args, "command")
     systemd_args = EvoGit.sandbox_args(repo_path, "bash", ["-c", command], repo_root)
 
@@ -618,11 +618,11 @@ defmodule EvoGit.Agent.Tools do
     )
   end
 
-  defp run_shell_command_schema do
+  defp bash_schema do
     ReqLLM.tool(
-      name: "run_shell_command",
+      name: "bash",
       description:
-        "Executes a shell command via bash -c. Common Linux command line tools and tools used in the project are mostly available.",
+        "Executes a shell command via bash -c. Useful for running scripts, building, testing, or executing common command-line tools.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
