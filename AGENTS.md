@@ -71,7 +71,7 @@ Initialize the Context Tree and Phylogenetic Graph, starting from either an exis
     * **Convergence Circuit Breaker:** To prevent infinite loops of subjective semantic tweaking by the LLM, agents are strictly instructed to evaluate context changes based *only* on functional API surface modifications, not phrasing. Additionally, the system enforces a hard limit on iterations (e.g., maximum 3 passes per node) to guarantee mathematical termination.
 
 **Mode B: New Codebase**
-* **Planning:** An agent interprets the user's prompt at the root node and drafts the initial architectural plan in the root `CONTEXT.md`.
+* **Root Initialization:** An agent interprets the user's prompt at the root node and drafts the initial architectural plan in the root `CONTEXT.md`.
 * **Recursive Realization:** For each planned submodule, spawn sub-agents to initialize the corresponding child nodes and populate their `CONTEXT.md` files.
 * **Fixed Point Convergence:** Identical to Mode A, utilizing the same Convergence Circuit Breaker to ensure the generated structure finalizes efficiently.
 
