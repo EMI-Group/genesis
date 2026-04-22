@@ -72,7 +72,7 @@ Initialize the Context Tree and Phylogenetic Graph, starting from either an exis
 
 **Mode B: New Codebase**
 * **Planning:** An agent interprets the user's prompt at the root node and drafts the initial architectural plan in the root `CONTEXT.md`.
-* **Recursive Realization:** The agent spawns sub-agents to physically create the planned directory structures, child `CONTEXT.md` files, and initial leaf-node code files.
+* **Recursive Realization:** For each planned submodule, spawn sub-agents to initialize the corresponding child nodes and populate their `CONTEXT.md` files.
 * **Fixed Point Convergence:** Identical to Mode A, utilizing the same Convergence Circuit Breaker to ensure the generated structure finalizes efficiently.
 
 ### **4.2 Phase 2: Evolution**
