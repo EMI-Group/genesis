@@ -59,36 +59,14 @@ defmodule EvoGit.Runtime.Genesis do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     {:ok, context_node} = ContextNode.load(".", repo_path)
 
-    # Mode B is a two-step process in the runtime: Planning then Realization.
-    # The design states:
-    # 1. Planning: Draft the initial architectural plan in the root CONTEXT.md.
-    # 2. Recursive Realization: Spawn sub-agents to initialize corresponding child nodes.
+    case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective,
+           event_sink: Keyword.get(opts, :event_sink, self())
+         )
+         |> AgentScheduler.run_agent() do
+      {:ok, agent_output} ->
+        final_sha = Map.get(agent_output, :commit_sha)
+        merge_and_report(repo_path, final_sha)
 
-    planning_objective =
-      "Draft the initial architectural plan in the root CONTEXT.md based on the objective: #{objective}"
-
-    Logger.info("Genesis Mode B: Phase 1 - Planning")
-
-    with {:ok, planning_output} <-
-           AgentSpec.new(context_node, phylo_node, CodebaseArchitect, planning_objective,
-             event_sink: Keyword.get(opts, :event_sink, self())
-           )
-           |> AgentScheduler.run_agent(),
-         planning_sha = Map.get(planning_output, :commit_sha) || current_sha,
-         phylo_node_realize = PhyloGraphNode.new(repo_path, planning_sha),
-         realization_objective =
-           "Implement and realize the initial architectural plan defined in CONTEXT.md. Initialize the corresponding child nodes and delegate focused sub-tasks to sub-agents.",
-         Logger.info("Genesis Mode B: Phase 2 - Recursive Realization"),
-         {:ok, realization_output} <-
-           AgentSpec.new(
-             context_node,
-             phylo_node_realize,
-             CodebaseArchitect,
-             realization_objective, event_sink: Keyword.get(opts, :event_sink, self()))
-           |> AgentScheduler.run_agent() do
-      final_sha = Map.get(realization_output, :commit_sha)
-      merge_and_report(repo_path, final_sha)
-    else
       error ->
         Logger.error("Genesis Mode B failed: #{inspect(error)}")
         error
