@@ -615,6 +615,12 @@ defmodule EvoGit.Agent do
         subagent_specs = build_subagent_specs(indexed_calls, state)
         results = EvoGit.AgentScheduler.spawn_sub_agents(subagent_specs)
 
+        # Get parent's current commit before merge to detect if any changes were made
+        parent_commit = case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
+          {:ok, agent_state} -> agent_state.phylo_node.current_commit
+          _ -> nil
+        end
+
         successful_shas =
           Enum.map(results, fn {:ok, %{commit_sha: sha}} when is_binary(sha) -> sha end)
 
@@ -623,11 +629,26 @@ defmodule EvoGit.Agent do
         merge_message =
           case EvoGit.Adapters.Git.merge_octopus(repo_path, successful_shas) do
             {:ok, output} ->
-              """
-              System Note: Successfully auto-merged changes from subagents.
-              Merge output:
-              #{output}
-              """
+              # Check if any actual changes were made by comparing commits
+              case EvoGit.Adapters.Git.rev_parse(repo_path) do
+                {:ok, ^parent_commit} ->
+                  # No changes - all subagents returned the same commit
+                  nil
+
+                {:ok, _new_commit} ->
+                  """
+                  System Note: Successfully auto-merged changes from subagents.
+                  Merge output:
+                  #{output}
+                  """
+
+                _error ->
+                  """
+                  System Note: Successfully auto-merged changes from subagents.
+                  Merge output:
+                  #{output}
+                  """
+              end
 
             {:conflict, output} ->
               {:ok, files} = EvoGit.Adapters.Git.conflict_files(repo_path)
