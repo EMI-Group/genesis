@@ -31,7 +31,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     ## Guidelines
 
     - Start by drafting the initial architectural plan in the root CONTEXT.md using 'rewrite_dir_context'.
-    - Use 'run_shell_command' to run initialization commands like `npm init`, `mix new` or to create files/directories if needed.
+    - Use 'bash' to run initialization commands like `npm init`, `mix new` or to create files/directories if needed.
     - Delegate focused sub-tasks to the `subagent_codebase_architect` sub-agent to architect specific child directories.
       BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
       Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be done.

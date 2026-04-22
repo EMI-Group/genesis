@@ -51,7 +51,7 @@ defmodule EvoGit.Agent.Executor do
     - `write_file`: Create a new file
     - `rewrite_file`: Replace entire file content
     - `replace_in_file`: Replace specific text
-    - `run_shell_command`: Run shell commands (e.g., for formatting)
+    - `bash`: Run shell commands (e.g., for formatting)
     - `rg`: Search for patterns in code
     - `glob`: Find files by pattern
     - `list_directory`: List directory contents
