@@ -9,8 +9,26 @@ defmodule EvoGit.Agent.Tools.Bash do
   def schema do
     ReqLLM.tool(
       name: "bash",
-      description:
-        "Executes a shell command via bash -c. Useful for running scripts, building, testing, or executing common command-line tools.",
+      description: """
+      Executes a shell command via bash -c.
+      Useful for running scripts, building, testing, or executing common command-line tools.
+      The current working directory is automatically set to the current node path under a worktree.
+
+      STRICT CONSTRAINTS:
+      - Do NOT use bash for file operations unless dedicated tools fail.
+      - File search: Use Glob (not find)
+      - Read files: Use Read (not cat/head/tail)
+      - Edit files: Use Edit (not sed/awk)
+      - Write files: Use Write (not echo/cat EOF)
+      - Communication: Output directly (not echo/printf)
+
+      EXECUTION RULES:
+      - Avoid using `cd`, and prefer relative paths for in-repo operations and absolute paths for external operations.
+      - Double-quote all paths containing spaces.
+      - Verify parent directories exist before creating files/folders.
+      - Always use $TMPDIR for temporary files, never /tmp.
+      - In `find -regex` alternations, place the longest alternative first (e.g., `'.*\.\(tsx\|ts\)'`).
+      """,
       parameter_schema: %{
         "type" => "object",
         "properties" => %{

@@ -11,7 +11,24 @@ defmodule EvoGit.Agent.Tools.Git do
   def schema do
     ReqLLM.tool(
       name: "git",
-      description: "Executes a git command. Provide arguments as a list of strings.",
+      description: """
+      Executes a git command inside your worktree.
+      Provide arguments as a list of strings.
+
+      - NEVER update the git config
+      - NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly
+      requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these
+      commands when given direct instructions
+      - CRITICAL: Commit the changes before calling any tools or subagents. Changes will be LOST if not committed.
+      - CRITICAL: Always create NEW commits rather than amending
+      - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
+      - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
+
+      ## Tips
+      - Run git status to see all untracked files and changes to tracked files
+      - Run git diff to see the specific changes to tracked files
+      - Run git log to see the commit history and understand recent changes
+      """,
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
