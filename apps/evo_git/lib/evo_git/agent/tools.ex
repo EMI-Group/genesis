@@ -139,12 +139,137 @@ defmodule EvoGit.Agent.Tools do
 
   defp execute_tool("read_file", args, repo_path, _repo_root) do
     file_path = Map.fetch!(args, "file_path") |> expand_path(repo_path)
+    offset = Map.get(args, "offset", 1)
+    limit = Map.get(args, "limit", 2000)
 
-    case File.read(file_path) do
-      {:ok, content} -> content
-      {:error, reason} -> "Error reading file #{file_path}: #{:file.format_error(reason)}"
+    with {:ok, stat} <- File.stat(file_path),
+         :ok <- validate_file_size(stat, Map.has_key?(args, "offset") or Map.has_key?(args, "limit")),
+         {:ok, result} <- read_file_with_lines(file_path, stat, offset, limit) do
+      format_file_read_result(result, file_path)
+    else
+      {:error, :too_large} ->
+        "Error: File #{file_path} is too large (>256 KB). Use offset and limit parameters to read specific ranges."
+
+      {:error, reason} ->
+        "Error reading file #{file_path}: #{:file.format_error(reason)}"
     end
   end
+
+  # Validates file size - only enforce limit for default (no offset/limit) reads
+  defp validate_file_size(stat, custom_range?) do
+    max_size = 256 * 1024  # 256 KB
+
+    if custom_range? or stat.size <= max_size do
+      :ok
+    else
+      {:error, :too_large}
+    end
+  end
+
+  # Reads file with line number support, handling large files via streaming
+  defp read_file_with_lines(file_path, stat, offset, limit) do
+    # Fast path: small files (< 5 MB) read entirely
+    file_size = stat.size
+    mtime = stat.mtime
+
+    if file_size < 5 * 1024 * 1024 do
+      read_file_fast_path(file_path, offset, limit)
+    else
+      read_file_streaming(file_path, offset, limit)
+    end
+  end
+
+  # Fast path for small files - read entirely into memory
+  defp read_file_fast_path(file_path, offset, limit) do
+    with {:ok, raw_content} <- File.read(file_path) do
+      # Strip UTF-8 BOM if present
+      content = strip_bom(raw_content)
+
+      # Split into lines, handling both \n and \r\n
+      lines =
+        content
+        |> String.split("\n")
+        |> Enum.map(fn line -> String.replace_suffix(line, "\r", "") end)
+
+      total_lines = length(lines)
+
+      # Convert offset to 0-indexed, clamp to valid range
+      start_index = max(0, offset - 1)
+      end_index = if limit, do: min(start_index + limit, total_lines), else: total_lines
+
+      selected_lines = Enum.slice(lines, start_index, end_index - start_index)
+
+      {:ok,
+       %{
+         lines: selected_lines,
+         start_line: offset,
+         total_lines: total_lines,
+         num_lines: length(selected_lines)
+       }}
+    end
+  end
+
+  # Streaming path for large files - process line by line
+  defp read_file_streaming(file_path, offset, limit) do
+    # Use File.stream! for memory-efficient reading
+    end_index = if limit, do: offset + limit, else: :infinity
+
+    {selected_lines, total_lines} =
+      file_path
+      |> File.stream!([], 512_000)  # 512KB chunks
+      |> Enum.map(fn line -> String.replace_suffix(line, "\r", "") end)
+      |> Enum.reduce({[], 0}, fn line, {acc, idx} ->
+        current_line = idx + 1
+
+        selected =
+          if current_line >= offset and current_line < end_index do
+            [line | acc]
+          else
+            acc
+          end
+
+        {selected, current_line}
+      end)
+
+    {:ok,
+     %{
+       lines: Enum.reverse(selected_lines),
+       start_line: offset,
+       total_lines: total_lines,
+       num_lines: length(selected_lines)
+     }}
+  end
+
+  # Formats result with line numbers (cat -n style)
+  defp format_file_read_result(result, file_path) do
+    %{lines: lines, start_line: start_line, total_lines: total_lines, num_lines: num_lines} =
+      result
+
+    cond do
+      # Empty file case
+      total_lines == 0 ->
+        "File: #{file_path}\nWarning: File exists but has empty contents.\n"
+
+      # Normal case with content
+      true ->
+        # Format: "line_number|content"
+        numbered_lines =
+          lines
+          |> Enum.with_index(start_line)
+          |> Enum.map(fn {line, num} -> "#{num}|#{line}" end)
+          |> Enum.join("\n")
+
+        # Add header metadata for context
+        header =
+          "File: #{file_path}\nLines: #{num_lines}-#{start_line + num_lines - 1} of #{total_lines}\n\n"
+
+        header <> numbered_lines
+    end
+  end
+
+  # Strips UTF-8 BOM if present at start of content
+  defp strip_bom(<<0xEF, 0xBB, 0xBF, rest::binary>>), do: rest
+  defp strip_bom(content), do: content
 
   defp execute_tool("read_many_files", args, repo_path, _repo_root) do
     paths = Map.fetch!(args, "file_paths")
@@ -473,11 +598,29 @@ defmodule EvoGit.Agent.Tools do
   defp read_file_schema do
     ReqLLM.tool(
       name: "read_file",
-      description: "Reads the content of a single file.",
+      description:
+        "Reads the content of a single file. " <>
+          "Returns formatted output with line numbers (cat -n style). " <>
+          "Usage: " <>
+          "- By default reads up to 2000 lines, with a 128 KB file size limit. " <>
+          "- For large files (>128 KB), you MUST use offset and limit parameters. " <>
+          "- Automatically streams files >= 5 MB for memory efficiency.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "file_path" => %{"type" => "string", "description" => "The path to the file to read"}
+          "file_path" => %{
+            "type" => "string",
+            "description" => "The path to the file to read"
+          },
+          "offset" => %{
+            "type" => "integer",
+            "description" => "Line number to start reading from (1-indexed, default: 1)",
+            "default" => 1
+          },
+          "limit" => %{
+            "type" => "integer",
+            "description" => "Maximum number of lines to read (default: 2000)"
+          }
         },
         "required" => ["file_path"]
       },
