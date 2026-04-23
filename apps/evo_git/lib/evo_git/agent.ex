@@ -55,7 +55,7 @@ defmodule EvoGit.Agent do
       @compression_threshold_bytes 400_000
       @compression_keep_recent 5
       # Tool output truncation thresholds
-      @tool_output_max_bytes 65536
+      @tool_output_max_bytes 128 * 1024
       @tool_output_truncate_size 4096
 
       defp current_model do
