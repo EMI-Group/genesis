@@ -17,7 +17,6 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
   def available_tools do
     [
       Tools.schema(:read_file),
-      Tools.schema(:read_many_files),
       Tools.schema(:rg),
       Tools.schema(:glob),
       Tools.schema(:list_directory),
