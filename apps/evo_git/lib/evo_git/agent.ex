@@ -43,11 +43,11 @@ defmodule EvoGit.Agent do
       require Logger
       use Retry
 
-      @max_turns 50
-      # 15 minutes
-      @timeout_ms 15 * 60 * 1000
-      # 1 minute
-      @grace_period_ms 60 * 1000
+      @max_turns 64
+      # 30 minutes
+      @timeout_ms 30 * 60 * 1000
+      # 3 minutes
+      @grace_period_ms 180 * 1000
       @complete_tool "complete_task"
 
       # Context compression thresholds in bytes
