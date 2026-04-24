@@ -53,17 +53,17 @@ defmodule EvoGit.Agent.Generalist do
 
     3. Planning and Decomposition: Before making changes, create a plan that decomposes the task into smaller, manageable steps. This can be a simple list of steps you intend to take. This will help you stay organized and ensure you don't miss anything important.
 
-    4. Make Changes: Use your available tools and sub-agents to make changes to the codebase.
+    4. Make Changes: Use your available tools and subagents to make changes to the codebase.
        - IMPORTANT: before calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
-       - After the sub-agents complete, the work will be automatically merged back into your workspace, if you need to reject their changes, you can use the `git` tool to revert them.
+       - After the subagents complete, the work will be automatically merged back into your workspace, if you need to reject their changes, you can use the `git` tool to revert them.
        - You can recursively spawn additional `subagent_generalist` agents to handle tasks in child nodes (including grandchild nodes, etc.)
-         - Normally, works below your assigned node level should be delegated to sub-agents, except when the task is very trivial.
-       - You can also spawn specialized sub-agents (e.g., codebase_investigator, executor) to handle specific tasks that require their expertise.
-         - Prefer delegating works to sub-agents over doing them yourself, as long as the objective for them is clear and the work is achievable. It's more efficient to let specialized agents handle tasks within their expertise, and subagents cost doesn't count against your time / turn limit.
+         - Normally, works below your assigned node level should be delegated to subagents, except when the task is very trivial.
+       - You can also spawn specialized subagents (e.g., codebase_investigator, executor) to handle specific tasks that require their expertise.
+         - Prefer delegating works to subagents over doing them yourself, as long as the objective for them is clear and the work is achievable. It's more efficient to let specialized agents handle tasks within their expertise, and subagents cost doesn't count against your time / turn limit.
 
     5. Commit Your Work:
        - Commit early, commit often. Each logical change should have its own commit with a clear message.
-       - Commit your changes before calling any sub-agents.
+       - Commit your changes before calling any subagents.
        - You can use the `git` tool to create commits.
 
     6. Complete: When satisfied with your work, call `complete_task` with a summary of what was done.

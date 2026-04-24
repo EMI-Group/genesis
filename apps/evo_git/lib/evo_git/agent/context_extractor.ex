@@ -50,13 +50,13 @@ defmodule EvoGit.Agent.ContextExtractor do
     - Early Exit Checks: Immediately after your initial analysis, check if you should exit early and call complete_task:
       - If you are in an unimportant directory (e.g., node_modules/, vendor/, __pycache__/) or an ignored directory, exit immediately.
       - If the current CONTEXT.md is already complete and fully satisfies your objective, exit immediately.
-    - Delegate focused sub-tasks to the subagent_context_extractor sub-agent to extract context for child directories.
+    - Delegate focused sub-tasks to the subagent_context_extractor subagent to extract context for child directories.
       - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
       - Call the subagent with a path (relative to repository root) and an objective describing what needs to be analyzed.
     - You can run tools, including subagents in parallel, to efficiently gather information.
-    - Aggregate the context from your analysis and any sub-agent reports.
+    - Aggregate the context from your analysis and any subagent reports.
     - Write or update the CONTEXT.md in your current directory to reflect this aggregated context using context_write.
-    - Global vs. Local Alignment: As the parent agent, you have a more global architectural view than your sub-agents. If a child's local context conflicts with your understanding, spawn a new sub-agent again to correct the child node.
+    - Global vs. Local Alignment: As the parent agent, you have a more global architectural view than your subagents. If a child's local context conflicts with your understanding, spawn a new subagent again to correct the child node.
       - Convergence Circuit Breaker: Evaluate context changes based only on functional API surface modifications, not subjective phrasing. Do not exceed a maximum of 3 passes per node to prevent infinite loops.
     - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the context_write tool.
     - When finished with your assigned scope, call complete_task with a summary of your findings and any recommendations for further analysis or refactoring.
@@ -67,9 +67,9 @@ defmodule EvoGit.Agent.ContextExtractor do
     2. Check for early exit: If src/ is unimportant or if src/CONTEXT.md already fulfills your objective, call complete_task immediately with your report.
     3. For each important subdirectory (e.g., src/utils/), spawn a subagent_context_extractor (in parallel) to analyze it, for example:
        - Call with path: "src/utils" and a clear objective such as "Analyze the src/utils/ directory and establish its CONTEXT.md based on its contents."
-    4. The sub-agent analyzes src/utils/, creates or updates src/utils/CONTEXT.md, and returns a summary of its findings.
-    5. You aggregate the summaries from all sub-agents and your own analysis to write or update the context in src/.
-    6. Global Alignment: Since you see the entire src/ architecture, you may spot misalignments caused by a sub-agent's narrow local view. For example, if a sub-agent labeled src/utils/ as "general utilities," but your global view reveals the broader system exclusively uses it for string manipulation, spawn a new sub-agent with the objective: "Refine src/utils/ context to specify it exclusively handles string-related utilities."
+    4. The subagent analyzes src/utils/, creates or updates src/utils/CONTEXT.md, and returns a summary of its findings.
+    5. You aggregate the summaries from all subagents and your own analysis to write or update the context in src/.
+    6. Global Alignment: Since you see the entire src/ architecture, you may spot misalignments caused by a subagent's narrow local view. For example, if a subagent labeled src/utils/ as "general utilities," but your global view reveals the broader system exclusively uses it for string manipulation, spawn a new subagent with the objective: "Refine src/utils/ context to specify it exclusively handles string-related utilities."
     """
   end
 end

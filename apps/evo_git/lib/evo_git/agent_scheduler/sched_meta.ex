@@ -13,8 +13,8 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   - `status` — `:pending | :running | :waiting | :ready`
     - :pending — just registered, ready to run when a worktree is available
     - :running — currently executing in a worktree
-    - :waiting — execution paused due to sub-agent calls
-    - :ready — execution paused, all sub-agents completed, ready to resume
+    - :waiting — execution paused due to subagent calls
+    - :ready — execution paused, all subagents completed, ready to resume
   - `worktree` — path to the assigned worktree, or `nil` when unassigned
   - `task_ref` — the `Task` monitor reference, or `nil`
   - `from` — the `GenServer.reply/2` destination for top-level agents
@@ -23,8 +23,8 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   - `retries` — number of crash-retry attempts so far
   - `result_sent` — whether the Task has already delivered a result
   - `sub_agent_from` — `GenServer.reply/2` destination for `spawn_sub_agents` call
-  - `pending_sub_agents` — `MapSet` of sub-agent IDs still running
-  - `sub_agent_results` — `%{agent_id => result}` accumulated sub-agent results
+  - `pending_sub_agents` — `MapSet` of subagent IDs still running
+  - `sub_agent_results` — `%{agent_id => result}` accumulated subagent results
   """
 
   alias EvoGit.AgentSpec

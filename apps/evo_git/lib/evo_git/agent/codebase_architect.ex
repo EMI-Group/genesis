@@ -36,12 +36,12 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     - Use 'bash' to run initialization commands like
       - `npm init`, `cargo init` or to create files/directories if needed.
       - Properly config .gitignore to avoid committing unnecessary files.
-    - Delegate focused sub-tasks to the subagent_codebase_architect sub-agent to architect specific child directories.
+    - Delegate focused sub-tasks to the subagent_codebase_architect subagent to architect specific child directories.
       - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
       - Call the subagent with a path (relative to repository root) and an objective describing what needs to be analyzed.
     - You can run tools, including subagents in parallel, to efficiently design the architecture.
-    - Aggregate the context from your analysis and any sub-agent reports
-      - If a sub-agent's local context conflicts with your global architectural vision, spawn sub-agent again with a more specific objective to correct the child node.
+    - Aggregate the context from your analysis and any subagent reports
+      - If a subagent's local context conflicts with your global architectural vision, spawn subagent again with a more specific objective to correct the child node.
     - You must ensure the generated structure finalizes efficiently and is fully documented.
     - When finished with your assigned scope, call `complete_task` with a summary of the created structure.
 
@@ -55,13 +55,13 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     2. You run `bash` commands to initialize the project:
       - Use uv to set up a Python environment and install Flask and pytest.
       - Configure the .gitignore to exclude the virtual environment and other unnecessary files.
-    3. You delegate to sub-agents to flesh out the backend and frontend directories:
-      - For the /backend sub-agent, you give the objective: "Design the backend directory, etc."
-      - For the /frontend sub-agent, you give the objective: "Design the frontend directory
-    4. Each sub-agent creates their own CONTEXT.md and generates initial code based on the architectural plan.
-    5. You review the sub-agents' outputs, ensure they align with the overall architectural vision, and if necessary, spawn additional sub-agents to refine any misaligned nodes.
-      - For example, if the /backend sub-agent creates a structure that uses non-RESTful design, you might spawn another sub-agent with the specific objective to correct that.
-    6. Once all sub-agents have completed and the architecture is finalized, you call `complete_task` with a summary of the created structure.
+    3. You delegate to subagents to flesh out the backend and frontend directories:
+      - For the /backend subagent, you give the objective: "Design the backend directory, etc."
+      - For the /frontend subagent, you give the objective: "Design the frontend directory
+    4. Each subagent creates their own CONTEXT.md and generates initial code based on the architectural plan.
+    5. You review the subagents' outputs, ensure they align with the overall architectural vision, and if necessary, spawn additional subagents to refine any misaligned nodes.
+      - For example, if the /backend subagent creates a structure that uses non-RESTful design, you might spawn another subagent with the specific objective to correct that.
+    6. Once all subagents have completed and the architecture is finalized, you call `complete_task` with a summary of the created structure.
     """
   end
 end

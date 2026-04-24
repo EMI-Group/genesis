@@ -29,8 +29,8 @@ defmodule EvoGit.Runtime.Genesis do
 
   # Mode A: Existing Codebase
   # * Root Initialization: The system spawns an investigator agent at the repository root on the latest commit.
-  # * Recursive Analysis: The agent spawns sub-agents for child directories/files to extract existing context and build the semantic tree structure.
-  # * Fixed Point Convergence: The parent agent aggregates the context. If discrepancies exist, it spawns sub-agents to modify the child nodes.
+  # * Recursive Analysis: The agent spawns subagents for child directories/files to extract existing context and build the semantic tree structure.
+  # * Fixed Point Convergence: The parent agent aggregates the context. If discrepancies exist, it spawns subagents to modify the child nodes.
   defp run_existing_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode A (Existing Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
@@ -52,7 +52,7 @@ defmodule EvoGit.Runtime.Genesis do
 
   # Mode B: New Codebase
   # * Planning: An agent interprets the user's prompt at the root node and drafts the initial architectural plan in the root CONTEXT.md.
-  # * Recursive Realization: For each planned submodule, spawn sub-agents to initialize the corresponding child nodes and populate their CONTEXT.md files.
+  # * Recursive Realization: For each planned submodule, spawn subagents to initialize the corresponding child nodes and populate their CONTEXT.md files.
   # * Fixed Point Convergence: Identical to Mode A, utilizing the same Convergence Circuit Breaker to ensure the generated structure finalizes efficiently.
   defp run_new_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode B (New Codebase)")

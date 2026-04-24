@@ -62,7 +62,7 @@ defmodule EvoDashWeb.AgentsComponents do
             </div>
           </div>
 
-          <!-- Sub-agent count badge -->
+          <!-- Subagent count badge -->
           <%= if agent.has_children do %>
             <div class="badge badge-ghost badge-sm shrink-0">
               <%= length(agent.children) %> child<%= if length(agent.children) != 1, do: "ren" %>

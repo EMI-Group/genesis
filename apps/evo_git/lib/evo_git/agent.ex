@@ -11,7 +11,7 @@ defmodule EvoGit.Agent do
   table managed by `EvoGit.AgentScheduler`. The worktree path lives inside
   `phylo_node.repo` and is re-read at the start of **every turn** via
   `load_worktree_path/1`. This ensures correctness when an agent is rescheduled
-  to a different worktree after yielding (e.g., during sub-agent delegation).
+  to a different worktree after yielding (e.g., during subagent delegation).
 
   Scheduling metadata (status, worktree assignment, parent tracking) lives in
   a separate `:evogit_sched_meta` table owned by the scheduler — agents never
@@ -475,7 +475,7 @@ defmodule EvoGit.Agent do
         # 2. Stream start events for all calls
         stream_start_events(tool_calls, state)
 
-        # 3. Split: Partition into sub-agent and standard calls
+        # 3. Split: Partition into subagent and standard calls
         {indexed_subagent_calls, indexed_standard_calls} =
           Enum.split_with(indexed_calls, fn {call, _index} ->
             subagent_module_for(call.name) != nil
@@ -682,7 +682,7 @@ defmodule EvoGit.Agent do
 
         append_history(state.agent_id, "SYSTEM_NOTE", %{content: merge_message})
 
-        # Sync current_commit after sub-agents complete (parent worktree state may have changed)
+        # Sync current_commit after subagents complete (parent worktree state may have changed)
         sync_current_commit_after_tools(state)
 
         indexed_results =
@@ -734,11 +734,11 @@ defmodule EvoGit.Agent do
       end
 
       defp format_subagent_result({:error, :path_ignored}) do
-        "Error: Cannot spawn sub-agent in an ignored folder. The current working directory is ignored by git."
+        "Error: Cannot spawn subagent in an ignored folder. The current working directory is ignored by git."
       end
 
       defp format_subagent_result({:error, reason}) do
-        "Error: Sub-agent failed: #{inspect(reason)}"
+        "Error: Subagent failed: #{inspect(reason)}"
       end
 
       defp format_subagent_result({:ok, %{result: result, commit_sha: commit_sha, tag: tag}}) do
@@ -806,8 +806,8 @@ defmodule EvoGit.Agent do
           2. Key Findings & Decisions:
           [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
 
-          3. Sub-Agent Ledger:
-          [List previously spawned sub-agents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
+          3. SubAgent Ledger:
+          [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
 
           4. Pending / Next Steps:
           [What specifically needs to be executed next to advance the Current Objective.]
@@ -887,23 +887,23 @@ defmodule EvoGit.Agent do
       end
 
       @doc """
-      Returns the tool name used when this agent is spawned as a sub-agent.
+      Returns the tool name used when this agent is spawned as a subagent.
       Override this in your agent module.
       """
       def subagent_tool_name, do: nil
 
       @doc """
-      Returns the tool description used when this agent is spawned as a sub-agent.
+      Returns the tool description used when this agent is spawned as a subagent.
       Override this in your agent module.
       """
       def subagent_tool_description, do: ""
 
       @doc """
-      Returns a list of agent modules that can be spawned as sub-agents.
+      Returns a list of agent modules that can be spawned as subagents.
       The framework automatically generates tool schemas and execution logic
       from each module's `subagent_tool_name/0` and `subagent_tool_description/0`.
 
-      Override this in your agent module to declare sub-agents.
+      Override this in your agent module to declare subagents.
 
       ## Example
 
@@ -929,18 +929,18 @@ defmodule EvoGit.Agent do
                 "path" => %{
                   "type" => "string",
                   "description" =>
-                    "The relative path from the repository root where the sub-agent should operate."
+                    "The relative path from the repository root where the subagent should operate."
                 },
                 "objective" => %{
                   "type" => "string",
                   "description" =>
-                    "A clear, self-contained objective for the sub-agent. " <>
+                    "A clear, self-contained objective for the subagent. " <>
                       "Include any relevant context since it starts with a fresh context."
                 },
                 "commit_id" => %{
                   "type" => "string",
                   "description" =>
-                    "Optional: The commit SHA to spawn the sub-agent on. " <>
+                    "Optional: The commit SHA to spawn the subagent on. " <>
                       "Defaults to the current commit if not specified."
                 }
               },
