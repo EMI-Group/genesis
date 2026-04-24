@@ -1,15 +1,17 @@
 defmodule EvoGit.Core.ContextNode do
   @moduledoc """
   Represents a node in the Spatial Dimension (the Context Tree).
+
+  The type (:directory or :file) is determined at runtime, not at creation time,
+  because the node may be created before the path exists in the filesystem.
   """
-  @enforce_keys [:path, :type, :repo]
-  defstruct [:path, :type, :repo]
+  @enforce_keys [:path, :repo]
+  defstruct [:path, :repo]
 
   alias EvoGit.Adapters.Git
 
   @type t :: %__MODULE__{
           path: String.t(),
-          type: :directory | :file,
           repo: String.t()
         }
 
@@ -52,28 +54,20 @@ defmodule EvoGit.Core.ContextNode do
   Loads a ContextNode from a given relative path within a repository.
   `relative_path` must be relative to `repo_path` (or "." for root).
   `repo_path` must be the absolute path to the repository root.
+
+  Note: This does not check if the path exists or determine its type,
+  because the node may represent a path that doesn't exist yet at creation time.
+  Type is determined at runtime when reading the context.
   """
   @spec load(String.t(), String.t()) :: {:ok, t()} | {:error, term()}
   def load(relative_path, repo_path) do
-    abs_path = Path.expand(relative_path, repo_path)
-
-    if File.exists?(abs_path) do
-      type =
-        if File.dir?(abs_path) do
-          :directory
-        else
-          :file
-        end
-
-      {:ok,
-       %__MODULE__{
-         path: relative_path,
-         type: type,
-         repo: repo_path
-       }}
-    else
-      {:error, :enoent}
-    end
+    # Don't check file existence or type at creation time
+    # The node may be created before the path exists in the filesystem
+    {:ok,
+     %__MODULE__{
+       path: relative_path,
+       repo: repo_path
+     }}
   end
 
   @doc """
@@ -115,18 +109,19 @@ defmodule EvoGit.Core.ContextNode do
 
   @doc """
   Reads the context contract for a given directory node, or the file content for a file node.
+
+  The type is determined at runtime by checking if the path is a directory.
   """
   @spec read_context(t()) :: {:ok, String.t()} | {:error, term()}
-  def read_context(%__MODULE__{type: :directory} = node) do
+  def read_context(%__MODULE__{} = node) do
     abs_path = Path.expand(node.path, node.repo)
-    contract_path = Path.join(abs_path, "CONTEXT.md")
 
-    File.read(contract_path)
-  end
-
-  def read_context(%__MODULE__{type: :file} = node) do
-    abs_path = Path.expand(node.path, node.repo)
-    File.read(abs_path)
+    if File.dir?(abs_path) do
+      contract_path = Path.join(abs_path, "CONTEXT.md")
+      File.read(contract_path)
+    else
+      File.read(abs_path)
+    end
   end
 
   @doc """
@@ -141,13 +136,16 @@ defmodule EvoGit.Core.ContextNode do
   end
 
   # Returns the relative path to the file that provides the context for a node.
+  # Type is determined at runtime by checking if the path is a directory.
   @spec context_file_path(t()) :: String.t()
-  defp context_file_path(%__MODULE__{type: :directory} = node) do
-    Path.join(node.path, "CONTEXT.md")
-  end
+  defp context_file_path(%__MODULE__{} = node) do
+    abs_path = Path.expand(node.path, node.repo)
 
-  defp context_file_path(%__MODULE__{type: :file} = node) do
-    node.path
+    if File.dir?(abs_path) do
+      Path.join(node.path, "CONTEXT.md")
+    else
+      node.path
+    end
   end
 
   @doc """
