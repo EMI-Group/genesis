@@ -107,10 +107,11 @@ defmodule EvoGit.Agent.Tools.Context do
     commit = Map.get(args, "commit", true)
     full_dir = Shared.expand_path(dir_path, repo_path)
 
-    cond do
-      not File.exists?(full_dir) ->
-        "Error: directory '#{dir_path}' does not exist"
+    if not File.exists?(full_dir) do
+      File.mkdir_p!(full_dir)
+    end
 
+    cond do
       not File.dir?(full_dir) ->
         "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
 
