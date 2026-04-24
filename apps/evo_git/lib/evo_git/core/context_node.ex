@@ -140,15 +140,13 @@ defmodule EvoGit.Core.ContextNode do
     end
   end
 
-  @doc """
-  Returns the relative path to the file that provides the context for a node.
-  """
+  # Returns the relative path to the file that provides the context for a node.
   @spec context_file_path(t()) :: String.t()
-  def context_file_path(%__MODULE__{type: :directory} = node) do
+  defp context_file_path(%__MODULE__{type: :directory} = node) do
     Path.join(node.path, "CONTEXT.md")
   end
 
-  def context_file_path(%__MODULE__{type: :file} = node) do
+  defp context_file_path(%__MODULE__{type: :file} = node) do
     node.path
   end
 
