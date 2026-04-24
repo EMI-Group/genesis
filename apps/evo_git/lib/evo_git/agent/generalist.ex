@@ -60,6 +60,7 @@ defmodule EvoGit.Agent.Generalist do
          - Normally, works below your assigned node level should be delegated to subagents, except when the task is very trivial.
        - You can also spawn specialized subagents (e.g., codebase_investigator, executor) to handle specific tasks that require their expertise.
          - Prefer delegating works to subagents over doing them yourself, as long as the objective for them is clear and the work is achievable. It's more efficient to let specialized agents handle tasks within their expertise, and subagents cost doesn't count against your time / turn limit.
+       - If there are no dependency constraints, always prefer spawning subagents in parallel, there is no limit in concurrency for subagents.
 
     5. Commit Your Work:
        - Commit early, commit often. Each logical change should have its own commit with a clear message.

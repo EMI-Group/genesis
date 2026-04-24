@@ -42,6 +42,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     - For large, complex investigations, delegate focused subagents to investigate other specific areas or subdirectories.
       Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be investigated.
       If you need to investigate a historical state of the codebase, you can also spawn a subagent with an optional commit SHA or branch name parameter, and the subagent will check out that state in a temporary workspace to perform the investigation.
+    - If there are no dependency constraints, always prefer spawning subagents in parallel, there is no limit in concurrency for subagents.
     - You can run tools, including subagents in parallel, to efficiently gather information.
     - When you discover important structural information about a directory (its purpose, API surface,
       or constraints) that is missing in the context, update the directory's CONTEXT.md using `context_write`. This persists

@@ -47,6 +47,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
       - When spawning subagents for the first time, please remind them that we are in the initialization stage, so some sibling files / APIs are missing, and they shouldn't worry about that; just work on their own task and expect them to be done later.
       - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
       - Call the subagent with a path (relative to repository root) and a clear objective describing what needs to be analyzed.
+      - If there are no dependency constraints, always prefer spawning subagents in parallel, there is no limit in concurrency for subagents.
     - You can run tools, including subagents in parallel, to efficiently design the architecture.
     - Aggregate the context from your analysis and any subagent reports
       - If a subagent's local context conflicts with your global architectural vision, spawn subagent again with a more specific objective to correct the child node.
