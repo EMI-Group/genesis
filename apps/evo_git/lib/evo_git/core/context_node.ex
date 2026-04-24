@@ -175,15 +175,4 @@ defmodule EvoGit.Core.ContextNode do
         {:error, reason}
     end
   end
-
-  @doc """
-  Builds the string context representation for the AI by traversing the context tree, raising on error.
-  """
-  @spec build_context!(String.t(), String.t()) :: String.t()
-  def build_context!(relative_path, repo_path) do
-    case build_context(relative_path, repo_path) do
-      {:ok, result} -> result
-      {:error, reason} -> raise "Failed to build context: #{inspect(reason)}"
-    end
-  end
 end
