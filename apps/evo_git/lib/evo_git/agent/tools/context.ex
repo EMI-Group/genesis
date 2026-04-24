@@ -46,7 +46,9 @@ defmodule EvoGit.Agent.Tools.Context do
           "1) Intent - what the directory is for and its role in the codebase, " <>
           "2) API Surface - what modules/functions the directory exports or provides, " <>
           "3) Constraints - rules or guidelines for code within this directory. " <>
-          "Use this to document a directory after analyzing its contents or establishing its design, or update existing context.",
+          "Use this to document a directory after analyzing its contents or establishing its design, or update existing context. " <>
+          "By default, the tool will create a git commit for the new or updated CONTEXT.md file (only this file), " <>
+          "and you should consider committing it as an important part of your workflow to ensure the context is preserved in the repository history.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
