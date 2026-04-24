@@ -154,7 +154,7 @@ defmodule EvoGit.Agent.Tools.FileRead do
         numbered_lines =
           lines
           |> Enum.with_index(start_line)
-          |> Enum.map(fn {line, num} -> "#{num}|#{line}" end)
+          |> Enum.map(fn {line, num} -> "#{num}\t#{line}" end)
           |> Enum.join("\n")
 
         header = "File: #{file_path}\nLines: #{num_lines}-#{start_line + num_lines - 1} of #{total_lines}\n\n"
