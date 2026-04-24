@@ -582,6 +582,58 @@ defmodule EvoGit.AgentScheduler do
     {id, state}
   end
 
+  # --- Dispatch Helpers ---
+
+  defp assign_and_prepare_worktree(agent_id, wt) do
+    {:ok, meta} = get_sched_meta(agent_id)
+    {:ok, agent_state} = get_agent_state(agent_id)
+    spec = meta.spec
+
+    commit_sha = spec.phylo_node.current_commit
+
+    Git.clean(wt)
+    Git.checkout(wt, commit_sha)
+
+    # Build the worktree-bound phylo_node (repo points to worktree)
+    wt_phylo_node = %PhyloGraphNode{
+      repo: wt,
+      base_commit: spec.phylo_node.base_commit,
+      current_commit: commit_sha
+    }
+    put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
+
+    # Create the directory of the assigned node path if it doesn't exist.
+    # This is normal because git doesn't record empty directories,
+    # so while the path "exists" in the context node, it won't exist in the repo until the agent writes something there and commits it.
+    # This ensures that the agent won't get confused by a missing path.
+    wt_node_path = Path.join(wt, spec.context_node.path)
+    if not File.exists?(wt_node_path) do
+      File.mkdir_p!(Path.dirname(wt_node_path))
+    end
+
+    commit_sha
+  end
+
+  defp handle_no_available_worktrees(state, agent_id, dispatch_fn) do
+    case find_reclaimable_worktree(state) do
+      {:ok, worktree, state} ->
+        state = %{state | available_worktrees: [worktree]}
+        dispatch_fn.(state, agent_id)
+
+      :none ->
+        {:ok, meta} = get_sched_meta(agent_id)
+
+        if meta.status == :ready do
+          Logger.info("AgentScheduler: Re-queueing ready agent #{agent_id} (no available worktrees)")
+          %{state | queue: :queue.in_r(agent_id, state.queue)}
+        else
+          Logger.info("AgentScheduler: Queueing agent #{agent_id} (no available worktrees)")
+          append_history(agent_id, "QUEUED", %{message: "Waiting for available worktree"})
+          %{state | queue: :queue.in(agent_id, state.queue)}
+        end
+    end
+  end
+
   # --- Dispatch ---
 
   defp try_dispatch(%{available_worktrees: [wt | rest]} = state, agent_id) do
@@ -589,23 +641,7 @@ defmodule EvoGit.AgentScheduler do
     retries = meta.retries
     spec = meta.spec
 
-    # Prepare the worktree: clean and checkout to the agent's temporal state
-    commit_sha = spec.phylo_node.current_commit
-    Git.clean(wt)
-    Git.checkout(wt, commit_sha)
-
-    # Build the worktree-bound phylo_node (repo points to worktree, not original)
-    wt_phylo_node = %PhyloGraphNode{
-      repo: wt,
-      base_commit: spec.phylo_node.base_commit,
-      current_commit: spec.phylo_node.current_commit
-    }
-    # Create the directory of the assigned node path if it doesn't exist to
-    # this is normal because git doesn't record empty directories,
-    # so while the path "exists" in the context node, it won't exist in the repo until the agent writes something there and commits it.
-    # This ensures that the agent won't get confused by a missing path.
-    wt_node_path = Path.join(wt, spec.context_node.path)
-    File.mkdir_p!(Path.dirname(wt_node_path))
+    assign_and_prepare_worktree(agent_id, wt)
 
     # Log dispatch event for dashboard visibility
     if retries > 0 do
@@ -633,10 +669,6 @@ defmodule EvoGit.AgentScheduler do
         spec.agent_module.run(spec.objective)
       end)
 
-    # Update agent state with worktree-bound phylo_node
-    {:ok, agent_state} = get_agent_state(agent_id)
-    put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
-
     # Update scheduler metadata with worktree assignment and running status
     put_sched_meta(agent_id, %{
       meta
@@ -653,20 +685,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp try_dispatch(%{available_worktrees: []} = state, agent_id) do
-    case find_reclaimable_worktree(state) do
-      {:ok, worktree, state} ->
-        state = %{state | available_worktrees: [worktree]}
-        try_dispatch(state, agent_id)
-
-      :none ->
-        Logger.info("AgentScheduler: Queueing agent #{agent_id} (no available worktrees)")
-
-        append_history(agent_id, "QUEUED", %{
-          message: "Waiting for available worktree"
-        })
-
-        %{state | queue: :queue.in(agent_id, state.queue)}
-    end
+    handle_no_available_worktrees(state, agent_id, &try_dispatch/2)
   end
 
   defp find_reclaimable_worktree(state) do
@@ -767,18 +786,37 @@ defmodule EvoGit.AgentScheduler do
 
   defp process_queue(state), do: state
 
+  # Resumes a waiting parent that still has its original worktree (it was never reclaimed).
+  defp dispatch_ready_parent(state, agent_id, %{worktree: wt} = meta) when not is_nil(wt) do
+    # Compute ordered results from the accumulated sub_agent_results
+    ordered_ids = meta.pending_sub_agents |> MapSet.to_list() |> Enum.sort()
+    results = Enum.map(ordered_ids, &meta.sub_agent_results[&1])
+
+    GenServer.reply(meta.sub_agent_from, results)
+
+    put_sched_meta(agent_id, %{
+      meta
+      | status: :running,
+        sub_agent_from: nil,
+        pending_sub_agents: MapSet.new(),
+        sub_agent_results: %{}
+    })
+
+    {:ok, agent_state} = get_agent_state(agent_id)
+    commit_sha = agent_state.phylo_node.current_commit
+
+    Logger.info(
+      "AgentScheduler: Waiting agent #{agent_id} resumed with existing worktree #{wt} at commit #{commit_sha}"
+    )
+
+    state
+  end
+
   # Resumes a waiting parent that was queued because no worktree was available
   # when its sub-agents completed. Assigns a worktree and unblocks the parent's
   # blocked GenServer.call.
   defp dispatch_ready_parent(%{available_worktrees: [wt | rest]} = state, agent_id, meta) do
-    {:ok, agent_state} = get_agent_state(agent_id)
-    commit_sha = agent_state.phylo_node.current_commit
-
-    Git.clean(wt)
-    Git.checkout(wt, commit_sha)
-
-    updated_phylo_node = %{agent_state.phylo_node | repo: wt}
-    put_agent_state(agent_id, %AgentState{agent_state | phylo_node: updated_phylo_node})
+    commit_sha = assign_and_prepare_worktree(agent_id, wt)
 
     # Compute ordered results from the accumulated sub_agent_results
     ordered_ids = meta.pending_sub_agents |> MapSet.to_list() |> Enum.sort()
@@ -802,6 +840,11 @@ defmodule EvoGit.AgentScheduler do
     %{state | available_worktrees: rest}
   end
 
+  # Agent needs a worktree but none are available.
+  defp dispatch_ready_parent(%{available_worktrees: []} = state, agent_id, meta) do
+    handle_no_available_worktrees(state, agent_id, fn s, a_id -> dispatch_ready_parent(s, a_id, meta) end)
+  end
+
   # --- Sub-Agent Result Tracking ---
 
   defp store_sub_result(parent_id, sub_id, result) do
@@ -822,9 +865,16 @@ defmodule EvoGit.AgentScheduler do
     if all_done? do
       Logger.info("AgentScheduler: Agent #{parent_id} ready to resume, all sub-agents completed")
 
-      # Mark as :ready and queue for worktree assignment via process_queue
-      put_sched_meta(parent_id, %{parent | status: :ready})
-      %{state | queue: :queue.in(parent_id, state.queue)}
+      if parent.worktree do
+        # Parent already has a worktree, resume immediately
+        parent = %{parent | status: :ready}
+        put_sched_meta(parent_id, parent)
+        dispatch_ready_parent(state, parent_id, parent)
+      else
+        # Needs a worktree, queue it
+        put_sched_meta(parent_id, %{parent | status: :ready})
+        %{state | queue: :queue.in(parent_id, state.queue)}
+      end
     else
       state
     end
