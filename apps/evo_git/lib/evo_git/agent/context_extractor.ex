@@ -4,7 +4,7 @@ defmodule EvoGit.Agent.ContextExtractor do
   and building a hierarchical semantic tree (Context Tree).
   """
   use EvoGit.Agent
-  alias EvoGit.Agent.Tools
+  alias EvoGit.Agent.Tools.{FileRead, Ripgrep, Glob, ListDirectory, Context, WebSearch, WebRead}
 
   def subagent_tool_name, do: "subagent_context_extractor"
 
@@ -17,14 +17,14 @@ defmodule EvoGit.Agent.ContextExtractor do
 
   def available_tools do
     [
-      Tools.schema(:read_file),
-      Tools.schema(:rg),
-      Tools.schema(:glob),
-      Tools.schema(:list_directory),
-      Tools.schema(:read_dir_context),
-      Tools.schema(:rewrite_dir_context),
-      Tools.schema(:web_search),
-      Tools.schema(:web_read),
+      FileRead.schema(),
+      Ripgrep.schema(),
+      Glob.schema(),
+      ListDirectory.schema(),
+      Context.read_schema(),
+      Context.write_schema(),
+      WebSearch.schema(),
+      WebRead.schema(),
       completion_schema()
     ] ++ subagent_schemas()
   end
@@ -55,10 +55,10 @@ defmodule EvoGit.Agent.ContextExtractor do
       - Call the subagent with a path (relative to repository root) and an objective describing what needs to be analyzed.
     - You can run tools, including subagents in parallel, to efficiently gather information.
     - Aggregate the context from your analysis and any sub-agent reports.
-    - Write or update the CONTEXT.md in your current directory to reflect this aggregated context using rewrite_dir_context.
+    - Write or update the CONTEXT.md in your current directory to reflect this aggregated context using context_write.
     - Global vs. Local Alignment: As the parent agent, you have a more global architectural view than your sub-agents. If a child's local context conflicts with your understanding, spawn a new sub-agent again to correct the child node.
       - Convergence Circuit Breaker: Evaluate context changes based only on functional API surface modifications, not subjective phrasing. Do not exceed a maximum of 3 passes per node to prevent infinite loops.
-    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the rewrite_dir_context tool.
+    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the context_write tool.
     - When finished with your assigned scope, call complete_task with a summary of your findings and any recommendations for further analysis or refactoring.
 
     ## Example Workflow
