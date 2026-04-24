@@ -12,7 +12,12 @@ defmodule EvoGit.Agent.Generalist do
   end
 
   def subagent_modules do
-    [EvoGit.Agent.CodebaseInvestigator]
+    [
+      EvoGit.Agent.CodebaseInvestigator,
+      EvoGit.Agent.Executor,
+      # Allow recursive delegation to other generalist subagents for child nodes
+      __MODULE__
+    ]
   end
 
   def system_prompt do
@@ -49,16 +54,16 @@ defmodule EvoGit.Agent.Generalist do
     3. Planning and Decomposition: Before making changes, create a plan that decomposes the task into smaller, manageable steps. This can be a simple list of steps you intend to take. This will help you stay organized and ensure you don't miss anything important.
 
     4. Make Changes: Use your available tools and sub-agents to make changes to the codebase.
-       - You can spawn additional `subagent_generalist` agents to handle tasks in child nodes (including grandchild nodes, etc.)
-         - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
+       - IMPORTANT: before calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
+       - After the sub-agents complete, the work will be automatically merged back into your workspace, if you need to reject their changes, you can use the `git` tool to revert them.
+       - You can recursively spawn additional `subagent_generalist` agents to handle tasks in child nodes (including grandchild nodes, etc.)
          - Normally, works below your assigned node level should be delegated to sub-agents, except when the task is very trivial.
-         - Normally, works that requires a specific expertise (e.g., investigation, testing, etc.) should be delegated to sub-agents with that expertise.
-         - Prefer delegating works to sub-agents over doing them yourself.
-         - After the sub-agents complete, the work will be automatically merged back into your workspace, if you need to reject their changes, you can use the `git` tool to revert them.
-       - Use the available tools to process files of your assigned node level.
+       - You can also spawn specialized sub-agents (e.g., codebase_investigator, executor) to handle specific tasks that require their expertise.
+         - Prefer delegating works to sub-agents over doing them yourself, as long as the objective for them is clear and the work is achievable.
 
     5. Commit Your Work:
        - Commit early, commit often. Each logical change should have its own commit with a clear message.
+       - Commit your changes before calling any sub-agents.
        - You can use the `git` tool to create commits.
 
     6. Complete: When satisfied with your work, call `complete_task` with a summary of what was done.
