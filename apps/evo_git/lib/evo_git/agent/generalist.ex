@@ -59,7 +59,7 @@ defmodule EvoGit.Agent.Generalist do
        - You can recursively spawn additional `subagent_generalist` agents to handle tasks in child nodes (including grandchild nodes, etc.)
          - Normally, works below your assigned node level should be delegated to sub-agents, except when the task is very trivial.
        - You can also spawn specialized sub-agents (e.g., codebase_investigator, executor) to handle specific tasks that require their expertise.
-         - Prefer delegating works to sub-agents over doing them yourself, as long as the objective for them is clear and the work is achievable.
+         - Prefer delegating works to sub-agents over doing them yourself, as long as the objective for them is clear and the work is achievable. It's more efficient to let specialized agents handle tasks within their expertise, and subagents cost doesn't count against your time / turn limit.
 
     5. Commit Your Work:
        - Commit early, commit often. Each logical change should have its own commit with a clear message.
