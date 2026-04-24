@@ -21,6 +21,11 @@ defmodule EvoGit.Agent.Tools.Bash do
       - Edit files: Use Edit (not sed/awk)
       - Write files: Use Write (not echo/cat EOF)
       - Communication: Output directly (not echo/printf)
+      Aside from these exceptions, you can use bash to run tools for file operations:
+      - Use ls with args for listing files with specific needs (e.g., `ls -la` for detailed listing).
+      - Use find for complex file searching with regex
+      - Use mkdir for creating directories
+      - Use project level package managers (e.g., uv, npm, mix, cargo) for managing dependencies.
 
       EXECUTION RULES:
       - Avoid using `cd`, and prefer relative paths for in-repo operations and absolute paths for external operations.
