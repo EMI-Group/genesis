@@ -99,8 +99,9 @@ defmodule EvoGit.Core.ContextNode do
     {:error, :invalid_path}
   end
 
-  # Reads the context contract for a given directory node, or the file content for a file node.
-  # The type is determined at runtime by checking if the path is a directory.
+  # Reads the CONTEXT.md contract for a directory node.
+  # Per the design spec, only directories have explicit CONTEXT.md files.
+  # File-level context is handled implicitly by LLMs, not explicitly modeled.
   @spec read_context(t()) :: {:ok, String.t()} | {:error, term()}
   defp read_context(%__MODULE__{} = node) do
     abs_path = Path.expand(node.path, node.repo)
@@ -109,12 +110,13 @@ defmodule EvoGit.Core.ContextNode do
       contract_path = Path.join(abs_path, "CONTEXT.md")
       File.read(contract_path)
     else
-      File.read(abs_path)
+      # Files don't have explicit CONTEXT.md - LLMs handle file-level context naturally
+      {:ok, ""}
     end
   end
 
-  # Returns the relative path to the file that provides the context for a node.
-  # Type is determined at runtime by checking if the path is a directory.
+  # Returns the relative path to the CONTEXT.md file for a directory node.
+  # Per the design spec, only directories have explicit CONTEXT.md files.
   @spec context_file_path(t()) :: String.t()
   defp context_file_path(%__MODULE__{} = node) do
     abs_path = Path.expand(node.path, node.repo)
@@ -122,12 +124,15 @@ defmodule EvoGit.Core.ContextNode do
     if File.dir?(abs_path) do
       Path.join(node.path, "CONTEXT.md")
     else
-      node.path
+      # Files don't have explicit context files
+      nil
     end
   end
 
   @doc """
   Builds the string context representation for the AI by traversing the context tree.
+  Per the design spec, only directories are included in the explicit context hierarchy.
+  File-level context is handled implicitly by LLMs.
   """
   @spec build_context(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def build_context(relative_path, repo_path) do
@@ -143,6 +148,11 @@ defmodule EvoGit.Core.ContextNode do
       {:ok, nodes} ->
         context_contents =
           nodes
+          # Only include directories in the explicit context hierarchy
+          |> Enum.filter(fn node ->
+            abs_path = Path.expand(node.path, node.repo)
+            File.dir?(abs_path)
+          end)
           |> Enum.map(fn node ->
             content =
               case read_context(node) do
