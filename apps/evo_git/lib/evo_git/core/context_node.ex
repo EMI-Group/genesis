@@ -59,15 +59,12 @@ defmodule EvoGit.Core.ContextNode do
   because the node may represent a path that doesn't exist yet at creation time.
   Type is determined at runtime when reading the context.
   """
-  @spec load(String.t(), String.t()) :: {:ok, t()} | {:error, term()}
+  @spec load(String.t(), String.t()) :: t()
   def load(relative_path, repo_path) do
-    # Don't check file existence or type at creation time
-    # The node may be created before the path exists in the filesystem
-    {:ok,
-     %__MODULE__{
-       path: relative_path,
-       repo: repo_path
-     }}
+    %__MODULE__{
+      path: relative_path,
+      repo: repo_path
+    }
   end
 
   @doc """
@@ -89,12 +86,7 @@ defmodule EvoGit.Core.ContextNode do
 
       nodes =
         paths
-        |> Enum.reduce([], fn p, acc ->
-          case load(p, repo_path) do
-            {:ok, node} -> [node | acc]
-            _ -> acc
-          end
-        end)
+        |> Enum.map(&load(&1, repo_path))
         |> Enum.reverse()
 
       {:ok, nodes}
