@@ -99,13 +99,10 @@ defmodule EvoGit.Core.ContextNode do
     {:error, :invalid_path}
   end
 
-  @doc """
-  Reads the context contract for a given directory node, or the file content for a file node.
-
-  The type is determined at runtime by checking if the path is a directory.
-  """
+  # Reads the context contract for a given directory node, or the file content for a file node.
+  # The type is determined at runtime by checking if the path is a directory.
   @spec read_context(t()) :: {:ok, String.t()} | {:error, term()}
-  def read_context(%__MODULE__{} = node) do
+  defp read_context(%__MODULE__{} = node) do
     abs_path = Path.expand(node.path, node.repo)
 
     if File.dir?(abs_path) do
@@ -113,17 +110,6 @@ defmodule EvoGit.Core.ContextNode do
       File.read(contract_path)
     else
       File.read(abs_path)
-    end
-  end
-
-  @doc """
-  Reads the context contract for a given directory or file node, raising on error.
-  """
-  @spec read_context!(t()) :: String.t()
-  def read_context!(%__MODULE__{} = node) do
-    case read_context(node) do
-      {:ok, content} -> content
-      {:error, reason} -> raise File.Error, reason: reason, action: "read", path: node.path
     end
   end
 
