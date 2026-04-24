@@ -61,9 +61,7 @@ defmodule EvoGit.Agent do
       defp current_model do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
-        model = agent_state.llm_model
-        Logger.debug("Using LLM model: #{model}")
-        model
+        agent_state.llm_model
       end
 
       # --- Public API ---
