@@ -12,7 +12,24 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
     ReqLLM.tool(
       name: "rg",
       description:
-        "Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.",
+        """
+        Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.
+
+        ripgrep (rg) recursively searches the current directory for lines matching a regex pattern.
+        By default, ripgrep will respect gitignore rules and automatically skip hidden files/directories and binary files.
+
+        Use -h for short descriptions and --help for more details.
+
+        USAGE:
+            rg [OPTIONS] PATTERN [PATH ...]
+            rg [OPTIONS] -e PATTERN ... [PATH ...]
+            rg [OPTIONS] -f PATTERNFILE ... [PATH ...]
+            rg [OPTIONS] --files [PATH ...]
+            rg [OPTIONS] --type-list
+            command | rg [OPTIONS] PATTERN
+            rg [OPTIONS] --help
+            rg [OPTIONS] --version
+        """,
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
