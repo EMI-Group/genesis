@@ -32,7 +32,13 @@ defmodule EvoGit.Agent.Tools.FileRead do
           },
           "limit" => %{
             "type" => "integer",
-            "description" => "Maximum number of lines to read (default: 2000)"
+            "description" => "Maximum number of lines to read (default: 2000)",
+            "default" => 2000
+          },
+          "line_numbers" => %{
+            "type" => "boolean",
+            "description" => "Whether to include line numbers in the output (default: true)",
+            "default" => true
           }
         },
         "required" => ["file_path"]
@@ -48,11 +54,12 @@ defmodule EvoGit.Agent.Tools.FileRead do
     file_path = Map.fetch!(args, "file_path") |> Shared.expand_path(repo_path)
     offset = Map.get(args, "offset", 1)
     limit = Map.get(args, "limit", 2000)
+    line_numbers = Map.get(args, "line_numbers", true)
 
     with {:ok, stat} <- File.stat(file_path),
          :ok <- validate_file_size(stat, Map.has_key?(args, "offset") or Map.has_key?(args, "limit")),
          {:ok, result} <- read_file_with_lines(file_path, stat, offset, limit) do
-      format_result(result, file_path)
+      format_result(result, file_path, line_numbers)
     else
       {:error, :too_large} ->
         "Error: File #{file_path} is too large (>256 KB). Use offset and limit parameters to read specific ranges."
@@ -142,7 +149,7 @@ defmodule EvoGit.Agent.Tools.FileRead do
   end
 
   # Formats result with line numbers (cat -n style)
-  defp format_result(result, file_path) do
+  defp format_result(result, file_path, line_numbers) do
     %{lines: lines, start_line: start_line, total_lines: total_lines, num_lines: num_lines} =
       result
 
@@ -151,15 +158,19 @@ defmodule EvoGit.Agent.Tools.FileRead do
         "File: #{file_path}\nWarning: File exists but has empty contents.\n"
 
       true ->
-        numbered_lines =
-          lines
-          |> Enum.with_index(start_line)
-          |> Enum.map(fn {line, num} -> "#{num}\t#{line}" end)
-          |> Enum.join("\n")
+        formatted_lines =
+          if line_numbers do
+            lines
+            |> Enum.with_index(start_line)
+            |> Enum.map(fn {line, num} -> "#{num}\t#{line}" end)
+            |> Enum.join("\n")
+          else
+            Enum.join(lines, "\n")
+          end
 
-        header = "File: #{file_path}\nLines: #{num_lines}-#{start_line + num_lines - 1} of #{total_lines}\n\n"
+        header = "File: #{file_path}\nLines: #{start_line}-#{start_line + num_lines - 1} of #{total_lines}\n\n"
 
-        header <> numbered_lines
+        header <> formatted_lines
     end
   end
 
