@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.Tools.DirContext do
+defmodule EvoGit.Agent.Tools.Context do
   @moduledoc """
   Tools for reading and writing directory CONTEXT.md files.
   """
@@ -10,18 +10,21 @@ defmodule EvoGit.Agent.Tools.DirContext do
   """
   def read_schema do
     ReqLLM.tool(
-      name: "read_dir_context",
+      name: "context_read",
       description:
-        "Reads the CONTEXT.md file of a directory node. " <>
-          "CONTEXT.md defines the directory's semantic contract (Intent, API Surface, Constraints). " <>
-          "Returns the content if it exists, or a message indicating no CONTEXT.md was found.",
+        "Reads a CONTEXT.md file from a directory. CONTEXT.md files are human-readable documentation " <>
+          "files that describe a directory's purpose and structure. They typically contain: " <>
+          "1) Intent - what the directory is for and its role in the codebase, " <>
+          "2) API Surface - what modules/functions the directory exports or provides, " <>
+          "3) Constraints - rules or guidelines for code within this directory. " <>
+          "Use this to read the context to understand the semantic meaning and expectations for a directory",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "dir_path" => %{
             "type" => "string",
             "description" =>
-              "The relative path to the directory whose CONTEXT.md should be read (e.g., '.', 'lib', 'src/foo')"
+              "The relative path to the directory to read CONTEXT.md from (e.g., '.', 'lib', 'src/components')"
           }
         },
         "required" => ["dir_path"]
@@ -35,30 +38,32 @@ defmodule EvoGit.Agent.Tools.DirContext do
   """
   def write_schema do
     ReqLLM.tool(
-      name: "rewrite_dir_context",
+      name: "context_write",
       description:
-        "Creates or updates the CONTEXT.md file for a directory node. " <>
-          "CONTEXT.md defines the directory's semantic contract: its Intent (purpose), " <>
-          "API Surface (exports), and Constraints (rules for children). " <>
-          "Use this tool whenever you need to establish or revise a directory's context. " <>
-          "For file-level context (header/module comments), use normal code editing tools instead.",
+        "Creates or updates a CONTEXT.md file for a directory. CONTEXT.md is a human-readable documentation file " <>
+          "that describes a directory's purpose and structure to help future developers (and AI) understand the codebase. " <>
+          "The context should be simple, concise, and clear. It typically contains: " <>
+          "1) Intent - what the directory is for and its role in the codebase, " <>
+          "2) API Surface - what modules/functions the directory exports or provides, " <>
+          "3) Constraints - rules or guidelines for code within this directory. " <>
+          "Use this to document a directory after analyzing its contents or establishing its design, or update existing context.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "dir_path" => %{
             "type" => "string",
             "description" =>
-              "The relative path to the directory whose CONTEXT.md should be updated (e.g., '.', 'lib', 'src/foo')"
+              "The relative path to the directory where CONTEXT.md should be created/updated (e.g., '.', 'lib', 'src/components')"
           },
           "content" => %{
             "type" => "string",
             "description" =>
-              "The full markdown content for the CONTEXT.md file. Should include Intent, API Surface, and Constraints sections."
+              "The full markdown content for the CONTEXT.md file. Should include sections for Intent, API Surface, and Constraints."
           },
           "commit" => %{
             "type" => "boolean",
             "description" =>
-              "Whether to commit the CONTEXT.md file after writing. Defaults to true. When true, only the CONTEXT.md file is committed.",
+              "Whether to create a git commit after writing the CONTEXT.md file. Defaults to true.",
             "default" => true
           }
         },
@@ -69,7 +74,7 @@ defmodule EvoGit.Agent.Tools.DirContext do
   end
 
   @doc """
-  Executes the read_dir_context tool.
+  Executes the context_read tool.
   """
   def execute_read(args, repo_path, _repo_root) do
     dir_path = Map.fetch!(args, "dir_path")
@@ -94,7 +99,7 @@ defmodule EvoGit.Agent.Tools.DirContext do
   end
 
   @doc """
-  Executes the rewrite_dir_context tool.
+  Executes the context_write tool.
   """
   def execute_write(args, repo_path, repo_root) do
     dir_path = Map.fetch!(args, "dir_path")
