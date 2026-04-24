@@ -34,6 +34,15 @@ defmodule EvoGit.Agent.ToolsTest do
       assert result =~ "1\thello world"
     end
 
+    test "reads an existing file without line numbers", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "test.txt")
+      File.write!(file_path, "hello world")
+
+      result = Tools.execute("read_file", %{"file_path" => "test.txt", "line_numbers" => false}, tmp_dir)
+      refute result =~ "1\thello world"
+      assert result =~ "hello world"
+    end
+
     test "returns error for missing file", %{tmp_dir: tmp_dir} do
       result = Tools.execute("read_file", %{"file_path" => "missing.txt"}, tmp_dir)
       assert result =~ "Error reading file"
