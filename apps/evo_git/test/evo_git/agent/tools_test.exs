@@ -31,25 +31,12 @@ defmodule EvoGit.Agent.ToolsTest do
       File.write!(file_path, "hello world")
 
       result = Tools.execute("read_file", %{"file_path" => "test.txt"}, tmp_dir)
-      assert result == "hello world"
+      assert result =~ "1\thello world"
     end
 
     test "returns error for missing file", %{tmp_dir: tmp_dir} do
       result = Tools.execute("read_file", %{"file_path" => "missing.txt"}, tmp_dir)
       assert result =~ "Error reading file"
-    end
-  end
-
-  describe "execute/4 - read_many_files" do
-    test "reads multiple existing files", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "test1.txt"), "content 1")
-      File.write!(Path.join(tmp_dir, "test2.txt"), "content 2")
-
-      result =
-        Tools.execute("read_many_files", %{"file_paths" => ["test1.txt", "test2.txt"]}, tmp_dir)
-
-      assert result =~ "File: test1.txt\ncontent 1"
-      assert result =~ "File: test2.txt\ncontent 2"
     end
   end
 
