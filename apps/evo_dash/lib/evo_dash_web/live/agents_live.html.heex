@@ -58,7 +58,7 @@
             </div>
             <div class="flex items-center gap-2">
               <span class="w-3 h-3 rounded-full bg-warning"></span>
-              <span>Waiting (for sub-agents)</span>
+              <span>Waiting (for subagents)</span>
             </div>
           </div>
         </div>
@@ -168,7 +168,7 @@
 
                 <%= if agent.pending_sub_agents != [] do %>
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Pending Sub-Agents</h4>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Pending SubAgents</h4>
                     <div class="flex flex-wrap gap-1 mt-1">
                       <%= for sub_id <- agent.pending_sub_agents do %>
                         <button
@@ -185,7 +185,7 @@
 
                 <%= if map_size(agent.sub_agent_results) > 0 do %>
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">Sub-Agent Results</h4>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">SubAgent Results</h4>
                     <div class="text-xs bg-base-200 p-2 rounded max-h-32 overflow-y-auto">
                       <%= for {sub_id, result} <- agent.sub_agent_results do %>
                         <div class="mb-1">

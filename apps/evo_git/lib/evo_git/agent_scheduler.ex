@@ -8,7 +8,7 @@ defmodule EvoGit.AgentScheduler do
 
   - Managing the worktree pool (creation, assignment, reclamation)
   - Preparing worktrees (Git clean/checkout) before agent execution
-  - Spawning and tracking agents (both top-level and sub-agents)
+  - Spawning and tracking agents (both top-level and subagents)
   - Transitioning agents between :pending, :running, :waiting, and :ready states
   - Lazy reclamation of worktrees from waiting agents when the pool is exhausted
 
@@ -60,13 +60,13 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Called from within a running agent to spawn sub-agents concurrently.
+  Called from within a running agent to spawn subagents concurrently.
   Marks the calling agent as :waiting (worktree becomes reclaimable).
-  Blocks until all sub-agents complete. Returns a list of results in the
+  Blocks until all subagents complete. Returns a list of results in the
   same order as the input specs.
 
   Returns `{:error, :max_depth_exceeded}` if the calling agent has reached
-  the maximum recursion depth and cannot spawn further sub-agents.
+  the maximum recursion depth and cannot spawn further subagents.
 
   Returns `{:error, :path_ignored}` if the calling agent is in a directory
   that is ignored by git (e.g., .venv, node_modules). This prevents infinite
@@ -291,19 +291,19 @@ defmodule EvoGit.AgentScheduler do
 
       # Mark parent as :waiting
       Logger.info(
-        "AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} sub-agents"
+        "AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents"
       )
 
       put_sched_meta(parent_id, %{parent | status: :waiting})
 
-      # Register each sub-agent (depth = parent.depth + 1)
+      # Register each subagent (depth = parent.depth + 1)
       {sub_ids, state} =
         Enum.map_reduce(specs, state, fn spec, acc ->
           {id, acc} = register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1)
           {id, acc}
         end)
 
-      # Track pending sub-agents on the parent
+      # Track pending subagents on the parent
       {:ok, parent} = get_sched_meta(parent_id)
 
       put_sched_meta(parent_id, %{
@@ -313,7 +313,7 @@ defmodule EvoGit.AgentScheduler do
           sub_agent_results: %{}
       })
 
-      # Dispatch all sub-agents
+      # Dispatch all subagents
       state = Enum.reduce(sub_ids, state, &try_dispatch(&2, &1))
 
       {:noreply, state}
@@ -813,7 +813,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   # Resumes a waiting parent that was queued because no worktree was available
-  # when its sub-agents completed. Assigns a worktree and unblocks the parent's
+  # when its subagents completed. Assigns a worktree and unblocks the parent's
   # blocked GenServer.call.
   defp dispatch_ready_parent(%{available_worktrees: [wt | rest]} = state, agent_id, meta) do
     commit_sha = assign_and_prepare_worktree(agent_id, wt)
@@ -845,7 +845,7 @@ defmodule EvoGit.AgentScheduler do
     handle_no_available_worktrees(state, agent_id, fn s, a_id -> dispatch_ready_parent(s, a_id, meta) end)
   end
 
-  # --- Sub-Agent Result Tracking ---
+  # --- SubAgent Result Tracking ---
 
   defp store_sub_result(parent_id, sub_id, result) do
     {:ok, parent} = get_sched_meta(parent_id)
@@ -863,7 +863,7 @@ defmodule EvoGit.AgentScheduler do
       end)
 
     if all_done? do
-      Logger.info("AgentScheduler: Agent #{parent_id} ready to resume, all sub-agents completed")
+      Logger.info("AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed")
 
       if parent.worktree do
         # Parent already has a worktree, resume immediately

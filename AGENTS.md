@@ -43,8 +43,8 @@ The `State` is defined by the following attributes:
 * **Temporal State (Current Commit):** The commit SHA the agent is currently working on (initially matches the Base Commit).
 * **Objective:** A natural language directive (e.g., "Implement the User schema").
 
-### **3.2 Sub-Agent Delegation**
-To prevent context bloat, agents recursively decompose tasks. A top-level agent spawns sub-agents with distinct `State` and `Objective` parameters to handle specific modules. Sub-agents return text results, diff stats, and auto-generated commit SHAs to the parent. Their context footprint does *not* count against the parent's session limits.
+### **3.2 SubAgent Delegation**
+To prevent context bloat, agents recursively decompose tasks. A top-level agent spawns subagents with distinct `State` and `Objective` parameters to handle specific modules. Subagents return text results, diff stats, and auto-generated commit SHAs to the parent. Their context footprint does *not* count against the parent's session limits.
 
 ### **3.3 Execution Constraints**
 * **Session Limits:** Agents possess a strict maximum number of iterative loops.
@@ -53,7 +53,7 @@ To prevent context bloat, agents recursively decompose tasks. A top-level agent 
 
 ### **3.4 Worktree Interactions & Auto-Commits**
 Agents run in isolated Git worktrees and must maintain clean states:
-* **Pre-Delegation Cleanliness:** Before calling a sub-agent, a parent agent *must* commit any pending changes it has made.
+* **Pre-Delegation Cleanliness:** Before calling a subagent, a parent agent *must* commit any pending changes it has made.
 * **Completion Cleanliness:** Upon finishing a task, agents must commit their final changes.
 * **Auto-Commit Fallback:** If an agent fails to commit in either scenario, the system automatically commits the changes using `Agent: <objective> (auto-commit)`, discarding `.gitignore` files. This guarantees that an agent can be put to sleep and cleanly resurrected later using just its commit SHA and node path.
 
@@ -66,23 +66,23 @@ Initialize the Context Tree and Phylogenetic Graph, starting from either an exis
 
 **Mode A: Existing Codebase**
 * **Root Initialization:** The system spawns an investigator agent at the repository root on the latest commit.
-* **Recursive Analysis:** The agent spawns sub-agents for child directories/files to extract existing context and build the semantic tree structure. *(Note: File-level extraction is minimal, relying mostly on existing code comments).*
-* **Fixed Point Convergence:** The parent agent aggregates the context. If discrepancies exist, it spawns sub-agents to modify the child nodes. This loop repeats until a "fixed point" is reached.
+* **Recursive Analysis:** The agent spawns subagents for child directories/files to extract existing context and build the semantic tree structure. *(Note: File-level extraction is minimal, relying mostly on existing code comments).*
+* **Fixed Point Convergence:** The parent agent aggregates the context. If discrepancies exist, it spawns subagents to modify the child nodes. This loop repeats until a "fixed point" is reached.
     * **Convergence Circuit Breaker:** To prevent infinite loops of subjective semantic tweaking by the LLM, agents are strictly instructed to evaluate context changes based *only* on functional API surface modifications, not phrasing. Additionally, the system enforces a hard limit on iterations (e.g., maximum 3 passes per node) to guarantee mathematical termination.
 
 **Mode B: New Codebase**
 * **Root Initialization:** An agent interprets the user's prompt at the root node and drafts the initial architectural plan in the root `CONTEXT.md`.
-* **Recursive Realization:** For each planned submodule, spawn sub-agents to initialize the corresponding child nodes and populate their `CONTEXT.md` files.
+* **Recursive Realization:** For each planned submodule, spawn subagents to initialize the corresponding child nodes and populate their `CONTEXT.md` files.
 * **Fixed Point Convergence:** Identical to Mode A, utilizing the same Convergence Circuit Breaker to ensure the generated structure finalizes efficiently.
 
 ### **4.2 Phase 2: Evolution**
 Mutate the codebase based on task ambiguity.
 
-* **Mode A: Simple Evolution (Top-Down):** Used for clear tasks (e.g., fixing reproducible bugs). The top-level agent (generalist) maps the spatial context, then analyzes the objective to identify the steps needed to achieve it. It can spawn codebase_investigator sub-agents to gather additional context if needed. Then it handle the editing of files within their assigned node level and spawns generalist sub-agents to execute each step in child nodes.
-    * **Recursive Realization:** The steps are also executed recursively, meaning the agents should only be editing / investigating files within their assigned node level, and delegate to sub-agents for any child nodes.
-    * **Fixed Point Convergence:** The parent agent evaluates the results of its sub-agents. If the objective is not met, it spawns new sub-agents to continue iterating until the task is complete or the session limit is reached.
-* **Mode B: Complex Evolution (Bottom-Up):** Used for open-ended tasks (e.g., system-wide optimization). Planning is bypassed. The parent defines a "Search Space" and spawns concurrent sub-agents to test different local file changes.
-    * **Parallel Branching and Merge Resolution:** When multiple sub-agents succeed concurrently, creating parallel branches in the Git DAG, the parent agent executes a sequential merge strategy. It first selects the single *best* performing branch to establish as the new baseline. It then attempts to merge the remaining successful branches one by one into this baseline. If an improvement merges cleanly and adds value, it is accepted. If it results in conflicts or cannot be incorporated (i.e., parallel improvements that contradict each other), the conflicting branch is discarded.
+* **Mode A: Simple Evolution (Top-Down):** Used for clear tasks (e.g., fixing reproducible bugs). The top-level agent (generalist) maps the spatial context, then analyzes the objective to identify the steps needed to achieve it. It can spawn codebase_investigator subagents to gather additional context if needed. Then it handle the editing of files within their assigned node level and spawns generalist subagents to execute each step in child nodes.
+    * **Recursive Realization:** The steps are also executed recursively, meaning the agents should only be editing / investigating files within their assigned node level, and delegate to subagents for any child nodes.
+    * **Fixed Point Convergence:** The parent agent evaluates the results of its subagents. If the objective is not met, it spawns new subagents to continue iterating until the task is complete or the session limit is reached.
+* **Mode B: Complex Evolution (Bottom-Up):** Used for open-ended tasks (e.g., system-wide optimization). Planning is bypassed. The parent defines a "Search Space" and spawns concurrent subagents to test different local file changes.
+    * **Parallel Branching and Merge Resolution:** When multiple subagents succeed concurrently, creating parallel branches in the Git DAG, the parent agent executes a sequential merge strategy. It first selects the single *best* performing branch to establish as the new baseline. It then attempts to merge the remaining successful branches one by one into this baseline. If an improvement merges cleanly and adds value, it is accepted. If it results in conflicts or cannot be incorporated (i.e., parallel improvements that contradict each other), the conflicting branch is discarded.
     * *Differential Evolution:* Extracts a transformation pattern from a successful reference module and applies it across similar components, keeping only the permutations that work.
     * *Co-evolution:* Mutates interdependent systems (e.g., frontend/backend) concurrently to reach a shared performance goal.
 * **Mode C: Recursive Realization:** This mode is strictly for realizing the whole codebase after Genesis mode B (new codebase). After the genesis mode B finishes, the repo contains full context hierarchy but no actual code. This phases is basically the same as Gensis mode A, except that the objective is to realize the codebase based on the context hierarchy.
@@ -104,13 +104,13 @@ EvoGit manages execution through an internal **Agent Scheduler**, analogous to O
 
 1. **Immutability:** The main user checkout is *never* directly modified by an agent.
 2. **Execution Lifecycle:** All agents are initially spawned by the scheduler into a `waiting` state. When a worktree slot becomes available, the scheduler assigns it to a waiting agent, **checks out the exact `current_commit` (not the `base_commit`)** specified in the agent's temporal state, and begins execution. This ensures resuming agents do not overwrite unyielded progress.
-3. **Cooperative Multitasking (Yielding):** Worktrees cannot be locked idle. When an agent needs to call sub-agents, it must *yield* execution.
+3. **Cooperative Multitasking (Yielding):** Worktrees cannot be locked idle. When an agent needs to call subagents, it must *yield* execution.
     * Before yielding, the agent must clean its workspace (committing any pending changes, or relying on the auto-commit fallback detailed in Section 3.4).
     * The parent agent is then transitioned back to the `waiting` state.
-    * The worktree is instantly released back to the scheduler to execute other queued agents (including the newly spawned sub-agents).
-    * Once the sub-agents complete, the parent agent is re-queued for a worktree to resume its evaluation.
+    * The worktree is instantly released back to the scheduler to execute other queued agents (including the newly spawned subagents).
+    * Once the subagents complete, the parent agent is re-queued for a worktree to resume its evaluation.
 4. **Data Tracing:** Agents commit semantic messages (`Agent: <objective>`) and attach metadata (Context, LLM reasoning) via `git notes`.
-5. **Depth Limits:** The runtime tracks the recursive depth of agent delegation. Upon reaching a configured maximum depth, agents are blocked from spawning further sub-agents.
+5. **Depth Limits:** The runtime tracks the recursive depth of agent delegation. Upon reaching a configured maximum depth, agents are blocked from spawning further subagents.
 6. **Command Restrictions:** Agents are prohibited from executing commands that alter global state or break temporal tracking:
     * **No `push` or `pull`:** Prevents remote modification or conflict ingestion.
     * **No `checkout` or `reset`:** Prevents agents from abandoning their assigned temporal state.

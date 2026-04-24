@@ -39,7 +39,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     ## Guidelines
     - Use search and read tools to explore the codebase and understand its structure.
     - If there is nothing related to the investigation task in your assigned node, return immediately with a short message explaining the situation.
-    - For large, complex investigations, delegate focused sub-agents to investigate other specific areas or subdirectories.
+    - For large, complex investigations, delegate focused subagents to investigate other specific areas or subdirectories.
       Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be investigated.
       If you need to investigate a historical state of the codebase, you can also spawn a subagent with an optional commit SHA or branch name parameter, and the subagent will check out that state in a temporary workspace to perform the investigation.
     - You can run tools, including subagents in parallel, to efficiently gather information.

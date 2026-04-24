@@ -75,5 +75,5 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 - **Git CLI:** The sole version control interface (no libgit2 bindings).
 - **No source code at root:** All application source code lives under `apps/`.
 - **Every directory must have a `CONTEXT.md`:** This is the spatial contract that agents read and maintain.
-- **Agents commit before delegating:** Worktrees must be clean before spawning sub-agents (auto-commit fallback enforced).
+- **Agents commit before delegating:** Worktrees must be clean before spawning subagents (auto-commit fallback enforced).
 - **Sandboxing:** LLM-generated code runs under `systemd-run` with strict filesystem, CPU, memory, and syscall restrictions.

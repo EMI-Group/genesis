@@ -3,8 +3,8 @@ defmodule EvoGit.Agent.Planner do
   Planning and orchestration agent for Mode A (Top-Down) evolution.
 
   This agent breaks down objectives into logical steps and orchestrates
-  their execution by spawning executor sub-agents. After all executors
-  complete, it spawns an evaluator sub-agent to verify the results.
+  their execution by spawning executor subagents. After all executors
+  complete, it spawns an evaluator subagent to verify the results.
   """
   use EvoGit.Agent
 
@@ -47,7 +47,7 @@ defmodule EvoGit.Agent.Planner do
        - `path`: The target directory or file for this step
        - `objective`: A clear, specific objective for this step
 
-       IMPORTANT: Before spawning any sub-agent, you MUST commit any pending changes you have made.
+       IMPORTANT: Before spawning any subagent, you MUST commit any pending changes you have made.
 
     5. **Verify Results**: After all executors complete, spawn `subagent_evaluator` to verify:
        - Changes satisfy the original objective
@@ -56,7 +56,7 @@ defmodule EvoGit.Agent.Planner do
 
     6. **Complete**: Call `complete_task` with a summary of what was done.
 
-    ## Available Sub-Agents
+    ## Available SubAgents
 
     - `subagent_executor`: Executes code changes. Use this for each step of your plan.
     - `subagent_evaluator`: Verifies changes satisfy the objective. Call this once after all executors finish.
@@ -74,9 +74,9 @@ defmodule EvoGit.Agent.Planner do
 
     ## Commit Discipline
 
-    ALWAYS commit changes before spawning sub-agents. The framework helps with this, but you should be aware of:
+    ALWAYS commit changes before spawning subagents. The framework helps with this, but you should be aware of:
     - Any files you've written will be auto-committed if you haven't committed them
-    - This ensures clean worktree handoff to sub-agents
+    - This ensures clean worktree handoff to subagents
     """
   end
 end
