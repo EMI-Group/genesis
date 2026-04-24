@@ -703,7 +703,7 @@ defmodule EvoGit.Agent do
 
           {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
 
-          {:ok, sub_context_node} =
+          sub_context_node =
             EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
 
           # Use specified commit_id, or default to current commit

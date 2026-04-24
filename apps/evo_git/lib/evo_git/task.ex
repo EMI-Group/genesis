@@ -67,7 +67,7 @@ defmodule EvoGit.Task do
         "Return ONLY the path as a JSON string under key 'path'."
 
     event_sink = Keyword.get(opts, :event_sink, self())
-    {:ok, context_node} = EvoGit.Core.ContextNode.load(".", phylo_node.repo)
+    context_node = EvoGit.Core.ContextNode.load(".", phylo_node.repo)
 
     result =
       AgentSpec.new(context_node, phylo_node, Generalist, diag_prompt, event_sink: event_sink)
