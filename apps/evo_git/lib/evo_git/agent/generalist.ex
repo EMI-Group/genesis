@@ -50,7 +50,7 @@ defmodule EvoGit.Agent.Generalist do
 
     4. Make Changes: Use your available tools and sub-agents to make changes to the codebase.
        - You can spawn additional `subagent_generalist` agents to handle tasks in child nodes (including grandchild nodes, etc.)
-          - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
+         - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
          - Normally, works below your assigned node level should be delegated to sub-agents, except when the task is very trivial.
          - Normally, works that requires a specific expertise (e.g., investigation, testing, etc.) should be delegated to sub-agents with that expertise.
          - Prefer delegating works to sub-agents over doing them yourself.
