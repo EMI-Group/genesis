@@ -9,7 +9,7 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.FileRead
   alias EvoGit.Agent.Tools.FileWrite
   alias EvoGit.Agent.Tools.FileEdit
-  alias EvoGit.Agent.Tools.DirContext
+  alias EvoGit.Agent.Tools.Context
   alias EvoGit.Agent.Tools.Bash
   alias EvoGit.Agent.Tools.Ripgrep
   alias EvoGit.Agent.Tools.Git
@@ -26,8 +26,8 @@ defmodule EvoGit.Agent.Tools do
       FileRead.schema(),
       FileWrite.schema(),
       FileEdit.schema(),
-      DirContext.read_schema(),
-      DirContext.write_schema(),
+      Context.read_schema(),
+      Context.write_schema(),
       Bash.schema(),
       Ripgrep.schema(),
       Git.schema(),
@@ -37,22 +37,6 @@ defmodule EvoGit.Agent.Tools do
       WebRead.schema()
     ]
   end
-
-  @doc """
-  Returns a specific tool schema by name.
-  """
-  def schema(:read_file), do: FileRead.schema()
-  def schema(:file_write), do: FileWrite.schema()
-  def schema(:file_edit), do: FileEdit.schema()
-  def schema(:read_dir_context), do: DirContext.read_schema()
-  def schema(:rewrite_dir_context), do: DirContext.write_schema()
-  def schema(:bash), do: Bash.schema()
-  def schema(:rg), do: Ripgrep.schema()
-  def schema(:git), do: Git.schema()
-  def schema(:glob), do: Glob.schema()
-  def schema(:list_directory), do: ListDirectory.schema()
-  def schema(:web_search), do: WebSearch.schema()
-  def schema(:web_read), do: WebRead.schema()
 
   @doc """
   Executes a tool by name with the given arguments.
@@ -85,12 +69,12 @@ defmodule EvoGit.Agent.Tools do
     FileEdit.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("read_dir_context", args, repo_path, repo_root) do
-    DirContext.execute_read(args, repo_path, repo_root)
+  defp execute_tool("context_read", args, repo_path, repo_root) do
+    Context.execute_read(args, repo_path, repo_root)
   end
 
-  defp execute_tool("rewrite_dir_context", args, repo_path, repo_root) do
-    DirContext.execute_write(args, repo_path, repo_root)
+  defp execute_tool("context_write", args, repo_path, repo_root) do
+    Context.execute_write(args, repo_path, repo_root)
   end
 
   defp execute_tool("bash", args, repo_path, repo_root) do

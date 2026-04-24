@@ -14,14 +14,8 @@ defmodule EvoGit.Agent.ToolsTest do
       assert "read_file" in names
       assert "file_write" in names
       assert "file_edit" in names
-    end
-  end
-
-  describe "schema/1" do
-    test "returns a specific schema by name" do
-      schema = Tools.schema(:read_file)
-      assert schema.name == "read_file"
-      assert is_map(schema.parameter_schema)
+      assert "context_read" in names
+      assert "context_write" in names
     end
   end
 
@@ -146,13 +140,13 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  describe "execute/4 - read_dir_context" do
+  describe "execute/4 - context_read" do
     test "reads existing CONTEXT.md", %{tmp_dir: tmp_dir} do
       dir_path = Path.join(tmp_dir, "lib")
       File.mkdir_p!(dir_path)
       File.write!(Path.join(dir_path, "CONTEXT.md"), "dir context")
 
-      result = Tools.execute("read_dir_context", %{"dir_path" => "lib"}, tmp_dir)
+      result = Tools.execute("context_read", %{"dir_path" => "lib"}, tmp_dir)
       assert result == "dir context"
     end
 
@@ -160,12 +154,12 @@ defmodule EvoGit.Agent.ToolsTest do
       dir_path = Path.join(tmp_dir, "lib")
       File.mkdir_p!(dir_path)
 
-      result = Tools.execute("read_dir_context", %{"dir_path" => "lib"}, tmp_dir)
+      result = Tools.execute("context_read", %{"dir_path" => "lib"}, tmp_dir)
       assert result =~ "No CONTEXT.md found"
     end
 
     test "returns error if directory is missing", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("read_dir_context", %{"dir_path" => "missing"}, tmp_dir)
+      result = Tools.execute("context_read", %{"dir_path" => "missing"}, tmp_dir)
       assert result =~ "does not exist"
     end
 
@@ -173,7 +167,7 @@ defmodule EvoGit.Agent.ToolsTest do
       file_path = Path.join(tmp_dir, "test.txt")
       File.write!(file_path, "")
 
-      result = Tools.execute("read_dir_context", %{"dir_path" => "test.txt"}, tmp_dir)
+      result = Tools.execute("context_read", %{"dir_path" => "test.txt"}, tmp_dir)
       assert result =~ "is a file, not a directory"
     end
   end
@@ -216,7 +210,7 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  describe "execute/4 - rewrite_dir_context" do
+  describe "execute/4 - context_write" do
     test "writes CONTEXT.md and commits in systemd-run sandbox", %{tmp_dir: tmp_dir} do
       # Initialize a git repository
       System.cmd("git", ["init"], cd: tmp_dir)
@@ -232,7 +226,7 @@ defmodule EvoGit.Agent.ToolsTest do
       File.mkdir_p!(dir_path)
 
       # Pass repo_root as tmp_dir as well so that systemd-run has access to .git
-      result = Tools.execute("rewrite_dir_context", %{"dir_path" => "lib", "content" => "new context", "commit" => true}, tmp_dir, tmp_dir)
+      result = Tools.execute("context_write", %{"dir_path" => "lib", "content" => "new context", "commit" => true}, tmp_dir, tmp_dir)
       assert result =~ "Successfully updated CONTEXT.md for directory 'lib'"
       assert result =~ "Committed:"
 
@@ -249,7 +243,7 @@ defmodule EvoGit.Agent.ToolsTest do
 
       result =
         Tools.execute(
-          "rewrite_dir_context",
+          "context_write",
           %{"dir_path" => "lib", "content" => "new context", "commit" => false},
           tmp_dir
         )
@@ -262,7 +256,7 @@ defmodule EvoGit.Agent.ToolsTest do
     test "returns error if directory does not exist", %{tmp_dir: tmp_dir} do
       result =
         Tools.execute(
-          "rewrite_dir_context",
+          "context_write",
           %{"dir_path" => "missing", "content" => "context"},
           tmp_dir
         )
@@ -276,7 +270,7 @@ defmodule EvoGit.Agent.ToolsTest do
 
       result =
         Tools.execute(
-          "rewrite_dir_context",
+          "context_write",
           %{"dir_path" => "test.txt", "content" => "context"},
           tmp_dir
         )

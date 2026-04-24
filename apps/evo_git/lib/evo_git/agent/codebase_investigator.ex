@@ -4,7 +4,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
   plus the ability to delegate to sub-investigators and update directory context files.
   """
   use EvoGit.Agent
-  alias EvoGit.Agent.Tools
+  alias EvoGit.Agent.Tools.{FileRead, Ripgrep, Glob, ListDirectory, Context, WebSearch, WebRead}
 
   def subagent_tool_name, do: "subagent_codebase_investigator"
 
@@ -16,14 +16,14 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
 
   def available_tools do
     [
-      Tools.schema(:read_file),
-      Tools.schema(:rg),
-      Tools.schema(:glob),
-      Tools.schema(:list_directory),
-      Tools.schema(:read_dir_context),
-      Tools.schema(:rewrite_dir_context),
-      Tools.schema(:web_search),
-      Tools.schema(:web_read),
+      FileRead.schema(),
+      Ripgrep.schema(),
+      Glob.schema(),
+      ListDirectory.schema(),
+      Context.read_schema(),
+      Context.write_schema(),
+      WebSearch.schema(),
+      WebRead.schema(),
       completion_schema()
     ] ++ subagent_schemas()
   end
@@ -44,9 +44,9 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
       If you need to investigate a historical state of the codebase, you can also spawn a subagent with an optional commit SHA or branch name parameter, and the subagent will check out that state in a temporary workspace to perform the investigation.
     - You can run tools, including subagents in parallel, to efficiently gather information.
     - When you discover important structural information about a directory (its purpose, API surface,
-      or constraints) that is missing in the context, update the directory's CONTEXT.md using `rewrite_dir_context`. This persists
+      or constraints) that is missing in the context, update the directory's CONTEXT.md using `context_write`. This persists
       your findings for future agents.
-    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the `rewrite_dir_context` tool.
+    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the `context_write` tool.
     - When finished, call `complete_task` with a comprehensive report of your findings.
 
     ## Example

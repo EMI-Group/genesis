@@ -32,7 +32,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     These are just examples; you do not need to strictly follow this format, as long as the context file effectively communicates the necessary information about the directory. The context file should be simple and concise. Do not attempt to document sub-file context (like function docstrings or inline comments), as the system relies on natural code structure for file-level comprehension.
 
     ## Guidelines
-    - Start by drafting the initial architectural plan in the root CONTEXT.md using 'rewrite_dir_context'.
+    - Start by drafting the initial architectural plan in the root CONTEXT.md using 'context_write'.
     - Use 'bash' to run initialization commands like
       - `npm init`, `cargo init` or to create files/directories if needed.
       - Properly config .gitignore to avoid committing unnecessary files.
