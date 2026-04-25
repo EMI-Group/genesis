@@ -106,7 +106,8 @@
                   </h4>
                   <p class="text-sm bg-base-200 p-3 rounded">
                     {String.slice(agent.objective, 0, 150)}{if String.length(agent.objective) >
-                                                                 150, do: "..."}
+                                                                 150,
+                                                               do: "..."}
                   </p>
                 </div>
 
@@ -236,8 +237,8 @@
                     <span class="text-sm text-base-content/50">None</span>
                   <% end %>
                 </div>
-                
-<!-- Chat History -->
+
+                <!-- Chat History -->
                 <div class="mt-6">
                   <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">
                     Chat History / Session Memory
@@ -245,7 +246,7 @@
                   <%= if agent.history && agent.history != [] do %>
                     <div class="bg-base-200 rounded-lg max-h-96 overflow-y-auto">
                       <div class="divide-y divide-base-300">
-                        <%= for entry <- agent.history do %>
+                        <%= for {entry, index} <- Enum.with_index(agent.history) do %>
                           <div class="p-3 hover:bg-base-300/50">
                             <div class="flex items-center gap-2 mb-1">
                               <.icon
@@ -258,6 +259,14 @@
                               ]}>
                                 {entry.type}
                               </span>
+                              <button
+                                class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/50 hover:text-base-content"
+                                phx-click="view_full_message"
+                                phx-value-index={index}
+                                title="View Full Message"
+                              >
+                                <.icon name="hero-arrows-pointing-out" class="size-3" />
+                              </button>
                               <span class="text-xs text-base-content/40 ml-auto">
                                 {format_timestamp(entry.timestamp)}
                               </span>
@@ -282,9 +291,7 @@
                                     do: entry.data.result.result,
                                     else: entry.data.result %>
                                 <div class="text-sm mt-1 bg-success/10 p-2 rounded text-success">
-                                  {String.slice(result_text, 0, 500)}{if String.length(
-                                                                           result_text
-                                                                         ) > 500, do: "..."}
+                                  {String.slice(result_text, 0, 500)}{if String.length( result_text) > 500, do: "..."}
                                 </div>
                               <% "ERROR" -> %>
                                 <div class="text-sm mt-1 bg-error/10 p-2 rounded text-error">
@@ -296,10 +303,7 @@
                                     Retry attempt {entry.data.attempt}
                                   </div>
                                   <div class="text-xs mt-1">
-                                    {String.slice(entry.data.reason, 0, 200)}{if String.length(
-                                                                                   entry.data.reason
-                                                                                 ) > 200,
-                                                                                 do: "..."}
+                                    {String.slice(entry.data.reason, 0, 200)}{if String.length( entry.data.reason) > 200, do: "..."}
                                   </div>
                                 </div>
                               <% "RETRY_DISPATCH" -> %>
@@ -349,4 +353,56 @@
       </div>
     </div>
   </div>
+
+  <!-- Full Message Modal -->
+  <%= if @selected_history_entry do %>
+    <div class="modal modal-open bg-black/50" id="full-message-modal">
+      <div class="modal-box w-11/12 max-w-5xl">
+        <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+          <.icon name={history_entry_icon(@selected_history_entry.type)} class="size-5" />
+          {@selected_history_entry.type}
+          <span class="text-sm font-normal text-base-content/50 ml-auto">
+            {format_timestamp(@selected_history_entry.timestamp)}
+          </span>
+        </h3>
+
+        <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+          <%= case @selected_history_entry.type do %>
+            <% "USER_PROMPT" -> %>
+              <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.content %></pre>
+            <% "THOUGHT_CHUNK" -> %>
+              <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.text %></pre>
+            <% "TOOL_CALL_START" -> %>
+              <div class="font-semibold mb-2">{@selected_history_entry.data.name}</div>
+              <pre class="text-sm"><%= inspect(@selected_history_entry.data.args, pretty: true, limit: :infinity) %></pre>
+            <% "COMPLETE" -> %>
+              <% result_text =
+                if is_map(@selected_history_entry.data.result),
+                  do: @selected_history_entry.data.result.result,
+                  else: @selected_history_entry.data.result %>
+              <pre class="text-sm whitespace-pre-wrap"><%= result_text %></pre>
+            <% "ERROR" -> %>
+              <pre class="text-sm whitespace-pre-wrap text-error"><%= @selected_history_entry.data.error %></pre>
+            <% "RETRY" -> %>
+              <div class="font-semibold mb-2">
+                Retry attempt {@selected_history_entry.data.attempt}
+              </div>
+              <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.reason %></pre>
+            <% "CONTEXT_TREE" -> %>
+              <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.content %></pre>
+            <% _ -> %>
+              <pre class="text-sm"><%= inspect(@selected_history_entry.data, pretty: true, limit: :infinity) %></pre>
+          <% end %>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn" phx-click="close_message_modal">Close</button>
+        </div>
+      </div>
+
+      <div class="modal-backdrop" phx-click="close_message_modal">
+        <button class="cursor-default">close</button>
+      </div>
+    </div>
+  <% end %>
 </div>
