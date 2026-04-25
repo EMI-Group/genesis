@@ -426,7 +426,12 @@ defmodule EvoGit.Agent do
           ReqLLM.Response.tool_calls(response)
           |> Enum.map(&ReqLLM.ToolCall.from_map/1)
 
+        thinking = ReqLLM.Response.thinking(response)
         text = ReqLLM.Response.text(response)
+
+        if thinking && thinking != "" do
+          stream_event(state.agent_id, "THOUGHT_CHUNK", %{text: thinking})
+        end
 
         if text && text != "" do
           stream_event(state.agent_id, "THOUGHT_CHUNK", %{text: text})
@@ -435,6 +440,7 @@ defmodule EvoGit.Agent do
         # Log the assistant message (with tool calls) to history
         append_history(state.agent_id, "ASSISTANT_MESSAGE", %{
           content: text || "",
+          thinking: thinking || "",
           tool_calls: tool_calls
         })
 
@@ -852,51 +858,67 @@ defmodule EvoGit.Agent do
         # Compress if total exceeds threshold
         if total_bytes > @compression_threshold_bytes do
           [first_message | rest_history] = state.history
-          {older_messages, recent_messages} = Enum.split(rest_history, -@compression_keep_recent)
 
-          prompt = """
-          Compress the following interaction history into a dense, structured summary to be passed to the next agent iteration.
+          total_rest = length(rest_history)
+          split_index = max(0, total_rest - @compression_keep_recent)
 
-          Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
+          # Find a safe index at or after split_index where role == :user
+          # This prevents orphaning a tool result or splitting a tool exchange
+          safe_offset =
+            Enum.find_index(Enum.slice(rest_history, split_index..-1//1), fn msg ->
+              msg.role == :user
+            end)
 
-          Output your summary strictly using the following format:
+          final_split_index = if safe_offset, do: split_index + safe_offset, else: split_index
+          {older_messages, recent_messages} = Enum.split(rest_history, final_split_index)
 
-          1. Current Progress:
-          [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
+          if older_messages == [] do
+            state
+          else
+            prompt = """
+            Compress the following interaction history into a dense, structured summary to be passed to the next agent iteration.
 
-          2. Key Findings & Decisions:
-          [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
+            Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
 
-          3. SubAgent Ledger:
-          [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
+            Output your summary strictly using the following format:
 
-          4. Pending / Next Steps:
-          [What specifically needs to be executed next to advance the Current Objective.]
+            1. Current Progress:
+            [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
 
-          ---
+            2. Key Findings & Decisions:
+            [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
 
-          [INTERACTION HISTORY BEGIN]
+            3. SubAgent Ledger:
+            [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
 
-          #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
-          """
+            4. Pending / Next Steps:
+            [What specifically needs to be executed next to advance the Current Objective.]
 
-          context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
+            ---
 
-          case ReqLLM.generate_text(current_model(), context) do
-            {:ok, response} ->
-              text = ReqLLM.Response.text(response)
-              summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> (text || ""))
+            [INTERACTION HISTORY BEGIN]
 
-              # Log compression event
-              append_history(state.agent_id, "CONTEXT_COMPRESSION", %{
-                compressed_count: length(older_messages),
-                summary: text || ""
-              })
+            #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
+            """
 
-              %{state | history: [first_message, summary_msg | recent_messages]}
+            context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
-            _error ->
-              state
+            case ReqLLM.generate_text(current_model(), context) do
+              {:ok, response} ->
+                text = ReqLLM.Response.text(response)
+                summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> (text || ""))
+
+                # Log compression event
+                append_history(state.agent_id, "CONTEXT_COMPRESSION", %{
+                  compressed_count: length(older_messages),
+                  summary: text || ""
+                })
+
+                %{state | history: [first_message, summary_msg | recent_messages]}
+
+              _error ->
+                state
+            end
           end
         else
           state
