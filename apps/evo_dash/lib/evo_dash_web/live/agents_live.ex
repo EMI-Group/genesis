@@ -58,8 +58,17 @@ defmodule EvoDashWeb.AgentsLive do
   defp build_path_tree(agents) do
     tree =
       Enum.reduce(agents, %{}, fn agent, acc ->
-        path = agent.context_path || "/"
-        segments = if path == "/", do: ["/"], else: String.split(path, "/", trim: true)
+        path = agent.context_path || "."
+        path = if path == "/", do: ".", else: path
+        
+        segments =
+          path
+          |> Path.split()
+          |> case do
+            ["." | rest] -> ["." | rest]
+            other -> ["." | other]
+          end
+
         insert_into_tree(acc, segments, [], agent)
       end)
 
@@ -70,7 +79,7 @@ defmodule EvoDashWeb.AgentsLive do
 
   defp insert_into_tree(tree, [segment | rest], acc_segments, agent) do
     current_segments = acc_segments ++ [segment]
-    current_path = if segment == "/", do: "/", else: Enum.join(current_segments, "/")
+    current_path = Path.join(current_segments)
 
     node = Map.get(tree, segment, %{name: segment, path: current_path, agents: [], children: %{}})
 

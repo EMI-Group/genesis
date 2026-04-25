@@ -4,8 +4,16 @@ defmodule EvoDashWeb.AgentsComponents do
   attr :nodes, :list, required: true
   attr :depth, :integer, default: 0
   attr :selected_id, :any, default: nil
+  attr :max_width, :integer, default: nil
 
   def path_tree(assigns) do
+    assigns =
+      if assigns.depth == 0 and is_nil(assigns.max_width) do
+        assign(assigns, :max_width, calculate_max_width(assigns.nodes))
+      else
+        assigns
+      end
+
     ~H"""
     <% total_nodes = length(@nodes) %>
     <%= for {node, index} <- Enum.with_index(@nodes) do %>
@@ -27,9 +35,9 @@ defmodule EvoDashWeb.AgentsComponents do
     <!-- Path and Agents Row -->
         <div class="relative z-10 flex flex-col sm:flex-row sm:items-start gap-4 py-2">
           <!-- Path info -->
-          <div class="flex items-center gap-2 mt-2 shrink-0">
-            <.icon name="hero-folder" class="size-5 text-base-content/50" />
-            <span class="font-semibold text-base-content">{node.name}</span>
+          <div class="flex items-center gap-2 mt-2 shrink-0" style={"width: #{@max_width}ch; max-width: 100%;"}>
+            <.icon name="hero-folder" class="size-5 text-base-content/50 shrink-0" />
+            <span class="font-semibold text-base-content truncate" title={node.name}>{node.name}</span>
           </div>
           
     <!-- Agents Row -->
@@ -90,6 +98,7 @@ defmodule EvoDashWeb.AgentsComponents do
               nodes={node.children}
               depth={@depth + 1}
               selected_id={@selected_id}
+              max_width={@max_width}
             />
           </div>
         <% end %>
@@ -97,6 +106,20 @@ defmodule EvoDashWeb.AgentsComponents do
     <% end %>
     """
   end
+
+  defp calculate_max_width([], _depth), do: 15
+
+  defp calculate_max_width(nodes, depth) do
+    nodes
+    |> Enum.map(fn node ->
+      my_width = (depth * 4) + String.length(node.name) + 8
+      child_width = calculate_max_width(node.children, depth + 1)
+      max(my_width, child_width)
+    end)
+    |> Enum.max(fn -> 15 end)
+  end
+
+  defp calculate_max_width(nodes), do: calculate_max_width(nodes, 0)
 
   defp agent_status_color(:pending), do: "text-base-content/70"
   defp agent_status_color(:running), do: "text-success"
