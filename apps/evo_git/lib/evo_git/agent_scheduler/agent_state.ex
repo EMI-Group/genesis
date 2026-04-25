@@ -28,7 +28,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           context_node: ContextNode.t(),
           phylo_node: PhyloGraphNode.t() | nil,
           event_sink: pid() | nil,
-          llm_model: String.t(),
+          llm_model: ReqLLM.model_input(),
           max_retries: pos_integer(),
           max_depth: pos_integer()
         }
