@@ -51,12 +51,13 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       {:ok, status_output} when is_binary(status_output) and status_output != "" ->
         formatted_status = format_git_status_porcelain(status_output)
         warning_msg = """
-        [NOTICE] The workspace has uncommitted changes. Please commit the necessary files before calling complete_task.
+        [NOTICE] The workspace has uncommitted changes.
+        Please commit the necessary files before calling complete_task.
 
         Git status:
         #{formatted_status}
 
-        After committing the files you want to keep, call complete_task again with check_git_status: false.
+        After committing the files you want to keep, call complete_task again with check_git_status: false to skip the git status check.
         """
         {:dirty, warning_msg}
 
