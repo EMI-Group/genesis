@@ -24,16 +24,16 @@ defmodule EvoDash.TaskRegistry do
     ]
 
     @type t :: %__MODULE__{
-      id: String.t() | nil,
-      type: atom() | nil,
-      status: :pending | :running | :completed | :failed | :cancelled,
-      opts: keyword() | nil,
-      ref: Task.t() | nil,
-      started_at: DateTime.t() | nil,
-      finished_at: DateTime.t() | nil,
-      logs: [String.t()],
-      result: term()
-    }
+            id: String.t() | nil,
+            type: atom() | nil,
+            status: :pending | :running | :completed | :failed | :cancelled,
+            opts: keyword() | nil,
+            ref: Task.t() | nil,
+            started_at: DateTime.t() | nil,
+            finished_at: DateTime.t() | nil,
+            logs: [String.t()],
+            result: term()
+          }
   end
 
   ## Client API
@@ -79,12 +79,13 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call({:start_task, task_id, task_type, opts}, _from, state) do
     # Start the task under the Task.Supervisor
-    task_ref = Task.Supervisor.async_nolink(
-      EvoDash.TaskSupervisor,
-      __MODULE__,
-      :execute_task,
-      [task_type, opts, task_id]
-    )
+    task_ref =
+      Task.Supervisor.async_nolink(
+        EvoDash.TaskSupervisor,
+        __MODULE__,
+        :execute_task,
+        [task_type, opts, task_id]
+      )
 
     task = %TaskInfo{
       id: task_id,
@@ -104,10 +105,11 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:get_task, task_id}, _from, state) do
-    task = case :ets.lookup(@table_name, task_id) do
-      [{^task_id, task_data}] -> task_data
-      [] -> nil
-    end
+    task =
+      case :ets.lookup(@table_name, task_id) do
+        [{^task_id, task_data}] -> task_data
+        [] -> nil
+      end
 
     {:reply, task, state}
   end
@@ -120,23 +122,24 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:cancel_task, task_id}, _from, state) do
-    result = case :ets.lookup(@table_name, task_id) do
-      [{^task_id, %TaskInfo{status: :running, ref: %Task{pid: pid} = task_ref} = task}] ->
-        if Process.alive?(pid) do
-          Task.shutdown(task_ref, :brutal_kill)
-          updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
-          :ets.insert(@table_name, {task_id, updated})
-          :ok
-        else
+    result =
+      case :ets.lookup(@table_name, task_id) do
+        [{^task_id, %TaskInfo{status: :running, ref: %Task{pid: pid} = task_ref} = task}] ->
+          if Process.alive?(pid) do
+            Task.shutdown(task_ref, :brutal_kill)
+            updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
+            :ets.insert(@table_name, {task_id, updated})
+            :ok
+          else
+            {:error, :not_running}
+          end
+
+        [{^task_id, %TaskInfo{}}] ->
           {:error, :not_running}
-        end
 
-      [{^task_id, %TaskInfo{}}] ->
-        {:error, :not_running}
-
-      [] ->
-        {:error, :not_found}
-    end
+        [] ->
+          {:error, :not_found}
+      end
 
     {:reply, result, state}
   end
@@ -240,20 +243,23 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_info({ref, result}, state) when is_reference(ref) do
     # Find the task with this ref
-    task_id = case :ets.tab2list(@table_name) |> Enum.find(fn {_id, task} ->
-      match?(%TaskInfo{ref: %{ref: ^ref}}, task)
-    end) do
-      {id, _task} -> id
-      nil -> nil
-    end
+    task_id =
+      case :ets.tab2list(@table_name)
+           |> Enum.find(fn {_id, task} ->
+             match?(%TaskInfo{ref: %{ref: ^ref}}, task)
+           end) do
+        {id, _task} -> id
+        nil -> nil
+      end
 
     if task_id do
-      status = case result do
-        {:ok, _} -> :completed
-        {:error, _} -> :failed
-        {:exit, _} -> :failed
-        _ -> :failed
-      end
+      status =
+        case result do
+          {:ok, _} -> :completed
+          {:error, _} -> :failed
+          {:exit, _} -> :failed
+          _ -> :failed
+        end
 
       update_task_status(task_id, status, result)
     end
