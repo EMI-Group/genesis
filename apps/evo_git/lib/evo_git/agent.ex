@@ -29,6 +29,7 @@ defmodule EvoGit.Agent do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
+  alias EvoGit.Agent.Tools.CompleteTask
 
   @type state :: %{context_node: ContextNode.t(), phylo_node: PhyloGraphNode.t()}
 
@@ -134,6 +135,7 @@ defmodule EvoGit.Agent do
 
           _ ->
             Logger.warning("Agent #{inspect(state.agent_id)}: No ETS state found, using defaults")
+
             fallback =
               Process.get(:repo_path) ||
                 Process.get(:evogit_repo_root) ||
@@ -209,15 +211,6 @@ defmodule EvoGit.Agent do
         end
       end
 
-      # Wraps the result with commit information in a structured format
-      defp wrap_result_with_commit(result, commit_sha, tag) do
-        %{
-          result: result,
-          commit_sha: commit_sha,
-          tag: tag
-        }
-      end
-
       # Checks and sends warnings when approaching time/turn limits
       # Warning thresholds: 50%, 80%
       defp check_limit_warnings(state) do
@@ -231,7 +224,9 @@ defmodule EvoGit.Agent do
         last_warned = state.last_warned_time_percent
 
         thresholds = [threshold_a, threshold_b]
-        {should_warn, new_last_warned} = check_thresholds(percentage_used, last_warned, thresholds)
+
+        {should_warn, new_last_warned} =
+          check_thresholds(percentage_used, last_warned, thresholds)
 
         if should_warn do
           time_used_min = Float.round(state.llm_time_ms / 60_000, 1)
@@ -263,7 +258,9 @@ defmodule EvoGit.Agent do
         last_warned = state.last_warned_turns_percent
 
         thresholds = [threshold_a, threshold_b]
-        {should_warn, new_last_warned} = check_thresholds(percentage_used, last_warned, thresholds)
+
+        {should_warn, new_last_warned} =
+          check_thresholds(percentage_used, last_warned, thresholds)
 
         if should_warn do
           warning_msg = """
@@ -432,7 +429,15 @@ defmodule EvoGit.Agent do
         complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
 
         if complete_call do
-          handle_complete_call(complete_call, state)
+          case handle_complete_call(complete_call, state) do
+            {:continue_dirty, new_history} ->
+              # Workspace was dirty - update state history and continue
+              state = %{state | history: new_history}
+              loop(state)
+
+            {:complete, final_result} ->
+              {:complete, final_result}
+          end
         else
           process_regular_tool_calls(tool_calls, state)
         end
@@ -444,6 +449,29 @@ defmodule EvoGit.Agent do
           status: "success"
         })
 
+        # Check if git status validation is enabled (default: true)
+        check_git_status =
+          Map.get(complete_call.arguments, "check_git_status") != false
+
+        if check_git_status do
+          repo_path = Process.get(:repo_path)
+
+          case CompleteTask.check_workspace_dirty(repo_path) do
+            {:dirty, warning_msg} ->
+              new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
+              append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
+
+              {:continue_dirty, new_history}
+
+            {:clean, _} ->
+              do_complete(complete_call, state)
+          end
+        else
+          do_complete(complete_call, state)
+        end
+      end
+
+      defp do_complete(complete_call, state) do
         # Sync the current commit before completing
         commit_sha = sync_and_get_current_commit(state)
 
@@ -451,17 +479,12 @@ defmodule EvoGit.Agent do
           Map.get(complete_call.arguments, "result") ||
             Map.get(complete_call.arguments, :result, "Task finished.")
 
-        tag_name = "subagent_#{state.agent_id}"
-        repo_path = Process.get(:repo_path)
-        Git.tag(repo_path, tag_name, commit_sha)
-
-        # Wrap result with commit information
-        final_result = wrap_result_with_commit(result, commit_sha, tag_name)
+        final_result = CompleteTask.complete(state.agent_id, result, commit_sha)
 
         # Log commit info separately for dashboard querying
         append_history(state.agent_id, "AGENT_COMPLETED", %{
           final_commit: commit_sha,
-          tag: tag_name,
+          tag: final_result.tag,
           result_length: String.length(result)
         })
 
@@ -614,10 +637,11 @@ defmodule EvoGit.Agent do
         results = EvoGit.AgentScheduler.spawn_sub_agents(subagent_specs)
 
         # Get parent's current commit before merge to detect if any changes were made
-        parent_commit = case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
-          {:ok, agent_state} -> agent_state.phylo_node.current_commit
-          _ -> nil
-        end
+        parent_commit =
+          case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
+            {:ok, agent_state} -> agent_state.phylo_node.current_commit
+            _ -> nil
+          end
 
         successful_shas =
           Enum.map(results, fn {:ok, %{commit_sha: sha}} when is_binary(sha) -> sha end)
@@ -755,6 +779,8 @@ defmodule EvoGit.Agent do
       defp format_subagent_result(text) when is_binary(text), do: text
       defp format_subagent_result(other), do: inspect(other)
 
+      # Formats git status --porcelain output for display
+      # Format: "XY filename" where X = staged, Y = unstaged
       # --- Helpers ---
 
       defp build_dynamic_context(state) do
@@ -863,27 +889,8 @@ defmodule EvoGit.Agent do
         end
       end
 
-      defp completion_schema do
-        ReqLLM.tool(
-          name: @complete_tool,
-          description:
-            "Call this tool to submit your final findings. This is the ONLY way to finish.",
-          parameter_schema: %{
-            "type" => "object",
-            "properties" => %{
-              "result" => %{
-                "type" => "string",
-                "description" => "The final result or findings"
-              }
-            },
-            "required" => ["result"]
-          },
-          callback: fn _args -> {:ok, "Task finished"} end
-        )
-      end
-
       def available_tools do
-        EvoGit.Agent.Tools.schemas() ++ subagent_schemas() ++ [completion_schema()]
+        EvoGit.Agent.Tools.schemas() ++ subagent_schemas() ++ [CompleteTask.schema()]
       end
 
       @doc """
