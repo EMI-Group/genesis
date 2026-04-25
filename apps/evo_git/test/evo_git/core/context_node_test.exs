@@ -25,8 +25,8 @@ defmodule EvoGit.Core.ContextNodeTest do
 
     {:ok, hierarchy} = ContextNode.hierarchy_nodes(target_path, tmp_dir)
 
-    # Missing leaf node (file.txt) shouldn't be loaded, meaning length is 3 (., nested, nested/deep)
-    assert length(hierarchy) == 3
+    # The length is 4 (., nested, nested/deep, nested/deep/file.txt)
+    assert length(hierarchy) == 4
   end
 
   test "hierarchy_nodes/2 returns error on absolute path", %{tmp_dir: tmp_dir} do

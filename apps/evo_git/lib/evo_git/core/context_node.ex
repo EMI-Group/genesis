@@ -84,10 +84,7 @@ defmodule EvoGit.Core.ContextNode do
           ["." | Enum.scan(Path.split(relative_path), &Path.join(&2, &1))]
         end
 
-      nodes =
-        paths
-        |> Enum.map(&load(&1, repo_path))
-        |> Enum.reverse()
+      nodes = Enum.map(paths, &load(&1, repo_path))
 
       {:ok, nodes}
     else
