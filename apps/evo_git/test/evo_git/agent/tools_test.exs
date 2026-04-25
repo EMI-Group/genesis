@@ -261,7 +261,7 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "does not exist"
+      assert result =~ "Successfully updated CONTEXT.md"
     end
 
     test "returns error if path is a file", %{tmp_dir: tmp_dir} do
