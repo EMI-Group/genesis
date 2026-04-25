@@ -232,10 +232,27 @@ defmodule EvoGit.Agent do
           time_used_min = Float.round(state.llm_time_ms / 60_000, 1)
           time_limit_min = Float.round(@timeout_ms / 60_000, 1)
 
-          warning_msg = """
-          [NOTICE] You have used approximately #{percentage_used}% of your time budget (#{time_used_min} / #{time_limit_min} minutes).
-          Consider accelerating your work by focusing on the most critical aspects of the task.
-          """
+          warning_msg =
+            if new_last_warned >= 80 do
+              """
+              [URGENT] You have used approximately #{percentage_used}% of your time budget (#{time_used_min} / #{time_limit_min} minutes).
+
+              STOP working on new tasks. Focus on finishing what you have at hand:
+              1. Commit any file changes you have made
+              2. Call complete_task as soon as possible
+
+              In your completion message, explain:
+              - What has been accomplished
+              - What hasn't been done due to the time limit
+
+              You do NOT need to complete everything. A partial completion with clear status is acceptable.
+              """
+            else
+              """
+              [NOTICE] You have used approximately #{percentage_used}% of your time budget (#{time_used_min} / #{time_limit_min} minutes).
+              Consider accelerating your work by focusing on the most critical aspects of the task.
+              """
+            end
 
           stream_event(state.agent_id, "BUDGET_WARNING", %{
             type: :llm_time,
@@ -263,10 +280,27 @@ defmodule EvoGit.Agent do
           check_thresholds(percentage_used, last_warned, thresholds)
 
         if should_warn do
-          warning_msg = """
-          [NOTICE] You have used approximately #{percentage_used}% of your available turns (#{state.turn} / #{@max_turns}).
-          Consider accelerating your work by focusing on the most critical aspects of the task.
-          """
+          warning_msg =
+            if new_last_warned >= 80 do
+              """
+              [URGENT] You have used approximately #{percentage_used}% of your available turns (#{state.turn} / #{@max_turns}).
+
+              STOP working on new tasks. Focus on finishing what you have at hand:
+              1. Commit any file changes you have made
+              2. Call complete_task as soon as possible
+
+              In your completion message, explain:
+              - What has been accomplished
+              - What hasn't been done due to the turn limit
+
+              You do NOT need to complete everything. A partial completion with clear status is acceptable.
+              """
+            else
+              """
+              [NOTICE] You have used approximately #{percentage_used}% of your available turns (#{state.turn} / #{@max_turns}).
+              Consider accelerating your work by focusing on the most critical aspects of the task.
+              """
+            end
 
           stream_event(state.agent_id, "BUDGET_WARNING", %{
             type: :turns,
@@ -336,7 +370,8 @@ defmodule EvoGit.Agent do
 
         warning_msg = """
         You have exceeded the execution limit (#{reason}).
-        You MUST call `#{@complete_tool}` immediately with your best answer. Do not call any other tools.
+        You MUST call `#{@complete_tool}` immediately with your best answer explaining the situation.
+        Do not call any other tools.
         """
 
         new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
