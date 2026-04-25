@@ -37,7 +37,10 @@ defmodule EvoDashWeb.AgentsComponents do
           <!-- Path info -->
           <div class="flex items-center gap-2 mt-2 shrink-0" style={"width: #{@max_width}ch; max-width: 100%;"}>
             <.icon name="hero-folder" class="size-5 text-base-content/50 shrink-0" />
-            <span class="font-semibold text-base-content truncate" title={node.name}>{node.name}</span>
+            <span class="font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
+            <%= if length(node.agents) > 0 do %>
+              <div class="grow border-b-2 border-dotted border-base-300 opacity-50 ml-1 mr-2"></div>
+            <% end %>
           </div>
           
     <!-- Agents Row -->
