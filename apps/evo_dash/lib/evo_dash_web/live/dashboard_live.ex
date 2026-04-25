@@ -15,12 +15,10 @@ defmodule EvoDashWeb.DashboardLive do
         </:subtitle>
         <:actions>
           <a href="/agents" class="btn btn-sm btn-ghost">
-            <.icon name="hero-server" class="size-4" />
-            Agents
+            <.icon name="hero-server" class="size-4" /> Agents
           </a>
           <a href="https://github.com/your-repo/evogit" class="btn btn-sm btn-ghost" target="_blank">
-            <.icon name="hero-document-text" class="size-4" />
-            Docs
+            <.icon name="hero-document-text" class="size-4" /> Docs
           </a>
         </:actions>
       </.header>
@@ -31,16 +29,14 @@ defmodule EvoDashWeb.DashboardLive do
           phx-click="set_tab"
           phx-value-tab="genesis"
         >
-          <.icon name="hero-cube" class="size-4" />
-          Genesis
+          <.icon name="hero-cube" class="size-4" /> Genesis
         </button>
         <button
           class={["tab", @selected_tab == :evolve && "tab-active"]}
           phx-click="set_tab"
           phx-value-tab="evolve"
         >
-          <.icon name="hero-arrow-path" class="size-4" />
-          Evolve
+          <.icon name="hero-arrow-path" class="size-4" /> Evolve
         </button>
       </div>
 
@@ -105,11 +101,12 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
-    selected_tab = case params["tab"] do
-      "evolve" -> :evolve
-      "genesis" -> :genesis
-      _ -> :genesis
-    end
+    selected_tab =
+      case params["tab"] do
+        "evolve" -> :evolve
+        "genesis" -> :genesis
+        _ -> :genesis
+      end
 
     {:noreply, assign(socket, selected_tab: selected_tab)}
   end
@@ -126,7 +123,18 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("genesis_submit", %{"path" => path, "prompt" => prompt, "mode" => mode, "concurrency" => concurrency, "retries" => retries, "agent_max_retries" => agent_max_retries}, socket) do
+  def handle_event(
+        "genesis_submit",
+        %{
+          "path" => path,
+          "prompt" => prompt,
+          "mode" => mode,
+          "concurrency" => concurrency,
+          "retries" => retries,
+          "agent_max_retries" => agent_max_retries
+        },
+        socket
+      ) do
     opts = [
       path: path,
       prompt: prompt,
@@ -154,7 +162,18 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("evolve_submit", %{"path" => path, "objective" => objective, "mode" => mode, "concurrency" => concurrency, "retries" => retries, "agent_max_retries" => agent_max_retries}, socket) do
+  def handle_event(
+        "evolve_submit",
+        %{
+          "path" => path,
+          "objective" => objective,
+          "mode" => mode,
+          "concurrency" => concurrency,
+          "retries" => retries,
+          "agent_max_retries" => agent_max_retries
+        },
+        socket
+      ) do
     opts = [
       path: path,
       objective: objective,
@@ -186,10 +205,12 @@ defmodule EvoDashWeb.DashboardLive do
     case TaskRegistry.cancel_task(task_id) do
       :ok ->
         expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+
         {:noreply,
          socket
          |> assign(:tasks, TaskRegistry.list_tasks())
          |> assign(:expanded_task_ids, expanded)}
+
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to cancel task: #{inspect(reason)}")}
     end
@@ -197,11 +218,12 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("toggle_task_details", %{"task_id" => task_id}, socket) do
-    expanded = if MapSet.member?(socket.assigns.expanded_task_ids, task_id) do
-      MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-    else
-      MapSet.put(socket.assigns.expanded_task_ids, task_id)
-    end
+    expanded =
+      if MapSet.member?(socket.assigns.expanded_task_ids, task_id) do
+        MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+      else
+        MapSet.put(socket.assigns.expanded_task_ids, task_id)
+      end
 
     {:noreply, assign(socket, :expanded_task_ids, expanded)}
   end

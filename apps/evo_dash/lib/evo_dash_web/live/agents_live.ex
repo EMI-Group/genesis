@@ -11,17 +11,21 @@ defmodule EvoDashWeb.AgentsLive do
       :timer.send_interval(1000, self(), :refresh_agents)
     end
 
+    agents = load_agents()
+
     socket =
       socket
       |> assign(:selected_agent_id, nil)
-      |> assign(:agents, load_agents())
+      |> assign(:agents, agents)
+      |> assign(:path_tree, build_path_tree(agents))
 
     {:ok, socket}
   end
 
   @impl true
   def handle_info(:refresh_agents, socket) do
-    {:noreply, assign(socket, :agents, load_agents())}
+    agents = load_agents()
+    {:noreply, socket |> assign(:agents, agents) |> assign(:path_tree, build_path_tree(agents))}
   end
 
   @impl true
@@ -35,6 +39,43 @@ defmodule EvoDashWeb.AgentsLive do
     {:noreply, assign(socket, :selected_agent_id, nil)}
   end
 
+  defp build_path_tree(agents) do
+    tree =
+      Enum.reduce(agents, %{}, fn agent, acc ->
+        path = agent.context_path || "/"
+        segments = if path == "/", do: ["/"], else: String.split(path, "/", trim: true)
+        insert_into_tree(acc, segments, [], agent)
+      end)
+
+    sort_tree(tree)
+  end
+
+  defp insert_into_tree(tree, [], _acc_segments, _agent), do: tree
+
+  defp insert_into_tree(tree, [segment | rest], acc_segments, agent) do
+    current_segments = acc_segments ++ [segment]
+    current_path = if segment == "/", do: "/", else: Enum.join(current_segments, "/")
+
+    node = Map.get(tree, segment, %{name: segment, path: current_path, agents: [], children: %{}})
+
+    if rest == [] do
+      node = %{node | agents: [agent | node.agents]}
+      Map.put(tree, segment, node)
+    else
+      node = %{node | children: insert_into_tree(node.children, rest, current_segments, agent)}
+      Map.put(tree, segment, node)
+    end
+  end
+
+  defp sort_tree(tree) do
+    tree
+    |> Map.values()
+    |> Enum.sort_by(& &1.name)
+    |> Enum.map(fn node ->
+      %{node | children: sort_tree(node.children), agents: Enum.sort_by(node.agents, & &1.id)}
+    end)
+  end
+
   defp load_agents do
     sched_metas =
       case :ets.whereis(@sched_meta_table) do
@@ -44,7 +85,9 @@ defmodule EvoDashWeb.AgentsLive do
 
     agent_states =
       case :ets.whereis(@agent_state_table) do
-        :undefined -> %{}
+        :undefined ->
+          %{}
+
         _ ->
           :ets.tab2list(@agent_state_table)
           |> Enum.into(%{})
@@ -66,7 +109,8 @@ defmodule EvoDashWeb.AgentsLive do
         agent_module: meta.spec.agent_module,
         objective: meta.spec.objective,
         context_path: agent_state && agent_state.context_node && agent_state.context_node.path,
-        current_commit: agent_state && agent_state.phylo_node && agent_state.phylo_node.current_commit,
+        current_commit:
+          agent_state && agent_state.phylo_node && agent_state.phylo_node.current_commit,
         base_commit: meta.spec.phylo_node.base_commit,
         children: children,
         has_children: length(children) > 0,

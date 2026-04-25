@@ -110,8 +110,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
         <div class="card-actions justify-end mt-4">
           <button type="submit" class="btn btn-primary">
-            <.icon name="hero-rocket-launch" class="size-4" />
-            Start Genesis
+            <.icon name="hero-rocket-launch" class="size-4" /> Start Genesis
           </button>
         </div>
       </div>
@@ -219,8 +218,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
         <div class="card-actions justify-end mt-4">
           <button type="submit" class="btn btn-primary">
-            <.icon name="hero-arrow-path" class="size-4" />
-            Start Evolution
+            <.icon name="hero-arrow-path" class="size-4" /> Start Evolution
           </button>
         </div>
       </div>
@@ -244,19 +242,25 @@ defmodule EvoDashWeb.DashboardComponents do
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <h3 class="font-semibold capitalize"><%= @task.type %></h3>
-                <span class={status_badge(@task.status)}><%= @task.status %></span>
+                <h3 class="font-semibold capitalize">{@task.type}</h3>
+                <span class={status_badge(@task.status)}>{@task.status}</span>
               </div>
               <p class="text-xs text-base-content/60 mt-1">
-                ID: <code class="bg-base-200 px-1 rounded"><%= @task.id %></code>
+                ID: <code class="bg-base-200 px-1 rounded">{@task.id}</code>
               </p>
               <p class="text-sm mt-2 truncate">
-                <%= task_description(@task) %>
+                {task_description(@task)}
               </p>
               <div class="flex items-center gap-4 mt-2 text-xs text-base-content/60">
-                <span><.icon name="hero-clock" class="size-3 inline" /> Started: <%= format_datetime(@task.started_at) %></span>
+                <span>
+                  <.icon name="hero-clock" class="size-3 inline" />
+                  Started: {format_datetime(@task.started_at)}
+                </span>
                 <%= if Map.get(@task, :finished_at) do %>
-                  <span><.icon name="hero-check-circle" class="size-3 inline" /> Finished: <%= format_datetime(@task.finished_at) %></span>
+                  <span>
+                    <.icon name="hero-check-circle" class="size-3 inline" />
+                    Finished: {format_datetime(@task.finished_at)}
+                  </span>
                 <% end %>
               </div>
             </div>
@@ -269,8 +273,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 phx-value-task_id={@task.id}
                 phx-confirm="Are you sure you want to cancel this task?"
               >
-                <.icon name="hero-x-mark" class="size-4" />
-                Cancel
+                <.icon name="hero-x-mark" class="size-4" /> Cancel
               </button>
             <% end %>
             <button
@@ -305,12 +308,22 @@ defmodule EvoDashWeb.DashboardComponents do
                 <h4 class="text-sm font-semibold mb-2">Logs</h4>
                 <div class="bg-base-200 p-2 rounded max-h-48 overflow-y-auto text-xs font-mono space-y-1">
                   <%= for log <- Enum.reverse(@task.logs) do %>
-                    <div class={["log-entry", log.level == :error && "text-error", log.level == :warn && "text-warning"]}>
-                      <span class="text-base-content/40">[<%= format_datetime(log.timestamp, :time) %>]</span>
-                      <span class={["font-semibold", log.level == :error && "text-error", log.level == :warn && "text-warning"]}>
-                        <%= String.upcase(to_string(log.level)) %>:
+                    <div class={[
+                      "log-entry",
+                      log.level == :error && "text-error",
+                      log.level == :warn && "text-warning"
+                    ]}>
+                      <span class="text-base-content/40">
+                        [{format_datetime(log.timestamp, :time)}]
                       </span>
-                      <%= log.message %>
+                      <span class={[
+                        "font-semibold",
+                        log.level == :error && "text-error",
+                        log.level == :warn && "text-warning"
+                      ]}>
+                        {String.upcase(to_string(log.level))}:
+                      </span>
+                      {log.message}
                     </div>
                   <% end %>
                 </div>
@@ -343,5 +356,7 @@ defmodule EvoDashWeb.DashboardComponents do
   defp task_description(_), do: ""
 
   defp format_datetime(datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
-  defp format_datetime(datetime, :time), do: datetime.time |> Time.to_string() |> String.slice(0..7)
+
+  defp format_datetime(datetime, :time),
+    do: datetime.time |> Time.to_string() |> String.slice(0..7)
 end

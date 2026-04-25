@@ -108,6 +108,7 @@ defmodule EvoDash.TaskRegistry do
       [{^task_id, task_data}] -> task_data
       [] -> nil
     end
+
     {:reply, task, state}
   end
 
@@ -129,11 +130,14 @@ defmodule EvoDash.TaskRegistry do
         else
           {:error, :not_running}
         end
+
       [{^task_id, %TaskInfo{}}] ->
         {:error, :not_running}
+
       [] ->
         {:error, :not_found}
     end
+
     {:reply, result, state}
   end
 
@@ -143,8 +147,11 @@ defmodule EvoDash.TaskRegistry do
       [{^task_id, %TaskInfo{} = task}] ->
         updated = %{task | status: status, result: result, finished_at: DateTime.utc_now()}
         :ets.insert(@table_name, {task_id, updated})
-      _ -> :ok
+
+      _ ->
+        :ok
     end
+
     {:noreply, state}
   end
 
@@ -154,8 +161,11 @@ defmodule EvoDash.TaskRegistry do
       [{^task_id, %TaskInfo{logs: logs} = task}] ->
         updated = %{task | logs: [log_entry | logs]}
         :ets.insert(@table_name, {task_id, updated})
-      _ -> :ok
+
+      _ ->
+        :ok
     end
+
     {:noreply, state}
   end
 
@@ -244,6 +254,7 @@ defmodule EvoDash.TaskRegistry do
         {:exit, _} -> :failed
         _ -> :failed
       end
+
       update_task_status(task_id, status, result)
     end
 
