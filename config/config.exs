@@ -58,6 +58,13 @@ config :evo_git,
   max_agent_depth: 5,
   llm_model: "zai_coding_plan:glm-5"
 
+# config/config.exs
+config :req_llm,
+  # HTTP timeouts (all values in milliseconds)
+  receive_timeout: 300_000,          # Default response timeout
+  metadata_timeout: 300_000,         # Streaming metadata collection timeout
+  thinking_timeout: 600_000          # Extended timeout for reasoning models
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
