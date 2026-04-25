@@ -618,8 +618,13 @@ defmodule EvoGit.Agent do
               case Task.yield(task, timeout) || Task.shutdown(task) do
                 {:ok, result} ->
                   case result do
-                    {:error, reason} -> "Error: #{inspect(reason)}"
-                    result -> truncate_large_output(result, name, call.arguments)
+                    {:error, reason} ->
+                      "Error: #{inspect(reason)}"
+
+                    result ->
+                      result
+                      |> ensure_utf8()
+                      |> truncate_large_output(name, call.arguments)
                   end
 
                 {:exit, reason} ->
@@ -643,6 +648,24 @@ defmodule EvoGit.Agent do
 
         results
       end
+
+      defp ensure_utf8(result) when is_binary(result) do
+        if String.valid?(result) do
+          result
+        else
+          case :unicode.characters_to_binary(result, :utf8, :utf8) do
+            {:error, valid, _} ->
+              valid <> "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
+
+            {:incomplete, valid, _} ->
+              valid <> "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
+
+            valid when is_binary(valid) ->
+              valid
+          end
+        end
+      end
+      defp ensure_utf8(result), do: result
 
       # Truncates large tool outputs to prevent history bloat
       defp truncate_large_output(result, name, args) when is_binary(result) do
