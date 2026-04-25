@@ -51,9 +51,9 @@ defmodule EvoGit.Runtime.Genesis do
   end
 
   # Mode B: New Codebase
-  # * Planning: An agent interprets the user's prompt at the root node and drafts the initial architectural plan in the root CONTEXT.md.
-  # * Recursive Realization: For each planned submodule, spawn subagents to initialize the corresponding child nodes and populate their CONTEXT.md files.
-  # * Fixed Point Convergence: Identical to Mode A, utilizing the same Convergence Circuit Breaker to ensure the generated structure finalizes efficiently.
+  # * Architecture & Skeleton: An agent interprets the user's prompt at the root node and drafts the architectural plan in the root CONTEXT.md. It creates the directory tree, optionally empty code files, and recursively spawns subagents to do this for child directories.
+  # * Implementation: After the entire skeleton is established, the agent orchestrates the implementation of the code by spawning generalist subagents.
+  # * Fixed Point Convergence: Identical to Mode A, utilizing the same Convergence Circuit Breaker to ensure the generated structure and code finalize efficiently.
   defp run_new_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode B (New Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
