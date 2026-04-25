@@ -1,81 +1,93 @@
 defmodule EvoDashWeb.AgentsComponents do
   use EvoDashWeb, :html
 
-  attr :agents, :list, required: true
-  attr :parent_id, :any, default: nil
+  attr :nodes, :list, required: true
   attr :depth, :integer, default: 0
   attr :selected_id, :any, default: nil
 
-  def agent_tree(assigns) do
+  def path_tree(assigns) do
     ~H"""
-    <% filtered_agents = Enum.filter(@agents, &(&1.parent_id == @parent_id)) %>
-    <% total_agents = length(filtered_agents) %>
-    <%= for {agent, index} <- Enum.with_index(filtered_agents) do %>
-      <% is_last = index == total_agents - 1 %>
+    <% total_nodes = length(@nodes) %>
+    <%= for {node, index} <- Enum.with_index(@nodes) do %>
+      <% is_last = index == total_nodes - 1 %>
       <div class={["relative", @depth > 0 && "ml-6"]}>
         <!-- Tree connector lines for nested items -->
         <%= if @depth > 0 do %>
           <!-- Vertical line -->
-          <div class={["absolute -left-3 border-l-2 border-base-300 z-0", is_last && "top-0 h-8", !is_last && "top-0 bottom-0"]}></div>
+          <div class={[
+            "absolute -left-3 border-l-2 border-base-300 z-0",
+            is_last && "top-0 h-6",
+            !is_last && "top-0 bottom-0"
+          ]}>
+          </div>
           <!-- Horizontal line -->
-          <div class="absolute -left-3 top-8 w-3 border-t-2 border-base-300 z-0"></div>
+          <div class="absolute -left-3 top-6 w-3 border-t-2 border-base-300 z-0"></div>
         <% end %>
-
-        <!-- Agent row -->
-        <div
-          class={[
-            "relative z-10 flex items-center gap-3 p-3 rounded-lg border-2 transition-all cursor-pointer hover:bg-base-200 my-1",
-            agent_status_bg(agent.status),
-            agent_status_border(agent.status),
-            @selected_id == agent.id && "ring-2 ring-primary ring-offset-1"
-          ]}
-          phx-click="select_agent"
-          phx-value-id={agent.id}
-        >
-          <!-- Expand/collapse icon if has children -->
-          <div class="w-6 flex items-center justify-center shrink-0">
-            <%= if agent.has_children do %>
-              <.icon name="hero-chevron-right" class="size-4 text-base-content/50" />
-            <% else %>
-              <span class="w-4 h-4"></span>
-            <% end %>
+        
+    <!-- Path and Agents Row -->
+        <div class="relative z-10 flex flex-col sm:flex-row sm:items-start gap-4 py-2">
+          <!-- Path info -->
+          <div class="flex items-center gap-2 mt-2 shrink-0">
+            <.icon name="hero-folder" class="size-5 text-base-content/50" />
+            <span class="font-semibold text-base-content">{node.name}</span>
           </div>
+          
+    <!-- Agents Row -->
+          <%= if length(node.agents) > 0 do %>
+            <div class="flex flex-wrap gap-2 flex-1 mt-1 sm:mt-0">
+              <%= for agent <- node.agents do %>
+                <div
+                  class={[
+                    "flex flex-col gap-1 p-2 rounded-lg border-2 shadow-sm transition-all cursor-pointer hover:bg-base-200 min-w-[140px]",
+                    agent_status_bg(agent.status),
+                    agent_status_border(agent.status),
+                    @selected_id == agent.id && "ring-2 ring-primary ring-offset-1"
+                  ]}
+                  phx-click="select_agent"
+                  phx-value-id={agent.id}
+                >
+                  <div class="flex items-center gap-2 justify-between">
+                    <div class="flex items-center gap-1.5">
+                      <.icon
+                        name={agent_status_icon(agent.status)}
+                        class={"size-4 #{agent_status_color(agent.status)}"}
+                      />
+                      <span class="font-bold text-sm">#{agent.id}</span>
+                    </div>
+                    <span class={[
+                      "text-[10px] px-1.5 py-0.5 rounded uppercase font-bold",
+                      agent_status_color(agent.status),
+                      agent_status_bg(agent.status)
+                    ]}>
+                      {agent.status}
+                    </span>
+                  </div>
 
-          <!-- Status icon -->
-          <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-base-200">
-            <.icon name={agent_status_icon(agent.status)} class={"size-5 #{agent_status_color(agent.status)}"} />
-          </div>
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="text-xs text-base-content/70 truncate">
+                      {format_module_name(agent.agent_module)}
+                    </div>
+                    <%= if agent.retries > 0 do %>
+                      <span class="badge badge-warning badge-xs">Retry {agent.retries}</span>
+                    <% end %>
+                  </div>
 
-          <!-- Agent info -->
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-semibold text-base">#<%= agent.id %></span>
-              <span class={["text-xs px-2 py-0.5 rounded-full font-medium", agent_status_color(agent.status), agent_status_bg(agent.status)]}>
-                <%= String.upcase(to_string(agent.status)) %>
-              </span>
-              <%= if agent.retries > 0 do %>
-                <span class="badge badge-warning badge-xs">Retry <%= agent.retries %></span>
+                  <%= if agent.has_children do %>
+                    <div class="text-[10px] text-base-content/50">
+                      {length(agent.children)} child{if length(agent.children) != 1, do: "ren"}
+                    </div>
+                  <% end %>
+                </div>
               <% end %>
-            </div>
-            <div class="text-sm text-base-content/70 truncate mt-1">
-              <%= format_module_name(agent.agent_module) %>
-            </div>
-          </div>
-
-          <!-- Subagent count badge -->
-          <%= if agent.has_children do %>
-            <div class="badge badge-ghost badge-sm shrink-0">
-              <%= length(agent.children) %> child<%= if length(agent.children) != 1, do: "ren" %>
             </div>
           <% end %>
         </div>
-
-        <!-- Children container with proper spacing -->
-        <%= if agent.has_children do %>
+        
+    <!-- Children container with proper spacing -->
+        <%= if length(node.children) > 0 do %>
           <div class="mt-1 space-y-1 relative">
-            <EvoDashWeb.AgentsComponents.agent_tree
-              agents={@agents}
-              parent_id={agent.id}
+            <EvoDashWeb.AgentsComponents.path_tree
+              nodes={node.children}
               depth={@depth + 1}
               selected_id={@selected_id}
             />
