@@ -16,6 +16,7 @@ defmodule EvoDashWeb.AgentsLive do
     socket =
       socket
       |> assign(:selected_agent_id, nil)
+      |> assign(:selected_history_entry, nil)
       |> assign(:agents, agents)
       |> assign(:path_tree, build_path_tree(agents))
 
@@ -36,7 +37,22 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   def handle_event("close_details", _params, socket) do
-    {:noreply, assign(socket, :selected_agent_id, nil)}
+    {:noreply, socket |> assign(:selected_agent_id, nil) |> assign(:selected_history_entry, nil)}
+  end
+
+  @impl true
+  def handle_event("view_full_message", %{"index" => index}, socket) do
+    index = String.to_integer(index)
+
+    agent = Enum.find(socket.assigns.agents, &(&1.id == socket.assigns.selected_agent_id))
+    entry = Enum.at(agent.history || [], index)
+
+    {:noreply, assign(socket, :selected_history_entry, entry)}
+  end
+
+  @impl true
+  def handle_event("close_message_modal", _params, socket) do
+    {:noreply, assign(socket, :selected_history_entry, nil)}
   end
 
   defp build_path_tree(agents) do
