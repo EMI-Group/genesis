@@ -4,7 +4,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
   plus the ability to delegate to sub-investigators and update directory context files.
   """
   use EvoGit.Agent
-  alias EvoGit.Agent.Tools.{FileRead, Ripgrep, Glob, ListDirectory, Context, WebSearch, WebRead}
+  alias EvoGit.Agent.Tools.{FileRead, Ripgrep, Glob, ListDirectory, Context, WebSearch, WebRead, CompleteTask}
 
   def subagent_tool_name, do: "subagent_codebase_investigator"
 
@@ -23,9 +23,8 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
       Context.read_schema(),
       Context.write_schema(),
       WebSearch.schema(),
-      WebRead.schema(),
-      completion_schema()
-    ] ++ subagent_schemas()
+      WebRead.schema()
+    ] ++ subagent_schemas() ++ [CompleteTask.schema()]
   end
 
   def subagent_modules, do: [__MODULE__]
