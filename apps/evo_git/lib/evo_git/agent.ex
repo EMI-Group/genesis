@@ -455,6 +455,10 @@ defmodule EvoGit.Agent do
             state = %{state | history: state.history ++ tool_responses}
             loop(state)
 
+          {:continue_dirty, new_history} ->
+            state = %{state | history: new_history}
+            loop(state)
+
           {:error, :protocol_violation} ->
             if state.in_grace_period do
               {:error, :recovery_failed}
@@ -472,9 +476,7 @@ defmodule EvoGit.Agent do
         if complete_call do
           case handle_complete_call(complete_call, state) do
             {:continue_dirty, new_history} ->
-              # Workspace was dirty - update state history and continue
-              state = %{state | history: new_history}
-              loop(state)
+              {:continue_dirty, new_history}
 
             {:complete, final_result} ->
               {:complete, final_result}
