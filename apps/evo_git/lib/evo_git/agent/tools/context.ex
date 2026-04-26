@@ -79,9 +79,17 @@ defmodule EvoGit.Agent.Tools.Context do
   Executes the context_read tool.
   """
   def execute_read(args, repo_path, _repo_root) do
-    dir_path = Map.fetch!(args, "dir_path")
-    full_dir = Shared.expand_path(dir_path, repo_path)
+    case Shared.fetch_string_arg(args, "dir_path") do
+      {:ok, dir_path} ->
+        full_dir = Shared.expand_path(dir_path, repo_path)
+        do_context_read(full_dir, dir_path)
 
+      {:error, message} ->
+        message
+    end
+  end
+
+  defp do_context_read(full_dir, dir_path) do
     cond do
       not File.exists?(full_dir) ->
         "Error: directory '#{dir_path}' does not exist"
@@ -104,59 +112,73 @@ defmodule EvoGit.Agent.Tools.Context do
   Executes the context_write tool.
   """
   def execute_write(args, repo_path, repo_root) do
-    dir_path = Map.fetch!(args, "dir_path")
-    content = Map.fetch!(args, "content")
-    commit = Map.get(args, "commit", true)
-    full_dir = Shared.expand_path(dir_path, repo_path)
-
-    if not File.exists?(full_dir) do
-      File.mkdir_p!(full_dir)
+    with {:ok, dir_path} <- Shared.fetch_string_arg(args, "dir_path"),
+         {:ok, content} <- Shared.fetch_string_arg(args, "content"),
+         {:ok, commit} <- validate_commit(Map.get(args, "commit", true)),
+         full_dir = Shared.expand_path(dir_path, repo_path) do
+      do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root)
     end
+  end
 
-    cond do
-      not File.dir?(full_dir) ->
-        "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
+  defp validate_commit(value) when is_boolean(value), do: {:ok, value}
 
-      true ->
-        context_path = Path.join(full_dir, "CONTEXT.md")
+  defp validate_commit(value),
+    do: {:error, "Argument 'commit' must be a boolean, got: #{inspect(value)}"}
 
-        case File.write(context_path, content) do
-          :ok ->
-            result_msg = "Successfully updated CONTEXT.md for directory '#{dir_path}'"
+  defp do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root) do
+    case File.mkdir_p(full_dir) do
+      :ok ->
+        cond do
+          not File.dir?(full_dir) ->
+            "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
 
-            if commit do
-              relative_path = Path.join(dir_path, "CONTEXT.md")
+          true ->
+            context_path = Path.join(full_dir, "CONTEXT.md")
 
-              systemd_add_args =
-                EvoGit.sandbox_args(repo_path, "git", ["add", relative_path], repo_root)
+            case File.write(context_path, content) do
+              :ok ->
+                result_msg = "Successfully updated CONTEXT.md for directory '#{dir_path}'"
 
-              systemd_commit_args =
-                EvoGit.sandbox_args(
-                  repo_path,
-                  "git",
-                  [
-                    "commit",
-                    "-m",
-                    "Update CONTEXT.md for #{dir_path}"
-                  ],
-                  repo_root
-                )
+                if commit do
+                  relative_path = Path.join(dir_path, "CONTEXT.md")
 
-              add_output =
-                elem(System.cmd("systemd-run", systemd_add_args, stderr_to_stdout: true), 0)
+                  systemd_add_args =
+                    EvoGit.sandbox_args(repo_path, "git", ["add", relative_path], repo_root)
 
-              commit_output =
-                elem(System.cmd("systemd-run", systemd_commit_args, stderr_to_stdout: true), 0)
+                  systemd_commit_args =
+                    EvoGit.sandbox_args(
+                      repo_path,
+                      "git",
+                      [
+                        "commit",
+                        "-m",
+                        "Update CONTEXT.md for #{dir_path}"
+                      ],
+                      repo_root
+                    )
 
-              result_msg <>
-                "\n\nCommitted:\n#{add_output}#{commit_output}"
-            else
-              result_msg
+                  add_output =
+                    elem(System.cmd("systemd-run", systemd_add_args, stderr_to_stdout: true), 0)
+
+                  commit_output =
+                    elem(
+                      System.cmd("systemd-run", systemd_commit_args, stderr_to_stdout: true),
+                      0
+                    )
+
+                  result_msg <>
+                    "\n\nCommitted:\n#{add_output}#{commit_output}"
+                else
+                  result_msg
+                end
+
+              {:error, reason} ->
+                "Error writing CONTEXT.md: #{:file.format_error(reason)}"
             end
-
-          {:error, reason} ->
-            "Error writing CONTEXT.md: #{:file.format_error(reason)}"
         end
+
+      {:error, reason} ->
+        "Error creating directory '#{dir_path}': #{:file.format_error(reason)}"
     end
   end
 end

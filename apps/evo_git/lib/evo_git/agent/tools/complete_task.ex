@@ -19,7 +19,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   def schema do
     ReqLLM.tool(
       name: "complete_task",
-      description: "Call this tool to submit your final findings. This is the ONLY way to finish.",
+      description:
+        "Call this tool to submit your final findings. This is the ONLY way to finish.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -50,6 +51,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     case Git.status(repo_path) do
       {:ok, status_output} when is_binary(status_output) and status_output != "" ->
         formatted_status = format_git_status_porcelain(status_output)
+
         warning_msg = """
         [NOTICE] The workspace has uncommitted changes.
         Please commit the necessary files before calling complete_task.
@@ -59,6 +61,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
 
         After committing the files you want to keep, call complete_task again with check_git_status: false to skip the git status check.
         """
+
         {:dirty, warning_msg}
 
       _ ->

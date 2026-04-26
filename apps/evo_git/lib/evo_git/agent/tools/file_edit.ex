@@ -48,11 +48,21 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   Executes the file_edit tool.
   """
   def execute(args, repo_path, _repo_root) do
-    file_path = Map.fetch!(args, "file_path") |> Shared.expand_path(repo_path)
-    old_string = Map.fetch!(args, "old_string")
-    new_string = Map.fetch!(args, "new_string")
-    replace_all = Map.get(args, "replace_all", false)
+    with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),
+         {:ok, old_string} <- Shared.fetch_string_arg(args, "old_string"),
+         {:ok, new_string} <- Shared.fetch_string_arg(args, "new_string"),
+         {:ok, replace_all} <- validate_replace_all(Map.get(args, "replace_all", false)),
+         expanded_path = Shared.expand_path(file_path, repo_path) do
+      do_edit(expanded_path, old_string, new_string, replace_all)
+    end
+  end
 
+  defp validate_replace_all(value) when is_boolean(value), do: {:ok, value}
+
+  defp validate_replace_all(value),
+    do: {:error, "Argument 'replace_all' must be a boolean, got: #{inspect(value)}"}
+
+  defp do_edit(file_path, old_string, new_string, replace_all) do
     case File.read(file_path) do
       {:ok, content} ->
         actual_old = Shared.find_actual_string(content, old_string)

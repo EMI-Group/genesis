@@ -4,6 +4,8 @@ defmodule EvoGit.Agent.Tools.WebRead do
   Note: Z.AI is a Chinese AI service provider.
   """
 
+  alias EvoGit.Agent.Tools.Shared
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -51,12 +53,28 @@ defmodule EvoGit.Agent.Tools.WebRead do
   Executes the web_read tool.
   """
   def execute(args, _repo_path, _repo_root) do
-    url = Map.fetch!(args, "url")
-    timeout = Map.get(args, "timeout", 20)
-    no_cache = Map.get(args, "no_cache", false)
-    return_format = Map.get(args, "return_format", "markdown")
-    retain_images = Map.get(args, "retain_images", true)
+    with {:ok, url} <- Shared.fetch_string_arg(args, "url"),
+         {:ok, timeout} <- validate_timeout(Map.get(args, "timeout", 20)),
+         {:ok, no_cache} <- validate_boolean(Map.get(args, "no_cache", false), "no_cache"),
+         {:ok, return_format} <-
+           Shared.fetch_optional_string_arg(args, "return_format", "markdown"),
+         {:ok, retain_images} <-
+           validate_boolean(Map.get(args, "retain_images", true), "retain_images") do
+      do_web_read(url, timeout, no_cache, return_format, retain_images)
+    end
+  end
 
+  defp validate_timeout(value) when is_integer(value) and value >= 1, do: {:ok, value}
+
+  defp validate_timeout(value),
+    do: {:error, "Argument 'timeout' must be a positive integer, got: #{inspect(value)}"}
+
+  defp validate_boolean(value, _name) when is_boolean(value), do: {:ok, value}
+
+  defp validate_boolean(value, name),
+    do: {:error, "Argument '#{name}' must be a boolean, got: #{inspect(value)}"}
+
+  defp do_web_read(url, timeout, no_cache, return_format, retain_images) do
     api_key = System.get_env("ZAI_API_KEY")
 
     if is_nil(api_key) do

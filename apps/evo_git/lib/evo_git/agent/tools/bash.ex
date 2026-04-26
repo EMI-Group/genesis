@@ -3,6 +3,8 @@ defmodule EvoGit.Agent.Tools.Bash do
   Tool for executing bash commands.
   """
 
+  alias EvoGit.Agent.Tools.Shared
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -49,7 +51,16 @@ defmodule EvoGit.Agent.Tools.Bash do
   Executes the bash tool.
   """
   def execute(args, repo_path, repo_root) do
-    command = Map.fetch!(args, "command")
+    case Shared.fetch_string_arg(args, "command") do
+      {:ok, command} ->
+        do_execute(command, repo_path, repo_root)
+
+      {:error, message} ->
+        message
+    end
+  end
+
+  defp do_execute(command, repo_path, repo_root) do
     systemd_args = EvoGit.sandbox_args(repo_path, "bash", ["-c", command], repo_root)
 
     {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)

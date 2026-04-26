@@ -4,6 +4,88 @@ defmodule EvoGit.Agent.Tools.Shared do
   """
 
   @doc """
+  Safely fetches a required string argument from the args map.
+  Returns {:ok, value} or {:error, message} with a helpful error message.
+  """
+  def fetch_string_arg(args, key) when is_map(args) do
+    case Map.fetch(args, key) do
+      {:ok, value} when is_binary(value) ->
+        {:ok, value}
+
+      {:ok, value} ->
+        case to_string_binary(value) do
+          {:ok, binary} -> {:ok, binary}
+          :error -> {:error, "Argument '#{key}' must be a string, got: #{inspect(value)}"}
+        end
+
+      :error ->
+        {:error, "Missing required argument '#{key}'. Please provide a valid value."}
+    end
+  end
+
+  def fetch_string_arg(_args, _key), do: {:error, "Arguments must be a map/object"}
+
+  @doc """
+  Safely fetches a required array argument from the args map.
+  Returns {:ok, value} or {:error, message} with a helpful error message.
+  """
+  def fetch_array_arg(args, key) when is_map(args) do
+    case Map.fetch(args, key) do
+      {:ok, value} when is_list(value) ->
+        validate_string_array(value)
+
+      {:ok, value} ->
+        {:error, "Argument '#{key}' must be an array, got: #{inspect(value)}"}
+
+      :error ->
+        {:error, "Missing required argument '#{key}'. Please provide a valid array."}
+    end
+  end
+
+  def fetch_array_arg(_args, _key), do: {:error, "Arguments must be a map/object"}
+
+  @doc """
+  Safely fetches an optional string argument from the args map.
+  Returns {:ok, value} or {:ok, default} if not present.
+  """
+  def fetch_optional_string_arg(args, key, default \\ nil) when is_map(args) do
+    if Map.has_key?(args, key) do
+      fetch_string_arg(args, key)
+    else
+      {:ok, default}
+    end
+  end
+
+  @doc """
+  Wraps execution with argument validation. Returns error message on failure.
+  """
+  def with_valid_args(args, required_keys, fun) when is_list(required_keys) do
+    Enum.reduce_while(required_keys, {:ok, %{}}, fn key_spec, {:ok, acc} ->
+      {key, type} = parse_key_spec(key_spec)
+
+      result =
+        case type do
+          :string -> fetch_string_arg(args, key)
+          :array -> fetch_array_arg(args, key)
+        end
+
+      case result do
+        {:ok, value} -> {:cont, {:ok, Map.put(acc, key, value)}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, fetched} -> fun.(fetched)
+      {:error, message} -> message
+    end
+  end
+
+  defp parse_key_spec(key) when is_atom(key), do: {key, :string}
+  defp parse_key_spec({key, :string}), do: {key, :string}
+  defp parse_key_spec({key, :array}), do: {key, :array}
+  defp parse_key_spec(key) when is_binary(key), do: {key, :string}
+
+  @doc """
   Validates and sanitizes an array argument to ensure all elements are binaries.
   Returns {:ok, sanitized_list} or :error with a descriptive message.
   """
