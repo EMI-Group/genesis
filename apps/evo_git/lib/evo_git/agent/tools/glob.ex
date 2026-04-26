@@ -3,6 +3,8 @@ defmodule EvoGit.Agent.Tools.Glob do
   Tool for file pattern matching using glob patterns.
   """
 
+  alias EvoGit.Agent.Tools.Shared
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -45,10 +47,21 @@ defmodule EvoGit.Agent.Tools.Glob do
   Executes the glob tool.
   """
   def execute(args, repo_path, _repo_root) do
-    pattern = Map.fetch!(args, "pattern")
-    search_path = Map.get(args, "path", repo_path) |> Path.expand(repo_path)
-    max_files = Map.get(args, "max_files", 100)
+    with {:ok, pattern} <- Shared.fetch_string_arg(args, "pattern"),
+         {:ok, max_files} <- validate_max_files(Map.get(args, "max_files", 100)),
+         path_value = Map.get(args, "path"),
+         search_path =
+           if(is_binary(path_value), do: Path.expand(path_value, repo_path), else: repo_path) do
+      do_glob(pattern, search_path, max_files)
+    end
+  end
 
+  defp validate_max_files(value) when is_integer(value) and value >= 1, do: {:ok, value}
+
+  defp validate_max_files(value),
+    do: {:error, "Argument 'max_files' must be a positive integer, got: #{inspect(value)}"}
+
+  defp do_glob(pattern, search_path, max_files) do
     full_pattern = Path.join(search_path, pattern)
 
     case Path.wildcard(full_pattern, match_dot: true) do

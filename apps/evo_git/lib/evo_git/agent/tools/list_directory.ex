@@ -3,6 +3,8 @@ defmodule EvoGit.Agent.Tools.ListDirectory do
   Tool for listing directory contents.
   """
 
+  alias EvoGit.Agent.Tools.Shared
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -29,12 +31,17 @@ defmodule EvoGit.Agent.Tools.ListDirectory do
   Executes the list_directory tool.
   """
   def execute(args, repo_path, _repo_root) do
-    dir_path = Map.fetch!(args, "dir_path")
-    full_path = Path.expand(dir_path, repo_path)
+    case Shared.fetch_string_arg(args, "dir_path") do
+      {:ok, dir_path} ->
+        full_path = Path.expand(dir_path, repo_path)
 
-    case File.ls(full_path) do
-      {:ok, files} -> Enum.join(files, "\n")
-      {:error, reason} -> "Error listing directory #{dir_path}: #{:file.format_error(reason)}"
+        case File.ls(full_path) do
+          {:ok, files} -> Enum.join(files, "\n")
+          {:error, reason} -> "Error listing directory #{dir_path}: #{:file.format_error(reason)}"
+        end
+
+      {:error, message} ->
+        message
     end
   end
 end

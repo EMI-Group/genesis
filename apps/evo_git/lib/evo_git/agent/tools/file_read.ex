@@ -51,13 +51,24 @@ defmodule EvoGit.Agent.Tools.FileRead do
   Executes the read_file tool.
   """
   def execute(args, repo_path, _repo_root) do
-    file_path = Map.fetch!(args, "file_path") |> Shared.expand_path(repo_path)
-    offset = Map.get(args, "offset", 1)
-    limit = Map.get(args, "limit", 2000)
-    line_numbers = Map.get(args, "line_numbers", true)
+    with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),
+         expanded_path = Shared.expand_path(file_path, repo_path),
+         {:ok, offset} <- validate_offset(Map.get(args, "offset", 1)),
+         {:ok, limit} <- validate_limit(Map.get(args, "limit", 2000)),
+         {:ok, line_numbers} <- validate_line_numbers(Map.get(args, "line_numbers", true)) do
+      do_read(
+        expanded_path,
+        offset,
+        limit,
+        line_numbers,
+        Map.has_key?(args, "offset") or Map.has_key?(args, "limit")
+      )
+    end
+  end
 
+  defp do_read(file_path, offset, limit, line_numbers, custom_range?) do
     with {:ok, stat} <- File.stat(file_path),
-         :ok <- validate_file_size(stat, Map.has_key?(args, "offset") or Map.has_key?(args, "limit")),
+         :ok <- validate_file_size(stat, custom_range?),
          {:ok, result} <- read_file_with_lines(file_path, stat, offset, limit) do
       format_result(result, file_path, line_numbers)
     else
@@ -68,6 +79,21 @@ defmodule EvoGit.Agent.Tools.FileRead do
         "Error reading file #{file_path}: #{:file.format_error(reason)}"
     end
   end
+
+  defp validate_offset(value) when is_integer(value) and value >= 1, do: {:ok, value}
+
+  defp validate_offset(value),
+    do: {:error, "Argument 'offset' must be a positive integer, got: #{inspect(value)}"}
+
+  defp validate_limit(value) when is_integer(value) and value >= 1, do: {:ok, value}
+
+  defp validate_limit(value),
+    do: {:error, "Argument 'limit' must be a positive integer, got: #{inspect(value)}"}
+
+  defp validate_line_numbers(value) when is_boolean(value), do: {:ok, value}
+
+  defp validate_line_numbers(value),
+    do: {:error, "Argument 'line_numbers' must be a boolean, got: #{inspect(value)}"}
 
   # Validates file size - only enforce limit for default (no offset/limit) reads
   defp validate_file_size(stat, custom_range?) do
@@ -168,7 +194,8 @@ defmodule EvoGit.Agent.Tools.FileRead do
             Enum.join(lines, "\n")
           end
 
-        header = "File: #{file_path}\nLines: #{start_line}-#{start_line + num_lines - 1} of #{total_lines}\n\n"
+        header =
+          "File: #{file_path}\nLines: #{start_line}-#{start_line + num_lines - 1} of #{total_lines}\n\n"
 
         header <> formatted_lines
     end

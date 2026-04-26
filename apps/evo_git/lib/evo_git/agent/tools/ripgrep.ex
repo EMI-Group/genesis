@@ -11,25 +11,24 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
   def schema do
     ReqLLM.tool(
       name: "rg",
-      description:
-        """
-        Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.
+      description: """
+      Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.
 
-        ripgrep (rg) recursively searches the current directory for lines matching a regex pattern.
-        By default, ripgrep will respect gitignore rules and automatically skip hidden files/directories and binary files.
+      ripgrep (rg) recursively searches the current directory for lines matching a regex pattern.
+      By default, ripgrep will respect gitignore rules and automatically skip hidden files/directories and binary files.
 
-        Use -h for short descriptions and --help for more details.
+      Use -h for short descriptions and --help for more details.
 
-        USAGE:
-            rg [OPTIONS] PATTERN [PATH ...]
-            rg [OPTIONS] -e PATTERN ... [PATH ...]
-            rg [OPTIONS] -f PATTERNFILE ... [PATH ...]
-            rg [OPTIONS] --files [PATH ...]
-            rg [OPTIONS] --type-list
-            command | rg [OPTIONS] PATTERN
-            rg [OPTIONS] --help
-            rg [OPTIONS] --version
-        """,
+      USAGE:
+          rg [OPTIONS] PATTERN [PATH ...]
+          rg [OPTIONS] -e PATTERN ... [PATH ...]
+          rg [OPTIONS] -f PATTERNFILE ... [PATH ...]
+          rg [OPTIONS] --files [PATH ...]
+          rg [OPTIONS] --type-list
+          command | rg [OPTIONS] PATTERN
+          rg [OPTIONS] --help
+          rg [OPTIONS] --version
+      """,
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -49,9 +48,7 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
   Executes the rg tool.
   """
   def execute(args, repo_path, repo_root) do
-    args_list = Map.fetch!(args, "args")
-
-    case Shared.validate_string_array(args_list) do
+    case Shared.fetch_array_arg(args, "args") do
       {:ok, sanitized_args} ->
         systemd_args = EvoGit.sandbox_args(repo_path, "rg", sanitized_args, repo_root)
 
@@ -64,7 +61,7 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
         end
 
       {:error, message} ->
-        "Error: #{message}"
+        message
     end
   end
 end

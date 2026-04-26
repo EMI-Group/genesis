@@ -48,9 +48,7 @@ defmodule EvoGit.Agent.Tools.Git do
   Executes the git tool.
   """
   def execute(args, repo_path, repo_root) do
-    args_list = Map.fetch!(args, "args")
-
-    case Shared.validate_string_array(args_list) do
+    case Shared.fetch_array_arg(args, "args") do
       {:ok, sanitized_args} ->
         systemd_args = EvoGit.sandbox_args(repo_path, "git", sanitized_args, repo_root)
 
@@ -63,7 +61,7 @@ defmodule EvoGit.Agent.Tools.Git do
         end
 
       {:error, message} ->
-        "Error: #{message}"
+        message
     end
   end
 end

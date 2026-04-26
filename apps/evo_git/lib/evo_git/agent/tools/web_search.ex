@@ -4,6 +4,8 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   Note: This is NOT Google Search. Z.AI is a Chinese AI service provider.
   """
 
+  alias EvoGit.Agent.Tools.Shared
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -47,11 +49,22 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   Executes the web_search tool.
   """
   def execute(args, _repo_path, _repo_root) do
-    search_query = Map.fetch!(args, "search_query")
-    count = Map.get(args, "count", 10)
-    search_domain_filter = Map.get(args, "search_domain_filter")
-    search_recency_filter = Map.get(args, "search_recency_filter", "noLimit")
+    with {:ok, search_query} <- Shared.fetch_string_arg(args, "search_query"),
+         {:ok, count} <- validate_count(Map.get(args, "count", 10)),
+         {:ok, search_recency_filter} <-
+           Shared.fetch_optional_string_arg(args, "search_recency_filter", "noLimit"),
+         search_domain_filter = Map.get(args, "search_domain_filter") do
+      do_web_search(search_query, count, search_domain_filter, search_recency_filter)
+    end
+  end
 
+  defp validate_count(value) when is_integer(value) and value >= 1 and value <= 50,
+    do: {:ok, value}
+
+  defp validate_count(value),
+    do: {:error, "Argument 'count' must be an integer between 1 and 50, got: #{inspect(value)}"}
+
+  defp do_web_search(search_query, count, search_domain_filter, search_recency_filter) do
     api_key = System.get_env("ZAI_API_KEY")
 
     if is_nil(api_key) do
