@@ -7,13 +7,14 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.AgentSpec
   alias EvoGit.Agent.CodebaseArchitect
   alias EvoGit.Agent.ContextExtractor
+  alias EvoGit.Runtime
   require Logger
 
   def run(objective, opts \\ []) do
     Logger.info("Genesis: Starting with objective: #{objective}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
-    with :ok <- ensure_repo(repo_path),
+    with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do
       if new_codebase?(repo_path) do
         run_new_codebase(objective, repo_path, head_sha, opts)
@@ -93,24 +94,6 @@ defmodule EvoGit.Runtime.Genesis do
     Logger.info("Genesis: Evolution complete. Current HEAD: #{String.slice(head_now, 0, 7)}")
 
     {:ok, final_sha || head_now}
-  end
-
-  defp ensure_repo(repo_path) do
-    if File.dir?(Path.join(repo_path, ".git")) do
-      :ok
-    else
-      Logger.info("Genesis: Initializing Git repository at #{repo_path}...")
-      File.mkdir_p!(repo_path)
-      Git.init(repo_path)
-      # Create initial commit to allow branching
-      File.write!(Path.join(repo_path, "README.md"), "")
-      Git.add(repo_path, "README.md")
-
-      case Git.commit(repo_path, "Initial commit") do
-        {:ok, _} -> :ok
-        error -> error
-      end
-    end
   end
 
   defp new_codebase?(repo_path) do

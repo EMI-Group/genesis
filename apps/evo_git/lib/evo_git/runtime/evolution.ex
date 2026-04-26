@@ -5,6 +5,7 @@ defmodule EvoGit.Runtime.Evolution do
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
   alias EvoGit.Adapters.Git
+  alias EvoGit.Runtime
   require Logger
 
   def run(objective, opts \\ []) do
@@ -13,7 +14,7 @@ defmodule EvoGit.Runtime.Evolution do
     Logger.info("Evolution: Starting for objective: #{objective} (mode: #{mode})")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
-    with :ok <- ensure_repo(repo_path),
+    with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, current_sha} <- PhyloGraphNode.current_head(repo_path) do
       case mode do
         :simple -> run_simple_mode(objective, repo_path, current_sha, opts)
@@ -82,22 +83,5 @@ defmodule EvoGit.Runtime.Evolution do
     )
 
     {:ok, final_sha || head_now}
-  end
-
-  defp ensure_repo(repo_path) do
-    if File.dir?(Path.join(repo_path, ".git")) do
-      :ok
-    else
-      Logger.info("Evolution: Initializing Git repository at #{repo_path}...")
-      File.mkdir_p!(repo_path)
-      Git.init(repo_path)
-      File.write!(Path.join(repo_path, "README.md"), "")
-      Git.add(repo_path, "README.md")
-
-      case Git.commit(repo_path, "Initial commit") do
-        {:ok, _} -> :ok
-        error -> error
-      end
-    end
   end
 end
