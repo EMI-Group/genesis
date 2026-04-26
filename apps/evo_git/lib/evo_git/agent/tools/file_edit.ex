@@ -53,7 +53,7 @@ defmodule EvoGit.Agent.Tools.FileEdit do
          {:ok, new_string} <- Shared.fetch_string_arg(args, "new_string"),
          {:ok, replace_all} <- validate_replace_all(Map.get(args, "replace_all", false)),
          expanded_path = Shared.expand_path(file_path, repo_path) do
-      do_edit(expanded_path, old_string, new_string, replace_all)
+      do_edit(expanded_path, file_path, old_string, new_string, replace_all)
     end
   end
 
@@ -62,13 +62,13 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   defp validate_replace_all(value),
     do: {:error, "Argument 'replace_all' must be a boolean, got: #{inspect(value)}"}
 
-  defp do_edit(file_path, old_string, new_string, replace_all) do
+  defp do_edit(file_path, display_path, old_string, new_string, replace_all) do
     case File.read(file_path) do
       {:ok, content} ->
         actual_old = Shared.find_actual_string(content, old_string)
 
         if is_nil(actual_old) do
-          "Error: old_string not found in file #{file_path}"
+          "Error: old_string not found in file #{display_path}"
         else
           match_count = Shared.count_occurrences(content, actual_old)
 
@@ -80,19 +80,19 @@ defmodule EvoGit.Agent.Tools.FileEdit do
             case File.write(file_path, updated_content) do
               :ok ->
                 if replace_all do
-                  "The file #{file_path} has been updated. All occurrences were successfully replaced."
+                  "The file #{display_path} has been updated. All occurrences were successfully replaced."
                 else
-                  "The file #{file_path} has been updated successfully."
+                  "The file #{display_path} has been updated successfully."
                 end
 
               {:error, reason} ->
-                "Error writing file #{file_path}: #{:file.format_error(reason)}"
+                "Error writing file #{display_path}: #{:file.format_error(reason)}"
             end
           end
         end
 
       {:error, reason} ->
-        "Error reading file #{file_path}: #{:file.format_error(reason)}"
+        "Error reading file #{display_path}: #{:file.format_error(reason)}"
     end
   end
 

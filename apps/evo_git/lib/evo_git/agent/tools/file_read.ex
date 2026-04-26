@@ -58,6 +58,7 @@ defmodule EvoGit.Agent.Tools.FileRead do
          {:ok, line_numbers} <- validate_line_numbers(Map.get(args, "line_numbers", true)) do
       do_read(
         expanded_path,
+        file_path,
         offset,
         limit,
         line_numbers,
@@ -66,17 +67,17 @@ defmodule EvoGit.Agent.Tools.FileRead do
     end
   end
 
-  defp do_read(file_path, offset, limit, line_numbers, custom_range?) do
+  defp do_read(file_path, display_path, offset, limit, line_numbers, custom_range?) do
     with {:ok, stat} <- File.stat(file_path),
          :ok <- validate_file_size(stat, custom_range?),
          {:ok, result} <- read_file_with_lines(file_path, stat, offset, limit) do
-      format_result(result, file_path, line_numbers)
+      format_result(result, display_path, line_numbers)
     else
       {:error, :too_large} ->
-        "Error: File #{file_path} is too large (>256 KB). Use offset and limit parameters to read specific ranges."
+        "Error: File #{display_path} is too large (>256 KB). Use offset and limit parameters to read specific ranges."
 
       {:error, reason} ->
-        "Error reading file #{file_path}: #{:file.format_error(reason)}"
+        "Error reading file #{display_path}: #{:file.format_error(reason)}"
     end
   end
 
