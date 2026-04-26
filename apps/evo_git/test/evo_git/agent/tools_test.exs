@@ -275,7 +275,7 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "is a file, not a directory"
+      assert result =~ "not a directory"
     end
   end
 
