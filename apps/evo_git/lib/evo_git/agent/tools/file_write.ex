@@ -36,20 +36,20 @@ defmodule EvoGit.Agent.Tools.FileWrite do
     with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),
          {:ok, content} <- Shared.fetch_string_arg(args, "content"),
          expanded_path = Shared.expand_path(file_path, repo_path) do
-      do_write(expanded_path, content)
+      do_write(expanded_path, file_path, content)
     end
   end
 
-  defp do_write(file_path, content) do
+  defp do_write(file_path, display_path, content) do
     case File.mkdir_p(Path.dirname(file_path)) do
       :ok ->
         case File.write(file_path, content) do
-          :ok -> "Successfully wrote to #{file_path}"
-          {:error, reason} -> "Error writing file #{file_path}: #{:file.format_error(reason)}"
+          :ok -> "Successfully wrote to #{display_path}"
+          {:error, reason} -> "Error writing file #{display_path}: #{:file.format_error(reason)}"
         end
 
       {:error, reason} ->
-        "Error creating directory for #{file_path}: #{:file.format_error(reason)}"
+        "Error creating directory for #{display_path}: #{:file.format_error(reason)}"
     end
   end
 end
