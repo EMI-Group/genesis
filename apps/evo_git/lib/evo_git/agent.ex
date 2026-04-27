@@ -87,42 +87,56 @@ defmodule EvoGit.Agent do
       def run(objective) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
 
-        node_path =
-          case EvoGit.AgentScheduler.get_agent_state(agent_id) do
-            {:ok, agent_state} -> agent_state.context_node.path
-            _ -> "."
-          end
+        {:ok, agent_state} EvoGit.AgentScheduler.get_agent_state(agent_id)
 
-        # Build context tree and merge into first user prompt
-        # Use :repo_path (set by scheduler to worktree path)
+        # Validate that the assigned node path exists
+        node_path = agent_state.context_node.path
         repo_path = Process.get(:repo_path)
-        context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
+        full_path = Path.join(repo_path, node_path)
 
-        objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
-        combined_prompt = "Current Context Tree:\n#{context_tree}\n\n#{objective_prompt}"
+        unless File.exists?(full_path) do
+          Logger.error(
+            "Agent #{agent_id}: Assigned node path does not exist: #{full_path} (node_path=#{node_path})"
+          )
 
-        state = %{
-          agent_id: agent_id,
-          depth: EvoGit.AgentScheduler.current_depth(),
-          node_path: node_path,
-          # Loaded from ETS each turn — see load_worktree_path/1
-          repo_path: nil,
-          turn: 0,
-          history: [ReqLLM.Context.user(combined_prompt)],
-          in_grace_period: false,
-          deadline: System.monotonic_time(:millisecond) + @timeout_ms,
-          # Track accumulated LLM time only
-          llm_time_ms: 0,
-          # Warning tracking: last percentage warned (starts at 0)
-          last_warned_time_percent: 0,
-          last_warned_turns_percent: 0
-        }
+          error_message = """
+          The assigned node path '#{node_path}' does not exist in the repository.
+          Please verify that the path is correct and is in the repository.
+          Note: git does not track empty directories, so ensure that the path contains at least one tracked file (empty CONTEXT.md or .gitkeep is a common choice).
+          """
 
-        # Log the conversation messages in order
-        append_history(agent_id, "SYSTEM_MESSAGE", %{content: system_prompt()})
-        append_history(agent_id, "USER_MESSAGE", %{content: combined_prompt})
+          {:completed, error_message}
+        else
+          # Build context tree and merge into first user prompt
+          # Use :repo_path (set by scheduler to worktree path)
+          context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
 
-        loop(state)
+          objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
+          combined_prompt = "Current Context Tree:\n#{context_tree}\n\n#{objective_prompt}"
+
+          state = %{
+            agent_id: agent_id,
+            depth: EvoGit.AgentScheduler.current_depth(),
+            node_path: node_path,
+            # Loaded from ETS each turn — see load_worktree_path/1
+            repo_path: nil,
+            turn: 0,
+            history: [ReqLLM.Context.user(combined_prompt)],
+            in_grace_period: false,
+            deadline: System.monotonic_time(:millisecond) + @timeout_ms,
+            # Track accumulated LLM time only
+            llm_time_ms: 0,
+            # Warning tracking: last percentage warned (starts at 0)
+            last_warned_time_percent: 0,
+            last_warned_turns_percent: 0
+          }
+
+          # Log the conversation messages in order
+          append_history(agent_id, "SYSTEM_MESSAGE", %{content: system_prompt()})
+          append_history(agent_id, "USER_MESSAGE", %{content: combined_prompt})
+
+          loop(state)
+        end
       end
 
       # --- Internal Execution Logic ---
@@ -667,6 +681,7 @@ defmodule EvoGit.Agent do
           end
         end
       end
+
       defp ensure_utf8(result), do: result
 
       # Truncates large tool outputs to prevent history bloat
