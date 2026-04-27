@@ -185,12 +185,20 @@ defmodule EvoGit.Agent.Tools.MakeDir do
       {:ok, "No keep files to commit"}
     else
       case Git.run(["add" | files_to_add], repo_path) do
-        {_output, 0} ->
+        {:ok, _output} ->
           commit_message = "Create director#{if(length(paths) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}"
-          Git.commit(repo_path, commit_message)
+          case Git.commit(repo_path, commit_message) do
+            {:ok, _} -> {:ok, "Commit successful"}
+            {:error, _, _} = error -> {:error, error}
+            {:conflict, _} = conflict -> {:error, conflict}
+            _ -> {:ok, "Commit successful"}
+          end
 
-        {output, code} ->
-          {:error, "git add failed with exit code #{code}: #{output}"}
+        {:error, _, _} = error ->
+          {:error, "git add failed: #{inspect(error)}"}
+
+        {:conflict, output} ->
+          {:error, "git add conflict: #{output}"}
       end
     end
   end
