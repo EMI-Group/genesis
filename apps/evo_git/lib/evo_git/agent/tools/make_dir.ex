@@ -43,7 +43,7 @@ defmodule EvoGit.Agent.Tools.MakeDir do
           "keep_file" => %{
             "type" => "string",
             "enum" => @keep_file_options,
-            "description":
+            "description" =>
               "Type of placeholder file to create in each directory so git tracks them. " <>
                 "CONTEXT.md: Creates an empty CONTEXT.md file (default, recommended). " <>
                 ".gitkeep: Creates a .gitkeep file (standard convention but less descriptive). " <>
@@ -53,13 +53,13 @@ defmodule EvoGit.Agent.Tools.MakeDir do
           },
           "commit" => %{
             "type" => "boolean",
-            "description":
+            "description" =>
               "Whether to automatically commit the created directories. When true, only the keep files are staged and committed - other dirty files in your workspace are NOT included. Default: true.",
             "default" => true
           },
           "parents" => %{
             "type" => "boolean",
-            "description":
+            "description" =>
               "Whether to create parent directories recursively (like 'mkdir -p'). When true, all missing parent directories are created. When false, only the final directory component is created and the tool errors if parents don't exist. Default: true.",
             "default" => true
           }

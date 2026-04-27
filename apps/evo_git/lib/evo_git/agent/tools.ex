@@ -74,8 +74,8 @@ defmodule EvoGit.Agent.Tools do
     FileEdit.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("mk_dir", args, repo_path, repo_root) do
-    MkDir.execute(args, repo_path, repo_root)
+  defp execute_tool("make_dir", args, repo_path, repo_root) do
+    MakeDir.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool("context_read", args, repo_path, repo_root) do

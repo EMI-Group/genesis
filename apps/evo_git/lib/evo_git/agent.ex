@@ -87,7 +87,7 @@ defmodule EvoGit.Agent do
       def run(objective) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
 
-        {:ok, agent_state} EvoGit.AgentScheduler.get_agent_state(agent_id)
+        {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
 
         # Validate that the assigned node path exists
         node_path = agent_state.context_node.path
