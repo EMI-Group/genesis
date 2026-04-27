@@ -63,7 +63,7 @@ defmodule EvoGit.Agent.ContextExtractor do
 
     ## Example Workflow
     A mock python project, and your task is to analyze the src/ directory:
-    1. Run list_directory to get an overview of the files and subdirectories in src/, or run git ls-files --cached --others --exclude-standard path/to/directory/ to get a list of tracked and untracked files.
+    1. Run list_dir to get an overview of the files and subdirectories in src/, or run git ls-files --cached --others --exclude-standard path/to/directory/ to get a list of tracked and untracked files.
     2. Check for early exit: If src/ is unimportant or if src/CONTEXT.md already fulfills your objective, call complete_task immediately with your report.
     3. For each important subdirectory (e.g., src/utils/), spawn a subagent_context_extractor (in parallel) to analyze it, for example:
        - Call with path: "src/utils" and a clear objective such as "Analyze the src/utils/ directory and establish its CONTEXT.md based on its contents."

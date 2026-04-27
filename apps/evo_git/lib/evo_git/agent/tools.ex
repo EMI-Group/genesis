@@ -96,7 +96,7 @@ defmodule EvoGit.Agent.Tools do
     Glob.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("list_directory", args, repo_path, repo_root) do
+  defp execute_tool("list_dir", args, repo_path, repo_root) do
     ListDirectory.execute(args, repo_path, repo_root)
   end
 

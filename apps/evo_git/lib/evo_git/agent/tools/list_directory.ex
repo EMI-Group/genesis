@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.Tools.ListDirectory do
   """
   def schema do
     ReqLLM.tool(
-      name: "list_directory",
+      name: "list_dir",
       description:
         "Lists the names of files and subdirectories directly within a specified directory path.",
       parameter_schema: %{
@@ -28,7 +28,7 @@ defmodule EvoGit.Agent.Tools.ListDirectory do
   end
 
   @doc """
-  Executes the list_directory tool.
+  Executes the list_dir tool.
   """
   def execute(args, repo_path, _repo_root) do
     case Shared.fetch_string_arg(args, "dir_path") do
