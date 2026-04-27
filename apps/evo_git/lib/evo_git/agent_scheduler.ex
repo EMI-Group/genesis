@@ -602,15 +602,6 @@ defmodule EvoGit.AgentScheduler do
     }
     put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
 
-    # Create the directory of the assigned node path if it doesn't exist.
-    # This is normal because git doesn't record empty directories,
-    # so while the path "exists" in the context node, it won't exist in the repo until the agent writes something there and commits it.
-    # This ensures that the agent won't get confused by a missing path.
-    wt_node_path = Path.join(wt, spec.context_node.path)
-    if not File.exists?(wt_node_path) do
-      File.mkdir_p!(Path.dirname(wt_node_path))
-    end
-
     commit_sha
   end
 
