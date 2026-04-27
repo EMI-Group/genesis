@@ -12,7 +12,7 @@ defmodule EvoGit.Agent.Tools.Git do
     ReqLLM.tool(
       name: "git",
       description: """
-      Executes a git command inside your worktree.
+      Executes a git command inside your worktree. The cwd is already set to the repository path.
       Provide arguments as a list of strings.
 
       - NEVER update the git config
@@ -25,6 +25,8 @@ defmodule EvoGit.Agent.Tools.Git do
       - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
 
       ## Tips
+      - Run git status to check the current state of the repo
+      - Run git add / git commit to save changes before they get lost
       - Run git status to see all untracked files and changes to tracked files
       - Run git diff to see the specific changes to tracked files
       - Run git log to see the commit history and understand recent changes
