@@ -38,7 +38,7 @@ defmodule EvoGit.Agent.Tools.MakeDir do
           "paths" => %{
             "type" => "array",
             "items" => %{"type" => "string"},
-            "description" => "List of directory paths to create. Paths are relative to the repository root. Example: ['src/components', 'lib/utils']."
+            "description" => "List of directory paths to create. Paths are relative to git repo path. Example: ['src/components', 'lib/utils']."
           },
           "keep_file" => %{
             "type" => "string",

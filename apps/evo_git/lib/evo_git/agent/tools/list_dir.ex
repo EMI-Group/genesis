@@ -18,7 +18,7 @@ defmodule EvoGit.Agent.Tools.ListDirectory do
         "properties" => %{
           "dir_path" => %{
             "type" => "string",
-            "description" => "The path to the directory to list (e.g., '.', 'lib', 'test')"
+            "description" => "The path to the directory to list, relative to git repo path (e.g., '.', 'lib', 'test')"
           }
         },
         "required" => ["dir_path"]

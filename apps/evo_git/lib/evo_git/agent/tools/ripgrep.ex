@@ -13,6 +13,7 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
       name: "rg",
       description: """
       Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.
+      The working directory is set to git repo path (the current git worktree path).
 
       ripgrep (rg) recursively searches the current directory for lines matching a regex pattern.
       By default, ripgrep will respect gitignore rules and automatically skip hidden files/directories and binary files.
