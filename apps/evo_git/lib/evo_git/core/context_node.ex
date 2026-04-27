@@ -135,11 +135,10 @@ defmodule EvoGit.Core.ContextNode do
   def build_context(relative_path, repo_path) do
     location_info =
       """
-      Current Repository (worktree): '#{repo_path}'.
-      Current Path: '#{relative_path}'.
-      IMPORTANT: Your working directory is the repository root ('.').
-      NOTICE: The worktree path might change as you get scheduled to run in different worktrees, therefore avoid relying on absolute paths.
-      All file paths provided to tools MUST be relative to the repository root.
+      Current Repository (worktree): '#{repo_path}'. Your current working directory (cwd) is also set to the repository path.
+      Current Assigned Node: '#{relative_path}'. You should be focusing on the context and files under this node.
+      IMPORTANT: The worktree path might change as you get scheduled to run in different worktrees, but the cwd will always be set to the correct path.
+        Therefore you should always use relative paths when referring to files in this repository.
       """
       |> String.trim_trailing()
 
