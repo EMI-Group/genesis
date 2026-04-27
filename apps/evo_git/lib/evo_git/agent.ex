@@ -99,13 +99,7 @@ defmodule EvoGit.Agent do
             "Agent #{agent_id}: Assigned node path does not exist: #{full_path} (node_path=#{node_path})"
           )
 
-          error_message = """
-          The assigned node path '#{node_path}' does not exist in the repository.
-          Please verify that the path is correct and is in the repository.
-          Note: git does not track empty directories, so ensure that the path contains at least one tracked file (empty CONTEXT.md or .gitkeep is a common choice).
-          """
-
-          {:completed, error_message}
+          {:error, :path_not_exist}
         else
           # Build context tree and merge into first user prompt
           # Use :repo_path (set by scheduler to worktree path)
@@ -725,12 +719,16 @@ defmodule EvoGit.Agent do
           end
 
         successful_shas =
-          Enum.map(results, fn {:ok, %{commit_sha: sha}} when is_binary(sha) -> sha end)
+          for {:ok, %{commit_sha: sha}} <- results, is_binary(sha), do: sha
 
         repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
+        # Skip merge if no subagents returned successful commits
         merge_message =
-          case EvoGit.Adapters.Git.merge_octopus(repo_path, successful_shas) do
+          if successful_shas == [] do
+            nil
+          else
+            case EvoGit.Adapters.Git.merge_octopus(repo_path, successful_shas) do
             {:ok, output} ->
               # Check if any actual changes were made by comparing commits
               case EvoGit.Adapters.Git.rev_parse(repo_path) do
@@ -771,6 +769,7 @@ defmodule EvoGit.Agent do
               Merge output:
               #{output}
               """
+            end
           end
 
         # Remove the tags created by subagents to prevent GC before the merge
@@ -840,6 +839,10 @@ defmodule EvoGit.Agent do
 
       defp format_subagent_result({:error, :path_ignored}) do
         "Error: Cannot spawn subagent in an ignored folder. The current working directory is ignored by git."
+      end
+
+      defp format_subagent_result({:error, :path_not_exist}) do
+        "Error: The assigned node path does not exist in the repository. Please verify that the path is correct and is in the repository. Note: git does not track empty directories, so ensure that the path contains at least one tracked file (empty CONTEXT.md or .gitkeep is a common choice)."
       end
 
       defp format_subagent_result({:error, reason}) do
