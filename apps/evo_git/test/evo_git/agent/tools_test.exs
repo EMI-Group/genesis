@@ -14,6 +14,7 @@ defmodule EvoGit.Agent.ToolsTest do
       assert "read_file" in names
       assert "file_write" in names
       assert "file_edit" in names
+      assert "make_dir" in names
       assert "context_read" in names
       assert "context_write" in names
     end
@@ -137,6 +138,89 @@ defmodule EvoGit.Agent.ToolsTest do
         )
 
       assert result =~ "old_string not found in file"
+    end
+  end
+
+  describe "execute/4 - make_dir" do
+    test "creates a single directory with CONTEXT.md by default", %{tmp_dir: tmp_dir} do
+      result = Tools.execute("make_dir", %{"paths" => ["lib"], "commit" => false}, tmp_dir)
+
+      assert result =~ "Successfully created 1 directory"
+      assert result =~ "lib"
+
+      assert File.dir?(Path.join(tmp_dir, "lib"))
+      assert File.exists?(Path.join(tmp_dir, "lib/CONTEXT.md"))
+    end
+
+    test "creates multiple directories", %{tmp_dir: tmp_dir} do
+      result = Tools.execute("make_dir", %{"paths" => ["lib", "test", "config"], "commit" => false}, tmp_dir)
+
+      assert result =~ "Successfully created 3 directories"
+
+      assert File.dir?(Path.join(tmp_dir, "lib"))
+      assert File.dir?(Path.join(tmp_dir, "test"))
+      assert File.dir?(Path.join(tmp_dir, "config"))
+    end
+
+    test "creates .gitkeep when specified", %{tmp_dir: tmp_dir} do
+      result = Tools.execute("make_dir", %{"paths" => ["lib"], "keep_file" => ".gitkeep", "commit" => false}, tmp_dir)
+
+      assert result =~ "Successfully created 1 directory"
+
+      refute File.exists?(Path.join(tmp_dir, "lib/CONTEXT.md"))
+      assert File.exists?(Path.join(tmp_dir, "lib/.gitkeep"))
+    end
+
+    test "creates no placeholder file when keep_file is none", %{tmp_dir: tmp_dir} do
+      result = Tools.execute("make_dir", %{"paths" => ["lib"], "keep_file" => "none", "commit" => false}, tmp_dir)
+
+      assert result =~ "Successfully created 1 directory"
+
+      refute File.exists?(Path.join(tmp_dir, "lib/CONTEXT.md"))
+      refute File.exists?(Path.join(tmp_dir, "lib/.gitkeep"))
+      assert File.dir?(Path.join(tmp_dir, "lib"))
+    end
+
+    test "creates nested directories by default", %{tmp_dir: tmp_dir} do
+      result = Tools.execute("make_dir", %{"paths" => ["lib/core/utils"], "commit" => false}, tmp_dir)
+
+      assert result =~ "Successfully created 1 directory"
+
+      assert File.dir?(Path.join(tmp_dir, "lib/core/utils"))
+      assert File.exists?(Path.join(tmp_dir, "lib/core/utils/CONTEXT.md"))
+    end
+
+    test "errors when parents is false and parent does not exist", %{tmp_dir: tmp_dir} do
+      result =
+        Tools.execute(
+          "make_dir",
+          %{"paths" => ["missing/nested"], "parents" => false, "commit" => false},
+          tmp_dir
+        )
+
+      assert result =~ "Errors:"
+      assert result =~ "missing/nested"
+    end
+
+    test "commits keep files when commit is true", %{tmp_dir: tmp_dir} do
+      # Initialize a git repository
+      System.cmd("git", ["init"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
+
+      # Create an initial commit
+      File.write!(Path.join(tmp_dir, "README.md"), "init")
+      System.cmd("git", ["add", "README.md"], cd: tmp_dir)
+      System.cmd("git", ["commit", "-m", "init commit"], cd: tmp_dir)
+
+      result = Tools.execute("make_dir", %{"paths" => ["lib"], "commit" => true}, tmp_dir, tmp_dir)
+
+      assert result =~ "Successfully created"
+      assert result =~ "Changes committed"
+
+      # Check commit was created
+      {log, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
+      assert log =~ "Create directory"
     end
   end
 
