@@ -1,10 +1,9 @@
-  defmodule EvoGit.Agent.Tools.Context do
+defmodule EvoGit.Agent.Tools.Context do
   @moduledoc """
   Tools for reading and writing directory CONTEXT.md files.
   """
 
   alias EvoGit.Agent.Tools.Shared
-  alias EvoGit.Adapters.Git
 
   @doc """
   Returns the tool schema for reading directory context.
@@ -142,18 +141,33 @@
 
                 if commit do
                   relative_path = Path.join(dir_path, "CONTEXT.md")
-                  commit_message = "Update CONTEXT.md for #{dir_path}"
 
-                  case Git.commit_files(repo_path, [relative_path], commit_message) do
-                    {:ok, output} ->
-                      result_msg <> "\n\nCommitted:\n#{output}"
+                  systemd_add_args =
+                    EvoGit.sandbox_args(repo_path, "git", ["add", relative_path], repo_root)
 
-                    {:error, _, reason} ->
-                      result_msg <> "\n\nWarning: Failed to commit: #{reason}"
+                  systemd_commit_args =
+                    EvoGit.sandbox_args(
+                      repo_path,
+                      "git",
+                      [
+                        "commit",
+                        "-m",
+                        "Update CONTEXT.md for #{dir_path}"
+                      ],
+                      repo_root
+                    )
 
-                    {:conflict, reason} ->
-                      result_msg <> "\n\nWarning: Conflict during commit: #{reason}"
-                  end
+                  add_output =
+                    elem(System.cmd("systemd-run", systemd_add_args, stderr_to_stdout: true), 0)
+
+                  commit_output =
+                    elem(
+                      System.cmd("systemd-run", systemd_commit_args, stderr_to_stdout: true),
+                      0
+                    )
+
+                  result_msg <>
+                    "\n\nCommitted:\n#{add_output}#{commit_output}"
                 else
                   result_msg
                 end

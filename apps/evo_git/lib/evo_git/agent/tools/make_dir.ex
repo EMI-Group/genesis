@@ -171,8 +171,8 @@ defmodule EvoGit.Agent.Tools.MakeDir do
   end
 
   defp do_commit(repo_path, paths, keep_file) do
-    # Collect the keep files we created
-    files_to_commit =
+    # Only stage the keep files we created, not any other dirty files in the workspace
+    files_to_add =
       Enum.flat_map(paths, fn path ->
         case keep_file do
           "none" -> []
@@ -180,16 +180,25 @@ defmodule EvoGit.Agent.Tools.MakeDir do
         end
       end)
 
-    # Skip commit if no keep files were created
-    if files_to_commit == [] do
+    # Skip git add if no keep files were created
+    if files_to_add == [] do
       {:ok, "No keep files to commit"}
     else
-      commit_message = "Create director#{if(length(paths) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}"
-      case Git.commit_files(repo_path, files_to_commit, commit_message) do
-        {:ok, _} -> {:ok, "Commit successful"}
-        {:error, _, _} = error -> {:error, error}
-        {:conflict, _} = conflict -> {:error, conflict}
-        _ -> {:ok, "Commit successful"}
+      case Git.run(["add" | files_to_add], repo_path) do
+        {:ok, _output} ->
+          commit_message = "Create director#{if(length(paths) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}"
+          case Git.commit(repo_path, commit_message) do
+            {:ok, _} -> {:ok, "Commit successful"}
+            {:error, _, _} = error -> {:error, error}
+            {:conflict, _} = conflict -> {:error, conflict}
+            _ -> {:ok, "Commit successful"}
+          end
+
+        {:error, _, _} = error ->
+          {:error, "git add failed: #{inspect(error)}"}
+
+        {:conflict, output} ->
+          {:error, "git add conflict: #{output}"}
       end
     end
   end
