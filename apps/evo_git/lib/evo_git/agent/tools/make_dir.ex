@@ -19,18 +19,18 @@ defmodule EvoGit.Agent.Tools.MakeDir do
 
       ## Why Placeholder Files Are Needed
 
-      Git does NOT track empty directories. If you create a directory without adding any files to it,
-      git will ignore it completely. To make a directory visible in the repository, you need to add
-      at least one file (typically a placeholder file like CONTEXT.md or .gitkeep).
+      Git does NOT track empty directories.
+      If you create a directory without adding any files to it, git will ignore it completely.
+      To make a directory visible in the repository, you need to add at least one file (typically a placeholder file like CONTEXT.md or .gitkeep).
 
       ## Default Behavior
 
       By default, this tool:
       1. Creates all specified directories (with parent directories if needed)
       2. Creates an empty CONTEXT.md file in each directory (so git tracks them)
-      3. Automatically commits these changes with a descriptive commit message
+      3. Automatically commits these changes with a descriptive commit message (only the new directories and their keep files are staged/committed, other dirty files are unaffected)
 
-      This default behavior is recommended for most cases to ensure directories are immediately tracked.
+      IMPORTANT: Unless you have a specific reason, it's recommended to keep the default settings to ensure directories are immediately tracked.
       """,
       parameter_schema: %{
         "type" => "object",
@@ -54,13 +54,13 @@ defmodule EvoGit.Agent.Tools.MakeDir do
           "commit" => %{
             "type" => "boolean",
             "description" =>
-              "Whether to automatically commit the created directories. When true, only the keep files are staged and committed - other dirty files in your workspace are NOT included. Default: true.",
+              "Whether to automatically commit the created directories. When true, the keep files are committed, other files won't be affected. Default: true.",
             "default" => true
           },
           "parents" => %{
             "type" => "boolean",
             "description" =>
-              "Whether to create parent directories recursively (like 'mkdir -p'). When true, all missing parent directories are created. When false, only the final directory component is created and the tool errors if parents don't exist. Default: true.",
+              "Whether to create parent directories recursively (like 'mkdir -p'). Default: true.",
             "default" => true
           }
         },
