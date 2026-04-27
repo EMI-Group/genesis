@@ -135,8 +135,10 @@ defmodule EvoGit.Core.ContextNode do
   def build_context(relative_path, repo_path) do
     location_info =
       """
+      Current Repository (worktree): '#{repo_path}'.
       Current Path: '#{relative_path}'.
       IMPORTANT: Your working directory is the repository root ('.').
+      NOTICE: The worktree path might change as you get scheduled to run in different worktrees, therefore avoid relying on absolute paths.
       All file paths provided to tools MUST be relative to the repository root.
       """
       |> String.trim_trailing()
