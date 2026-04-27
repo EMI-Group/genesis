@@ -208,4 +208,76 @@ defmodule EvoGit.Adapters.Git do
   def delete_tag(path, tag_name) do
     run(["tag", "-d", tag_name], path)
   end
+
+  @doc """
+  Commits specific files without affecting the current staging area.
+
+  Uses a temporary GIT_INDEX_FILE to stage and commit only the specified files,
+  leaving any existing staged changes untouched.
+
+  ## Parameters
+    - path: The repository path
+    - files: List of file paths to commit (relative to repository root)
+    - message: Commit message
+
+  ## Returns
+    - `{:ok, output}` on success
+    - `{:error, code, output}` on error
+    - `{:conflict, output}` on merge conflicts
+
+  ## Example
+      commit_files(repo_path, ["src/foo.ex", "README.md"], "Add new feature")
+  """
+  def commit_files(path, files, message) when is_list(files) and is_binary(message) do
+    # Create a temporary index file
+    index_file = Path.join(System.tmp_dir!(), "evogit_index_#{System.unique_integer([:positive])}")
+
+    env = %{"GIT_INDEX_FILE" => index_file}
+
+    try do
+      # Initialize the temporary index from HEAD
+      case System.cmd("git", ["read-tree", "HEAD"], cd: path, stderr_to_stdout: true, env: env) do
+        {_, 0} ->
+          # Add the specified files to the temporary index
+          add_result = System.cmd("git", ["add" | files], cd: path, stderr_to_stdout: true, env: env)
+
+          case add_result do
+            {_, 0} ->
+              # Commit using the temporary index
+              commit_result =
+                System.cmd(
+                  "git",
+                  ["commit", "-m", message],
+                  cd: path,
+                  stderr_to_stdout: true,
+                  env: env
+                )
+
+              case commit_result do
+                {output, 0} ->
+                  {:ok, String.trim(output)}
+
+                {output, 1} ->
+                  if String.contains?(output, "nothing to commit") do
+                    {:ok, String.trim(output)}
+                  else
+                    {:error, 1, String.trim(output)}
+                  end
+
+                {output, code} ->
+                  {:error, code, String.trim(output)}
+              end
+
+            {output, code} ->
+              {:error, code, String.trim(output)}
+          end
+
+        {output, code} ->
+          {:error, code, String.trim(output)}
+      end
+    after
+      # Clean up the temporary index file
+      File.rm(index_file)
+    end
+  end
 end
