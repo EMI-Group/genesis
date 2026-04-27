@@ -12,7 +12,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
     ReqLLM.tool(
       name: "web_search",
       description:
-        "Searches the web for information. " <>
+        "Searches the web for information with Tavily. " <>
           "Returns structured search results including titles, URLs, and content summaries.",
       parameter_schema: %{
         "type" => "object",
