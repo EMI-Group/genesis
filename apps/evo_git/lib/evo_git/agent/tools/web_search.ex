@@ -1,7 +1,6 @@
 defmodule EvoGit.Agent.Tools.WebSearch do
   @moduledoc """
-  Tool for web search using Z.AI (zhipu.ai/chat.z.ai) API.
-  Note: This is NOT Google Search. Z.AI is a Chinese AI service provider.
+  Tool for web search using Tavily API.
   """
 
   alias EvoGit.Agent.Tools.Shared
@@ -14,32 +13,26 @@ defmodule EvoGit.Agent.Tools.WebSearch do
       name: "web_search",
       description:
         "Searches the web for information. " <>
-          "Returns structured search results including titles, URLs, summaries, site names, and publication dates.",
+          "Returns structured search results including titles, URLs, and content summaries.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "search_query" => %{
+          "query" => %{
             "type" => "string",
             "description" => "The search query string"
           },
-          "count" => %{
+          "search_depth" => %{
+            "type" => "string",
+            "description" => "Search depth: 'basic' or 'advanced' (default: 'basic')",
+            "default" => "basic"
+          },
+          "max_results" => %{
             "type" => "integer",
-            "description" => "Number of results to return (1-50, default 10)",
+            "description" => "Maximum number of results to return (1-50, default 10)",
             "default" => 10
-          },
-          "search_domain_filter" => %{
-            "type" => "string",
-            "description" =>
-              "Optional domain filter (e.g., 'www.example.com') to only search within a specific domain"
-          },
-          "search_recency_filter" => %{
-            "type" => "string",
-            "description" =>
-              "Time filter for search results (e.g., 'noLimit', '1d', '1w', '1m', '1y')",
-            "default" => "noLimit"
           }
         },
-        "required" => ["search_query"]
+        "required" => ["query"]
       },
       callback: fn _ -> {:ok, nil} end
     )
@@ -49,48 +42,44 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   Executes the web_search tool.
   """
   def execute(args, _repo_path, _repo_root) do
-    with {:ok, search_query} <- Shared.fetch_string_arg(args, "search_query"),
-         {:ok, count} <- validate_count(Map.get(args, "count", 10)),
-         {:ok, search_recency_filter} <-
-           Shared.fetch_optional_string_arg(args, "search_recency_filter", "noLimit"),
-         search_domain_filter = Map.get(args, "search_domain_filter") do
-      do_web_search(search_query, count, search_domain_filter, search_recency_filter)
+    with {:ok, query} <- Shared.fetch_string_arg(args, "query"),
+         {:ok, search_depth} <- validate_search_depth(Map.get(args, "search_depth", "basic")),
+         {:ok, max_results} <- validate_max_results(Map.get(args, "max_results", 10)) do
+      do_web_search(query, search_depth, max_results)
     end
   end
 
-  defp validate_count(value) when is_integer(value) and value >= 1 and value <= 50,
+  defp validate_search_depth(value) when value in ["basic", "advanced"], do: {:ok, value}
+
+  defp validate_search_depth(value),
+    do: {:error, "Argument 'search_depth' must be 'basic' or 'advanced', got: #{inspect(value)}"}
+
+  defp validate_max_results(value) when is_integer(value) and value >= 1 and value <= 50,
     do: {:ok, value}
 
-  defp validate_count(value),
-    do: {:error, "Argument 'count' must be an integer between 1 and 50, got: #{inspect(value)}"}
+  defp validate_max_results(value),
+    do: {:error, "Argument 'max_results' must be an integer between 1 and 50, got: #{inspect(value)}"}
 
-  defp do_web_search(search_query, count, search_domain_filter, search_recency_filter) do
-    api_key = System.get_env("ZAI_API_KEY")
+  defp do_web_search(query, search_depth, max_results) do
+    api_key = System.get_env("TAVILY_API_KEY")
 
     if is_nil(api_key) do
-      "Error: ZAI_API_KEY environment variable is not set"
+      "Error: TAVILY_API_KEY environment variable is not set"
     else
-      url = "https://api.z.ai/api/paas/v4/web-search"
+      url = "https://api.tavily.com/search"
 
-      body =
-        %{
-          search_query: search_query,
-          count: count,
-          search_recency_filter: search_recency_filter
-        }
-        |> then(fn base ->
-          if search_domain_filter do
-            Map.put(base, :search_domain_filter, search_domain_filter)
-          else
-            base
-          end
-        end)
+      body = %{
+        query: query,
+        search_depth: search_depth,
+        max_results: max_results
+      }
 
-      case Req.post(url,
-             json: body,
-             auth: {:bearer, api_key},
-             receive_timeout: 30_000
-           ) do
+      headers = %{
+        "Content-Type" => "application/json",
+        "Authorization" => "Bearer #{api_key}"
+      }
+
+      case Req.post(url, json: body, headers: headers, receive_timeout: 30_000) do
         {:ok, %{status: 200, body: response_body}} ->
           format_response(response_body)
 
@@ -103,19 +92,14 @@ defmodule EvoGit.Agent.Tools.WebSearch do
     end
   end
 
-  defp format_response(%{"search_result" => results}) when is_list(results) do
+  defp format_response(%{"results" => results}) when is_list(results) do
     formatted =
       Enum.map(results, fn result ->
         title = result["title"] || "Untitled"
-        link = result["link"] || ""
+        url = result["url"] || ""
         content = result["content"] || ""
-        media = result["media"] || ""
-        publish_date = result["publish_date"] || ""
 
-        date_str = if publish_date != "", do: " (#{publish_date})", else: ""
-        media_str = if media != "", do: " - #{media}", else: ""
-
-        "## #{title}#{date_str}#{media_str}\n#{link}\n\n#{content}\n"
+        "## #{title}\n#{url}\n\n#{content}\n"
       end)
       |> Enum.join("\n---\n\n")
 
