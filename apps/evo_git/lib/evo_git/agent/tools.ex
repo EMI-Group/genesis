@@ -16,7 +16,7 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.Glob
   alias EvoGit.Agent.Tools.ListDirectory
   alias EvoGit.Agent.Tools.WebSearch
-  alias EvoGit.Agent.Tools.WebRead
+  alias EvoGit.Agent.Tools.Curl
 
   @doc """
   Returns a list of all available tool schemas for ReqLLM.
@@ -37,7 +37,7 @@ defmodule EvoGit.Agent.Tools do
       Glob.schema(),
       ListDirectory.schema(),
       WebSearch.schema(),
-      WebRead.schema()
+      Curl.schema()
     ]
   end
 
@@ -104,8 +104,8 @@ defmodule EvoGit.Agent.Tools do
     WebSearch.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("web_read", args, repo_path, repo_root) do
-    WebRead.execute(args, repo_path, repo_root)
+  defp execute_tool("curl", args, repo_path, repo_root) do
+    Curl.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool(unknown_tool, _args, _repo_path, _repo_root) do
