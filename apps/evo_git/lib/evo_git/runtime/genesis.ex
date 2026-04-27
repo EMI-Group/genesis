@@ -99,7 +99,7 @@ defmodule EvoGit.Runtime.Genesis do
   defp new_codebase?(repo_path) do
     files =
       case File.ls(repo_path) do
-        {:ok, items} -> items -- [".git", "README.md", ".evogit"]
+        {:ok, items} -> items -- [".git", "README.md", ".evogit", ".gitignore"]
         _ -> []
       end
 
