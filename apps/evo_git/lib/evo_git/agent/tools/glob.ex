@@ -29,7 +29,7 @@ defmodule EvoGit.Agent.Tools.Glob do
           },
           "path" => %{
             "type" => "string",
-            "description" => "Directory to search in (default: current working directory)"
+            "description" => "Directory to search in (default: git repo path)"
           },
           "max_files" => %{
             "type" => "integer",

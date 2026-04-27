@@ -23,7 +23,7 @@ defmodule EvoGit.Agent.Tools.FileRead do
         "properties" => %{
           "file_path" => %{
             "type" => "string",
-            "description" => "The path to the file to read"
+            "description" => "The path to the file to read (relative to git repo path)"
           },
           "offset" => %{
             "type" => "integer",
