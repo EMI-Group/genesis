@@ -18,10 +18,11 @@ defmodule EvoGit.Agent.Tools.Bash do
 
       STRICT CONSTRAINTS:
       - Do NOT use bash for file operations unless dedicated tools fail.
-      - File search: Use Glob (not find)
-      - Read files: Use Read (not cat/head/tail)
-      - Edit files: Use Edit (not sed/awk)
-      - Write files: Use Write (not echo/cat EOF)
+      - File search: Use glob (not find)
+      - Directory creation: Use make_dir (not mkdir)
+      - Read files: Use file_read (not cat/head/tail)
+      - Edit files: Use file_edit (not sed/awk)
+      - Write files: Use file_write (not echo/cat EOF)
       - Communication: Output directly (not echo/printf)
       Aside from these exceptions, you can use bash to run tools for file operations:
       - Use ls with args for listing files with specific needs (e.g., `ls -la` for detailed listing).
