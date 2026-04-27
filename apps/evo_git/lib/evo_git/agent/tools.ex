@@ -9,6 +9,7 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.FileRead
   alias EvoGit.Agent.Tools.FileWrite
   alias EvoGit.Agent.Tools.FileEdit
+  alias EvoGit.Agent.Tools.MakeDir
   alias EvoGit.Agent.Tools.Context
   alias EvoGit.Agent.Tools.Bash
   alias EvoGit.Agent.Tools.Ripgrep
@@ -29,6 +30,7 @@ defmodule EvoGit.Agent.Tools do
       FileRead.schema(),
       FileWrite.schema(),
       FileEdit.schema(),
+      MakeDir.schema(),
       Context.read_schema(),
       Context.write_schema(),
       Bash.schema(),
@@ -70,6 +72,10 @@ defmodule EvoGit.Agent.Tools do
 
   defp execute_tool("file_edit", args, repo_path, repo_root) do
     FileEdit.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("mk_dir", args, repo_path, repo_root) do
+    MkDir.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool("context_read", args, repo_path, repo_root) do
