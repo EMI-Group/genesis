@@ -9,7 +9,7 @@ Contains agent implementations and tool definitions for EvoGit's LLM-powered aut
 - **`EvoGit.Agent.Tools`** (`tools.ex`) — Defines 14 LLM tool schemas and dispatch for ReqLLM function calling:
   - File I/O: `read_file`, `read_many_files`, `write_file`, `rewrite_file`, `create_files`, `create_directories`, `replace_in_file`
   - Context Tree: `context_read`, `context_write`
-  - Shell & Search: `bash`, `rg`, `git`, `glob`, `list_directory`
+  - Shell & Search: `bash`, `rg`, `git`, `glob`, `list_dir`
   - Key functions: `schemas/0` (all tools), `execute/3` (run tool by name with args and repo path)
 
 ### Agent Modules

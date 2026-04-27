@@ -190,14 +190,14 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  describe "execute/4 - list_directory" do
+  describe "execute/4 - list_dir" do
     test "lists contents of a directory", %{tmp_dir: tmp_dir} do
       dir_path = Path.join(tmp_dir, "lib")
       File.mkdir_p!(dir_path)
       File.write!(Path.join(dir_path, "a.ex"), "")
       File.mkdir_p!(Path.join(dir_path, "sub"))
 
-      result = Tools.execute("list_directory", %{"dir_path" => "lib"}, tmp_dir)
+      result = Tools.execute("list_dir", %{"dir_path" => "lib"}, tmp_dir)
 
       files = String.split(result, "\n")
       assert "a.ex" in files
@@ -205,7 +205,7 @@ defmodule EvoGit.Agent.ToolsTest do
     end
 
     test "returns error for missing directory", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("list_directory", %{"dir_path" => "missing"}, tmp_dir)
+      result = Tools.execute("list_dir", %{"dir_path" => "missing"}, tmp_dir)
       assert result =~ "Error listing directory"
     end
   end

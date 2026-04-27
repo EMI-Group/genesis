@@ -52,7 +52,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     ## Example
 
     ### Example 1: investigate the "API of the database access layer" of an application, and you're in the root `/` directory:
-    1. Check your current context tree and identify the relevant directory node(s), use relevant tools (e.g. list_directory, rg) to search for relevant files.
+    1. Check your current context tree and identify the relevant directory node(s), use relevant tools (e.g. list_dir, rg) to search for relevant files.
     2. Let's say you find some relevant files, `lib/app/db/repo.py`, `lib/app/db/models.py`, `docs/db/access.md` and `docs/db/connection.md`.
       - If you are very certain that these files directly contain the information you need, then you can read them directly and extract the information you need.
       - If you are uncertain, you can spawn two subagents with more focused objectives:
