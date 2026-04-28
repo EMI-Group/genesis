@@ -132,6 +132,8 @@ When spawning subagents, we enforce the following rules:
 1. Read-Only Agents can only spawn other Read-Only subagents, and cannot spawn Read-Write subagents. This ensures that if the parent agent is only authorized to read, its subagents cannot perform unauthorized writes.
 2. Read-Write Agents can spawn both Read-Only and Read-Write subagents, but the read-write subagents must operate within the same node or child nodes of the parent agent's assigned node. This ensures that if the write permissions cannot be escalated.
 
+Similarly, file operations are also restricted, where agents should only modify files that are within their scoped node. For example, if an agent is assigned to operate on `src/foo/`, it should only modify files within `src/foo/` and its child directories. This will make sure that the agents are respecting the spatial contract and not making unauthorized changes to other parts of the codebase.
+
 ---
 
 # Project structure
