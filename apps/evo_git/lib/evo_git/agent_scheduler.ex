@@ -393,7 +393,10 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp ensure_initialized(%{initialized: true} = state, new_repo_path) do
-    Logger.info("AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing...")
+    Logger.info(
+      "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing..."
+    )
+
     state = teardown_worktrees(state)
     do_initialize(state, new_repo_path)
   end
@@ -614,6 +617,7 @@ defmodule EvoGit.AgentScheduler do
       base_commit: spec.phylo_node.base_commit,
       current_commit: commit_sha
     }
+
     put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
 
     commit_sha
@@ -629,7 +633,10 @@ defmodule EvoGit.AgentScheduler do
         {:ok, meta} = get_sched_meta(agent_id)
 
         if meta.status == :ready do
-          Logger.info("AgentScheduler: Re-queueing ready agent #{agent_id} (no available worktrees)")
+          Logger.info(
+            "AgentScheduler: Re-queueing ready agent #{agent_id} (no available worktrees)"
+          )
+
           %{state | queue: :queue.in_r(agent_id, state.queue)}
         else
           Logger.info("AgentScheduler: Queueing agent #{agent_id} (no available worktrees)")
@@ -743,11 +750,23 @@ defmodule EvoGit.AgentScheduler do
       {:ok, current_sha} ->
         {:ok, agent_state} = get_agent_state(agent_id)
 
-        if agent_state.phylo_node.current_commit != current_sha do
+        agent_needs_update? = agent_state.phylo_node.current_commit != current_sha
+        meta_needs_update? = meta.spec.phylo_node.current_commit != current_sha
+
+        if agent_needs_update? do
           updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
           put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
+        end
 
-          updated_spec = %{meta.spec | phylo_node: updated_phylo}
+        if meta_needs_update? do
+          # When updating the spec, preserve the original repo path instead of
+          # using the worktree path (which is transient and may be reassigned)
+          updated_spec_phylo = %{
+            meta.spec.phylo_node
+            | current_commit: current_sha
+          }
+
+          updated_spec = %{meta.spec | phylo_node: updated_spec_phylo}
           updated_meta = %{meta | spec: updated_spec}
           put_sched_meta(agent_id, updated_meta)
 
@@ -847,7 +866,9 @@ defmodule EvoGit.AgentScheduler do
 
   # Agent needs a worktree but none are available.
   defp dispatch_ready_parent(%{available_worktrees: []} = state, agent_id, meta) do
-    handle_no_available_worktrees(state, agent_id, fn s, a_id -> dispatch_ready_parent(s, a_id, meta) end)
+    handle_no_available_worktrees(state, agent_id, fn s, a_id ->
+      dispatch_ready_parent(s, a_id, meta)
+    end)
   end
 
   # --- SubAgent Result Tracking ---
@@ -987,7 +1008,22 @@ defmodule EvoGit.AgentScheduler do
 
     state =
       if meta.worktree do
-        reset_worktree(meta.worktree, state.repo_root, state.base_sha)
+        # Use the agent's current commit (if any) to reset the worktree,
+        # otherwise fall back to the global base commit
+        reset_sha =
+          case get_agent_state(agent_id) do
+            {:ok, %{phylo_node: %{current_commit: sha}}} when is_binary(sha) ->
+              sha
+
+            _ ->
+              Logger.error(
+                "AgentScheduler: Failed to get current commit for agent #{agent_id} during recycle, falling back to base_sha."
+              )
+
+              state.base_sha
+          end
+
+        reset_worktree(meta.worktree, state.repo_root, reset_sha)
         %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
       else
         state
@@ -1007,8 +1043,15 @@ defmodule EvoGit.AgentScheduler do
         "Retry #{meta.retries}/#{state.agent_max_retries}"
     )
 
+    # Use the agent's current commit (if any) to reset the worktree for retry
     if meta.worktree do
-      reset_worktree(meta.worktree, state.repo_root, state.base_sha)
+      reset_sha =
+        case get_agent_state(agent_id) do
+          {:ok, %{phylo_node: %{current_commit: sha}}} when is_binary(sha) -> sha
+          _ -> state.base_sha
+        end
+
+      reset_worktree(meta.worktree, state.repo_root, reset_sha)
     end
 
     if meta.retries < state.agent_max_retries do
@@ -1052,6 +1095,14 @@ defmodule EvoGit.AgentScheduler do
 
       state =
         if meta.worktree do
+          # Reset worktree using agent's current commit before returning it to pool
+          reset_sha =
+            case get_agent_state(agent_id) do
+              {:ok, %{phylo_node: %{current_commit: sha}}} when is_binary(sha) -> sha
+              _ -> state.base_sha
+            end
+
+          reset_worktree(meta.worktree, state.repo_root, reset_sha)
           %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
         else
           state
