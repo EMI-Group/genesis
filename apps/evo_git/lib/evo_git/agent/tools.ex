@@ -7,6 +7,7 @@ defmodule EvoGit.Agent.Tools do
   """
 
   alias EvoGit.Agent.Tools.FileRead
+  alias EvoGit.Agent.Tools.FileCreate
   alias EvoGit.Agent.Tools.FileWrite
   alias EvoGit.Agent.Tools.FileEdit
   alias EvoGit.Agent.Tools.MakeDir
@@ -28,6 +29,7 @@ defmodule EvoGit.Agent.Tools do
   def schemas do
     [
       FileRead.schema(),
+      FileCreate.schema(),
       FileWrite.schema(),
       FileEdit.schema(),
       MakeDir.schema(),
@@ -66,6 +68,10 @@ defmodule EvoGit.Agent.Tools do
 
   defp execute_tool("read_file", args, repo_path, repo_root, _node_path) do
     FileRead.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("create_files", args, repo_path, repo_root, node_path) do
+    FileCreate.execute(args, repo_path, repo_root, node_path)
   end
 
   defp execute_tool("file_write", args, repo_path, repo_root, node_path) do
