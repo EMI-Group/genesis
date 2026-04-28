@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   """
   def schema do
     ReqLLM.tool(
-      name: "file_edit",
+      name: "edit_file",
       description:
         "Performs exact string replacements in files. " <>
           "Usage: " <>
@@ -45,7 +45,7 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   end
 
   @doc """
-  Executes the file_edit tool.
+  Executes the edit_file tool.
   """
   def execute(args, repo_path, _repo_root, node_path \\ nil) do
     with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),

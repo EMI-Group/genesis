@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.Tools.Git do
   """
   def schema do
     ReqLLM.tool(
-      name: "git",
+      name: "run_git",
       description: """
       Executes a git command inside your worktree. The cwd is already set to the repository path.
       Provide arguments as a list of strings.

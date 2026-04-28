@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.Tools.Bash do
   """
   def schema do
     ReqLLM.tool(
-      name: "bash",
+      name: "run_bash",
       description: """
       Executes a shell command via bash -c.
       Useful for running scripts, building, testing, git or executing common command-line tools.
@@ -26,8 +26,8 @@ defmodule EvoGit.Agent.Tools.Bash do
       - File search: Use glob (not find)
       - Directory creation: Use make_dir (not mkdir)
       - Read files: Use file_read (not cat/head/tail)
-      - Edit files: Use file_edit (not sed/awk)
-      - Write files: Use file_write (not echo/cat EOF)
+      - Edit files: Use edit_file (not sed/awk)
+      - Write files: Use write_file (not echo/cat EOF)
       - Communication: Output directly (not echo/printf)
       Aside from these exceptions, you can use bash to run tools for file operations:
       - Use ls with args for listing files with specific needs (e.g., `ls -la` for detailed listing).

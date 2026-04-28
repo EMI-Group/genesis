@@ -46,9 +46,9 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     - If there are no dependency constraints, always prefer spawning subagents in parallel, there is no limit in concurrency for subagents.
     - You can run tools, including subagents in parallel, to efficiently gather information.
     - When you discover important structural information about a directory (its purpose, API surface,
-      or constraints) that is missing in the context, update the directory's CONTEXT.md using `context_write`. This persists
+      or constraints) that is missing in the context, update the directory's CONTEXT.md using `write_context`. This persists
       your findings for future agents.
-    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the `context_write` tool.
+    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the `write_context` tool.
     - When finished, call `complete_task` with a comprehensive report of your findings.
 
     ## Example

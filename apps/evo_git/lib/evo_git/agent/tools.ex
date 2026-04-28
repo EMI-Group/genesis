@@ -74,11 +74,11 @@ defmodule EvoGit.Agent.Tools do
     FileCreate.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("file_write", args, repo_path, repo_root, node_path) do
+  defp execute_tool("write_file", args, repo_path, repo_root, node_path) do
     FileWrite.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("file_edit", args, repo_path, repo_root, node_path) do
+  defp execute_tool("edit_file", args, repo_path, repo_root, node_path) do
     FileEdit.execute(args, repo_path, repo_root, node_path)
   end
 
@@ -86,15 +86,15 @@ defmodule EvoGit.Agent.Tools do
     MakeDir.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("context_read", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("read_context", args, repo_path, repo_root, _node_path) do
     Context.execute_read(args, repo_path, repo_root)
   end
 
-  defp execute_tool("context_write", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("write_context", args, repo_path, repo_root, _node_path) do
     Context.execute_write(args, repo_path, repo_root)
   end
 
-  defp execute_tool("bash", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("run_bash", args, repo_path, repo_root, _node_path) do
     Bash.execute(args, repo_path, repo_root)
   end
 
@@ -102,7 +102,7 @@ defmodule EvoGit.Agent.Tools do
     Ripgrep.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("git", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("run_git", args, repo_path, repo_root, _node_path) do
     Git.execute(args, repo_path, repo_root)
   end
 
@@ -114,7 +114,7 @@ defmodule EvoGit.Agent.Tools do
     ListDirectory.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("web_search", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("search_web", args, repo_path, repo_root, _node_path) do
     WebSearch.execute(args, repo_path, repo_root)
   end
 
