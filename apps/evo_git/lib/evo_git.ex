@@ -34,13 +34,18 @@ defmodule EvoGit do
         ["-p", "InaccessiblePaths=-#{Path.join(home, dir)}"]
       end)
 
-    # Build ReadWritePaths - always include cwd, and repo_root/.git if provided
+    # Build ReadWritePaths - always include cwd, repo_root/.git if provided,
+    # and common cache directories for build tools
+    home_cache = Path.join(home, ".cache")
+    cargo_home = Path.join(home, ".cargo")
+
     read_write_paths =
-      if repo_root do
-        [cwd, Path.join(repo_root, ".git")]
-      else
-        [cwd]
-      end
+      [cwd, home_cache, cargo_home] ++
+        if repo_root do
+          [Path.join(repo_root, ".git")]
+        else
+          []
+        end
 
     read_write_args =
       Enum.flat_map(read_write_paths, fn path ->
@@ -71,9 +76,9 @@ defmodule EvoGit do
       "-p",
       "SystemCallErrorNumber=EPERM",
       "-p",
-      "SystemCallFilter=~ @module @keyring @raw-io @reboot @mount @swap @clock @cpu-emulation @debug @obsolete @privileged",
+      "SystemCallFilter=~ @module @keyring @raw-io @reboot @mount @swap @debug @obsolete @privileged",
       "-p",
-      "CPUQuota=400%",
+      "CPUQuota=800%",
       "-p",
       "MemoryMax=16G"
     ] ++
