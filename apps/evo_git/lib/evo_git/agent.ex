@@ -1006,6 +1006,27 @@ defmodule EvoGit.Agent do
       def subagent_tool_description, do: ""
 
       @doc """
+      Returns the agent type: `:read` or `:read_write`.
+
+      - `:read` - Read-only agents can only read files and update CONTEXT.md files
+      - `:read_write` - Read-write agents can read, write, and modify code
+
+      Override this in your agent module to declare its type.
+
+      ## Rules for Subagent Delegation
+
+      - **Read agents** can only spawn other read subagents
+      - **Read-write agents** can spawn both read and read-write subagents,
+        but read-write subagents must operate within the same node or child nodes
+        of the parent agent's assigned node (no permission escalation)
+
+      ## Example
+
+          def agent_type, do: :read_write
+      """
+      def agent_type, do: :read_write
+
+      @doc """
       Returns a list of agent modules that can be spawned as subagents.
       The framework automatically generates tool schemas and execution logic
       from each module's `subagent_tool_name/0` and `subagent_tool_description/0`.
@@ -1096,7 +1117,8 @@ defmodule EvoGit.Agent do
                      system_prompt: 0,
                      subagent_tool_name: 0,
                      subagent_tool_description: 0,
-                     subagent_modules: 0
+                     subagent_modules: 0,
+                     agent_type: 0
     end
   end
 end

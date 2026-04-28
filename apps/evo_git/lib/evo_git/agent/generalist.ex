@@ -4,6 +4,8 @@ defmodule EvoGit.Agent.Generalist do
   """
   use EvoGit.Agent
 
+  def agent_type, do: :read_write
+
   def subagent_tool_name, do: "subagent_generalist"
 
   def subagent_tool_description do

@@ -7,6 +7,8 @@ defmodule EvoGit.Agent.Executor do
   """
   use EvoGit.Agent
 
+  def agent_type, do: :read_write
+
   def subagent_tool_name, do: "subagent_executor"
 
   def subagent_modules do

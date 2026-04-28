@@ -6,6 +6,8 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
   use EvoGit.Agent
   alias EvoGit.Agent.Tools.{FileRead, Ripgrep, Glob, ListDirectory, Context, WebSearch, Curl, CompleteTask}
 
+  def agent_type, do: :read
+
   def subagent_tool_name, do: "subagent_codebase_investigator"
 
   def subagent_tool_description do
