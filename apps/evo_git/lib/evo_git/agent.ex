@@ -849,7 +849,13 @@ defmodule EvoGit.Agent do
       end
 
       defp format_subagent_result({:error, :path_not_exist}) do
-        "Error: The assigned node path does not exist in the repository. Please verify that the path is correct and is in the repository. Note: git does not track empty directories, so ensure that the path contains at least one tracked file (empty CONTEXT.md or .gitkeep is a common choice)."
+        """
+        Error: The assigned node path does not exist in the repository.
+        Please verify that the path is correct and is in the repository.
+        Note: git does not track empty directories,
+        - If the path is a directory, ensure that the path contains at least one tracked file (empty CONTEXT.md or .gitkeep is a common choice), you can use the `make_dir` tool to create a directory and auto create a tracked file within and commit it.
+        - If the path is a file, ensure that the file is tracked by git. You can use the `touch` tool to create an empty file and auto commit it.
+        """
       end
 
       defp format_subagent_result({:error, reason}) do
