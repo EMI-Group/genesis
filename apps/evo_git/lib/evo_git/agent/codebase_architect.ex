@@ -6,6 +6,8 @@ defmodule EvoGit.Agent.CodebaseArchitect do
   """
   use EvoGit.Agent
 
+  def agent_type, do: :read_write
+
   def subagent_tool_name, do: "subagent_codebase_architect"
 
   def subagent_tool_description do

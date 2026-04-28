@@ -7,6 +7,8 @@ defmodule EvoGit.Agent.Evaluator do
   """
   use EvoGit.Agent
 
+  def agent_type, do: :read
+
   def subagent_tool_name, do: "subagent_evaluator"
 
   def subagent_tool_description do

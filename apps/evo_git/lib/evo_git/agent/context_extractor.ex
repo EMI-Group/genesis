@@ -6,6 +6,8 @@ defmodule EvoGit.Agent.ContextExtractor do
   use EvoGit.Agent
   alias EvoGit.Agent.Tools.{FileRead, Ripgrep, Glob, ListDirectory, Context, WebSearch, Curl, CompleteTask}
 
+  def agent_type, do: :read
+
   def subagent_tool_name, do: "subagent_context_extractor"
 
   def subagent_tool_description do

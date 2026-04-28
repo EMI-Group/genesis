@@ -8,6 +8,8 @@ defmodule EvoGit.Agent.Planner do
   """
   use EvoGit.Agent
 
+  def agent_type, do: :read
+
   def subagent_tool_name, do: "subagent_planner"
 
   def subagent_tool_description do
