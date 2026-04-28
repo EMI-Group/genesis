@@ -52,9 +52,8 @@ defmodule EvoGit.Agent.Tools.Git do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_array_arg(args, "args") do
       {:ok, sanitized_args} ->
-        systemd_args = EvoGit.sandbox_args(repo_path, "git", sanitized_args, repo_root)
-
-        {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+        {output, exit_code} =
+          EvoGit.sandbox_run(repo_path, "git", sanitized_args, repo_root)
 
         if exit_code == 0 do
           "Command executed successfully.\nOutput:\n#{output}"

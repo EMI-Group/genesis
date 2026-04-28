@@ -51,9 +51,8 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_array_arg(args, "args") do
       {:ok, sanitized_args} ->
-        systemd_args = EvoGit.sandbox_args(repo_path, "rg", sanitized_args, repo_root)
-
-        {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+        {output, exit_code} =
+          EvoGit.sandbox_run(repo_path, "rg", sanitized_args, repo_root)
 
         cond do
           exit_code == 0 -> "Command executed successfully.\nOutput:\n#{output}"
