@@ -142,11 +142,11 @@ defmodule EvoGit.Agent.Tools.Context do
                 if commit do
                   relative_path = Path.join(dir_path, "CONTEXT.md")
 
-                  systemd_add_args =
-                    EvoGit.sandbox_args(repo_path, "git", ["add", relative_path], repo_root)
+                  {add_output, _} =
+                    EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root)
 
-                  systemd_commit_args =
-                    EvoGit.sandbox_args(
+                  {commit_output, _} =
+                    EvoGit.sandbox_run(
                       repo_path,
                       "git",
                       [
@@ -155,15 +155,6 @@ defmodule EvoGit.Agent.Tools.Context do
                         "Update CONTEXT.md for #{dir_path}"
                       ],
                       repo_root
-                    )
-
-                  add_output =
-                    elem(System.cmd("systemd-run", systemd_add_args, stderr_to_stdout: true), 0)
-
-                  commit_output =
-                    elem(
-                      System.cmd("systemd-run", systemd_commit_args, stderr_to_stdout: true),
-                      0
                     )
 
                   result_msg <>

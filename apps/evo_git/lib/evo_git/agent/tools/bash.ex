@@ -62,9 +62,8 @@ defmodule EvoGit.Agent.Tools.Bash do
   end
 
   defp do_execute(command, repo_path, repo_root) do
-    systemd_args = EvoGit.sandbox_args(repo_path, "bash", ["-c", command], repo_root)
-
-    {output, exit_code} = System.cmd("systemd-run", systemd_args, stderr_to_stdout: true)
+    {output, exit_code} =
+      EvoGit.sandbox_run(repo_path, "bash", ["-c", command], repo_root)
 
     if exit_code == 0 do
       "Command executed successfully.\nOutput:\n#{output}"

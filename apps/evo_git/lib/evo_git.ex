@@ -85,4 +85,31 @@ defmodule EvoGit do
       read_write_args ++
       inaccessible_args ++ [executable | args]
   end
+
+  @doc """
+  Runs a command inside a cheap sandbox using systemd-run.
+
+  ## Parameters
+
+  - `cwd` - The working directory for the command
+  - `executable` - The executable to run
+  - `args` - List of arguments to pass to the executable (default: [])
+  - `repo_root` - Optional path to the git repository root. If provided,
+    marks the repo_root/.git as writable, which is required for git worktrees
+    to access the shared git database.
+
+  ## Returns
+
+  `{{output :: String.t(), exit_code :: non_neg_integer()}}`
+
+  ## Examples
+
+      iex> EvoGit.sandbox_run("/path/to/repo", "ls", ["-la"])
+      {"file1.txt\\nfile2.txt\\n", 0}
+
+  """
+  def sandbox_run(cwd, executable, args \\ [], repo_root \\ nil) do
+    sandbox_args(cwd, executable, args, repo_root)
+    |> then(&System.cmd("systemd-run", &1, stderr_to_stdout: true))
+  end
 end
