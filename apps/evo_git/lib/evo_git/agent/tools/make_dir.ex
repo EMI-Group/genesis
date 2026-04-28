@@ -73,12 +73,12 @@ defmodule EvoGit.Agent.Tools.MakeDir do
   @doc """
   Executes the make_dir tool.
   """
-  def execute(args, repo_path, _repo_root) do
+  def execute(args, repo_path, _repo_root, node_path \\ nil) do
     with {:ok, paths} <- Shared.fetch_array_arg(args, "paths"),
          {:ok, keep_file} <- fetch_keep_file(args),
          {:ok, commit?} <- fetch_commit(args),
          {:ok, parents?} <- fetch_parents(args) do
-      do_make_dir(paths, keep_file, commit?, parents?, repo_path)
+      do_make_dir(paths, keep_file, commit?, parents?, repo_path, node_path)
     end
   end
 
@@ -100,11 +100,11 @@ defmodule EvoGit.Agent.Tools.MakeDir do
     if is_boolean(parents?), do: {:ok, parents?}, else: {:error, "parents must be a boolean"}
   end
 
-  defp do_make_dir(paths, keep_file, commit?, parents?, repo_path) do
+  defp do_make_dir(paths, keep_file, commit?, parents?, repo_path, node_path) do
     results =
       Enum.map(paths, fn path ->
         expanded_path = Shared.expand_path(path, repo_path)
-        create_dir(expanded_path, path, keep_file, parents?)
+        create_dir(expanded_path, path, keep_file, parents?, repo_path, node_path)
       end)
 
     {successes, failures} = Enum.split_with(results, &(&1 == :ok))
@@ -147,7 +147,17 @@ defmodule EvoGit.Agent.Tools.MakeDir do
     final_message
   end
 
-  defp create_dir(full_path, display_path, keep_file, parents?) do
+  defp create_dir(full_path, display_path, keep_file, parents?, repo_path, node_path) do
+    case Shared.validate_file_scope(full_path, node_path, repo_path) do
+      :ok ->
+        do_create_dir(full_path, display_path, keep_file, parents?)
+
+      {:error, message} ->
+        {:error, display_path, message}
+    end
+  end
+
+  defp do_create_dir(full_path, display_path, keep_file, parents?) do
     with :ok <- mkdir_if_needed(full_path, parents?),
          :ok <- create_keep_file(full_path, keep_file) do
       :ok

@@ -173,4 +173,76 @@ defmodule EvoGit.Agent.Tools.Shared do
     |> length()
     |> Kernel.-(1)
   end
+
+  # --- Path Validation for Spatial Contract ---
+
+  @doc """
+  Normalizes a path for comparison by trimming leading/trailing slashes
+  and converting "." to empty string (root).
+  """
+  def normalize_path(path) when is_binary(path) do
+    path
+    |> String.trim_leading("/")
+    |> String.trim_trailing("/")
+    |> then(fn
+      "." -> ""
+      p -> p
+    end)
+  end
+
+  @doc """
+  Checks if a child path is within or equal to a parent path.
+  Both paths should be normalized before calling.
+  """
+  def is_child_or_same_node?(parent_path, child_path) do
+    # "." represents root, everything is a child
+    if parent_path == "" do
+      true
+    else
+      # Same node is always allowed
+      if parent_path == child_path do
+        true
+      else
+        # Check if child is a descendant of parent
+        String.starts_with?(child_path, parent_path <> "/")
+      end
+    end
+  end
+
+  @doc """
+  Validates that a file path is within the agent's assigned node scope.
+  Returns :ok if valid, {:error, message} if the path is outside the scope.
+  """
+  def validate_file_scope(expanded_path, node_path, repo_path) when is_binary(node_path) do
+    # Get the relative path from repo_path
+    relative_path = Path.relative_to(expanded_path, repo_path)
+
+    # Normalize for comparison
+    normalized_target = normalize_path(relative_path)
+    normalized_node = normalize_path(node_path)
+
+    if is_child_or_same_node?(normalized_node, normalized_target) do
+      :ok
+    else
+      {:error, format_scope_error(relative_path, node_path)}
+    end
+  end
+
+  def validate_file_scope(_expanded_path, _node_path, _repo_path) do
+    # If no node_path assigned, allow all (backward compatibility)
+    :ok
+  end
+
+  defp format_scope_error(target_path, node_path) do
+    """
+    Cannot modify '#{target_path}'. You are assigned to work within '#{node_path}' and this path is outside your scope.
+
+    You can still complete work within your assigned node. Once finished, report back to the user explaining:
+    1. What you have accomplished within '#{node_path}'
+    2. What work remains at '#{target_path}' that requires attention at a higher level or different scope
+
+    This allows the user to make an informed decision about how to proceed.
+    """
+    |> String.trim()
+  end
 end

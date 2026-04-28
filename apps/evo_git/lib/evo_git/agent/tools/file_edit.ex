@@ -47,13 +47,13 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   @doc """
   Executes the file_edit tool.
   """
-  def execute(args, repo_path, _repo_root) do
+  def execute(args, repo_path, _repo_root, node_path \\ nil) do
     with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),
          {:ok, old_string} <- Shared.fetch_string_arg(args, "old_string"),
          {:ok, new_string} <- Shared.fetch_string_arg(args, "new_string"),
          {:ok, replace_all} <- validate_replace_all(Map.get(args, "replace_all", false)),
          expanded_path = Shared.expand_path(file_path, repo_path) do
-      do_edit(expanded_path, file_path, old_string, new_string, replace_all)
+      do_edit(expanded_path, file_path, old_string, new_string, replace_all, repo_path, node_path)
     end
   end
 
@@ -62,7 +62,17 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   defp validate_replace_all(value),
     do: {:error, "Argument 'replace_all' must be a boolean, got: #{inspect(value)}"}
 
-  defp do_edit(file_path, display_path, old_string, new_string, replace_all) do
+  defp do_edit(file_path, display_path, old_string, new_string, replace_all, repo_path, node_path) do
+    case Shared.validate_file_scope(file_path, node_path, repo_path) do
+      :ok ->
+        perform_edit(file_path, display_path, old_string, new_string, replace_all)
+
+      {:error, message} ->
+        message
+    end
+  end
+
+  defp perform_edit(file_path, display_path, old_string, new_string, replace_all) do
     case File.read(file_path) do
       {:ok, content} ->
         actual_old = Shared.find_actual_string(content, old_string)

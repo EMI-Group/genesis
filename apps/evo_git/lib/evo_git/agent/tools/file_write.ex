@@ -32,15 +32,25 @@ defmodule EvoGit.Agent.Tools.FileWrite do
   @doc """
   Executes the file_write tool.
   """
-  def execute(args, repo_path, _repo_root) do
+  def execute(args, repo_path, _repo_root, node_path \\ nil) do
     with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),
          {:ok, content} <- Shared.fetch_string_arg(args, "content"),
          expanded_path = Shared.expand_path(file_path, repo_path) do
-      do_write(expanded_path, file_path, content)
+      do_write(expanded_path, file_path, content, repo_path, node_path)
     end
   end
 
-  defp do_write(file_path, display_path, content) do
+  defp do_write(file_path, display_path, content, repo_path, node_path) do
+    case Shared.validate_file_scope(file_path, node_path, repo_path) do
+      :ok ->
+        perform_write(file_path, display_path, content)
+
+      {:error, message} ->
+        message
+    end
+  end
+
+  defp perform_write(file_path, display_path, content) do
     case File.mkdir_p(Path.dirname(file_path)) do
       :ok ->
         case File.write(file_path, content) do
