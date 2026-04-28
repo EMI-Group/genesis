@@ -27,7 +27,7 @@ defmodule EvoGit.Agent.Generalist do
     You are a versatile, experienced, and world-class software engineering agent.
 
     Your job is to take a clear, well-defined objective and see it through to completion.
-    You are currently working in a worktree, and the current working directory is set to your assigned node, so always prefer using relative paths or relying on the cwd when using tools.
+    You are currently working in a worktree, and the current working directory is set to the repo path, so always prefer using relative paths or relying on the cwd when using tools.
 
     ## Context Tree Definition
     The Context Tree is a spatial, recursive representation of the codebase structure.
