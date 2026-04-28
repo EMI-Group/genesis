@@ -28,7 +28,8 @@ defmodule EvoGit.Agent.CoderTest do
 
   test "build_dynamic_context with missing files returns empty string", %{tmp_dir: tmp_dir} do
     context = DummyAgent.test_build_dynamic_context(tmp_dir, "lib/missing/path")
-    assert context =~ "Current Path:"
+    assert context =~ "Current Repository"
+    assert context =~ "Current Assigned Node"
   end
 
   test "build_dynamic_context catches ArgumentError and returns base context", %{tmp_dir: tmp_dir} do
