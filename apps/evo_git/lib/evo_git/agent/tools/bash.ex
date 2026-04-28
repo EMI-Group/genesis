@@ -15,6 +15,8 @@ defmodule EvoGit.Agent.Tools.Bash do
       Executes a shell command via bash -c.
       Useful for running scripts, building, testing, or executing common command-line tools.
       The current working directory is automatically set to the repo path (the current git worktree path).
+      IMPORTANT: Your repo path might move! Avoid cd to the repo path then run commands, ALWAYS prefer directly running commands in the cwd.
+          For example, BAD: `cd /path-to-repo/ && ls -la`, GOOD: `ls -la` (the cwd is set to the correct repo path).
 
       STRICT CONSTRAINTS:
       - Do NOT use bash for file operations unless dedicated tools fail.
