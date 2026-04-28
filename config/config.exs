@@ -62,11 +62,11 @@ config :evo_git,
 config :req_llm,
   # HTTP timeouts (all values in milliseconds)
   # Default response timeout
-  receive_timeout: 300_000,
+  receive_timeout: 600_000,
   # Streaming metadata collection timeout
-  metadata_timeout: 300_000,
+  metadata_timeout: 600_000,
   # Extended timeout for reasoning models
-  thinking_timeout: 600_000
+  thinking_timeout: 1_000_000
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
