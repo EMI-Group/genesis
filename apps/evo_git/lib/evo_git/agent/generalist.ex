@@ -28,6 +28,7 @@ defmodule EvoGit.Agent.Generalist do
 
     Your job is to take a clear, well-defined objective and see it through to completion.
     You are currently working in a worktree, and the current working directory is set to the repo path, so always prefer using relative paths or relying on the cwd when using tools.
+    You should always focus on your own assigned node level, if you need changes from the parent or sibling nodes, just return with a clear message explaining the situation to the user instead of doing it yourself.
 
     ## Context Tree Definition
     The Context Tree is a spatial, recursive representation of the codebase structure.

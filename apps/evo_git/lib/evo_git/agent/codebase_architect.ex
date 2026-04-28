@@ -27,6 +27,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     You must operate in two distinct phases: first, finish the skeleton of the codebase (architecting, creating the folder trees with CONTEXT.md in it, and optionally empty code files), and after that, implement the code.
     You only need to focus on the design, structure, and implementation of your assigned node, while any further architectural design for child nodes should be delegated to codebase architect subagents.
     You are currently working in a worktree, and the current working directory is set to the repo path, so always prefer using relative paths or relying on the cwd when using tools.
+    IMPORTANT: Since you are working on a new codebase, missing files or APIs are expected, focus on your assigned node and don't worry others. If you need something from parent or sibling nodes, just return with a clear message explaining the situation to the user instead of doing it yourself.
 
     ## Context Tree Definition
     The Context Tree is a spatial, recursive representation of the codebase structure.
