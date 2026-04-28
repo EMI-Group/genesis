@@ -51,7 +51,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     - PHASE 2: IMPLEMENTATION
       - Once the skeleton is fully established, implement the code.
       - Spawn `subagent_generalist` subagents to generate code for specific files.
-      - When spawning subagents for the first time, remind them that we are in the initialization stage, so some sibling files / APIs might be missing, and they shouldn't worry about that; just work on their own task and expect them to be done later.
+        - Remind them that some sibling files / APIs might be missing, and they should strictly work on their own task.
 
     - General Subagent Guidelines:
       - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
