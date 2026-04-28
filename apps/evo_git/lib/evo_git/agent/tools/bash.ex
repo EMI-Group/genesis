@@ -13,11 +13,14 @@ defmodule EvoGit.Agent.Tools.Bash do
       name: "bash",
       description: """
       Executes a shell command via bash -c.
-      Useful for running scripts, building, testing, or executing common command-line tools.
+      Useful for running scripts, building, testing, git or executing common command-line tools.
       The current working directory is automatically set to the repo path (the current git worktree path).
       IMPORTANT: Your repo path might move! Avoid cd to the repo path then run commands, ALWAYS prefer directly running commands in the cwd.
-          For example, BAD: `cd /path-to-repo/ && ls -la`, GOOD: `ls -la` (the cwd is set to the correct repo path).
+          For example:
+          - BAD: `cd /path-to-repo/ && ls -la`, GOOD: `ls -la`
+          - BAD: `cd /path-to-repo/ && git status`, GOOD: `git status`
 
+      ## General Guidelines
       STRICT CONSTRAINTS:
       - Do NOT use bash for file operations unless dedicated tools fail.
       - File search: Use glob (not find)
@@ -38,6 +41,24 @@ defmodule EvoGit.Agent.Tools.Bash do
       - Verify parent directories exist before creating files/folders.
       - Always use $TMPDIR for temporary files, never /tmp.
       - In `find -regex` alternations, place the longest alternative first (e.g., `'.*\.\(tsx\|ts\)'`).
+
+      ## Git Specific Guidelines
+      Use bash for all git operations
+      - NEVER update the git config
+      - NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly
+      requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these
+      commands when given direct instructions
+      - CRITICAL: Commit the changes before calling any tools or subagents. Changes will be LOST if not committed.
+      - CRITICAL: Always create NEW commits rather than amending
+      - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
+      - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
+
+      ### Git Tips
+      - Run git status to check the current state of the repo
+      - Run git add / git commit to save changes before they get lost
+      - Run git status to see all untracked files and changes to tracked files
+      - Run git diff to see the specific changes to tracked files
+      - Run git log to see the commit history and understand recent changes
       """,
       parameter_schema: %{
         "type" => "object",
