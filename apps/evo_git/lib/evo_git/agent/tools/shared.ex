@@ -237,7 +237,8 @@ defmodule EvoGit.Agent.Tools.Shared do
     """
     Cannot modify '#{target_path}'. You are assigned to work within '#{node_path}' and this path is outside your scope.
 
-    You can still complete work within your assigned node. Once finished, report back to the user explaining:
+    You can still complete work within your assigned node, and remember you don't need to complete the entire task, do what you can and let the user guide the next steps.
+    Once finished, report back to the user explaining:
     1. What you have accomplished within '#{node_path}'
     2. What work remains at '#{target_path}' that requires attention at a higher level or different scope
 
