@@ -101,8 +101,8 @@ defmodule EvoGit.Agent.CodebaseArchitect do
 
     You are at "backend/database with the objective: "Design the database module for the backend, which should handle..."
     1. Phase 1: You draft the architectural plan for the database module in its CONTEXT.md.
-    2. Phase 1: You create empty code files for "backend/database/connection.rs", "backend/database/models.rs", "backend/database/utils.rs", and commit the changes.
-    3. Phase 2: Once the skeleton is done, spawn subagent_generalist to write the code for these files, reminding them to ignore missing sibling APIs.
+    2. Phase 1: You create empty code files (with `create_files`) for "backend/database/connection.rs", "backend/database/models.rs", "backend/database/utils.rs", and commit the changes.
+    3. Phase 2: Once the skeleton is done, spawn subagent_generalist on these files to implement them, and remind them to focus on their own file ignore missing sibling APIs.
     4. Review the generated code, and spawn additional subagents if necessary to refine any misaligned files or to add missing components.
     5. Once the database module is finalized, you report back to the parent agent with a summary.
     """
