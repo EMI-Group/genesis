@@ -261,23 +261,36 @@ defmodule EvoGit.AgentScheduler do
     state = ensure_initialized(state)
     {:ok, parent} = get_sched_meta(parent_id)
 
-    # Check if parent is in an ignored folder
+    # Get parent agent state for spatial contract validation
     case get_agent_state(parent_id) do
-      {:ok, agent_state} when is_struct(agent_state) ->
-        if EvoGit.Core.ContextNode.is_ignored?(agent_state.context_node) do
+      {:ok, %{context_node: parent_context} = agent_state} ->
+        # Check if parent is in an ignored folder
+        if EvoGit.Core.ContextNode.is_ignored?(parent_context) do
           Logger.warning(
             "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id} " <>
-              "in ignored path '#{agent_state.context_node.path}'"
+              "in ignored path '#{parent_context.path}'"
           )
 
           {:reply, {:error, :path_ignored}, state}
+        else
+          # Check spatial contract
+          case validate_spatial_contract(parent_id, agent_state, specs, state) do
+            :ok ->
+              # Continue to depth check and spawning
+              check_max_depth_and_spawn(parent_id, parent, specs, from, state)
+
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
         end
 
       _ ->
         # If we can't get agent state, proceed with spawn (backward compatibility)
-        :ok
+        check_max_depth_and_spawn(parent_id, parent, specs, from, state)
     end
+  end
 
+  defp check_max_depth_and_spawn(parent_id, parent, specs, from, state) do
     if parent.depth >= state.max_depth do
       Logger.warning(
         "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id} " <>
@@ -286,6 +299,7 @@ defmodule EvoGit.AgentScheduler do
 
       {:reply, {:error, :max_depth_exceeded}, state}
     else
+      # All checks passed - proceed with spawning
       # Pre-Delegation Cleanliness
       parent = auto_commit_fallback(parent_id, parent)
 
@@ -842,6 +856,91 @@ defmodule EvoGit.AgentScheduler do
     {:ok, parent} = get_sched_meta(parent_id)
     results = Map.put(parent.sub_agent_results, sub_id, result)
     put_sched_meta(parent_id, %{parent | sub_agent_results: results})
+  end
+
+  # --- Spatial Contract Validation ---
+
+  # Validates the spatial contract for spawning subagents.
+  #
+  # Rules:
+  # - Read agents can only spawn read subagents
+  #   Already enforced by agent module level definitions, so no need to check here.
+  # - Read-write agents can spawn both read and read-write subagents,
+  #   but read-write subagents must operate within the same node or child nodes
+  #   of the parent agent's assigned node (no permission escalation)
+  defp validate_spatial_contract(parent_id, parent_agent_state, specs, _state) do
+    # only check spatial contract for read-write parents
+    parent_type = :read_write
+    parent_path = parent_agent_state.context_node.path
+
+    Enum.reduce_while(specs, :ok, fn spec, _acc ->
+      child_type = spec.agent_module.agent_type()
+      child_path = spec.context_node.path
+
+      case validate_spawn_spatiality(parent_type, parent_path, child_type, child_path) do
+        :ok ->
+          {:cont, :ok}
+
+        {:error, reason} ->
+          Logger.warning(
+            "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id}: #{reason}"
+          )
+
+          {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp validate_spawn_spatiality(
+         :read_write,
+         parent_path,
+         :read_write,
+         child_path
+       ) do
+    # Read-write subagents must operate within the same node or child nodes
+    # of the parent agent's assigned node (no permission escalation)
+    if is_child_or_same_node?(parent_path, child_path) do
+      :ok
+    else
+      {:error,
+       {:spatial_contract_violation,
+        """
+        Subagent that requires editing permissions can only be spawned on the same node or child nodes of your assigned node.
+        You attempted to spawn a read-write subagent at '#{child_path}' from your assigned node '#{parent_path}'.
+
+        This violates the contract - you do NOT have write permission on sibling or parent nodes.
+        If you need to make changes to '#{child_path}', do the following:
+        1. Complete your work within your assigned node '#{parent_path}'
+        2. Return and report to the user about your progress and the changes needed on '#{child_path}'
+        """}}
+    end
+  end
+
+  defp validate_spawn_spatiality(_parent_type, _parent_path, _child_type, _child_path) do
+    # All other combinations are valid:
+    # - Read parent spawning read child (any path)
+    # - Read-write parent spawning read child (any path)
+    :ok
+  end
+
+  defp is_child_or_same_node?(parent_path, child_path) do
+    # Normalize paths for comparison
+    parent = normalize_path(parent_path)
+    child = normalize_path(child_path)
+
+    # Same node is always allowed
+    if parent == child do
+      true
+    else
+      # Check if child is a descendant of parent
+      String.starts_with?(child, parent <> "/")
+    end
+  end
+
+  defp normalize_path(path) when is_binary(path) do
+    path
+    |> String.trim_leading("/")
+    |> String.trim_trailing("/")
   end
 
   defp maybe_resume_parent(state, parent_id) do
