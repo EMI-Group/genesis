@@ -75,6 +75,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
       - Use `cargo` to set up the Rust backend (with no VCS, because you are already in a git repo).
       - Configure the root .gitignore to exclude target directories and other unnecessary files.
     3. Phase 1: You delegate to subagents to flesh out the backend and frontend directories:
+      - Use `make_dir` to create the /backend and /frontend directories, and create empty CONTEXT.md. The tool will auto commit these changes. This will prepare the workspace for spawning subagents.
       - For the /backend subagent, you spawn a codebase architect with the objective: "Design the backend directory, expose ... etc."
       - For the /frontend subagent, you spawn a codebase architect with the objective: "Design the frontend directory, the API it should call, etc."
     4. Phase 1: Each subagent creates their own CONTEXT.md and generates the skeleton based on the architectural plan.
@@ -90,16 +91,17 @@ defmodule EvoGit.Agent.CodebaseArchitect do
 
     You are at "backend/" with the objective: "Design the backend directory for a Rust web service, exposing a REST API with Axum, and set up testing."
     1. Phase 1: You draft the architectural plan for the backend directory in its CONTEXT.md.
-    2. Phase 1: You spawn subagent_codebase_architect for the "backend/src/api", "backend/src/services", "backend/src/database" etc., to establish the skeleton.
-    3. Phase 1: Review all architect subagent outputs, ensure they align with the overall architectural vision, and refine if necessary.
-    4. Phase 2: You spawn subagent_generalist to implement specific files in "backend/", reminding them they are in the initialization stage and missing sibling APIs will be implemented later.
-    5. Once the backend architecture and implementation are finalized, you report back to the parent agent with a summary.
+    2. Phase 1: You create the necessary subdirectories (e.g., "backend/database", "backend/http") with `make_dir`.
+    3. Phase 1: You spawn subagent_codebase_architect for the "backend/database", "backend/http" etc., to establish the skeleton.
+    4. Phase 1: Review all architect subagent outputs, ensure they align with the overall architectural vision, and refine if necessary.
+    5. Phase 2: You spawn subagent_generalist to implement specific files in "backend/", reminding them they are in the initialization stage and missing sibling APIs will be implemented later.
+    6. Once the backend architecture and implementation are finalized, you report back to the parent agent with a summary.
 
     ### Example 3
 
-    You are at "backend/src/database/" with the objective: "Design the database module for the backend, which should handle..."
+    You are at "backend/database with the objective: "Design the database module for the backend, which should handle..."
     1. Phase 1: You draft the architectural plan for the database module in its CONTEXT.md.
-    2. Phase 1: You create empty code files for "backend/src/database/connection.rs", "backend/src/database/models.rs", "backend/src/database/utils.rs".
+    2. Phase 1: You create empty code files for "backend/database/connection.rs", "backend/database/models.rs", "backend/database/utils.rs", and commit the changes.
     3. Phase 2: Once the skeleton is done, spawn subagent_generalist to write the code for these files, reminding them to ignore missing sibling APIs.
     4. Review the generated code, and spawn additional subagents if necessary to refine any misaligned files or to add missing components.
     5. Once the database module is finalized, you report back to the parent agent with a summary.
