@@ -35,7 +35,7 @@ defmodule EvoGit.Agent.Tools do
       Context.write_schema(),
       Bash.schema(),
       Ripgrep.schema(),
-      Git.schema(),
+      # Git.schema(),
       Glob.schema(),
       ListDirectory.schema(),
       WebSearch.schema(),
