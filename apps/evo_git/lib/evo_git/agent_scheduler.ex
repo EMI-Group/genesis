@@ -883,7 +883,7 @@ defmodule EvoGit.AgentScheduler do
 
         {:error, reason} ->
           Logger.warning(
-            "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id}: #{reason}"
+            "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id}: #{inspect(reason)}"
           )
 
           {:halt, {:error, reason}}
@@ -928,12 +928,17 @@ defmodule EvoGit.AgentScheduler do
     parent = normalize_path(parent_path)
     child = normalize_path(child_path)
 
-    # Same node is always allowed
-    if parent == child do
+    # "." represents root, everything is a child
+    if parent == "" or parent == "." do
       true
     else
-      # Check if child is a descendant of parent
-      String.starts_with?(child, parent <> "/")
+      # Same node is always allowed
+      if parent == child do
+        true
+      else
+        # Check if child is a descendant of parent
+        String.starts_with?(child, parent <> "/")
+      end
     end
   end
 
@@ -941,6 +946,11 @@ defmodule EvoGit.AgentScheduler do
     path
     |> String.trim_leading("/")
     |> String.trim_trailing("/")
+    # Treat "." as root/empty for comparison purposes
+    |> then(fn
+      "." -> ""
+      p -> p
+    end)
   end
 
   defp maybe_resume_parent(state, parent_id) do
