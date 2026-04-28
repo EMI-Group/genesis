@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   """
   def schema do
     ReqLLM.tool(
-      name: "web_search",
+      name: "search_web",
       description:
         "Searches the web for information with Tavily. " <>
           "Returns structured search results including titles, URLs, and content summaries.",
@@ -39,7 +39,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   end
 
   @doc """
-  Executes the web_search tool.
+  Executes the search_web tool.
   """
   def execute(args, _repo_path, _repo_root) do
     with {:ok, query} <- Shared.fetch_string_arg(args, "query"),

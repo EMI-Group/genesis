@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.Tools.Context do
   """
   def read_schema do
     ReqLLM.tool(
-      name: "context_read",
+      name: "read_context",
       description:
         "Reads a CONTEXT.md file from a directory. CONTEXT.md files are human-readable documentation " <>
           "files that describe a directory's purpose and structure. They typically contain: " <>
@@ -38,7 +38,7 @@ defmodule EvoGit.Agent.Tools.Context do
   """
   def write_schema do
     ReqLLM.tool(
-      name: "context_write",
+      name: "write_context",
       description:
         "Creates or updates a CONTEXT.md file for a directory. CONTEXT.md is a human-readable documentation file " <>
           "that describes a directory's purpose and structure to help future developers (and AI) understand the codebase. " <>
@@ -76,7 +76,7 @@ defmodule EvoGit.Agent.Tools.Context do
   end
 
   @doc """
-  Executes the context_read tool.
+  Executes the read_context tool.
   """
   def execute_read(args, repo_path, _repo_root) do
     case Shared.fetch_string_arg(args, "dir_path") do
@@ -109,7 +109,7 @@ defmodule EvoGit.Agent.Tools.Context do
   end
 
   @doc """
-  Executes the context_write tool.
+  Executes the write_context tool.
   """
   def execute_write(args, repo_path, repo_root) do
     with {:ok, dir_path} <- Shared.fetch_string_arg(args, "dir_path"),

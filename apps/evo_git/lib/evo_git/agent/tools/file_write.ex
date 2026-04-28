@@ -10,12 +10,12 @@ defmodule EvoGit.Agent.Tools.FileWrite do
   """
   def schema do
     ReqLLM.tool(
-      name: "file_write",
+      name: "write_file",
       description:
         "Writes a file to the local filesystem. " <>
           "Usage: " <>
           "- This tool will overwrite the existing file if there is one at the provided path. " <>
-          "- Prefer the file_edit tool for modifying existing files — it only sends the diff. " <>
+          "- Prefer the edit_file tool for modifying existing files — it only sends the diff. " <>
           "Only use this tool to create new files or for complete rewrites.",
       parameter_schema: %{
         "type" => "object",
@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.Tools.FileWrite do
   end
 
   @doc """
-  Executes the file_write tool.
+  Executes the write_file tool.
   """
   def execute(args, repo_path, _repo_root, node_path \\ nil) do
     with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),

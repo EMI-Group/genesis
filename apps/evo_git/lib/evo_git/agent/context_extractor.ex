@@ -57,10 +57,10 @@ defmodule EvoGit.Agent.ContextExtractor do
       - If there are no dependency constraints, always prefer spawning subagents in parallel, there is no limit in concurrency for subagents.
     - You can run tools, including subagents in parallel, to efficiently gather information.
     - Aggregate the context from your analysis and any subagent reports.
-    - Write or update the CONTEXT.md in your current directory to reflect this aggregated context using context_write.
+    - Write or update the CONTEXT.md in your current directory to reflect this aggregated context using write_context.
     - Global vs. Local Alignment: As the parent agent, you have a more global architectural view than your subagents. If a child's local context conflicts with your understanding, spawn a new subagent again to correct the child node.
       - Convergence Circuit Breaker: Evaluate context changes based only on functional API surface modifications, not subjective phrasing. Do not exceed a maximum of 3 passes per node to prevent infinite loops.
-    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the context_write tool.
+    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the write_context tool.
     - When finished with your assigned scope, call complete_task with a summary of your findings and any recommendations for further analysis or refactoring.
 
     ## Example Workflow
