@@ -611,11 +611,18 @@ defmodule EvoGit.Agent do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
         repo_path = Process.get(:repo_path)
 
+        # Get node_path from agent state for spatial contract validation
+        node_path =
+          case EvoGit.AgentScheduler.get_agent_state(agent_id) do
+            {:ok, %{context_node: %{path: path}}} -> path
+            _ -> nil
+          end
+
         tasks =
           Enum.map(indexed_calls, fn {call, index} ->
             {index, call.name, call,
              Task.async(fn ->
-               EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_path, repo_root)
+               EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_path, repo_root, node_path)
              end)}
           end)
 

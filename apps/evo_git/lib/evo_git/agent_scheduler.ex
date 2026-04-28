@@ -920,7 +920,8 @@ defmodule EvoGit.AgentScheduler do
        ) do
     # Read-write subagents must operate within the same node or child nodes
     # of the parent agent's assigned node (no permission escalation)
-    if is_child_or_same_node?(parent_path, child_path) do
+    # Use Shared module for path validation
+    if EvoGit.Agent.Tools.Shared.is_child_or_same_node?(parent_path, child_path) do
       :ok
     else
       {:error,
@@ -942,36 +943,6 @@ defmodule EvoGit.AgentScheduler do
     # - Read parent spawning read child (any path)
     # - Read-write parent spawning read child (any path)
     :ok
-  end
-
-  defp is_child_or_same_node?(parent_path, child_path) do
-    # Normalize paths for comparison
-    parent = normalize_path(parent_path)
-    child = normalize_path(child_path)
-
-    # "." represents root, everything is a child
-    if parent == "" or parent == "." do
-      true
-    else
-      # Same node is always allowed
-      if parent == child do
-        true
-      else
-        # Check if child is a descendant of parent
-        String.starts_with?(child, parent <> "/")
-      end
-    end
-  end
-
-  defp normalize_path(path) when is_binary(path) do
-    path
-    |> String.trim_leading("/")
-    |> String.trim_trailing("/")
-    # Treat "." as root/empty for comparison purposes
-    |> then(fn
-      "." -> ""
-      p -> p
-    end)
   end
 
   defp maybe_resume_parent(state, parent_id) do

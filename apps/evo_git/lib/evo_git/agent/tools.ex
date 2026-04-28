@@ -54,67 +54,69 @@ defmodule EvoGit.Agent.Tools do
   - `repo_root` - Optional path to the git repository root. If provided,
     this is passed to sandbox operations to allow write access to the shared
     git database (needed for git worktrees).
+  - `node_path` - Optional path to the agent's assigned node for spatial
+    contract validation. Used to ensure file operations stay within scope.
 
   """
-  def execute(tool_name, args, repo_path, repo_root \\ nil) do
-    execute_tool(tool_name, args, repo_path, repo_root)
+  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil) do
+    execute_tool(tool_name, args, repo_path, repo_root, node_path)
   end
 
   # Tool execution dispatch
 
-  defp execute_tool("read_file", args, repo_path, repo_root) do
+  defp execute_tool("read_file", args, repo_path, repo_root, _node_path) do
     FileRead.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("file_write", args, repo_path, repo_root) do
-    FileWrite.execute(args, repo_path, repo_root)
+  defp execute_tool("file_write", args, repo_path, repo_root, node_path) do
+    FileWrite.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("file_edit", args, repo_path, repo_root) do
-    FileEdit.execute(args, repo_path, repo_root)
+  defp execute_tool("file_edit", args, repo_path, repo_root, node_path) do
+    FileEdit.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("make_dir", args, repo_path, repo_root) do
-    MakeDir.execute(args, repo_path, repo_root)
+  defp execute_tool("make_dir", args, repo_path, repo_root, node_path) do
+    MakeDir.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("context_read", args, repo_path, repo_root) do
+  defp execute_tool("context_read", args, repo_path, repo_root, _node_path) do
     Context.execute_read(args, repo_path, repo_root)
   end
 
-  defp execute_tool("context_write", args, repo_path, repo_root) do
+  defp execute_tool("context_write", args, repo_path, repo_root, _node_path) do
     Context.execute_write(args, repo_path, repo_root)
   end
 
-  defp execute_tool("bash", args, repo_path, repo_root) do
+  defp execute_tool("bash", args, repo_path, repo_root, _node_path) do
     Bash.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("rg", args, repo_path, repo_root) do
+  defp execute_tool("rg", args, repo_path, repo_root, _node_path) do
     Ripgrep.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("git", args, repo_path, repo_root) do
+  defp execute_tool("git", args, repo_path, repo_root, _node_path) do
     Git.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("glob", args, repo_path, repo_root) do
+  defp execute_tool("glob", args, repo_path, repo_root, _node_path) do
     Glob.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("list_dir", args, repo_path, repo_root) do
+  defp execute_tool("list_dir", args, repo_path, repo_root, _node_path) do
     ListDirectory.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("web_search", args, repo_path, repo_root) do
+  defp execute_tool("web_search", args, repo_path, repo_root, _node_path) do
     WebSearch.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("curl", args, repo_path, repo_root) do
+  defp execute_tool("curl", args, repo_path, repo_root, _node_path) do
     Curl.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool(unknown_tool, _args, _repo_path, _repo_root) do
+  defp execute_tool(unknown_tool, _args, _repo_path, _repo_root, _node_path) do
     "Error: Unknown tool '#{unknown_tool}'"
   end
 end
