@@ -59,7 +59,7 @@ defmodule EvoDashWeb.AgentsLive do
       Enum.reduce(agents, %{}, fn agent, acc ->
         path = agent.context_path || "."
         path = if path == "/", do: ".", else: path
-        
+
         segments =
           path
           |> Path.split()
@@ -164,7 +164,11 @@ defmodule EvoDashWeb.AgentsLive do
 
   # Converts ReqLLM.Message structs to history entry format
   defp convert_messages_to_history(messages) when is_list(messages) do
-    Enum.map(messages, fn msg ->
+    base_time = System.system_time(:millisecond)
+
+    messages
+    |> Enum.with_index()
+    |> Enum.map(fn {msg, index} ->
       content_text =
         case msg.content do
           parts when is_list(parts) ->
@@ -181,7 +185,7 @@ defmodule EvoDashWeb.AgentsLive do
         end
 
       %{
-        timestamp: System.monotonic_time(:millisecond),
+        timestamp: base_time + index * 1000,
         type: Atom.to_string(msg.role),
         data: %{
           content: content_text,
@@ -213,29 +217,18 @@ defmodule EvoDashWeb.AgentsLive do
   defp status_icon(:waiting), do: "hero-pause-circle"
   defp status_icon(_), do: "hero-question-mark-circle"
 
-  defp history_entry_icon("USER_PROMPT"), do: "hero-chat-bubble-left-ellipsis"
-  defp history_entry_icon("CONTEXT_TREE"), do: "hero-squares-2x2"
-  defp history_entry_icon("THOUGHT_CHUNK"), do: "hero-light-bulb"
-  defp history_entry_icon("TOOL_CALL_START"), do: "hero-cog-6-tooth"
-  defp history_entry_icon("TOOL_CALL_END"), do: "hero-check-circle"
-  defp history_entry_icon("COMPLETE"), do: "hero-flag-checkered"
-  defp history_entry_icon("ERROR"), do: "hero-exclamation-triangle"
-  defp history_entry_icon("RETRY"), do: "hero-arrow-path"
-  defp history_entry_icon("RETRY_DISPATCH"), do: "hero-arrow-clockwise"
-  defp history_entry_icon("QUEUED"), do: "hero-clock"
+  # Message role icons and colors for ReqLLM.Message roles
+  defp history_entry_icon("system"), do: "hero-cog"
+  defp history_entry_icon("user"), do: "hero-chat-bubble-left-ellipsis"
+  defp history_entry_icon("assistant"), do: "hero-sparkles"
+  defp history_entry_icon("tool"), do: "hero-wrench-screwdriver"
   defp history_entry_icon(_), do: "hero-document-text"
 
-  defp history_entry_color("USER_PROMPT"), do: "text-info"
-  defp history_entry_color("CONTEXT_TREE"), do: "text-secondary"
-  defp history_entry_color("THOUGHT_CHUNK"), do: "text-warning"
-  defp history_entry_color("TOOL_CALL_START"), do: "text-accent"
-  defp history_entry_color("TOOL_CALL_END"), do: "text-success"
-  defp history_entry_color("COMPLETE"), do: "text-success"
-  defp history_entry_color("ERROR"), do: "text-error"
-  defp history_entry_color("RETRY"), do: "text-warning"
-  defp history_entry_color("RETRY_DISPATCH"), do: "text-warning"
-  defp history_entry_color("QUEUED"), do: "text-base-content/50"
-  defp history_entry_color(_), do: "text-base-content/50"
+  defp history_entry_color("system"), do: "text-accent"
+  defp history_entry_color("user"), do: "text-info"
+  defp history_entry_color("assistant"), do: "text-warning"
+  defp history_entry_color("tool"), do: "text-success"
+  defp history_entry_color(_), do: "text-base-content/70"
 
   defp format_timestamp(timestamp_ms) do
     datetime = DateTime.from_unix!(timestamp_ms, :millisecond)
