@@ -618,41 +618,24 @@ defmodule EvoGit.Agent do
             _ -> nil
           end
 
-        tasks =
-          Enum.map(indexed_calls, fn {call, index} ->
-            {index, call.name, call,
-             Task.async(fn ->
-               EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_path, repo_root, node_path)
-             end)}
-          end)
-
-        # Wait for all tasks to complete with timeout
+        # Execute tools sequentially to avoid parallel execution issues
+        # For example, running two git in parallel would result in git lock issues, and wasting tokens.
         results =
-          Enum.map(tasks, fn {index, name, call, task} ->
+          Enum.map(indexed_calls, fn {call, index} ->
             tool_call_id = Map.get(call, :id, call.name)
 
             output =
-              case Task.yield(task, timeout) || Task.shutdown(task) do
-                {:ok, result} ->
-                  case result do
-                    {:error, reason} ->
-                      "Error: #{inspect(reason)}"
+              case EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_path, repo_root, node_path) do
+                {:error, reason} ->
+                  "Error: #{inspect(reason)}"
 
-                    result ->
-                      result
-                      |> ensure_utf8()
-                      |> truncate_large_output(name, call.arguments)
-                  end
-
-                {:exit, reason} ->
-                  "Error: Tool task crashed: #{inspect(reason)}"
-
-                nil ->
-                  timeout_sec = div(timeout, 1000)
-                  "Error: Tool execution timed out after #{timeout_sec} seconds"
+                result ->
+                  result
+                  |> ensure_utf8()
+                  |> truncate_large_output(call.name, call.arguments)
               end
 
-            {index, tool_call_id, name, output}
+            {index, tool_call_id, call.name, output}
           end)
 
         # Log all tool results in parallel
