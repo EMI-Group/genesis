@@ -278,7 +278,8 @@ defmodule EvoGit.AgentScheduler do
       "AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents"
     )
 
-    put_sched_meta(parent_id, %{parent | status: :waiting})
+    parent = %{parent | status: :waiting}
+    put_sched_meta(parent_id, parent)
 
     # Validate each spec and partition into valid/invalid
     {valid_specs_with_idx, invalid_results} =
