@@ -261,64 +261,17 @@ defmodule EvoGit.AgentScheduler do
     state = ensure_initialized(state)
     {:ok, parent} = get_sched_meta(parent_id)
 
-    case validate_subagent_spawn(parent_id, parent, specs, state) do
-      :ok ->
-        spawn_subagents(parent_id, parent, specs, from, state)
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
+    spawn_validated_subagents(parent_id, parent, specs, from, state)
   end
 
-  # --- Validation Pipeline for Subagent Spawning ---
+  # --- Subagent-Level Validation and Spawning ---
 
-  defp validate_subagent_spawn(parent_id, parent, specs, state) do
-    with {:ok, agent_state} <- validate_agent_state_exists(parent_id),
-         :ok <- validate_not_ignored_path(parent_id, agent_state),
-         :ok <- validate_max_depth(parent_id, parent, state),
-         :ok <- validate_spatial_contract(parent_id, agent_state, specs, state) do
-      :ok
-    end
-  end
+  # Validates and spawns subagents. Each spec is validated independently;
+  # failed specs get an error result, valid specs are spawned.
+  defp spawn_validated_subagents(parent_id, parent, specs, from, state) do
+    # Get parent agent state for validation context
+    parent_agent_state = get_agent_state(parent_id)
 
-  defp validate_agent_state_exists(parent_id) do
-    case get_agent_state(parent_id) do
-      {:ok, agent_state} -> {:ok, agent_state}
-      :error -> {:ok, nil}
-    end
-  end
-
-  defp validate_not_ignored_path(parent_id, nil), do: :ok
-
-  defp validate_not_ignored_path(parent_id, %{context_node: parent_context}) do
-    if EvoGit.Core.ContextNode.is_ignored?(parent_context) do
-      Logger.warning(
-        "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id} " <>
-          "in ignored path '#{parent_context.path}'"
-      )
-
-      {:error, :path_ignored}
-    else
-      :ok
-    end
-  end
-
-  defp validate_max_depth(parent_id, parent, state) do
-    if parent.depth >= state.max_depth do
-      Logger.warning(
-        "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id} " <>
-          "(depth #{parent.depth} >= max #{state.max_depth})"
-      )
-
-      {:error, :max_depth_exceeded}
-    else
-      :ok
-    end
-  end
-
-  # --- Spawning ---
-
-  defp spawn_subagents(parent_id, parent, specs, from, state) do
     # Pre-Delegation Cleanliness
     parent = auto_commit_fallback(parent_id, parent)
 
@@ -329,53 +282,115 @@ defmodule EvoGit.AgentScheduler do
 
     put_sched_meta(parent_id, %{parent | status: :waiting})
 
-    # Register each subagent (depth = parent.depth + 1)
-    {sub_ids, state} =
-      Enum.map_reduce(specs, state, fn spec, acc ->
-        {id, acc} = register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1)
-        {id, acc}
+    # Validate each spec and partition into valid/invalid
+    {valid_specs_with_idx, invalid_results} =
+      specs
+      |> Enum.with_index()
+      |> Enum.reduce({[], %{}}, fn {spec, idx}, {valid, invalid} ->
+        case validate_single_subagent(parent_id, parent, spec, parent_agent_state, state) do
+          :ok ->
+            {[{spec, idx} | valid], invalid}
+
+          {:error, reason} ->
+            Logger.warning(
+              "AgentScheduler: Subagent #{idx} failed validation: #{inspect(reason)}"
+            )
+
+            {valid, Map.put(invalid, idx, {:error, reason})}
+        end
       end)
 
-    # Track pending subagents on the parent
-    {:ok, parent} = get_sched_meta(parent_id)
+    # Reverse to maintain original order
+    valid_specs_with_idx = Enum.reverse(valid_specs_with_idx)
 
+    # Register and spawn valid subagents
+    {idx_to_sub_id, state} =
+      Enum.map_reduce(valid_specs_with_idx, state, fn {spec, idx}, acc ->
+        {sub_id, acc} = register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1)
+        {{idx, sub_id}, acc}
+      end)
+
+    sub_ids = Enum.map(idx_to_sub_id, fn {_idx, sub_id} -> sub_id end)
+
+    # Build the sub_id -> index mapping
+    sub_agent_indices = Map.new(idx_to_sub_id, fn {idx, sub_id} -> {sub_id, idx} end)
+
+    # Track pending subagents, pre-failed results, and index mapping on the parent
     put_sched_meta(parent_id, %{
       parent
       | sub_agent_from: from,
+        total_sub_specs: length(specs),
         pending_sub_agents: MapSet.new(sub_ids),
-        sub_agent_results: %{}
+        sub_agent_results: invalid_results,
+        sub_agent_indices: sub_agent_indices
     })
 
-    # Dispatch all subagents
+    # Dispatch all valid subagents
     state = Enum.reduce(sub_ids, state, &try_dispatch(&2, &1))
 
-    {:noreply, state}
+    # If no valid subagents, immediately reply with all errors
+    if sub_ids == [] do
+      results = build_ordered_results(invalid_results, length(specs))
+      GenServer.reply(from, results)
+      put_sched_meta(parent_id, %{parent | status: :running})
+      {:noreply, state}
+    else
+      {:noreply, state}
+    end
   end
 
-  # --- Spatial Contract Validation ---
+  # Validates a single subagent spec. All checks are per-subagent.
+  defp validate_single_subagent(parent_id, parent, spec, parent_agent_state_result, state) do
+    subagent_depth = parent.depth + 1
 
-  defp validate_spatial_contract(_parent_id, nil, _specs, _state), do: :ok
+    with :ok <- validate_subagent_depth(parent_id, subagent_depth, state),
+         :ok <- validate_subagent_not_ignored(spec),
+         :ok <- validate_spatial_contract_for_spec(parent_id, parent_agent_state_result, spec) do
+      :ok
+    end
+  end
 
-  defp validate_spatial_contract(parent_id, %{context_node: parent_context}, specs, _state) do
+  # Checks if the subagent's depth exceeds the maximum allowed depth
+  defp validate_subagent_depth(_parent_id, subagent_depth, state) do
+    if subagent_depth > state.max_depth do
+      Logger.warning(
+        "AgentScheduler: Subagent depth #{subagent_depth} exceeds max #{state.max_depth}"
+      )
+
+      {:error, :max_depth_exceeded}
+    else
+      :ok
+    end
+  end
+
+  # Checks if the subagent's path is ignored by git
+  defp validate_subagent_not_ignored(spec) do
+    if EvoGit.Core.ContextNode.is_ignored?(spec.context_node) do
+      {:error, :path_ignored}
+    else
+      :ok
+    end
+  end
+
+  # Builds the final results list in the same order as input specs
+  defp build_ordered_results(sub_results, spec_count) do
+    0..(spec_count - 1)
+    |> Enum.map(fn idx ->
+      Map.get(sub_results, idx, {:error, :unknown_error})
+    end)
+  end
+
+  # --- Spatial Contract Validation (Per-Subagent) ---
+
+  defp validate_spatial_contract_for_spec(_parent_id, nil, _spec), do: :ok
+
+  defp validate_spatial_contract_for_spec(_parent_id, %{context_node: parent_context}, spec) do
     parent_type = :read_write
     parent_path = parent_context.path
+    child_type = spec.agent_module.agent_type()
+    child_path = spec.context_node.path
 
-    Enum.reduce_while(specs, :ok, fn spec, _acc ->
-      child_type = spec.agent_module.agent_type()
-      child_path = spec.context_node.path
-
-      case validate_spawn_spatiality(parent_type, parent_path, child_type, child_path) do
-        :ok ->
-          {:cont, :ok}
-
-        {:error, reason} ->
-          Logger.warning(
-            "AgentScheduler: Rejecting spawn_sub_agents from agent #{parent_id}: #{inspect(reason)}"
-          )
-
-          {:halt, {:error, reason}}
-      end
-    end)
+    validate_spawn_spatiality(parent_type, parent_path, child_type, child_path)
   end
 
   defp validate_spawn_spatiality(
@@ -881,9 +896,7 @@ defmodule EvoGit.AgentScheduler do
 
   # Resumes a waiting parent that still has its original worktree (it was never reclaimed).
   defp dispatch_ready_parent(state, agent_id, %{worktree: wt} = meta) when not is_nil(wt) do
-    # Compute ordered results from the accumulated sub_agent_results
-    ordered_ids = meta.pending_sub_agents |> MapSet.to_list() |> Enum.sort()
-    results = Enum.map(ordered_ids, &meta.sub_agent_results[&1])
+    results = build_ordered_results(meta.sub_agent_results, meta.total_sub_specs)
 
     GenServer.reply(meta.sub_agent_from, results)
 
@@ -892,7 +905,9 @@ defmodule EvoGit.AgentScheduler do
       | status: :running,
         sub_agent_from: nil,
         pending_sub_agents: MapSet.new(),
-        sub_agent_results: %{}
+        sub_agent_results: %{},
+        sub_agent_indices: %{},
+        total_sub_specs: 0
     })
 
     {:ok, agent_state} = get_agent_state(agent_id)
@@ -911,9 +926,7 @@ defmodule EvoGit.AgentScheduler do
   defp dispatch_ready_parent(%{available_worktrees: [wt | rest]} = state, agent_id, meta) do
     commit_sha = assign_and_prepare_worktree(agent_id, wt)
 
-    # Compute ordered results from the accumulated sub_agent_results
-    ordered_ids = meta.pending_sub_agents |> MapSet.to_list() |> Enum.sort()
-    results = Enum.map(ordered_ids, &meta.sub_agent_results[&1])
+    results = build_ordered_results(meta.sub_agent_results, meta.total_sub_specs)
 
     GenServer.reply(meta.sub_agent_from, results)
 
@@ -923,7 +936,9 @@ defmodule EvoGit.AgentScheduler do
         worktree: wt,
         sub_agent_from: nil,
         pending_sub_agents: MapSet.new(),
-        sub_agent_results: %{}
+        sub_agent_results: %{},
+        sub_agent_indices: %{},
+        total_sub_specs: 0
     })
 
     Logger.info(
@@ -944,18 +959,15 @@ defmodule EvoGit.AgentScheduler do
 
   defp store_sub_result(parent_id, sub_id, result) do
     {:ok, parent} = get_sched_meta(parent_id)
-    results = Map.put(parent.sub_agent_results, sub_id, result)
+    idx = Map.get(parent.sub_agent_indices, sub_id)
+    results = Map.put(parent.sub_agent_results, idx, result)
     put_sched_meta(parent_id, %{parent | sub_agent_results: results})
   end
 
   defp maybe_resume_parent(state, parent_id) do
     {:ok, parent} = get_sched_meta(parent_id)
-    pending = parent.pending_sub_agents
 
-    all_done? =
-      Enum.all?(pending, fn sub_id ->
-        Map.has_key?(parent.sub_agent_results, sub_id)
-      end)
+    all_done? = map_size(parent.sub_agent_results) == parent.total_sub_specs
 
     if all_done? do
       Logger.info("AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed")
