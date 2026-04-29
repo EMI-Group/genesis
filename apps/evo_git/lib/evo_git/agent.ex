@@ -903,7 +903,8 @@ defmodule EvoGit.Agent do
 
         # Compress if total exceeds threshold
         if total_bytes > @compression_threshold_bytes do
-          [first_message | rest_context] = messages
+          # Preserve: system prompt (1st) and initial user prompt (2nd)
+          [system_msg, initial_user_msg | rest_context] = messages
 
           total_rest = length(rest_context)
           split_index = max(0, total_rest - @compression_keep_recent)
@@ -963,9 +964,9 @@ defmodule EvoGit.Agent do
                       summary: text
                     })
 
-                    # Rebuild the context with first_message, summary_msg, and recent_messages
+                    # Rebuild the context with system prompt, initial user prompt, summary, and recent messages
                     new_context =
-                      ReqLLM.Context.new([first_message, summary_msg | recent_messages])
+                      ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg | recent_messages])
 
                     %{state | context: new_context}
 
