@@ -37,7 +37,6 @@ defmodule EvoGit.AgentScheduler do
 
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
-  @history_table :evogit_agent_history
 
   # --- Client API ---
 
@@ -170,7 +169,6 @@ defmodule EvoGit.AgentScheduler do
   def init(opts) do
     :ets.new(@agent_table, [:named_table, :public, :set, read_concurrency: true])
     :ets.new(@sched_table, [:named_table, :public, :set, read_concurrency: true])
-    :ets.new(@history_table, [:named_table, :public, :bag, read_concurrency: true])
 
     max_concurrency =
       Keyword.get(opts, :max_concurrency, Defaults.max_concurrency())
@@ -576,45 +574,48 @@ defmodule EvoGit.AgentScheduler do
   # --- ETS Helpers (Agent History Table) ---
 
   @doc """
-  Appends a history entry to the agent's history.
-  The history table is a bag to allow multiple entries per agent.
+  Gets the conversation context for an agent from the agent state table.
+  Returns the context or nil if not set.
   """
-  @spec append_history(pos_integer(), String.t(), map()) :: :ok
-  def append_history(agent_id, type, data) do
-    entry = %{
-      timestamp: System.monotonic_time(:millisecond),
-      type: type,
-      data: data
-    }
-
-    :ets.insert(@history_table, {agent_id, entry})
-    :ok
-  end
-
-  @doc """
-  Retrieves all history entries for a given agent, sorted by timestamp.
-  Returns an empty list if no history exists.
-  """
-  @spec get_history(pos_integer()) :: [map()]
-  def get_history(agent_id) do
-    case :ets.lookup(@history_table, agent_id) do
-      [] ->
-        []
-
-      entries ->
-        entries
-        |> Enum.map(fn {_id, entry} -> entry end)
-        |> Enum.sort_by(& &1.timestamp)
+  @spec get_agent_context(pos_integer()) :: ReqLLM.Context.t() | nil
+  def get_agent_context(agent_id) do
+    case get_agent_state(agent_id) do
+      {:ok, %{context: context}} -> context
+      _ -> nil
     end
   end
 
   @doc """
-  Clears all history entries for a given agent.
+  Updates the conversation context for an agent in the agent state table.
+  Also streams the update to the event sink for real-time dashboard updates.
   """
-  @spec clear_history(pos_integer()) :: :ok
-  def clear_history(agent_id) do
-    :ets.delete(@history_table, agent_id)
-    :ok
+  @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
+  def update_agent_context(agent_id, %ReqLLM.Context{} = context) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        updated_state = %{agent_state | context: context}
+        put_agent_state(agent_id, updated_state)
+
+        # Stream context update to event sink for dashboard
+        stream_context_update(agent_id, context)
+
+        :ok
+
+      :error ->
+        :error
+    end
+  end
+
+  # Streams context update to event sink for dashboard visualization
+  defp stream_context_update(agent_id, context) do
+    case get_agent_state(agent_id) do
+      {:ok, %{event_sink: pid}} when is_pid(pid) ->
+        messages = ReqLLM.Context.to_list(context)
+        send(pid, {:agent_context, %{agent_id: agent_id, messages: messages}})
+
+      _ ->
+        :ok
+    end
   end
 
   defp find_waiting_agent_with_worktree do
@@ -722,7 +723,6 @@ defmodule EvoGit.AgentScheduler do
           %{state | queue: :queue.in_r(agent_id, state.queue)}
         else
           Logger.info("AgentScheduler: Queueing agent #{agent_id} (no available worktrees)")
-          append_history(agent_id, "QUEUED", %{message: "Waiting for available worktree"})
           %{state | queue: :queue.in(agent_id, state.queue)}
         end
     end
@@ -736,15 +736,6 @@ defmodule EvoGit.AgentScheduler do
     spec = meta.spec
 
     assign_and_prepare_worktree(agent_id, wt)
-
-    # Log dispatch event for dashboard visibility
-    if retries > 0 do
-      append_history(agent_id, "RETRY_DISPATCH", %{
-        attempt: retries,
-        backoff_seconds: 30 * retries,
-        worktree: wt
-      })
-    end
 
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
@@ -1015,7 +1006,6 @@ defmodule EvoGit.AgentScheduler do
 
     delete_agent_state(agent_id)
     delete_sched_meta(agent_id)
-    clear_history(agent_id)
     state
   end
 
@@ -1046,15 +1036,6 @@ defmodule EvoGit.AgentScheduler do
           state
         end
 
-      # Clear old history before retry to ensure clean state
-      clear_history(agent_id)
-
-      # Log retry event to history for dashboard visibility
-      append_history(agent_id, "RETRY", %{
-        attempt: meta.retries + 1,
-        reason: inspect(reason)
-      })
-
       # Reset scheduler metadata for retry - status set to :pending to indicate waiting for worktree
       put_sched_meta(agent_id, %{
         meta
@@ -1066,7 +1047,7 @@ defmodule EvoGit.AgentScheduler do
 
       # Reset agent state phylo_node (will be re-set on dispatch)
       {:ok, agent_state} = get_agent_state(agent_id)
-      put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil})
+      put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
 
       state = try_dispatch(state, agent_id)
       state = process_queue(state)
@@ -1094,7 +1075,6 @@ defmodule EvoGit.AgentScheduler do
 
       delete_agent_state(agent_id)
       delete_sched_meta(agent_id)
-      clear_history(agent_id)
 
       if meta.parent_id do
         store_sub_result(meta.parent_id, agent_id, {:error, :agent_max_retries_exceeded})

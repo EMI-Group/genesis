@@ -110,6 +110,8 @@ defmodule EvoGit.Agent do
           objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
           combined_prompt = "Current Context Tree:\n#{context_tree}\n\n#{objective_prompt}"
 
+          context = ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)])
+
           state = %{
             agent_id: agent_id,
             depth: EvoGit.AgentScheduler.current_depth(),
@@ -117,7 +119,7 @@ defmodule EvoGit.Agent do
             # Loaded from ETS each turn — see load_worktree_path/1
             repo_path: nil,
             turn: 0,
-            context: ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)]),
+            context: context,
             in_grace_period: false,
             deadline: System.monotonic_time(:millisecond) + @timeout_ms,
             # Track accumulated LLM time only
@@ -127,9 +129,8 @@ defmodule EvoGit.Agent do
             last_warned_turns_percent: 0
           }
 
-          # Log the conversation messages in order
-          append_history(agent_id, "SYSTEM_MESSAGE", %{content: system_prompt()})
-          append_history(agent_id, "USER_MESSAGE", %{content: combined_prompt})
+          # Sync initial context to ETS for dashboard
+          EvoGit.AgentScheduler.update_agent_context(agent_id, context)
 
           loop(state)
         end
@@ -264,15 +265,7 @@ defmodule EvoGit.Agent do
               """
             end
 
-          stream_event(state.agent_id, "BUDGET_WARNING", %{
-            type: :llm_time,
-            percentage: percentage_used,
-            time_used_ms: state.llm_time_ms,
-            time_limit_ms: @timeout_ms
-          })
-
           new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-          append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
 
           %{state | context: new_context, last_warned_time_percent: new_last_warned}
         else
@@ -320,7 +313,6 @@ defmodule EvoGit.Agent do
           })
 
           new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-          append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
 
           %{state | context: new_context, last_warned_turns_percent: new_last_warned}
         else
@@ -346,6 +338,9 @@ defmodule EvoGit.Agent do
         state = load_worktree_path(state)
         state = try_compress_chat(state)
         state = check_limit_warnings(state)
+
+        # Sync context to ETS after any updates (compression, warnings)
+        sync_context_to_ets(state.agent_id, state.context)
 
         cond do
           state.llm_time_ms >= @timeout_ms and not state.in_grace_period ->
@@ -385,9 +380,6 @@ defmodule EvoGit.Agent do
         """
 
         new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-
-        # Log the warning message as part of conversation
-        append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
 
         new_deadline = System.monotonic_time(:millisecond) + @grace_period_ms
 
@@ -442,27 +434,22 @@ defmodule EvoGit.Agent do
           stream_event(state.agent_id, "THOUGHT_CHUNK", %{text: text})
         end
 
-        # Log the assistant message (with tool calls) to context
-        append_history(state.agent_id, "ASSISTANT_MESSAGE", %{
-          content: text || "",
-          thinking: thinking || "",
-          tool_calls: tool_calls
-        })
-
         # Use the updated context from response (already has assistant message appended)
         state = %{state | context: response.context, turn: state.turn + 1}
+        sync_context_to_ets(state.agent_id, state.context)
 
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
-            append_history(state.agent_id, "COMPLETE", %{result: final_result})
             {:ok, final_result}
 
           {:continue, tool_responses} ->
-            state = %{state | context: state.context ++ tool_responses}
+            state = %{state | context: ReqLLM.Context.append(state.context, tool_responses)}
+            sync_context_to_ets(state.agent_id, state.context)
             loop(state)
 
           {:continue_dirty, new_context} ->
             state = %{state | context: new_context}
+            sync_context_to_ets(state.agent_id, state.context)
             loop(state)
 
           {:error, :protocol_violation} ->
@@ -508,7 +495,6 @@ defmodule EvoGit.Agent do
           case CompleteTask.check_workspace_dirty(repo_path) do
             {:dirty, warning_msg} ->
               new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-              append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
 
               {:continue_dirty, new_context}
 
@@ -529,13 +515,6 @@ defmodule EvoGit.Agent do
             Map.get(complete_call.arguments, :result, "Task finished.")
 
         final_result = CompleteTask.complete(state.agent_id, result, commit_sha)
-
-        # Log commit info separately for dashboard querying
-        append_history(state.agent_id, "AGENT_COMPLETED", %{
-          final_commit: commit_sha,
-          tag: final_result.tag,
-          result_length: String.length(result)
-        })
 
         {:complete, final_result}
       end
@@ -641,14 +620,6 @@ defmodule EvoGit.Agent do
 
             {index, tool_call_id, call.name, output}
           end)
-
-        # Log all tool results in parallel
-        Enum.each(results, fn {_index, _tool_call_id, name, output} ->
-          append_history(agent_id, "TOOL_RESULT", %{
-            tool_name: name,
-            content: output
-          })
-        end)
 
         results
       end
@@ -778,8 +749,6 @@ defmodule EvoGit.Agent do
           EvoGit.Adapters.Git.delete_tag(repo_path, tag)
         end)
 
-        append_history(state.agent_id, "SYSTEM_NOTE", %{content: merge_message})
-
         # Sync current_commit after subagents complete (parent worktree state may have changed)
         sync_current_commit_after_tools(state)
 
@@ -821,11 +790,6 @@ defmodule EvoGit.Agent do
         stream_event(state.agent_id, "TOOL_CALL_END", %{name: call.name})
 
         output = format_subagent_result(result)
-
-        append_history(state.agent_id, "TOOL_RESULT", %{
-          tool_name: call.name,
-          content: output
-        })
 
         tool_call_id = Map.get(call, :id, call.name)
         {index, tool_call_id, call.name, output}
@@ -874,10 +838,11 @@ defmodule EvoGit.Agent do
         end
       end
 
-      defp stream_event(agent_id, type, data) do
-        # Also write to context ETS table for dashboard visualization
-        append_history(agent_id, type, data)
+      defp sync_context_to_ets(agent_id, context) do
+        EvoGit.AgentScheduler.update_agent_context(agent_id, context)
+      end
 
+      defp stream_event(agent_id, type, data) do
         case EvoGit.AgentScheduler.get_event_sink(agent_id) do
           pid when is_pid(pid) ->
             send(pid, {:agent_event, %{agent_id: agent_id, type: type, data: data}})
@@ -885,10 +850,6 @@ defmodule EvoGit.Agent do
           _ ->
             :ok
         end
-      end
-
-      defp append_history(agent_id, type, data) do
-        EvoGit.AgentScheduler.append_history(agent_id, type, data)
       end
 
       defp try_compress_chat(state) do
@@ -957,12 +918,6 @@ defmodule EvoGit.Agent do
                     text = ReqLLM.Response.text(response)
                     # Manually create summary context since we're restructuring context
                     summary_msg = user("Summary of previous events:\n" <> text)
-
-                    # Log compression event
-                    append_history(state.agent_id, "CONTEXT_COMPRESSION", %{
-                      compressed_count: length(older_messages),
-                      summary: text
-                    })
 
                     # Rebuild the context with system prompt, initial user prompt, summary, and recent messages
                     new_context =
