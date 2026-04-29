@@ -433,6 +433,15 @@ defmodule EvoGit.Agent do
           ReqLLM.Response.tool_calls(response)
           |> Enum.map(&ReqLLM.ToolCall.from_map/1)
 
+        # Validate tool calls have IDs
+        invalid_calls = Enum.filter(tool_calls, fn call -> is_nil(Map.get(call, :id)) end)
+
+        if invalid_calls != [] do
+          Logger.error(
+            "Agent #{state.agent_id}: Found #{length(invalid_calls)} tool calls without IDs: #{inspect(invalid_calls)}"
+          )
+        end
+
         thinking = ReqLLM.Response.thinking(response)
         text = ReqLLM.Response.text(response)
 
@@ -552,6 +561,14 @@ defmodule EvoGit.Agent do
         all_indexed_results = indexed_subagent_results ++ indexed_standard_results
         sorted_results = Enum.sort_by(all_indexed_results, &elem(&1, 0))
 
+        # Validate that we have the same number of results as tool calls
+        if length(sorted_results) != length(indexed_calls) do
+          Logger.error(
+            "Agent #{state.agent_id}: Tool call count mismatch! Expected #{length(indexed_calls)} results, got #{length(sorted_results)}. " <>
+              "This will cause API errors."
+          )
+        end
+
         all_results =
           Enum.map(sorted_results, fn {_index, tool_call_id, name, output} ->
             tool_result(tool_call_id, name, output)
@@ -609,7 +626,7 @@ defmodule EvoGit.Agent do
         # For example, running two git in parallel would result in git lock issues, and wasting tokens.
         results =
           Enum.map(indexed_calls, fn {call, index} ->
-            tool_call_id = Map.get(call, :id, call.name)
+            tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
 
             output =
               case EvoGit.Agent.Tools.execute(
@@ -801,7 +818,7 @@ defmodule EvoGit.Agent do
 
         output = format_subagent_result(result)
 
-        tool_call_id = Map.get(call, :id, call.name)
+        tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
         {index, tool_call_id, call.name, output}
       end
 
