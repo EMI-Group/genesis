@@ -423,7 +423,10 @@ defmodule EvoGit.Agent do
 
         # Track current context length (replace, don't accumulate)
         usage = ReqLLM.Response.usage(response)
-        current_tokens = usage.input_tokens + usage.output_tokens + Map.get(usage, :reasoning_tokens, 0)
+
+        current_tokens =
+          usage.input_tokens + usage.output_tokens + Map.get(usage, :reasoning_tokens, 0)
+
         state = %{state | total_tokens: current_tokens}
 
         tool_calls =
@@ -866,6 +869,10 @@ defmodule EvoGit.Agent do
         if state.total_tokens > threshold do
           # Preserve: system prompt (1st) and initial user prompt (2nd)
           # Compress EVERYTHING else
+          Logger.info(
+            "Agent #{state.agent_id}: Context length (#{state.total_tokens} tokens) exceeded compression threshold (#{threshold} tokens). Attempting compression..."
+          )
+
           messages = ReqLLM.Context.to_list(state.context)
 
           case messages do
