@@ -54,7 +54,6 @@ defmodule EvoGit.Agent do
       # Context compression thresholds in bytes
       # usually a token is roughly 4 bytes, so roughly 100k tokens before compression
       @compression_threshold_bytes 400_000
-      @compression_keep_recent 5
       # Tool output truncation thresholds
       @tool_output_max_bytes 128 * 1024
       @tool_output_truncate_size 4096
@@ -865,73 +864,57 @@ defmodule EvoGit.Agent do
         # Compress if total exceeds threshold
         if total_bytes > @compression_threshold_bytes do
           # Preserve: system prompt (1st) and initial user prompt (2nd)
+          # Compress EVERYTHING else
           [system_msg, initial_user_msg | rest_context] = messages
 
-          total_rest = length(rest_context)
-          split_index = max(0, total_rest - @compression_keep_recent)
+          prompt = """
+          Compress the following interaction context into a dense, structured summary to be passed to the next agent iteration.
 
-          # Find a safe index at or after split_index where role == :user
-          # This prevents orphaning a tool result or splitting a tool exchange
-          safe_offset =
-            Enum.find_index(Enum.slice(rest_context, split_index..-1//1), fn msg ->
-              msg.role == :user
-            end)
+          Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
 
-          final_split_index = if safe_offset, do: split_index + safe_offset, else: split_index
-          {older_messages, recent_messages} = Enum.split(rest_context, final_split_index)
+          Output your summary strictly using the following format:
 
-          if older_messages == [] do
-            state
-          else
-            prompt = """
-            Compress the following interaction context into a dense, structured summary to be passed to the next agent iteration.
+          1. Current Progress:
+          [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
 
-            Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
+          2. Key Findings & Decisions:
+          [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
 
-            Output your summary strictly using the following format:
+          3. SubAgent Ledger:
+          [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
 
-            1. Current Progress:
-            [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
+          4. Pending / Next Steps:
+          [What specifically needs to be executed next to advance the Current Objective.]
 
-            2. Key Findings & Decisions:
-            [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
+          ---
 
-            3. SubAgent Ledger:
-            [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
+          [INTERACTION HISTORY BEGIN]
 
-            4. Pending / Next Steps:
-            [What specifically needs to be executed next to advance the Current Objective.]
+          #{inspect(rest_context, limit: :infinity, printable_limit: :infinity)}
+          """
 
-            ---
+          compression_context = ReqLLM.Context.new([user(prompt)])
 
-            [INTERACTION HISTORY BEGIN]
+          case ReqLLM.stream_text(current_model(), compression_context) do
+            {:ok, stream_response} ->
+              case ReqLLM.StreamResponse.process_stream(stream_response) do
+                {:ok, response} ->
+                  text = ReqLLM.Response.text(response)
+                  # Manually create summary context since we're restructuring context
+                  summary_msg = user("Summary of previous events:\n" <> text)
 
-            #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
-            """
+                  # Rebuild the context with system prompt, initial user prompt, and summary only
+                  new_context =
+                    ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
 
-            compression_context = ReqLLM.Context.new([user(prompt)])
+                  %{state | context: new_context}
 
-            case ReqLLM.stream_text(current_model(), compression_context) do
-              {:ok, stream_response} ->
-                case ReqLLM.StreamResponse.process_stream(stream_response) do
-                  {:ok, response} ->
-                    text = ReqLLM.Response.text(response)
-                    # Manually create summary context since we're restructuring context
-                    summary_msg = user("Summary of previous events:\n" <> text)
+                _error ->
+                  state
+              end
 
-                    # Rebuild the context with system prompt, initial user prompt, summary, and recent messages
-                    new_context =
-                      ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg | recent_messages])
-
-                    %{state | context: new_context}
-
-                  _error ->
-                    state
-                end
-
-              _error ->
-                state
-            end
+            _error ->
+              state
           end
         else
           state
