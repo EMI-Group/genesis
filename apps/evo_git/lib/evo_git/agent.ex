@@ -414,17 +414,18 @@ defmodule EvoGit.Agent do
                   |> randomize()
                   |> cap(60_000)
                   |> Stream.take(max_retries) do
-            ReqLLM.generate_text(current_model(), context, tools: tools)
-            |> tap(fn
-              # Log the error and retry if LLM call fails
+            with {:ok, stream_response} <-
+                   ReqLLM.stream_text(current_model(), context.messages, tools: tools),
+                 {:ok, response} <-
+                   ReqLLM.StreamResponse.process_stream(stream_response) do
+              {:ok, response}
+            else
               {:error, reason} ->
                 Logger.warning(
                   "Agent #{state.agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
                 )
-
-              _ ->
-                :ok
-            end)
+                {:error, reason}
+            end
           end
 
         llm_end = System.monotonic_time(:millisecond)
@@ -436,7 +437,6 @@ defmodule EvoGit.Agent do
 
         thinking = ReqLLM.Response.thinking(response)
         text = ReqLLM.Response.text(response)
-
         if thinking && thinking != "" do
           stream_event(state.agent_id, "THOUGHT_CHUNK", %{text: thinking})
         end
@@ -452,7 +452,8 @@ defmodule EvoGit.Agent do
           tool_calls: tool_calls
         })
 
-        state = %{state | history: state.history ++ [response.message], turn: state.turn + 1}
+        # Use the updated context from response (already has assistant message appended)
+        state = %{state | history: response.context.messages, turn: state.turn + 1}
 
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
@@ -625,7 +626,13 @@ defmodule EvoGit.Agent do
             tool_call_id = Map.get(call, :id, call.name)
 
             output =
-              case EvoGit.Agent.Tools.execute(call.name, call.arguments, repo_path, repo_root, node_path) do
+              case EvoGit.Agent.Tools.execute(
+                     call.name,
+                     call.arguments,
+                     repo_path,
+                     repo_root,
+                     node_path
+                   ) do
                 {:error, reason} ->
                   "Error: #{inspect(reason)}"
 
@@ -719,46 +726,46 @@ defmodule EvoGit.Agent do
             nil
           else
             case EvoGit.Adapters.Git.merge_octopus(repo_path, successful_shas) do
-            {:ok, output} ->
-              # Check if any actual changes were made by comparing commits
-              case EvoGit.Adapters.Git.rev_parse(repo_path) do
-                {:ok, ^parent_commit} ->
-                  # No changes - all subagents returned the same commit
-                  nil
+              {:ok, output} ->
+                # Check if any actual changes were made by comparing commits
+                case EvoGit.Adapters.Git.rev_parse(repo_path) do
+                  {:ok, ^parent_commit} ->
+                    # No changes - all subagents returned the same commit
+                    nil
 
-                {:ok, _new_commit} ->
-                  """
-                  System Note: Successfully auto-merged changes from subagents.
-                  Merge output:
-                  #{output}
-                  """
+                  {:ok, _new_commit} ->
+                    """
+                    System Note: Successfully auto-merged changes from subagents.
+                    Merge output:
+                    #{output}
+                    """
 
-                _error ->
-                  """
-                  System Note: Successfully auto-merged changes from subagents.
-                  Merge output:
-                  #{output}
-                  """
-              end
+                  _error ->
+                    """
+                    System Note: Successfully auto-merged changes from subagents.
+                    Merge output:
+                    #{output}
+                    """
+                end
 
-            {:conflict, output} ->
-              {:ok, files} = EvoGit.Adapters.Git.conflict_files(repo_path)
+              {:conflict, output} ->
+                {:ok, files} = EvoGit.Adapters.Git.conflict_files(repo_path)
 
-              """
-              System Note: Auto-merging subagent changes resulted in conflicts.
-              Merge output:
-              #{output}
+                """
+                System Note: Auto-merging subagent changes resulted in conflicts.
+                Merge output:
+                #{output}
 
-              Conflicting files:
-              #{Enum.join(files, "\n")}
-              """
+                Conflicting files:
+                #{Enum.join(files, "\n")}
+                """
 
-            {:error, code, output} ->
-              """
-              System Note: Failed to auto-merge subagent changes (exit code #{code}).
-              Merge output:
-              #{output}
-              """
+              {:error, code, output} ->
+                """
+                System Note: Failed to auto-merge subagent changes (exit code #{code}).
+                Merge output:
+                #{output}
+                """
             end
           end
 
@@ -940,20 +947,27 @@ defmodule EvoGit.Agent do
             #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
             """
 
-            context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
+            messages = [ReqLLM.Context.user(prompt)]
 
-            case ReqLLM.generate_text(current_model(), context) do
-              {:ok, response} ->
-                text = ReqLLM.Response.text(response)
-                summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> (text || ""))
+            case ReqLLM.stream_text(current_model(), messages) do
+              {:ok, stream_response} ->
+                case ReqLLM.StreamResponse.process_stream(stream_response) do
+                  {:ok, response} ->
+                    text = ReqLLM.Response.text(response)
+                    # Manually create summary context since we're restructuring history
+                    summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> text)
 
-                # Log compression event
-                append_history(state.agent_id, "CONTEXT_COMPRESSION", %{
-                  compressed_count: length(older_messages),
-                  summary: text || ""
-                })
+                    # Log compression event
+                    append_history(state.agent_id, "CONTEXT_COMPRESSION", %{
+                      compressed_count: length(older_messages),
+                      summary: text
+                    })
 
-                %{state | history: [first_message, summary_msg | recent_messages]}
+                    %{state | history: [first_message, summary_msg | recent_messages]}
+
+                  _error ->
+                    state
+                end
 
               _error ->
                 state
