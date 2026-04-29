@@ -78,7 +78,7 @@ defmodule EvoGit do
       "-p",
       "SystemCallFilter=~ @module @keyring @raw-io @reboot @mount @swap @debug @obsolete @privileged",
       "-p",
-      "CPUQuota=800%",
+      "CPUWeight=30",
       "-p",
       "MemoryMax=16G"
     ] ++
