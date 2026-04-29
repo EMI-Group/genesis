@@ -59,6 +59,8 @@ defmodule EvoGit.Agent do
       @tool_output_max_bytes 128 * 1024
       @tool_output_truncate_size 4096
 
+      import ReqLLM.Context, only: [user: 1, assistant: 1, system: 1, tool_result: 3]
+
       defp current_model do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
@@ -115,7 +117,7 @@ defmodule EvoGit.Agent do
             # Loaded from ETS each turn — see load_worktree_path/1
             repo_path: nil,
             turn: 0,
-            history: [ReqLLM.Context.user(combined_prompt)],
+            history: ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)]),
             in_grace_period: false,
             deadline: System.monotonic_time(:millisecond) + @timeout_ms,
             # Track accumulated LLM time only
@@ -269,7 +271,7 @@ defmodule EvoGit.Agent do
             time_limit_ms: @timeout_ms
           })
 
-          new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
+          new_history = ReqLLM.Context.append(state.history, user(warning_msg))
           append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
 
           %{state | history: new_history, last_warned_time_percent: new_last_warned}
@@ -317,7 +319,7 @@ defmodule EvoGit.Agent do
             max_turns: @max_turns
           })
 
-          new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
+          new_history = ReqLLM.Context.append(state.history, user(warning_msg))
           append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
 
           %{state | history: new_history, last_warned_turns_percent: new_last_warned}
@@ -382,7 +384,7 @@ defmodule EvoGit.Agent do
         Do not call any other tools.
         """
 
-        new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
+        new_history = ReqLLM.Context.append(state.history, user(warning_msg))
 
         # Log the warning message as part of conversation
         append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
@@ -394,12 +396,7 @@ defmodule EvoGit.Agent do
       end
 
       defp do_turn(state) do
-        context =
-          ReqLLM.Context.new([
-            ReqLLM.Context.system(system_prompt())
-            | state.history
-          ])
-
+        context = state.history
         tools = effective_tools(state)
 
         # Track LLM time
@@ -453,7 +450,7 @@ defmodule EvoGit.Agent do
         })
 
         # Use the updated context from response (already has assistant message appended)
-        state = %{state | history: response.context.messages, turn: state.turn + 1}
+        state = %{state | history: response.context, turn: state.turn + 1}
 
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
@@ -510,7 +507,7 @@ defmodule EvoGit.Agent do
 
           case CompleteTask.check_workspace_dirty(repo_path) do
             {:dirty, warning_msg} ->
-              new_history = state.history ++ [ReqLLM.Context.user(warning_msg)]
+              new_history = ReqLLM.Context.append(state.history, user(warning_msg))
               append_history(state.agent_id, "USER_MESSAGE", %{content: warning_msg})
 
               {:continue_dirty, new_history}
@@ -568,12 +565,12 @@ defmodule EvoGit.Agent do
 
         all_results =
           Enum.map(sorted_results, fn {_index, tool_call_id, name, output} ->
-            ReqLLM.Context.tool_result(tool_call_id, name, output)
+            tool_result(tool_call_id, name, output)
           end)
 
         all_results =
           if merge_message do
-            all_results ++ [ReqLLM.Context.user(merge_message)]
+            all_results ++ [user(merge_message)]
           else
             all_results
           end
@@ -895,15 +892,18 @@ defmodule EvoGit.Agent do
       end
 
       defp try_compress_chat(state) do
+        # Get the messages list from the context
+        messages = ReqLLM.Context.to_list(state.history)
+
         # Calculate total byte length of history messages
         total_bytes =
-          Enum.reduce(state.history, 0, fn msg, acc ->
+          Enum.reduce(messages, 0, fn msg, acc ->
             acc + estimate_message_bytes(msg)
           end)
 
         # Compress if total exceeds threshold
         if total_bytes > @compression_threshold_bytes do
-          [first_message | rest_history] = state.history
+          [first_message | rest_history] = messages
 
           total_rest = length(rest_history)
           split_index = max(0, total_rest - @compression_keep_recent)
@@ -947,15 +947,15 @@ defmodule EvoGit.Agent do
             #{inspect(older_messages, limit: :infinity, printable_limit: :infinity)}
             """
 
-            messages = [ReqLLM.Context.user(prompt)]
+            compression_context = ReqLLM.Context.new([user(prompt)])
 
-            case ReqLLM.stream_text(current_model(), messages) do
+            case ReqLLM.stream_text(current_model(), compression_context) do
               {:ok, stream_response} ->
                 case ReqLLM.StreamResponse.process_stream(stream_response) do
                   {:ok, response} ->
                     text = ReqLLM.Response.text(response)
                     # Manually create summary context since we're restructuring history
-                    summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> text)
+                    summary_msg = user("Summary of previous events:\n" <> text)
 
                     # Log compression event
                     append_history(state.agent_id, "CONTEXT_COMPRESSION", %{
@@ -963,7 +963,11 @@ defmodule EvoGit.Agent do
                       summary: text
                     })
 
-                    %{state | history: [first_message, summary_msg | recent_messages]}
+                    # Rebuild the context with first_message, summary_msg, and recent_messages
+                    new_history =
+                      ReqLLM.Context.new([first_message, summary_msg | recent_messages])
+
+                    %{state | history: new_history}
 
                   _error ->
                     state
