@@ -3,7 +3,6 @@ defmodule EvoDashWeb.AgentsLive do
 
   @agent_state_table :evogit_agent_state
   @sched_meta_table :evogit_sched_meta
-  @history_table :evogit_agent_history
 
   @impl true
   def mount(_params, _session, socket) do
@@ -150,13 +149,47 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   defp load_agent_history(agent_id) do
-    case :ets.whereis(@history_table) do
-      :undefined -> []
-      _ -> :ets.tab2list(@history_table)
+    case :ets.lookup(@agent_state_table, agent_id) do
+      [{^agent_id, agent_state}] ->
+        case Map.get(agent_state, :context) do
+          nil -> []
+          %ReqLLM.Context{messages: messages} -> convert_messages_to_history(messages)
+          _ -> []
+        end
+
+      [] ->
+        []
     end
-    |> Enum.filter(fn {id, _entry} -> id == agent_id end)
-    |> Enum.map(fn {_id, entry} -> entry end)
-    |> Enum.sort_by(& &1.timestamp)
+  end
+
+  # Converts ReqLLM.Message structs to history entry format
+  defp convert_messages_to_history(messages) when is_list(messages) do
+    Enum.map(messages, fn msg ->
+      content_text =
+        case msg.content do
+          parts when is_list(parts) ->
+            parts
+            |> Enum.map(fn
+              %{text: text} when is_binary(text) -> text
+              %{type: :thinking, text: text} -> "[thinking] #{text}"
+              _ -> ""
+            end)
+            |> Enum.join("")
+
+          _ ->
+            ""
+        end
+
+      %{
+        timestamp: System.monotonic_time(:millisecond),
+        type: Atom.to_string(msg.role),
+        data: %{
+          content: content_text,
+          tool_calls: Map.get(msg, :tool_calls),
+          metadata: Map.get(msg, :metadata, %{})
+        }
+      }
+    end)
   end
 
   defp find_children(parent_id, sched_metas) do
