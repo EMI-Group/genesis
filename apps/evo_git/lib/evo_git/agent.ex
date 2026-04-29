@@ -390,34 +390,37 @@ defmodule EvoGit.Agent do
         context = state.context
         tools = effective_tools(state)
 
-        # Track LLM time
-        llm_start = System.monotonic_time(:millisecond)
-
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         max_retries = agent_state.max_retries
 
-        {ok, response} =
+        {:ok, response, llm_duration} =
           retry with:
                   exponential_backoff(1_000)
                   |> randomize()
                   |> cap(60_000)
                   |> Stream.take(max_retries) do
-            with {:ok, stream_response} <-
-                   ReqLLM.stream_text(current_model(), context.messages, tools: tools),
-                 {:ok, response} <-
-                   ReqLLM.StreamResponse.process_stream(stream_response) do
-              {:ok, response}
+            with llm_start <- System.monotonic_time(:millisecond),
+                 {:ok, stream_resp} <-
+                   ReqLLM.stream_text(
+                     current_model(),
+                     context.messages,
+                     tools: tools
+                   ),
+                 {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
+                 llm_end <- System.monotonic_time(:millisecond) do
+              {:ok, response, llm_end - llm_start}
             else
               {:error, reason} ->
                 Logger.warning(
                   "Agent #{state.agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
                 )
+
                 {:error, reason}
             end
           end
 
         llm_end = System.monotonic_time(:millisecond)
-        state = %{state | llm_time_ms: state.llm_time_ms + (llm_end - llm_start)}
+        state = %{state | llm_time_ms: state.llm_time_ms + llm_duration}
 
         tool_calls =
           ReqLLM.Response.tool_calls(response)
@@ -425,6 +428,7 @@ defmodule EvoGit.Agent do
 
         thinking = ReqLLM.Response.thinking(response)
         text = ReqLLM.Response.text(response)
+
         if thinking && thinking != "" do
           stream_event(state.agent_id, "THOUGHT_CHUNK", %{text: thinking})
         end
