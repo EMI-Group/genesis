@@ -56,7 +56,8 @@ config :evo_git,
   max_retries: 15,
   agent_max_retries: 3,
   max_agent_depth: 5,
-  llm_model: "zai_coding_plan:glm-5"
+  llm_model: "zai_coding_plan:glm-5",
+  compression_threshold_bytes: 400_000
 
 # config/config.exs
 config :req_llm,
