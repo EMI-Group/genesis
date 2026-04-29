@@ -120,6 +120,8 @@ defmodule EvoGit.Agent do
             deadline: System.monotonic_time(:millisecond) + @timeout_ms,
             # Track accumulated LLM time only
             llm_time_ms: 0,
+            # Track current context length (in tokens)
+            total_tokens: 0,
             # Warning tracking: last percentage warned (starts at 0)
             last_warned_time_percent: 0,
             last_warned_turns_percent: 0
@@ -418,6 +420,11 @@ defmodule EvoGit.Agent do
 
         llm_end = System.monotonic_time(:millisecond)
         state = %{state | llm_time_ms: state.llm_time_ms + llm_duration}
+
+        # Track current context length (replace, don't accumulate)
+        usage = ReqLLM.Response.usage(response)
+        current_tokens = usage.input_tokens + usage.output_tokens + Map.get(usage, :reasoning_tokens, 0)
+        state = %{state | total_tokens: current_tokens}
 
         tool_calls =
           ReqLLM.Response.tool_calls(response)
@@ -853,95 +860,72 @@ defmodule EvoGit.Agent do
       end
 
       defp try_compress_chat(state) do
-        # Get the messages list from the context
-        messages = ReqLLM.Context.to_list(state.context)
+        # Compress if current context length exceeds threshold (configurable, defaults to 100_000 tokens)
+        threshold = Application.get_env(:evo_git, :compression_threshold_tokens, 100_000)
 
-        # Calculate total byte length of context messages
-        total_bytes =
-          Enum.reduce(messages, 0, fn msg, acc ->
-            acc + estimate_message_bytes(msg)
-          end)
-
-        # Compress if total exceeds threshold (configurable, defaults to 400_000 bytes)
-        threshold = Application.get_env(:evo_git, :compression_threshold_bytes, 400_000)
-
-        if total_bytes > threshold do
+        if state.total_tokens > threshold do
           # Preserve: system prompt (1st) and initial user prompt (2nd)
           # Compress EVERYTHING else
-          [system_msg, initial_user_msg | rest_context] = messages
+          messages = ReqLLM.Context.to_list(state.context)
 
-          prompt = """
-          Compress the following interaction context into a dense, structured summary to be passed to the next agent iteration.
+          case messages do
+            [system_msg, initial_user_msg | rest_context] ->
+              prompt = """
+              Compress the following interaction context into a dense, structured summary to be passed to the next agent iteration.
 
-          Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
+              Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
 
-          Output your summary strictly using the following format:
+              Output your summary strictly using the following format:
 
-          1. Current Progress:
-          [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
+              1. Current Progress:
+              [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
 
-          2. Key Findings & Decisions:
-          [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
+              2. Key Findings & Decisions:
+              [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
 
-          3. SubAgent Ledger:
-          [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
+              3. SubAgent Ledger:
+              [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
 
-          4. Pending / Next Steps:
-          [What specifically needs to be executed next to advance the Current Objective.]
+              4. Pending / Next Steps:
+              [What specifically needs to be executed next to advance the Current Objective.]
 
-          ---
+              ---
 
-          [INTERACTION HISTORY BEGIN]
+              [INTERACTION HISTORY BEGIN]
 
-          #{inspect(rest_context, limit: :infinity, printable_limit: :infinity)}
-          """
+              #{inspect(rest_context, limit: :infinity, printable_limit: :infinity)}
+              """
 
-          compression_context = ReqLLM.Context.new([user(prompt)])
+              compression_context = ReqLLM.Context.new([user(prompt)])
 
-          case ReqLLM.stream_text(current_model(), compression_context) do
-            {:ok, stream_response} ->
-              case ReqLLM.StreamResponse.process_stream(stream_response) do
-                {:ok, response} ->
-                  text = ReqLLM.Response.text(response)
-                  # Manually create summary context since we're restructuring context
-                  summary_msg = user("Summary of previous events:\n" <> text)
+              case ReqLLM.stream_text(current_model(), compression_context) do
+                {:ok, stream_response} ->
+                  case ReqLLM.StreamResponse.process_stream(stream_response) do
+                    {:ok, response} ->
+                      text = ReqLLM.Response.text(response)
+                      # Manually create summary context since we're restructuring context
+                      summary_msg = user("Summary of previous events:\n" <> text)
 
-                  # Rebuild the context with system prompt, initial user prompt, and summary only
-                  new_context =
-                    ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
+                      # Rebuild the context with system prompt, initial user prompt, and summary only
+                      new_context =
+                        ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
 
-                  %{state | context: new_context}
+                      %{state | context: new_context}
+
+                    _error ->
+                      state
+                  end
 
                 _error ->
                   state
               end
 
-            _error ->
+            _ ->
+              # Not enough messages to compress, return state as-is
               state
           end
         else
           state
-        end
-      end
-
-      defp estimate_message_bytes(msg) when is_binary(msg), do: byte_size(msg)
-
-      defp estimate_message_bytes(msg) when is_struct(msg) do
-        try do
-          msg
-          |> Map.from_struct()
-          |> inspect(limit: :infinity, printable_limit: :infinity)
-          |> byte_size()
-        rescue
-          _ -> 0
-        end
-      end
-
-      defp estimate_message_bytes(msg) do
-        try do
-          inspect(msg, limit: :infinity, printable_limit: :infinity) |> byte_size()
-        rescue
-          _ -> 0
         end
       end
 
