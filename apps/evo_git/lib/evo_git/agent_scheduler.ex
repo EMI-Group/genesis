@@ -270,7 +270,7 @@ defmodule EvoGit.AgentScheduler do
   # failed specs get an error result, valid specs are spawned.
   defp spawn_validated_subagents(parent_id, parent, specs, from, state) do
     # Get parent agent state for validation context
-    parent_agent_state = get_agent_state(parent_id)
+    {:ok, parent_agent_state} = get_agent_state(parent_id)
 
     # Pre-Delegation Cleanliness
     parent = auto_commit_fallback(parent_id, parent)
@@ -340,12 +340,12 @@ defmodule EvoGit.AgentScheduler do
   end
 
   # Validates a single subagent spec. All checks are per-subagent.
-  defp validate_single_subagent(parent_id, parent, spec, parent_agent_state_result, state) do
+  defp validate_single_subagent(parent_id, parent, spec, parent_agent_state, state) do
     subagent_depth = parent.depth + 1
 
     with :ok <- validate_subagent_depth(parent_id, subagent_depth, state),
          :ok <- validate_subagent_not_ignored(spec),
-         :ok <- validate_spatial_contract_for_spec(parent_id, parent_agent_state_result, spec) do
+         :ok <- validate_spatial_contract_for_spec(parent_id, parent_agent_state, spec) do
       :ok
     end
   end
@@ -381,8 +381,6 @@ defmodule EvoGit.AgentScheduler do
   end
 
   # --- Spatial Contract Validation (Per-Subagent) ---
-
-  defp validate_spatial_contract_for_spec(_parent_id, nil, _spec), do: :ok
 
   defp validate_spatial_contract_for_spec(_parent_id, %{context_node: parent_context}, spec) do
     parent_type = :read_write
