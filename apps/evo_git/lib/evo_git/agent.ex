@@ -51,9 +51,6 @@ defmodule EvoGit.Agent do
       @grace_period_ms 180 * 1000
       @complete_tool "complete_task"
 
-      # Context compression thresholds in bytes
-      # usually a token is roughly 4 bytes, so roughly 100k tokens before compression
-      @compression_threshold_bytes 400_000
       # Tool output truncation thresholds
       @tool_output_max_bytes 128 * 1024
       @tool_output_truncate_size 4096
@@ -865,8 +862,10 @@ defmodule EvoGit.Agent do
             acc + estimate_message_bytes(msg)
           end)
 
-        # Compress if total exceeds threshold
-        if total_bytes > @compression_threshold_bytes do
+        # Compress if total exceeds threshold (configurable, defaults to 400_000 bytes)
+        threshold = Application.get_env(:evo_git, :compression_threshold_bytes, 400_000)
+
+        if total_bytes > threshold do
           # Preserve: system prompt (1st) and initial user prompt (2nd)
           # Compress EVERYTHING else
           [system_msg, initial_user_msg | rest_context] = messages
