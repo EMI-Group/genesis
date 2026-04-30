@@ -481,13 +481,7 @@ defmodule EvoGit.Agent do
         complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
 
         if complete_call do
-          case handle_complete_call(complete_call, state, tool_calls) do
-            {:continue, tool_responses} ->
-              {:continue, tool_responses}
-
-            {:complete, final_result} ->
-              {:complete, final_result}
-          end
+          handle_complete_call(complete_call, state, tool_calls)
         else
           process_regular_tool_calls(tool_calls, state)
         end
@@ -508,10 +502,15 @@ defmodule EvoGit.Agent do
 
           case CompleteTask.check_workspace_dirty(repo_path) do
             {:dirty, warning_msg} ->
-              tool_responses = Enum.map(tool_calls, fn call ->
-                tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
-                tool_result(tool_call_id, call.name, warning_msg)
-              end)
+              Logger.warning(
+                "Agent #{state.agent_id}: Workspace is dirty at completion. Warning: #{warning_msg}"
+              )
+
+              tool_responses =
+                Enum.map(tool_calls, fn call ->
+                  tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
+                  tool_result(tool_call_id, call.name, warning_msg)
+                end)
 
               {:continue, tool_responses}
 
