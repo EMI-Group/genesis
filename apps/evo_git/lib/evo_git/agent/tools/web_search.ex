@@ -5,6 +5,8 @@ defmodule EvoGit.Agent.Tools.WebSearch do
 
   alias EvoGit.Agent.Tools.Shared
 
+  @default_timeout 60_000
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -30,6 +32,12 @@ defmodule EvoGit.Agent.Tools.WebSearch do
             "type" => "integer",
             "description" => "Maximum number of results to return (1-50, default 10)",
             "default" => 10
+          },
+          "timeout" => %{
+            "type" => "integer",
+            "description" =>
+              "Timeout in milliseconds for this tool execution. Default: #{@default_timeout}",
+            "default" => @default_timeout
           }
         },
         "required" => ["query"]

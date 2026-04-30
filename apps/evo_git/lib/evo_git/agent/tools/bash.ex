@@ -5,6 +5,9 @@ defmodule EvoGit.Agent.Tools.Bash do
 
   alias EvoGit.Agent.Tools.Shared
 
+  # 3 minutes timeout for running complex commands, such as running tests or building the project.
+  @default_timeout 180_000
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -63,7 +66,8 @@ defmodule EvoGit.Agent.Tools.Bash do
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "command" => %{"type" => "string", "description" => "The bash command to execute"}
+          "command" => %{"type" => "string", "description" => "The bash command to execute"},
+          "timeout" => %{"type" => "integer", "description" => "Timeout in milliseconds for this tool execution. Default: #{@default_timeout}", "default" => @default_timeout}
         },
         "required" => ["command"]
       },

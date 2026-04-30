@@ -6,6 +6,9 @@ defmodule EvoGit.Agent.Tools.Curl do
 
   alias EvoGit.Agent.Tools.Shared
 
+  # 1 minute default timeout for curl requests
+  @default_timeout 60_000
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -25,7 +28,8 @@ defmodule EvoGit.Agent.Tools.Curl do
           },
           "method" => %{
             "type" => "string",
-            "description" => "HTTP method: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS (default: GET)",
+            "description" =>
+              "HTTP method: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS (default: GET)",
             "default" => "GET",
             "enum" => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
           },
@@ -40,15 +44,21 @@ defmodule EvoGit.Agent.Tools.Curl do
             "type" => "string",
             "description" =>
               "Optional request body for POST/PUT/PATCH requests. " <>
-              "For JSON APIs, pass a JSON string. Example: '{\"key\": \"value\"}'"
+                "For JSON APIs, pass a JSON string. Example: '{\"key\": \"value\"}'"
           },
           "max_bytes" => %{
             "type" => "integer",
             "description" =>
               "Maximum response size in bytes before truncation. " <>
-              "Responses larger than this will be truncated with a notice. " <>
-              "Default: 1048576 (1MB). Increase for large responses.",
+                "Responses larger than this will be truncated with a notice. " <>
+                "Default: 1048576 (1MB). Increase for large responses.",
             "default" => 1_048_576
+          },
+          "timeout" => %{
+            "type" => "integer",
+            "description" =>
+              "Timeout in milliseconds for this tool execution. Default: #{@default_timeout}",
+            "default" => @default_timeout
           }
         },
         "required" => ["url"]
