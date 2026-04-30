@@ -52,7 +52,6 @@ defmodule EvoGit.Agent.Generalist do
        - You need to understand how components interact
        - You need to analyze data flow or dependencies
        - You need additional context
-       - The investigation is large or complex enough that delegating it will be more efficient
 
     3. Planning and Decomposition: Before making changes, create a plan that decomposes the task into smaller, manageable steps. This can be a simple list of steps you intend to take. This will help you stay organized and ensure you don't miss anything important.
 
