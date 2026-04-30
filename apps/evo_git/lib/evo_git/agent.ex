@@ -603,7 +603,7 @@ defmodule EvoGit.Agent do
         indexed_results
       end
 
-      defp batch_execute_tools(indexed_calls, timeout \\ :infinity, repo_root \\ nil) do
+      defp batch_execute_tools(indexed_calls, max_timeout, repo_root) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
         repo_path = Process.get(:repo_path)
 
@@ -620,21 +620,35 @@ defmodule EvoGit.Agent do
           Enum.map(indexed_calls, fn {call, index} ->
             tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
 
+            tool_timeout = Map.get(call.arguments, "timeout", 60_000)
+            tool_timeout = min(tool_timeout, max_timeout)
+
+            task =
+              Task.async(fn ->
+                EvoGit.Agent.Tools.execute(
+                  call.name,
+                  call.arguments,
+                  repo_path,
+                  repo_root,
+                  node_path
+                )
+              end)
+
             output =
-              case EvoGit.Agent.Tools.execute(
-                     call.name,
-                     call.arguments,
-                     repo_path,
-                     repo_root,
-                     node_path
-                   ) do
-                {:error, reason} ->
+              case Task.yield(task, tool_timeout) || Task.shutdown(task) do
+                {:ok, {:error, reason}} ->
                   "Error: #{inspect(reason)}"
 
-                result ->
+                {:ok, result} ->
                   result
                   |> ensure_utf8()
                   |> truncate_large_output(call.name, call.arguments)
+
+                {:exit, reason} ->
+                  "Error: Tool execution crashed: #{inspect(reason)}"
+
+                nil ->
+                  "Error: Tool execution timed out after #{tool_timeout}ms"
               end
 
             {index, tool_call_id, call.name, output}
