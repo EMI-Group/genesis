@@ -399,12 +399,7 @@ defmodule EvoGit.Agent do
                   |> cap(60_000)
                   |> Stream.take(max_retries) do
             with llm_start <- System.monotonic_time(:millisecond),
-                 {:ok, stream_resp} <-
-                   ReqLLM.stream_text(
-                     current_model(),
-                     context.messages,
-                     tools: tools
-                   ),
+                 {:ok, stream_resp} <- ReqLLM.stream_text(current_model(), context, tools: tools),
                  {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
                  llm_end <- System.monotonic_time(:millisecond) do
               {:ok, response, llm_end - llm_start}
