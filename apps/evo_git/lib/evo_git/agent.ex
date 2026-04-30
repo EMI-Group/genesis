@@ -49,6 +49,9 @@ defmodule EvoGit.Agent do
       @timeout_ms 30 * 60 * 1000
       # 3 minutes
       @grace_period_ms 180 * 1000
+      # 10 seconds default timeout for tools that don't specify their own
+      # Normally these are simple tools that should respond quickly.
+      @default_tool_timeout 10_000
       @complete_tool "complete_task"
 
       # Tool output truncation thresholds
@@ -620,7 +623,7 @@ defmodule EvoGit.Agent do
           Enum.map(indexed_calls, fn {call, index} ->
             tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
 
-            tool_timeout = Map.get(call.arguments, "timeout", 60_000)
+            tool_timeout = Map.get(call.arguments, "timeout", @default_tool_timeout)
             tool_timeout = min(tool_timeout, max_timeout)
 
             task =
