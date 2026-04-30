@@ -51,7 +51,9 @@ defmodule EvoGit.Agent do
       @grace_period_ms 180 * 1000
       # 10 seconds default timeout for tools that don't specify their own
       # Normally these are simple tools that should respond quickly.
+      # The max timeout for any tool is capped at 30 minutes to prevent runaway executions.
       @default_tool_timeout 10_000
+      @max_tool_timeout 1_800_000
       @complete_tool "complete_task"
 
       # Tool output truncation thresholds
@@ -593,7 +595,7 @@ defmodule EvoGit.Agent do
         repo_root = Process.get(:evogit_repo_root)
 
         # Batch execute all tools in parallel with 10 min timeout
-        indexed_results = batch_execute_tools(indexed_calls, 600_000, repo_root)
+        indexed_results = batch_execute_tools(indexed_calls, @max_tool_timeout, repo_root)
 
         # Sync current_commit after tool execution for dashboard visibility
         sync_current_commit_after_tools(state)
