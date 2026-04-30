@@ -486,7 +486,7 @@ defmodule EvoGit.Agent do
         complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
 
         if complete_call do
-          case handle_complete_call(complete_call, state) do
+          case handle_complete_call(complete_call, state, tool_calls) do
             {:continue_dirty, new_context} ->
               {:continue_dirty, new_context}
 
@@ -498,7 +498,7 @@ defmodule EvoGit.Agent do
         end
       end
 
-      defp handle_complete_call(complete_call, state) do
+      defp handle_complete_call(complete_call, state, tool_calls) do
         stream_event(state.agent_id, "TOOL_CALL_END", %{
           name: @complete_tool,
           status: "success"
@@ -513,7 +513,12 @@ defmodule EvoGit.Agent do
 
           case CompleteTask.check_workspace_dirty(repo_path) do
             {:dirty, warning_msg} ->
-              new_context = ReqLLM.Context.append(state.context, user(warning_msg))
+              tool_responses = Enum.map(tool_calls, fn call ->
+                tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
+                tool_result(tool_call_id, call.name, warning_msg)
+              end)
+
+              new_context = ReqLLM.Context.append(state.context, tool_responses)
 
               {:continue_dirty, new_context}
 
