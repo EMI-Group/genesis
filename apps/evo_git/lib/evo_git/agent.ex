@@ -466,11 +466,6 @@ defmodule EvoGit.Agent do
             sync_context_to_ets(state.agent_id, state.context)
             loop(state)
 
-          {:continue_dirty, new_context} ->
-            state = %{state | context: new_context}
-            sync_context_to_ets(state.agent_id, state.context)
-            loop(state)
-
           {:error, :protocol_violation} ->
             if state.in_grace_period do
               {:error, :recovery_failed}
@@ -487,8 +482,8 @@ defmodule EvoGit.Agent do
 
         if complete_call do
           case handle_complete_call(complete_call, state, tool_calls) do
-            {:continue_dirty, new_context} ->
-              {:continue_dirty, new_context}
+            {:continue, tool_responses} ->
+              {:continue, tool_responses}
 
             {:complete, final_result} ->
               {:complete, final_result}
@@ -518,9 +513,7 @@ defmodule EvoGit.Agent do
                 tool_result(tool_call_id, call.name, warning_msg)
               end)
 
-              new_context = ReqLLM.Context.append(state.context, tool_responses)
-
-              {:continue_dirty, new_context}
+              {:continue, tool_responses}
 
             {:clean, _} ->
               do_complete(complete_call, state)
