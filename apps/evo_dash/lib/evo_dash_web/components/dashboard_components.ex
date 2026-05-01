@@ -7,18 +7,18 @@ defmodule EvoDashWeb.DashboardComponents do
 
   attr :path, :string, default: ""
   attr :prompt, :string, default: ""
-  attr :mode, :string, default: "new"
+  attr :mode, :string, default: "genesis_new"
   attr :concurrency, :string, default: @default_concurrency
   attr :retries, :string, default: @default_retries
   attr :agent_max_retries, :string, default: @default_agent_max_retries
 
-  def genesis_form(assigns) do
+  def task_form(assigns) do
     ~H"""
-    <.form for={%{}} phx-submit="genesis_submit" class="card bg-base-200">
+    <.form for={%{}} phx-submit="task_submit" phx-change="task_change" class="card bg-base-200">
       <div class="card-body">
-        <h2 class="card-title">Start a New Genesis</h2>
+        <h2 class="card-title">Start a Task</h2>
         <p class="text-sm text-base-content/70 mb-4">
-          Bootstrap the Context Tree and Phylogenetic Graph for a new or existing codebase.
+          Bootstrap a new codebase, analyze an existing one, or evolve your code.
         </p>
 
         <div class="form-control">
@@ -32,38 +32,33 @@ defmodule EvoDashWeb.DashboardComponents do
             class="input input-bordered w-full"
             placeholder="/path/to/your/repo"
           />
-          <label class="label">
-            <span class="label-text-alt">The path to the git repository to work on</span>
-          </label>
         </div>
 
         <div class="form-control">
           <label class="label">
-            <span class="label-text font-semibold">Mode</span>
+            <span class="label-text font-semibold">Task Mode</span>
           </label>
-          <select name="mode" class="select select-bordered">
-            <option value="new" selected={@mode == "new"}>New Codebase</option>
-            <option value="existing" selected={@mode == "existing"}>Existing Codebase</option>
+          <select name="mode" class="select select-bordered w-full">
+            <optgroup label="Genesis (Bootstrap & Analyze)">
+              <option value="genesis_new" selected={@mode == "genesis_new"}>New Codebase</option>
+              <option value="genesis_existing" selected={@mode == "genesis_existing"}>Existing Codebase</option>
+            </optgroup>
+            <optgroup label="Evolve (Mutate Code)">
+              <option value="evolve_simple" selected={@mode == "evolve_simple"}>Simple (Top-down)</option>
+              <option value="evolve_complex" selected={@mode == "evolve_complex"}>Complex (Bottom-up)</option>
+            </optgroup>
           </select>
-          <label class="label">
-            <span class="label-text-alt">
-              New: Create a new codebase from scratch. Existing: Analyze existing code.
-            </span>
-          </label>
         </div>
 
         <div class="form-control">
           <label class="label">
-            <span class="label-text font-semibold">Prompt</span>
+            <span class="label-text font-semibold">Prompt / Objective</span>
           </label>
           <textarea
             name="prompt"
             class="textarea textarea-bordered h-32"
-            placeholder="Describe the software you want to create..."
+            placeholder="Describe the software you want to create or the change you want to make..."
           ><%= @prompt %></textarea>
-          <label class="label">
-            <span class="label-text-alt">Required for new mode, optional for existing</span>
-          </label>
         </div>
 
         <div class="grid grid-cols-3 gap-4">
@@ -110,115 +105,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
         <div class="card-actions justify-end mt-4">
           <button type="submit" class="btn btn-primary">
-            <.icon name="hero-rocket-launch" class="size-4" /> Start Genesis
-          </button>
-        </div>
-      </div>
-    </.form>
-    """
-  end
-
-  attr :path, :string, default: ""
-  attr :objective, :string, default: ""
-  attr :mode, :string, default: "simple"
-  attr :concurrency, :string, default: @default_concurrency
-  attr :retries, :string, default: @default_retries
-  attr :agent_max_retries, :string, default: @default_agent_max_retries
-
-  def evolve_form(assigns) do
-    ~H"""
-    <.form for={%{}} phx-submit="evolve_submit" class="card bg-base-200">
-      <div class="card-body">
-        <h2 class="card-title">Evolve Existing Code</h2>
-        <p class="text-sm text-base-content/70 mb-4">
-          Mutate the codebase based on an objective using evolutionary algorithms.
-        </p>
-
-        <div class="form-control">
-          <label class="label">
-            <span class="label-text font-semibold">Repository Path</span>
-          </label>
-          <input
-            type="text"
-            name="path"
-            value={@path || File.cwd!()}
-            class="input input-bordered w-full"
-            placeholder="/path/to/your/repo"
-          />
-        </div>
-
-        <div class="form-control">
-          <label class="label">
-            <span class="label-text font-semibold">Mode</span>
-          </label>
-          <select name="mode" class="select select-bordered">
-            <option value="simple" selected={@mode == "simple"}>Simple (Top-down)</option>
-            <option value="complex" selected={@mode == "complex"}>Complex (Bottom-up)</option>
-          </select>
-          <label class="label">
-            <span class="label-text-alt">
-              Simple: For clear, well-defined tasks. Complex: For open-ended exploration.
-            </span>
-          </label>
-        </div>
-
-        <div class="form-control">
-          <label class="label">
-            <span class="label-text font-semibold">Objective</span>
-          </label>
-          <textarea
-            name="objective"
-            class="textarea textarea-bordered h-32"
-            placeholder="Describe the change you want to make..."
-            required
-          ><%= @objective %></textarea>
-        </div>
-
-        <div class="grid grid-cols-3 gap-4">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">Concurrency</span>
-            </label>
-            <input
-              type="number"
-              name="concurrency"
-              value={@concurrency}
-              min="1"
-              max="10000"
-              class="input input-bordered"
-            />
-          </div>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">Max Retries</span>
-            </label>
-            <input
-              type="number"
-              name="retries"
-              value={@retries}
-              min="1"
-              max="10000"
-              class="input input-bordered"
-            />
-          </div>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">Agent Max Retries</span>
-            </label>
-            <input
-              type="number"
-              name="agent_max_retries"
-              value={@agent_max_retries}
-              min="1"
-              max="100"
-              class="input input-bordered"
-            />
-          </div>
-        </div>
-
-        <div class="card-actions justify-end mt-4">
-          <button type="submit" class="btn btn-primary">
-            <.icon name="hero-arrow-path" class="size-4" /> Start Evolution
+            <.icon name="hero-rocket-launch" class="size-4" /> Start Task
           </button>
         </div>
       </div>
