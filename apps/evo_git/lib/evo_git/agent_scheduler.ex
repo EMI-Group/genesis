@@ -820,37 +820,30 @@ defmodule EvoGit.AgentScheduler do
   defp auto_commit_fallback(_agent_id, meta), do: meta
 
   defp sync_current_commit(agent_id, %{worktree: wt} = meta) do
-    case Git.rev_parse(wt) do
-      {:ok, current_sha} ->
-        {:ok, agent_state} = get_agent_state(agent_id)
+    {:ok, current_sha} = Git.rev_parse(wt)
+    {:ok, agent_state} = get_agent_state(agent_id)
 
-        agent_needs_update? = agent_state.phylo_node.current_commit != current_sha
-        meta_needs_update? = meta.spec.phylo_node.current_commit != current_sha
+    agent_needs_update? = agent_state.phylo_node.current_commit != current_sha
+    meta_needs_update? = meta.spec.phylo_node.current_commit != current_sha
 
-        if agent_needs_update? do
-          updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-          put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
-        end
+    if agent_needs_update? do
+      updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
+      put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
+    end
 
-        if meta_needs_update? do
-          # When updating the spec, preserve the original repo path instead of
-          # using the worktree path (which is transient and may be reassigned)
-          updated_spec_phylo = %{
-            meta.spec.phylo_node
-            | current_commit: current_sha
-          }
+    if meta_needs_update? do
+      updated_spec_phylo = %{
+        meta.spec.phylo_node
+        | current_commit: current_sha
+      }
 
-          updated_spec = %{meta.spec | phylo_node: updated_spec_phylo}
-          updated_meta = %{meta | spec: updated_spec}
-          put_sched_meta(agent_id, updated_meta)
+      updated_spec = %{meta.spec | phylo_node: updated_spec_phylo}
+      updated_meta = %{meta | spec: updated_spec}
+      put_sched_meta(agent_id, updated_meta)
 
-          updated_meta
-        else
-          meta
-        end
-
-      _ ->
-        meta
+      updated_meta
+    else
+      meta
     end
   end
 
