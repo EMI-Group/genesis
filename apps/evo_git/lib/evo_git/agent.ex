@@ -147,82 +147,52 @@ defmodule EvoGit.Agent do
             Process.put(:repo_path, wt)
             %{state | repo_path: wt}
 
+          {:ok, %AgentState{phylo_node: phylo_node}} when is_nil(phylo_node.repo) ->
+            raise "PhyloNode repo is nil for agent #{state.agent_id} - scheduler bug"
+
           _ ->
-            Logger.warning("Agent #{inspect(state.agent_id)}: No ETS state found, using defaults")
-
-            fallback =
-              Process.get(:repo_path) ||
-                Process.get(:evogit_repo_root) ||
-                File.cwd!()
-
-            %{state | repo_path: state.repo_path || fallback}
+            raise "No ETS state found for agent #{state.agent_id} - scheduler bug"
         end
       end
 
       defp sync_current_commit_after_tools(state) do
-        # Get the current worktree path
-        repo_path = Process.get(:repo_path)
+        repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-        if repo_path do
-          case Git.rev_parse(repo_path) do
-            {:ok, current_sha} ->
-              case AgentScheduler.get_agent_state(state.agent_id) do
-                {:ok, agent_state} ->
-                  # Only update if commit changed
-                  if agent_state.phylo_node.current_commit != current_sha do
-                    updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-                    AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
+        case Git.rev_parse(repo_path) do
+          {:ok, current_sha} ->
+            {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
 
-                    # Stream event for dashboard visibility
-                    stream_event(state.agent_id, "COMMIT_UPDATED", %{
-                      new_commit: current_sha
-                    })
-                  end
+            if agent_state.phylo_node.current_commit != current_sha do
+              updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
+              AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
 
-                _error ->
-                  :ok
-              end
+              stream_event(state.agent_id, "COMMIT_UPDATED", %{
+                new_commit: current_sha
+              })
+            end
 
-            _error ->
-              :ok
-          end
+          {:error, code, msg} ->
+            raise "Git rev_parse failed (#{code}): #{msg}"
         end
       end
 
       # Syncs current commit and returns the SHA (for use in completion)
       defp sync_and_get_current_commit(state) do
-        # Get the current worktree path
-        repo_path = Process.get(:repo_path)
+        repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-        if repo_path do
-          case Git.rev_parse(repo_path) do
-            {:ok, current_sha} ->
-              case AgentScheduler.get_agent_state(state.agent_id) do
-                {:ok, agent_state} ->
-                  # Update if commit changed
-                  if agent_state.phylo_node.current_commit != current_sha do
-                    updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-                    AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
+        {:ok, current_sha} = Git.rev_parse(repo_path)
+        {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
 
-                    # Stream event for dashboard visibility
-                    stream_event(state.agent_id, "COMMIT_UPDATED", %{
-                      new_commit: current_sha
-                    })
-                  end
+        if agent_state.phylo_node.current_commit != current_sha do
+          updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
+          AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
 
-                  current_sha
-
-                _error ->
-                  # Fallback: get SHA directly from git
-                  current_sha
-              end
-
-            _error ->
-              nil
-          end
-        else
-          nil
+          stream_event(state.agent_id, "COMMIT_UPDATED", %{
+            new_commit: current_sha
+          })
         end
+
+        current_sha
       end
 
       # Checks and sends warnings when approaching time/turn limits
@@ -591,10 +561,8 @@ defmodule EvoGit.Agent do
       end
 
       defp process_standard_calls(indexed_calls, state) do
-        # Get repo_root from process dictionary for git worktree database access
-        repo_root = Process.get(:evogit_repo_root)
+        repo_root = Process.get(:evogit_repo_root) || raise "evogit_repo_root not in process dictionary"
 
-        # Batch execute all tools in parallel with 10 min timeout
         indexed_results = batch_execute_tools(indexed_calls, @max_tool_timeout, repo_root)
 
         # Sync current_commit after tool execution for dashboard visibility
@@ -610,14 +578,9 @@ defmodule EvoGit.Agent do
 
       defp batch_execute_tools(indexed_calls, max_timeout, repo_root) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
-        repo_path = Process.get(:repo_path)
+        repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-        # Get node_path from agent state for spatial contract validation
-        node_path =
-          case EvoGit.AgentScheduler.get_agent_state(agent_id) do
-            {:ok, %{context_node: %{path: path}}} -> path
-            _ -> nil
-          end
+        {:ok, %{context_node: %{path: node_path}}} = EvoGit.AgentScheduler.get_agent_state(agent_id)
 
         # Execute tools sequentially to avoid parallel execution issues
         # For example, running two git in parallel would result in git lock issues, and wasting tokens.
@@ -714,12 +677,8 @@ defmodule EvoGit.Agent do
         subagent_specs = build_subagent_specs(indexed_calls, state)
         results = EvoGit.AgentScheduler.spawn_sub_agents(subagent_specs)
 
-        # Get parent's current commit before merge to detect if any changes were made
-        parent_commit =
-          case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
-            {:ok, agent_state} -> agent_state.phylo_node.current_commit
-            _ -> nil
-          end
+        {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
+        parent_commit = agent_state.phylo_node.current_commit
 
         successful_shas =
           for {:ok, %{commit_sha: sha}} <- results, is_binary(sha), do: sha
@@ -891,12 +850,9 @@ defmodule EvoGit.Agent do
       end
 
       defp try_compress_chat(state) do
-        # Compress if current context length exceeds threshold (configurable, defaults to 100_000 tokens)
         threshold = Application.get_env(:evo_git, :compression_threshold_tokens, 100_000)
 
         if state.total_tokens > threshold do
-          # Preserve: system prompt (1st) and initial user prompt (2nd)
-          # Compress EVERYTHING else
           Logger.info(
             "Agent #{state.agent_id}: Context length (#{state.total_tokens} tokens) exceeded compression threshold (#{threshold} tokens). Attempting compression..."
           )
@@ -933,30 +889,17 @@ defmodule EvoGit.Agent do
 
               compression_context = ReqLLM.Context.new([user(prompt)])
 
-              case ReqLLM.stream_text(current_model(), compression_context) do
-                {:ok, stream_response} ->
-                  case ReqLLM.StreamResponse.process_stream(stream_response) do
-                    {:ok, response} ->
-                      text = ReqLLM.Response.text(response)
-                      # Manually create summary context since we're restructuring context
-                      summary_msg = user("Summary of previous events:\n" <> text)
-
-                      # Rebuild the context with system prompt, initial user prompt, and summary only
-                      new_context =
-                        ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
-
-                      %{state | context: new_context}
-
-                    _error ->
-                      state
-                  end
-
-                _error ->
-                  state
+              with {:ok, stream_response} <- ReqLLM.stream_text(current_model(), compression_context),
+                   {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
+                   text <- ReqLLM.Response.text(response),
+                   summary_msg <- user("Summary of previous events:\n" <> text),
+                   new_context <- ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
+                %{state | context: new_context}
+              else
+                _error -> state
               end
 
             _ ->
-              # Not enough messages to compress, return state as-is
               state
           end
         else
