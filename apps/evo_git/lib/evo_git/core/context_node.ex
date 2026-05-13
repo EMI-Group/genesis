@@ -10,6 +10,8 @@ defmodule EvoGit.Core.ContextNode do
 
   alias EvoGit.Adapters.Git
 
+  @context_max_bytes 64 * 1024
+
   @type t :: %__MODULE__{
           path: String.t(),
           repo: String.t()
@@ -161,10 +163,10 @@ defmodule EvoGit.Core.ContextNode do
             file = context_file_path(node)
 
             truncated_content =
-              if String.length(content) > 10000 do
+              if byte_size(content) > @context_max_bytes do
                 require Logger
                 Logger.warning("Content truncated for file: #{file}")
-                String.slice(content, 0, 10000) <> "\n... [Content Truncated] ..."
+                binary_part(content, 0, @context_max_bytes) <> "\n... [Content Truncated] ..."
               else
                 content
               end
