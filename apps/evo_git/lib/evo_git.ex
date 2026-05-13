@@ -19,6 +19,7 @@ defmodule EvoGit do
   def sandbox_args(cwd, executable, args \\ [], repo_root \\ nil) do
     home = System.user_home!()
 
+    # Keep sensitive credentials locked down
     inaccessible_args =
       [
         ".ssh",
@@ -34,13 +35,29 @@ defmodule EvoGit do
         ["-p", "InaccessiblePaths=-#{Path.join(home, dir)}"]
       end)
 
-    # Build ReadWritePaths - always include cwd, repo_root/.git if provided,
-    # and common cache directories for build tools
-    home_cache = Path.join(home, ".cache")
-    cargo_home = Path.join(home, ".cargo")
+    # Comprehensive build tool & language cache support
+    build_cache_dirs =
+      [
+        ".cache",       # Universal cache (Python pip, Go build, C/C++ ccache)
+        ".local/share", # Universal local share (pnpm state, generic tools)
+        ".local/state", # Universal local state
+        ".cargo",       # Rust packages
+        ".rustup",      # Rust toolchains
+        ".mix",         # Elixir Mix
+        ".hex",         # Elixir Hex
+        ".npm",         # Node.js npm
+        ".yarn",        # Node.js yarn
+        ".bun",         # Bun JS
+        ".m2",          # Java Maven
+        ".gradle",      # Java Gradle
+        "go"            # Golang workspace (default GOPATH)
+      ]
+      |> Enum.map(&Path.join(home, &1))
 
+    # Add cwd, the system temp folders, and the language caches
     read_write_paths =
-      [cwd, home_cache, cargo_home] ++
+      [cwd, "/tmp", "/var/tmp"] ++
+        build_cache_dirs ++
         if repo_root do
           [Path.join(repo_root, ".git")]
         else
@@ -49,7 +66,8 @@ defmodule EvoGit do
 
     read_write_args =
       Enum.flat_map(read_write_paths, fn path ->
-        ["-p", "ReadWritePaths=#{path}"]
+        # The "-" prefix ensures systemd won't crash if the directory doesn't exist yet
+        ["-p", "ReadWritePaths=-#{path}"]
       end)
 
     [
@@ -57,30 +75,18 @@ defmodule EvoGit do
       "--wait",
       "--pipe",
       "-q",
-      "-p",
-      "WorkingDirectory=#{cwd}",
-      "-p",
-      "ProtectSystem=strict",
-      "-p",
-      "ProtectHome=read-only",
-      "-p",
-      "PrivateTmp=yes",
-      "-p",
-      "NoNewPrivileges=yes",
-      "-p",
-      "PrivatePIDs=yes",
-      "-p",
-      "ProtectProc=invisible",
-      "-p",
-      "SystemCallArchitectures=native",
-      "-p",
-      "SystemCallErrorNumber=EPERM",
-      "-p",
-      "SystemCallFilter=~ @module @keyring @raw-io @reboot @mount @swap @debug @obsolete @privileged",
-      "-p",
-      "CPUWeight=30",
-      "-p",
-      "MemoryMax=16G"
+      "-p", "WorkingDirectory=#{cwd}",
+      "-p", "ProtectSystem=strict",
+      "-p", "ProtectHome=read-only",
+      # Note: PrivateTmp=yes has been removed so the host's /tmp is shared
+      "-p", "NoNewPrivileges=yes",
+      "-p", "PrivatePIDs=yes",
+      "-p", "ProtectProc=invisible",
+      "-p", "SystemCallArchitectures=native",
+      "-p", "SystemCallErrorNumber=EPERM",
+      "-p", "SystemCallFilter=~ @module @keyring @raw-io @reboot @mount @swap @debug @obsolete @privileged",
+      "-p", "CPUWeight=30",
+      "-p", "MemoryMax=16G"
     ] ++
       read_write_args ++
       inaccessible_args ++ [executable | args]
