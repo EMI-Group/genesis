@@ -861,6 +861,8 @@ defmodule EvoGit.Agent do
 
           case messages do
             [system_msg, initial_user_msg | rest_context] ->
+              interaction_history = format_messages_for_compression(rest_context)
+
               prompt = """
               Compress the following interaction context into a dense, structured summary to be passed to the next agent iteration.
 
@@ -884,7 +886,7 @@ defmodule EvoGit.Agent do
 
               [INTERACTION HISTORY BEGIN]
 
-              #{inspect(rest_context, limit: :infinity, printable_limit: :infinity)}
+              #{interaction_history}
               """
 
               compression_context = ReqLLM.Context.new([user(prompt)])
@@ -905,6 +907,52 @@ defmodule EvoGit.Agent do
         else
           state
         end
+      end
+
+      # Formats a list of messages into a readable string for compression
+      defp format_messages_for_compression(messages) do
+        messages
+        |> Enum.map(&format_single_message/1)
+        |> Enum.join("\n\n")
+      end
+
+      # Formats a single message into a readable string
+      defp format_single_message(%{role: :tool, name: tool_name} = msg) when is_binary(tool_name) do
+        header = "[TOOL: #{tool_name}]"
+        content = extract_message_content(msg)
+
+        if String.trim(content) == "" do
+          "#{header} <empty>"
+        else
+          "#{header}\n#{content}"
+        end
+      end
+
+      defp format_single_message(%{role: role} = msg) do
+        header = "[#{role |> to_string() |> String.upcase()}]"
+        content = extract_message_content(msg)
+
+        if String.trim(content) == "" do
+          "#{header} <empty>"
+        else
+          "#{header}\n#{content}"
+        end
+      end
+
+      # Extracts text content from a message's content parts
+      defp extract_message_content(msg) do
+        msg.content
+        |> Enum.map(fn
+          %{type: :text, text: text} when is_binary(text) -> text
+          %{type: :thinking, text: text} when is_binary(text) -> "[THINKING]\n#{text}"
+          %{type: :image_url} -> "[IMAGE]"
+          %{type: :video_url} -> "[VIDEO]"
+          %{type: :image} -> "[IMAGE]"
+          %{type: :file, filename: filename} -> "[FILE: #{filename}]"
+          _ -> ""
+        end)
+        |> Enum.reject(&(String.trim(&1) == ""))
+        |> Enum.join("\n")
       end
 
       def available_tools do
