@@ -358,7 +358,7 @@
                                       <div class="space-y-1">
                                         <%= for call <- entry.data.tool_calls do %>
                                           <div class="flex items-center gap-2">
-                                            <span class="font-mono">{call.name}</span>
+                                            <span class="font-mono">{call.function.name}</span>
                                           </div>
                                         <% end %>
                                       </div>
@@ -469,8 +469,8 @@
                     <div class="space-y-2">
                       <%= for call <- @selected_history_entry.data.tool_calls do %>
                         <div class="bg-secondary/10 p-3 rounded">
-                          <div class="font-mono font-semibold mb-1">{call.name}</div>
-                          <pre class="text-xs overflow-x-auto"><%= inspect(call.arguments || call.input, pretty: true) %></pre>
+                          <div class="font-mono font-semibold mb-1">{call.function.name}</div>
+                          <pre class="text-xs overflow-x-auto"><%= call.function.arguments_json %></pre>
                         </div>
                       <% end %>
                     </div>
