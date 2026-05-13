@@ -38,19 +38,32 @@ defmodule EvoGit do
     # Comprehensive build tool & language cache support
     build_cache_dirs =
       [
-        ".cache",       # Universal cache (Python pip, Go build, C/C++ ccache)
-        ".local/share", # Universal local share (pnpm state, generic tools)
-        ".local/state", # Universal local state
-        ".cargo",       # Rust packages
-        ".rustup",      # Rust toolchains
-        ".mix",         # Elixir Mix
-        ".hex",         # Elixir Hex
-        ".npm",         # Node.js npm
-        ".yarn",        # Node.js yarn
-        ".bun",         # Bun JS
-        ".m2",          # Java Maven
-        ".gradle",      # Java Gradle
-        "go"            # Golang workspace (default GOPATH)
+        # Universal cache (Python pip, Go build, C/C++ ccache)
+        ".cache",
+        # Universal local share (pnpm state, generic tools)
+        ".local/share",
+        # Universal local state
+        ".local/state",
+        # Rust packages
+        ".cargo",
+        # Rust toolchains
+        ".rustup",
+        # Elixir Mix
+        ".mix",
+        # Elixir Hex
+        ".hex",
+        # Node.js npm
+        ".npm",
+        # Node.js yarn
+        ".yarn",
+        # Bun JS
+        ".bun",
+        # Java Maven
+        ".m2",
+        # Java Gradle
+        ".gradle",
+        # Golang workspace (default GOPATH)
+        "go"
       ]
       |> Enum.map(&Path.join(home, &1))
 
@@ -75,18 +88,51 @@ defmodule EvoGit do
       "--wait",
       "--pipe",
       "-q",
-      "-p", "WorkingDirectory=#{cwd}",
-      "-p", "ProtectSystem=strict",
-      "-p", "ProtectHome=read-only",
-      # Note: PrivateTmp=yes has been removed so the host's /tmp is shared
-      "-p", "NoNewPrivileges=yes",
-      "-p", "PrivatePIDs=yes",
-      "-p", "ProtectProc=invisible",
-      "-p", "SystemCallArchitectures=native",
-      "-p", "SystemCallErrorNumber=EPERM",
-      "-p", "SystemCallFilter=~ @module @keyring @raw-io @reboot @mount @swap @debug @obsolete @privileged",
-      "-p", "CPUWeight=30",
-      "-p", "MemoryMax=16G"
+      "-p",
+      "WorkingDirectory=#{cwd}",
+      # --- FILESYSTEM PROTECTION (The Anti-rm -rf) ---
+      # /usr, /boot, /etc are read-only
+      "-p",
+      "ProtectSystem=strict",
+      # /home is read-only (except ReadWritePaths)
+      "-p",
+      "ProtectHome=read-only",
+      # Cannot tweak /sys
+      "-p",
+      "ProtectKernelTunables=yes",
+      # Cannot escape cgroups
+      "-p",
+      "ProtectControlGroups=yes",
+      # --- SYSCALL FILTERING (The Goldilocks Zone) ---
+      "-p",
+      "SystemCallArchitectures=native",
+      "-p",
+      "SystemCallErrorNumber=EPERM",
+      "-p",
+      "SystemCallFilter=~ @clock @module @mount @raw-io @reboot @swap",
+      # --- RESOURCE LIMITS (The Anti-Fork Bomb) ---
+      # Prevent CPU starvation on the host
+      "-p",
+      "CPUWeight=30",
+      # Prevent Out-Of-Memory host crashes
+      "-p",
+      "MemoryMax=16G",
+      # Prevent accidental fork bombs by LLM
+      "-p",
+      "TasksMax=8196",
+      # Fix "Too many open files" in npm/cargo
+      "-p",
+      "LimitNOFILE=65536",
+      # --- PROCESS ISOLATION ---
+      # Cannot use sudo or setuid binaries
+      "-p",
+      "NoNewPrivileges=yes",
+      # Cannot see host processes via `ps`
+      "-p",
+      "PrivatePIDs=yes",
+      # Hides other user processes in /proc
+      "-p",
+      "ProtectProc=invisible"
     ] ++
       read_write_args ++
       inaccessible_args ++ [executable | args]
