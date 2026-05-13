@@ -87,9 +87,12 @@ defmodule EvoGit do
       "--user",
       "--wait",
       "--pipe",
+      "--collect",
       "-q",
       "-p",
       "WorkingDirectory=#{cwd}",
+      "-p",
+      "StandardInput=null",
       # --- FILESYSTEM PROTECTION (The Anti-rm -rf) ---
       # /usr, /boot, /etc are read-only
       "-p",
@@ -132,7 +135,9 @@ defmodule EvoGit do
       "PrivatePIDs=yes",
       # Hides other user processes in /proc
       "-p",
-      "ProtectProc=invisible"
+      "ProtectProc=invisible",
+      "-p",
+      "OOMScoreAdjust=1000"
     ] ++
       read_write_args ++
       inaccessible_args ++ [executable | args]
