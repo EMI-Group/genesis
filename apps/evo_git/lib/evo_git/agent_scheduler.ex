@@ -196,7 +196,7 @@ defmodule EvoGit.AgentScheduler do
        llm_model: llm_model,
        max_retries: max_retries,
        next_agent_id: 1,
-       available_worktrees: [],
+       running_count: 0,
        ref_to_agent: %{},
        queue: :queue.new()
      }}
@@ -493,10 +493,9 @@ defmodule EvoGit.AgentScheduler do
 
   defp do_initialize(state, repo_root) do
     worker_base = Path.join(repo_root, ".evogit/workers")
-    max_concurrency = state.max_concurrency
 
     Logger.info(
-      "AgentScheduler: Initializing with #{max_concurrency} worktrees at #{worker_base}"
+      "AgentScheduler: Initializing worktree directory at #{worker_base}"
     )
 
     File.rm_rf!(worker_base)
@@ -505,25 +504,9 @@ defmodule EvoGit.AgentScheduler do
 
     {:ok, current_sha} = Git.rev_parse(repo_root)
 
-    worktrees =
-      for i <- 1..max_concurrency do
-        path = Path.join(worker_base, "worker_#{i}")
-
-        case Git.add_worktree(repo_root, path, current_sha) do
-          {:ok, _} ->
-            path
-
-          {:error, _, msg} ->
-            Logger.error("Failed to create worktree #{path}: #{msg}")
-            nil
-        end
-      end
-      |> Enum.reject(&is_nil/1)
-
     %{
       state
       | initialized: true,
-        available_worktrees: worktrees,
         repo_root: repo_root,
         base_sha: current_sha
     }
@@ -533,10 +516,10 @@ defmodule EvoGit.AgentScheduler do
     worker_base = Path.join(repo_root, ".evogit/workers")
     File.rm_rf!(worker_base)
     Git.prune_worktrees(repo_root)
-    %{state | initialized: false, available_worktrees: []}
+    %{state | initialized: false}
   end
 
-  defp teardown_worktrees(state), do: %{state | initialized: false, available_worktrees: []}
+  defp teardown_worktrees(state), do: %{state | initialized: false}
 
   defp maybe_update(state, key, opts) do
     case Keyword.fetch(opts, key) do
@@ -619,23 +602,6 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  defp find_waiting_agent_with_worktree do
-    # Use a plain map with __struct__ for the ETS match spec — struct literals
-    # require all @enforce_keys which doesn't work in match patterns.
-    match_spec = [
-      {
-        {:"$1", %{__struct__: SchedMeta, status: :waiting, worktree: :"$2"}},
-        [{:"/=", :"$2", nil}],
-        [{{:"$1", :"$2"}}]
-      }
-    ]
-
-    case :ets.select(@sched_table, match_spec, 1) do
-      {[{agent_id, worktree}], _cont} -> {agent_id, worktree}
-      :"$end_of_table" -> nil
-    end
-  end
-
   # --- Agent Registry ---
 
   defp register_agent(state, spec, from, parent_id, depth) do
@@ -707,49 +673,44 @@ defmodule EvoGit.AgentScheduler do
     commit_sha
   end
 
-  defp handle_no_available_worktrees(state, agent_id, dispatch_fn) do
-    case find_reclaimable_worktree(state) do
-      {:ok, worktree, state} ->
-        state = %{state | available_worktrees: [worktree]}
-        dispatch_fn.(state, agent_id)
-
-      :none ->
-        {:ok, meta} = get_sched_meta(agent_id)
-
-        if meta.status == :ready do
-          Logger.info(
-            "AgentScheduler: Re-queueing ready agent #{agent_id} (no available worktrees)"
-          )
-
-          %{state | queue: :queue.in_r(agent_id, state.queue)}
-        else
-          Logger.info("AgentScheduler: Queueing agent #{agent_id} (no available worktrees)")
-          %{state | queue: :queue.in(agent_id, state.queue)}
-        end
-    end
-  end
-
   # --- Dispatch ---
 
-  defp try_dispatch(%{available_worktrees: [wt | rest]} = state, agent_id) do
+  defp try_dispatch(state, agent_id) do
     {:ok, meta} = get_sched_meta(agent_id)
     retries = meta.retries
     spec = meta.spec
 
-    assign_and_prepare_worktree(agent_id, wt)
+    # Create a persistent worktree for this agent: worker_<agent_id>
+    worktree_path = Path.join([state.repo_root, ".evogit/workers", "worker_#{agent_id}"])
+
+    # Create the worktree if it doesn't exist (e.g., on first dispatch)
+    unless File.exists?(worktree_path) do
+      commit_sha = spec.phylo_node.current_commit
+
+      case Git.add_worktree(state.repo_root, worktree_path, commit_sha) do
+        {:ok, _} ->
+          Logger.info("AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id}")
+
+        {:error, _, msg} ->
+          Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
+          raise "Failed to create worktree for agent #{agent_id}"
+      end
+    end
+
+    assign_and_prepare_worktree(agent_id, worktree_path)
 
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
         Process.put(:evogit_agent_depth, meta.depth)
         Process.put(:evogit_repo_root, state.repo_root)
-        Process.put(:repo_path, wt)
+        Process.put(:repo_path, worktree_path)
 
         if retries > 0 do
           Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
           Process.sleep(30_000 * retries)
         else
-          Logger.info("AgentScheduler: Agent #{agent_id} starting execution in worktree #{wt}")
+          Logger.info("AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}")
         end
 
         spec.agent_module.run(spec.objective)
@@ -759,35 +720,15 @@ defmodule EvoGit.AgentScheduler do
     put_sched_meta(agent_id, %{
       meta
       | status: :running,
-        worktree: wt,
+        worktree: worktree_path,
         task_ref: task.ref
     })
 
     %{
       state
-      | available_worktrees: rest,
+      | running_count: state.running_count + 1,
         ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
     }
-  end
-
-  defp try_dispatch(%{available_worktrees: []} = state, agent_id) do
-    handle_no_available_worktrees(state, agent_id, &try_dispatch/2)
-  end
-
-  defp find_reclaimable_worktree(state) do
-    case find_waiting_agent_with_worktree() do
-      {donor_id, worktree} ->
-        Logger.info(
-          "AgentScheduler: Reclaiming worktree #{worktree} from waiting agent #{donor_id}"
-        )
-
-        {:ok, donor} = get_sched_meta(donor_id)
-        put_sched_meta(donor_id, %{donor | worktree: nil})
-        {:ok, worktree, state}
-
-      nil ->
-        :none
-    end
   end
 
   # --- Auto-Commit Fallback ---
@@ -849,18 +790,19 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Queue Processing ---
 
-  defp process_queue(%{queue: queue, available_worktrees: [_ | _]} = state) do
+  defp process_queue(%{queue: queue} = state) do
     case :queue.out(queue) do
       {{:value, agent_id}, new_queue} ->
         state = %{state | queue: new_queue}
 
         case get_sched_meta(agent_id) do
           {:ok, %{status: :ready} = meta} ->
-            # Ready parent needs worktree + reply, not a fresh dispatch
+            # Ready parent agent - resume with its persistent worktree
             state = dispatch_ready_parent(state, agent_id, meta)
             process_queue(state)
 
           {:ok, _meta} ->
+            # Regular agent - dispatch with its persistent worktree
             state = try_dispatch(state, agent_id)
             process_queue(state)
 
@@ -875,10 +817,9 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  defp process_queue(state), do: state
-
-  # Resumes a waiting parent that still has its original worktree (it was never reclaimed).
-  defp dispatch_ready_parent(state, agent_id, %{worktree: wt} = meta) when not is_nil(wt) do
+  # Resumes a waiting parent agent. The parent keeps its persistent worktree
+  # while waiting, so no worktree assignment is needed.
+  defp dispatch_ready_parent(state, agent_id, %{worktree: wt} = meta) do
     results = build_ordered_results(meta.sub_agent_results, meta.total_sub_specs)
 
     GenServer.reply(meta.sub_agent_from, results)
@@ -897,45 +838,10 @@ defmodule EvoGit.AgentScheduler do
     commit_sha = agent_state.phylo_node.current_commit
 
     Logger.info(
-      "AgentScheduler: Waiting agent #{agent_id} resumed with existing worktree #{wt} at commit #{commit_sha}"
+      "AgentScheduler: Waiting agent #{agent_id} resumed with persistent worktree #{wt} at commit #{commit_sha}"
     )
 
     state
-  end
-
-  # Resumes a waiting parent that was queued because no worktree was available
-  # when its subagents completed. Assigns a worktree and unblocks the parent's
-  # blocked GenServer.call.
-  defp dispatch_ready_parent(%{available_worktrees: [wt | rest]} = state, agent_id, meta) do
-    commit_sha = assign_and_prepare_worktree(agent_id, wt)
-
-    results = build_ordered_results(meta.sub_agent_results, meta.total_sub_specs)
-
-    GenServer.reply(meta.sub_agent_from, results)
-
-    put_sched_meta(agent_id, %{
-      meta
-      | status: :running,
-        worktree: wt,
-        sub_agent_from: nil,
-        pending_sub_agents: MapSet.new(),
-        sub_agent_results: %{},
-        sub_agent_indices: %{},
-        total_sub_specs: 0
-    })
-
-    Logger.info(
-      "AgentScheduler: Waiting agent #{agent_id} resumed with worktree #{wt} at commit #{commit_sha}"
-    )
-
-    %{state | available_worktrees: rest}
-  end
-
-  # Agent needs a worktree but none are available.
-  defp dispatch_ready_parent(%{available_worktrees: []} = state, agent_id, meta) do
-    handle_no_available_worktrees(state, agent_id, fn s, a_id ->
-      dispatch_ready_parent(s, a_id, meta)
-    end)
   end
 
   # --- SubAgent Result Tracking ---
@@ -955,16 +861,10 @@ defmodule EvoGit.AgentScheduler do
     if all_done? do
       Logger.info("AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed")
 
-      if parent.worktree do
-        # Parent already has a worktree, resume immediately
-        parent = %{parent | status: :ready}
-        put_sched_meta(parent_id, parent)
-        dispatch_ready_parent(state, parent_id, parent)
-      else
-        # Needs a worktree, queue it
-        put_sched_meta(parent_id, %{parent | status: :ready})
-        %{state | queue: :queue.in(parent_id, state.queue)}
-      end
+      # Parent always has its persistent worktree - resume immediately
+      parent = %{parent | status: :ready}
+      put_sched_meta(parent_id, parent)
+      dispatch_ready_parent(state, parent_id, parent)
     else
       state
     end
@@ -975,32 +875,14 @@ defmodule EvoGit.AgentScheduler do
   defp recycle_agent(state, agent_id) do
     {:ok, meta} = get_sched_meta(agent_id)
 
-    state =
-      if meta.worktree do
-        # Use the agent's current commit (if any) to reset the worktree,
-        # otherwise fall back to the global base commit
-        reset_sha =
-          case get_agent_state(agent_id) do
-            {:ok, %{phylo_node: %{current_commit: sha}}} when is_binary(sha) ->
-              sha
-
-            _ ->
-              Logger.error(
-                "AgentScheduler: Failed to get current commit for agent #{agent_id} during recycle, falling back to base_sha."
-              )
-
-              state.base_sha
-          end
-
-        reset_worktree(meta.worktree, state.repo_root, reset_sha)
-        %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
-      else
-        state
-      end
+    # Delete the agent's persistent worktree
+    if meta.worktree do
+      delete_worktree(meta.worktree, state.repo_root)
+    end
 
     delete_agent_state(agent_id)
     delete_sched_meta(agent_id)
-    state
+    %{state | running_count: state.running_count - 1}
   end
 
   defp handle_agent_crash(state, agent_id, reason) do
@@ -1011,31 +893,13 @@ defmodule EvoGit.AgentScheduler do
         "Retry #{meta.retries}/#{state.agent_max_retries}"
     )
 
-    # Use the agent's current commit (if any) to reset the worktree for retry
-    if meta.worktree do
-      reset_sha =
-        case get_agent_state(agent_id) do
-          {:ok, %{phylo_node: %{current_commit: sha}}} when is_binary(sha) -> sha
-          _ -> state.base_sha
-        end
-
-      reset_worktree(meta.worktree, state.repo_root, reset_sha)
-    end
-
     if meta.retries < state.agent_max_retries do
-      state =
-        if meta.worktree do
-          %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
-        else
-          state
-        end
-
-      # Reset scheduler metadata for retry - status set to :pending to indicate waiting for worktree
+      # On retry, keep the persistent worktree - just update retry count and status
+      # The worktree will be reused on next dispatch (assign_and_prepare_worktree will clean/checkout)
       put_sched_meta(agent_id, %{
         meta
         | retries: meta.retries + 1,
           status: :pending,
-          worktree: nil,
           task_ref: nil
       })
 
@@ -1052,23 +916,14 @@ defmodule EvoGit.AgentScheduler do
 
       Logger.error("AgentScheduler: #{msg}")
 
-      state =
-        if meta.worktree do
-          # Reset worktree using agent's current commit before returning it to pool
-          reset_sha =
-            case get_agent_state(agent_id) do
-              {:ok, %{phylo_node: %{current_commit: sha}}} when is_binary(sha) -> sha
-              _ -> state.base_sha
-            end
-
-          reset_worktree(meta.worktree, state.repo_root, reset_sha)
-          %{state | available_worktrees: [meta.worktree | state.available_worktrees]}
-        else
-          state
-        end
+      # Delete the agent's persistent worktree on permanent failure
+      if meta.worktree do
+        delete_worktree(meta.worktree, state.repo_root)
+      end
 
       delete_agent_state(agent_id)
       delete_sched_meta(agent_id)
+      state = %{state | running_count: state.running_count - 1}
 
       if meta.parent_id do
         store_sub_result(meta.parent_id, agent_id, {:error, :agent_max_retries_exceeded})
@@ -1083,10 +938,9 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  defp reset_worktree(path, repo_root, base_sha) do
-    Logger.info("AgentScheduler: Resetting worktree #{path}")
+  defp delete_worktree(path, repo_root) do
+    Logger.info("AgentScheduler: Deleting worktree #{path}")
     File.rm_rf!(path)
     Git.prune_worktrees(repo_root)
-    Git.add_worktree(repo_root, path, base_sha)
   end
 end
