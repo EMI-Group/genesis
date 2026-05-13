@@ -341,7 +341,7 @@
                                       {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><empty message></div>
+                                    <div class="text-sm text-base-content/50 italic">&lt;empty message&gt;</div>
                                   <% end %>
                                 </div>
                               <% "assistant" -> %>
@@ -369,7 +369,7 @@
                                       {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><no text content></div>
+                                    <div class="text-sm text-base-content/50 italic">&lt;no text content&gt;</div>
                                   <% end %>
                                 </div>
                               <% "tool" -> %>
@@ -384,7 +384,7 @@
                                       <pre class="text-xs whitespace-pre-wrap">{String.slice(entry.data.content, 0, 500)}{if String.length(entry.data.content) > 500, do: "\n...[truncated]"}</pre>
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><empty result></div>
+                                    <div class="text-sm text-base-content/50 italic">&lt;empty result&gt;</div>
                                   <% end %>
                                 </div>
                               <% _ -> %>
