@@ -246,4 +246,51 @@ defmodule EvoDashWeb.AgentsLive do
     datetime = DateTime.from_unix!(timestamp_ms, :millisecond)
     Calendar.strftime(datetime, "%H:%M:%S")
   end
+
+  # Safely extract tool call name from different formats
+  defp tool_call_name(call) when is_map(call) do
+    cond do
+      Map.has_key?(call, :function) and is_map(call.function) ->
+        Map.get(call.function, :name, "unknown")
+
+      Map.has_key?(call, "function") and is_map(call["function"]) ->
+        Map.get(call["function"], "name") || Map.get(call["function"], "name", "unknown")
+
+      Map.has_key?(call, :name) ->
+        call.name
+
+      Map.has_key?(call, "name") ->
+        call["name"]
+
+      true ->
+        "unknown"
+    end
+  end
+
+  defp tool_call_name(_), do: "unknown"
+
+  # Safely extract tool call arguments from different formats
+  defp tool_call_arguments(call) when is_map(call) do
+    cond do
+      Map.has_key?(call, :function) and is_map(call.function) ->
+        Map.get(call.function, :arguments_json) ||
+          Map.get(call.function, :arguments, "{}")
+
+      Map.has_key?(call, "function") and is_map(call["function"]) ->
+        Map.get(call["function"], "arguments_json") ||
+          Map.get(call["function"], "arguments") ||
+          Map.get(call["function"], "arguments", "{}")
+
+      Map.has_key?(call, :arguments) ->
+        call.arguments
+
+      Map.has_key?(call, "arguments") ->
+        call["arguments"]
+
+      true ->
+        "{}"
+    end
+  end
+
+  defp tool_call_arguments(_), do: "{}"
 end
