@@ -184,14 +184,26 @@ defmodule EvoDashWeb.AgentsLive do
             ""
         end
 
+      base_data = %{
+        content: content_text,
+        tool_calls: Map.get(msg, :tool_calls),
+        metadata: Map.get(msg, :metadata, %{})
+      }
+
+      # Add tool-specific metadata
+      data = case msg.role do
+        :tool ->
+          Map.put(base_data, :tool_name, Map.get(msg, :name))
+        :assistant ->
+          Map.put(base_data, :reasoning_details, Map.get(msg, :reasoning_details))
+        _ ->
+          base_data
+      end
+
       %{
         timestamp: base_time + index * 1000,
         type: Atom.to_string(msg.role),
-        data: %{
-          content: content_text,
-          tool_calls: Map.get(msg, :tool_calls),
-          metadata: Map.get(msg, :metadata, %{})
-        }
+        data: data
       }
     end)
   end
