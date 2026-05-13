@@ -24,7 +24,7 @@ defmodule EvoGit.MixProject do
 
   defp deps do
     [
-      {:req_llm, git: "https://github.com/BillHuang2001/req_llm.git", branch: "fix-deepseek"},
+      {:req_llm, "~> 1.11.0"},
       {:retry, "~> 0.19"},
       {:req, "~> 0.5.0"}
     ]
