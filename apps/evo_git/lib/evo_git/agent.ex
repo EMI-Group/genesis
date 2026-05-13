@@ -58,7 +58,7 @@ defmodule EvoGit.Agent do
 
       # Tool output truncation thresholds
       @tool_output_max_bytes 128 * 1024
-      @tool_output_truncate_size 4096
+      @tool_output_truncate_size 8192
 
       import ReqLLM.Context, only: [user: 1, assistant: 1, system: 1, tool_result: 3]
 
