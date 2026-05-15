@@ -296,6 +296,32 @@ defmodule EvoDashWeb.DashboardComponents do
     render_result(%{result: result, commit_sha: commit_sha, tag: tag})
   end
 
+  defp render_result({:error, reason}) do
+    assigns = %{reason: inspect(reason, limit: 100)}
+
+    ~H"""
+    <div class="bg-error/10 border border-error/20 p-3 rounded-lg">
+      <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
+        <.icon name="hero-x-circle" class="size-3" /> Error
+      </h5>
+      <pre class="text-xs text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
+    </div>
+    """
+  end
+
+  defp render_result({:exit, reason}) do
+    assigns = %{reason: inspect(reason, limit: 100)}
+
+    ~H"""
+    <div class="bg-error/10 border border-error/20 p-3 rounded-lg">
+      <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
+        <.icon name="hero-x-circle" class="size-3" /> Crashed
+      </h5>
+      <pre class="text-xs text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
+    </div>
+    """
+  end
+
   defp render_result(%{result: result, commit_sha: commit_sha, tag: tag}) when is_binary(result) do
     assigns = %{result: result, commit_sha: commit_sha, tag: tag}
 

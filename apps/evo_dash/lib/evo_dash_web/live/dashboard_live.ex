@@ -57,33 +57,66 @@ defmodule EvoDashWeb.DashboardLive do
     <%= if @selected_result do %>
       <div class="modal modal-open bg-black/50">
         <div class="modal-box w-11/12 max-w-5xl">
-          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-success" />
-            Agent Message
-          </h3>
-
           <%= case @selected_result do %>
             <% {:ok, %{result: result}} when is_binary(result) -> %>
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-check-circle" class="size-5 text-success" />
+                Agent Message
+              </h3>
               <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
                 <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
               </div>
 
             <% {%{result: result}} when is_binary(result) -> %>
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-check-circle" class="size-5 text-success" />
+                Agent Message
+              </h3>
               <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
                 <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
               </div>
 
+            <% {:error, reason} -> %>
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-x-circle" class="size-5 text-error" />
+                Task Failed
+              </h3>
+              <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
+              </div>
+
+            <% {:exit, reason} -> %>
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-x-circle" class="size-5 text-error" />
+                Task Crashed
+              </h3>
+              <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
+              </div>
+
             <% {:ok, %{result: result}} -> %>
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-check-circle" class="size-5 text-success" />
+                Agent Message
+              </h3>
               <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
                 <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
               </div>
 
             <% %{result: result} -> %>
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-check-circle" class="size-5 text-success" />
+                Agent Message
+              </h3>
               <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
                 <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
               </div>
 
             <% _ -> %>
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+                Result
+              </h3>
               <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
                 <pre class="text-sm overflow-x-auto"><%= inspect(@selected_result, pretty: true, limit: :infinity) %></pre>
               </div>
