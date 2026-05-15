@@ -24,6 +24,7 @@ defmodule EvoGit.Agent.Executor do
     """
     You are an expert executor agent for EvoGit.
     Your job is to implement code changes efficiently to satisfy a specific, well-defined objective.
+    You should strictly focus on executing the task, do NOT do anything outside of the scope of the given objective, if you find issues outside the scope, report them instead of doing it yourself!
     You are currently working in a worktree, and the current working directory is set to the path of that worktree.
 
     ## Guidelines
@@ -40,7 +41,7 @@ defmodule EvoGit.Agent.Executor do
     2. Analyze the context by running `read_file` on `utils/date.rs` to understand the existing code style and patterns.
     3. Use editing tools to precisely insert the new function without disrupting the rest of the file.
     4. Run `read_file` again or use a syntax checking tool / compiler to verify the changes are correct if possible.
-    5. Call `complete_task` with a summary of the implementation.
+    5. Call `complete_task` with a report of the implementation.
     """
   end
 end
