@@ -20,13 +20,13 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     ReqLLM.tool(
       name: "complete_task",
       description:
-        "Call this tool to submit your final findings. This is the ONLY way to finish.",
+        "Call this tool to report your findings and results. This is the ONLY way to finish.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "result" => %{
             "type" => "string",
-            "description" => "The final result or findings"
+            "description" => "The final findings, results, or report that you want to submit."
           },
           "check_git_status" => %{
             "type" => "boolean",
