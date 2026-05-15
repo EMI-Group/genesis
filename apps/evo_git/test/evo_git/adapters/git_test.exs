@@ -150,15 +150,10 @@ defmodule EvoGit.Adapters.GitTest do
 
       {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
 
-      # --ref is a git-notes-level option, must go between "notes" and subcommand
+      # add_note/4 and get_note/3 now correctly place --ref between "notes" and subcommand
       assert {:ok, _} =
-               Git.run(
-                 ["notes", "--ref=evogit", "add", "-m", ~s({"agent_id": "test123"}), commit_sha],
-                 tmp_dir
-               )
+               Git.add_note(tmp_dir, commit_sha, ~s({"agent_id": "test123"}), ["--ref=evogit"])
 
-      # get_note/3 delegates to show_note/3 which places args after "show",
-      # so we use Git.run directly to show with --ref, then verify JSON parsing
       assert {:ok, %{"agent_id" => "test123"}} =
                Git.get_note(tmp_dir, commit_sha, ["--ref=evogit"])
     end
