@@ -86,7 +86,7 @@ defmodule EvoGit.Runtime.Genesis do
 
       # Create a branch for the agent's final commit
       branch_name = generate_branch_name("genesis")
-      :ok = Git.create_branch(repo_path, branch_name, final_sha)
+      {:ok, _} = Git.create_branch(repo_path, branch_name, final_sha)
       Logger.info("Genesis: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}")
 
       # Try to create a PR if gh is available
