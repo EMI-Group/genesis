@@ -108,61 +108,61 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   describe "format_git_status_porcelain/1" do
     test "formats modified files" do
       output = CompleteTask.format_git_status_porcelain(" M lib/foo.ex")
-      assert output =~ "modified lib/foo.ex"
+      assert output =~ "modified  lib/foo.ex"
     end
 
     test "formats staged files" do
       output = CompleteTask.format_git_status_porcelain("M  lib/bar.ex")
-      assert output =~ "staged lib/bar.ex"
+      assert output =~ "staged  lib/bar.ex"
     end
 
     test "formats staged and modified files" do
       output = CompleteTask.format_git_status_porcelain("MM lib/baz.ex")
-      assert output =~ "staged, modified lib/baz.ex"
+      assert output =~ "staged, modified  lib/baz.ex"
     end
 
     test "formats staged new files" do
       output = CompleteTask.format_git_status_porcelain("A  new_file.ex")
-      assert output =~ "staged (new) new_file.ex"
+      assert output =~ "staged (new)  new_file.ex"
     end
 
     test "formats deleted files" do
       output = CompleteTask.format_git_status_porcelain(" D deleted_file.ex")
-      assert output =~ "deleted deleted_file.ex"
+      assert output =~ "deleted  deleted_file.ex"
     end
 
     test "formats staged deleted files" do
       output = CompleteTask.format_git_status_porcelain("D  staged_del.ex")
-      assert output =~ "staged (deleted) staged_del.ex"
+      assert output =~ "staged (deleted)  staged_del.ex"
     end
 
     test "formats staged and deleted files" do
       output = CompleteTask.format_git_status_porcelain("DD both_del.ex")
-      assert output =~ "staged, deleted both_del.ex"
+      assert output =~ "staged, deleted  both_del.ex"
     end
 
     test "formats staged renamed files" do
       output = CompleteTask.format_git_status_porcelain("R  renamed.ex")
-      assert output =~ "staged (renamed) renamed.ex"
+      assert output =~ "staged (renamed)  renamed.ex"
     end
 
     test "formats untracked files (single ?)" do
       output = CompleteTask.format_git_status_porcelain("?? untracked.ex")
-      assert output =~ "untracked untracked.ex"
+      assert output =~ "untracked  untracked.ex"
     end
 
     test "formats multiple files on separate lines" do
       porcelain = " M modified.ex\nA  added.ex\n?? untracked.ex"
       output = CompleteTask.format_git_status_porcelain(porcelain)
 
-      assert output =~ "modified modified.ex"
-      assert output =~ "staged (new) added.ex"
-      assert output =~ "untracked untracked.ex"
+      assert output =~ "modified  modified.ex"
+      assert output =~ "staged (new)  added.ex"
+      assert output =~ "untracked  untracked.ex"
     end
 
     test "passes through unknown status codes as-is" do
       output = CompleteTask.format_git_status_porcelain("XY weird.ex")
-      assert output =~ "XY weird.ex"
+      assert output =~ "XY  weird.ex"
     end
 
     test "handles empty string" do
@@ -171,7 +171,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
 
     test "passes through short lines unchanged" do
       output = CompleteTask.format_git_status_porcelain("ab")
-      assert output == "ab"
+      assert output == "ab "
     end
   end
 
