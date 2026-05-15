@@ -66,25 +66,62 @@ defmodule EvoGit.Runtime.Evolution do
     result = Map.get(agent_output, :result)
     tag = Map.get(agent_output, :tag)
 
-    if final_sha do
-      Logger.info("Evolution: Merging agent changes back to main workspace...")
-      case Git.merge_no_commit(repo_path, final_sha) do
-        {:ok, output} ->
-          Logger.info("Evolution: User handoff merge successful.\n#{output}")
+    # Get the base commit (HEAD before any agent work)
+    {:ok, base_sha} = Git.rev_parse(repo_path)
 
-        {:conflict, output} ->
-          Logger.warning("Evolution: User handoff merge has conflicts.\n#{output}")
+    # Check if the agent made any changes
+    if final_sha && final_sha != base_sha do
+      Logger.info("Evolution: Agent produced changes (#{String.slice(base_sha, 0, 7)} -> #{String.slice(final_sha, 0, 7)})")
 
-        {:error, code, output} ->
-          Logger.warning("Evolution: User handoff merge finished (exit code #{code}).\n#{output}")
-      end
+      # Create a branch for the agent's final commit
+      branch_name = generate_branch_name("evolve")
+      :ok = Git.create_branch(repo_path, branch_name, final_sha)
+      Logger.info("Evolution: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}")
+
+      # Try to create a PR if gh is available
+      pr_url = try_create_pull_request(repo_path, branch_name, "Evolution task")
+
+      {:ok, %{
+        commit_sha: final_sha,
+        result: result,
+        tag: tag,
+        branch_name: branch_name,
+        pr_url: pr_url
+      }}
+    else
+      Logger.info("Evolution: No changes detected (base and final commit are the same)")
+      {:ok, %{
+        commit_sha: final_sha || base_sha,
+        result: result,
+        tag: tag,
+        branch_name: nil,
+        pr_url: nil,
+        no_changes: true
+      }}
     end
+  end
 
-    {:ok, head_now} = Git.rev_parse(repo_path)
-    Logger.info(
-      "Evolution: Evolution successful. Current HEAD: #{String.slice(head_now, 0, 7)}"
-    )
+  defp generate_branch_name(prefix) do
+    short_id = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
+    "evogit/#{prefix}_#{short_id}"
+  end
 
-    {:ok, %{commit_sha: final_sha || head_now, result: result, tag: tag}}
+  defp try_create_pull_request(repo_path, head_branch, _task_type) do
+    if Git.gh_available?() do
+      {:ok, current_branch} = Git.current_branch(repo_path)
+      base_branch = if current_branch == "HEAD", do: "main", else: current_branch
+
+      case Git.create_pull_request(repo_path, head_branch, base_branch, "EvoGit: #{head_branch}", "Automated changes by EvoGit agent.") do
+        {:ok, pr_url} ->
+          Logger.info("Evolution: Created pull request: #{pr_url}")
+          pr_url
+        {:error, _code, output} ->
+          Logger.warning("Evolution: Failed to create pull request: #{output}")
+          nil
+      end
+    else
+      Logger.info("Evolution: 'gh' CLI not available, skipping PR creation")
+      nil
+    end
   end
 end
