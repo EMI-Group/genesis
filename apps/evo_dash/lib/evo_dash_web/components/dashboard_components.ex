@@ -218,9 +218,19 @@ defmodule EvoDashWeb.DashboardComponents do
               </div>
               <%= if Map.get(@task, :result) do %>
                 <div class="bg-base-200/40 p-4 rounded-xl border border-base-200">
-                  <h4 class="text-sm font-bold mb-3 flex items-center gap-2">
-                    <.icon name="hero-check-badge" class="size-4 text-success" /> Result
-                  </h4>
+                  <div class="flex items-center justify-between mb-3">
+                    <h4 class="text-sm font-bold flex items-center gap-2">
+                      <.icon name="hero-check-badge" class="size-4 text-success" /> Result
+                    </h4>
+                    <button
+                      class="btn btn-xs btn-ghost"
+                      phx-click="view_full_result"
+                      phx-value-task_id={@task.id}
+                    >
+                      <.icon name="hero-arrows-pointing-out" class="size-4" />
+                      View Full
+                    </button>
+                  </div>
                   <%= render_result(@task.result) %>
                 </div>
               <% end %>
@@ -282,6 +292,10 @@ defmodule EvoDashWeb.DashboardComponents do
 
   defp task_description(_), do: ""
 
+  defp render_result({:ok, %{result: result, commit_sha: commit_sha, tag: tag}}) when is_binary(result) do
+    render_result(%{result: result, commit_sha: commit_sha, tag: tag})
+  end
+
   defp render_result(%{result: result, commit_sha: commit_sha, tag: tag}) when is_binary(result) do
     assigns = %{result: result, commit_sha: commit_sha, tag: tag}
 
@@ -291,7 +305,9 @@ defmodule EvoDashWeb.DashboardComponents do
         <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
           <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Agent Message
         </h5>
-        <div class="text-sm whitespace-pre-wrap break-words"><%= @result %></div>
+        <div class="text-sm whitespace-pre-wrap break-words">
+          {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
+        </div>
       </div>
       <div class="flex flex-wrap gap-2 text-xs">
         <%= if @commit_sha do %>
