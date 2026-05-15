@@ -77,3 +77,10 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 - **Every directory must have a `CONTEXT.md`:** This is the spatial contract that agents read and maintain.
 - **Agents commit before delegating:** Worktrees must be clean before spawning subagents (auto-commit fallback enforced).
 - **Sandboxing:** LLM-generated code runs under `systemd-run` with strict filesystem, CPU, memory, and syscall restrictions.
+
+## Development Notes
+
+- Run `mix precommit` to format code and run tests before committing.
+- Use `mix test` to execute the test suite.
+- Use `mix deps.get` to fetch dependencies.
+- Use `mix compile` to compile the project and check for compilation errors.
