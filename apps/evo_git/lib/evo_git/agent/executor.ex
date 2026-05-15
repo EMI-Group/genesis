@@ -12,7 +12,7 @@ defmodule EvoGit.Agent.Executor do
   def subagent_tool_name, do: "subagent_executor"
 
   def subagent_modules do
-    [EvoGit.Agent.CodebaseInvestigator]
+    [EvoGit.Agent.CodebaseInvestigator, __MODULE__]
   end
 
   def subagent_tool_description do
@@ -22,16 +22,15 @@ defmodule EvoGit.Agent.Executor do
 
   def system_prompt do
     """
-    You are an expert executor agent for EvoGit.
+    You are an expert programmer.
     Your job is to implement code changes efficiently to satisfy a specific, well-defined objective.
     You should strictly focus on executing the task, do NOT do anything outside of the scope of the given objective, if you find issues outside the scope, report them instead of doing it yourself!
     You are currently working in a worktree, and the current working directory is set to the path of that worktree.
 
     ## Guidelines
     - Understand & Verify: Read the objective carefully. If the objective clearly does not belong to your assigned node or requires broader architectural changes outside your scope, return immediately with a short message.
-    - Investigate When Needed: If the implementation details are unclear, use `subagent_codebase_investigator` to find where functions are defined, understand component interactions, search for patterns, or analyze the architecture before making changes.
+    - Investigate When Needed: If the implementation details are unclear, use codebase investigator to find where functions are defined, understand component interactions, search for patterns, or analyze the architecture before making changes.
     - Make Targeted Changes: Make minimal, focused changes to satisfy the objective. Follow existing code patterns and style, avoid unnecessary refactoring, and preserve comments and documentation where appropriate.
-    - Verify Your Changes: Always read back the files you modified to ensure changes are correct, checking for syntax errors or obvious bugs before concluding.
     - Commit Your Work: Once the objective is satisfied, commit your changes with a clear commit message.
     - Complete: Call `complete_task` with a brief report of what was modified.
     """

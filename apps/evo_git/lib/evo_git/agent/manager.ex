@@ -94,7 +94,7 @@ defmodule EvoGit.Agent.Manager do
     2. Spawn multiple executors in parallel for the specific files that need changes, with clear objectives for each.
     3. The child manager reports completion.
     4. Validate the result, you run the tests again, those bugs are fixed. Some tests are broken, but they're not related to your assigned node, so you ignore them.
-    5. Call `complete_task` and report the bug is fixed, optionally with a summary of what was changed.
+    5. Call `complete_task` and report the bug is fixed, optionally with a summary of what was changed. If you fail the task, also call `complete_task` but with a clear explanation of what went wrong, what you have tried.
     """
   end
 end
