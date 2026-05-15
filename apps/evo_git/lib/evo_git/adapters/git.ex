@@ -267,6 +267,33 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Checks if a branch has commits that are not in the base branch.
+
+  Returns `true` if the branch has unique commits, `false` otherwise.
+  Uses `git merge-base --is-ancestor` to check ancestry.
+  """
+  def branch_has_unique_commits?(repo_path, branch, base) do
+    # Check if branch tip is an ancestor of base (meaning branch has no unique commits)
+    case System.cmd("git", ["merge-base", "--is-ancestor", branch, base],
+           cd: repo_path,
+           stderr_to_stdout: true
+         ) do
+      {_output, 0} -> false  # branch is ancestor of base, no unique commits
+      {_output, 1} -> true   # branch has commits not in base
+      {_output, _} -> true   # assume unique commits on other errors
+    end
+  end
+
+  @doc """
+  Pushes a branch to the remote repository.
+
+  Returns `{:ok, output}` on success, `{:conflict, output}` or `{:error, code, output}` on failure.
+  """
+  def push_branch(repo_path, branch_name) do
+    run(["push", "-u", "origin", branch_name], repo_path)
+  end
+
+  @doc """
   Creates a pull request using the `gh` CLI.
 
   Uses `gh pr create --head <head> --base <base> --title <title> --body <body>`.

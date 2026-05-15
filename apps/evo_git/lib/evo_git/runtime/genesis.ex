@@ -122,12 +122,26 @@ defmodule EvoGit.Runtime.Genesis do
       {:ok, current_branch} = Git.current_branch(repo_path)
       base_branch = if current_branch == "HEAD", do: "main", else: current_branch
 
-      case Git.create_pull_request(repo_path, head_branch, base_branch, "EvoGit: #{head_branch}", "Automated changes by EvoGit agent.") do
-        {:ok, pr_url} ->
-          Logger.info("Genesis: Created pull request: #{pr_url}")
-          pr_url
+      # Push the branch to remote first
+      case Git.push_branch(repo_path, head_branch) do
+        {:ok, _} ->
+          Logger.info("Genesis: Pushed branch '#{head_branch}' to remote")
+
+          case Git.create_pull_request(repo_path, head_branch, base_branch, "EvoGit: #{head_branch}", "Automated changes by EvoGit agent.") do
+            {:ok, pr_url} ->
+              Logger.info("Genesis: Created pull request: #{pr_url}")
+              pr_url
+            {:error, _code, output} ->
+              Logger.warning("Genesis: Failed to create pull request: #{output}")
+              nil
+          end
+
         {:error, _code, output} ->
-          Logger.warning("Genesis: Failed to create pull request: #{output}")
+          Logger.warning("Genesis: Failed to push branch '#{head_branch}': #{output}")
+          nil
+
+        {:conflict, output} ->
+          Logger.warning("Genesis: Conflict pushing branch '#{head_branch}': #{output}")
           nil
       end
     else
