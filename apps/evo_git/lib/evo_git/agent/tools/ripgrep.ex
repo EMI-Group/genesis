@@ -17,7 +17,7 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
 
       ripgrep (rg) recursively searches the current directory for lines matching a regex pattern.
       By default, ripgrep will respect gitignore rules and automatically skip hidden files/directories and binary files.
-      IMPORTANT: Don't read input from stdin, it will cause the command to hang and timeout.
+      IMPORTANT: Explicitly provide the pattern and path arguments, otherwise rg will try to read them from stdin, which will cause the command to hang and timeout.
 
       USAGE:
           rg [OPTIONS] PATTERN [PATH ...]
@@ -28,6 +28,10 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
           command | rg [OPTIONS] PATTERN
           rg [OPTIONS] --help
           rg [OPTIONS] --version
+
+      EXAMPLE ARGS:
+          ["-n", "TODO", "src/"] - searches for the pattern "TODO" in the "src/" and prints line numbers
+          ["-i", "-e", "fixme", "."] - case-insensitive
       """,
       parameter_schema: %{
         "type" => "object",
@@ -35,7 +39,7 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
           "args" => %{
             "type" => "array",
             "items" => %{"type" => "string"},
-            "description" => "List of arguments to pass to rg, e.g. ['-n', 'pattern', 'dir']"
+            "description" => "List of arguments to pass to rg, e.g. ['-n', 'pattern', 'path']"
           }
         },
         "required" => ["args"]
