@@ -221,7 +221,7 @@ defmodule EvoDashWeb.DashboardComponents do
                   <h4 class="text-sm font-bold mb-3 flex items-center gap-2">
                     <.icon name="hero-check-badge" class="size-4 text-success" /> Result
                   </h4>
-                  <pre class="text-xs bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner"><%= inspect(@task.result, pretty: true) %></pre>
+                  <%= render_result(@task.result) %>
                 </div>
               <% end %>
             </div>
@@ -281,6 +281,43 @@ defmodule EvoDashWeb.DashboardComponents do
   end
 
   defp task_description(_), do: ""
+
+  defp render_result(%{result: result, commit_sha: commit_sha, tag: tag}) when is_binary(result) do
+    assigns = %{result: result, commit_sha: commit_sha, tag: tag}
+
+    ~H"""
+    <div class="space-y-3">
+      <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
+        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Agent Message
+        </h5>
+        <div class="text-sm whitespace-pre-wrap break-words"><%= @result %></div>
+      </div>
+      <div class="flex flex-wrap gap-2 text-xs">
+        <%= if @commit_sha do %>
+          <span class="badge badge-ghost font-mono">
+            <.icon name="hero-code-bracket" class="size-3 mr-1" />
+            <%= String.slice(@commit_sha, 0..7) %>
+          </span>
+        <% end %>
+        <%= if @tag do %>
+          <span class="badge badge-ghost font-mono">
+            <.icon name="hero-tag" class="size-3 mr-1" />
+            <%= @tag %>
+          </span>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  defp render_result(result) do
+    assigns = %{result: inspect(result, pretty: true)}
+
+    ~H"""
+    <pre class="text-xs bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner"><%= @result %></pre>
+    """
+  end
 
   defp format_datetime(datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
 

@@ -42,8 +42,7 @@ defmodule EvoGit.Runtime.Genesis do
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
-        final_sha = Map.get(agent_output, :commit_sha)
-        merge_and_report(repo_path, final_sha)
+        merge_and_report(repo_path, agent_output)
 
       error ->
         Logger.error("Genesis Mode A failed: #{inspect(error)}")
@@ -65,8 +64,7 @@ defmodule EvoGit.Runtime.Genesis do
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
-        final_sha = Map.get(agent_output, :commit_sha)
-        merge_and_report(repo_path, final_sha)
+        merge_and_report(repo_path, agent_output)
 
       error ->
         Logger.error("Genesis Mode B failed: #{inspect(error)}")
@@ -74,7 +72,11 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  defp merge_and_report(repo_path, final_sha) do
+  defp merge_and_report(repo_path, agent_output) do
+    final_sha = Map.get(agent_output, :commit_sha)
+    result = Map.get(agent_output, :result)
+    tag = Map.get(agent_output, :tag)
+
     if final_sha do
       Logger.info("Genesis: Merging agent changes back to main workspace...")
 
@@ -93,7 +95,7 @@ defmodule EvoGit.Runtime.Genesis do
     {:ok, head_now} = Git.rev_parse(repo_path)
     Logger.info("Genesis: Evolution complete. Current HEAD: #{String.slice(head_now, 0, 7)}")
 
-    {:ok, final_sha || head_now}
+    {:ok, %{commit_sha: final_sha || head_now, result: result, tag: tag}}
   end
 
   defp new_codebase?(repo_path) do

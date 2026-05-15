@@ -43,8 +43,7 @@ defmodule EvoGit.Runtime.Evolution do
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
-        final_sha = Map.get(agent_output, :commit_sha)
-        merge_and_report(repo_path, final_sha)
+        merge_and_report(repo_path, agent_output)
 
       error ->
         Logger.error("Evolution Mode A failed: #{inspect(error)}")
@@ -62,7 +61,11 @@ defmodule EvoGit.Runtime.Evolution do
     run_simple_mode(objective, repo_path, current_sha, opts)
   end
 
-  defp merge_and_report(repo_path, final_sha) do
+  defp merge_and_report(repo_path, agent_output) do
+    final_sha = Map.get(agent_output, :commit_sha)
+    result = Map.get(agent_output, :result)
+    tag = Map.get(agent_output, :tag)
+
     if final_sha do
       Logger.info("Evolution: Merging agent changes back to main workspace...")
       case Git.merge_no_commit(repo_path, final_sha) do
@@ -82,6 +85,6 @@ defmodule EvoGit.Runtime.Evolution do
       "Evolution: Evolution successful. Current HEAD: #{String.slice(head_now, 0, 7)}"
     )
 
-    {:ok, final_sha || head_now}
+    {:ok, %{commit_sha: final_sha || head_now, result: result, tag: tag}}
   end
 end
