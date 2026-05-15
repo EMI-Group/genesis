@@ -18,10 +18,6 @@ defmodule EvoGit.Agent.Tools.Bash do
       Executes a shell command via bash -c.
       Useful for running scripts, building, testing, git or executing common command-line tools.
       The current working directory is automatically set to the repo path (the current git worktree path).
-      IMPORTANT: Your repo path might move! Avoid cd to the repo path then run commands, ALWAYS prefer directly running commands in the cwd.
-          For example:
-          - BAD: `cd /path-to-repo/ && ls -la`, GOOD: `ls -la`
-          - BAD: `cd /path-to-repo/ && git status`, GOOD: `git status`
 
       ## General Guidelines
       STRICT CONSTRAINTS:
@@ -39,7 +35,7 @@ defmodule EvoGit.Agent.Tools.Bash do
       - Use project level package managers (e.g., uv, npm, mix, cargo) for managing dependencies.
 
       EXECUTION RULES:
-      - Avoid using `cd`, and prefer relative paths for in-repo operations and absolute paths for external operations.
+      - Prefer relative paths for in-repo operations and absolute paths for external operations.
       - Double-quote all paths containing spaces.
       - Verify parent directories exist before creating files/folders.
       - Always use $TMPDIR for temporary files, never /tmp.
