@@ -58,11 +58,38 @@ defmodule EvoDashWeb.DashboardLive do
       <div class="modal modal-open bg-black/50">
         <div class="modal-box w-11/12 max-w-5xl">
           <%= case @selected_result do %>
-            <% {:ok, %{result: result}} when is_binary(result) -> %>
+            <% {:ok, %{result: result, no_changes: true}} when is_binary(result) -> %>
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-information-circle" class="size-5 text-warning" />
+                No Changes
+              </h3>
+              <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
+              </div>
+              <div class="mt-4 bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <h4 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide">Agent Message</h4>
+                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+              </div>
+
+            <% {:ok, %{result: result, branch_name: branch_name} = data} when is_binary(result) -> %>
               <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
                 <.icon name="hero-check-circle" class="size-5 text-success" />
                 Agent Message
               </h3>
+              <div class="flex flex-wrap gap-2 mb-4">
+                <%= if branch_name do %>
+                  <span class="badge badge-primary font-mono text-sm">
+                    <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
+                    <%= branch_name %>
+                  </span>
+                <% end %>
+                <%= if Map.get(data, :pr_url) do %>
+                  <a href={Map.get(data, :pr_url)} target="_blank" class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity">
+                    <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
+                    View PR
+                  </a>
+                <% end %>
+              </div>
               <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
                 <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
               </div>

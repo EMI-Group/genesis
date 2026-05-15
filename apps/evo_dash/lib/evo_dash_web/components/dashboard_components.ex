@@ -292,8 +292,8 @@ defmodule EvoDashWeb.DashboardComponents do
 
   defp task_description(_), do: ""
 
-  defp render_result({:ok, %{result: result, commit_sha: commit_sha, tag: tag}}) when is_binary(result) do
-    render_result(%{result: result, commit_sha: commit_sha, tag: tag})
+  defp render_result({:ok, %{result: result} = data}) when is_binary(result) do
+    render_result(data)
   end
 
   defp render_result({:error, reason}) do
@@ -322,8 +322,37 @@ defmodule EvoDashWeb.DashboardComponents do
     """
   end
 
-  defp render_result(%{result: result, commit_sha: commit_sha, tag: tag}) when is_binary(result) do
-    assigns = %{result: result, commit_sha: commit_sha, tag: tag}
+  defp render_result(%{result: result, no_changes: true} = _data) when is_binary(result) do
+    assigns = %{result: result}
+
+    ~H"""
+    <div class="space-y-3">
+      <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
+        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Agent Message
+        </h5>
+        <div class="text-sm whitespace-pre-wrap break-words">
+          {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
+        </div>
+      </div>
+      <div class="bg-warning/10 border border-warning/20 p-3 rounded-lg">
+        <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
+          <.icon name="hero-information-circle" class="size-3" /> No Changes
+        </h5>
+        <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
+      </div>
+    </div>
+    """
+  end
+
+  defp render_result(%{result: result, commit_sha: commit_sha} = data) when is_binary(result) do
+    assigns = %{
+      result: result,
+      commit_sha: commit_sha,
+      tag: Map.get(data, :tag),
+      branch_name: Map.get(data, :branch_name),
+      pr_url: Map.get(data, :pr_url)
+    }
 
     ~H"""
     <div class="space-y-3">
@@ -347,6 +376,18 @@ defmodule EvoDashWeb.DashboardComponents do
             <.icon name="hero-tag" class="size-3 mr-1" />
             <%= @tag %>
           </span>
+        <% end %>
+        <%= if @branch_name do %>
+          <span class="badge badge-primary font-mono">
+            <.icon name="hero-code-bracket-square" class="size-3 mr-1" />
+            <%= @branch_name %>
+          </span>
+        <% end %>
+        <%= if @pr_url do %>
+          <a href={@pr_url} target="_blank" class="badge badge-success font-mono hover:opacity-80 transition-opacity">
+            <.icon name="hero-arrow-top-right-on-square" class="size-3 mr-1" />
+            View PR
+          </a>
         <% end %>
       </div>
     </div>
