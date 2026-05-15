@@ -193,7 +193,7 @@ defmodule EvoGit.Adapters.Git do
   Returns {:ok, metadata_map} or :error if note doesn't exist or is invalid JSON.
   """
   def get_note(path, object, args \\ []) do
-    case show_note(path, object, args) do
+    case run(["notes" | args] ++ ["show", object], path) do
       {:ok, note_content} ->
         case Jason.decode(note_content) do
           {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
