@@ -105,19 +105,74 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   defp porcelain_status_code_to_name(x, y), do: "#{x}#{y}"
 
   @doc """
-  Performs the actual completion: syncs commit, creates tag, wraps result.
+  Performs the actual completion: syncs commit, creates tag, adds metadata note.
 
   Returns {:ok, completion_map} with :result, :commit_sha, and :tag.
+
+  ## Options
+    - `:base_commit` - The commit SHA the agent started on (required for metadata)
+    - `:parent_id` - The parent agent ID (if this is a subagent)
+    - `:depth` - The depth of this agent in the hierarchy
+    - `:objective` - The objective/task this agent was working on
   """
-  def complete(agent_id, result, commit_sha) do
-    tag_name = "subagent_#{agent_id}"
+  def complete(agent_id, result, commit_sha, opts \\ []) do
+    base_commit = Keyword.get(opts, :base_commit)
+    parent_id = Keyword.get(opts, :parent_id)
+    depth = Keyword.get(opts, :depth, 0)
+    objective = Keyword.get(opts, :objective)
     repo_path = Process.get(:repo_path)
+
+    # Create tag
+    tag_name = "subagent_#{agent_id}"
     Git.tag(repo_path, tag_name, commit_sha)
+
+    # Add metadata as git note (if we have the base commit)
+    if base_commit do
+      add_metadata_note(repo_path, commit_sha, %{
+        agent_id: agent_id,
+        base_commit: base_commit,
+        final_commit: commit_sha,
+        parent_id: parent_id,
+        depth: depth,
+        objective: objective,
+        completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+    end
 
     %{
       result: result,
       commit_sha: commit_sha,
       tag: tag_name
     }
+  end
+
+  defp add_metadata_note(repo_path, commit_sha, metadata) do
+    note_content = Jason.encode!(metadata, pretty: true)
+
+    # Use a notes ref specific to evogit to avoid conflicts with user's notes
+    case Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit"]) do
+      {:ok, _} -> :ok
+      {:error, _, _msg} ->
+        # If custom ref fails (might not exist yet), try with force to create it
+        Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit", "--force"])
+      end
+  end
+
+  @doc """
+  Retrieves the metadata for an agent from their final commit's git note.
+
+  Returns {:ok, metadata_map} or :error if not found.
+
+  ## Metadata includes
+    - `agent_id` - The agent's ID
+    - `base_commit` - The commit the agent started on
+    - `final_commit` - The agent's final commit
+    - `parent_id` - The parent agent ID (if subagent)
+    - `depth` - Depth in the agent hierarchy
+    - `objective` - The objective/task the agent was given
+    - `completed_at` - ISO8601 timestamp of completion
+  """
+  def get_agent_metadata(repo_path, commit_sha) do
+    Git.get_note(repo_path, commit_sha, ["--ref=evogit"])
   end
 end

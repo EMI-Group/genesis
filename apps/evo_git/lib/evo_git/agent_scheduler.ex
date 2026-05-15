@@ -632,7 +632,9 @@ defmodule EvoGit.AgentScheduler do
       event_sink: event_sink,
       llm_model: state.llm_model,
       max_retries: state.max_retries,
-      max_depth: state.max_depth
+      max_depth: state.max_depth,
+      parent_id: parent_id,
+      objective: spec.objective
     })
 
     # Scheduler metadata table: scheduling bookkeeping

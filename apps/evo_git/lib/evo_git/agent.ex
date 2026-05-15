@@ -500,7 +500,19 @@ defmodule EvoGit.Agent do
           Map.get(complete_call.arguments, "result") ||
             Map.get(complete_call.arguments, :result, "Task finished.")
 
-        final_result = CompleteTask.complete(state.agent_id, result, commit_sha)
+        # Get metadata from agent state
+        {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
+        depth = EvoGit.AgentScheduler.current_depth()
+
+        final_result = CompleteTask.complete(
+          state.agent_id,
+          result,
+          commit_sha,
+          base_commit: agent_state.phylo_node.base_commit,
+          parent_id: agent_state.parent_id,
+          depth: depth,
+          objective: agent_state.objective
+        )
 
         {:complete, final_result}
       end
