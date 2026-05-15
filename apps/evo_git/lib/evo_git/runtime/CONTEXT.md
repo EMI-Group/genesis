@@ -12,8 +12,8 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
   - Returns `{:ok, commit_sha}` on success.
 
 - **`EvoGit.Runtime.Evolution`** (`evolution.ex`) — Stage 2: Evolutionary Loop.
-  - `run(objective, opts \\ [])` — Entry point. Calls `Task.diagnose/3` to identify the target path, dispatches an agent (default: `EvoGit.Agent.Generalist`) via `AgentScheduler`, and merges results back.
-  - Returns `{:ok, commit_sha}` on success.
+  - `run(objective, opts \\ [])` — Entry point. Calls `Task.diagnose/3` to identify the target path, dispatches an agent (default: `EvoGit.Agent.Manager`) via `AgentScheduler`, and creates a branch for the agent's changes (with optional PR via `gh` CLI).
+  - Returns `{:ok, %{commit_sha, result, tag, branch_name, pr_url}}` on success. Includes `no_changes: true` when no changes were detected.
 
 - **`EvoGit.Runtime.Prompts`** (`prompts.ex`) — Centralized LLM prompt repository.
   - `agent_mutation(objective)` — Mutation instruction for agent loop.
@@ -28,12 +28,13 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 - `EvoGit.Core.PhyloGraphNode`, `EvoGit.Core.ContextNode` — Core data structures
 - `EvoGit.AgentScheduler`, `EvoGit.AgentSpec` — Agent execution
 - `EvoGit.Agent.CodebaseArchitect`, `EvoGit.Agent.ContextExtractor`, `EvoGit.Agent.Generalist` — Agent modules
-- `EvoGit.Adapters.Git` — Git operations
+- `EvoGit.Adapters.Git` — Git operations (requires: `create_branch/3`, `current_branch/1`, `gh_available?/0`, `create_pull_request/5`)
 - `EvoGit.Task` — Diagnosis routing
 
 ## Constraints
 - The parent coordinator (`EvoGit.Runtime` in `../runtime.ex`) orchestrates Genesis first, then Evolution.
-- Both phases follow the same pattern: ensure repo → create phylo node → load context node → run agent → merge branch back.
+- Both phases follow the same pattern: ensure repo → create phylo node → load context node → run agent → handle result.
 - Prompts are the single source of truth for all LLM instructions; do not inline prompt text in agent or runtime modules.
 - `genesis_plan` and `genesis_realize` are two-step (plan then realize) — plan writes CONTEXT.md/headers only; realize creates files/implements code.
-- Agent output is always merged via `git merge --no-commit` to allow user review before final commit.
+- Evolution uses a **branch-based approach**: agent changes are placed on a dedicated branch (e.g. `evogit/evolve_abcdef`) instead of merging directly into the working tree. A PR is optionally created if the `gh` CLI is available.
+- The `EvoGit.Adapters.Git` module must provide: `create_branch/3`, `current_branch/1`, `gh_available?/0`, and `create_pull_request/5` for the Evolution branch-based flow to work.
