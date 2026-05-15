@@ -359,7 +359,8 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "not a directory"
+      assert result =~ "Error creating directory"
+      assert result =~ "file already exists"
     end
   end
 
