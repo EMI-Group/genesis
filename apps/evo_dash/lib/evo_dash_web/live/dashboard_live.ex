@@ -52,6 +52,53 @@ defmodule EvoDashWeb.DashboardLive do
         <% end %>
       </div>
     </div>
+
+    <!-- Full Result Modal -->
+    <%= if @selected_result do %>
+      <div class="modal modal-open bg-black/50">
+        <div class="modal-box w-11/12 max-w-5xl">
+          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-success" />
+            Agent Message
+          </h3>
+
+          <%= case @selected_result do %>
+            <% {:ok, %{result: result}} when is_binary(result) -> %>
+              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+              </div>
+
+            <% {%{result: result}} when is_binary(result) -> %>
+              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+              </div>
+
+            <% {:ok, %{result: result}} -> %>
+              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
+              </div>
+
+            <% %{result: result} -> %>
+              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
+              </div>
+
+            <% _ -> %>
+              <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <pre class="text-sm overflow-x-auto"><%= inspect(@selected_result, pretty: true, limit: :infinity) %></pre>
+              </div>
+          <% end %>
+
+          <div class="modal-action">
+            <button class="btn" phx-click="close_result_modal">Close</button>
+          </div>
+        </div>
+
+        <div class="modal-backdrop" phx-click="close_result_modal">
+          <button class="cursor-default">close</button>
+        </div>
+      </div>
+    <% end %>
     """
   end
 
@@ -67,6 +114,7 @@ defmodule EvoDashWeb.DashboardLive do
       socket
       |> assign(:tasks, tasks)
       |> assign(:expanded_task_ids, MapSet.new())
+      |> assign(:selected_result, nil)
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -170,6 +218,18 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     {:noreply, assign(socket, :expanded_task_ids, expanded)}
+  end
+
+  @impl true
+  def handle_event("view_full_result", %{"task_id" => task_id}, socket) do
+    task = Enum.find(socket.assigns.tasks, &(&1.id == task_id))
+    result = Map.get(task || %{}, :result)
+    {:noreply, assign(socket, :selected_result, result)}
+  end
+
+  @impl true
+  def handle_event("close_result_modal", _params, socket) do
+    {:noreply, assign(socket, :selected_result, nil)}
   end
 
   defp assign_form_defaults(socket) do
