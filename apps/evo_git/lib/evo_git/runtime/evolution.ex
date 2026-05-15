@@ -111,12 +111,26 @@ defmodule EvoGit.Runtime.Evolution do
       {:ok, current_branch} = Git.current_branch(repo_path)
       base_branch = if current_branch == "HEAD", do: "main", else: current_branch
 
-      case Git.create_pull_request(repo_path, head_branch, base_branch, "EvoGit: #{head_branch}", "Automated changes by EvoGit agent.") do
-        {:ok, pr_url} ->
-          Logger.info("Evolution: Created pull request: #{pr_url}")
-          pr_url
+      # Push the branch to remote first
+      case Git.push_branch(repo_path, head_branch) do
+        {:ok, _} ->
+          Logger.info("Evolution: Pushed branch '#{head_branch}' to remote")
+
+          case Git.create_pull_request(repo_path, head_branch, base_branch, "EvoGit: #{head_branch}", "Automated changes by EvoGit agent.") do
+            {:ok, pr_url} ->
+              Logger.info("Evolution: Created pull request: #{pr_url}")
+              pr_url
+            {:error, _code, output} ->
+              Logger.warning("Evolution: Failed to create pull request: #{output}")
+              nil
+          end
+
         {:error, _code, output} ->
-          Logger.warning("Evolution: Failed to create pull request: #{output}")
+          Logger.warning("Evolution: Failed to push branch '#{head_branch}': #{output}")
+          nil
+
+        {:conflict, output} ->
+          Logger.warning("Evolution: Conflict pushing branch '#{head_branch}': #{output}")
           nil
       end
     else
