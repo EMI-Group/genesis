@@ -15,13 +15,15 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `llm_model` — the LLM model string for this agent to use
   - `max_retries` — maximum LLM call retries for this agent
   - `max_depth` — maximum agent recursion depth
+  - `parent_id` — the parent agent ID (if this is a subagent), or `nil`
+  - `objective` — the objective/task the agent was given
   """
 
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
   @enforce_keys [:context_node, :llm_model, :max_retries, :max_depth]
-  defstruct [:context, :context_node, :phylo_node, :event_sink, :llm_model, :max_retries, :max_depth]
+  defstruct [:context, :context_node, :phylo_node, :event_sink, :llm_model, :max_retries, :max_depth, :parent_id, :objective]
 
   @type t :: %__MODULE__{
           context: ReqLLM.Context.t() | nil,
@@ -30,6 +32,8 @@ defmodule EvoGit.AgentScheduler.AgentState do
           event_sink: pid() | nil,
           llm_model: ReqLLM.model_input(),
           max_retries: pos_integer(),
-          max_depth: pos_integer()
+          max_depth: pos_integer(),
+          parent_id: pos_integer() | nil,
+          objective: String.t() | nil
         }
 end

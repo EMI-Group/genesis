@@ -189,6 +189,22 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Gets the parsed note content for a given object as a map.
+  Returns {:ok, metadata_map} or :error if note doesn't exist or is invalid JSON.
+  """
+  def get_note(path, object, args \\ []) do
+    case show_note(path, object, args) do
+      {:ok, note_content} ->
+        case Jason.decode(note_content) do
+          {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
+          _ -> :error
+        end
+      _ ->
+        :error
+    end
+  end
+
+  @doc """
   Lists all notes.
   """
   def list_notes(path, args \\ []) do
