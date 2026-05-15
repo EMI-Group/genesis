@@ -224,4 +224,74 @@ defmodule EvoGit.Adapters.Git do
   def delete_tag(path, tag_name) do
     run(["tag", "-d", tag_name], path)
   end
+
+  @doc """
+  Creates a branch pointing at a specific commit.
+
+  Uses `git branch <name> <sha>`.
+  """
+  def create_branch(repo_path, branch_name, commit_sha) do
+    run(["branch", branch_name, commit_sha], repo_path)
+  end
+
+  @doc """
+  Returns `{:ok, branch_name}` for the current branch, or `{:ok, "HEAD"}` if detached.
+
+  Uses `git rev-parse --abbrev-ref HEAD`.
+  """
+  def current_branch(repo_path) do
+    run(["rev-parse", "--abbrev-ref", "HEAD"], repo_path)
+  end
+
+  @doc """
+  Returns `true` if the given branch name exists in the repository, `false` otherwise.
+
+  Uses `git show-ref --verify --quiet refs/heads/<branch_name>` and checks the exit code.
+  """
+  def branch_exists?(repo_path, branch_name) do
+    case System.cmd("git", ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
+           cd: repo_path
+         ) do
+      {_output, 0} -> true
+      {_output, _code} -> false
+    end
+  end
+
+  @doc """
+  Returns `true` if the `gh` CLI tool is available on the system, `false` otherwise.
+
+  Uses `System.find_executable("gh")` to check availability.
+  """
+  def gh_available? do
+    System.find_executable("gh") != nil
+  end
+
+  @doc """
+  Creates a pull request using the `gh` CLI.
+
+  Uses `gh pr create --head <head> --base <base> --title <title> --body <body>`.
+  Returns `{:ok, pr_url}` on success, `{:error, code, output}` on failure.
+  """
+  def create_pull_request(repo_path, head_branch, base_branch, title, body) do
+    case System.cmd(
+           "gh",
+           [
+             "pr",
+             "create",
+             "--head",
+             head_branch,
+             "--base",
+             base_branch,
+             "--title",
+             title,
+             "--body",
+             body
+           ],
+           cd: repo_path,
+           stderr_to_stdout: true
+         ) do
+      {output, 0} -> {:ok, String.trim(output)}
+      {output, code} -> {:error, code, String.trim(output)}
+    end
+  end
 end
