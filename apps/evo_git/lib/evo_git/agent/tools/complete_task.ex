@@ -11,6 +11,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   the standard tool execution pipeline.
   """
 
+  require Logger
+
   alias EvoGit.Adapters.Git
 
   @doc """
@@ -135,6 +137,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         parent_id: parent_id,
         depth: depth,
         objective: objective,
+        result: result,
         completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
       })
     end
@@ -151,11 +154,32 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
 
     # Use a notes ref specific to evogit to avoid conflicts with user's notes
     case Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit"]) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, _, _msg} ->
         # If custom ref fails (might not exist yet), try with force to create it
-        Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit", "--force"])
-      end
+        handle_fallback(repo_path, commit_sha, note_content)
+
+      {:conflict, _msg} ->
+        # git notes add returns exit code 1 when the ref doesn't exist yet
+        handle_fallback(repo_path, commit_sha, note_content)
+    end
+  end
+
+  defp handle_fallback(repo_path, commit_sha, note_content) do
+    case Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit", "--force"]) do
+      {:ok, _} ->
+        :ok
+
+      {:error, _code, msg} ->
+        Logger.warning("Failed to write git note for commit #{commit_sha}: #{msg}")
+        {:error, msg}
+
+      {:conflict, msg} ->
+        Logger.warning("Failed to write git note for commit #{commit_sha}: #{msg}")
+        {:error, msg}
+    end
   end
 
   @doc """
@@ -170,6 +194,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     - `parent_id` - The parent agent ID (if subagent)
     - `depth` - Depth in the agent hierarchy
     - `objective` - The objective/task the agent was given
+    - `result` - The agent's final result message
     - `completed_at` - ISO8601 timestamp of completion
   """
   def get_agent_metadata(repo_path, commit_sha) do

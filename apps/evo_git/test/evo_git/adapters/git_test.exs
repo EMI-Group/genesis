@@ -128,4 +128,56 @@ defmodule EvoGit.Adapters.GitTest do
     # Show note again, should fail because note doesn't exist
     assert {:conflict, _} = Git.show_note(tmp_dir, commit_sha)
   end
+
+  describe "get_note/3" do
+    test "returns parsed JSON map for valid note", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      assert {:ok, _} =
+               Git.add_note(tmp_dir, commit_sha, ~s({"key": "value", "num": 42}))
+
+      assert {:ok, %{"key" => "value", "num" => 42}} = Git.get_note(tmp_dir, commit_sha)
+    end
+
+    test "returns parsed JSON map with --ref=evogit", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      # add_note/4 and get_note/3 now correctly place --ref between "notes" and subcommand
+      assert {:ok, _} =
+               Git.add_note(tmp_dir, commit_sha, ~s({"agent_id": "test123"}), ["--ref=evogit"])
+
+      assert {:ok, %{"agent_id" => "test123"}} =
+               Git.get_note(tmp_dir, commit_sha, ["--ref=evogit"])
+    end
+
+    test "returns error when note is not valid JSON", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      assert {:ok, _} = Git.add_note(tmp_dir, commit_sha, "plain text note")
+
+      assert :error = Git.get_note(tmp_dir, commit_sha)
+    end
+
+    test "returns error when no note exists", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      assert :error = Git.get_note(tmp_dir, commit_sha)
+    end
+  end
 end

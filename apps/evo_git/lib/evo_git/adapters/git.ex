@@ -169,23 +169,32 @@ defmodule EvoGit.Adapters.Git do
 
   @doc """
   Adds a note to a given object (usually a commit).
+
+  Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the
+  subcommand so that `--ref` is recognised by git.
   """
   def add_note(path, object, message, args \\ []) do
-    run(["notes", "add"] ++ args ++ ["-m", message, object], path)
+    run(["notes" | args] ++ ["add", "-m", message, object], path)
   end
 
   @doc """
   Removes a note from a given object.
+
+  Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the
+  subcommand so that `--ref` is recognised by git.
   """
   def remove_note(path, object, args \\ []) do
-    run(["notes", "remove"] ++ args ++ [object], path)
+    run(["notes" | args] ++ ["remove", object], path)
   end
 
   @doc """
   Shows the note for a given object.
+
+  Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the
+  subcommand so that `--ref` is recognised by git.
   """
   def show_note(path, object, args \\ []) do
-    run(["notes", "show"] ++ args ++ [object], path)
+    run(["notes" | args] ++ ["show", object], path)
   end
 
   @doc """
@@ -193,7 +202,7 @@ defmodule EvoGit.Adapters.Git do
   Returns {:ok, metadata_map} or :error if note doesn't exist or is invalid JSON.
   """
   def get_note(path, object, args \\ []) do
-    case show_note(path, object, args) do
+    case run(["notes" | args] ++ ["show", object], path) do
       {:ok, note_content} ->
         case Jason.decode(note_content) do
           {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
