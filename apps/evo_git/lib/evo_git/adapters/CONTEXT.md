@@ -22,7 +22,9 @@ Low-level Git CLI wrapper centred on **worktree isolation**. Every function take
 | **Diff** | `diff/4`, `file_diff/5` |
 | **Notes** | `add_note/4`, `remove_note/3`, `show_note/3`, `list_notes/2` |
 | **Tags** | `tag/3`, `delete_tag/2` |
+| **Branches** | `create_branch/3`, `current_branch/1`, `branch_exists?/2` |
 | **Init** | `init/1` |
+| **GitHub** | `gh_available?/0`, `create_pull_request/5` |
 
 **Return convention:**
 - `{:ok, String.t()}` — success (trimmed stdout)
