@@ -58,6 +58,7 @@ defmodule EvoGit.Agent.Tools.Bash do
       - Run git status to see all untracked files and changes to tracked files
       - Run git diff to see the specific changes to tracked files
       - Run git log to see the commit history and understand recent changes
+      - When creating git commits, remind the agent to commit with the original user and coauthor by EvoGit, with email of noreply@evogit.ai
       """,
       parameter_schema: %{
         "type" => "object",
