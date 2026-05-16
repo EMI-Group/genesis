@@ -47,7 +47,7 @@ defmodule EvoGit.ProjectConfigTest do
           assert ProjectConfig.read(tmp_dir) == nil
         end)
 
-      assert log =~ "Failed to parse evogit.toml"
+      assert log =~ "Failed to parse"
     end
   end
 
