@@ -5,6 +5,8 @@ defmodule EvoGit.Agent.Tools.Context do
 
   alias EvoGit.Agent.Tools.Shared
 
+  @co_author_trailer "\n\nCo-Authored-By: EvoGit <noreply@evogit.ai>"
+
   @doc """
   Returns the tool schema for reading directory context.
   """
@@ -152,7 +154,7 @@ defmodule EvoGit.Agent.Tools.Context do
                       [
                         "commit",
                         "-m",
-                        "Update CONTEXT.md for #{dir_path}"
+                        "Update CONTEXT.md for #{dir_path}#{@co_author_trailer}"
                       ],
                       repo_root
                     )
