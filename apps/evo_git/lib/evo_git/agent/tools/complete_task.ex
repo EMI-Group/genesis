@@ -4,7 +4,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
 
   This tool has special handling:
   - It performs a git status check before allowing completion (can be disabled)
-  - It creates a tag at the completion commit
+  - It records the branch name for the completion commit
   - It returns commit information along with the result
 
   The tool is handled specially in the agent loop and doesn't go through
@@ -107,9 +107,9 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   defp porcelain_status_code_to_name(x, y), do: "#{x}#{y}"
 
   @doc """
-  Performs the actual completion: syncs commit, creates tag, adds metadata note.
+  Performs the actual completion: records branch name, adds metadata note.
 
-  Returns {:ok, completion_map} with :result, :commit_sha, and :tag.
+  Returns {:ok, completion_map} with :result, :commit_sha, and :branch.
 
   ## Options
     - `:base_commit` - The commit SHA the agent started on (required for metadata)
@@ -124,9 +124,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     objective = Keyword.get(opts, :objective)
     repo_path = Process.get(:repo_path)
 
-    # Create tag
-    tag_name = "subagent_#{agent_id}"
-    Git.tag(repo_path, tag_name, commit_sha)
+    # Branch name (created by scheduler at worktree creation, just record it here)
+    branch_name = "agent/#{agent_id}"
 
     # Add metadata as git note (if we have the base commit)
     if base_commit do
@@ -145,7 +144,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     %{
       result: result,
       commit_sha: commit_sha,
-      tag: tag_name
+      branch: branch_name
     }
   end
 
