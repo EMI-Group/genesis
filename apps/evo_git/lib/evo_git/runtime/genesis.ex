@@ -82,7 +82,9 @@ defmodule EvoGit.Runtime.Genesis do
 
     # Check if the agent made any changes
     if final_sha && final_sha != base_sha do
-      Logger.info("Genesis: Agent produced changes (#{String.slice(base_sha, 0, 7)} -> #{String.slice(final_sha, 0, 7)})")
+      Logger.info(
+        "Genesis: Agent produced changes (#{String.slice(base_sha, 0, 7)} -> #{String.slice(final_sha, 0, 7)})"
+      )
 
       # Create a branch for the agent's final commit
       branch_name = generate_branch_name("genesis")
@@ -92,23 +94,26 @@ defmodule EvoGit.Runtime.Genesis do
       # Try to create a PR if gh is available
       pr_url = try_create_pull_request(repo_path, branch_name, result)
 
-      {:ok, %{
-        commit_sha: final_sha,
-        result: result,
-        tag: tag,
-        branch_name: branch_name,
-        pr_url: pr_url
-      }}
+      {:ok,
+       %{
+         commit_sha: final_sha,
+         result: result,
+         tag: tag,
+         branch_name: branch_name,
+         pr_url: pr_url
+       }}
     else
       Logger.info("Genesis: No changes detected (base and final commit are the same)")
-      {:ok, %{
-        commit_sha: final_sha || base_sha,
-        result: result,
-        tag: tag,
-        branch_name: nil,
-        pr_url: nil,
-        no_changes: true
-      }}
+
+      {:ok,
+       %{
+         commit_sha: final_sha || base_sha,
+         result: result,
+         tag: tag,
+         branch_name: nil,
+         pr_url: nil,
+         no_changes: true
+       }}
     end
   end
 
@@ -120,60 +125,71 @@ defmodule EvoGit.Runtime.Genesis do
   defp try_create_pull_request(repo_path, head_branch, agent_result) do
     if Git.gh_available?() do
       # Check if origin remote exists, create if not
-      unless Git.has_origin_remote?(repo_path) do
-        Logger.info("Genesis: No origin remote found, creating remote repository...")
-        case Git.create_origin_remote(repo_path) do
-          {:ok, repo_url} ->
-            Logger.info("Genesis: Created remote repository: #{repo_url}")
-          {:error, _code, output} ->
-            Logger.warning("Genesis: Failed to create remote repository: #{output}")
-            return nil
-        end
-      end
+      with true <-
+             Git.has_origin_remote?(repo_path) or
+               create_remote_repo_and_continue(repo_path),
+           {:ok, current_branch} <- Git.current_branch(repo_path) do
+        base_branch = if current_branch == "HEAD", do: "main", else: current_branch
 
-      {:ok, current_branch} = Git.current_branch(repo_path)
-      base_branch = if current_branch == "HEAD", do: "main", else: current_branch
-
-      # Try to get origin's default branch
-      case Git.origin_default_branch(repo_path) do
-        {:ok, origin_default} ->
-          base_branch = origin_default
-        _ ->
-          :ok
-      end
-
-      # Get the configured GitHub username
-      github_username = EvoGit.Defaults.github_username()
-
-      # Format PR body with header and agent result
-      pr_title = "EvoGit: #{head_branch}"
-      pr_body = format_pr_body(github_username, agent_result)
-
-      # Push the branch to remote first
-      case Git.push_branch(repo_path, head_branch) do
-        {:ok, _} ->
-          Logger.info("Genesis: Pushed branch '#{head_branch}' to remote")
-
-          case Git.create_pull_request(repo_path, head_branch, base_branch, pr_title, pr_body) do
-            {:ok, pr_url} ->
-              Logger.info("Genesis: Created pull request: #{pr_url}")
-              pr_url
-            {:error, _code, output} ->
-              Logger.warning("Genesis: Failed to create pull request: #{output}")
-              nil
+        # Try to get origin's default branch
+        base_branch =
+          case Git.origin_default_branch(repo_path) do
+            {:ok, origin_default} -> origin_default
+            _ -> base_branch
           end
 
-        {:error, _code, output} ->
-          Logger.warning("Genesis: Failed to push branch '#{head_branch}': #{output}")
-          nil
+        # Get the configured GitHub username
+        github_username = EvoGit.Defaults.github_username()
 
-        {:conflict, output} ->
-          Logger.warning("Genesis: Conflict pushing branch '#{head_branch}': #{output}")
+        # Format PR body with header and agent result
+        pr_title = "EvoGit: #{head_branch}"
+        pr_body = format_pr_body(github_username, agent_result)
+
+        # Push the branch to remote first
+        case Git.push_branch(repo_path, head_branch) do
+          {:ok, _} ->
+            Logger.info("Genesis: Pushed branch '#{head_branch}' to remote")
+
+            case Git.create_pull_request(repo_path, head_branch, base_branch, pr_title, pr_body) do
+              {:ok, pr_url} ->
+                Logger.info("Genesis: Created pull request: #{pr_url}")
+                pr_url
+
+              {:error, _code, output} ->
+                Logger.warning("Genesis: Failed to create pull request: #{output}")
+                nil
+            end
+
+          {:error, _code, output} ->
+            Logger.warning("Genesis: Failed to push branch '#{head_branch}': #{output}")
+            nil
+
+          {:conflict, output} ->
+            Logger.warning("Genesis: Conflict pushing branch '#{head_branch}': #{output}")
+            nil
+        end
+      else
+        {:error, _code, output} ->
+          Logger.warning("Genesis: Failed to create remote repository: #{output}")
           nil
       end
     else
       Logger.info("Genesis: 'gh' CLI not available, skipping PR creation")
       nil
+    end
+  end
+
+  defp create_remote_repo_and_continue(repo_path) do
+    Logger.info("Genesis: No origin remote found, creating remote repository...")
+
+    case Git.create_origin_remote(repo_path) do
+      {:ok, repo_url} ->
+        Logger.info("Genesis: Created remote repository: #{repo_url}")
+        true
+
+      {:error, _code, output} ->
+        Logger.warning("Genesis: Failed to create remote repository: #{output}")
+        false
     end
   end
 
