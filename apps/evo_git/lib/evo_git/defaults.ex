@@ -19,6 +19,7 @@ defmodule EvoGit.Defaults do
   @agent_max_retries 3
   @max_agent_depth 5
   @llm_model "zai_coding_plan:glm-5"
+  @github_username "BillHuang2001"
 
   @spec get(atom(), term()) :: term()
   defp get(key, default) do
@@ -30,4 +31,5 @@ defmodule EvoGit.Defaults do
   def agent_max_retries, do: get(:agent_max_retries, @agent_max_retries)
   def max_agent_depth, do: get(:max_agent_depth, @max_agent_depth)
   def llm_model, do: get(:llm_model, @llm_model)
+  def github_username, do: get(:github_username, @github_username)
 end
