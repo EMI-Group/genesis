@@ -275,9 +275,7 @@ defmodule EvoGit.AgentScheduler do
     parent = auto_commit_fallback(parent_id, parent)
 
     # Mark parent as :waiting
-    Logger.info(
-      "AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents"
-    )
+    Logger.info("AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents")
 
     parent = %{parent | status: :waiting}
     put_sched_meta(parent_id, parent)
@@ -495,9 +493,7 @@ defmodule EvoGit.AgentScheduler do
   defp do_initialize(state, repo_root) do
     worker_base = Path.join(repo_root, ".evogit/workers")
 
-    Logger.info(
-      "AgentScheduler: Initializing worktree directory at #{worker_base}"
-    )
+    Logger.info("AgentScheduler: Initializing worktree directory at #{worker_base}")
 
     File.rm_rf!(worker_base)
     Git.prune_worktrees(repo_root)
@@ -681,34 +677,38 @@ defmodule EvoGit.AgentScheduler do
       nil ->
         :ok
 
-      script_path ->
-        abs_script = Path.join(repo_root, script_path)
+      script_content ->
+        Logger.info("AgentScheduler: Running worktree init script")
 
-        if File.exists?(abs_script) do
-          Logger.info("AgentScheduler: Running worktree init script: #{script_path}")
-
-          case System.cmd(abs_script, [],
-                 env: %{
-                   "SOURCE_REPO_PATH" => repo_root,
-                   "TARGET_WORKTREE_PATH" => worktree_path
-                 },
-                 cd: repo_root,
-                 stderr_to_stdout: true
-               ) do
-            {output, 0} ->
-              if output != "" do
-                Logger.info("AgentScheduler: Worktree init script output:\n#{output}")
-              end
-
-              Logger.info("AgentScheduler: Worktree init script completed successfully")
-
-            {output, exit_code} ->
-              Logger.warning(
-                "AgentScheduler: Worktree init script failed with exit code #{exit_code}:\n#{output}"
-              )
+        # Detect shell from shebang, default to /bin/sh
+        shell =
+          case String.split(script_content, "\n") |> List.first() do
+            "#!" <> rest -> String.trim(rest)
+            _ -> "bash"
           end
-        else
-          Logger.warning("AgentScheduler: Worktree init script not found: #{abs_script}")
+
+        cmd = """
+        export SOURCE_REPO_PATH="#{repo_root}"
+        export TARGET_WORKTREE_PATH="#{worktree_path}"
+        cd "#{repo_root}"
+        #{script_content}
+        """
+
+        case System.cmd(shell, ["-c", cmd],
+               cd: repo_root,
+               stderr_to_stdout: true
+             ) do
+          {output, 0} ->
+            if output != "" do
+              Logger.info("AgentScheduler: Worktree init script output:\n#{output}")
+            end
+
+            Logger.info("AgentScheduler: Worktree init script completed successfully")
+
+          {output, exit_code} ->
+            Logger.warning(
+              "AgentScheduler: Worktree init script failed with exit code #{exit_code}:\n#{output}"
+            )
         end
 
         :ok
@@ -733,7 +733,9 @@ defmodule EvoGit.AgentScheduler do
 
         case Git.add_worktree(state.repo_root, worktree_path, commit_sha, branch_name) do
           {:ok, _} ->
-            Logger.info("AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} on branch #{branch_name}")
+            Logger.info(
+              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} on branch #{branch_name}"
+            )
 
           {:error, _, msg} ->
             Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
@@ -763,7 +765,9 @@ defmodule EvoGit.AgentScheduler do
           Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
           Process.sleep(30_000 * retries)
         else
-          Logger.info("AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}")
+          Logger.info(
+            "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
+          )
         end
 
         spec.agent_module.run(spec.objective)
