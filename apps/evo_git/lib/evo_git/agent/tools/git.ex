@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.Tools.Git do
       - Run git status to see all untracked files and changes to tracked files
       - Run git diff to see the specific changes to tracked files
       - Run git log to see the commit history and understand recent changes
-      - When creating git commits, remind the agent to commit with the original user and coauthor by EvoGit, with email of noreply@evogit.ai
+      - When committing, append `EvoGit <noreply@evogit.ai>` as a co-author on git commits using a second `-m` flag (e.g., `git commit -m "message" -m "Co-authored-by: EvoGit <noreply@evogit.ai>"`).
       """,
       parameter_schema: %{
         "type" => "object",
