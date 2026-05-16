@@ -167,7 +167,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   end
 
   defp handle_fallback(repo_path, commit_sha, note_content) do
-    case Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit", "-f"]) do
+    case Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit"], force: true) do
       {:ok, _} ->
         :ok
 

@@ -172,9 +172,12 @@ defmodule EvoGit.Adapters.Git do
 
   Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the
   subcommand so that `--ref` is recognised by git.
+
+  The force option (if true) adds `-f` after the `add` subcommand.
   """
-  def add_note(path, object, message, args \\ []) do
-    run(["notes" | args] ++ ["add", "-m", message, object], path)
+  def add_note(path, object, message, args \\ [], force \\ false) do
+    force_flag = if force, do: ["-f"], else: []
+    run(["notes" | args] ++ ["add" | force_flag] ++ ["-m", message, object], path)
   end
 
   @doc """
