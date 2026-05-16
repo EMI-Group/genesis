@@ -17,7 +17,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
       name: "search_history",
       description: """
       Searches for a pattern in the git commit history, revealing matching commit IDs and their messages.
-      This is a wrapper around `git log` with regex-based filtering in Elixir.
+      Use this tool to find relevant commits in the past that may provide explanations, or clues about the codebase's evolution, or provide context for the current task.
       It searches commit messages (subject and body) and optionally git notes.
       """,
       parameter_schema: %{

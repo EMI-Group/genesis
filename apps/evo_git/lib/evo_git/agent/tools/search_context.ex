@@ -17,6 +17,7 @@ defmodule EvoGit.Agent.Tools.SearchContext do
       description: """
       Search for a regex pattern in all CONTEXT.md files within a given node path recursively.
       Returns matching lines with their file paths and surrounding context lines.
+      Use this tool to quickly narrow down relevant architectural information to help navigate the codebase and understand spatial contracts.
       Uses ripgrep internally, so the pattern follows ripgrep's regex syntax.
       """,
       parameter_schema: %{
