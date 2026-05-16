@@ -119,8 +119,28 @@ defmodule EvoGit.Runtime.Genesis do
 
   defp try_create_pull_request(repo_path, head_branch, _task_type) do
     if Git.gh_available?() do
+      # Check if origin remote exists, create if not
+      unless Git.has_origin_remote?(repo_path) do
+        Logger.info("Genesis: No origin remote found, creating remote repository...")
+        case Git.create_origin_remote(repo_path) do
+          {:ok, repo_url} ->
+            Logger.info("Genesis: Created remote repository: #{repo_url}")
+          {:error, _code, output} ->
+            Logger.warning("Genesis: Failed to create remote repository: #{output}")
+            return nil
+        end
+      end
+
       {:ok, current_branch} = Git.current_branch(repo_path)
       base_branch = if current_branch == "HEAD", do: "main", else: current_branch
+
+      # Try to get origin's default branch
+      case Git.origin_default_branch(repo_path) do
+        {:ok, origin_default} ->
+          base_branch = origin_default
+        _ ->
+          :ok
+      end
 
       # Push the branch to remote first
       case Git.push_branch(repo_path, head_branch) do
