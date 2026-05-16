@@ -54,6 +54,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 │  │  ContextNode (Spatial)  │  │  Assets (Tailwind/DaisyUI)│ │
 │  │  PhyloGraphNode (Temp.) │  │                           │ │
 │  │  Git Adapter (CLI)      │  │                           │ │
+│  │  ProjectConfig (evogit.toml)                              │
 │  └─────────────────────────┘  └───────────────────────────┘ │
 │                                                              │
 │  ┌─────────────────────────┐  ┌───────────────────────────┐ │
@@ -68,6 +69,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 2. **Temporal Dimension (Phylogenetic Graph):** Code evolves via Git commits. Agents work in isolated worktrees; successful branches are merged.
 3. **Stateless Agents:** `NewState = Agent(State, Objective)`. All persistent memory lives in the Context Tree or Git history.
 4. **Worktree Isolation:** Agents never modify the main checkout. Work happens in `.evogit/workers/` with cooperative multitasking.
+5. **Project Configuration:** An optional `evogit.toml` file at the repo root allows project-level customization. Currently supports `worktree.script` for running initialization scripts after worktree creation.
 
 ## Constraints
 - **Umbrella structure:** All dependencies, build artifacts, and the lockfile live at the root level (`deps/`, `_build/`, `mix.lock`).

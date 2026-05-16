@@ -30,6 +30,8 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 │    ContextNode (Spatial)  │  PhyloGraphNode (Temporal)  │  Domain data structures
 ├──────────────────────────────────────────────────────────┤
 │  EvoGit.Adapters.Git                                     │  Git CLI wrapper (worktree-focused)
+├──────────────────────────────────────────────────────────┤
+│  EvoGit.ProjectConfig                                    │  Reads evogit.toml project config
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -46,6 +48,7 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 | `EvoGit.AgentScheduler` | `lib/evo_git/agent_scheduler.ex` | GenServer managing agent lifecycles, worktree pool, and ETS state |
 | `EvoGit.Task` | `lib/evo_git/task.ex` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
 | `EvoGit.Runtime` | `lib/evo_git/runtime.ex` | Top-level coordinator: Genesis then Evolution |
+| `EvoGit.ProjectConfig` | `lib/evo_git/project_config.ex` | Reads and parses `evogit.toml` from repo root; provides `worktree_script/1` accessor |
 
 ### Subdirectories
 | Directory | Description |
@@ -66,6 +69,7 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 ### Dependencies
 - `req_llm ~> 1.10` — LLM client for agent reasoning and tool calling
 - `retry ~> 0.19` — Retry logic for resilient operations
+- `toml ~> 0.7` — TOML configuration file parser for `evogit.toml` project config
 
 ## Constraints
 - Part of an **umbrella project** — build artifacts, deps, and lockfile live at the repository root (`../../_build`, `../../deps`, `../../mix.lock`).
@@ -74,3 +78,4 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 - Agent execution happens in **isolated git worktrees** managed by `AgentScheduler` — never on the main working copy.
 - The `EvoGit.Agent` `use` macro injects the agent loop, tool dispatch, subagent management, and `complete_task` tool automatically.
 - Subdirectories follow Elixir convention: `lib/evo_git/<subdir>/` maps to `EvoGit.<Subdir>` namespace.
+- Project-level configuration is read from `evogit.toml` in the repo root via `EvoGit.ProjectConfig`. Currently supports `worktree.script` — a script that runs after worktree creation with `$SOURCE_REPO_PATH` and `$TARGET_WORKTREE_PATH` env vars.
