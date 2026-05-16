@@ -27,6 +27,8 @@ This directory contains all tool definitions and implementations for EvoGit's LL
 | `Glob` | `glob.ex` | `glob` | File pattern matching with glob patterns (uses `Path.wildcard`) | Read | No (uses `Path.wildcard`, `File.stat`) | No |
 | `ListDirectory` | `list_dir.ex` | `list_dir` | List directory contents (uses `File.ls`) | Read | No (uses `File.ls`) | No |
 | `WebSearch` | `web_search.ex` | `search_web` | Web search via Tavily API (requires `TAVILY_API_KEY` env var; uses `Req.post`) | Read | No (uses `Req.post`) | No |
+| `SearchContext` | `search_context.ex` | `search_context` | Search patterns in CONTEXT.md files across a node path (wraps ripgrep with `--glob CONTEXT.md`) | Read | Yes (`EvoGit.sandbox_run`) | No |
+| `SearchHistory` | `search_history.ex` | `search_history` | Search git commit history by pattern with regex filtering (wraps `git log`) | Read | Yes (`EvoGit.sandbox_run`) | No |
 | `Curl` | `curl.ex` | `curl` | HTTP requests via curl (**commented out** in `schemas/0`; uses `System.cmd("curl", ...)`) | Read | No (uses `System.cmd("curl", ...)`) | No |
 | `CompleteTask` | `complete_task.ex` | `complete_task` | Agent completion tool — special handling, NOT in standard schemas | Special | No (uses `Git` adapter) | No |
 | `Shared` | `shared.ex` | *(utility)* | Shared argument parsing, path validation, scope checking utilities | Utility | N/A | N/A |
