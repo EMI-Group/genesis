@@ -234,7 +234,7 @@ defmodule EvoGit.Agent do
             else
               """
               [NOTICE] You have used approximately #{percentage_used}% of your time budget (#{time_used_min} / #{time_limit_min} minutes).
-              Consider accelerating your work by focusing on the most critical aspects of the task.
+              Consider accelerating your work by focusing on the most critical aspects of the task, and make good use of subagents to let them do the work for you.
               """
             end
 
@@ -504,15 +504,16 @@ defmodule EvoGit.Agent do
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         depth = EvoGit.AgentScheduler.current_depth()
 
-        final_result = CompleteTask.complete(
-          state.agent_id,
-          result,
-          commit_sha,
-          base_commit: agent_state.phylo_node.base_commit,
-          parent_id: agent_state.parent_id,
-          depth: depth,
-          objective: agent_state.objective
-        )
+        final_result =
+          CompleteTask.complete(
+            state.agent_id,
+            result,
+            commit_sha,
+            base_commit: agent_state.phylo_node.base_commit,
+            parent_id: agent_state.parent_id,
+            depth: depth,
+            objective: agent_state.objective
+          )
 
         {:complete, final_result}
       end
@@ -573,7 +574,8 @@ defmodule EvoGit.Agent do
       end
 
       defp process_standard_calls(indexed_calls, state) do
-        repo_root = Process.get(:evogit_repo_root) || raise "evogit_repo_root not in process dictionary"
+        repo_root =
+          Process.get(:evogit_repo_root) || raise "evogit_repo_root not in process dictionary"
 
         indexed_results = batch_execute_tools(indexed_calls, @max_tool_timeout, repo_root)
 
@@ -592,7 +594,8 @@ defmodule EvoGit.Agent do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
         repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-        {:ok, %{context_node: %{path: node_path}}} = EvoGit.AgentScheduler.get_agent_state(agent_id)
+        {:ok, %{context_node: %{path: node_path}}} =
+          EvoGit.AgentScheduler.get_agent_state(agent_id)
 
         # Execute tools sequentially to avoid parallel execution issues
         # For example, running two git in parallel would result in git lock issues, and wasting tokens.
@@ -903,7 +906,8 @@ defmodule EvoGit.Agent do
 
               compression_context = ReqLLM.Context.new([user(prompt)])
 
-              with {:ok, stream_response} <- ReqLLM.stream_text(current_model(), compression_context),
+              with {:ok, stream_response} <-
+                     ReqLLM.stream_text(current_model(), compression_context),
                    {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
                    text <- ReqLLM.Response.text(response),
                    summary_msg <- user("Summary of previous events:\n" <> text),
@@ -929,7 +933,8 @@ defmodule EvoGit.Agent do
       end
 
       # Formats a single message into a readable string
-      defp format_single_message(%{role: :tool, name: tool_name} = msg) when is_binary(tool_name) do
+      defp format_single_message(%{role: :tool, name: tool_name} = msg)
+           when is_binary(tool_name) do
         header = "[TOOL: #{tool_name}]"
         content = extract_message_content(msg)
 
