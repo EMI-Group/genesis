@@ -235,6 +235,13 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Deletes a branch.
+  """
+  def delete_branch(path, branch_name) do
+    run(["branch", "-D", branch_name], path)
+  end
+
+  @doc """
   Creates a branch pointing at a specific commit.
 
   Uses `git branch <name> <sha>`.

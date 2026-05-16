@@ -688,10 +688,11 @@ defmodule EvoGit.AgentScheduler do
     # Create the worktree if it doesn't exist (e.g., on first dispatch)
     unless File.exists?(worktree_path) do
       commit_sha = spec.phylo_node.current_commit
+      branch_name = "agent/#{agent_id}"
 
-      case Git.add_worktree(state.repo_root, worktree_path, commit_sha) do
+      case Git.add_worktree(state.repo_root, worktree_path, commit_sha, branch_name) do
         {:ok, _} ->
-          Logger.info("AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id}")
+          Logger.info("AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} on branch #{branch_name}")
 
         {:error, _, msg} ->
           Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
@@ -942,7 +943,14 @@ defmodule EvoGit.AgentScheduler do
 
   defp delete_worktree(path, repo_root) do
     Logger.info("AgentScheduler: Deleting worktree #{path}")
+    # Extract agent ID from path to derive branch name (e.g., worker_42 -> agent/42)
+    branch_name =
+      path
+      |> Path.basename()
+      |> String.replace_prefix("worker_", "agent/")
+
     File.rm_rf!(path)
     Git.prune_worktrees(repo_root)
+    Git.delete_branch(repo_root, branch_name)
   end
 end

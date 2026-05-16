@@ -201,7 +201,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       {:ok, %{tmp_dir: tmp_dir, base_commit: base_commit}}
     end
 
-    test "creates a git tag subagent_<agent_id> on the commit", %{
+    test "returns a branch name agent/<agent_id> for the agent", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit
     } do
@@ -212,11 +212,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
           base_commit: base_commit
         )
 
-      assert %{result: "Task done", commit_sha: ^base_commit, tag: "subagent_agent_123"} = result
-
-      # Verify the tag exists and points to the correct commit
-      {:ok, tagged_commit} = Git.rev_parse(tmp_dir, "subagent_agent_123^{}")
-      assert tagged_commit == base_commit
+      assert %{result: "Task done", commit_sha: ^base_commit, branch: "agent/agent_123"} = result
 
       Process.delete(:repo_path)
     end
@@ -267,7 +263,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.delete(:repo_path)
     end
 
-    test "returns a map with :result, :commit_sha, and :tag", %{
+    test "returns a map with :result, :commit_sha, and :branch", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit
     } do
@@ -281,10 +277,10 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert is_map(result)
       assert Map.has_key?(result, :result)
       assert Map.has_key?(result, :commit_sha)
-      assert Map.has_key?(result, :tag)
+      assert Map.has_key?(result, :branch)
       assert result.result == "My findings"
       assert result.commit_sha == base_commit
-      assert result.tag == "subagent_agent_ret"
+      assert result.branch == "agent/agent_ret"
 
       Process.delete(:repo_path)
     end
@@ -319,7 +315,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
 
       result = CompleteTask.complete("agent_defaults", "Simple result", base_commit)
 
-      assert result.tag == "subagent_agent_defaults"
+      assert result.branch == "agent/agent_defaults"
       assert result.result == "Simple result"
 
       # No base_commit in opts, so no metadata note
