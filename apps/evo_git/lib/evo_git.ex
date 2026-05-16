@@ -83,12 +83,25 @@ defmodule EvoGit do
         ["-p", "ReadWritePaths=-#{path}"]
       end)
 
+    # Propagate PATH and HOME so tools installed in non-standard locations (e.g. /usr/local/bin,
+    # nix store, user-local bin) are found inside the sandbox the same way they are in
+    # the user's interactive shell.
+    env_args =
+      [{"PATH", System.get_env("PATH")}, {"HOME", System.get_env("HOME")}]
+      |> Enum.flat_map(fn
+        {_key, nil} -> []
+        {key, value} -> ["--setenv=#{key}=#{value}"]
+      end)
+
     [
       "--user",
       "--wait",
       "--pipe",
       "--collect",
-      "-q",
+      "-q"
+    ] ++
+      env_args ++
+      [
       "-p",
       "WorkingDirectory=#{cwd}",
       "-p",
