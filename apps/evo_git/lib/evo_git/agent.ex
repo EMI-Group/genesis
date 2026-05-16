@@ -44,7 +44,7 @@ defmodule EvoGit.Agent do
       require Logger
       use Retry
 
-      @max_turns 64
+      @max_turns 128
       # 30 minutes
       @timeout_ms 30 * 60 * 1000
       # 3 minutes
@@ -195,88 +195,43 @@ defmodule EvoGit.Agent do
         current_sha
       end
 
-      # Checks and sends warnings when approaching time/turn limits
-      # Warning thresholds: 50%, 80%
+      # Checks and sends warnings when approaching time/turn limits.
+      # Threshold configs and messages live in EvoGit.Agent.Warnings.
       defp check_limit_warnings(state) do
         state
-        |> maybe_warn_limit(:time, 50, 80)
-        |> maybe_warn_limit(:turns, 50, 80)
+        |> maybe_warn_limit(:time, EvoGit.Agent.Warnings.time_thresholds(@timeout_ms))
+        |> maybe_warn_limit(:turns, EvoGit.Agent.Warnings.turn_thresholds(@max_turns))
       end
 
-      defp maybe_warn_limit(state, :time, threshold_a, threshold_b) do
+      defp maybe_warn_limit(state, :time, thresholds) do
         percentage_used = div(state.llm_time_ms * 100, @timeout_ms)
         last_warned = state.last_warned_time_percent
-
-        thresholds = [threshold_a, threshold_b]
+        threshold_values = Enum.map(thresholds, fn {t, _} -> t end)
 
         {should_warn, new_last_warned} =
-          check_thresholds(percentage_used, last_warned, thresholds)
+          check_thresholds(percentage_used, last_warned, threshold_values)
 
         if should_warn do
-          time_used_min = Float.round(state.llm_time_ms / 60_000, 1)
-          time_limit_min = Float.round(@timeout_ms / 60_000, 1)
-
-          warning_msg =
-            if new_last_warned >= 80 do
-              """
-              [URGENT] You have used approximately #{percentage_used}% of your time budget (#{time_used_min} / #{time_limit_min} minutes).
-
-              STOP working on new tasks. Focus on finishing what you have at hand:
-              1. Commit any file changes you have made
-              2. Call complete_task as soon as possible
-
-              In your completion message, explain:
-              - What has been accomplished
-              - What hasn't been done due to the time limit
-
-              You do NOT need to complete everything. A partial completion with clear status is acceptable.
-              """
-            else
-              """
-              [NOTICE] You have used approximately #{percentage_used}% of your time budget (#{time_used_min} / #{time_limit_min} minutes).
-              Consider accelerating your work by focusing on the most critical aspects of the task, and make good use of subagents to let them do the work for you.
-              """
-            end
-
+          {_, msg_fn} = Enum.find(thresholds, fn {t, _} -> t == new_last_warned end)
+          warning_msg = msg_fn.(percentage_used, state)
           new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-
           %{state | context: new_context, last_warned_time_percent: new_last_warned}
         else
           state
         end
       end
 
-      defp maybe_warn_limit(state, :turns, threshold_a, threshold_b) do
+      defp maybe_warn_limit(state, :turns, thresholds) do
         percentage_used = div(state.turn * 100, @max_turns)
         last_warned = state.last_warned_turns_percent
-
-        thresholds = [threshold_a, threshold_b]
+        threshold_values = Enum.map(thresholds, fn {t, _} -> t end)
 
         {should_warn, new_last_warned} =
-          check_thresholds(percentage_used, last_warned, thresholds)
+          check_thresholds(percentage_used, last_warned, threshold_values)
 
         if should_warn do
-          warning_msg =
-            if new_last_warned >= 80 do
-              """
-              [URGENT] You have used approximately #{percentage_used}% of your available turns (#{state.turn} / #{@max_turns}).
-
-              STOP working on new tasks. Focus on finishing what you have at hand:
-              1. Commit any file changes you have made
-              2. Call complete_task as soon as possible
-
-              In your completion message, explain:
-              - What has been accomplished
-              - What hasn't been done due to the turn limit
-
-              You do NOT need to complete everything. A partial completion with clear status is acceptable.
-              """
-            else
-              """
-              [NOTICE] You have used approximately #{percentage_used}% of your available turns (#{state.turn} / #{@max_turns}).
-              Consider accelerating your work by focusing on the most critical aspects of the task.
-              """
-            end
+          {_, msg_fn} = Enum.find(thresholds, fn {t, _} -> t == new_last_warned end)
+          warning_msg = msg_fn.(percentage_used, state)
 
           stream_event(state.agent_id, "BUDGET_WARNING", %{
             type: :turns,
@@ -286,7 +241,6 @@ defmodule EvoGit.Agent do
           })
 
           new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-
           %{state | context: new_context, last_warned_turns_percent: new_last_warned}
         else
           state
