@@ -34,6 +34,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Defaults
+  alias EvoGit.ProjectConfig
 
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
@@ -675,6 +676,45 @@ defmodule EvoGit.AgentScheduler do
     commit_sha
   end
 
+  defp run_worktree_init_script(repo_root, worktree_path) do
+    case ProjectConfig.worktree_script(repo_root) do
+      nil ->
+        :ok
+
+      script_path ->
+        abs_script = Path.join(repo_root, script_path)
+
+        if File.exists?(abs_script) do
+          Logger.info("AgentScheduler: Running worktree init script: #{script_path}")
+
+          case System.cmd(abs_script, [],
+                 env: %{
+                   "SOURCE_REPO_PATH" => repo_root,
+                   "TARGET_WORKTREE_PATH" => worktree_path
+                 },
+                 cd: repo_root,
+                 stderr_to_stdout: true
+               ) do
+            {output, 0} ->
+              if output != "" do
+                Logger.info("AgentScheduler: Worktree init script output:\n#{output}")
+              end
+
+              Logger.info("AgentScheduler: Worktree init script completed successfully")
+
+            {output, exit_code} ->
+              Logger.warning(
+                "AgentScheduler: Worktree init script failed with exit code #{exit_code}:\n#{output}"
+              )
+          end
+        else
+          Logger.warning("AgentScheduler: Worktree init script not found: #{abs_script}")
+        end
+
+        :ok
+    end
+  end
+
   # --- Dispatch ---
 
   defp try_dispatch(state, agent_id) do
@@ -686,21 +726,31 @@ defmodule EvoGit.AgentScheduler do
     worktree_path = Path.join([state.repo_root, ".evogit/workers", "worker_#{agent_id}"])
 
     # Create the worktree if it doesn't exist (e.g., on first dispatch)
-    unless File.exists?(worktree_path) do
-      commit_sha = spec.phylo_node.current_commit
-      branch_name = "agent/#{agent_id}"
+    newly_created =
+      unless File.exists?(worktree_path) do
+        commit_sha = spec.phylo_node.current_commit
+        branch_name = "agent/#{agent_id}"
 
-      case Git.add_worktree(state.repo_root, worktree_path, commit_sha, branch_name) do
-        {:ok, _} ->
-          Logger.info("AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} on branch #{branch_name}")
+        case Git.add_worktree(state.repo_root, worktree_path, commit_sha, branch_name) do
+          {:ok, _} ->
+            Logger.info("AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} on branch #{branch_name}")
 
-        {:error, _, msg} ->
-          Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
-          raise "Failed to create worktree for agent #{agent_id}"
+          {:error, _, msg} ->
+            Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
+            raise "Failed to create worktree for agent #{agent_id}"
+        end
+
+        true
+      else
+        false
       end
-    end
 
     assign_and_prepare_worktree(agent_id, worktree_path)
+
+    # Run worktree init script on first creation only
+    if newly_created do
+      run_worktree_init_script(state.repo_root, worktree_path)
+    end
 
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
