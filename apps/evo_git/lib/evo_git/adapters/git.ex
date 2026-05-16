@@ -330,4 +330,88 @@ defmodule EvoGit.Adapters.Git do
       {output, code} -> {:error, code, String.trim(output)}
     end
   end
+
+  @doc """
+  Checks if the repository has a remote named 'origin'.
+
+  Returns `true` if origin remote exists, `false` otherwise.
+  """
+  def has_origin_remote?(repo_path) do
+    case System.cmd("git", ["remote", "get-url", "origin"],
+           cd: repo_path,
+           stderr_to_stdout: true
+         ) do
+      {_output, 0} -> true
+      {_output, _} -> false
+    end
+  end
+
+  @doc """
+  Creates a new remote repository using `gh` CLI and adds it as origin.
+
+  Uses `gh repo create` with the current directory name as the repo name.
+  Returns `{:ok, repo_url}` on success, `{:error, code, output}` on failure.
+  """
+  def create_origin_remote(repo_path) do
+    dir_name = Path.basename(repo_path)
+
+    case System.cmd(
+           "gh",
+           ["repo", "create", dir_name, "--source=.", "--remote=origin", "--push=false"],
+           cd: repo_path,
+           stderr_to_stdout: true
+         ) do
+      {output, 0} ->
+        # Extract the repo URL from the output
+        case parse_repo_url(output) do
+          {:ok, url} -> {:ok, url}
+          :error -> {:ok, "https://github.com/#{get_github_username()}/#{dir_name}"}
+        end
+
+      {output, code} ->
+        {:error, code, String.trim(output)}
+    end
+  end
+
+  @doc """
+  Gets the default branch name of the origin remote.
+
+  Returns `{:ok, branch_name}` or `{:error, reason}`.
+  """
+  def origin_default_branch(repo_path) do
+    case System.cmd(
+           "git",
+           ["symbolic-ref", "refs/remotes/origin/HEAD"],
+           cd: repo_path,
+           stderr_to_stdout: true
+         ) do
+      {output, 0} ->
+        branch = output |> String.trim() |> String.split("/") |> List.last()
+        {:ok, branch}
+
+      {_output, _} ->
+        # Fallback to common defaults
+        {:ok, "main"}
+    end
+  end
+
+  defp parse_repo_url(output) do
+    case Regex.run(~r/https:\/\/github\.com\/[^\/]+\/[^\/\s]+/, output) do
+      [url | _] -> {:ok, url}
+      _ -> :error
+    end
+  end
+
+  defp get_github_username do
+    case System.cmd("gh", ["auth", "status"]) do
+      {output, 0} ->
+        case Regex.run(~r/Logged in as ([^\s]+)/, output) do
+          [_, username | _] -> username
+          _ -> "unknown"
+        end
+
+      _ ->
+        "unknown"
+    end
+  end
 end
