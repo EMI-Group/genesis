@@ -1,103 +1,179 @@
 # EvoGit.Agent.Tools — Tool Definitions & Execution
 
 ## Intent
-This directory contains all tool definitions and implementations for EvoGit's LLM-powered agents. Each tool is a self-contained module that defines both a **schema** (for the LLM to understand what the tool does and what parameters it accepts) and an **execute** function (the actual implementation). The tools are the primary interface through which agents interact with the filesystem, git, the web, and other system resources.
+This directory contains all tool definitions and implementations for EvoGit's LLM-powered agents. Each tool is a self-contained Elixir module that defines both a **schema** (for the LLM to understand what the tool does and what parameters it accepts via `ReqLLM.tool/2`) and an **execute** function (the actual implementation). The tools are the primary interface through which agents interact with the filesystem, git, the web, and other system resources.
 
 ## API Surface
 
 ### Central Dispatcher: `EvoGit.Agent.Tools` (parent `tools.ex`)
 | Function | Description |
 |----------|-------------|
-| `schemas/0` | Returns all tool schemas for ReqLLM (excluding `complete_task`) |
-| `execute(tool_name, args, repo_path, repo_root, node_path)` | Dispatches tool execution by name to the appropriate module |
+| `schemas/0` | Returns all active tool schemas for ReqLLM (Git & Curl schemas are commented out) |
+| `execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)` | Dispatches tool execution by name to the appropriate module via pattern-matched private `execute_tool/5` clauses |
 
 ### Tool Modules (each in its own file)
 
-| Module | Tool Name | Purpose | Type |
-|--------|-----------|---------|------|
-| `FileRead` | `read_file` | Read file contents with line numbers, offset/limit, streaming for large files | Read |
-| `FileCreate` | `create_files` | Create empty files with auto-git-commit | Write |
-| `FileWrite` | `write_file` | Write/overwrite file contents | Write |
-| `FileEdit` | `edit_file` | Exact string replacement in files (diff-style editing) | Write |
-| `MakeDir` | `make_dir` | Create directories with optional placeholder files (CONTEXT.md/.gitkeep) and auto-commit | Write |
-| `Context` | `read_context` / `write_context` | Read/write directory CONTEXT.md files (write auto-commits) | Read/Write |
-| `Bash` | `run_bash` | Execute arbitrary bash commands via sandboxed `systemd-run` | Read/Write |
-| `Ripgrep` | `rg` | Search files with ripgrep patterns | Read |
-| `Git` | `run_git` | Execute git commands (currently **commented out** in `schemas/0`) | Read/Write |
-| `Glob` | `glob` | File pattern matching with glob patterns | Read |
-| `ListDirectory` | `list_dir` | List directory contents | Read |
-| `WebSearch` | `search_web` | Web search via Tavily API (requires `TAVILY_API_KEY` env var) | Read |
-| `Curl` | `curl` | HTTP requests via curl (currently **commented out** in `schemas/0`) | Read |
-| `CompleteTask` | `complete_task` | Agent completion tool — special handling, NOT in standard schemas | Special |
-| `Shared` | *(utility)* | Shared argument parsing, path validation, scope checking utilities | Utility |
+| Module | File | Tool Name | Purpose | Type | Uses sandbox_run? | Has scope validation? |
+|--------|------|-----------|---------|------|--------------------|-----------------------|
+| `FileRead` | `file_read.ex` | `read_file` | Read file contents with line numbers, offset/limit, streaming for large files | Read | No (uses `File.read`/`File.stream!`) | No |
+| `FileCreate` | `file_create.ex` | `create_files` | Create empty files with auto-git-commit | Write | No (uses `File.write`, `Git.run`/`Git.commit`) | Yes |
+| `FileWrite` | `file_write.ex` | `write_file` | Write/overwrite file contents | Write | No (uses `File.write`) | Yes |
+| `FileEdit` | `file_edit.ex` | `edit_file` | Exact string replacement in files (diff-style editing) | Write | No (uses `File.read`/`File.write`) | Yes |
+| `MakeDir` | `make_dir.ex` | `make_dir` | Create directories with optional placeholder files (CONTEXT.md/.gitkeep) and auto-commit | Write | No (uses `File.mkdir_p`, `Git.run`/`Git.commit`) | Yes |
+| `Context` | `context.ex` | `read_context` / `write_context` | Read/write directory CONTEXT.md files (write auto-commits) | Read/Write | Yes (write only, via `EvoGit.sandbox_run` for git add/commit) | No |
+| `Bash` | `bash.ex` | `run_bash` | Execute arbitrary bash commands via sandboxed `systemd-run` | Read/Write | Yes (`EvoGit.sandbox_run`) | No |
+| `Ripgrep` | `ripgrep.ex` | `rg` | Search files with ripgrep patterns | Read | Yes (`EvoGit.sandbox_run`) | No |
+| `Git` | `git.ex` | `run_git` | Execute git commands (**commented out** in `schemas/0`) | Read/Write | Yes (`EvoGit.sandbox_run`) | No |
+| `Glob` | `glob.ex` | `glob` | File pattern matching with glob patterns (uses `Path.wildcard`) | Read | No (uses `Path.wildcard`, `File.stat`) | No |
+| `ListDirectory` | `list_dir.ex` | `list_dir` | List directory contents (uses `File.ls`) | Read | No (uses `File.ls`) | No |
+| `WebSearch` | `web_search.ex` | `search_web` | Web search via Tavily API (requires `TAVILY_API_KEY` env var; uses `Req.post`) | Read | No (uses `Req.post`) | No |
+| `Curl` | `curl.ex` | `curl` | HTTP requests via curl (**commented out** in `schemas/0`; uses `System.cmd("curl", ...)`) | Read | No (uses `System.cmd("curl", ...)`) | No |
+| `CompleteTask` | `complete_task.ex` | `complete_task` | Agent completion tool — special handling, NOT in standard schemas | Special | No (uses `Git` adapter) | No |
+| `Shared` | `shared.ex` | *(utility)* | Shared argument parsing, path validation, scope checking utilities | Utility | N/A | N/A |
 
-### Tool Schema Pattern
-Every tool module follows this pattern:
+### How `EvoGit.sandbox_run/4` Is Called
+
+Defined in `lib/evo_git.ex`. Wraps command execution in `systemd-run` with strict sandboxing (filesystem, CPU, memory, syscall restrictions).
+
+```elixir
+# Signature
+EvoGit.sandbox_run(cwd, executable, args \\ [], repo_root \\ nil)
+# Returns: {output :: String.t(), exit_code :: non_neg_integer()}
+
+# Used in tools:
+# Bash tool:
+EvoGit.sandbox_run(repo_path, "bash", ["-c", command], repo_root)
+
+# Ripgrep tool:
+EvoGit.sandbox_run(repo_path, "rg", sanitized_args, repo_root)
+
+# Git tool:
+EvoGit.sandbox_run(repo_path, "git", sanitized_args, repo_root)
+
+# Context write (for git operations):
+EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root)
+EvoGit.sandbox_run(repo_path, "git", ["commit", "-m", msg], repo_root)
+```
+
+When `repo_root` is provided, the shared `.git` directory is added as a `ReadWritePath` so worktrees can access the shared git database.
+
+### Tool Schema Pattern (Exact Convention)
+
+Every tool module follows this identical pattern:
 
 ```elixir
 defmodule EvoGit.Agent.Tools.MyTool do
+  @moduledoc """
+  Tool for <purpose>.
+  """
+
   alias EvoGit.Agent.Tools.Shared
 
-  @doc "Returns the tool schema for ReqLLM."
+  @doc """
+  Returns the tool schema for ReqLLM.
+  """
   def schema do
     ReqLLM.tool(
-      name: "tool_name",
-      description: "Human-readable description for the LLM...",
-      parameter_schema: %{
+      name: "tool_name",                          # String identifier used by the LLM
+      description: "Human-readable description",  # Can be string or heredoc
+      parameter_schema: %{                         # JSON Schema object
         "type" => "object",
-        "properties" => %{ ... },
-        "required" => [...]
+        "properties" => %{
+          "param_name" => %{
+            "type" => "string",
+            "description" => "What this param does",
+            "default" => "value"                   # Optional default
+          }
+        },
+        "required" => ["param_name"]
       },
-      callback: fn _ -> {:ok, nil} end   # Placeholder; execution handled separately
+      callback: fn _ -> {:ok, nil} end            # ALWAYS a no-op placeholder
     )
   end
 
-  @doc "Executes the tool."
-  def execute(args, repo_path, repo_root) do
-    # Parse args with Shared helpers, perform operation, return string result
+  @doc """
+  Executes the tool.
+  """
+  def execute(args, repo_path, _repo_root) do       # Read tools: 3 args
+  # OR
+  def execute(args, repo_path, _repo_root, node_path \\ nil) do  # Write tools: 4 args
+    # Pattern: use Shared.fetch_string_arg / fetch_array_arg to validate args
+    # Return a string result (success message or error message)
   end
 end
 ```
 
-Key fields in `ReqLLM.tool()`:
+Key schema fields:
 - **`name`** — String identifier used by the LLM to call the tool
-- **`description`** — Detailed instructions for the LLM on when and how to use the tool
-- **`parameter_schema`** — JSON Schema object defining parameters (types, defaults, descriptions)
-- **`callback`** — Always `fn _ -> {:ok, nil} end` (placeholder; real execution via `execute/2,3,4`)
+- **`description`** — Detailed instructions for the LLM; can be a string (`<>` concat or plain) or a heredoc `"""`
+- **`parameter_schema`** — JSON Schema object defining parameters (types, defaults, descriptions, enum values)
+- **`callback`** — Always `fn _ -> {:ok, nil} end` (placeholder; real execution via the module's `execute` function)
 
-### Execution Context Parameters
-All tool `execute` functions receive:
-- `args` — Map of arguments from the LLM's tool call
-- `repo_path` — The worktree working directory path
-- `repo_root` — Optional git repository root (for shared `.git` database access in worktrees)
-- `node_path` — Optional agent's assigned node path (for spatial scope validation; write tools only)
+### Special Case: Context Module (Two Schemas, One Module)
 
-### Currently Disabled Tools
-`Git.schema()` and `Curl.schema()` are commented out in `Tools.schemas/0` — agents use `run_bash` for git operations instead.
+The `Context` module defines two separate schemas (`read_schema/0` and `write_schema/0`) and two separate execute functions (`execute_read/3` and `execute_write/3`). This is the only module with multiple schemas.
 
-## How Tools Are Registered & Used
+### Special Case: CompleteTask Module
 
-### Registration Flow
-1. **`Tools.schemas/0`** aggregates schemas from all tool modules → returns list of `ReqLLM.tool()` structs
-2. **Agent's `available_tools/0`** (in `EvoGit.Agent` `use` macro) combines: `Tools.schemas() ++ subagent_schemas() ++ [CompleteTask.schema()]`
-3. Individual agents can override `available_tools/0` to provide a restricted subset (e.g., `CodebaseInvestigator` only has read tools)
-4. **`effective_tools/1`** filters out subagent tools when at max recursion depth
+The `CompleteTask` module is NOT included in `Tools.schemas/0`. It is injected separately by the agent framework. It has special methods: `check_workspace_dirty/1`, `complete/4`, `get_agent_metadata/2`. It uses the `Git` adapter directly rather than `sandbox_run`.
 
-### Execution Flow
-1. LLM returns tool calls in its response
-2. Agent loop (`process_tool_calls/2`) splits them into:
-   - **`complete_task`** → special handling (git status check, metadata recording, completion)
-   - **Subagent calls** → `AgentScheduler.spawn_sub_agents/1` (creates worktree, runs agent)
-   - **Standard tool calls** → `Tools.execute(tool_name, args, repo_path, repo_root, node_path)` → dispatches to module's `execute` function
-3. Results are returned as `tool_result(id, name, output)` messages appended to the LLM context
+## How `Shared` Module Works
 
-### Spatial Scope Validation
-Write tools (`FileCreate`, `FileWrite`, `FileEdit`, `MakeDir`) call `Shared.validate_file_scope/3` which ensures the target path is within the agent's assigned `node_path`. Read tools do not perform this check.
+### Argument Fetching
+```elixir
+# Required string arg — returns {:ok, value} or {:error, message}
+Shared.fetch_string_arg(args, "file_path")
+
+# Required array arg — validates all elements are strings
+Shared.fetch_array_arg(args, "paths")
+
+# Optional string arg — returns {:ok, value} or {:ok, default}
+Shared.fetch_optional_string_arg(args, "method", "GET")
+
+# Batch validation — fetches multiple args, calls fun on success
+Shared.with_valid_args(args, ["file_path", "content"], fn fetched ->
+  # fetched is a map with validated keys
+end)
+```
+
+### Path Handling
+```elixir
+# Expands relative path to absolute
+Shared.expand_path(file_path, repo_path)  # => Path.expand(file_path, repo_path)
+```
+
+### Scope Validation (Write Tools Only)
+```elixir
+# Validates file is within agent's assigned node_path
+Shared.validate_file_scope(expanded_path, node_path, repo_path)
+# Returns :ok or {:error, message}
+# Returns :ok if node_path is nil (backward compat)
+```
+
+### String Utilities
+```elixir
+Shared.normalize_quotes(str)              # Curly quotes → straight quotes
+Shared.find_actual_string(content, search) # Handles quote mismatches for edit_file
+Shared.count_occurrences(content, pattern) # Counts pattern occurrences
+Shared.to_string_binary(value)            # Converts int/float/atom to string
+```
+
+## Execution Flow Summary
+
+1. **Registration**: `Tools.schemas/0` aggregates schemas → injected into agent's `available_tools/0`
+2. **Dispatch**: LLM returns tool call → agent loop calls `Tools.execute(tool_name, args, repo_path, repo_root, node_path)`
+3. **Pattern match**: `execute_tool/5` dispatches to the correct module's `execute` function
+4. **Write tools**: Call `Shared.validate_file_scope/3` to enforce spatial scope
+5. **Sandboxed tools**: Call `EvoGit.sandbox_run(repo_path, executable, args, repo_root)` which returns `{output, exit_code}`
+6. **Result**: All execute functions return a **string** — either a success message or an error message
 
 ## Constraints
 - **All tool execution results must be strings** — the agent loop expects string output to send back to the LLM
-- **Sandboxed execution** — tools that run external commands (`Bash`, `Ripgrep`, `Git`, `Context.write`) use `EvoGit.sandbox_run/4` which wraps commands in `systemd-run` with filesystem/CPU/memory restrictions
-- **Tool output truncation** — outputs exceeding 128 KB are truncated to 8 KB (first/last 4 KB) by the agent loop
-- **Sequential execution** — standard tool calls execute sequentially (not in parallel) to avoid git lock conflicts
-- **`callback` is unused** — the `callback` field in `ReqLLM.tool()` is always a no-op placeholder; actual execution goes through the module's `execute` function
-- **Subagent tools are dynamically generated** — each agent's `subagent_modules/0` drives schema generation and dispatch via `subagent_schemas/0` and `subagent_module_for/1`
+- **Sandboxed execution** — tools that run external commands (`Bash`, `Ripgrep`, `Git`, `Context.write`) use `EvoGit.sandbox_run/4` which wraps in `systemd-run`
+- **Direct File/System calls** — tools like `FileRead`, `FileWrite`, `FileEdit`, `Glob`, `ListDirectory` use Elixir's `File` module directly (not sandboxed)
+- **Tool output truncation** — outputs exceeding 128 KB are truncated to 8 KB (first/last 4 KB) by the agent loop (outside this directory)
+- **Sequential execution** — standard tool calls execute sequentially (not parallel) to avoid git lock conflicts
+- **`callback` is always a no-op** — the `callback` field in `ReqLLM.tool()` is never used for actual execution; dispatch goes through `execute` functions
+- **Write tools receive `node_path`** — 4-arity execute functions for spatial scope validation; read tools use 3-arity
+- **Disabled tools**: `Git.schema()` and `Curl.schema()` are commented out in `Tools.schemas/0`; agents use `run_bash` for git operations instead
+- **New tools must**: follow the module pattern (schema + execute), be aliased in `tools.ex`, have a dispatch clause in `execute_tool/5`, and be added to the `schemas/0` list
