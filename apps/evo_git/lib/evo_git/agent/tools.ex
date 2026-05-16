@@ -19,6 +19,8 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.ListDirectory
   alias EvoGit.Agent.Tools.WebSearch
   alias EvoGit.Agent.Tools.Curl
+  alias EvoGit.Agent.Tools.SearchHistory
+alias EvoGit.Agent.Tools.SearchContext
 
   @doc """
   Returns a list of all available tool schemas for ReqLLM.
@@ -40,6 +42,8 @@ defmodule EvoGit.Agent.Tools do
       Glob.schema(),
       ListDirectory.schema(),
       WebSearch.schema(),
+      SearchContext.schema(),
+      SearchHistory.schema(),
       # Git.schema(),
       # Curl.schema()
     ]
@@ -120,6 +124,14 @@ defmodule EvoGit.Agent.Tools do
 
   defp execute_tool("curl", args, repo_path, repo_root, _node_path) do
     Curl.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("search_context", args, repo_path, repo_root, _node_path) do
+    SearchContext.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("search_history", args, repo_path, repo_root, _node_path) do
+    SearchHistory.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool(unknown_tool, _args, _repo_path, _repo_root, _node_path) do
