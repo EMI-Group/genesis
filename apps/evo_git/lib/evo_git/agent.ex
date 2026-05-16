@@ -746,16 +746,16 @@ defmodule EvoGit.Agent do
             end
           end
 
-        # Remove the tags created by subagents to prevent GC before the merge
-        successful_tags =
+        # Remove the branches created for subagents now that they're merged
+        successful_branches =
           Enum.map(results, fn
-            {:ok, %{tag: tag}} when is_binary(tag) -> tag
+            {:ok, %{branch: branch}} when is_binary(branch) -> branch
             _ -> nil
           end)
           |> Enum.reject(&is_nil/1)
 
-        Enum.each(successful_tags, fn tag ->
-          EvoGit.Adapters.Git.delete_tag(repo_path, tag)
+        Enum.each(successful_branches, fn branch ->
+          EvoGit.Adapters.Git.delete_branch(repo_path, branch)
         end)
 
         # Sync current_commit after subagents complete (parent worktree state may have changed)
@@ -822,7 +822,7 @@ defmodule EvoGit.Agent do
         "Error: Subagent failed: #{inspect(reason)}"
       end
 
-      defp format_subagent_result({:ok, %{result: result, commit_sha: commit_sha, tag: tag}}) do
+      defp format_subagent_result({:ok, %{result: result, commit_sha: commit_sha}}) do
         """
         # Result
         #{result}
