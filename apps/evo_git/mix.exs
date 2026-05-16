@@ -26,7 +26,8 @@ defmodule EvoGit.MixProject do
     [
       {:req_llm, "~> 1.11.0"},
       {:retry, "~> 0.19"},
-      {:req, "~> 0.5.0"}
+      {:req, "~> 0.5.0"},
+      {:toml, "~> 0.7"}
     ]
   end
 end
