@@ -3,6 +3,8 @@ defmodule EvoGit.Adapters.Git do
   Wrapper for Git CLI operations, focusing on Worktree isolation.
   """
 
+  @co_author_trailer "\n\nCo-Authored-By: EvoGit <noreply@evogit.ai>"
+
   @doc """
   Runs a git command in the given directory.
   """
@@ -67,7 +69,8 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def commit(path, message) do
-    run(["commit", "-m", message], path)
+    full_message = message <> @co_author_trailer
+    run(["commit", "-m", full_message], path)
   end
 
   def merge(path, commit_sha) do
