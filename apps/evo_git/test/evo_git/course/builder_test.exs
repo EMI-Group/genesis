@@ -54,23 +54,11 @@ defmodule EvoGit.Course.BuilderTest do
     repo_path
   end
 
-  defp has_zstd_support? do
-    case System.cmd("tar", ["--zstd", "--version"], stderr_to_stdout: true) do
-      {_, 0} -> true
-      _ -> false
-    end
-  end
-
   # ---------------------------------------------------------------------------
   # list_language_branches/1
   # ---------------------------------------------------------------------------
 
   describe "list_language_branches/1" do
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid " <>
-             "(String.trim/2 expects a binary, not a keyword). " <>
-             "Should be: |> Enum.map(&String.trim/1) |> Enum.map(fn \"* \" <> rest -> rest; other -> other end)"
     test "returns only main and lang-* branches, sorted", %{tmp_dir: tmp_dir} do
       repo_path =
         create_test_repo(tmp_dir, %{
@@ -84,9 +72,6 @@ defmodule EvoGit.Course.BuilderTest do
       assert branches == ["lang-es", "lang-zh", "main"]
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "returns only main when repo has no language branches", %{tmp_dir: tmp_dir} do
       repo_path =
         create_test_repo(tmp_dir, %{
@@ -130,16 +115,9 @@ defmodule EvoGit.Course.BuilderTest do
 
   describe "build/3" do
     setup %{tmp_dir: tmp_dir} do
-      if not has_zstd_support?() do
-        {:skip, "tar --zstd not available on this system"}
-      else
-        {:ok, %{tmp_dir: tmp_dir}}
-      end
+      {:ok, %{tmp_dir: tmp_dir}}
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "builds course from repo with main and lang-zh branches", %{tmp_dir: tmp_dir} do
       repo_path =
         create_test_repo(tmp_dir, %{
@@ -169,9 +147,6 @@ defmodule EvoGit.Course.BuilderTest do
       assert File.stat!(tar_path).size > 0
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "builds course with custom tar_file path", %{tmp_dir: tmp_dir} do
       repo_path =
         create_test_repo(tmp_dir, %{
@@ -188,9 +163,6 @@ defmodule EvoGit.Course.BuilderTest do
       assert File.stat!(custom_tar).size > 0
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "maps branch names to correct language codes", %{tmp_dir: tmp_dir} do
       repo_path =
         create_test_repo(tmp_dir, %{
@@ -212,9 +184,6 @@ defmodule EvoGit.Course.BuilderTest do
       assert File.read!(Path.join(output_dir, "ja/index.html")) == "ja"
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "handles repo with nested file structures", %{tmp_dir: tmp_dir} do
       repo_path =
         create_test_repo(tmp_dir, %{
@@ -250,16 +219,9 @@ defmodule EvoGit.Course.BuilderTest do
 
   describe "build/3 with transformations" do
     setup %{tmp_dir: tmp_dir} do
-      if not has_zstd_support?() do
-        {:skip, "tar --zstd not available on this system"}
-      else
-        {:ok, %{tmp_dir: tmp_dir}}
-      end
+      {:ok, %{tmp_dir: tmp_dir}}
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "applies transformation modules in order", %{tmp_dir: tmp_dir} do
       defmodule TestWatermark do
         def transform(dir, _opts) do
@@ -283,9 +245,6 @@ defmodule EvoGit.Course.BuilderTest do
       assert File.read!(Path.join(output_dir, "en/WATERMARK.txt")) == "transformed!"
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "fails when a transformation returns error", %{tmp_dir: tmp_dir} do
       defmodule TestFailingTransform do
         def transform(_dir, _opts) do
@@ -304,9 +263,6 @@ defmodule EvoGit.Course.BuilderTest do
                Builder.build(repo_path, output_dir, transformations: [TestFailingTransform])
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "passes branches option to transformations", %{tmp_dir: tmp_dir} do
       defmodule TestBranchesTransform do
         def transform(dir, opts) do
@@ -401,9 +357,6 @@ defmodule EvoGit.Course.BuilderTest do
       assert {:error, "bad_course", _reason} = hd(results)
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "builds all configured courses and returns results", %{tmp_dir: tmp_dir} do
       # Create two test repos
       repo1_path =
@@ -444,9 +397,6 @@ defmodule EvoGit.Course.BuilderTest do
       end)
     end
 
-    @tag skip:
-           "Requires fix in EvoGit.Course.Builder.list_language_branches/1: " <>
-             "line 100 uses String.trim(&1, leading: true) which is invalid."
     test "passes options through to build", %{tmp_dir: tmp_dir} do
       repo_path =
         create_test_repo(tmp_dir, %{
