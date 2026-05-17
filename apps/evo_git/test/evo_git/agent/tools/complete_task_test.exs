@@ -201,7 +201,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       {:ok, %{tmp_dir: tmp_dir, base_commit: base_commit}}
     end
 
-    test "returns a branch name agent/<agent_id> for the agent", %{
+    test "returns a branch name evogit-agent<agent_id> for the agent", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit
     } do
@@ -212,7 +212,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
           base_commit: base_commit
         )
 
-      assert %{result: "Task done", commit_sha: ^base_commit, branch: "agent/agent_123"} = result
+      assert %{result: "Task done", commit_sha: ^base_commit, branch: "evogit-agentagent_123"} = result
 
       Process.delete(:repo_path)
     end
@@ -280,7 +280,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert Map.has_key?(result, :branch)
       assert result.result == "My findings"
       assert result.commit_sha == base_commit
-      assert result.branch == "agent/agent_ret"
+      assert result.branch == "evogit-agentagent_ret"
 
       Process.delete(:repo_path)
     end
@@ -315,7 +315,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
 
       result = CompleteTask.complete("agent_defaults", "Simple result", base_commit)
 
-      assert result.branch == "agent/agent_defaults"
+      assert result.branch == "evogit-agentagent_defaults"
       assert result.result == "Simple result"
 
       # No base_commit in opts, so no metadata note
