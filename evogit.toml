@@ -1,0 +1,5 @@
+[worktree]
+script = '''
+cp --reflink=auto -r $SOURCE_REPO_PATH/deps $TARGET_WORKTREE_PATH
+cp --reflink=auto $SOURCE_REPO_PATH/config/dev.local.exs $TARGET_WORKTREE_PATH/config/dev.local.exs
+'''
