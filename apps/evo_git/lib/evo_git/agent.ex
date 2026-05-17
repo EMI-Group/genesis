@@ -349,7 +349,17 @@ defmodule EvoGit.Agent do
         usage = ReqLLM.Response.usage(response)
 
         current_tokens =
-          usage.input_tokens + usage.output_tokens + Map.get(usage, :reasoning_tokens, 0)
+          if is_map(usage) do
+            usage.input_tokens + usage.output_tokens + Map.get(usage, :reasoning_tokens, 0)
+          else
+            # Usage is nil - can happen with some providers or cached responses
+            # Keep the previous token count
+            Logger.warning(
+              "Agent #{state.agent_id}: LLM response doesn't contain token usage info."
+            )
+
+            state.total_tokens
+          end
 
         state = %{state | total_tokens: current_tokens}
 
