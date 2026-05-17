@@ -38,6 +38,11 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def add_worktree(repo_path, worktree_path, base_sha, branch_name \\ nil) do
+    if branch_name && branch_exists?(repo_path, branch_name) do
+      # Branch already exists (previous session crashed) — force-delete and recreate
+      System.cmd("git", ["branch", "-D", branch_name], cd: repo_path)
+    end
+
     args =
       if branch_name do
         ["worktree", "add", "-b", branch_name, worktree_path, base_sha]

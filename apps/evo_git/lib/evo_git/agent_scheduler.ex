@@ -729,7 +729,7 @@ defmodule EvoGit.AgentScheduler do
     newly_created =
       unless File.exists?(worktree_path) do
         commit_sha = spec.phylo_node.current_commit
-        branch_name = "agent/#{agent_id}"
+        branch_name = "evogit-agent#{agent_id}"
 
         case Git.add_worktree(state.repo_root, worktree_path, commit_sha, branch_name) do
           {:ok, _} ->
@@ -1001,7 +1001,7 @@ defmodule EvoGit.AgentScheduler do
     branch_name =
       path
       |> Path.basename()
-      |> String.replace_prefix("worker_", "agent/")
+      |> String.replace_prefix("worker_", "evogit-agent")
 
     File.rm_rf!(path)
     Git.prune_worktrees(repo_root)
