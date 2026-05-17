@@ -1,0 +1,708 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## 0.18.4 - 2026-05-11
+
+### Added
+
+- `Zoi.base64/1` to validate base64-encoded strings
+- `Zoi.base64url/1` to validate base64url-encoded strings
+- `Zoi.jwt/1` to validate JWT format
+- `:content_encoding` and `:content_media_type` metadata options now map to JSON Schema's `contentEncoding` and `contentMediaType`
+
+## 0.18.3 - 2026-05-10
+
+### Added
+
+- `unique_items` option for `Zoi.array/2` to enforce that all items are unique
+- `Zoi.from_json_schema/1` now supports the `uniqueItems` keyword
+
+### Changed
+
+- `decimal` dependency now supports `~> 3.0`
+
+## 0.18.2 - 2026-05-06
+
+### Added
+
+- `Zoi.from_json_schema/1` function to convert JSON Schema format to a `Zoi` schema
+- `Zoi.to_json_schema/1` now supports the following metadata: `title`, `examples`, `readOnly`, `writeOnly`, `$id`, `$comment`
+
+## 0.18.1 - 2026-04-27
+
+### Changed
+
+- `Zoi.literal/2` string typespec now resolve to `binary()`
+
+## 0.18.0 - 2026-04-24
+
+### Added
+
+- `Zoi.Error.put_issue_opt/3` to add key-value pairs to error issue opts
+
+### Changed
+
+- `Zoi.discriminated_union/3` errors now include `discriminator` in issue opts identifying the matched variant
+- `Zoi.array/2` now does partial parsing to preserves item positions using integer-keyed maps instead of dropping invalid items in `Zoi.Context.parse/2`
+- `Zoi.enum/2` error issue now returns values as a list instead of a joined string
+- `Zoi.Error` issue opts now include `type` for programmatic type distinction (e.g. `:integer`, `:float`, `:string`, `:array`, `:date`, `:datetime`)
+- Improve error spec for `Zoi.refinement/2` and `Zoi.transform/2`
+
+## 0.17.4 - 2026-04-06
+
+### Added
+
+- `Zoi.pick/2` to select specific fields from a map or keyword schema
+- `Zoi.omit/2` to remove specific fields from a map or keyword schema
+
+### Changed
+
+- `Zoi.nullable/2` now propagates the inner `opts` to it's type
+
+## 0.17.3 - 2026-03-19
+
+### Changed
+
+- `Zoi.type_spec/1` now preserves custom `typespec` overrides in nested schemas
+
+## 0.17.2 - 2026-03-15
+
+### Changed
+
+- `Zoi.type_spec/1` for `Zoi.struct/3` now resolves optional fields as `nil`
+- `Zoi.type_spec/1` for `Zoi.default/3` with `nil` value now resolves as nilable
+
+## 0.17.1 - 2026-02-19
+
+### Changed
+
+- `Zoi.email/1` now forwards `description`, `example`, `metadata` and `deprecated` options to the underlying string schema
+- `Zoi.url/1` now forwards `description`, `example`, `metadata` and `deprecated` options to the underlying string schema
+- `Zoi.uuid/1` now forwards `description`, `example`, `metadata` and `deprecated` options to the underlying string schema
+- `Zoi.ipv4/1` now forwards `description`, `example`, `metadata` and `deprecated` options to the underlying string schema
+- `Zoi.ipv6/1` now forwards `description`, `example`, `metadata` and `deprecated` options to the underlying string schema
+- `Zoi.hex/1` now forwards `description`, `example`, `metadata` and `deprecated` options to the underlying string schema
+
+## 0.17.0 - 2026-01-30
+
+### Added
+
+- `unrecognized_keys` option for `Zoi.map/2`, `Zoi.object/2`, `Zoi.keyword/2`, and `Zoi.struct/3` to control how unrecognized keys are handled:
+  - `:strip` (default) - removes unrecognized keys from the output
+  - `:error` - returns an error when unrecognized keys are present
+  - `:preserve` - keeps unrecognized keys in the output without validation (not available for structs)
+  - `{:preserve, {key_schema, value_schema}}` - preserves unrecognized keys and validates them against the given schemas (not available for structs)
+- `deprecated` option for all schema types to emit deprecation warnings during parsing. `Zoi.describe/1` will also include the deprecation message in the generated documentation
+- `Zoi.to_json_schema/1` now emits `deprecated: true` when a schema is marked as deprecated
+- Multi-line description support in `Zoi.describe/1` with proper indentation
+
+### Changed
+
+- `strict` option is now deprecated in favor of `unrecognized_keys`. Use `unrecognized_keys: :error` instead of `strict: true`
+- `Zoi.extend/3` now uses options from schema1 instead of merging options from both schemas
+- Improved `Zoi.Describe.Encoder` output format:
+  - Enum now uses `|` separator instead of "one of"
+  - Union now uses `|` separator instead of "or"
+  - Tuple now uses `{X, Y}` format instead of "tuple of X, Y values"
+
+## 0.16.1 - 2026-01-20
+
+### Added
+
+- `Zoi.lazy/1` now supports MFA tuples `{module, function, args}` in addition to anonymous functions. This enables lazy schemas to be stored in module attributes and used at compile time:
+
+  ```elixir
+  # MFA tuple, can be sued runtime and compiletime
+  @schema Zoi.lazy({MyModule, :user_schema, []})
+
+  # Anonymous function, can be used runtime but not compiletime (like module attributes)
+  Zoi.lazy(fn -> user_schema() end)
+  ```
+
+## 0.16.0 - 2026-01-19
+
+### Added
+
+- `Zoi.discriminated_union/3` type for creating discriminated unions (#138)
+
+### Changed
+
+- Add sponsor section to documentation (#140)
+- Fix Elixir 1.20 deprecation warnings (#141)
+- Fix string keys parsing on maps when coercion is enabled (#139)
+
+## 0.15.0 - 2026-01-05
+
+### Added
+
+- `Zoi.pid/1` type for validating pid values
+- `Zoi.module/1` type for validating module values
+- `Zoi.reference/1` type for validating reference values
+- `Zoi.port/1` type for validating port values
+- `Zoi.macro/1` type for validating quoted expressions (Macro.t())
+- `typespec` option for all types to override generated typespec:
+  ```elixir
+  Zoi.integer(gte: 0, typespec: quote(do: non_neg_integer()))
+  Zoi.any(typespec: quote(do: pos_integer()))
+  ```
+
+## 0.14.1 - 2026-01-02
+
+### Changed
+
+- `Zoi.to_json_schema/1` now preserves string refinements (pattern, format) when encoding nested schemas inside `Zoi.map/2`, `Zoi.array/1`, `Zoi.lazy/1`, `Zoi.default/2`, and `Zoi.codec/3`. Previously, types like `Zoi.uuid()` and `Zoi.email()` would lose their regex pattern when nested inside an object.
+
+## 0.14.0 - 2025-12-22
+
+### Added
+
+- `Zoi.map/2` now supports field-based mode with `%{field: type}` notation, following Elixir's type system where fields are required by default
+- `Zoi.function/1` type for validating function values with optional arity constraint
+- `Zoi.struct/1` now accepts just a module to validate struct type without field validation
+- `Zoi.Describe.Encoder` protocol for generating human-readable type descriptions
+- `Zoi.json/1` type for validating any JSON-compatible value (string, number, boolean, null, array, or object with string keys)
+- `Zoi.map/2` now accepts `coerce: true` option to convert structs to maps via `Map.from_struct/1`, enabling validation of database structs for API output
+
+### Changed
+
+- `Zoi.object/2` is now an alias for field-based `Zoi.map/2`. Both functions work identically
+- `Zoi.Types.Object` has been consolidated into `Zoi.Types.Map`. The `Zoi.object/2` API remains unchanged
+- `Zoi.keyword/2` default behavior: defaults now apply correctly when parsing keyword list with missing keys
+
+## 0.13.1 - 2025-12-19
+
+### Changed
+
+- Add references on documentation of `0.13` release
+
+## 0.13.0 - 2025-12-19
+
+### Added
+
+- `Zoi.codec/3` for bidirectional transformations between types. Codecs enable parsing from one type to another and encoding back:
+
+  ```elixir
+  date_codec = Zoi.codec(
+    Zoi.ISO.date(),
+    Zoi.date(),
+    decode: fn value -> Date.from_iso8601(value) end,
+    encode: fn value -> Date.to_iso8601(value) end
+  )
+
+  {:ok, ~D[2025-01-15]} = Zoi.parse(date_codec, "2025-01-15")
+  {:ok, "2025-01-15"} = Zoi.encode(date_codec, ~D[2025-01-15])
+  ```
+
+- `Zoi.encode/3` and `Zoi.encode!/3` functions to encode values using a codec's encode function.
+- `Zoi.multiple_of/3` refinement for validating that a number is a multiple of a given value. Works with `integer/0`, `float/0`, `number/0`, and `decimal/0` types:
+- `Zoi.TypeSpec` protocol for opt-in Elixir type specification generation. Custom types can now implement this protocol separately from `Zoi.Type`:
+  ```elixir
+  defimpl Zoi.TypeSpec do
+    def spec(_schema, _opts) do
+      quote(do: binary())
+    end
+  end
+  ```
+
+### Changed
+
+- `Zoi.JSONSchema.Encoder` for `Zoi.object/2` now respects the `strict` option. When `strict: true`, the generated JSON Schema will have `additionalProperties: false`. When `strict: false` (default), it will have `additionalProperties: true`.
+- `type_spec/2` moved from `Zoi.Type` protocol to the new `Zoi.TypeSpec` protocol. This is not a breaking change as the public API (`Zoi.type_spec/1`) remains unchanged.
+
+## 0.12.1 - 2025-12-09
+
+### Added
+
+- `Zoi.default/2` implements `Zoi.JSONSchema` protocol to include default values in generated JSON Schemas.
+
+## 0.12.0 - 2025-12-05
+
+### Added
+
+- `Zoi.lazy/1` type for deferring schema evaluation until parse time, enabling recursive and self-referencing schemas.
+
+## 0.11.1 - 2025-12-04
+
+### Added
+
+- Improved the documentation for "Rendering forms with Phoenix" guide, adding example on how to handle errors with changesets or custom errors.
+
+## 0.11.0 - 2025-11-24
+
+### Changed
+
+- **Protocol-based validation architecture**: All validations now use `Zoi.Validations.*` protocols instead of the centralized `Zoi.Refinements` module. This improves:
+  - **Introspection**: Constraint values stored as struct fields (e.g., `min_length: 5`) instead of opaque MFAs
+  - **Ergonomics**: Pass constraints directly in constructors: `Zoi.string(min_length: 5, max_length: 100)`
+  - **Integration**: External libraries can easily inspect schema constraints for JSON Schema, OpenAPI, etc.
+- Validation protocols: `Gte`, `Lte`, `Gt`, `Lt`, `Length`, `Url`, `Regex`, `StartsWith`, `EndsWith`, `OneOf`
+- Each type implements relevant protocols (String implements all, Integer/Float/Number implement Gte/Lte/Gt/Lt, etc.)
+- Now all types `opts` params are validated at type creation time, using `Zoi` internals, raising errors if invalid options are provided.
+- `Zoi.gt/2` and `Zoi.lt/2` refinements will now work with `Zoi.integer()`, `Zoi.float()` and `Zoi.number()` only. `Zoi.array/2` and `Zoi.string/2` types should use `Zoi.min/2` and `Zoi.max/2` instead for length validations.
+
+## 0.10.7 - 2025-11-16
+
+### Added
+
+- Recipes guide with common use cases and examples of `Zoi` usage.
+
+## 0.10.6 - 2025-11-13
+
+### Added
+
+- `Zoi.one_of/2` type to accept a value that matches exactly one of the provided literal values.
+
+## 0.10.5 - 2025-11-13
+
+### Changed
+
+- `Zoi.enum/2` typespec for binary now returns `binary()` instead of literals.
+
+## 0.10.4 - 2025-11-10
+
+### Changed
+
+- Fix `Zoi.Struct.enforce_keys/1` to work when `Zoi.default/2` wraps a `Zoi.optional/2` type
+
+## 0.10.3 - 2025-11-10
+
+### Added
+
+- wrap `Zoi.Type.t()` into `Zoi.schema()` type
+- Group guides on hexdocs
+
+## 0.10.2 - 2025-11-10
+
+### Added
+
+- `Zoi.Schema.traverse/2` for recursively walking and transforming schema structures. This function applies a transformation to all nested fields while leaving the root schema unchanged, making it easy to apply operations like coercion, nullish, or defaults across an entire schema tree.
+- `Zoi.coerce/1` helper function to enable type coercion on schemas that support it.
+
+### Changed
+
+- `Zoi.transform/2` and `Zoi.refine/2` are now chained in the order they were added, allowing more flexible validation and transformation flows.
+
+## 0.10.1 - 2025-11-09
+
+### Added
+
+- `Zoi.describe/1` now supports `Zoi.struct/2` type.
+
+## 0.10.0 - 2025-11-09
+
+### Added
+
+- `Zoi.Form` module with `prepare/1` and `parse/2` functions for seamless Phoenix form integration.
+- `Phoenix.HTML.FormData` protocol implementation for `Zoi.Context`, enabling Phoenix form rendering without losing the original params.
+- Partial parsing data is now preserved inside `%Zoi.Context{}` (and surfaced through forms) even when validation fails, allowing Phoenix forms to keep previously valid entries.
+- Keyword schemas defined with another schema as the value now keep the successfully parsed entries even if a sibling entry fails validation.
+- `Zoi.Form.prepare/1` now forces coercion on every nested field so Phoenix form strings are cast into their target types automatically.
+- `Zoi.Form.parse/2` automatically normalizes LiveView's map-based array format (with numeric string keys) into regular lists in `ctx.input`, eliminating the need for manual conversion when manipulating array fields dynamically.
+- Architecture diagram in main module documentation (`Zoi`) showing the parsing flow and validation pipeline with Mermaid visualization.
+
+### Changed
+
+- Achieved 100% test coverage across the entire codebase (previously 99.8%).
+
+## 0.9.1 - 2025-11-06
+
+### Added
+
+- `Zoi.JSONSchema` now accepts `Zoi.decimal/1`, converting it to `type: "number"`.
+
+## 0.9.0 - 2025-11-06
+
+### Added
+
+- `Zoi.array/2` now accepts `:coerce` option to force `Map` and `Tuple` types into an array.
+
+### Changed
+
+- `Zoi.type_spec/1` for object with string keys now returns generic `map()` type spec due to how Elixir handles this type internally.
+
+## 0.9.0-rc.1 - 2025-11-04
+
+### Added
+
+- `Zoi.object/2` and `Zoi.keyword/2` now accept `:empty_values` option to define which values are considered empty when parsing objects and keyword lists. By default, this option is set to `[]`, meaning no values are considered empty. You can customize this option to include values like `nil`, empty strings (`""`), or any other value you want to treat as empty and it will return a `:required` error when those values are encountered for required fields.
+
+## 0.9.0-rc.0 - 2025-11-04
+
+### Changed
+
+- All errors have been reworked to include more context on the error `code` and `issue`. Now errors will have the following structure (example):
+
+```elixir
+%Zoi.Error{
+  code: :invalid_type,
+  issue: {"invalid type: expected string", [expected: :string]},
+  message: "invalid type: expected string",
+  path: [:user, :name]
+}
+```
+
+And it's also possible to have errors with dynamic messages:
+
+```elixir
+%Zoi.Error{
+  code: :invalid_literal,
+  message: "invalid literal: expected true",
+  issue: {"invalid literal: expected %{expected}", [expected: true]},
+  path: []
+}
+```
+
+This will give more flexibility when handling errors programmatically, and better support with tools such as `Gettext` for localization.
+
+- Removed `Zoi.gt/3` and `Zoi.lt/3` refinements for strings. Use `Zoi.min/3` and `Zoi.max/3` instead.
+- Allow all refinements to accept custom error messages.
+- `Zoi.url/2` now uses elixir's built-in `URI.parse/1` for URL validation.
+
+## 0.8.4 - 2025-11-01
+
+### Changed
+
+- Fix nested `Zoi.keyword/2` error when parsing invalid values
+- Fix `Zoi.Describe` when dealing with `Decimal` optional dependency
+
+## 0.8.3 - 2025-10-31
+
+### Added
+
+- All types now implements the `Inspect` protocol. This should improve the ergonomics when working with Zoi types in IEx or when inspecting/debugging it's types.
+
+## 0.8.2 - 2025-10-30
+
+### Added
+
+- `Zoi.non_negative/2` refinement for numbers to accept values from 0 and above
+- `Zoi.describe/1` returns a structured documentation for keyword and object types
+
+### Changed
+
+- `Zoi.keyword/2` now can accept a schema in the first argument to validate the values of the keyword list
+- `Zoi.keyword/2` type_spec now reflects correctly the keyword list definition
+
+## 0.8.1 - 2025-10-27
+
+### Changed
+
+- Update readme with new metadata examples and reference to main api
+
+## 0.8.0 - 2025-10-26
+
+### Added
+
+- `Zoi.nullish/2` type to accept `nil` or a value of a specific type
+- `@spec` for all public functions
+- `@typedoc` for all public types
+- `Zoi.description/1` option to add description metadata to types for documentation purposes
+- `Zoi.example/1` option to add example metadata to types for documentation purposes
+
+### Changed
+
+- `Zoi.to_json_schema/1` now reads `description`, `example` opts from types to include them in the generated JSON Schema
+
+## 0.7.4 - 2025-10-25
+
+### Changed
+
+- `Zoi.regex/3` fix regex compilation, now the `regex.opts` are properly handled
+
+## 0.7.3 - 2025-10-20
+
+### Added
+
+- `Zoi.email/1` now accepts `pattern` option to customize the email regex
+
+### Changed
+
+- `Zoi.enum/2` now accepts `coerce` option to coerce values to the key or to the value
+
+## 0.7.2 - 2025-10-13
+
+### Added
+
+- Fixed example in `guides/using_zoi_to_generate_openapi_specs.md`
+
+## 0.7.1 - 2025-10-12
+
+### Added
+
+- `Zoi.to_json_schema/1` support for metadata (e.g., example, description)
+- `guides/quickstart_guide.md` added to the documentation
+
+## 0.7.0 - 2025-10-10
+
+### Added
+
+- `Zoi.to_json_schema/1` function to convert `Zoi` schemas to JSON Schema format
+
+### Changed
+
+- `Zoi.array/2` fixed path in errors when parsing arrays
+- `Zoi.regex/2` fixed regex compile errors when used in module attributes
+
+## 0.6.6 - 2025-10-08
+
+### Added
+
+- `Zoi.metadata/1` - option to add metadata to types for documentation purposes
+
+### Changed
+
+- `Zoi.example/1` deprecated in favor of `Zoi.metadata/1`
+
+## 0.6.5 - 2025-10-07
+
+### Added
+
+- `Zoi.example/1` option to add example values to types for documentation and testing purposes
+
+## 0.6.4 - 2025-09-30
+
+### Added
+
+- `Zoi.downcase/1` refinement to validate if a string is in lowercase
+- `Zoi.upcase/1` refinement to validate if a string is in uppercase
+- `Zoi.hex/1` refinement to validate if a string is a valid hexadecimal
+
+## 0.6.3 - 2025-09-27
+
+### Added
+
+- `keys` in `Zoi.object/2` data structure
+- `Zoi.struct/2` type to parse structs and maps into structs
+- `Zoi.Struct` module with helper functions to work with structs. This module offers two main functions:
+  - `Zoi.Struct.enforce_keys/1`: List of keys that must be present in the struct
+  - `Zoi.Struct.struct_keys/1`: List of keys and their default values to be used with `defstruct`
+
+## 0.6.2 - 2025-09-26
+
+### Added
+
+- `Zoi.literal/2` type to accept only a specific literal value
+
+### Changed
+
+- Refactor all errors to be generated on type creation instead of parsing time
+
+## 0.6.1 - 2025-09-08
+
+### Added
+
+- `Zoi.null/1` type to accept only `nil` values
+- `Zoi.positive/1` refinement for numbers to accept only positive values
+- `Zoi.negative/1` refinement for numbers to accept only negative values
+
+## 0.6.0 - 2025-09-07
+
+### Added
+
+- `Zoi.required/2` type to enforce presence of a value in `keyword` and `object` types
+
+### Changed
+
+- `Zoi.object/2` now uses `mfa` to call inner `transform` function
+- `Zoi.keyword/2` have all fields set as optional by default, use `Zoi.required/2` to enforce presence of a value
+
+## 0.5.7 - 2025-09-06
+
+### Changed
+
+- `Zoi.parse!/3` Error message
+
+## 0.5.6 - 2025-09-05
+
+### Added
+
+- `Zoi.parse!/3` function that raises an error if parsing fails
+- `Zoi.type_spec/2` function that returns the Elixir type spec for a given Zoi schema, implemented for all types
+
+## 0.5.5 - 2025-09-03
+
+### Added
+
+- `Zoi.keyword/2` type
+
+### Changed
+
+- `Zoi.struct/2` now works with the new `Zoi.keyword/2` type
+- Improved `Zoi.transform/2` documentation
+
+## 0.5.4 - 2025-08-29
+
+### Added
+
+- Guide for converting keys from maps
+- Guide for generating schema from JSON structure
+
+## 0.5.3 - 2025-08-29
+
+### Changed
+
+- Fix `transform` and `refinement` types
+
+## 0.5.2 - 2025-08-28
+
+### Added
+
+- `Zoi.prettify_errors/2` added docs
+- `Zoi.extend/3` type
+
+### Changed
+
+- `Zoi.map/3` now parses key and value types correctly
+- Fix encapsulated types ignoring refinements and transforms when parsing
+
+## 0.5.1 - 2025-08-17
+
+### Changed
+
+- `Zoi.prettify_errors/1` don't return `\n` at the end of the string anymore
+
+## 0.5.0 - 2025-08-17
+
+### Added
+
+- `Zoi.atom/1` type
+- `Zoi.string_boolean/1` type
+- `Zoi.union/2` custom error messages
+- `Zoi.intersection/2` custom error messages
+- `Zoi.to_struct/2` transform
+
+### Changed
+
+- `Zoi.boolean/1` does not coerce values besides "true" and "false" anymore. For coercion of other values, use `Zoi.string_boolean/1` type.
+
+## 0.4.0 - 2025-08-14
+
+### Added
+
+- `Zoi.Context` module to provide context when parsing data
+
+### Changed
+
+- `Zoi.object/2` will not automatically parse objects with inputs that differ from the string/atom keys map format. For example:
+
+```elixir
+schema = Zoi.object(%{
+  name: Zoi.string(),
+  age: Zoi.integer()
+})
+Zoi.object(schema, %{"name" => "John", "age" => 30})
+{:error, _errors}
+```
+
+To make this API work, you can pass `coerce: true` option to `Zoi.object/2`. This will make the object parser to check from the `Map` input if the keys are strings or atoms and fetch it's values automatically.
+
+```elixir
+schema = Zoi.object(%{
+  name: Zoi.string(),
+  age: Zoi.integer()
+})
+Zoi.object(schema, %{"name" => "John", "age" => 30}, coerce: true)
+{:ok, %{name: "John", age: 30}}
+```
+
+## 0.3.4 - 2025-08-09
+
+### Added
+
+- `Zoi.min/2`, `Zoi.max/2`, `Zoi.gt/2`, `Zoi.gte/2`, `Zoi.lt/2`, `Zoi.lte/2` refinements for `Zoi.time/1` type
+- `Zoi.min/2`, `Zoi.max/2`, `Zoi.gt/2`, `Zoi.gte/2`, `Zoi.lt/2`, `Zoi.lte/2` refinements for `Zoi.date/1` type
+- `Zoi.min/2`, `Zoi.max/2`, `Zoi.gt/2`, `Zoi.gte/2`, `Zoi.lt/2`, `Zoi.lte/2` refinements for `Zoi.datetime/1` type
+- `Zoi.min/2`, `Zoi.max/2`, `Zoi.gt/2`, `Zoi.gte/2`, `Zoi.lt/2`, `Zoi.lte/2` refinements for `Zoi.naive_datetime/1` type
+
+## 0.3.3 - 2025-08-09
+
+### Added
+
+- `Zoi.time/1` type
+- `Zoi.date/1` type
+- `Zoi.datetime/1` type
+- `Zoi.naive_datetime/1` type
+
+## 0.3.2 - 2025-08-09
+
+### Added
+
+- `Zoi.decimal/1` type
+- `Zoi.min/2`, `Zoi.max/2`, `Zoi.gt/2`, `Zoi.gte/2`, `Zoi.lt/2`, `Zoi.lte/2` refinements for `Zoi.decimal/1` type
+
+## 0.3.1 - 2025-08-08
+
+### Added
+
+- `Zoi.ISO.time/1` type
+- `Zoi.ISO.date/1` type
+- `Zoi.ISO.datetime/1` type
+- `Zoi.ISO.to_time_struct/1` transform
+- `Zoi.ISO.to_date_struct/1` transform
+- `Zoi.ISO.to_datetime_struct/1` transform
+- `Zoi.ISO.to_naive_datetime/1` transform
+- `Zoi.prettify_errors/1` function to format errors in a human-readable way
+
+## 0.3.0 - 2025-08-07
+
+### Added
+
+- `Zoi.email/0` format
+- `Zoi.url/0` format
+- `Zoi.uuid/1` format
+
+### Changed
+
+- Removed `Zoi.email/1`, now use `Zoi.email/0` that will automatically use the `Zoi.string/1` type
+- All refinements now accept a `:message` option to customize the error message
+
+## 0.2.3 - 2025-08-06
+
+### Added
+
+- `Zoi.map/3` type
+- `Zoi.intersection/2` type
+- `Zoi.gt/2` refinement
+- `Zoi.gte/2` refinement
+- `Zoi.lt/2` refinement
+- `Zoi.lte/2` refinement
+
+## 0.2.2 - 2025-08-06
+
+### Added
+
+- Guides for using `Zoi` in Phoenix controllers
+- New `Zoi.tuple/2` type
+- New `Zoi.any/1` type
+- New `Zoi.nullable/2` type
+
+### Changed
+
+- Improved error messages for all validations and types
+- `Zoi.treefy_errors/1` now returns a more human-readable structure
+- `Zoi.optional/2` cannot accept `nil` as a value anymore. Use `Zoi.nullable/2` instead.
+- `Zoi.optional/2` inside `Zoi.object/2` now handles optional fields correctly
+
+## 0.2.1 - 2025-08-06
+
+### Added
+
+- Custom error messages for primitive types
+
+### Changed
+
+- `Zoi.number/2` now returns proper error message
+
+## 0.2.0 - 2025-08-05
+
+### Added
+
+- `mfa` to `Zoi.refine/2` and `Zoi.transform/2` functions
+- accumulator errors to `Zoi.refine/2` and `Zoi.transform/2` functions
+- `Zoi.array/2` type
+- `Zoi.length/2`, `Zoi.min/2` and `Zoi.max/2` validators for arrays
+
+### Changed
+
+- errors are now returned as a list of `%Zoi.Error{}` structs

@@ -1,0 +1,38 @@
+import Config
+
+System.put_env("GOOGLE_API_KEY", "AIzaSyAE86wFyYgxiCGVxrvJEYxUkpDRryaCXBU")
+System.put_env("ZAI_API_KEY", "904e861ea44f47c1bdb2c64ec6be6c46.X8N67zkfi2c6nEvD")
+# System.put_env("ZAI_API_KEY", "0c4ec19fe9314b8f97224d14c57fcab4.CnuoIMM6Gw8BxnHE")
+System.put_env("DEEPSEEK_API_KEY", "sk-bdc90a24b5664572a177b60a91f93dc1") # me
+System.put_env("DEEPSEEK_API_KEY", "sk-b38bf3c0b21b441ca06b0e81ed2591a5")
+System.put_env("GROQ_API_KEY", "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")
+System.put_env("TAVILY_API_KEY", "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")
+
+config :evo_git,
+  max_concurrency: 4,
+  llm_model: %{provider: :deepseek, id: "deepseek-v4-pro"},
+  compression_threshold_tokens: 700_000
+
+# config :evo_git,
+#   max_concurrency: 8,
+#   llm_model: "zai_coding_plan:glm-5.1",
+#   compression_threshold_tokens: 150_000
+
+config :evo_dash, EvoDashWeb.Endpoint,
+  # Binding to loopback ipv4 address prevents access from other machines.
+  # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
+  http: [ip: {100, 117, 174, 60}, port: String.to_integer(System.get_env("PORT") || "4100")],
+  check_origin: false,
+  code_reloader: false
+
+# High-scale configuration
+config :req_llm,
+  finch: [
+    name: ReqLLM.Finch,
+    pools: %{
+      # More connections
+      :default => [protocols: [:http1], size: 8, count: 8]
+    }
+  ]
+
+config :evo_dash, EvoDashWeb.Endpoint, code_reloader: false

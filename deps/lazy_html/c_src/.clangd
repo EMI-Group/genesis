@@ -1,0 +1,6 @@
+CompileFlags:
+  Add:
+    - "--include-directory=/Users/jonatanklosko/.local/share/mise/installs/erlang/28.3.1/erts-16.2/include/"
+    - "--include-directory=/Users/jonatanklosko/git/fine/c_include/"
+    - "--include-directory=/Users/jonatanklosko/git/lazy_html/_build/c/third_party/lexbor/244b84956a6dc7eec293781d051354f351274c46/source"
+    - "-std=c++17"

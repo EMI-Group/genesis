@@ -103,7 +103,7 @@ defmodule EvoGit.Course.Server do
   @spec pull_course(String.t(), keyword()) :: :ok | {:error, term()}
   def pull_course(course_name, opts \\ []) do
     if mode_is_build?() do
-      EvoGit.Course.FilePuller.pull(course_name, builder_node(), builds_dir(), opts)
+      EvoGit.Course.FilePuller.pull(course_name, courses_dir(), opts)
     else
       Logger.warning("pull_course is only supported in :build mode, skipping")
       :ok
@@ -252,13 +252,7 @@ defmodule EvoGit.Course.Server do
   # ===========================================================================
 
   defp default_mode do
-    try do
-      EvoGit.Course.mode()
-    rescue
-      UndefinedFunctionError ->
-        # Fallback: read directly from config if EvoGit.Course.mode/0 is not yet defined
-        Application.get_env(:evo_git, :course_mode, :build)
-    end
+    EvoGit.Course.mode()
   end
 
   defp mode_is_build? do
@@ -266,15 +260,7 @@ defmodule EvoGit.Course.Server do
   end
 
   defp courses_dir do
-    Application.get_env(:evo_git, :courses_dir, "/var/evogit/courses")
-  end
-
-  defp builder_node do
-    Application.get_env(:evo_git, :builder_node)
-  end
-
-  defp builds_dir do
-    Application.get_env(:evo_git, :course_builds_dir, "/tmp/evogit_builds")
+    EvoGit.Course.courses_dir()
   end
 
   defp find_course_config(course_name) do
