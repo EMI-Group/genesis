@@ -1,0 +1,8 @@
+{application,retry,
+             [{modules,['Elixir.Retry','Elixir.Retry.Annotation',
+                        'Elixir.Retry.DelayStreams']},
+              {optional_applications,[]},
+              {applications,[kernel,stdlib,elixir]},
+              {description,"Simple Elixir macros for linear retry, exponential backoff and wait with composable delays."},
+              {registered,[]},
+              {vsn,"0.19.0"}]}.

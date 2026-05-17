@@ -336,7 +336,7 @@ defmodule EvoGit.Course.Server do
   defp file_etag(file_path) do
     case File.stat(file_path) do
       {:ok, %{mtime: mtime, size: size}} ->
-        etag_value = "#{mtime}_#{size}"
+        etag_value = "#{inspect(mtime)}_#{size}"
         {:ok, etag_value}
 
       {:error, :enoent} ->

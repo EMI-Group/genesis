@@ -44,24 +44,16 @@ defmodule EvoGit.Course.ServerTest do
       {:ok, tmp_dir: tmp_dir, courses_dir: courses_dir}
     end
 
-    # BUG: file_etag/1 uses "#{mtime}_#{size}" but File.stat returns mtime
-    # as a tuple {{Y,M,D},{H,M,S}} which does not implement String.Chars.
-    # This causes a Protocol.UndefinedError. Once the source is fixed
-    # (e.g., using inspect(mtime) in file_etag/1), replace the assert_raise
-    # below with the intended assertions:
-    #
-    #   assert {:ok, "hello world", metadata} = Server.get_file(...)
-    #   assert is_binary(metadata.etag)
-    #   assert metadata.content_type == "text/html"
-    #   assert metadata.cache_control == "public, max-age=86400"
-    #
     test "get_file :build", %{courses_dir: courses_dir} do
       course_dir = make_dir(Path.join(courses_dir, "my_course"))
       write_file(course_dir, "index.html", "hello world")
 
-      assert_raise Protocol.UndefinedError, fn ->
-        Server.get_file("my_course", "index.html", :build)
-      end
+      assert {:ok, "hello world", metadata} =
+               Server.get_file("my_course", "index.html", :build)
+
+      assert is_binary(metadata.etag)
+      assert metadata.content_type == "text/html"
+      assert metadata.cache_control == "public, max-age=86400"
     end
 
     test "get_file :build not_found", %{courses_dir: courses_dir} do
@@ -76,14 +68,16 @@ defmodule EvoGit.Course.ServerTest do
                Server.get_file("no_such_course", "index.html", :build)
     end
 
-    # BUG: Same file_etag/1 issue as "get_file :build" above.
     test "get_file :build nested path", %{courses_dir: courses_dir} do
       course_dir = make_dir(Path.join(courses_dir, "my_course"))
       write_file(course_dir, "css/style.css", "body { color: red; }")
 
-      assert_raise Protocol.UndefinedError, fn ->
-        Server.get_file("my_course", "css/style.css", :build)
-      end
+      assert {:ok, "body { color: red; }", metadata} =
+               Server.get_file("my_course", "css/style.css", :build)
+
+      assert is_binary(metadata.etag)
+      assert metadata.content_type == "text/css"
+      assert metadata.cache_control == "public, max-age=86400"
     end
 
     test "has_course? :build", %{courses_dir: courses_dir} do
@@ -104,14 +98,12 @@ defmodule EvoGit.Course.ServerTest do
       assert %{name: "course_b"} in courses
     end
 
-    # BUG: Same file_etag/1 issue as "get_file :build" above.
     test "etag :build", %{courses_dir: courses_dir} do
       course_dir = make_dir(Path.join(courses_dir, "my_course"))
       write_file(course_dir, "index.html", "hello world")
 
-      assert_raise Protocol.UndefinedError, fn ->
-        Server.etag("my_course", "index.html", :build)
-      end
+      assert {:ok, etag} = Server.etag("my_course", "index.html", :build)
+      assert is_binary(etag)
     end
 
     test "etag :build not_found", %{courses_dir: courses_dir} do

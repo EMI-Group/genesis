@@ -18,20 +18,26 @@ defmodule EvoGit.Course.BuilderTest do
     System.cmd("git", ["config", "user.email", "test@test.com"], cd: repo_path)
     System.cmd("git", ["config", "user.name", "Test"], cd: repo_path)
 
-    # Make an initial commit so we can create branches.
-    # This creates the default branch (master on older git, main on newer).
+    # Make an initial commit so we can create branches
     File.write!(Path.join(repo_path, ".gitkeep"), "")
     System.cmd("git", ["add", ".gitkeep"], cd: repo_path)
     System.cmd("git", ["commit", "-m", "initial commit"], cd: repo_path)
 
-    # Rename from master to main if on older git. This is a no-op (fails
-    # silently) if the default branch is already main.
-    System.cmd("git", ["branch", "-m", "master", "main"], cd: repo_path)
+    # Determine the default branch name (after first commit so HEAD exists)
+    {branch_name, 0} = System.cmd("git", ["rev-parse", "--abbrev-ref", "HEAD"], cd: repo_path)
+    default_branch = String.trim(branch_name)
 
-    # Create and commit on each branch
+    # Rename to main if needed
+    if default_branch != "main" do
+      System.cmd("git", ["branch", "-m", default_branch, "main"], cd: repo_path)
+    end
+
+    # Create and commit on each branch (keyword list ensures order)
     Enum.each(branches_with_files, fn {branch, files} ->
       if branch != "main" do
         System.cmd("git", ["checkout", "-b", branch], cd: repo_path)
+      else
+        System.cmd("git", ["checkout", "main"], cd: repo_path)
       end
 
       Enum.each(files, fn {filename, content} ->

@@ -12,6 +12,8 @@ defmodule EvoGit.Course do
           output_dir: String.t() | nil
         }
 
+  @enforce_keys [:name, :repo_path]
+
   defstruct [
     :name,
     :repo_path,

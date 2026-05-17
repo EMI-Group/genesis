@@ -97,7 +97,11 @@ defmodule EvoGit.Course.Builder do
         branches =
           output
           |> String.split("\n", trim: true)
-          |> Enum.map(&String.trim(&1, leading: true))
+          |> Enum.map(&String.trim/1)
+          |> Enum.map(fn
+            "* " <> rest -> rest
+            other -> other
+          end)
           |> Enum.reject(&String.starts_with?(&1, "remotes/"))
           |> Enum.filter(&branch_matches?/1)
           |> Enum.sort()
@@ -141,17 +145,26 @@ defmodule EvoGit.Course.Builder do
   end
 
   defp extract_branch(repo_path, branch, subdir) do
-    case System.cmd("git", ["archive", branch], cd: repo_path) do
-      {archive_data, 0} ->
-        case System.cmd("tar", ["-x", "-C", subdir], input: archive_data) do
+    # Use git archive --output to a temp file, then tar -xf to extract.
+    # We write to a path under subdir to stay on the same filesystem.
+    tmp_tar = Path.join(subdir, ".evogit_archive_tmp.tar")
+
+    case System.cmd("git", ["-C", repo_path, "archive", "--output", tmp_tar, branch],
+           stderr_to_stdout: true) do
+      {_output, 0} ->
+        case System.cmd("tar", ["-xf", tmp_tar, "-C", subdir], stderr_to_stdout: true) do
           {_output, 0} ->
+            File.rm(tmp_tar)
             :ok
 
           {output, code} ->
+            File.rm(tmp_tar)
+            Logger.error("tar extract failed for #{branch}: #{output}")
             {:error, {:tar_extract_failed, code, String.trim(output)}}
         end
 
       {output, code} ->
+        Logger.error("git archive failed for #{branch}: #{output}")
         {:error, {:git_archive_failed, code, String.trim(output)}}
     end
   end
