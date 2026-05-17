@@ -125,7 +125,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     repo_path = Process.get(:repo_path)
 
     # Branch name (created by scheduler at worktree creation, just record it here)
-    branch_name = "agent/#{agent_id}"
+    branch_name = "evogit-agent#{agent_id}"
 
     # Add metadata as git note (if we have the base commit)
     if base_commit do
