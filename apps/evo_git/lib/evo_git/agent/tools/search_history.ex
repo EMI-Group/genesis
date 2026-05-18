@@ -106,7 +106,14 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
         "--format=%H%n%B%n#{separator}"
       end
 
-    git_args = ["log", format, commit_id, "--max-count=#{max_count}"]
+    git_args =
+      if search_notes do
+        # --no-standard-notes disables the default refs/notes/commits ref so only
+        # evogit notes (refs/notes/evogit) are included in %N.
+        ["log", format, commit_id, "--max-count=#{max_count}", "--no-standard-notes", "--notes=evogit"]
+      else
+        ["log", format, commit_id, "--max-count=#{max_count}"]
+      end
 
     {output, exit_code} = EvoGit.sandbox_run(repo_path, "git", git_args, repo_root)
 

@@ -154,6 +154,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     # Use a notes ref specific to evogit to avoid conflicts with user's notes
     case Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit"]) do
       {:ok, _} ->
+        Logger.info("Wrote git note for commit #{commit_sha} (ref: evogit)")
         :ok
 
       {:error, _, _msg} ->
@@ -161,14 +162,15 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         handle_fallback(repo_path, commit_sha, note_content)
 
       {:conflict, _msg} ->
-        # git notes add returns exit code 1 when the ref doesn't exist yet
+        # git notes add returns exit code 1 when note already exists — overwrite with force
         handle_fallback(repo_path, commit_sha, note_content)
     end
   end
 
   defp handle_fallback(repo_path, commit_sha, note_content) do
-    case Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit"], force: true) do
+    case Git.add_note(repo_path, commit_sha, note_content, ["--ref=evogit"], true) do
       {:ok, _} ->
+        Logger.info("Wrote git note for commit #{commit_sha} (ref: evogit, forced)")
         :ok
 
       {:error, _code, msg} ->
