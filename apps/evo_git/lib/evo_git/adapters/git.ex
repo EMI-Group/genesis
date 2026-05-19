@@ -375,7 +375,7 @@ defmodule EvoGit.Adapters.Git do
 
     case System.cmd(
            "gh",
-           ["repo", "create", dir_name, "--source=.", "--remote=origin", "--push=false"],
+           ["repo", "create", dir_name, "--private", "--source=.", "--remote=origin", "--push=false"],
            cd: repo_path,
            stderr_to_stdout: true
          ) do
