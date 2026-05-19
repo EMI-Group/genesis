@@ -172,6 +172,10 @@ defmodule EvoGit.Runtime.Genesis do
         {:error, _code, output} ->
           Logger.warning("Genesis: Failed to create remote repository: #{output}")
           nil
+
+        _ ->
+          Logger.warning("Genesis: Failed to set up remote repository")
+          nil
       end
     else
       Logger.info("Genesis: 'gh' CLI not available, skipping PR creation")
