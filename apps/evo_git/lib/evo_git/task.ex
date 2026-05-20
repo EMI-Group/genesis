@@ -67,7 +67,7 @@ defmodule EvoGit.Task do
         "Return ONLY the path as a JSON string under key 'path'."
 
     event_sink = Keyword.get(opts, :event_sink, self())
-    context_node = EvoGit.Core.ContextNode.load(".", phylo_node.repo)
+    context_node = EvoGit.Core.ContextNode.load("./", phylo_node.repo)
 
     result =
       AgentSpec.new(context_node, phylo_node, Generalist, diag_prompt, event_sink: event_sink)
@@ -86,17 +86,20 @@ defmodule EvoGit.Task do
 
       error ->
         Logger.error("Diagnosis failed: #{inspect(error)}")
-        "."
+        "./"
     end
   end
 
   defp validate_path(path, files) do
-    if path == "." or path in files or (path <> "/") in files or
-         Enum.any?(files, &String.starts_with?(&1, path <> "/")) do
-      path
+    # Strip ./ prefix for comparison with git file list
+    bare_path = path |> String.trim_leading("./") |> then(fn "" -> "."; p -> p end)
+
+    if bare_path == "." or bare_path in files or (bare_path <> "/") in files or
+         Enum.any?(files, &String.starts_with?(&1, bare_path <> "/")) do
+      if bare_path == ".", do: "./", else: "./" <> bare_path
     else
       Logger.warning("Agent: Diagnosed path '#{path}' not found in tree, falling back to root.")
-      "."
+      "./"
     end
   end
 
