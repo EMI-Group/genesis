@@ -34,6 +34,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Defaults
+  alias EvoGit.Platform
   alias EvoGit.ProjectConfig
 
   @agent_table :evogit_agent_state
@@ -684,17 +685,27 @@ defmodule EvoGit.AgentScheduler do
         shell =
           case String.split(script_content, "\n") |> List.first() do
             "#!" <> rest -> String.trim(rest)
-            _ -> "bash"
+            _ -> Platform.shell()
           end
 
-        cmd = """
-        export SOURCE_REPO_PATH="#{repo_root}"
-        export TARGET_WORKTREE_PATH="#{worktree_path}"
-        cd "#{repo_root}"
-        #{script_content}
-        """
+        cmd =
+          if Platform.windows?() do
+            """
+            $env:SOURCE_REPO_PATH = "#{repo_root}"
+            $env:TARGET_WORKTREE_PATH = "#{worktree_path}"
+            Set-Location "#{repo_root}"
+            #{script_content}
+            """
+          else
+            """
+            export SOURCE_REPO_PATH="#{repo_root}"
+            export TARGET_WORKTREE_PATH="#{worktree_path}"
+            cd "#{repo_root}"
+            #{script_content}
+            """
+          end
 
-        case System.cmd(shell, ["-c", cmd],
+        case System.cmd(shell, Platform.shell_args(cmd),
                cd: repo_root,
                stderr_to_stdout: true
              ) do
