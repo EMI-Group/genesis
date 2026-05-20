@@ -31,6 +31,10 @@ Contains Phoenix LiveView modules and templates that form the interactive UI lay
 - Import `EvoDashWeb.CoreComponents` and `EvoDashWeb.Layouts`
 - Styled with DaisyUI/Tailwind CSS classes
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual LiveView files within this directory (`dashboard_live.ex`, `agents_live.ex`) and their companion templates. For any changes to LiveView pages or their templates, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - Each LiveView must be a single `.ex` file with an inline `render/1` callback **or** a companion `.html.heex` template — not both. (`DashboardLive` renders inline; `AgentsLive` uses a separate template.)
 - LiveViews must not perform direct business logic; delegate to context modules (`TaskRegistry`, `AgentTree`, etc.).
