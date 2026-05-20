@@ -11,6 +11,8 @@ This is an **Elixir umbrella project** with two child applications:
 | `:evo_git` | `apps/evo_git/` | Core runtime — agent execution, Git interactions, dual-dimension architecture, CLI |
 | `:evo_dash` | `apps/evo_dash/` | Phoenix LiveView dashboard — real-time visualization of Context Tree, agent activity, task management |
 
+The detailed design document can be found in AGENTS.md.
+
 ## Routing Table
 - `apps/` → Umbrella child applications (`evo_git/` core runtime, `evo_dash/` web dashboard)
 - `config/` → Environment-based Elixir configuration (`config.exs` + environment overrides)
