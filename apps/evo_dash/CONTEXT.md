@@ -7,35 +7,35 @@ EvoDash is the **web-based dashboard application** for the EvoGit umbrella proje
 This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibling `:evo_git` application for all evolutionary code generation runtime operations.
 
 ## Routing Table
-- `assets/` → Frontend source assets (JavaScript, CSS, vendor libraries)
-- `lib/` → Application source code (`evo_dash/` domain logic, `evo_dash_web/` web interface)
-- `test/` → ExUnit test suite (controller tests, error handler tests, support modules)
+- `./assets/` → Frontend source assets (JavaScript, CSS, vendor libraries)
+- `./lib/` → Application source code (`evo_dash/` domain logic, `evo_dash_web/` web interface)
+- `./test/` → ExUnit test suite (controller tests, error handler tests, support modules)
 
 ## API Surface
 
 ### Application Entry & Supervision
 | Module | File | Purpose |
 |--------|------|---------|
-| `EvoDash` | `lib/evo_dash.ex` | Domain context placeholder |
-| `EvoDash.Application` | `lib/evo_dash/application.ex` | OTP supervisor (Telemetry → DNSCluster → PubSub → TaskRegistry → Endpoint) |
-| `EvoDash.TaskRegistry` | `lib/evo_dash/task_registry.ex` | ETS-backed GenServer tracking genesis/evolve tasks; spawns `EvoGit.Runtime.*` processes |
+| `EvoDash` | `./lib/evo_dash.ex` | Domain context placeholder |
+| `EvoDash.Application` | `./lib/evo_dash/application.ex` | OTP supervisor (Telemetry → DNSCluster → PubSub → TaskRegistry → Endpoint) |
+| `EvoDash.TaskRegistry` | `./lib/evo_dash/task_registry.ex` | ETS-backed GenServer tracking genesis/evolve tasks; spawns `EvoGit.Runtime.*` processes |
 | `EvoDash.PubSub` | (started in app) | Phoenix PubSub for real-time event distribution |
 
 ### Web Layer (`lib/evo_dash_web/`)
 | Module | File | Purpose |
 |--------|------|---------|
-| `EvoDashWeb` | `lib/evo_dash_web.ex` | `use`-based macros for controller, live_view, html, etc. |
-| `EvoDashWeb.Endpoint` | `lib/evo_dash_web/endpoint.ex` | Phoenix endpoint (LiveView socket, static files, Plug pipeline) |
-| `EvoDashWeb.Router` | `lib/evo_dash_web/router.ex` | Routes: `/` → DashboardLive, `/agents` → AgentsLive |
-| `EvoDashWeb.Telemetry` | `lib/evo_dash_web/telemetry.ex` | Telemetry metrics supervisor (Phoenix + VM metrics) |
+| `EvoDashWeb` | `./lib/evo_dash_web.ex` | `use`-based macros for controller, live_view, html, etc. |
+| `EvoDashWeb.Endpoint` | `./lib/evo_dash_web/endpoint.ex` | Phoenix endpoint (LiveView socket, static files, Plug pipeline) |
+| `EvoDashWeb.Router` | `./lib/evo_dash_web/router.ex` | Routes: `/` → DashboardLive, `/agents` → AgentsLive |
+| `EvoDashWeb.Telemetry` | `./lib/evo_dash_web/telemetry.ex` | Telemetry metrics supervisor (Phoenix + VM metrics) |
 
-### LiveView Pages (`lib/evo_dash_web/live/`)
+### LiveView Pages (`./lib/evo_dash_web/live/`)
 | Module | Route | Purpose |
 |--------|-------|---------|
 | `EvoDashWeb.DashboardLive` | `GET /` | Task launcher (genesis/evolve forms) + running task cards with logs |
 | `EvoDashWeb.AgentsLive` | `GET /agents` | Recursive agent tree inspector with detail panels |
 
-### UI Components (`lib/evo_dash_web/components/`)
+### UI Components (`./lib/evo_dash_web/components/`)
 | Module | Purpose |
 |--------|---------|
 | `CoreComponents` | Phoenix 1.8 base components (header, flash, button, icon, input, table, theme_toggle) |
@@ -43,15 +43,15 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | `AgentsComponents` | `agent_tree` — recursive tree with connector lines and status coloring |
 | `Layouts` | Root HTML layout with theme persistence and flash group |
 
-### Controllers (`lib/evo_dash_web/controllers/`)
+### Controllers (`./lib/evo_dash_web/controllers/`)
 Standard Phoenix boilerplate: `PageController` (home), `ErrorHTML`, `ErrorJSON`. Most UI is LiveView-based.
 
-### Frontend Assets (`assets/`)
-- **JS** (`js/app.js`): LiveSocket setup with colocated hooks, topbar progress indicator
-- **CSS** (`css/app.css`): Tailwind CSS 4 + DaisyUI plugin with custom light/dark themes, Heroicons, LiveView loading variants
+### Frontend Assets (`./assets/`)
+- **JS** (`./js/app.js`): LiveSocket setup with colocated hooks, topbar progress indicator
+- **CSS** (`./css/app.css`): Tailwind CSS 4 + DaisyUI plugin with custom light/dark themes, Heroicons, LiveView loading variants
 - **Vendor**: daisyui.js, daisyui-theme.js, heroicons.js, topbar.js
 
-### Test Suite (`test/`)
+### Test Suite (`./test/`)
 Minimal coverage: controller tests (PageController, error handlers) via `EvoDashWeb.ConnCase`. No LiveView tests yet.
 
 ## Key Interactions
@@ -76,8 +76,8 @@ Browser ←→ Endpoint ←→ Router
 - **No database**: All task state is in-memory (ETS); lost on restart
 - **Single-node**: DNSCluster configured but no distributed clustering logic yet
 - **Naming conventions**:
-  - Domain modules: `lib/evo_dash/<module>.ex`
-  - Web modules: `lib/evo_dash_web/<module>.ex`
+  - Domain modules: `./lib/evo_dash/<module>.ex`
+  - Web modules: `./lib/evo_dash_web/<module>.ex`
   - LiveViews: `<name>_live.ex` / `<name>_live.html.heex`
   - Components: `<domain>_components.ex`
 - **Build**: `mix assets.build` (esbuild + tailwind), `mix assets.deploy` (minified + digested)

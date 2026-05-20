@@ -47,5 +47,5 @@ A struct with fields `repo`, `base_commit`, and `current_commit`.
 - Both modules must depend **only** on `EvoGit.Adapters.Git` for git operations — never call `System.cmd` or shell out directly.
 - `ContextNode.build_context/2` truncates individual file contents at 10,000 characters to bound AI prompt size.
 - `PhyloGraphNode` maintains the invariant that `base_commit` is immutable after creation; only `current_commit` advances.
-- All `ContextNode` paths must be relative to the repository root; absolute or `..`-prefixed paths are rejected by `hierarchy_nodes/2`.
+- All `ContextNode` paths must be relative to the repository root using the `"./"` convention (e.g., `"./"` for root, `"./foo/bar"` for subdirectories); absolute or `..`-prefixed paths are rejected by `hierarchy_nodes/2`.
 - Directory naming follows `snake_case` Elixir convention; file names mirror their module name (`context_node.ex` → `ContextNode`).

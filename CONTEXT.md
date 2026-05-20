@@ -8,13 +8,15 @@ This is an **Elixir umbrella project** with two child applications:
 
 | App | Directory | Purpose |
 |-----|-----------|---------|
-| `:evo_git` | `apps/evo_git/` | Core runtime — agent execution, Git interactions, dual-dimension architecture, CLI |
-| `:evo_dash` | `apps/evo_dash/` | Phoenix LiveView dashboard — real-time visualization of Context Tree, agent activity, task management |
+| `:evo_git` | `./apps/evo_git/` | Core runtime — agent execution, Git interactions, dual-dimension architecture, CLI |
+| `:evo_dash` | `./apps/evo_dash/` | Phoenix LiveView dashboard — real-time visualization of Context Tree, agent activity, task management |
+
+The detailed design document can be found in AGENTS.md.
 
 ## Routing Table
-- `apps/` → Umbrella child applications (`evo_git/` core runtime, `evo_dash/` web dashboard)
-- `config/` → Environment-based Elixir configuration (`config.exs` + environment overrides)
-- `example_design/` → Example design documents (sample `evoclass.json`)
+- `./apps/` → Umbrella child applications (`./evo_git/` core runtime, `./evo_dash/` web dashboard)
+- `./config/` → Environment-based Elixir configuration (`config.exs` + environment overrides)
+- `./example_design/` → Example design documents (sample `evoclass.json`)
 
 ## API Surface
 
@@ -30,9 +32,9 @@ This is an **Elixir umbrella project** with two child applications:
 ### Directories
 | Directory | Purpose |
 |-----------|---------|
-| `apps/` | Umbrella child applications (`evo_git/`, `evo_dash/`) |
-| `config/` | Environment-based configuration (`config.exs` + env overrides) |
-| `example_design/` | Example design document (`evoclass.json` — a multi-level course generation design) |
+| `./apps/` | Umbrella child applications (`./evo_git/`, `./evo_dash/`) |
+| `./config/` | Environment-based configuration (`config.exs` + env overrides) |
+| `./example_design/` | Example design document (`evoclass.json` — a multi-level course generation design) |
 
 ### CLI Interface (via `mix run`)
 ```bash
@@ -50,7 +52,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 │                     EvoGit Umbrella Root                     │
 │                                                              │
 │  ┌─────────────────────────┐  ┌───────────────────────────┐ │
-│  │     apps/evo_git/       │  │     apps/evo_dash/        │ │
+│  │    ./apps/evo_git/      │  │    ./apps/evo_dash/       │ │
 │  │     (Core Runtime)      │  │     (Web Dashboard)       │ │
 │  │                         │  │                           │ │
 │  │  CLI → Runtime          │  │  TaskRegistry ←→ Runtime  │ │
@@ -63,7 +65,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 │  └─────────────────────────┘  └───────────────────────────┘ │
 │                                                              │
 │  ┌─────────────────────────┐  ┌───────────────────────────┐ │
-│  │     config/             │  │   example_design/          │ │
+│  │    ./config/            │  │  ./example_design/         │ │
 │  │     Environment config  │  │   Sample design documents  │ │
 │  └─────────────────────────┘  └───────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
@@ -77,10 +79,10 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 5. **Project Configuration:** An optional `evogit.toml` file at the repo root allows project-level customization. Currently supports `worktree.script` for running initialization scripts after worktree creation.
 
 ## Constraints
-- **Umbrella structure:** All dependencies, build artifacts, and the lockfile live at the root level (`deps/`, `_build/`, `mix.lock`).
+- **Umbrella structure:** All dependencies, build artifacts, and the lockfile live at the root level (`./deps/`, `./_build/`, `mix.lock`).
 - **Elixir ~> 1.18:** Required for the standard `JSON` library.
 - **Git CLI:** The sole version control interface (no libgit2 bindings).
-- **No source code at root:** All application source code lives under `apps/`.
+- **No source code at root:** All application source code lives under `./apps/`.
 - **Every directory must have a `CONTEXT.md`:** This is the spatial contract that agents read and maintain.
 - **Agents commit before delegating:** Worktrees must be clean before spawning subagents (auto-commit fallback enforced).
 - **Sandboxing:** LLM-generated code runs under `systemd-run` with strict filesystem, CPU, memory, and syscall restrictions.

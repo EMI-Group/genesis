@@ -26,7 +26,7 @@ defmodule EvoGit.Agent.Tools.Context do
           "dir_path" => %{
             "type" => "string",
             "description" =>
-              "The relative path to the directory to read CONTEXT.md from (e.g., '.', 'lib', 'src/components')"
+              "The relative path to the directory to read CONTEXT.md from (e.g., './', './lib', './src/components')"
           }
         },
         "required" => ["dir_path"]
@@ -57,7 +57,7 @@ defmodule EvoGit.Agent.Tools.Context do
           "dir_path" => %{
             "type" => "string",
             "description" =>
-              "The relative path to the directory where CONTEXT.md should be created/updated (e.g., '.', 'lib', 'src/components')"
+              "The relative path to the directory where CONTEXT.md should be created/updated (e.g., './', './lib', './src/components')"
           },
           "content" => %{
             "type" => "string",
