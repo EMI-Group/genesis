@@ -3,6 +3,9 @@
 ## Intent
 Classic Phoenix HTTP controllers and error handlers for the EvoDash web interface. These serve as fallback/classic HTTP endpoints — most of the application's interactive UI is handled by LiveViews in the sibling `live/` directory.
 
+## Routing Table
+- `page_html/` → Page HTML templates (home page welcome template)
+
 ## API Surface
 
 ### Modules
