@@ -26,6 +26,10 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 - **Add a vendor library**: drop a `.js` file in `vendor/` and import via relative path (e.g., `import "../vendor/my-lib"`).
 - **Update DaisyUI/Heroicons**: replace the corresponding `.js` file in `vendor/` with the latest release.
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual files within this directory (`js/app.js`, `css/app.css`, `vendor/` libraries, `tsconfig.json`). For any changes to frontend JavaScript, CSS styling, vendor libraries, or TypeScript config, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 
 - **Build tooling**: JS is bundled by esbuild; CSS is processed by Tailwind CSS 4. No Node.js toolchain is required — vendor libs are committed directly.

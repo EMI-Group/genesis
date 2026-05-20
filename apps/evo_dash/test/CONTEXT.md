@@ -20,6 +20,10 @@ Holds all test files for the EvoDash application. Provides the ExUnit test runne
 - `error_html_test.exs` — `EvoDashWeb.ErrorHTMLTest` — Validates HTML error templates (404 → "Not Found", 500 → "Internal Server Error").
 - `error_json_test.exs` — `EvoDashWeb.ErrorJSONTest` — Validates JSON error responses (404/500 with appropriate `%{errors: %{detail: ...}}` shape).
 
+## Routing Table
+
+This directory has no child subdirectories — all test work is handled by the individual test files within this directory, organized by source path (e.g., `evo_dash_web/controllers/`). The `support/` subdirectory contains shared test helpers (e.g., `conn_case.ex`). For any test additions or modifications, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - Follow standard Phoenix test conventions: mirror the `lib/` directory structure under `test/`.
 - All connection-based tests must `use EvoDashWeb.ConnCase`.
