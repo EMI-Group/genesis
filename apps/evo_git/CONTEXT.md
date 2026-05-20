@@ -71,6 +71,22 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 - `retry ~> 0.19` — Retry logic for resilient operations
 - `toml ~> 0.7` — TOML configuration file parser for `evogit.toml` project config
 
+## Routing Table
+
+The following table maps areas of concern to child node paths, so parent agents know where to spawn subagents:
+
+| Concern / Area | Child Node Path |
+|---|---|
+| Agent implementations & LLM tool definitions | `lib/evo_git/agent/` |
+| LLM tool implementations (file, git, bash, search, etc.) | `lib/evo_git/agent/tools/` |
+| Core domain models (ContextNode, PhyloGraphNode) | `lib/evo_git/core/` |
+| Git CLI adapter (worktree, merge, diff, notes, etc.) | `lib/evo_git/adapters/` |
+| Runtime orchestration (Genesis, Evolution, Prompts) | `lib/evo_git/runtime/` |
+| Agent scheduler data structures (AgentState, SchedMeta) | `lib/evo_git/agent_scheduler/` |
+| ExUnit tests | `test/` |
+
+When a task involves agent behavior, system prompts, or delegation logic, delegate to `lib/evo_git/agent/`. For core data structures like ContextNode, delegate to `lib/evo_git/core/`. For git operations, delegate to `lib/evo_git/adapters/`. For runtime flow (Genesis/Evolution), delegate to `lib/evo_git/runtime/`. For scheduler internals, delegate to `lib/evo_git/agent_scheduler/`. For test changes, delegate to `test/`.
+
 ## Constraints
 - Part of an **umbrella project** — build artifacts, deps, and lockfile live at the repository root (`../../_build`, `../../deps`, `../../mix.lock`).
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.

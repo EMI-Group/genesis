@@ -25,6 +25,16 @@ All agents `use EvoGit.Agent` and implement required callback `system_prompt/0`.
 ### Hierarchy Pattern
 Agents support recursive subagent delegation. Parent agents define `subagent_modules/0` and `subagent_tool_name/0` / `subagent_tool_description/0` callbacks. The `use EvoGit.Agent` macro automatically injects subagent tool schemas into `available_tools/0` and enforces a max-depth guard (`at_max_depth?/1`) that strips subagent tools when the depth limit is reached.
 
+## Routing Table
+
+The following table maps areas of concern to child node paths, so parent agents know where to spawn subagents:
+
+| Concern / Area | Child Node Path |
+|---|---|
+| LLM tool implementations (file I/O, git, bash, search, context, etc.) | `tools/` |
+
+When a task involves tool implementation details (tool schemas, execute functions, parameter validation), delegate to `tools/`. All agent behavior modules (Generalist, Manager, Investigator, etc.) live directly in this directory as individual files.
+
 ## Constraints
 - Every agent module MUST `use EvoGit.Agent` and implement `system_prompt/0`.
 - System prompts must NOT contain dynamic state, the objective, or the context tree — those are injected as user prompts by the framework.

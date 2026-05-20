@@ -62,6 +62,19 @@ Browser ←→ Endpoint ←→ Router
 - Task logs are piped back via `event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}`
 - LiveViews poll TaskRegistry on timers (1s for dashboard, 500ms for agents)
 
+## Routing Table
+
+The following table maps areas of concern to child node paths, so parent agents know where to spawn subagents:
+
+| Concern / Area | Child Node Path |
+|---|---|
+| Domain logic, OTP application, TaskRegistry | `lib/evo_dash/` |
+| Web layer (endpoint, router, LiveViews, components, controllers) | `lib/evo_dash_web/` |
+| Frontend assets (JS, CSS, vendor libraries) | `assets/` |
+| ExUnit tests | `test/` |
+
+When a task involves the OTP supervision tree, TaskRegistry, or domain context, delegate to `lib/evo_dash/`. For web interface work (endpoint, router, LiveViews, components, controllers), delegate to `lib/evo_dash_web/`. For frontend styling or JavaScript, delegate to `assets/`. For test changes, delegate to `test/`.
+
 ## Constraints
 
 - **Umbrella dependency**: Must have `:evo_git` available at compile and runtime
