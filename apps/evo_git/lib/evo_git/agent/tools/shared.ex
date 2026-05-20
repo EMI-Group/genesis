@@ -178,15 +178,21 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   @doc """
   Normalizes a path for comparison by trimming leading/trailing slashes
-  and converting "." to empty string (root).
+  and ensuring all paths start with `./` (root is `./`).
   """
   def normalize_path(path) when is_binary(path) do
     path
     |> String.trim_leading("/")
     |> String.trim_trailing("/")
     |> then(fn
-      "." -> ""
-      p -> p
+      "" -> "./"
+      "." -> "./"
+      p -> 
+        if String.starts_with?(p, "./") do
+          p
+        else
+          "./" <> p
+        end
     end)
   end
 
@@ -195,15 +201,13 @@ defmodule EvoGit.Agent.Tools.Shared do
   Both paths should be normalized before calling.
   """
   def is_child_or_same_node?(parent_path, child_path) do
-    # "." represents root, everything is a child
-    if parent_path == "" do
+    # "./" represents root, everything is a child
+    if parent_path == "./" do
       true
     else
-      # Same node is always allowed
       if parent_path == child_path do
         true
       else
-        # Check if child is a descendant of parent
         String.starts_with?(child_path, parent_path <> "/")
       end
     end
