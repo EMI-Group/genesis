@@ -142,6 +142,14 @@ end)
 ```elixir
 # Expands relative path to absolute
 Shared.expand_path(file_path, repo_path)  # => Path.expand(file_path, repo_path)
+
+# Normalizes a path to the "./" convention (root is "./")
+Shared.normalize_path(path)
+# "." → "./", "" → "./", "foo/bar" → "./foo/bar", "./foo/bar" → "./foo/bar"
+
+# Checks if a child path is within or equal to a parent path
+# Both paths should be normalized before calling.
+Shared.is_child_or_same_node?(parent_path, child_path)
 ```
 
 ### Scope Validation (Write Tools Only)
