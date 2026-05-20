@@ -24,6 +24,18 @@ The parent module `EvoDashWeb` (at `lib/evo_dash_web.ex`, one level up) acts as 
 ### Parent Module (lib/evo_dash_web.ex)
 `EvoDashWeb` — `__using__/1` macro dispatching to `:router`, `:channel`, `:controller`, `:live_view`, `:live_component`, `:html`. Provides `static_paths/0`, `verified_routes/0`, and `html_helpers/0` (imports CoreComponents, Phoenix.HTML, JS, Layouts).
 
+## Routing Table
+
+The following table maps areas of concern to child node paths, so parent agents know where to spawn subagents:
+
+| Concern / Area | Child Node Path |
+|---|---|
+| Reusable UI components (buttons, forms, layouts, icons) | `components/` |
+| Classic HTTP controllers & error handlers | `controllers/` |
+| Phoenix LiveView pages (dashboard, agent inspector) | `live/` |
+
+When a task involves UI component implementation or styling, delegate to `components/`. For HTTP controller or error handler changes, delegate to `controllers/`. For LiveView page work (real-time dashboards, agent tree UI), delegate to `live/`.
+
 ## Constraints
 - All web modules use `use EvoDashWeb, <role>` as their entrypoint — do not bypass the shared `__using__` macro.
 - New interactive pages should be LiveViews in `live/`, not controllers in `controllers/`.
