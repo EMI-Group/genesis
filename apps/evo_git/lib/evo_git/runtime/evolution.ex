@@ -35,7 +35,7 @@ defmodule EvoGit.Runtime.Evolution do
 
     # Use Manager agent for Mode A
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
-    context_node = ContextNode.load(".", repo_path)
+    context_node = ContextNode.load("./", repo_path)
 
     # Manager plans and delegates the task to appropriate subagents
     case AgentSpec.new(context_node, phylo_node, EvoGit.Agent.Manager, objective,

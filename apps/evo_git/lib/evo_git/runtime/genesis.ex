@@ -35,7 +35,7 @@ defmodule EvoGit.Runtime.Genesis do
   defp run_existing_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode A (Existing Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
-    context_node = ContextNode.load(".", repo_path)
+    context_node = ContextNode.load("./", repo_path)
 
     case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective,
            event_sink: Keyword.get(opts, :event_sink, self())
@@ -57,7 +57,7 @@ defmodule EvoGit.Runtime.Genesis do
   defp run_new_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode B (New Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
-    context_node = ContextNode.load(".", repo_path)
+    context_node = ContextNode.load("./", repo_path)
 
     case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective,
            event_sink: Keyword.get(opts, :event_sink, self())
