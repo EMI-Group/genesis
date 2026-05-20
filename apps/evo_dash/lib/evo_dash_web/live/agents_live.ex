@@ -57,8 +57,8 @@ defmodule EvoDashWeb.AgentsLive do
   defp build_path_tree(agents) do
     tree =
       Enum.reduce(agents, %{}, fn agent, acc ->
-        path = agent.context_path || "."
-        path = if path == "/", do: ".", else: path
+        path = agent.context_path || "./"
+        path = if path == "/", do: "./", else: path
 
         segments =
           path
