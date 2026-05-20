@@ -3,6 +3,9 @@
 ## Intent
 ExUnit test suite for the EvoGit OTP application. Validates core domain logic, git adapter operations, agent tooling, and context node handling using real git operations on temporary filesystem sandboxes — no mocks.
 
+## Routing Table
+- `evo_git/` → Test files mirroring source structure (core, adapters, agent tools, project config tests)
+
 ## API Surface
 
 ### Top-level files
