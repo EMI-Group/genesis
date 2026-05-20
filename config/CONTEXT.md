@@ -32,6 +32,10 @@ These values are no longer stored in Application config. They are defined in `Ev
 - PubSub: `EvoDash.PubSub`
 - Asset builders: esbuild `0.25.4`, tailwind `4.1.7` (referencing `apps/evo_dash/assets`)
 
+## Routing Table
+
+This directory has no child subdirectories — all configuration work is handled by the individual `.exs` files within this directory (`config.exs`, `dev.exs`, `test.exs`, `prod.exs`, `runtime.exs`). For any configuration changes, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - **Load order matters**: `config.exs` is loaded first and imports the environment-specific file (`#{config_env()}.exs`) at the bottom, so env files override base settings.
 - **Runtime vs compile-time**: Only `runtime.exs` may reference environment variables for secrets; `config.exs`, `dev.exs`, `test.exs`, and `prod.exs` are compile-time.
