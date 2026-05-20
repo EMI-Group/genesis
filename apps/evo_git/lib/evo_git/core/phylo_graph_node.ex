@@ -127,7 +127,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
     # Note: if path is ".", use just the sha.
     args =
       cond do
-        path == "." ->
+        path in [".", "./"] ->
           ["ls-tree", "--name-only", node.current_commit]
 
         String.ends_with?(path, "/") ->
