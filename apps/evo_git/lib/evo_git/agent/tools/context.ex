@@ -14,11 +14,11 @@ defmodule EvoGit.Agent.Tools.Context do
     ReqLLM.tool(
       name: "read_context",
       description:
-        "Reads a CONTEXT.md file from a directory. CONTEXT.md files are human-readable documentation " <>
-          "files that describe a directory's purpose and structure. They typically contain: " <>
-          "1) Intent - what the directory is for and its role in the codebase, " <>
-          "2) API Surface - what modules/functions the directory exports or provides, " <>
-          "3) Constraints - rules or guidelines for code within this directory. " <>
+        "Reads a CONTEXT.md file from a directory. CONTEXT.md files serve two purposes: " <>
+          "1) Documentation - describe the directory's purpose (Intent), what it exposes (API Surface), " <>
+          "and rules for code within it (Constraints). " <>
+          "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories, " <>
+          "so parent agents know where to delegate work. " <>
           "Use this to read the context to understand the semantic meaning and expectations for a directory",
       parameter_schema: %{
         "type" => "object",
@@ -42,12 +42,12 @@ defmodule EvoGit.Agent.Tools.Context do
     ReqLLM.tool(
       name: "write_context",
       description:
-        "Creates or updates a CONTEXT.md file for a directory. CONTEXT.md is a human-readable documentation file " <>
-          "that describes a directory's purpose and structure to help future developers (and AI) understand the codebase. " <>
-          "The context should be simple, concise, and clear. It typically contains: " <>
-          "1) Intent - what the directory is for and its role in the codebase, " <>
-          "2) API Surface - what modules/functions the directory exports or provides, " <>
-          "3) Constraints - rules or guidelines for code within this directory. " <>
+        "Creates or updates a CONTEXT.md file for a directory. CONTEXT.md serves two purposes: " <>
+          "1) Documentation - describe the directory's purpose (Intent), what it exposes (API Surface), " <>
+          "and rules for code within it (Constraints). " <>
+          "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories, " <>
+          "so parent agents know where to delegate work. " <>
+          "The context should be simple, concise, and clear. " <>
           "Use this to document a directory after analyzing its contents or establishing its design, or update existing context. " <>
           "By default, the tool will create a git commit for the new or updated CONTEXT.md file (only this file), " <>
           "and you should consider committing it as an important part of your workflow to ensure the context is preserved in the repository history.",
@@ -62,7 +62,7 @@ defmodule EvoGit.Agent.Tools.Context do
           "content" => %{
             "type" => "string",
             "description" =>
-              "The full markdown content for the CONTEXT.md file. Should include sections for Intent, API Surface, and Constraints."
+              "The full markdown content for the CONTEXT.md file. Should include sections for Intent, API Surface, Constraints, and a Routing Table mapping areas to child subdirectories."
           },
           "commit" => %{
             "type" => "boolean",
