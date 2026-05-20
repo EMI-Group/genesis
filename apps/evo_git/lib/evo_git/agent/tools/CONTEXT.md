@@ -169,6 +169,10 @@ Shared.to_string_binary(value)            # Converts int/float/atom to string
 5. **Sandboxed tools**: Call `EvoGit.sandbox_run(repo_path, executable, args, repo_root)` which returns `{output, exit_code}`
 6. **Result**: All execute functions return a **string** — either a success message or an error message
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual tool module files within this directory (e.g., `file_read.ex`, `bash.ex`, `context.ex`, `git.ex`, etc.). For any changes to tool schemas or execute functions, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - **All tool execution results must be strings** — the agent loop expects string output to send back to the LLM
 - **Sandboxed execution** — tools that run external commands (`Bash`, `Ripgrep`, `Git`, `Context.write`) use `EvoGit.sandbox_run/4` which wraps in `systemd-run`

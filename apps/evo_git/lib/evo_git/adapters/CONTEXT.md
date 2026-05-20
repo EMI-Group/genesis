@@ -31,6 +31,10 @@ Low-level Git CLI wrapper centred on **worktree isolation**. Every function take
 - `{:conflict, String.t()}` — exit code 1 (merge conflict, etc.)
 - `{:error, code :: integer, String.t()}` — any other non-zero exit
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual files within this directory (`git.ex` is the primary adapter, with `adapters.ex` as the parent namespace module). For any changes to the Git adapter or adding new external tool adapters, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - One adapter module per external tool; each file in this directory must follow the `EvoGit.Adapters.<Tool>` naming pattern.
 - All external command invocation must go through `run/2` (or equivalent `System.cmd` wrappers) to keep error handling consistent.
