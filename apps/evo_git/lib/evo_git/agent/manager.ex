@@ -43,6 +43,7 @@ defmodule EvoGit.Agent.Manager do
     2. API Surface: What modules/files it contains and exposes, and basic examples of how to use them.
     3. Code Style: Rules for child files and subdirectories, such as naming conventions.
     4. Design Guidelines: General architectural patterns or principles.
+    5. Routing Table: A map of areas/concerns to child node paths. This tells you exactly which child node handles which concern, so you know where to spawn subagents for specific tasks.
 
     ## Your Responsibilities
 

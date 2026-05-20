@@ -37,6 +37,7 @@ defmodule EvoGit.Agent.Generalist do
     2. API Surface: What modules/files it contains and exposes, and basic examples of how to use them.
     3. Code Style: Rules for child files and subdirectories, such as naming conventions.
     4. Design Guidelines: General architectural patterns or principles.
+    5. Routing Table: A map of areas/concerns to child node paths. This tells you exactly which child node handles which concern, so you know where to spawn subagents for specific tasks.
     These are just examples; you do not need to strictly follow this format, as long as the context file effectively communicates the necessary information about the directory.
     The context file should be simple and concise.
     After you make major changes to your assigned node, make sure to update the context if necessary.

@@ -18,7 +18,9 @@ defmodule EvoGit.Agent.Tools.Context do
           "files that describe a directory's purpose and structure. They typically contain: " <>
           "1) Intent - what the directory is for and its role in the codebase, " <>
           "2) API Surface - what modules/functions the directory exports or provides, " <>
-          "3) Constraints - rules or guidelines for code within this directory. " <>
+          "3) Constraints - rules or guidelines for code within this directory, " <>
+          "4) Routing Table - a map of areas/concerns to child node paths, telling parent agents " <>
+          "where to spawn subagents for specific tasks. " <>
           "Use this to read the context to understand the semantic meaning and expectations for a directory",
       parameter_schema: %{
         "type" => "object",
@@ -47,7 +49,9 @@ defmodule EvoGit.Agent.Tools.Context do
           "The context should be simple, concise, and clear. It typically contains: " <>
           "1) Intent - what the directory is for and its role in the codebase, " <>
           "2) API Surface - what modules/functions the directory exports or provides, " <>
-          "3) Constraints - rules or guidelines for code within this directory. " <>
+          "3) Constraints - rules or guidelines for code within this directory, " <>
+          "4) Routing Table - a map of areas/concerns to child node paths, so parent agents know " <>
+          "where to spawn subagents for specific tasks. " <>
           "Use this to document a directory after analyzing its contents or establishing its design, or update existing context. " <>
           "By default, the tool will create a git commit for the new or updated CONTEXT.md file (only this file), " <>
           "and you should consider committing it as an important part of your workflow to ensure the context is preserved in the repository history.",
@@ -62,7 +66,7 @@ defmodule EvoGit.Agent.Tools.Context do
           "content" => %{
             "type" => "string",
             "description" =>
-              "The full markdown content for the CONTEXT.md file. Should include sections for Intent, API Surface, and Constraints."
+              "The full markdown content for the CONTEXT.md file. Should include sections for Intent, API Surface, Constraints, and Routing Table (mapping areas/concerns to child node paths)."
           },
           "commit" => %{
             "type" => "boolean",
