@@ -71,7 +71,21 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 4. **Worktree Isolation:** Agents never modify the main checkout. Work happens in `.evogit/workers/` with cooperative multitasking.
 5. **Project Configuration:** An optional `evogit.toml` file at the repo root allows project-level customization. Currently supports `worktree.script` for running initialization scripts after worktree creation.
 
+## Routing Table
+
+The following table maps areas of concern to child node paths, so parent agents know where to spawn subagents:
+
+| Concern / Area | Child Node Path |
+|---|---|
+| Core runtime, agent execution, Git operations, CLI | `apps/evo_git/` |
+| Web dashboard, LiveView UI, task management | `apps/evo_dash/` |
+| Environment configuration (dev/test/prod) | `config/` |
+| Design documents, example specifications | `example_design/` |
+
+When a task involves the core runtime engine, agent logic, or Git interactions, delegate to `apps/evo_git/`. For web dashboard UI or LiveView work, delegate to `apps/evo_dash/`. For configuration changes, delegate to `config/`. For design documents, delegate to `example_design/`.
+
 ## Constraints
+
 - **Umbrella structure:** All dependencies, build artifacts, and the lockfile live at the root level (`deps/`, `_build/`, `mix.lock`).
 - **Elixir ~> 1.18:** Required for the standard `JSON` library.
 - **Git CLI:** The sole version control interface (no libgit2 bindings).
