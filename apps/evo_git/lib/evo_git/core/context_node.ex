@@ -27,7 +27,7 @@ defmodule EvoGit.Core.ContextNode do
   end
 
   # Check if a path (and all its parent components) is ignored by git
-  defp check_path_ignored(path, repo_path) when is_binary(path) and path != "." do
+  defp check_path_ignored(path, repo_path) when is_binary(path) and path not in [".", "./"] do
     abs_path = Path.expand(path, repo_path)
 
     # First, check the current path
@@ -54,7 +54,7 @@ defmodule EvoGit.Core.ContextNode do
 
   @doc """
   Loads a ContextNode from a given relative path within a repository.
-  `relative_path` must be relative to `repo_path` (or "." for root).
+  `relative_path` must be relative to `repo_path` (or "./" for root).
   `repo_path` must be the absolute path to the repository root.
 
   Note: This does not check if the path exists or determine its type,
@@ -80,10 +80,19 @@ defmodule EvoGit.Core.ContextNode do
       when is_binary(relative_path) and is_binary(repo_path) do
     if Path.type(relative_path) == :relative and not String.starts_with?(relative_path, "..") do
       paths =
-        if relative_path == "." do
-          ["."]
+        if relative_path in [".", "./"] do
+          ["./"]
         else
-          ["." | Enum.scan(Path.split(relative_path), &Path.join(&2, &1))]
+          # Ensure path starts with "./"
+          normalized =
+            if String.starts_with?(relative_path, "./"),
+              do: relative_path,
+              else: "./" <> relative_path
+
+          # Path.split("./foo/bar") = [".", "foo", "bar"]
+          [_dot | parts] = Path.split(normalized)
+          # Build ["./", "./foo", "./foo/bar"]
+          ["./" | Enum.scan(parts, ".", fn part, acc -> acc <> "/" <> part end)]
         end
 
       nodes = Enum.map(paths, &load(&1, repo_path))
@@ -121,7 +130,11 @@ defmodule EvoGit.Core.ContextNode do
     abs_path = Path.expand(node.path, node.repo)
 
     if File.dir?(abs_path) do
-      Path.join(node.path, "CONTEXT.md")
+      if node.path == "./" do
+        "./CONTEXT.md"
+      else
+        Path.join(node.path, "CONTEXT.md")
+      end
     else
       # Files don't have explicit context files
       nil
