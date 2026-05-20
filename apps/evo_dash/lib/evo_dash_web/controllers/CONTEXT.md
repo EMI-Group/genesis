@@ -14,6 +14,10 @@ Classic Phoenix HTTP controllers and error handlers for the EvoDash web interfac
 ### Templates
 - **`page_html/home.html.heex`** — The default Phoenix welcome/home page template with links to docs, source, changelog, and community resources.
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual controller and error handler files within this directory (`page_controller.ex`, `error_html.ex`, `error_json.ex`, `page_html.ex`) and their template subdirectories. For any changes to HTTP controllers or error handlers, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - All modules use `EvoDashWeb` as the base web module (via `use EvoDashWeb, :controller` or `use EvoDashWeb, :html`).
 - Controller modules follow the `{name}_controller.ex` naming convention; template modules follow `{name}_html.ex` with a matching `{name}_html/` template directory.

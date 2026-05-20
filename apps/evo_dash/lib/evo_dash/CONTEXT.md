@@ -37,6 +37,10 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 - Uses an `event_sink` callback (`{EvoDash.TaskRegistry, :update_task_log, [task_id]}`) to pipe runtime logs back into the registry.
 - On completion, receives `{:task_complete, task_id, result}` and updates status accordingly.
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual files within this directory (`application.ex`, `task_registry.ex`, and `evo_dash.ex` as the parent namespace). For any changes to the OTP supervision tree, TaskRegistry, or domain logic, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - `TaskRegistry` is a singleton (registered under its module name); do not start multiple instances.
 - ETS table is `:public` — direct reads are possible but mutations must go through the GenServer API to preserve consistency.

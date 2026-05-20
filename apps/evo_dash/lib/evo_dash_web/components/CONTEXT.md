@@ -26,6 +26,10 @@ All component modules use `use EvoDashWeb, :html` (which expands to `use Phoenix
 <.agent_tree agents={@agents} />
 ```
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual component files within this directory (`core_components.ex`, `dashboard_components.ex`, `agents_components.ex`, `layouts.ex`) and the `layouts/` template subdirectory. For any changes to UI components or layout templates, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - Every component module **must** use `use EvoDashWeb, :html`.
 - Styling is Tailwind CSS + daisyUI — no inline CSS or external stylesheets in components.
