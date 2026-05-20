@@ -10,22 +10,22 @@ defmodule EvoGit.Core.ContextNodeTest do
     File.write!(Path.join(tmp_dir, "lib/CONTEXT.md"), "Lib Context")
     File.write!(Path.join(tmp_dir, "lib/my_module.ex"), "defmodule MyModule do end")
 
-    target_path = "lib/my_module.ex"
+    target_path = "./lib/my_module.ex"
     {:ok, hierarchy} = ContextNode.hierarchy_nodes(target_path, tmp_dir)
 
     assert length(hierarchy) == 3
-    assert Enum.at(hierarchy, 0).path == "."
-    assert Enum.at(hierarchy, 1).path == "lib"
-    assert Enum.at(hierarchy, 2).path == "lib/my_module.ex"
+    assert Enum.at(hierarchy, 0).path == "./"
+    assert Enum.at(hierarchy, 1).path == "./lib"
+    assert Enum.at(hierarchy, 2).path == "./lib/my_module.ex"
   end
 
   test "hierarchy_nodes/2 handles missing intermediate contexts", %{tmp_dir: tmp_dir} do
     File.mkdir_p!(Path.join(tmp_dir, "nested/deep"))
-    target_path = "nested/deep/file.txt"
+    target_path = "./nested/deep/file.txt"
 
     {:ok, hierarchy} = ContextNode.hierarchy_nodes(target_path, tmp_dir)
 
-    # The length is 4 (., nested, nested/deep, nested/deep/file.txt)
+    # ./, ./nested, ./nested/deep, ./nested/deep/file.txt
     assert length(hierarchy) == 4
   end
 
@@ -34,9 +34,9 @@ defmodule EvoGit.Core.ContextNodeTest do
   end
 
   test "hierarchy_nodes/2 with dot relative path", %{tmp_dir: tmp_dir} do
-    {:ok, hierarchy} = ContextNode.hierarchy_nodes(".", tmp_dir)
+    {:ok, hierarchy} = ContextNode.hierarchy_nodes("./", tmp_dir)
     assert length(hierarchy) == 1
-    assert Enum.at(hierarchy, 0).path == "."
+    assert Enum.at(hierarchy, 0).path == "./"
   end
 
   test "hierarchy_nodes/2 with path outside root returns error", %{tmp_dir: tmp_dir} do
