@@ -31,6 +31,10 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 - `EvoGit.Adapters.Git` — Git operations (requires: `create_branch/3`, `current_branch/1`, `gh_available?/0`, `create_pull_request/5`)
 - `EvoGit.Task` — Diagnosis routing
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual files within this directory (`genesis.ex`, `evolution.ex`, `prompts.ex`). For any changes to the Genesis/Evolution runtime orchestration or LLM prompt templates, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 - The parent coordinator (`EvoGit.Runtime` in `../runtime.ex`) orchestrates Genesis first, then Evolution.
 - Both phases follow the same pattern: ensure repo → create phylo node → load context node → run agent → handle result.
