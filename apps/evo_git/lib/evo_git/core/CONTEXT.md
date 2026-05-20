@@ -42,6 +42,10 @@ A struct with fields `repo`, `base_commit`, and `current_commit`.
 | `list_files/1` | `(t()) -> {:ok, [String]} \| {:error, term}` | Lists all files at the node's commit |
 | `list_immediate_children/2` | `(t(), path) -> {:ok, [String]} \| {:error, term}` | Lists direct children of a path at the node's commit |
 
+## Routing Table
+
+This directory has no child subdirectories — all work is handled by the individual files within this directory (`context_node.ex`, `phylo_graph_node.ex`). For any changes to the ContextNode or PhyloGraphNode domain models, work directly on the relevant file in this node; no subagent delegation to child paths is needed.
+
 ## Constraints
 
 - Both modules must depend **only** on `EvoGit.Adapters.Git` for git operations — never call `System.cmd` or shell out directly.
