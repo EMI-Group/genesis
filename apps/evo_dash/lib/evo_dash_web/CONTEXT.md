@@ -5,6 +5,11 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 
 The parent module `EvoDashWeb` (at `lib/evo_dash_web.ex`, one level up) acts as the single entrypoint via a `__using__/1` macro, injecting common imports and verified routes into controllers, LiveViews, components, and HTML modules.
 
+## Routing Table
+- `live/` → Phoenix LiveView pages (Dashboard task launcher, Agents tree inspector)
+- `components/` → Reusable HEEx UI components and layout templates
+- `controllers/` → Classic HTTP controllers and error handlers
+
 ## API Surface
 
 ### Top-Level Modules

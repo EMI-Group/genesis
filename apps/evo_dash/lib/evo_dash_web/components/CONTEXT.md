@@ -3,6 +3,9 @@
 ## Intent
 Contains all reusable UI component modules and layout templates for the EvoDash web interface. This is the presentation layer — Phoenix function components rendered via HEEx templates, organized by domain concern.
 
+## Routing Table
+- `layouts/` → HTML layout templates (root layout shell with meta tags, CSRF, theme persistence)
+
 ## API Surface
 
 ### Modules

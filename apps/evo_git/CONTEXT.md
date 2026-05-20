@@ -3,6 +3,10 @@
 ## Intent
 The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It implements an evolutionary software development runtime where autonomous LLM-powered agents create, analyze, and modify codebases using git worktree isolation. The system models a codebase as a **Context Tree** (spatial dimension) and a **Phylogenetic Graph** (temporal dimension), enabling agents to navigate, mutate, and evolve code in isolated sandboxes.
 
+## Routing Table
+- `lib/` → Application source code (agents, core domain, adapters, runtime, scheduler)
+- `test/` → ExUnit test suite (core, adapters, agent tools, project config tests)
+
 ## Architecture Overview
 
 ```

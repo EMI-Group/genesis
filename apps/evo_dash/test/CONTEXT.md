@@ -3,6 +3,10 @@
 ## Intent
 Holds all test files for the EvoDash application. Provides the ExUnit test runner configuration and shared test support modules (e.g., `ConnCase`) used across controller and endpoint tests.
 
+## Routing Table
+- `support/` → Shared test support modules (ConnCase for connection-based tests)
+- `evo_dash_web/` → Web-layer tests (controller tests, error handler tests)
+
 ## API Surface
 
 ### Top-Level

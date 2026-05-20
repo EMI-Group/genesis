@@ -3,6 +3,9 @@
 ## Intent
 Contains agent implementations and tool definitions for EvoGit's LLM-powered autonomous agents. Each agent is a stateless module that uses `EvoGit.Agent` (defined in `../agent.ex`) and provides a system prompt, optional tool overrides, and subagent delegation configuration. Agents operate within a session loop managed by `EvoGit.AgentScheduler`, reading state from ETS and driving LLM tool-call cycles.
 
+## Routing Table
+- `tools/` → LLM tool definitions and execution (17+ tool modules for file I/O, context, search, shell, etc.)
+
 ## API Surface
 
 ### Tool Library

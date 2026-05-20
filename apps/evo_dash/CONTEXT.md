@@ -6,6 +6,11 @@ EvoDash is the **web-based dashboard application** for the EvoGit umbrella proje
 
 This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibling `:evo_git` application for all evolutionary code generation runtime operations.
 
+## Routing Table
+- `assets/` → Frontend source assets (JavaScript, CSS, vendor libraries)
+- `lib/` → Application source code (`evo_dash/` domain logic, `evo_dash_web/` web interface)
+- `test/` → ExUnit test suite (controller tests, error handler tests, support modules)
+
 ## API Surface
 
 ### Application Entry & Supervision
