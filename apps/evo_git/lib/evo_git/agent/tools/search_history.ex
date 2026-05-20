@@ -122,7 +122,9 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
     else
       case compile_regex(pattern) do
         {:ok, regex} ->
-          commits = parse_log_output(output, separator)
+          # Filter out git warnings that pollute the structured output
+          clean_output = filter_git_warnings(output)
+          commits = parse_log_output(clean_output, separator)
           matches = filter_commits(commits, regex)
           format_results(matches, pattern)
 
@@ -147,6 +149,10 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
     |> Enum.reject(&(&1 == ""))
     |> Enum.map(&parse_single_commit/1)
     |> Enum.reject(&is_nil/1)
+  end
+
+  defp filter_git_warnings(output) do
+    String.replace(output, "warning: notes ref refs/notes/evogit is invalid\n", "")
   end
 
   defp parse_single_commit(block) do
