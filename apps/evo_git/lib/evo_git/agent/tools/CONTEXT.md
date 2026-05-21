@@ -21,7 +21,7 @@ This directory contains all tool definitions and implementations for EvoGit's LL
 | `FileEdit` | `file_edit.ex` | `edit_file` | Exact string replacement in files (diff-style editing) | Write | No (uses `File.read`/`File.write`) | Yes |
 | `MakeDir` | `make_dir.ex` | `make_dir` | Create directories with optional placeholder files (CONTEXT.md/.gitkeep) and auto-commit | Write | No (uses `File.mkdir_p`, `Git.run`/`Git.commit`) | Yes |
 | `Context` | `context.ex` | `read_context` / `write_context` | Read/write directory CONTEXT.md files (write auto-commits) | Read/Write | Yes (write only, via `EvoGit.sandbox_run` for git add/commit) | No |
-| `Bash` | `bash.ex` | `run_bash` | Execute arbitrary bash commands via sandboxed `systemd-run` | Read/Write | Yes (`EvoGit.sandbox_run`) | No |
+| `ShellTool` | `shell_tool.ex` | `run_bash` (Linux/macOS) / `run_powershell` (Windows) | Execute shell commands via sandboxed `systemd-run`; uses compile-time platform detection for tool name, description, and prompts | Read/Write | Yes (`EvoGit.sandbox_run`) | No |
 | `Ripgrep` | `ripgrep.ex` | `rg` | Search files with ripgrep patterns | Read | Yes (`EvoGit.sandbox_run`) | No |
 | `Git` | `git.ex` | `run_git` | Execute git commands (**commented out** in `schemas/0`) | Read/Write | Yes (`EvoGit.sandbox_run`) | No |
 | `Glob` | `glob.ex` | `glob` | File pattern matching with glob patterns (uses `Path.wildcard`) | Read | No (uses `Path.wildcard`, `File.stat`) | No |
@@ -43,8 +43,8 @@ EvoGit.sandbox_run(cwd, executable, args \\ [], repo_root \\ nil)
 # Returns: {output :: String.t(), exit_code :: non_neg_integer()}
 
 # Used in tools:
-# Bash tool:
-EvoGit.sandbox_run(repo_path, "bash", ["-c", command], repo_root)
+# ShellTool (uses Platform.shell/0 and Platform.shell_args/1 at runtime):
+EvoGit.sandbox_run(repo_path, shell, shell_args, repo_root)
 
 # Ripgrep tool:
 EvoGit.sandbox_run(repo_path, "rg", sanitized_args, repo_root)
@@ -110,6 +110,14 @@ Key schema fields:
 - **`description`** — Detailed instructions for the LLM; can be a string (`<>` concat or plain) or a heredoc `"""`
 - **`parameter_schema`** — JSON Schema object defining parameters (types, defaults, descriptions, enum values)
 - **`callback`** — Always `fn _ -> {:ok, nil} end` (placeholder; real execution via the module's `execute` function)
+
+### Special Case: ShellTool Module (Compile-Time Platform Adaptation)
+
+The `ShellTool` module uses compile-time module attributes to adapt its tool name, shell identity, and description to the current platform. Key attributes:
+- `@os Platform.os()` — compile-time OS detection
+- `@tool_name` — `"run_bash"` on Linux/macOS, `"run_powershell"` on Windows
+- `@shell_name`, `@shell_flag`, `@tmp_var` — platform-specific strings
+- `schema/0` uses these attributes; `execute/3` uses `Platform.shell()` and `Platform.shell_args()` at runtime
 
 ### Special Case: Context Module (Two Schemas, One Module)
 
@@ -179,7 +187,7 @@ Shared.to_string_binary(value)            # Converts int/float/atom to string
 
 ## Constraints
 - **All tool execution results must be strings** — the agent loop expects string output to send back to the LLM
-- **Sandboxed execution** — tools that run external commands (`Bash`, `Ripgrep`, `Git`, `Context.write`) use `EvoGit.sandbox_run/4` which wraps in `systemd-run`
+- **Sandboxed execution** — tools that run external commands (`ShellTool`, `Ripgrep`, `Git`, `Context.write`) use `EvoGit.sandbox_run/4` which wraps in `systemd-run`
 - **Direct File/System calls** — tools like `FileRead`, `FileWrite`, `FileEdit`, `Glob`, `ListDirectory` use Elixir's `File` module directly (not sandboxed)
 - **Tool output truncation** — outputs exceeding 128 KB are truncated to 8 KB (first/last 4 KB) by the agent loop (outside this directory)
 - **Sequential execution** — standard tool calls execute sequentially (not parallel) to avoid git lock conflicts
