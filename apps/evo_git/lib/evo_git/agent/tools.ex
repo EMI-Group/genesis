@@ -12,7 +12,7 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.FileEdit
   alias EvoGit.Agent.Tools.MakeDir
   alias EvoGit.Agent.Tools.Context
-  alias EvoGit.Agent.Tools.Bash
+  alias EvoGit.Agent.Tools.ShellTool
   alias EvoGit.Agent.Tools.Ripgrep
   alias EvoGit.Agent.Tools.Git
   alias EvoGit.Agent.Tools.Glob
@@ -37,7 +37,7 @@ alias EvoGit.Agent.Tools.SearchContext
       MakeDir.schema(),
       Context.read_schema(),
       Context.write_schema(),
-      Bash.schema(),
+      ShellTool.schema(),
       Ripgrep.schema(),
       Glob.schema(),
       ListDirectory.schema(),
@@ -64,6 +64,9 @@ alias EvoGit.Agent.Tools.SearchContext
     contract validation. Used to ensure file operations stay within scope.
 
   """
+  # Compile-time tool name for dispatch (matches ShellTool's compile-time @tool_name)
+  @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
+
   def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil) do
     execute_tool(tool_name, args, repo_path, repo_root, node_path)
   end
@@ -98,8 +101,8 @@ alias EvoGit.Agent.Tools.SearchContext
     Context.execute_write(args, repo_path, repo_root)
   end
 
-  defp execute_tool("run_bash", args, repo_path, repo_root, _node_path) do
-    Bash.execute(args, repo_path, repo_root)
+  defp execute_tool(@shell_tool_name, args, repo_path, repo_root, _node_path) do
+    ShellTool.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool("rg", args, repo_path, repo_root, _node_path) do

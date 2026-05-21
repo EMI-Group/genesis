@@ -71,7 +71,7 @@ defmodule EvoGit.Agent.Generalist do
     5. Commit Your Work:
        - Commit early, commit often. Each logical change should have its own commit with a clear message.
        - Commit your changes before calling any subagents.
-       - You can use the `bash` tool to run git commands to commit your work.
+       - You can use the shell tool to run git commands to commit your work.
 
     6. Complete: When satisfied with your work, call `complete_task` with a summary of what was done.
 
