@@ -34,6 +34,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Defaults
+  alias EvoGit.Platform
   alias EvoGit.ProjectConfig
 
   @agent_table :evogit_agent_state
@@ -382,9 +383,9 @@ defmodule EvoGit.AgentScheduler do
 
   defp validate_spatial_contract_for_spec(_parent_id, %{context_node: parent_context}, spec) do
     parent_type = :read_write
-    parent_path = EvoGit.Agent.Tools.Shared.normalize_path(parent_context.path)
+    parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
     child_type = spec.agent_module.agent_type()
-    child_path = EvoGit.Agent.Tools.Shared.normalize_path(spec.context_node.path)
+    child_path = EvoGit.Agent.Tools.Shared.normalize_relpath(spec.context_node.path)
 
     validate_spawn_spatiality(parent_type, parent_path, child_type, child_path)
   end
@@ -684,17 +685,27 @@ defmodule EvoGit.AgentScheduler do
         shell =
           case String.split(script_content, "\n") |> List.first() do
             "#!" <> rest -> String.trim(rest)
-            _ -> "bash"
+            _ -> Platform.shell()
           end
 
-        cmd = """
-        export SOURCE_REPO_PATH="#{repo_root}"
-        export TARGET_WORKTREE_PATH="#{worktree_path}"
-        cd "#{repo_root}"
-        #{script_content}
-        """
+        cmd =
+          if Platform.windows?() do
+            """
+            $env:SOURCE_REPO_PATH = "#{repo_root}"
+            $env:TARGET_WORKTREE_PATH = "#{worktree_path}"
+            Set-Location "#{repo_root}"
+            #{script_content}
+            """
+          else
+            """
+            export SOURCE_REPO_PATH="#{repo_root}"
+            export TARGET_WORKTREE_PATH="#{worktree_path}"
+            cd "#{repo_root}"
+            #{script_content}
+            """
+          end
 
-        case System.cmd(shell, ["-c", cmd],
+        case System.cmd(shell, Platform.shell_args(cmd),
                cd: repo_root,
                stderr_to_stdout: true
              ) do

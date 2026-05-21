@@ -1,7 +1,28 @@
 defmodule EvoGit do
   @moduledoc """
-  Documentation for `EvoGit`.
+  Core EvoGit module providing sandboxed command execution.
+
+  The sandbox uses `systemd-run` on Linux to isolate agent-executed commands.
+  On other platforms (macOS, Windows) or when `systemd-run` is unavailable,
+  commands run directly without sandboxing.
+
+  ## Sandbox Configuration
+
+  The sandbox behavior is controlled by the `:sandbox` application config:
+
+    * `:auto` (default) — Enables sandbox on Linux when `systemd-run` is available,
+      disables on all other platforms.
+    * `:enabled` — Force-enable sandbox (will fail on non-Linux platforms).
+    * `:disabled` — Disable sandbox entirely, run commands directly.
+
+  ## Example Configuration
+
+      config :evo_git, sandbox: :auto        # default
+      config :evo_git, sandbox: :enabled     # force enable
+      config :evo_git, sandbox: :disabled    # force disable
   """
+
+  alias EvoGit.Platform
 
   @doc """
   Generates systemd-run arguments to execute a command inside a cheap sandbox.
@@ -69,7 +90,7 @@ defmodule EvoGit do
 
     # Add cwd, the system temp folders, and the language caches
     read_write_paths =
-      [cwd, "/tmp", "/var/tmp"] ++
+      [cwd | Platform.tmp_paths()] ++
         build_cache_dirs ++
         if repo_root do
           [Path.join(repo_root, ".git")]
@@ -179,7 +200,19 @@ defmodule EvoGit do
 
   """
   def sandbox_run(cwd, executable, args \\ [], repo_root \\ nil) do
-    sandbox_args(cwd, executable, args, repo_root)
-    |> then(&System.cmd("systemd-run", &1, stderr_to_stdout: true))
+    if sandbox_enabled?() do
+      sandbox_args(cwd, executable, args, repo_root)
+      |> then(&System.cmd("systemd-run", &1, stderr_to_stdout: true))
+    else
+      System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
+    end
+  end
+
+  defp sandbox_enabled? do
+    case Application.get_env(:evo_git, :sandbox, :auto) do
+      :enabled -> true
+      :disabled -> false
+      :auto -> Platform.systemd_available?()
+    end
   end
 end

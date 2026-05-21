@@ -177,17 +177,23 @@ defmodule EvoGit.Agent.Tools.Shared do
   # --- Path Validation for Spatial Contract ---
 
   @doc """
-  Normalizes a path for comparison by trimming leading/trailing slashes
+  Normalizes a relative path for comparison by trimming leading/trailing slashes
   and ensuring all paths start with `./` (root is `./`).
+
+  Crashes if given an absolute path (starts with "/").
   """
-  def normalize_path(path) when is_binary(path) do
+  def normalize_relpath(path) when is_binary(path) do
+    if String.starts_with?(path, "/") do
+      raise "normalize_relpath expects a relative path, got absolute: #{inspect(path)}"
+    end
+
     path
     |> String.trim_leading("/")
     |> String.trim_trailing("/")
     |> then(fn
       "" -> "./"
       "." -> "./"
-      p -> 
+      p ->
         if String.starts_with?(p, "./") do
           p
         else
@@ -222,8 +228,8 @@ defmodule EvoGit.Agent.Tools.Shared do
     relative_path = Path.relative_to(expanded_path, repo_path)
 
     # Normalize for comparison
-    normalized_target = normalize_path(relative_path)
-    normalized_node = normalize_path(node_path)
+    normalized_target = normalize_relpath(relative_path)
+    normalized_node = normalize_relpath(node_path)
 
     if is_child_or_same_node?(normalized_node, normalized_target) do
       :ok
