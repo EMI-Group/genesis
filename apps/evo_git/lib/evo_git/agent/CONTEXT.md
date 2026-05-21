@@ -12,7 +12,7 @@ Contains agent implementations and tool definitions for EvoGit's LLM-powered aut
 - **`EvoGit.Agent.Tools`** (`tools.ex`) — Defines 14 LLM tool schemas and dispatch for ReqLLM function calling:
   - File I/O: `read_file`, `read_many_files`, `write_file`, `rewrite_file`, `create_files`, `create_directories`, `replace_in_file`
   - Context Tree: `read_context`, `write_context`
-  - Shell & Search: `bash`, `rg`, `git`, `glob`, `list_dir`
+  - Shell & Search: `run_bash`, `rg`, `git`, `glob`, `list_dir`
   - Key functions: `schemas/0` (all tools), `execute/3` (run tool by name with args and repo path)
 
 ### Agent Modules
@@ -31,7 +31,7 @@ Agents support recursive subagent delegation. Parent agents define `subagent_mod
 ## Constraints
 - Every agent module MUST `use EvoGit.Agent` and implement `system_prompt/0`.
 - System prompts must NOT contain dynamic state, the objective, or the context tree — those are injected as user prompts by the framework.
-- Agents that only read should restrict `available_tools/0` to read-only tools (no `write_file`, `rewrite_file`, `create_files`, `bash`).
+- Agents that only read should restrict `available_tools/0` to read-only tools (no `write_file`, `rewrite_file`, `create_files`, `run_bash`).
 - Subagent delegation must commit any pending changes before spawning a child agent.
 - Tool schemas use `ReqLLM.tool/2` format — new tools must follow the same `{name, description, parameter_schema, callback}` structure.
 - The `complete_task` tool is always injected by the `use EvoGit.Agent` macro; agents need not include it in `available_tools/0`.

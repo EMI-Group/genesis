@@ -49,7 +49,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
     ## Guidelines
     - PHASE 1: ARCHITECTURE & SKELETON
       - Start by drafting the architectural plan in your assigned node using 'write_context'. The architecture is very important, so spend time designing a clear and effective structure that meets the user's objective.
-      - Use 'bash' to run initialization commands like `npm init`, `cargo init`, config .gitignore etc if you are in the root node "./".
+      - Use the shell tool to run initialization commands like `npm init`, `cargo init`, config .gitignore etc if you are in the root node "./".
       - Create necessary directories and optionally empty code files in your level to realize your architectural vision.
       - Delegate architectural tasks to subagents: Spawn `subagent_codebase_architect` subagents to architect specific child directories.
       - You MUST WAIT for all architectural subagents to finish and ensure the entire skeleton (Context Tree and empty files) is created before proceeding to Phase 2.
@@ -82,7 +82,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
       - The main directories (e.g., /backend, /frontend)
       - The stack choices (e.g., Axum for backend, Yew or React for frontend, Cargo for dependency management)
       - Basic API design and file structure for the backend and frontend, how to organize the code, how to run tests, etc.
-    2. Phase 1: You run `bash` commands to initialize the project:
+    2. Phase 1: You run shell commands to initialize the project:
       - Use `cargo` to set up the Rust backend (with no VCS, because you are already in a git repo).
       - Configure the root .gitignore to exclude target directories and other unnecessary files.
     3. Phase 1: You delegate to subagents to flesh out the backend and frontend directories:
