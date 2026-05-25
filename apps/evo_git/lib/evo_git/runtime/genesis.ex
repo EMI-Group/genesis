@@ -91,6 +91,9 @@ defmodule EvoGit.Runtime.Genesis do
       {:ok, _} = Git.create_branch(repo_path, branch_name, final_sha)
       Logger.info("Genesis: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}")
 
+      # Merge the branch into the current branch so changes are applied
+      merge_branch_into_current(repo_path, branch_name)
+
       # Try to create a PR if gh is available
       pr_url = try_create_pull_request(repo_path, branch_name, result)
 
@@ -120,6 +123,43 @@ defmodule EvoGit.Runtime.Genesis do
   defp generate_branch_name(prefix) do
     short_id = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
     "evogit/#{prefix}_#{short_id}"
+  end
+
+  defp merge_branch_into_current(repo_path, branch_name) do
+    case Git.current_branch(repo_path) do
+      {:ok, current_branch} when current_branch != "HEAD" ->
+        Logger.info(
+          "Genesis: Merging branch '#{branch_name}' into '#{current_branch}'..."
+        )
+
+        case Git.merge(repo_path, branch_name) do
+          {:ok, output} ->
+            Logger.info("Genesis: Successfully merged '#{branch_name}': #{output}")
+
+          {:conflict, output} ->
+            Logger.warning(
+              "Genesis: Merge conflict when merging '#{branch_name}' into '#{current_branch}'. " <>
+                "Changes remain on branch '#{branch_name}' for manual resolution. #{output}"
+            )
+
+          {:error, code, output} ->
+            Logger.warning(
+              "Genesis: Failed to merge '#{branch_name}': (code=#{code}) #{output}"
+            )
+        end
+
+      {:ok, "HEAD"} ->
+        Logger.warning(
+          "Genesis: Detached HEAD state — cannot merge '#{branch_name}'. " <>
+            "Changes remain on branch '#{branch_name}'."
+        )
+
+      error ->
+        Logger.warning(
+          "Genesis: Could not determine current branch (#{inspect(error)}). " <>
+            "Changes remain on branch '#{branch_name}'."
+        )
+    end
   end
 
   defp try_create_pull_request(repo_path, head_branch, agent_result) do
