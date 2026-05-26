@@ -744,33 +744,93 @@ defmodule EvoGit.Agent do
 
           raw_path = Map.get(call.arguments, "path") |> EvoGit.Core.ContextNode.normalize_relpath()
 
+          parent_repo_root = parent_state.repo_root || parent_state.phylo_node.repo
+          parent_worktree = parent_state.phylo_node.repo
+          foreign_repos = parent_state.foreign_repos || []
+
+          # Resolve which repo this subagent belongs to
+          {_tag, target_repo, effective_raw_path} =
+            resolve_subagent_repo(raw_path, parent_worktree, parent_repo_root, foreign_repos)
+
           # If the LLM passed a file path, use its parent directory instead
           path =
-            if File.regular?(Path.join(parent_state.phylo_node.repo, raw_path)) do
-              raw_path
+            if File.regular?(Path.join(parent_worktree, effective_raw_path)) do
+              effective_raw_path
               |> Path.dirname()
               |> EvoGit.Core.ContextNode.normalize_relpath()
             else
-              raw_path
+              effective_raw_path
             end
 
           objective = Map.get(call.arguments, "objective")
           commit_id = Map.get(call.arguments, "commit_id")
 
           sub_context_node =
-            EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
+            EvoGit.Core.ContextNode.load(path, target_repo)
 
           # Use specified commit_id, or default to current commit
-          base_commit = commit_id || parent_state.phylo_node.current_commit
+          base_commit = commit_id || get_current_commit(target_repo, parent_state.phylo_node)
 
           sub_phylo_node = %EvoGit.Core.PhyloGraphNode{
-            repo: parent_state.phylo_node.repo,
+            repo: target_repo,
             base_commit: base_commit,
             current_commit: base_commit
           }
 
-          EvoGit.AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective)
+          EvoGit.AgentSpec.new(
+            sub_context_node,
+            sub_phylo_node,
+            mod,
+            objective,
+            repo_root: target_repo,
+            foreign_repos: foreign_repos
+          )
         end)
+      end
+
+      # Resolves which repo a subagent should operate in based on the raw path.
+      # Returns {tag, target_repo_abs_path, effective_raw_path}.
+      # - For foreign repos: the target_repo is the foreign repo, and raw_path is
+      #   normalized relative to that foreign repo.
+      # - For local repo: target_repo is the parent_repo_root, raw_path is unchanged.
+      defp resolve_subagent_repo(raw_path, parent_worktree, parent_repo_root, foreign_repos) do
+        abs_path =
+          if Path.type(raw_path) == :absolute do
+            raw_path
+          else
+            Path.expand(raw_path, parent_worktree)
+          end
+
+        # Check if path belongs to a foreign repo
+        foreign_repo =
+          Enum.find(foreign_repos, fn repo_root ->
+            String.starts_with?(abs_path, repo_root <> "/") or abs_path == repo_root
+          end)
+
+        case foreign_repo do
+          nil ->
+            {:local, parent_repo_root, raw_path}
+
+          repo ->
+            # Normalize path relative to foreign repo
+            relative = Path.relative_to(abs_path, repo)
+            effective_path = if relative == abs_path, do: "./", else: "./" <> relative
+            {:foreign, repo, effective_path}
+        end
+      end
+
+      # Gets the current commit for a target repo.
+      # If the target repo is the same as the parent's worktree, use the parent's current_commit.
+      # Otherwise, query the target repo's HEAD.
+      defp get_current_commit(target_repo, parent_phylo_node) do
+        if target_repo == parent_phylo_node.repo or target_repo == parent_phylo_node.base_commit do
+          parent_phylo_node.current_commit
+        else
+          case EvoGit.Adapters.Git.rev_parse(target_repo) do
+            {:ok, sha} -> sha
+            _ -> parent_phylo_node.current_commit
+          end
+        end
       end
 
       defp process_subagent_result(call, index, result, state) do
