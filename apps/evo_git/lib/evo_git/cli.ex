@@ -17,7 +17,8 @@ defmodule EvoGit.CLI do
           retries: :integer,
           path: :string,
           model: :string,
-          mode: :string
+          mode: :string,
+          foreign_repos: :keep
         ],
         aliases: [
           h: :help,
@@ -85,6 +86,13 @@ defmodule EvoGit.CLI do
           runtime_opts = Keyword.put(runtime_opts, :repo_path, repo_path)
           runtime_opts = Keyword.put(runtime_opts, :mode, String.to_atom(mode))
 
+          # Parse --foreign-repo options (accumulated via :keep)
+          foreign_repos =
+            Keyword.get_values(opts, :foreign_repos)
+            |> Enum.map(&Path.expand/1)
+
+          runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
+
           Genesis.run(prompt || "", runtime_opts)
         else
           IO.puts("Aborting.")
@@ -106,6 +114,13 @@ defmodule EvoGit.CLI do
         runtime_opts = []
         runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
         runtime_opts = Keyword.put(runtime_opts, :mode, String.to_atom(mode))
+
+        # Parse --foreign-repo options (accumulated via :keep)
+        foreign_repos =
+          Keyword.get_values(opts, :foreign_repos)
+          |> Enum.map(&Path.expand/1)
+
+        runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
 
         Evolution.run(objective, runtime_opts)
       else
@@ -188,6 +203,7 @@ defmodule EvoGit.CLI do
       -p, --path <path>           Path to the git repository (default: current directory).
       -m, --model <model>         Override the default LLM model (default: #{Defaults.llm_model()}).
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).
+      --foreign-repo <path>      Additional repo path agents can reference (can be repeated).
       -h, --help                  Show this help message.
 
     Examples:
