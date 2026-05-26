@@ -740,11 +740,22 @@ defmodule EvoGit.Agent do
       defp build_subagent_specs(indexed_calls, state) do
         Enum.map(indexed_calls, fn {call, _index} ->
           mod = subagent_module_for(call.name)
-          path = Map.get(call.arguments, "path") |> EvoGit.Core.ContextNode.normalize_relpath()
+          {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
+
+          raw_path = Map.get(call.arguments, "path") |> EvoGit.Core.ContextNode.normalize_relpath()
+
+          # If the LLM passed a file path, use its parent directory instead
+          path =
+            if File.regular?(Path.join(parent_state.phylo_node.repo, raw_path)) do
+              raw_path
+              |> Path.dirname()
+              |> EvoGit.Core.ContextNode.normalize_relpath()
+            else
+              raw_path
+            end
+
           objective = Map.get(call.arguments, "objective")
           commit_id = Map.get(call.arguments, "commit_id")
-
-          {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
 
           sub_context_node =
             EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
@@ -1004,7 +1015,7 @@ defmodule EvoGit.Agent do
                 "path" => %{
                   "type" => "string",
                   "description" =>
-                    "The relative path from the repository root where the subagent should operate (e.g., './src/auth', './lib/utils')."
+                    "The relative path to a DIRECTORY from the repository root where the subagent should operate (e.g., './src/auth', './lib/utils'). MUST be a directory node, NOT a file path. The subagent will operate on all files within this directory."
                 },
                 "objective" => %{
                   "type" => "string",
