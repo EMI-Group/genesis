@@ -29,7 +29,7 @@ defmodule EvoGit.Agent.Tools.FileCreate do
             "type" => "array",
             "items" => %{"type" => "string"},
             "description" =>
-              "List of file paths to create. Paths are relative to git repo path. Example: ['src/index.js', 'docs/README.md']."
+              "List of file paths to create. Paths are relative to git repo path. Example: ['./src/index.js', './docs/README.md']."
           },
           "commit" => %{
             "type" => "boolean",
