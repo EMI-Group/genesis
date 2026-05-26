@@ -740,7 +740,7 @@ defmodule EvoGit.Agent do
       defp build_subagent_specs(indexed_calls, state) do
         Enum.map(indexed_calls, fn {call, _index} ->
           mod = subagent_module_for(call.name)
-          path = Map.get(call.arguments, "path")
+          path = Map.get(call.arguments, "path") |> EvoGit.Core.ContextNode.normalize_relpath()
           objective = Map.get(call.arguments, "objective")
           commit_id = Map.get(call.arguments, "commit_id")
 

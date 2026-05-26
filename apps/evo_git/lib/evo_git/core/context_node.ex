@@ -53,6 +53,37 @@ defmodule EvoGit.Core.ContextNode do
   defp check_path_ignored(_, _), do: false
 
   @doc """
+  Normalizes a relative path to canonical "./foo/bar" format.
+
+  Rules:
+  - Raises if the path is absolute (starts with "/")
+  - Strips leading/trailing slashes
+  - `""` → `"./"`, `"."` → `"./"`
+  - If already starts with `"./"`, keeps as-is
+  - Otherwise prepends `"./"`
+  """
+  @spec normalize_relpath(String.t()) :: String.t()
+  def normalize_relpath(path) when is_binary(path) do
+    if String.starts_with?(path, "/") do
+      raise "normalize_relpath expects a relative path, got absolute: #{inspect(path)}"
+    end
+
+    path
+    |> String.trim_leading("/")
+    |> String.trim_trailing("/")
+    |> then(fn
+      "" -> "./"
+      "." -> "./"
+      p ->
+        if String.starts_with?(p, "./") do
+          p
+        else
+          "./" <> p
+        end
+    end)
+  end
+
+  @doc """
   Loads a ContextNode from a given relative path within a repository.
   `relative_path` must be relative to `repo_path` (or "./" for root).
   `repo_path` must be the absolute path to the repository root.
@@ -64,7 +95,7 @@ defmodule EvoGit.Core.ContextNode do
   @spec load(String.t(), String.t()) :: t()
   def load(relative_path, repo_path) do
     %__MODULE__{
-      path: relative_path,
+      path: normalize_relpath(relative_path),
       repo: repo_path
     }
   end
@@ -83,11 +114,7 @@ defmodule EvoGit.Core.ContextNode do
         if relative_path in [".", "./"] do
           ["./"]
         else
-          # Ensure path starts with "./"
-          normalized =
-            if String.starts_with?(relative_path, "./"),
-              do: relative_path,
-              else: "./" <> relative_path
+          normalized = normalize_relpath(relative_path)
 
           # Path.split("./foo/bar") = [".", "foo", "bar"]
           [_dot | parts] = Path.split(normalized)
