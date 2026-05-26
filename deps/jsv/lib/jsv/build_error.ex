@@ -1,0 +1,43 @@
+defmodule JSV.BuildError do
+  @moduledoc """
+  A simple wrapper for errors returned from `JSV.build/2`.
+  """
+
+  @inspect_limit 20
+  @enforce_keys [:reason, :action, :build_path]
+  defexception @enforce_keys
+
+  @doc """
+  Wraps the given term as the `reason` in a `#{inspect(__MODULE__)}` struct.
+
+  The `action` should be a `{module, function, [arg1, arg2, ..., argN]}` tuple or
+  a mfa tuple whenever possible.
+  """
+
+  @spec of(term, term, build_path :: nil | String.t()) :: Exception.t()
+  def of(reason, action, build_path \\ nil) do
+    %__MODULE__{reason: reason, action: action, build_path: build_path}
+  end
+
+  @impl true
+  def message(%{action: {m, f, a}} = e) when is_atom(m) and is_atom(f) and (is_list(a) or is_integer(a)) do
+    "could not build JSON schema at #{e.build_path} " <>
+      "with #{Exception.format_mfa(m, f, a)}, " <> "#{format_reason(e.reason, {m, f, a})}"
+  end
+
+  def message(e) do
+    "could not build JSON schema at #{e.build_path}, " <> "#{format_reason(e.reason, e.action)}"
+  end
+
+  defp format_reason({:invalid_ns_merge, ns, relative}, {JSV.Ref, _, _}) when is_binary(relative) do
+    "cannot resolve the relative reference #{inspect(relative)} against base #{inspect(ns)}"
+  end
+
+  defp format_reason(:mixed_casts, _) do
+    "using both jsv-cast and x-jsv-cast on the same schema is not supported"
+  end
+
+  defp format_reason(reason, _action) do
+    inspect(reason, pretty: true, limit: @inspect_limit)
+  end
+end

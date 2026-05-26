@@ -48,7 +48,7 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class="flex items-center gap-1 overflow-x-auto pb-1">
       <%= for project <- @projects do %>
         <div class={
-          "group flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium cursor-pointer transition-all whitespace-nowrap",
+          "group flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium cursor-pointer transition-all whitespace-nowrap " <>
           if(project.id == @active_project_id, do: "bg-base-100 border border-b-0 border-base-200 text-primary font-bold shadow-sm", else: "bg-base-200/50 text-base-content/60 hover:bg-base-200 hover:text-base-content")
         }>
           <span phx-click="switch_project" phx-value-project_id={project.id} class="flex items-center gap-2">
@@ -155,10 +155,10 @@ defmodule EvoDashWeb.DashboardComponents do
                   <span>
                     <span class="font-bold">Auto-detected:</span>
                     <%= case @detected_mode do
-                      {:genesis_new, desc} -> "New Codebase"
-                      {:genesis_existing, desc} -> "Existing Codebase"
-                      {:evolve_simple, desc} -> "Simple (Top-down)"
-                      {:evolve_complex, desc} -> "Complex (Bottom-up)"
+                      {:genesis_new, _desc} -> "New Codebase"
+                      {:genesis_existing, _desc} -> "Existing Codebase"
+                      {:evolve_simple, _desc} -> "Simple (Top-down)"
+                      {:evolve_complex, _desc} -> "Complex (Bottom-up)"
                     end %>
                     <span class="text-base-content/60">— <%= elem(@detected_mode, 1) %></span>
                   </span>

@@ -1,0 +1,139 @@
+# ReqLLM • Image Generation Comparison
+
+[![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fagentjido%2Freq_llm%2Fblob%2Fmain%2Fguides%2Fimage-generation.livemd)
+
+```elixir
+Mix.install([
+  {:req_llm, "~> 1.4"},
+  {:kino, "~> 0.14.2"}
+])
+```
+
+## Setup
+
+Configure your API keys. Set them as environment variables, Livebook secrets, or replace the fallback values below.
+
+```elixir
+ReqLLM.put_key(:openai_api_key, System.get_env("OPENAI_API_KEY") || "your-openai-key")
+ReqLLM.put_key(:xai_api_key, System.get_env("XAI_API_KEY") || "your-xai-key")
+ReqLLM.put_key(:google_api_key, System.get_env("GOOGLE_API_KEY") || "your-google-key")
+:ok
+```
+
+## Image Generation Comparison
+
+Generate images from three different providers in parallel and compare the results.
+
+### Models Used
+
+| Provider | Model                    | Notes                                      |
+| -------- | ------------------------ | ------------------------------------------ |
+| OpenAI   | `gpt-image-1.5`          | State-of-the-art quality, 1:1 aspect ratio |
+| xAI      | `grok-imagine-image`     | Grok's image generation                    |
+| Google   | `gemini-2.5-flash-image` | Fast generation, good for iteration        |
+
+```elixir
+prompt_input = Kino.Input.textarea("Enter your image prompt",
+  default: "A cozy coffee shop interior with warm lighting, exposed brick walls, and steam rising from ceramic cups"
+)
+```
+
+```elixir
+defmodule ImageGenerator do
+  @doc """
+  Generates an image and returns timing/cost metadata.
+  """
+  def generate(model, prompt, opts \\ []) do
+    start_time = System.monotonic_time(:millisecond)
+
+    result = ReqLLM.generate_image(model, prompt, opts)
+
+    end_time = System.monotonic_time(:millisecond)
+    duration_ms = end_time - start_time
+
+    case result do
+      {:ok, response} ->
+        image_data = ReqLLM.Response.image_data(response)
+        cost = get_in(response.usage || %{}, [:cost, :total]) || 0.0
+
+        {:ok, %{
+          model: model,
+          image_data: image_data,
+          duration_ms: duration_ms,
+          cost: cost,
+          usage: response.usage
+        }}
+
+      {:error, error} ->
+        {:error, %{model: model, error: error, duration_ms: duration_ms}}
+    end
+  end
+
+  @doc """
+  Formats duration in a human-readable way.
+  """
+  def format_duration(ms) when ms < 1000, do: "#{ms}ms"
+  def format_duration(ms), do: "#{Float.round(ms / 1000, 1)}s"
+
+  @doc """
+  Formats cost in USD.
+  """
+  def format_cost(cost) when is_number(cost), do: "$#{Float.round(cost * 1.0, 4)}"
+  def format_cost(_), do: "N/A"
+end
+
+:ok
+```
+
+### Generate Images
+
+Click "Evaluate" to generate images from all three providers in parallel.
+
+```elixir
+prompt = Kino.Input.read(prompt_input)
+
+models = [
+  {"openai:gpt-image-1.5", [size: "1024x1024"]},
+  {"xai:grok-imagine-image", [aspect_ratio: "1:1"]},
+  {"google:gemini-2.5-flash-image", [aspect_ratio: "1:1"]}
+]
+
+# Run all three generations in parallel
+tasks = Enum.map(models, fn {model, opts} ->
+  Task.async(fn ->
+    ImageGenerator.generate(model, prompt, opts)
+  end)
+end)
+
+# Wait for all tasks to complete (with 2 minute timeout per task)
+results = Task.await_many(tasks, 120_000)
+
+# Display results
+result_widgets = Enum.map(results, fn result ->
+  case result do
+    {:ok, data} ->
+      # Create image widget
+      image = Kino.Image.new(data.image_data, :png)
+
+      # Create metadata markdown
+      metadata = Kino.Markdown.new("""
+      **#{data.model}**
+
+      Time: #{ImageGenerator.format_duration(data.duration_ms)} | Cost: #{ImageGenerator.format_cost(data.cost)}
+      """)
+
+      Kino.Layout.grid([metadata, image], columns: 1)
+
+    {:error, data} ->
+      Kino.Markdown.new("""
+      **#{data.model}**
+
+      Error: #{inspect(data.error)}
+
+      Time: #{ImageGenerator.format_duration(data.duration_ms)}
+      """)
+  end
+end)
+
+Kino.Layout.grid(result_widgets, columns: 3)
+```
