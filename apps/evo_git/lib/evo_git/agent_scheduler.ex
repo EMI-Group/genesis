@@ -189,9 +189,7 @@ defmodule EvoGit.AgentScheduler do
 
     {:ok,
      %{
-       initialized: false,
-       repo_root: nil,
-       base_sha: nil,
+       repos: %{},
        max_concurrency: max_concurrency,
        agent_max_retries: agent_max_retries,
        max_depth: max_depth,
@@ -211,9 +209,8 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:run_agent, spec}, from, state) do
-    # Extract repo_path from the spec's phylo_node
-    repo_path = spec.phylo_node.repo
-    state = ensure_initialized(state, repo_path)
+    repo_root = spec.repo_root || spec.phylo_node.repo
+    state = ensure_initialized(state, repo_root)
     {agent_id, state} = register_agent(state, spec, from, _parent_id = nil, _depth = 0)
     Logger.info("AgentScheduler: Spawning top-level agent #{agent_id}")
     state = try_dispatch(state, agent_id)
@@ -239,10 +236,10 @@ defmodule EvoGit.AgentScheduler do
         |> maybe_update(:llm_model, opts)
         |> maybe_update(:max_retries, opts)
 
-      # If concurrency changed, tear down the pool so it's lazily re-created
+      # If concurrency changed, tear down ALL repos' worktrees so they're lazily re-created
       state =
-        if concurrency_changed and state.initialized do
-          teardown_worktrees(state)
+        if concurrency_changed do
+          teardown_all_worktrees(state)
         else
           state
         end
@@ -258,7 +255,6 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:spawn_sub_agents, parent_id, specs}, from, state) do
-    state = ensure_initialized(state)
     {:ok, parent} = get_sched_meta(parent_id)
 
     spawn_validated_subagents(parent_id, parent, specs, from, state)
@@ -381,13 +377,20 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Spatial Contract Validation (Per-Subagent) ---
 
-  defp validate_spatial_contract_for_spec(_parent_id, %{context_node: parent_context}, spec) do
-    parent_type = :read_write
-    parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
-    child_type = spec.agent_module.agent_type()
-    child_path = EvoGit.Agent.Tools.Shared.normalize_relpath(spec.context_node.path)
+  defp validate_spatial_contract_for_spec(_parent_id, %{context_node: parent_context, repo_root: parent_repo_root}, spec) do
+    spec_repo_root = spec.repo_root || spec.phylo_node.repo
 
-    validate_spawn_spatiality(parent_type, parent_path, child_type, child_path)
+    # Skip spatial contract validation for cross-repo subagents (different repo trees)
+    if spec_repo_root != parent_repo_root do
+      :ok
+    else
+      parent_type = :read_write
+      parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
+      child_type = spec.agent_module.agent_type()
+      child_path = EvoGit.Agent.Tools.Shared.normalize_relpath(spec.context_node.path)
+
+      validate_spawn_spatiality(parent_type, parent_path, child_type, child_path)
+    end
   end
 
   defp validate_spawn_spatiality(
@@ -464,31 +467,14 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Initialization ---
 
-  defp ensure_initialized(state, repo_path \\ nil)
-
-  defp ensure_initialized(%{initialized: true} = state, nil), do: state
-
-  defp ensure_initialized(%{initialized: true, repo_root: repo_root} = state, new_repo_path)
-       when repo_root == new_repo_path do
-    state
-  end
-
-  defp ensure_initialized(%{initialized: true} = state, new_repo_path) do
-    Logger.info(
-      "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing..."
-    )
-
-    state = teardown_worktrees(state)
-    do_initialize(state, new_repo_path)
-  end
-
-  defp ensure_initialized(_state, nil) do
-    raise ArgumentError, "repo_path is required for initial AgentScheduler initialization"
-  end
-
   defp ensure_initialized(state, repo_path) do
     repo_root = Path.expand(repo_path)
-    do_initialize(state, repo_root)
+
+    if Map.has_key?(state.repos, repo_root) do
+      state
+    else
+      do_initialize(state, repo_root)
+    end
   end
 
   defp do_initialize(state, repo_root) do
@@ -502,22 +488,23 @@ defmodule EvoGit.AgentScheduler do
 
     {:ok, current_sha} = Git.rev_parse(repo_root)
 
-    %{
-      state
-      | initialized: true,
-        repo_root: repo_root,
-        base_sha: current_sha
-    }
+    %{state | repos: Map.put(state.repos, repo_root, %{base_sha: current_sha})}
   end
 
-  defp teardown_worktrees(%{repo_root: repo_root} = state) when is_binary(repo_root) do
+  defp teardown_all_worktrees(state) do
+    # Tear down worktrees for ALL initialized repos
+    state = Enum.reduce(state.repos, state, fn {repo_root, _info}, acc ->
+      teardown_worktrees_for_repo(acc, repo_root)
+    end)
+    %{state | repos: %{}}
+  end
+
+  defp teardown_worktrees_for_repo(state, repo_root) do
     worker_base = Path.join(repo_root, ".evogit/workers")
     File.rm_rf!(worker_base)
     Git.prune_worktrees(repo_root)
-    %{state | initialized: false}
+    state
   end
-
-  defp teardown_worktrees(state), do: %{state | initialized: false}
 
   defp maybe_update(state, key, opts) do
     case Keyword.fetch(opts, key) do
@@ -605,6 +592,10 @@ defmodule EvoGit.AgentScheduler do
   defp register_agent(state, spec, from, parent_id, depth) do
     id = state.next_agent_id
 
+    # Resolve repo_root from spec, falling back to phylo_node.repo
+    repo_root = spec.repo_root || spec.phylo_node.repo
+    foreign_repos = spec.foreign_repos || []
+
     # Resolve event_sink: explicit in opts, inherited from parent, or nil
     event_sink =
       case spec.opts do
@@ -627,6 +618,8 @@ defmodule EvoGit.AgentScheduler do
     put_agent_state(id, %AgentState{
       context_node: spec.context_node,
       phylo_node: nil,
+      repo_root: repo_root,
+      foreign_repos: foreign_repos,
       event_sink: event_sink,
       llm_model: state.llm_model,
       max_retries: state.max_retries,
@@ -642,7 +635,8 @@ defmodule EvoGit.AgentScheduler do
       status: :pending,
       from: from,
       parent_id: parent_id,
-      spec: spec
+      spec: spec,
+      repo_root: repo_root
     })
 
     state = %{state | next_agent_id: id + 1}
@@ -733,9 +727,10 @@ defmodule EvoGit.AgentScheduler do
     {:ok, meta} = get_sched_meta(agent_id)
     retries = meta.retries
     spec = meta.spec
+    agent_repo_root = meta.repo_root
 
     # Create a persistent worktree for this agent: worker_<agent_id>
-    worktree_path = Path.join([state.repo_root, ".evogit/workers", "worker_#{agent_id}"])
+    worktree_path = Path.join([agent_repo_root, ".evogit/workers", "worker_#{agent_id}"])
 
     # Create the worktree if it doesn't exist (e.g., on first dispatch)
     newly_created =
@@ -743,7 +738,7 @@ defmodule EvoGit.AgentScheduler do
         commit_sha = spec.phylo_node.current_commit
         branch_name = "evogit-agent#{agent_id}"
 
-        case Git.add_worktree(state.repo_root, worktree_path, commit_sha, branch_name) do
+        case Git.add_worktree(agent_repo_root, worktree_path, commit_sha, branch_name) do
           {:ok, _} ->
             Logger.info(
               "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} on branch #{branch_name}"
@@ -763,14 +758,14 @@ defmodule EvoGit.AgentScheduler do
 
     # Run worktree init script on first creation only
     if newly_created do
-      run_worktree_init_script(state.repo_root, worktree_path)
+      run_worktree_init_script(agent_repo_root, worktree_path)
     end
 
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
         Process.put(:evogit_agent_depth, meta.depth)
-        Process.put(:evogit_repo_root, state.repo_root)
+        Process.put(:evogit_repo_root, agent_repo_root)
         Process.put(:repo_path, worktree_path)
 
         if retries > 0 do
@@ -946,7 +941,7 @@ defmodule EvoGit.AgentScheduler do
 
     # Delete the agent's persistent worktree
     if meta.worktree do
-      delete_worktree(meta.worktree, state.repo_root)
+      delete_worktree(meta.worktree, meta.repo_root)
     end
 
     delete_agent_state(agent_id)
@@ -987,7 +982,7 @@ defmodule EvoGit.AgentScheduler do
 
       # Delete the agent's persistent worktree on permanent failure
       if meta.worktree do
-        delete_worktree(meta.worktree, state.repo_root)
+        delete_worktree(meta.worktree, meta.repo_root)
       end
 
       delete_agent_state(agent_id)
