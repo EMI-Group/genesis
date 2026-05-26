@@ -17,40 +17,57 @@ defmodule EvoDashWeb.DashboardLive do
           <a href="/agents" class="btn btn-sm btn-ghost">
             <.icon name="hero-server" class="size-4" /> Agents
           </a>
-          <a href="https://github.com/your-repo/evogit" class="btn btn-sm btn-ghost" target="_blank">
-            <.icon name="hero-document-text" class="size-4" /> Docs
-          </a>
         </:actions>
       </.header>
 
-      <div class="mt-6 mb-8">
-        <EvoDashWeb.DashboardComponents.task_form
-          path={@task_path}
-          prompt={@task_prompt}
-          mode={@task_mode}
-          concurrency={@task_concurrency}
-          retries={@task_retries}
-          agent_max_retries={@task_agent_max_retries}
-        />
-      </div>
+      <%= if @projects != [] do %>
+        <div class="mt-4">
+          <EvoDashWeb.DashboardComponents.project_tabs
+            projects={@projects}
+            active_project_id={@active_project_id}
+          />
+        </div>
+      <% end %>
 
-      <div class="divider">Running & Recent Tasks</div>
+      <%= if @active_project_id == nil do %>
+        <div class="mt-6">
+          <EvoDashWeb.DashboardComponents.landing_page />
+        </div>
+      <% else %>
+        <% project = Enum.find(@projects, &(&1.id == @active_project_id)) %>
 
-      <div class="space-y-4">
-        <%= if @tasks == [] do %>
-          <div class="text-center py-12 text-base-content/50">
-            <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
-            <p>No tasks yet. Start by creating a new Genesis or Evolve task.</p>
-          </div>
-        <% else %>
-          <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
-            <EvoDashWeb.DashboardComponents.task_card
-              task={task}
-              show_details={MapSet.member?(@expanded_task_ids, task.id)}
-            />
+        <div class="mt-6 mb-8">
+          <EvoDashWeb.DashboardComponents.task_form
+            path={project.path}
+            prompt={@task_prompt}
+            mode={@task_mode}
+            concurrency={@task_concurrency}
+            retries={@task_retries}
+            agent_max_retries={@task_agent_max_retries}
+            detected_mode={@detected_mode}
+            mode_overridden={@mode_overridden}
+            project_active={true}
+          />
+        </div>
+
+        <div class="divider">Running & Recent Tasks</div>
+
+        <div class="space-y-4">
+          <%= if @tasks == [] do %>
+            <div class="text-center py-12 text-base-content/50">
+              <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
+              <p>No tasks yet for this project. Start by creating a new task.</p>
+            </div>
+          <% else %>
+            <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
+              <EvoDashWeb.DashboardComponents.task_card
+                task={task}
+                show_details={MapSet.member?(@expanded_task_ids, task.id)}
+              />
+            <% end %>
           <% end %>
-        <% end %>
-      </div>
+        </div>
+      <% end %>
     </div>
 
     <!-- Full Result Modal -->
@@ -175,6 +192,10 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:tasks, tasks)
       |> assign(:expanded_task_ids, MapSet.new())
       |> assign(:selected_result, nil)
+      |> assign(:projects, [])
+      |> assign(:active_project_id, nil)
+      |> assign(:detected_mode, nil)
+      |> assign(:mode_overridden, false)
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -182,35 +203,168 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_info(:refresh_tasks, socket) do
-    new_tasks = TaskRegistry.list_tasks()
-    {:noreply, assign(socket, :tasks, new_tasks)}
+    tasks =
+      case socket.assigns.active_project_id do
+        nil ->
+          TaskRegistry.list_tasks()
+
+        _ ->
+          project =
+            Enum.find(socket.assigns.projects, &(&1.id == socket.assigns.active_project_id))
+
+          if project,
+            do: TaskRegistry.list_tasks_by_repo(project.path),
+            else: TaskRegistry.list_tasks()
+      end
+
+    {:noreply, assign(socket, :tasks, tasks)}
+  end
+
+  @impl true
+  def handle_event("open_project", %{"path" => path}, socket) do
+    path = String.trim(path)
+
+    if path == "" do
+      {:noreply, put_flash(socket, :error, "Please enter a repository path")}
+    else
+      expanded = Path.expand(path)
+
+      existing = Enum.find(socket.assigns.projects, &(Path.expand(&1.path) == expanded))
+
+      if existing do
+        detected = detect_task_mode(existing.path)
+
+        socket =
+          socket
+          |> assign(:active_project_id, existing.id)
+          |> assign_tasks_for_project(existing.path)
+          |> assign(:detected_mode, detected)
+          |> assign(:mode_overridden, false)
+          |> assign_task_mode_from_detection()
+
+        {:noreply, socket}
+      else
+        project = %{
+          id: generate_project_id(),
+          path: path,
+          name: project_name_from_path(path)
+        }
+
+        detected = detect_task_mode(path)
+
+        socket =
+          socket
+          |> assign(:projects, socket.assigns.projects ++ [project])
+          |> assign(:active_project_id, project.id)
+          |> assign_tasks_for_project(project.path)
+          |> assign(:detected_mode, detected)
+          |> assign(:mode_overridden, false)
+          |> assign_task_mode_from_detection()
+
+        {:noreply, socket}
+      end
+    end
+  end
+
+  @impl true
+  def handle_event("switch_project", %{"project_id" => project_id}, socket) do
+    project = Enum.find(socket.assigns.projects, &(&1.id == project_id))
+
+    if project do
+      detected = detect_task_mode(project.path)
+
+      socket =
+        socket
+        |> assign(:active_project_id, project_id)
+        |> assign_tasks_for_project(project.path)
+        |> assign(:detected_mode, detected)
+        |> assign(:mode_overridden, false)
+        |> assign_task_mode_from_detection()
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("close_project", %{"project_id" => project_id}, socket) do
+    projects = Enum.reject(socket.assigns.projects, &(&1.id == project_id))
+
+    new_active =
+      if socket.assigns.active_project_id == project_id do
+        case List.last(projects) do
+          nil -> nil
+          p -> p.id
+        end
+      else
+        socket.assigns.active_project_id
+      end
+
+    socket =
+      socket
+      |> assign(:projects, projects)
+      |> assign(:active_project_id, new_active)
+
+    socket =
+      case new_active do
+        nil ->
+          assign(socket, :tasks, TaskRegistry.list_tasks())
+
+        _ ->
+          project = Enum.find(projects, &(&1.id == new_active))
+          assign_tasks_for_project(socket, project.path)
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
   def handle_event("task_change", params, socket) do
+    new_mode = params["mode"] || socket.assigns.task_mode
+
+    new_overridden =
+      if params["mode"] && params["mode"] != "" do
+        true
+      else
+        socket.assigns.mode_overridden
+      end
+
     {:noreply,
      socket
-     |> assign(:task_mode, params["mode"] || socket.assigns.task_mode)
+     |> assign(:task_mode, new_mode)
      |> assign(:task_prompt, params["prompt"] || socket.assigns.task_prompt)
-     |> assign(:task_path, params["path"] || socket.assigns.task_path)
      |> assign(:task_concurrency, params["concurrency"] || socket.assigns.task_concurrency)
      |> assign(:task_retries, params["retries"] || socket.assigns.task_retries)
-     |> assign(:task_agent_max_retries, params["agent_max_retries"] || socket.assigns.task_agent_max_retries)}
+     |> assign(:task_agent_max_retries, params["agent_max_retries"] || socket.assigns.task_agent_max_retries)
+     |> assign(:mode_overridden, new_overridden)}
   end
 
   @impl true
   def handle_event(
         "task_submit",
         %{
-          "path" => path,
           "prompt" => prompt,
           "mode" => combined_mode,
           "concurrency" => concurrency,
           "retries" => retries,
           "agent_max_retries" => agent_max_retries
-        },
+        } = params,
         socket
       ) do
+    project = Enum.find(socket.assigns.projects, &(&1.id == socket.assigns.active_project_id))
+
+    path =
+      if project,
+        do: project.path,
+        else: params["path"] || File.cwd!()
+
+    prompt = prompt || socket.assigns.task_prompt
+    combined_mode = combined_mode || socket.assigns.task_mode
+    concurrency = concurrency || socket.assigns.task_concurrency
+    retries = retries || socket.assigns.task_retries
+    agent_max_retries = agent_max_retries || socket.assigns.task_agent_max_retries
+
     {task_type, mode} =
       case combined_mode do
         "genesis_new" -> {:genesis, "new"}
@@ -236,11 +390,18 @@ defmodule EvoDashWeb.DashboardLive do
 
     case TaskRegistry.start_task(task_type, opts) do
       {:ok, task} ->
+        new_tasks =
+          if project,
+            do: TaskRegistry.list_tasks_by_repo(project.path),
+            else: TaskRegistry.list_tasks()
+
         {:noreply,
          socket
-         |> put_flash(:info, "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}")
-         |> assign(:tasks, TaskRegistry.list_tasks())
-         |> assign(:task_path, path)
+         |> put_flash(
+           :info,
+           "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}"
+         )
+         |> assign(:tasks, new_tasks)
          |> assign(:task_prompt, prompt)
          |> assign(:task_mode, combined_mode)
          |> assign(:task_concurrency, concurrency)
@@ -260,7 +421,7 @@ defmodule EvoDashWeb.DashboardLive do
 
         {:noreply,
          socket
-         |> assign(:tasks, TaskRegistry.list_tasks())
+         |> assign(:tasks, refresh_tasks_for_socket(socket))
          |> assign(:expanded_task_ids, expanded)}
 
       {:error, reason} ->
@@ -292,13 +453,63 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply, assign(socket, :selected_result, nil)}
   end
 
+  # Private Helpers
+
   defp assign_form_defaults(socket) do
     socket
-    |> assign(:task_path, File.cwd!())
     |> assign(:task_prompt, "")
     |> assign(:task_mode, "genesis_new")
     |> assign(:task_concurrency, to_string(EvoGit.Defaults.max_concurrency()))
     |> assign(:task_retries, to_string(EvoGit.Defaults.max_retries()))
     |> assign(:task_agent_max_retries, to_string(EvoGit.Defaults.agent_max_retries()))
+  end
+
+  defp assign_tasks_for_project(socket, path) do
+    assign(socket, :tasks, TaskRegistry.list_tasks_by_repo(path))
+  end
+
+  defp assign_task_mode_from_detection(socket) do
+    case socket.assigns.detected_mode do
+      {mode, _desc} -> assign(socket, :task_mode, to_string(mode))
+      nil -> socket
+    end
+  end
+
+  defp refresh_tasks_for_socket(socket) do
+    project = Enum.find(socket.assigns.projects, &(&1.id == socket.assigns.active_project_id))
+
+    if project,
+      do: TaskRegistry.list_tasks_by_repo(project.path),
+      else: TaskRegistry.list_tasks()
+  end
+
+  defp detect_task_mode(path) do
+    expanded = Path.expand(path)
+
+    cond do
+      !File.dir?(expanded) || dir_empty?(expanded) ->
+        {:genesis_new, "Directory is empty or doesn't exist — will create a new codebase"}
+
+      !File.exists?(Path.join(expanded, "CONTEXT.md")) ->
+        {:genesis_existing, "No CONTEXT.md found — will analyze existing codebase"}
+
+      true ->
+        {:evolve_simple, "CONTEXT.md found — will evolve existing codebase"}
+    end
+  end
+
+  defp dir_empty?(path) do
+    case File.ls(path) do
+      {:ok, []} -> true
+      _ -> false
+    end
+  end
+
+  defp generate_project_id do
+    :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
+  end
+
+  defp project_name_from_path(path) do
+    path |> Path.expand() |> Path.basename()
   end
 end
