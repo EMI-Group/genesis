@@ -77,6 +77,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path]
 3. **Stateless Agents:** `NewState = Agent(State, Objective)`. All persistent memory lives in the Context Tree or Git history.
 4. **Worktree Isolation:** Agents never modify the main checkout. Work happens in `.evogit/workers/` with cooperative multitasking.
 5. **Project Configuration:** An optional `evogit.toml` file at the repo root allows project-level customization. Currently supports `worktree.script` for running initialization scripts after worktree creation.
+6. **Multi-Repo Support:** Tasks can reference additional foreign repositories via `foreign_repos`. Agents can spawn subagents into foreign repos by passing absolute paths. The scheduler maintains per-repo worktree pools under each repo's `.evogit/workers/`. Cross-repo subagents bypass spatial contract validation (different repo trees).
 
 ## Constraints
 - **Umbrella structure:** All dependencies, build artifacts, and the lockfile live at the root level (`./deps/`, `./_build/`, `mix.lock`).
