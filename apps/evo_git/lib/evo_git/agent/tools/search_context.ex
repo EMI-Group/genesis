@@ -8,7 +8,7 @@ defmodule EvoGit.Agent.Tools.SearchContext do
 
   alias EvoGit.Agent.Tools.Shared
 
-  @default_path "."
+  @default_path "./"
   @default_context 3
 
   def schema do
@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.Tools.SearchContext do
           "path" => %{
             "type" => "string",
             "description" =>
-              "The node path (directory) to search within, relative to repository root. Default: \".\"",
+              "The node path (directory) to search within, relative to repository root (e.g., './', './lib', './src/components'). Default: \"./\"",
             "default" => @default_path
           },
           "context" => %{
