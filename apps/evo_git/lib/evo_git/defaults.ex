@@ -17,7 +17,7 @@ defmodule EvoGit.Defaults do
   @max_concurrency 3
   @max_retries 15
   @agent_max_retries 3
-  @max_agent_depth 5
+  @max_agent_depth 8
   @llm_model "zai_coding_plan:glm-5"
   @github_username "BillHuang2001"
 
