@@ -83,3 +83,15 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 - The `EvoGit.Agent` `use` macro injects the agent loop, tool dispatch, subagent management, and `complete_task` tool automatically.
 - Subdirectories follow Elixir convention: `./lib/evo_git/<subdir>/` maps to `EvoGit.<Subdir>` namespace.
 - Project-level configuration is read from `evogit.toml` in the repo root via `EvoGit.ProjectConfig`. Currently supports `worktree.script` — a script that runs after worktree creation with `$SOURCE_REPO_PATH` and `$TARGET_WORKTREE_PATH` env vars.
+
+## Multi-Repo Support
+
+The system supports agents working across multiple git repositories in a single task:
+
+- **AgentScheduler** tracks multiple repos via a `repos` map (`%{abs_path => %{base_sha: sha}}`) instead of a single `repo_root`. Each repo is lazily initialized when first used.
+- **AgentSpec** carries `repo_root` (the main repo for the agent) and `foreign_repos` (list of additional repo paths for cross-repo subagent spawning).
+- **SchedMeta** stores `repo_root` per agent, used for worktree path computation and cleanup.
+- **AgentState** stores `repo_root` and `foreign_repos`, propagated to subagents.
+- **Agent.build_subagent_specs/2** resolves subagent paths to determine if they belong to a foreign repo via `resolve_subagent_repo/4`. Foreign-repo subagents are created with the foreign repo as their target, bypassing spatial contract validation.
+- **CLI** accepts `--foreign-repo <path>` (repeatable) to specify additional repos. Passed through Genesis/Evolution to AgentSpec.
+- **Backward compatible**: when `foreign_repos` is empty/nil, behavior is identical to the single-repo system.
