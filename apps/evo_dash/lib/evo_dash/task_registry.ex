@@ -200,6 +200,7 @@ defmodule EvoDash.TaskRegistry do
     concurrency = Keyword.fetch!(opts, :concurrency)
     retries = Keyword.fetch!(opts, :retries)
     agent_max_retries = Keyword.fetch!(opts, :agent_max_retries)
+    foreign_repos = Keyword.get(opts, :foreign_repos, [])
 
     # Ensure evo_git app is started
     Application.ensure_all_started(:evo_git)
@@ -216,6 +217,7 @@ defmodule EvoDash.TaskRegistry do
       concurrency: concurrency,
       retries: retries,
       agent_max_retries: agent_max_retries,
+      foreign_repos: foreign_repos,
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
 
@@ -229,6 +231,7 @@ defmodule EvoDash.TaskRegistry do
     concurrency = Keyword.fetch!(opts, :concurrency)
     retries = Keyword.fetch!(opts, :retries)
     agent_max_retries = Keyword.fetch!(opts, :agent_max_retries)
+    foreign_repos = Keyword.get(opts, :foreign_repos, [])
 
     Application.ensure_all_started(:evo_git)
 
@@ -244,6 +247,7 @@ defmodule EvoDash.TaskRegistry do
       concurrency: concurrency,
       retries: retries,
       agent_max_retries: agent_max_retries,
+      foreign_repos: foreign_repos,
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
 

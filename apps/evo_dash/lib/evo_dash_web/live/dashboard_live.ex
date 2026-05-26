@@ -47,6 +47,7 @@ defmodule EvoDashWeb.DashboardLive do
             detected_mode={@detected_mode}
             mode_overridden={@mode_overridden}
             project_active={true}
+            foreign_repos={@foreign_repos}
           />
         </div>
 
@@ -241,6 +242,7 @@ defmodule EvoDashWeb.DashboardLive do
           |> assign(:detected_mode, detected)
           |> assign(:mode_overridden, false)
           |> assign_task_mode_from_detection()
+          |> assign(:foreign_repos, [])
 
         {:noreply, socket}
       else
@@ -260,6 +262,7 @@ defmodule EvoDashWeb.DashboardLive do
           |> assign(:detected_mode, detected)
           |> assign(:mode_overridden, false)
           |> assign_task_mode_from_detection()
+          |> assign(:foreign_repos, [])
 
         {:noreply, socket}
       end
@@ -280,6 +283,7 @@ defmodule EvoDashWeb.DashboardLive do
         |> assign(:detected_mode, detected)
         |> assign(:mode_overridden, false)
         |> assign_task_mode_from_detection()
+        |> assign(:foreign_repos, [])
 
       {:noreply, socket}
     else
@@ -388,6 +392,9 @@ defmodule EvoDashWeb.DashboardLive do
         Keyword.put(opts, :objective, prompt)
       end
 
+    foreign_repos = Map.get(params, "foreign_repos", [])
+    opts = Keyword.put(opts, :foreign_repos, foreign_repos)
+
     case TaskRegistry.start_task(task_type, opts) do
       {:ok, task} ->
         new_tasks =
@@ -406,7 +413,8 @@ defmodule EvoDashWeb.DashboardLive do
          |> assign(:task_mode, combined_mode)
          |> assign(:task_concurrency, concurrency)
          |> assign(:task_retries, retries)
-         |> assign(:task_agent_max_retries, agent_max_retries)}
+         |> assign(:task_agent_max_retries, agent_max_retries)
+         |> assign(:foreign_repos, [])}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
@@ -453,6 +461,26 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply, assign(socket, :selected_result, nil)}
   end
 
+  @impl true
+  def handle_event("add_foreign_repo", %{"new_foreign_repo" => path}, socket) do
+    path = String.trim(path)
+
+    if path != "" do
+      expanded = Path.expand(path)
+      foreign_repos = socket.assigns.foreign_repos ++ [expanded]
+      {:noreply, assign(socket, :foreign_repos, foreign_repos)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("remove_foreign_repo", %{"index" => idx}, socket) do
+    idx = String.to_integer(idx)
+    foreign_repos = List.delete_at(socket.assigns.foreign_repos, idx)
+    {:noreply, assign(socket, :foreign_repos, foreign_repos)}
+  end
+
   # Private Helpers
 
   defp assign_form_defaults(socket) do
@@ -462,6 +490,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:task_concurrency, to_string(EvoGit.Defaults.max_concurrency()))
     |> assign(:task_retries, to_string(EvoGit.Defaults.max_retries()))
     |> assign(:task_agent_max_retries, to_string(EvoGit.Defaults.agent_max_retries()))
+    |> assign(:foreign_repos, [])
   end
 
   defp assign_tasks_for_project(socket, path) do

@@ -91,6 +91,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :detected_mode, :any, default: nil
   attr :mode_overridden, :boolean, default: false
   attr :project_active, :boolean, default: false
+  attr :foreign_repos, :list, default: []
 
   def task_form(assigns) do
     ~H"""
@@ -226,6 +227,36 @@ defmodule EvoDashWeb.DashboardComponents do
                     max="100"
                     class="input input-sm input-bordered w-full focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono shadow-sm"
                   />
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="divider text-xs text-base-content/40 uppercase tracking-widest my-2">Additional Repos</div>
+              <div class="space-y-3">
+                <div class="bg-base-200/30 p-4 rounded-lg border border-base-200/50">
+                  <p class="text-xs text-base-content/60 mb-3">
+                    Add additional repositories that agents can reference when working across multiple codebases.
+                  </p>
+                  <!-- List existing foreign repos -->
+                  <%= for {repo, idx} <- Enum.with_index(@foreign_repos) do %>
+                    <div class="flex items-center gap-2 mb-2">
+                      <input type="hidden" name="foreign_repos[]" value={repo} />
+                      <div class="flex-1 flex items-center gap-2 bg-base-100 px-3 py-1.5 rounded-lg border border-base-200 text-xs font-mono">
+                        <.icon name="hero-folder" class="size-3 text-base-content/40" />
+                        <span class="truncate"><%= repo %></span>
+                      </div>
+                      <button type="button" class="btn btn-xs btn-ghost btn-circle" phx-click="remove_foreign_repo" phx-value-index={idx}>
+                        <.icon name="hero-x-mark" class="size-3" />
+                      </button>
+                    </div>
+                  <% end %>
+                  <!-- Add new foreign repo -->
+                  <div class="flex gap-2">
+                    <input type="text" name="new_foreign_repo" class="input input-xs input-bordered flex-1 font-mono" placeholder="/path/to/other/repo" />
+                    <button type="button" class="btn btn-xs btn-ghost" phx-click="add_foreign_repo">
+                      <.icon name="hero-plus" class="size-3" /> Add
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
