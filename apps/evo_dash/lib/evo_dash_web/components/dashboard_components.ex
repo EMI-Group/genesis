@@ -6,11 +6,91 @@ defmodule EvoDashWeb.DashboardComponents do
   @default_agent_max_retries to_string(EvoGit.Defaults.agent_max_retries())
 
   attr :path, :string, default: ""
+
+  def landing_page(assigns) do
+    ~H"""
+    <div class="flex flex-col items-center justify-center py-16">
+      <div class="bg-primary/10 text-primary p-6 rounded-2xl mb-8">
+        <.icon name="hero-folder-open" class="size-16" />
+      </div>
+      <h2 class="text-2xl font-bold mb-3">Welcome to EvoGit Dashboard</h2>
+      <p class="text-base-content/70 mb-8 text-center max-w-md">
+        Open a project repository to start creating and managing evolutionary software development tasks.
+      </p>
+      <div class="w-full max-w-lg">
+        <.form for={%{}} phx-submit="open_project" class="flex gap-3">
+          <div class="relative flex-1">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+              <.icon name="hero-folder" class="size-5" />
+            </div>
+            <input
+              type="text"
+              name="path"
+              value={@path}
+              class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm shadow-sm"
+              placeholder="/path/to/your/repository"
+            />
+          </div>
+          <button type="submit" class="btn btn-primary px-6 shadow-sm hover:shadow transition-all">
+            <.icon name="hero-folder-open" class="size-5" /> Open Project
+          </button>
+        </.form>
+      </div>
+    </div>
+    """
+  end
+
+  attr :projects, :list, required: true
+  attr :active_project_id, :string, default: nil
+
+  def project_tabs(assigns) do
+    ~H"""
+    <div class="flex items-center gap-1 overflow-x-auto pb-1">
+      <%= for project <- @projects do %>
+        <div class={
+          "group flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium cursor-pointer transition-all whitespace-nowrap",
+          if(project.id == @active_project_id, do: "bg-base-100 border border-b-0 border-base-200 text-primary font-bold shadow-sm", else: "bg-base-200/50 text-base-content/60 hover:bg-base-200 hover:text-base-content")
+        }>
+          <span phx-click="switch_project" phx-value-project_id={project.id} class="flex items-center gap-2">
+            <.icon name="hero-folder" class="size-4" />
+            <%= project.name %>
+          </span>
+          <button
+            class="btn btn-xs btn-ghost btn-circle opacity-0 group-hover:opacity-100 transition-opacity ml-1"
+            phx-click="close_project"
+            phx-value-project_id={project.id}
+            title="Close project"
+          >
+            <.icon name="hero-x-mark" class="size-3" />
+          </button>
+        </div>
+      <% end %>
+      <.form for={%{}} phx-submit="open_project" class="flex items-center gap-1 ml-1">
+        <div class="relative">
+          <input
+            type="text"
+            name="path"
+            class="input input-xs input-bordered w-48 pl-3 font-mono text-xs"
+            placeholder="Open project path..."
+          />
+        </div>
+        <button type="submit" class="btn btn-xs btn-ghost btn-circle" title="Open project">
+          <.icon name="hero-plus" class="size-3" />
+        </button>
+      </.form>
+    </div>
+    """
+  end
+
+  attr :path, :string, default: ""
   attr :prompt, :string, default: ""
   attr :mode, :string, default: "genesis_new"
   attr :concurrency, :string, default: @default_concurrency
   attr :retries, :string, default: @default_retries
   attr :agent_max_retries, :string, default: @default_agent_max_retries
+  attr :detected_mode, :any, default: nil
+  attr :mode_overridden, :boolean, default: false
+  attr :project_active, :boolean, default: false
 
   def task_form(assigns) do
     ~H"""
@@ -29,23 +109,27 @@ defmodule EvoDashWeb.DashboardComponents do
         <div class="grid grid-cols-1 md:grid-cols-12 gap-8">
           <!-- Left Column: Path & Prompt -->
           <div class="md:col-span-8 flex flex-col gap-6">
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text font-semibold text-base-content">Repository Path</span>
-              </label>
-              <div class="relative">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
-                  <.icon name="hero-folder" class="size-5" />
+            <%= if @project_active do %>
+              <input type="hidden" name="path" value={@path} />
+            <% else %>
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text font-semibold text-base-content">Repository Path</span>
+                </label>
+                <div class="relative">
+                  <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                    <.icon name="hero-folder" class="size-5" />
+                  </div>
+                  <input
+                    type="text"
+                    name="path"
+                    value={@path || File.cwd!()}
+                    class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm shadow-sm"
+                    placeholder="/path/to/your/repo"
+                  />
                 </div>
-                <input
-                  type="text"
-                  name="path"
-                  value={@path || File.cwd!()}
-                  class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm shadow-sm"
-                  placeholder="/path/to/your/repo"
-                />
               </div>
-            </div>
+            <% end %>
 
             <div class="form-control flex-1">
               <label class="label">
@@ -65,6 +149,21 @@ defmodule EvoDashWeb.DashboardComponents do
               <label class="label">
                 <span class="label-text font-semibold text-base-content">Task Mode</span>
               </label>
+              <%= if @detected_mode do %>
+                <div class="alert alert-info py-2 px-3 text-xs mb-2">
+                  <.icon name="hero-sparkles" class="size-4 shrink-0" />
+                  <span>
+                    <span class="font-bold">Auto-detected:</span>
+                    <%= case @detected_mode do
+                      {:genesis_new, desc} -> "New Codebase"
+                      {:genesis_existing, desc} -> "Existing Codebase"
+                      {:evolve_simple, desc} -> "Simple (Top-down)"
+                      {:evolve_complex, desc} -> "Complex (Bottom-up)"
+                    end %>
+                    <span class="text-base-content/60">— <%= elem(@detected_mode, 1) %></span>
+                  </span>
+                </div>
+              <% end %>
               <select name="mode" class="select select-bordered w-full focus:outline-none focus:ring-2 focus:ring-primary/30 font-medium shadow-sm">
                 <optgroup label="Genesis (Bootstrap & Analyze)">
                   <option value="genesis_new" selected={@mode == "genesis_new"}>New Codebase</option>
@@ -75,6 +174,13 @@ defmodule EvoDashWeb.DashboardComponents do
                   <option value="evolve_complex" selected={@mode == "evolve_complex"}>Complex (Bottom-up)</option>
                 </optgroup>
               </select>
+              <%= if @mode_overridden do %>
+                <label class="label">
+                  <span class="label-text-alt text-warning flex items-center gap-1">
+                    <.icon name="hero-exclamation-triangle" class="size-3" /> Manual override active
+                  </span>
+                </label>
+              <% end %>
             </div>
 
             <div>
