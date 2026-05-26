@@ -36,10 +36,13 @@ defmodule EvoGit.Runtime.Evolution do
     # Use Manager agent for Mode A
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
+    foreign_repos = Keyword.get(opts, :foreign_repos, [])
 
     # Manager plans and delegates the task to appropriate subagents
     case AgentSpec.new(context_node, phylo_node, EvoGit.Agent.Manager, objective,
-           event_sink: Keyword.get(opts, :event_sink, self())
+           event_sink: Keyword.get(opts, :event_sink, self()),
+           repo_root: repo_path,
+           foreign_repos: foreign_repos
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
