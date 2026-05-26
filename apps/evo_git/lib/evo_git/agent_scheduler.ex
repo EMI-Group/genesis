@@ -659,7 +659,11 @@ defmodule EvoGit.AgentScheduler do
     commit_sha = spec.phylo_node.current_commit
 
     Git.clean(wt)
-    Git.checkout(wt, commit_sha)
+    branch_name = "evogit-agent#{agent_id}"
+    # Force-create/reset the branch to point at the desired commit, then check it out.
+    # This ensures we're on the named branch (not detached HEAD) and the branch
+    # will advance with subsequent commits.
+    Git.run(["checkout", "-B", branch_name, commit_sha], wt)
 
     # Build the worktree-bound phylo_node (repo points to worktree)
     wt_phylo_node = %PhyloGraphNode{
