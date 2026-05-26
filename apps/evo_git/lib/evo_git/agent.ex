@@ -1004,7 +1004,7 @@ defmodule EvoGit.Agent do
                 "path" => %{
                   "type" => "string",
                   "description" =>
-                    "The relative path from the repository root where the subagent should operate."
+                    "The relative path from the repository root where the subagent should operate (e.g., './src/auth', './lib/utils')."
                 },
                 "objective" => %{
                   "type" => "string",

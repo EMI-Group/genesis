@@ -23,7 +23,7 @@ defmodule EvoGit.Agent.Tools.FileEdit do
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "file_path" => %{"type" => "string", "description" => "The path to the file to modify (relative to git repo path)"},
+          "file_path" => %{"type" => "string", "description" => "The path to the file to modify (relative to git repo path, e.g., './lib/app.ex')"},
           "old_string" => %{
             "type" => "string",
             "description" => "The exact text to replace"

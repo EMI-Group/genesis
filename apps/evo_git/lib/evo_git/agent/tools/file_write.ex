@@ -20,7 +20,7 @@ defmodule EvoGit.Agent.Tools.FileWrite do
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "file_path" => %{"type" => "string", "description" => "The path to the file to write (relative to git repo path)"},
+          "file_path" => %{"type" => "string", "description" => "The path to the file to write (relative to git repo path, e.g., './src/index.js')"},
           "content" => %{"type" => "string", "description" => "The content to write to the file"}
         },
         "required" => ["file_path", "content"]

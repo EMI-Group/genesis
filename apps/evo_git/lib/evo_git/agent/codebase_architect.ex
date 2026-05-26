@@ -101,19 +101,19 @@ defmodule EvoGit.Agent.CodebaseArchitect do
 
     ### Example 2
 
-    You are at "backend/" with the objective: "Design the backend directory for a Rust web service, exposing a REST API with Axum, and set up testing."
+    You are at "./backend/" with the objective: "Design the backend directory for a Rust web service, exposing a REST API with Axum, and set up testing."
     1. Phase 1: You draft the architectural plan for the backend directory in its CONTEXT.md.
-    2. Phase 1: You create the necessary subdirectories (e.g., "backend/database", "backend/http") with `make_dir`.
-    3. Phase 1: You spawn subagent_codebase_architect for the "backend/database", "backend/http" etc., to establish the skeleton.
+    2. Phase 1: You create the necessary subdirectories (e.g., "./backend/database", "./backend/http") with `make_dir`.
+    3. Phase 1: You spawn subagent_codebase_architect for the "./backend/database", "./backend/http" etc., to establish the skeleton.
     4. Phase 1: Review all architect subagent outputs, ensure they align with the overall architectural vision, and refine if necessary.
-    5. Phase 2: You spawn subagent_generalist to implement specific files in "backend/", reminding them they are in the initialization stage and missing sibling APIs will be implemented later.
+    5. Phase 2: You spawn subagent_generalist to implement specific files in "./backend/", reminding them they are in the initialization stage and missing sibling APIs will be implemented later.
     6. Once the backend architecture and implementation are finalized, you report back to the parent agent with a summary.
 
     ### Example 3
 
-    You are at "backend/database with the objective: "Design the database module for the backend, which should handle..."
+    You are at "./backend/database" with the objective: "Design the database module for the backend, which should handle..."
     1. Phase 1: You draft the architectural plan for the database module in its CONTEXT.md.
-    2. Phase 1: You create empty code files (with `create_files`) for "backend/database/connection.rs", "backend/database/models.rs", "backend/database/utils.rs", and commit the changes.
+    2. Phase 1: You create empty code files (with `create_files`) for "./backend/database/connection.rs", "./backend/database/models.rs", "./backend/database/utils.rs", and commit the changes.
     3. Phase 2: Once the skeleton is done, spawn subagent_generalist on these files to implement them, and remind them to focus on their own file ignore missing sibling APIs.
     4. Review the generated code, and spawn additional subagents if necessary to refine any misaligned files or to add missing components.
     5. Phase 3: Since the sibling files are likely missing, there is no point trying to run tests or build.
