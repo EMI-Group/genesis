@@ -74,7 +74,7 @@ defmodule EvoGit.Agent.ContextExtractor do
     1. Run list_dir to get an overview of the files and subdirectories in src/, or run git ls-files --cached --others --exclude-standard path/to/directory/ to get a list of tracked and untracked files.
     2. Check for early exit: If src/ is unimportant or if src/CONTEXT.md already fulfills your objective, call complete_task immediately with your report.
     3. For each important subdirectory (e.g., src/utils/), spawn a subagent_context_extractor (in parallel) to analyze it, for example:
-       - Call with path: "src/utils" and a clear objective such as "Analyze the src/utils/ directory and establish its CONTEXT.md based on its contents."
+       - Call with path: "./src/utils" and a clear objective such as "Analyze the src/utils/ directory and establish its CONTEXT.md based on its contents."
     4. The subagent analyzes src/utils/, creates or updates src/utils/CONTEXT.md, and returns a summary of its findings.
     5. You aggregate the summaries from all subagents and your own analysis to write or update the context in src/.
     6. Global Alignment: Since you see the entire src/ architecture, you may spot misalignments caused by a subagent's narrow local view. For example, if a subagent labeled src/utils/ as "general utilities," but your global view reveals the broader system exclusively uses it for string manipulation, spawn a new subagent with the objective: "Refine src/utils/ context to specify it exclusively handles string-related utilities."

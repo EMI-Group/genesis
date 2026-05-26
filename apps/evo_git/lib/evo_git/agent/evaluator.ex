@@ -76,7 +76,7 @@ defmodule EvoGit.Agent.Evaluator do
 
     ```json
     {
-      "args": ["diff", "<base_commit>", "HEAD", "--", "path/to/file.ex"]
+      "args": ["diff", "<base_commit>", "HEAD", "--", "./path/to/file.ex"]
     }
     ```
 
