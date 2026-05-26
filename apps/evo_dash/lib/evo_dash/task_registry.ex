@@ -15,6 +15,7 @@ defmodule EvoDash.TaskRegistry do
       :id,
       :type,
       :opts,
+      :repo_path,
       :ref,
       :started_at,
       :finished_at,
@@ -28,6 +29,7 @@ defmodule EvoDash.TaskRegistry do
             type: atom() | nil,
             status: :pending | :running | :completed | :failed | :cancelled,
             opts: keyword() | nil,
+            repo_path: String.t() | nil,
             ref: Task.t() | nil,
             started_at: DateTime.t() | nil,
             finished_at: DateTime.t() | nil,
@@ -53,6 +55,19 @@ defmodule EvoDash.TaskRegistry do
 
   def list_tasks do
     GenServer.call(__MODULE__, :list_tasks)
+  end
+
+  def list_tasks_by_repo(repo_path) do
+    expanded = Path.expand(repo_path)
+
+    :ets.tab2list(@table_name)
+    |> Enum.map(fn {_id, task} -> task end)
+    |> Enum.filter(fn task ->
+      case task.repo_path do
+        nil -> false
+        path -> Path.expand(path) == expanded
+      end
+    end)
   end
 
   def cancel_task(task_id) do
@@ -92,6 +107,7 @@ defmodule EvoDash.TaskRegistry do
       type: task_type,
       status: :running,
       opts: opts,
+      repo_path: opts[:path],
       ref: task_ref,
       started_at: DateTime.utc_now(),
       finished_at: nil,
