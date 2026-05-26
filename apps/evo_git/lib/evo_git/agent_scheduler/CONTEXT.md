@@ -7,7 +7,7 @@ Contains the plain-struct data models used internally by the parent `EvoGit.Agen
 
 | Module | Description |
 |---|---|
-| `EvoGit.AgentScheduler.AgentState` | Live spatial/temporal state for a **running** agent. Stored in `:evogit_agent_state` ETS. Fields: `context_node` (ContextNode), `phylo_node` (PhyloGraphNode \| nil), `event_sink` (pid \| nil). Enforced keys: `[:context_node]`. |
+| `EvoGit.AgentScheduler.AgentState` | Live spatial/temporal state for a **running** agent. Stored in `:evogit_agent_state` ETS. Fields: `context_node` (ContextNode), `phylo_node` (PhyloGraphNode \| nil), `repo_root` (String.t() \| nil), `foreign_repos` ([String.t()]), `event_sink` (pid \| nil). Enforced keys: `[:context_node]`. |
 | `EvoGit.AgentScheduler.SchedMeta` | Scheduling metadata for a **registered** agent. Stored in `:evogit_sched_meta` ETS. Fields: `id`, `depth`, `spec` (AgentSpec), `status` (`:pending \| :running \| :waiting \| :ready`), `worktree`, `task_ref`, `from`, `parent_id`, `retries`, `result_sent`, `sub_agent_from`, `pending_sub_agents` (MapSet), `sub_agent_results` (map). Enforced keys: `[:id, :depth, :spec]`. |
 
 ## Constraints
