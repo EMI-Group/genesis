@@ -128,15 +128,10 @@ defmodule EvoGit.Runtime.Genesis do
       with true <-
              Git.has_origin_remote?(repo_path) or
                create_remote_repo_and_continue(repo_path),
-           {:ok, current_branch} <- Git.current_branch(repo_path) do
-        base_branch = if current_branch == "HEAD", do: "main", else: current_branch
-
-        # Try to get origin's default branch
-        base_branch =
-          case Git.origin_default_branch(repo_path) do
-            {:ok, origin_default} -> origin_default
-            _ -> base_branch
-          end
+           {:ok, _current_branch} <- Git.current_branch(repo_path) do
+        base_branch = case Git.origin_default_branch(repo_path) do
+          {:ok, origin_default} -> origin_default
+        end
 
         # Get the configured GitHub username
         github_username = EvoGit.Defaults.github_username()

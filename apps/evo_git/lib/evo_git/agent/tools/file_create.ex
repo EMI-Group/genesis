@@ -165,7 +165,6 @@ defmodule EvoGit.Agent.Tools.FileCreate do
             {:ok, _} -> {:ok, "Commit successful"}
             {:error, _, _} = error -> {:error, error}
             {:conflict, _} = conflict -> {:error, conflict}
-            _ -> {:ok, "Commit successful"}
           end
 
         {:error, _, _} = error ->
