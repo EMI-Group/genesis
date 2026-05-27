@@ -44,6 +44,12 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-c 
 # Evolution: Modify/fix an existing codebase
 mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-R name:path]
 
+# Concurrency Options:
+#   -c, --concurrency <n>
+#       Set number of concurrent agents / LLM calls (default: 3).
+#       --tool-concurrency <n>
+#       Set number of concurrent tool executions (default: 2).
+
 # Multi-Repo Options:
 #   -R, --foreign-repo <name:path | path>
 #       Add a foreign repository for cross-repo operations.
@@ -63,8 +69,10 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-
 │  │                         │  │                           │ │
 │  │  CLI → Runtime          │  │  TaskRegistry ←→ Runtime  │ │
 │  │  AgentScheduler (ETS)   │  │  Phoenix LiveView UI      │ │
-│  │  Agents (LLM-powered)   │  │  Endpoint (Bandit)        │ │
-│  │  ContextNode (Spatial)  │  │  Assets (Tailwind/DaisyUI)│ │
+│  │  ├─ LLM Slots + Backoff │  │  Endpoint (Bandit)        │ │
+│  │  ├─ Tool Slots          │  │  Assets (Tailwind/DaisyUI)│ │
+│  │  Agents (LLM-powered)   │  │                           │ │
+│  │  ContextNode (Spatial)  │  │                           │ │
 │  │  PhyloGraphNode (Temp.) │  │                           │ │
 │  │  Git Adapter (CLI)      │  │                           │ │
 │  │  ProjectConfig (evogit.toml)                              │
@@ -76,6 +84,42 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-
 │  └─────────────────────────┘  └───────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Slot Management & Backoff
+
+The `AgentScheduler` manages two independent slot pools that gate agent resource usage:
+
+| Slot Pool | Config Key | Default | CLI Flag | Backoff |
+|-----------|-----------|---------|----------|---------|
+| **LLM Slots** | `max_concurrency` | 3 | `-c` / `--concurrency` | Yes — 60s global cooldown on rate-limit errors (`report_llm_error/2`) |
+| **Tool Slots** | `max_tool_concurrency` | 2 | `--tool-concurrency` | No — simple semaphore |
+
+Both use blocking `GenServer.call` — agents wait in FIFO queues when no slots are available and are granted slots via `GenServer.reply/2` when freed.
+
+```
+Agent calls LLM → request_llm_slot(agent_id)
+  ├─ slot available → granted immediately
+  └─ no slot / in backoff → queued, blocked
+
+LLM returns rate_limit error → report_llm_error(agent_id, :rate_limit)
+  → All waiting agents get 60s backoff timestamp
+  → retry_llm_waiting timer fires at 65s to unstick any stragglers
+
+Agent finishes LLM call → release_llm_slot(agent_id)
+  → grant_pending_llm_slots drains queue (skipping still-in-backoff entries)
+```
+
+### Orphaned Branch Cleanup
+
+On scheduler initialization (`ensure_initialized`), the scheduler runs `clean_orphaned_branches/1` which:
+1. Lists all `evogit-agent*` branches via `git branch --list`
+2. Deletes each one via `Git.delete_branch/2`
+
+This ensures stale branches from previous interrupted runs don't accumulate.
+
+### Task ID Tracking
+
+Each top-level `run_agent/2` call is assigned a monotonically increasing `task_id` (from `state.next_task_id`). All subagents spawned within that run inherit the same `task_id` via `SchedMeta.task_id`. This groups related agents for observability and lifecycle management without coupling to parent-child hierarchy alone.
 
 ### Multi-Repo Support
 
@@ -137,6 +181,7 @@ Agent LLM calls subagent tool with path: "/Source/original-proj/src/main.py"
 4. **Worktree Isolation:** Agents never modify the main checkout. Work happens in `.evogit/workers/` with cooperative multitasking.
 5. **Project Configuration:** An optional `evogit.toml` file at the repo root allows project-level customization. Currently supports `worktree.script` for running initialization scripts after worktree creation.
 6. **Multi-Repo Support:** Agents can operate across multiple Git repositories simultaneously. Foreign repos are registered via CLI flags or `evogit.toml` configuration. Agents spawn subagents to foreign repos by specifying absolute paths, which are automatically resolved to the correct repo. Each repo maintains its own worktrees, commit history, and spatial contracts independently.
+7. **Slot-Based Concurrency:** LLM calls and tool executions are independently throttled via slot pools managed by the scheduler. LLM slots include a global backoff mechanism for rate-limit errors.
 
 ## Constraints
 - **Umbrella structure:** All dependencies, build artifacts, and the lockfile live at the root level (`./deps/`, `./_build/`, `mix.lock`).
@@ -148,6 +193,8 @@ Agent LLM calls subagent tool with path: "/Source/original-proj/src/main.py"
 - **Sandboxing:** LLM-generated code runs under `systemd-run` with strict filesystem, CPU, memory, and syscall restrictions.
 - **Foreign repo paths must be absolute:** Both CLI `-R` flags and `evogit.toml` `[foreign_repos]` entries require absolute paths. Agents use absolute paths to route subagents to foreign repos.
 - **Cross-repo results are not merged:** Subagents operating on foreign repos commit independently. Results are reported to the parent agent but no cross-repo merge is performed.
+- **LLM slot discipline:** All LLM calls must go through `request_llm_slot` / `release_llm_slot`. Rate-limit errors must be reported via `report_llm_error` to trigger global backoff.
+- **Tool slot discipline:** Tool executions must go through `request_tool_slot` / `release_tool_slot` to respect `max_tool_concurrency`.
 
 ## Development Notes
 
