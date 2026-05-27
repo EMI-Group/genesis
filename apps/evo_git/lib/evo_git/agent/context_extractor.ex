@@ -60,7 +60,7 @@ defmodule EvoGit.Agent.ContextExtractor do
     - Delegate focused sub-tasks to the subagent_context_extractor subagent to extract context for child directories.
       - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
       - Call the subagent with a path (relative to repository root) and an objective describing what needs to be analyzed.
-      - If there are no dependency constraints, always prefer spawning subagents in parallel, there is no limit in concurrency for subagents.
+      - If there are no dependency constraints, always prefer spawning subagents in parallel. There is no limit on concurrency for subagents.
     - You can run tools, including subagents in parallel, to efficiently gather information.
     - Aggregate the context from your analysis and any subagent reports.
     - Write or update the CONTEXT.md in your current directory to reflect this aggregated context using write_context.

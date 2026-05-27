@@ -35,7 +35,7 @@ defmodule EvoGit.Agent.Warnings do
          (#{time_used_min} / #{time_limit_min} minutes).
          Consider accelerating your work by focusing on the most critical aspects of the task, \
          and make good use of subagents to let them do the work for you.
-         You don't need to complete everything, it's ok to complete only the most important parts and report the situation.
+         You don't need to complete everything. It's okay to complete only the most important parts and report the situation.
          """
        end},
       {80,
@@ -55,7 +55,7 @@ defmodule EvoGit.Agent.Warnings do
          - What has been accomplished
          - What hasn't been done due to the time limit
 
-         You do NOT need to complete everything. A partial completion with clear report is acceptable.
+         You do NOT need to complete everything. A partial completion with a clear report is acceptable.
          """
        end}
     ]
@@ -83,7 +83,7 @@ defmodule EvoGit.Agent.Warnings do
          (#{state.turn} / #{max_turns}).
          Consider accelerating your work by focusing on the most critical aspects of the task, \
          and make good use of subagents to let them do the work for you.
-         You don't need to complete everything, it's ok to complete only the most important parts and report the situation.
+         You don't need to complete everything. It's okay to complete only the most important parts and report the situation.
          """
        end},
       {80,
@@ -100,7 +100,7 @@ defmodule EvoGit.Agent.Warnings do
          - What has been accomplished
          - What hasn't been done due to the turn limit
 
-         You do NOT need to complete everything. A partial completion with clear report is acceptable.
+         You do NOT need to complete everything. A partial completion with a clear report is acceptable.
          """
        end}
     ]

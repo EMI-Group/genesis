@@ -18,7 +18,7 @@ defmodule EvoGit.Agent.Tools.Git do
       - NEVER update the git config
       - NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly
       requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these
-      commands when given direct instructions
+      commands when given direct instructions.
       - Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
       - Never use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
 

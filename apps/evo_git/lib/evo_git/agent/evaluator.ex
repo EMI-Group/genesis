@@ -12,7 +12,8 @@ defmodule EvoGit.Agent.Evaluator do
   def subagent_tool_name, do: "subagent_evaluator"
 
   def subagent_tool_description do
-    "[Subagent] Evaluates code changes and verifies they satisfy the objective."
+    "[Subagent] An evaluator agent that reviews code changes and verifies they satisfy the objective. " <>
+      "Call this subagent to check correctness, completeness, quality, and safety of changes made by executors."
   end
 
   def subagent_modules do
@@ -26,7 +27,7 @@ defmodule EvoGit.Agent.Evaluator do
 
     ## Your Process
 
-    1. **Review the Changes**: Use the `git` tool to see what was changed.
+    1. **Review the Changes**: Use the shell tool (`run_bash`) to see what was changed via `git diff`.
        - Use `git diff <base_commit> HEAD` to see all changes
        - Use `git diff <base_commit> HEAD -- <file_path>` for a specific file
        - Look at all modified, added, and deleted files
@@ -64,7 +65,7 @@ defmodule EvoGit.Agent.Evaluator do
 
     ## Using Git Diff
 
-    To compare commits, use the `git` tool with diff arguments:
+    To compare commits, use the shell tool (`run_bash`) with git diff arguments:
 
     ```json
     {
