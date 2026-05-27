@@ -14,6 +14,11 @@ defmodule EvoGit.Runtime.Genesis do
     Logger.info("Genesis: Starting with objective: #{objective}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
+    foreign_repos = Keyword.get(opts, :foreign_repos, [])
+    if foreign_repos != [] do
+      EvoGit.AgentScheduler.register_foreign_repos(foreign_repos)
+    end
+
     with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do
       if new_codebase?(repo_path) do
