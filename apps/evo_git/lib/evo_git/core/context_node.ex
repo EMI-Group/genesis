@@ -4,9 +4,16 @@ defmodule EvoGit.Core.ContextNode do
 
   The type (:directory or :file) is determined at runtime, not at creation time,
   because the node may be created before the path exists in the filesystem.
+
+  ## Multi-repo support
+
+  The `repo_id` field identifies which repository this node belongs to in a
+  multi-repo setup.  It defaults to `:primary` for single-repo usage and is
+  threaded through `load/3` and `hierarchy_nodes/3` when working with foreign
+  repositories.
   """
   @enforce_keys [:path, :repo]
-  defstruct [:path, :repo]
+  defstruct [:path, :repo, repo_id: :primary]
 
   alias EvoGit.Adapters.Git
 
@@ -14,7 +21,8 @@ defmodule EvoGit.Core.ContextNode do
 
   @type t :: %__MODULE__{
           path: String.t(),
-          repo: String.t()
+          repo: String.t(),
+          repo_id: atom()
         }
 
   @doc """
@@ -94,9 +102,18 @@ defmodule EvoGit.Core.ContextNode do
   """
   @spec load(String.t(), String.t()) :: t()
   def load(relative_path, repo_path) do
+    load(relative_path, repo_path, :primary)
+  end
+
+  @doc """
+  Loads a ContextNode with an explicit `repo_id` for multi-repo support.
+  """
+  @spec load(String.t(), String.t(), atom()) :: t()
+  def load(relative_path, repo_path, repo_id) do
     %__MODULE__{
       path: normalize_relpath(relative_path),
-      repo: repo_path
+      repo: repo_path,
+      repo_id: repo_id
     }
   end
 
@@ -107,8 +124,17 @@ defmodule EvoGit.Core.ContextNode do
   Nodes that do not exist in the filesystem are excluded from the result list.
   """
   @spec hierarchy_nodes(String.t(), String.t()) :: {:ok, [t()]} | {:error, term()}
-  def hierarchy_nodes(relative_path, repo_path)
-      when is_binary(relative_path) and is_binary(repo_path) do
+  def hierarchy_nodes(relative_path, repo_path) do
+    hierarchy_nodes(relative_path, repo_path, :primary)
+  end
+
+  @doc """
+  Retrieves the full hierarchy of ContextNodes from the project root down to the given relative path,
+  with an explicit `repo_id` for multi-repo support.
+  """
+  @spec hierarchy_nodes(String.t(), String.t(), atom()) :: {:ok, [t()]} | {:error, term()}
+  def hierarchy_nodes(relative_path, repo_path, repo_id)
+      when is_binary(relative_path) and is_binary(repo_path) and is_atom(repo_id) do
     if Path.type(relative_path) == :relative and not String.starts_with?(relative_path, "..") do
       paths =
         if relative_path in [".", "./"] do
@@ -122,7 +148,7 @@ defmodule EvoGit.Core.ContextNode do
           ["./" | Enum.scan(parts, ".", fn part, acc -> acc <> "/" <> part end)]
         end
 
-      nodes = Enum.map(paths, &load(&1, repo_path))
+      nodes = Enum.map(paths, &load(&1, repo_path, repo_id))
 
       {:ok, nodes}
     else
@@ -130,7 +156,7 @@ defmodule EvoGit.Core.ContextNode do
     end
   end
 
-  def hierarchy_nodes(_relative_path, _repo_path) do
+  def hierarchy_nodes(_relative_path, _repo_path, _repo_id) do
     {:error, :invalid_path}
   end
 
