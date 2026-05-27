@@ -32,6 +32,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentSpec
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Defaults
   alias EvoGit.Platform
@@ -102,6 +103,15 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Returns the repo root path for the current agent's repo_id.
+  Returns nil if not in a scheduled agent.
+  """
+  def current_repo_root do
+    repo_id = Process.get(:evogit_repo_id, :primary)
+    GenServer.call(__MODULE__, {:repo_root_for, repo_id})
+  end
+
+  @doc """
   Returns the configured maximum agent recursion depth.
   """
   def max_depth do
@@ -165,6 +175,32 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
+  @doc """
+  Registers foreign repos for multi-repo support.
+  Called during runtime initialization before any agents are spawned.
+  """
+  @spec register_foreign_repos([ForeignRepo.t()]) :: :ok
+  def register_foreign_repos(foreign_repos) when is_list(foreign_repos) do
+    GenServer.call(__MODULE__, {:register_foreign_repos, foreign_repos})
+  end
+
+  @doc """
+  Returns the list of all registered ForeignRepo structs (including primary).
+  """
+  @spec get_foreign_repos() :: [ForeignRepo.t()]
+  def get_foreign_repos do
+    GenServer.call(__MODULE__, :get_foreign_repos)
+  end
+
+  @doc """
+  Returns the repo root path for the given repo_id.
+  Raises if the repo_id is not registered.
+  """
+  @spec repo_root_for(atom()) :: String.t() | {:error, {:unknown_repo, atom()}}
+  def repo_root_for(repo_id) when is_atom(repo_id) do
+    GenServer.call(__MODULE__, {:repo_root_for, repo_id})
+  end
+
   # --- Server Callbacks ---
 
   @impl true
@@ -191,6 +227,7 @@ defmodule EvoGit.AgentScheduler do
      %{
        initialized: false,
        repo_root: nil,
+       repos: %{},
        base_sha: nil,
        max_concurrency: max_concurrency,
        agent_max_retries: agent_max_retries,
@@ -207,6 +244,45 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call(:get_max_depth, _from, state) do
     {:reply, state.max_depth, state}
+  end
+
+  @impl true
+  def handle_call({:register_foreign_repos, foreign_repos}, _from, state) do
+    repos_map =
+      foreign_repos
+      |> Enum.map(fn repo -> {repo.id, repo} end)
+      |> Map.new()
+
+    # Merge with existing repos
+    repos = Map.merge(state.repos, repos_map)
+
+    Logger.info(
+      "AgentScheduler: Registered #{map_size(repos_map)} foreign repo(s): #{inspect(Map.keys(repos_map))}"
+    )
+
+    {:reply, :ok, %{state | repos: repos}}
+  end
+
+  @impl true
+  def handle_call(:get_foreign_repos, _from, state) do
+    repos = Map.values(state.repos)
+    {:reply, repos, state}
+  end
+
+  @impl true
+  def handle_call({:repo_root_for, repo_id}, _from, state) do
+    case Map.get(state.repos, repo_id) do
+      %ForeignRepo{root: root} ->
+        {:reply, root, state}
+
+      nil ->
+        # Fallback: if repo_id is :primary and repos not yet populated, use repo_root
+        if repo_id == :primary and state.repo_root do
+          {:reply, state.repo_root, state}
+        else
+          {:reply, {:error, {:unknown_repo, repo_id}}, state}
+        end
+    end
   end
 
   @impl true
@@ -502,10 +578,15 @@ defmodule EvoGit.AgentScheduler do
 
     {:ok, current_sha} = Git.rev_parse(repo_root)
 
+    # Register primary repo
+    primary_repo = ForeignRepo.new(:primary, repo_root)
+    repos = Map.put(state.repos, :primary, primary_repo)
+
     %{
       state
       | initialized: true,
         repo_root: repo_root,
+        repos: repos,
         base_sha: current_sha
     }
   end
@@ -632,7 +713,8 @@ defmodule EvoGit.AgentScheduler do
       max_retries: state.max_retries,
       max_depth: state.max_depth,
       parent_id: parent_id,
-      objective: spec.objective
+      objective: spec.objective,
+      repo_id: spec.repo_id
     })
 
     # Scheduler metadata table: scheduling bookkeeping
@@ -735,7 +817,14 @@ defmodule EvoGit.AgentScheduler do
     spec = meta.spec
 
     # Create a persistent worktree for this agent: worker_<agent_id>
-    worktree_path = Path.join([state.repo_root, ".evogit/workers", "worker_#{agent_id}"])
+    # Determine repo root from the agent's repo_id
+    agent_repo_root =
+      case Map.get(state.repos, spec.repo_id) do
+        %ForeignRepo{root: root} -> root
+        nil -> state.repo_root
+      end
+
+    worktree_path = Path.join([agent_repo_root, ".evogit/workers", "worker_#{agent_id}"])
 
     # Create the worktree if it doesn't exist (e.g., on first dispatch)
     newly_created =
@@ -743,7 +832,7 @@ defmodule EvoGit.AgentScheduler do
         commit_sha = spec.phylo_node.current_commit
         branch_name = "evogit-agent#{agent_id}"
 
-        case Git.add_worktree(state.repo_root, worktree_path, commit_sha, branch_name) do
+        case Git.add_worktree(agent_repo_root, worktree_path, commit_sha, branch_name) do
           {:ok, _} ->
             Logger.info(
               "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} on branch #{branch_name}"
@@ -763,14 +852,22 @@ defmodule EvoGit.AgentScheduler do
 
     # Run worktree init script on first creation only
     if newly_created do
-      run_worktree_init_script(state.repo_root, worktree_path)
+      run_worktree_init_script(agent_repo_root, worktree_path)
     end
 
     task =
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
         Process.put(:evogit_agent_depth, meta.depth)
-        Process.put(:evogit_repo_root, state.repo_root)
+
+        repo_root_val =
+          case Map.get(state.repos, spec.repo_id) do
+            %ForeignRepo{root: root} -> root
+            nil -> state.repo_root
+          end
+
+        Process.put(:evogit_repo_root, repo_root_val)
+        Process.put(:evogit_repo_id, spec.repo_id)
         Process.put(:repo_path, worktree_path)
 
         if retries > 0 do
