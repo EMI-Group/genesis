@@ -10,9 +10,14 @@ defmodule EvoGit.ProjectConfig do
 
     - `SOURCE_REPO_PATH` — The path to the main repository checkout
     - `TARGET_WORKTREE_PATH` — The path to the newly created worktree
+
+  - `foreign_repos` — A map of foreign repository references. Each entry is a
+    TOML table with `path` (required) and `name` (optional) keys.
   """
 
   require Logger
+
+  alias EvoGit.Core.ForeignRepo
 
   @config_filename "evogit.toml"
 
@@ -49,6 +54,35 @@ defmodule EvoGit.ProjectConfig do
       %{"worktree" => %{"script" => script}} when is_binary(script) -> script
       _ -> nil
     end
+  end
+
+  @doc """
+  Reads foreign repo configurations from evogit.toml.
+
+  Returns a list of `EvoGit.Core.ForeignRepo` structs, or an empty list if none configured.
+  Each entry under `[foreign_repos]` is a table with:
+
+  - `path` (required) - absolute path to the foreign repo
+  - `name` (optional) - human-readable name
+  """
+  @spec foreign_repos(String.t()) :: [EvoGit.Core.ForeignRepo.t()]
+  def foreign_repos(repo_root) do
+    case read(repo_root) do
+      %{"foreign_repos" => repos} when is_map(repos) ->
+        Enum.map(repos, fn {id_str, config} ->
+          id = String.to_atom(id_str)
+          path = Map.fetch!(config, "path")
+          name = Map.get(config, "name")
+          ForeignRepo.new(id, path, name: name)
+        end)
+
+      _ ->
+        []
+    end
+  rescue
+    e ->
+      Logger.warning("Failed to parse foreign_repos from evogit.toml: #{inspect(e)}")
+      []
   end
 
   defp parse_toml(contents, path) do
