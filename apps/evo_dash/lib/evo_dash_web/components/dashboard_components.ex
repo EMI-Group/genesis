@@ -5,9 +5,9 @@ defmodule EvoDashWeb.DashboardComponents do
   @default_retries to_string(EvoGit.Defaults.max_retries())
   @default_agent_max_retries to_string(EvoGit.Defaults.agent_max_retries())
 
-  attr :path, :string, default: ""
   attr :prompt, :string, default: ""
   attr :mode, :string, default: "genesis_new"
+  attr :mode_info, :string, default: ""
   attr :concurrency, :string, default: @default_concurrency
   attr :retries, :string, default: @default_retries
   attr :agent_max_retries, :string, default: @default_agent_max_retries
@@ -27,26 +27,8 @@ defmodule EvoDashWeb.DashboardComponents do
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-12 gap-8">
-          <!-- Left Column: Path & Prompt -->
+          <!-- Left Column: Prompt -->
           <div class="md:col-span-8 flex flex-col gap-6">
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text font-semibold text-base-content">Repository Path</span>
-              </label>
-              <div class="relative">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
-                  <.icon name="hero-folder" class="size-5" />
-                </div>
-                <input
-                  type="text"
-                  name="path"
-                  value={@path || File.cwd!()}
-                  class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm shadow-sm"
-                  placeholder="/path/to/your/repo"
-                />
-              </div>
-            </div>
-
             <div class="form-control flex-1">
               <label class="label">
                 <span class="label-text font-semibold text-base-content">Prompt / Objective</span>
@@ -75,6 +57,9 @@ defmodule EvoDashWeb.DashboardComponents do
                   <option value="evolve_complex" selected={@mode == "evolve_complex"}>Complex (Bottom-up)</option>
                 </optgroup>
               </select>
+              <label class="label">
+                <span class="label-text-alt text-base-content/50 text-xs">Mode auto-detected. Change if needed.</span>
+              </label>
             </div>
 
             <div>
@@ -131,13 +116,87 @@ defmodule EvoDashWeb.DashboardComponents do
       <div class="bg-base-200/50 px-6 py-4 md:px-8 border-t border-base-200 flex flex-col sm:flex-row items-center justify-between gap-4">
         <span class="text-sm text-base-content/60 flex items-center gap-2">
           <.icon name="hero-light-bulb" class="size-5 text-warning" />
-          Double-check your repository path and objective.
+          Ready to execute. Mode was auto-detected based on project state.
         </span>
         <button type="submit" class="btn btn-primary px-8 shadow-sm hover:shadow transition-all w-full sm:w-auto">
           <.icon name="hero-rocket-launch" class="size-5" /> Execute Task
         </button>
       </div>
     </.form>
+    """
+  end
+
+  attr :projects, :map, required: true
+  attr :active_project, :string, default: nil
+
+  def project_tabs(assigns) do
+    ~H"""
+    <div class="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-thin">
+      <%= for {_path, project} <- @projects do %>
+        <div class={[
+          "flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium cursor-pointer transition-all whitespace-nowrap",
+          @active_project == project.path && "bg-primary text-primary-content shadow-sm",
+          @active_project != project.path && "bg-base-200 hover:bg-base-300 text-base-content/70"
+        ]}>
+          <button phx-click="switch_project" phx-value-path={project.path} class="flex items-center gap-2">
+            <.icon name="hero-folder" class="size-4" />
+            <%= project.name %>
+          </button>
+          <button
+            phx-click="close_project"
+            phx-value-path={project.path}
+            class="ml-1 hover:text-error transition-colors"
+            title="Close project"
+          >
+            <.icon name="hero-x-mark" class="size-3" />
+          </button>
+        </div>
+      <% end %>
+      <!-- Add project button -->
+      <div class="px-3 py-2">
+        <button class="btn btn-xs btn-ghost" phx-click="show_open_project">
+          <.icon name="hero-plus" class="size-4" /> Open Project
+        </button>
+      </div>
+    </div>
+    """
+  end
+
+  attr :path, :string, default: ""
+
+  def open_project_form(assigns) do
+    ~H"""
+    <div class="max-w-xl mx-auto">
+      <div class="bg-base-100 rounded-xl shadow-sm border border-base-200 p-8">
+        <div class="text-center mb-6">
+          <div class="bg-primary/10 text-primary p-4 rounded-full w-fit mx-auto mb-4">
+            <.icon name="hero-folder-open" class="size-8" />
+          </div>
+          <h2 class="text-2xl font-bold">Open a Project</h2>
+          <p class="text-base-content/60 mt-2">Enter the path to a Git repository to get started</p>
+        </div>
+        <.form for={%{}} phx-submit="open_project" class="space-y-4">
+          <div class="form-control">
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                <.icon name="hero-folder" class="size-5" />
+              </div>
+              <input
+                type="text"
+                name="path"
+                value={@path}
+                class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
+                placeholder="/path/to/your/repo"
+                autofocus
+              />
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary w-full">
+            <.icon name="hero-folder-open" class="size-5" /> Open Project
+          </button>
+        </.form>
+      </div>
+    </div>
     """
   end
 
