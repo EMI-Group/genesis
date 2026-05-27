@@ -457,13 +457,16 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Spatial Contract Validation (Per-Subagent) ---
 
-  defp validate_spatial_contract_for_spec(_parent_id, %{context_node: parent_context}, spec) do
-    parent_type = :read_write
-    parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
-    child_type = spec.agent_module.agent_type()
-    child_path = EvoGit.Agent.Tools.Shared.normalize_relpath(spec.context_node.path)
-
-    validate_spawn_spatiality(parent_type, parent_path, child_type, child_path)
+  defp validate_spatial_contract_for_spec(_parent_id, %{context_node: parent_context, repo_id: parent_repo_id}, spec) do
+    # Cross-repo delegation: foreign repos are independent trees, skip spatial check
+    if spec.repo_id != parent_repo_id do
+      :ok
+    else
+      parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
+      child_type = spec.agent_module.agent_type()
+      child_path = EvoGit.Agent.Tools.Shared.normalize_relpath(spec.context_node.path)
+      validate_spawn_spatiality(:read_write, parent_path, child_type, child_path)
+    end
   end
 
   defp validate_spawn_spatiality(
@@ -850,8 +853,9 @@ defmodule EvoGit.AgentScheduler do
 
     assign_and_prepare_worktree(agent_id, worktree_path)
 
-    # Run worktree init script on first creation only
-    if newly_created do
+    # Run worktree init script on first creation only, and only for the primary repo
+    # (foreign repos are independent and should not inherit the primary repo's init script)
+    if newly_created and spec.repo_id == :primary do
       run_worktree_init_script(agent_repo_root, worktree_path)
     end
 
