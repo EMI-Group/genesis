@@ -438,7 +438,7 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:release_llm_slot, _agent_id}, _from, state) do
-    state = %{state | llm_slots_available: state.llm_slots_available + 1}
+    state = %{state | llm_slots_available: min(state.llm_slots_available + 1, state.max_concurrency)}
     state = grant_pending_llm_slots(state)
     {:reply, :ok, state}
   end
@@ -451,6 +451,10 @@ defmodule EvoGit.AgentScheduler do
 
     # Re-queue all currently waiting agents with the backoff timestamp
     llm_waiting = update_waiting_with_backoff(state.llm_waiting, backoff_until)
+
+    # Schedule a retry after backoff expires to unstick waiting agents
+    Process.send_after(self(), :retry_llm_waiting, 65_000)
+
     {:reply, :ok, %{state | llm_backoff_until: backoff_until, llm_waiting: llm_waiting}}
   end
 
@@ -473,7 +477,7 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:release_tool_slot, _agent_id}, _from, state) do
-    state = %{state | tool_slots_available: state.tool_slots_available + 1}
+    state = %{state | tool_slots_available: min(state.tool_slots_available + 1, state.max_tool_concurrency)}
     state = grant_pending_tool_slots(state)
     {:reply, :ok, state}
   end
@@ -631,6 +635,13 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp validate_spawn_spatiality(_parent_type, _parent_path, _child_type, _child_path), do: :ok
+
+  # Retry LLM waiting queue after backoff expiry
+  @impl true
+  def handle_info(:retry_llm_waiting, state) do
+    state = grant_pending_llm_slots(state)
+    {:noreply, state}
+  end
 
   # Task returned a result
   @impl true
@@ -1302,14 +1313,20 @@ defmodule EvoGit.AgentScheduler do
     now = System.monotonic_time(:millisecond)
 
     case :queue.out(waiting) do
-      {{:value, {_agent_id, from, backoff_until}}, rest_waiting} ->
-        # Check if the backoff has expired for this entry
+      {{:value, {_agent_id, from}}, rest_waiting} ->
+        # 2-tuple entry: no backoff, grant immediately
+        GenServer.reply(from, :ok)
+        state = maybe_clear_llm_backoff(state)
+        grant_pending_llm_slots(%{state | llm_waiting: rest_waiting, llm_slots_available: slots - 1})
+
+      {{:value, {agent_id, from, backoff_until}}, rest_waiting} ->
         if backoff_until && now < backoff_until do
-          # Still in backoff - keep waiting but check if we can clear the global backoff
+          # Still in backoff - re-enqueue at front of rest and stop processing
           state = maybe_clear_llm_backoff(state)
-          grant_pending_llm_slots(%{state | llm_waiting: waiting})
+          updated_waiting = :queue.in_r({agent_id, from, backoff_until}, rest_waiting)
+          grant_pending_llm_slots(%{state | llm_waiting: updated_waiting})
         else
-          # Grant the slot
+          # Backoff expired or not set - grant the slot
           GenServer.reply(from, :ok)
           state = maybe_clear_llm_backoff(state)
           grant_pending_llm_slots(%{state | llm_waiting: rest_waiting, llm_slots_available: slots - 1})
