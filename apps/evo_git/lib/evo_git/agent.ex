@@ -659,15 +659,42 @@ defmodule EvoGit.Agent do
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         parent_commit = agent_state.phylo_node.current_commit
 
-        successful_shas =
-          for {:ok, %{commit_sha: sha}} <- results, is_binary(sha), do: sha
+        # Separate same-repo and cross-repo results
+        # Cross-repo subagents commit to their own repo, no merge needed into parent
+        {same_repo_shas, cross_repo_count} =
+          Enum.reduce(Enum.zip(subagent_specs, results), {[], 0}, fn {spec, result}, {shas, count} ->
+            case result do
+              {:ok, %{commit_sha: sha}} when is_binary(sha) ->
+                if spec.repo_id == :primary do
+                  {[sha | shas], count}
+                else
+                  {shas, count + 1}
+                end
+
+              _ ->
+                {shas, count}
+            end
+          end)
+
+        successful_shas = Enum.reverse(same_repo_shas)
 
         repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
-        # Skip merge if no subagents returned successful commits
+        cross_repo_note =
+          if cross_repo_count > 0 do
+            "\nSystem Note: #{cross_repo_count} cross-repo subagent(s) completed. Their changes are in foreign repo worktrees (not merged here)."
+          else
+            ""
+          end
+
+        # Skip merge if no same-repo subagents returned successful commits
         merge_message =
           if successful_shas == [] do
-            nil
+            if cross_repo_count > 0 do
+              cross_repo_note
+            else
+              nil
+            end
           else
             case EvoGit.Adapters.Git.merge_octopus(repo_path, successful_shas) do
               {:ok, output} ->
@@ -677,16 +704,16 @@ defmodule EvoGit.Agent do
                     # No changes - all subagents returned the same commit
                     nil
 
-                  {:ok, new_commit} ->
+                  {:ok, _new_commit} ->
                     """
-                    System Note: Successfully auto-merged changes from subagents.
+                    System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
                     Merge output:
                     #{output}
                     """
 
                   _error ->
                     """
-                    System Note: Successfully auto-merged changes from subagents.
+                    System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
                     Merge output:
                     #{output}
                     """
@@ -698,7 +725,7 @@ defmodule EvoGit.Agent do
                 conflict_files_list = Enum.join(files, "\n")
 
                 """
-                System Note: Auto-merging subagent changes resulted in conflicts.
+                System Note: Auto-merging subagent changes resulted in conflicts.#{cross_repo_note}
                 Merge output:
                 #{output}
 
@@ -708,22 +735,22 @@ defmodule EvoGit.Agent do
 
               {:error, code, output} ->
                 """
-                System Note: Failed to auto-merge subagent changes (exit code #{code}).
+                System Note: Failed to auto-merge subagent changes (exit code #{code}).#{cross_repo_note}
                 Merge output:
                 #{output}
                 """
             end
           end
 
-        # Remove the branches created for subagents now that they're merged
-        successful_branches =
-          Enum.map(results, fn
-            {:ok, %{branch: branch}} when is_binary(branch) -> branch
-            _ -> nil
+        # Only delete branches for same-repo subagents
+        same_repo_branches =
+          Enum.zip(subagent_specs, results)
+          |> Enum.filter(fn {spec, result} ->
+            spec.repo_id == :primary and match?({:ok, %{branch: _}}, result)
           end)
-          |> Enum.reject(&is_nil/1)
+          |> Enum.map(fn {_, {:ok, %{branch: branch}}} -> branch end)
 
-        Enum.each(successful_branches, fn branch ->
+        Enum.each(same_repo_branches, fn branch ->
           EvoGit.Adapters.Git.delete_branch(repo_path, branch)
         end)
 
