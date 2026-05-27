@@ -677,11 +677,17 @@ defmodule EvoGit.Agent do
                     # No changes - all subagents returned the same commit
                     nil
 
-                  {:ok, _new_commit} ->
+                  {:ok, new_commit} ->
+                    diff_stats =
+                      case EvoGit.Adapters.Git.diff_stat(repo_path, parent_commit, new_commit) do
+                        {:ok, stats} when stats != "" -> "\n\n#{stats}"
+                        _ -> ""
+                      end
+
                     """
                     System Note: Successfully auto-merged changes from subagents.
                     Merge output:
-                    #{output}
+                    #{output}#{diff_stats}
                     """
 
                   _error ->
@@ -695,13 +701,15 @@ defmodule EvoGit.Agent do
               {:conflict, output} ->
                 {:ok, files} = EvoGit.Adapters.Git.conflict_files(repo_path)
 
+                conflict_files_list = Enum.join(files, "\n")
+
                 """
                 System Note: Auto-merging subagent changes resulted in conflicts.
                 Merge output:
                 #{output}
 
                 Conflicting files:
-                #{Enum.join(files, "\n")}
+                #{conflict_files_list}
                 """
 
               {:error, code, output} ->
