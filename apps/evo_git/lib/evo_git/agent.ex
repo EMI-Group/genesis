@@ -321,25 +321,44 @@ defmodule EvoGit.Agent do
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         max_retries = agent_state.max_retries
 
-        {:ok, response, llm_duration} =
-          retry with:
-                  exponential_backoff(1_000)
-                  |> randomize()
-                  |> cap(60_000)
-                  |> Stream.take(max_retries) do
-            with llm_start <- System.monotonic_time(:millisecond),
-                 {:ok, stream_resp} <- ReqLLM.stream_text(current_model(), context, tools: tools),
-                 {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
-                 llm_end <- System.monotonic_time(:millisecond) do
-              {:ok, response, llm_end - llm_start}
-            else
-              {:error, reason} ->
-                Logger.warning(
-                  "Agent #{state.agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
-                )
+        # Request LLM slot from scheduler (blocks if at concurrency limit)
+        AgentScheduler.request_llm_slot(state.agent_id)
 
-                {:error, reason}
+        {:ok, response, llm_duration} =
+          try do
+            retry with:
+                    exponential_backoff(1_000)
+                    |> randomize()
+                    |> cap(60_000)
+                    |> Stream.take(max_retries) do
+              with llm_start <- System.monotonic_time(:millisecond),
+                   {:ok, stream_resp} <- ReqLLM.stream_text(current_model(), context, tools: tools),
+                   {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
+                   llm_end <- System.monotonic_time(:millisecond) do
+                {:ok, response, llm_end - llm_start}
+              else
+                {:error, reason} ->
+                  Logger.warning(
+                    "Agent #{state.agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
+                  )
+
+                  {:error, reason}
+              end
             end
+          else
+            {:ok, response, llm_duration} ->
+              AgentScheduler.release_llm_slot(state.agent_id)
+              {:ok, response, llm_duration}
+
+            {:error, reason} = error ->
+              # Check if it's a rate limit error
+              if is_rate_limit_error?(reason) do
+                AgentScheduler.report_llm_error(state.agent_id, :rate_limit)
+              end
+
+              AgentScheduler.release_llm_slot(state.agent_id)
+              # Re-raise to be caught by the agent's crash handling
+              raise "LLM request failed after #{max_retries} retries: #{inspect(reason)}"
           end
 
         llm_end = System.monotonic_time(:millisecond)
@@ -570,6 +589,9 @@ defmodule EvoGit.Agent do
             tool_timeout = Map.get(call.arguments, "timeout", @default_tool_timeout)
             tool_timeout = min(tool_timeout, max_timeout)
 
+            # Request tool execution slot from scheduler (blocks if at concurrency limit)
+            AgentScheduler.request_tool_slot(agent_id)
+
             task =
               Task.async(fn ->
                 EvoGit.Agent.Tools.execute(
@@ -598,6 +620,9 @@ defmodule EvoGit.Agent do
                   "Error: Tool execution timed out after #{tool_timeout}ms"
               end
 
+            # Always release the tool slot after execution
+            AgentScheduler.release_tool_slot(agent_id)
+
             {index, tool_call_id, call.name, output}
           end)
 
@@ -622,6 +647,14 @@ defmodule EvoGit.Agent do
       end
 
       defp ensure_utf8(result), do: result
+
+      defp is_rate_limit_error?(reason) do
+        reason_str = inspect(reason)
+        String.contains?(reason_str, "rate_limit") or
+          String.contains?(reason_str, "quota") or
+          String.contains?(reason_str, "429") or
+          String.contains?(reason_str, "resource_exhausted")
+      end
 
       # Truncates large tool outputs to prevent context bloat
       defp truncate_large_output(result, name, args) when is_binary(result) do
@@ -945,15 +978,31 @@ defmodule EvoGit.Agent do
 
               compression_context = ReqLLM.Context.new([user(prompt)])
 
-              with {:ok, stream_response} <-
-                     ReqLLM.stream_text(current_model(), compression_context),
-                   {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-                   text <- ReqLLM.Response.text(response),
-                   summary_msg <- user("Summary of previous events:\n" <> text),
-                   new_context <- ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
-                %{state | context: new_context}
-              else
-                _error -> state
+              AgentScheduler.request_llm_slot(state.agent_id)
+
+              result =
+                try do
+                  with {:ok, stream_response} <-
+                         ReqLLM.stream_text(current_model(), compression_context),
+                       {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
+                       text <- ReqLLM.Response.text(response),
+                       summary_msg <- user("Summary of previous events:\n" <> text),
+                       new_context <- ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
+                    {:ok, %{state | context: new_context}}
+                  else
+                    _error -> {:error, state}
+                  end
+                rescue
+                  e ->
+                    Logger.warning("Agent #{state.agent_id}: Compression LLM call failed: #{inspect(e)}")
+                    {:error, state}
+                after
+                  AgentScheduler.release_llm_slot(state.agent_id)
+                end
+
+              case result do
+                {:ok, new_state} -> new_state
+                {:error, original_state} -> original_state
               end
 
             _ ->
