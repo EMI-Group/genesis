@@ -17,7 +17,8 @@ defmodule EvoGit.CLI do
           retries: :integer,
           path: :string,
           model: :string,
-          mode: :string
+          mode: :string,
+          foreign_repo: [:string, :keep]
         ],
         aliases: [
           h: :help,
@@ -26,7 +27,8 @@ defmodule EvoGit.CLI do
           r: :retries,
           p: :path,
           m: :model,
-          d: :mode
+          d: :mode,
+          R: :foreign_repo
         ]
       )
 
@@ -85,6 +87,9 @@ defmodule EvoGit.CLI do
           runtime_opts = Keyword.put(runtime_opts, :repo_path, repo_path)
           runtime_opts = Keyword.put(runtime_opts, :mode, String.to_atom(mode))
 
+          foreign_repos = parse_foreign_repos(opts)
+          runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
+
           Genesis.run(prompt || "", runtime_opts)
         else
           IO.puts("Aborting.")
@@ -106,6 +111,9 @@ defmodule EvoGit.CLI do
         runtime_opts = []
         runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
         runtime_opts = Keyword.put(runtime_opts, :mode, String.to_atom(mode))
+
+        foreign_repos = parse_foreign_repos(opts)
+        runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
 
         Evolution.run(objective, runtime_opts)
       else
@@ -163,6 +171,24 @@ defmodule EvoGit.CLI do
     end
   end
 
+  defp parse_foreign_repos(opts) do
+    case Keyword.get_values(opts, :foreign_repo) do
+      [] -> []
+      values ->
+        Enum.map(values, fn spec ->
+          case String.split(spec, ":", parts: 2) do
+            [path] ->
+              # No name specified, use directory basename
+              name = path |> Path.basename() |> String.to_atom()
+              EvoGit.Core.ForeignRepo.new(name, path)
+            [name_str, path] ->
+              name = String.to_atom(name_str)
+              EvoGit.Core.ForeignRepo.new(name, path)
+          end
+        end)
+    end
+  end
+
   defp print_help do
     IO.puts("""
     EvoGit CLI - Evolutionary Software Development
@@ -188,6 +214,10 @@ defmodule EvoGit.CLI do
       -p, --path <path>           Path to the git repository (default: current directory).
       -m, --model <model>         Override the default LLM model (default: #{Defaults.llm_model()}).
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).
+      -R, --foreign-repo <name:path | path>
+                                  Add a foreign repository for cross-repo operations.
+                                  Can be specified multiple times. If name is omitted,
+                                  the directory basename is used. (e.g., -R original:/Source/proj)
       -h, --help                  Show this help message.
 
     Examples:
