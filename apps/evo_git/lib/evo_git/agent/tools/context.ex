@@ -19,7 +19,7 @@ defmodule EvoGit.Agent.Tools.Context do
           "and rules for code within it (Constraints). " <>
           "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories, " <>
           "so parent agents know where to delegate work. " <>
-          "Use this to read the context to understand the semantic meaning and expectations for a directory",
+          "Use this to read the context to understand the semantic meaning and expectations for a directory.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
