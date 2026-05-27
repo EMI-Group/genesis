@@ -159,6 +159,27 @@ defmodule EvoDashWeb.DashboardLive do
         </div>
       </div>
     <% end %>
+
+    <!-- Full Options Modal -->
+    <%= if @selected_options do %>
+      <div class="modal modal-open bg-black/50">
+        <div class="modal-box w-11/12 max-w-5xl">
+          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+            Full Objective
+          </h3>
+          <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+            <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+          </div>
+          <div class="modal-action">
+            <button class="btn" phx-click="close_options_modal">Close</button>
+          </div>
+        </div>
+        <div class="modal-backdrop" phx-click="close_options_modal">
+          <button class="cursor-default">close</button>
+        </div>
+      </div>
+    <% end %>
     """
   end
 
@@ -175,6 +196,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:tasks, tasks)
       |> assign(:expanded_task_ids, MapSet.new())
       |> assign(:selected_result, nil)
+      |> assign(:selected_options, nil)
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -290,6 +312,19 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_event("close_result_modal", _params, socket) do
     {:noreply, assign(socket, :selected_result, nil)}
+  end
+
+  @impl true
+  def handle_event("view_full_options", %{"task_id" => task_id}, socket) do
+    task = Enum.find(socket.assigns.tasks, &(&1.id == task_id))
+    opts = Map.get(task || %{}, :opts, [])
+    primary_text = opts[:prompt] || opts[:objective] || ""
+    {:noreply, assign(socket, :selected_options, primary_text)}
+  end
+
+  @impl true
+  def handle_event("close_options_modal", _params, socket) do
+    {:noreply, assign(socket, :selected_options, nil)}
   end
 
   defp assign_form_defaults(socket) do

@@ -211,10 +211,20 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="space-y-4">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div class="bg-base-200/40 p-4 rounded-xl border border-base-200">
-                <h4 class="text-sm font-bold mb-3 flex items-center gap-2">
-                  <.icon name="hero-cog-8-tooth" class="size-4 text-primary" /> Options
-                </h4>
-                <pre class="text-xs bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner"><%= inspect(@task.opts, pretty: true) %></pre>
+                <div class="flex items-center justify-between mb-3">
+                  <h4 class="text-sm font-bold flex items-center gap-2">
+                    <.icon name="hero-cog-8-tooth" class="size-4 text-primary" /> Options
+                  </h4>
+                  <button
+                    class="btn btn-xs btn-ghost"
+                    phx-click="view_full_options"
+                    phx-value-task_id={@task.id}
+                  >
+                    <.icon name="hero-arrows-pointing-out" class="size-4" />
+                    View Full
+                  </button>
+                </div>
+                <%= render_options(@task.opts) %>
               </div>
               <%= if Map.get(@task, :result) do %>
                 <div class="bg-base-200/40 p-4 rounded-xl border border-base-200">
@@ -291,6 +301,69 @@ defmodule EvoDashWeb.DashboardComponents do
   end
 
   defp task_description(_), do: ""
+
+  defp render_options(opts) do
+    primary_text = opts[:prompt] || opts[:objective] || ""
+    mode = opts[:mode] || ""
+    path = opts[:path] || ""
+    concurrency = opts[:concurrency]
+    retries = opts[:retries]
+    agent_max_retries = opts[:agent_max_retries]
+
+    assigns = %{
+      primary_text: primary_text,
+      mode: mode,
+      path: path,
+      concurrency: concurrency,
+      retries: retries,
+      agent_max_retries: agent_max_retries
+    }
+
+    ~H"""
+    <div class="space-y-3">
+      <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
+        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Objective
+        </h5>
+        <div class="text-sm whitespace-pre-wrap break-words">
+          {String.slice(@primary_text, 0, 300)}{if String.length(@primary_text) > 300, do: "..."}
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 text-xs">
+        <%= if @mode != "" do %>
+          <span class="badge badge-primary font-mono">
+            <.icon name="hero-cog-6-tooth" class="size-3 mr-1" />
+            <%= @mode %>
+          </span>
+        <% end %>
+        <%= if @path != "" do %>
+          <span class="badge badge-ghost font-mono">
+            <.icon name="hero-folder" class="size-3 mr-1" />
+            <%= @path %>
+          </span>
+        <% end %>
+        <%= if @concurrency do %>
+          <span class="badge badge-ghost font-mono">
+            <.icon name="hero-arrow-path-rounded-square" class="size-3 mr-1" />
+            concurrency: <%= @concurrency %>
+          </span>
+        <% end %>
+        <%= if @retries do %>
+          <span class="badge badge-ghost font-mono">
+            <.icon name="hero-arrow-uturn-right" class="size-3 mr-1" />
+            retries: <%= @retries %>
+          </span>
+        <% end %>
+        <%= if @agent_max_retries do %>
+          <span class="badge badge-ghost font-mono">
+            <.icon name="hero-arrow-uturn-down" class="size-3 mr-1" />
+            agent retries: <%= @agent_max_retries %>
+          </span>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
 
   defp render_result({:ok, %{result: result} = data}) when is_binary(result) do
     render_result(data)
