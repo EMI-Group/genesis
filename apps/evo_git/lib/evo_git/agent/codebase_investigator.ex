@@ -13,7 +13,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     Context,
     WebSearch,
     Curl,
-    Git,
+    ShellTool,
     CompleteTask,
     SearchContext,
     SearchHistory
@@ -39,7 +39,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
       Context.write_schema(),
       WebSearch.schema(),
       Curl.schema(),
-      Git.schema(),
+      ShellTool.schema(),
       SearchContext.schema(),
       SearchHistory.schema()
     ] ++ subagent_schemas() ++ [CompleteTask.schema()]
@@ -55,6 +55,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
 
     ## Guidelines
     - Use search and read tools to explore the codebase and understand its structure.
+    - You have access to the shell tool (`run_bash`), but you must use it strictly as a **read-only** tool. Only run commands that inspect or query the codebase (e.g., `git log`, `git diff`, `git show`, `ls`, `find`, `wc`, `file`). NEVER use it to modify files, run builds, execute scripts, or make any changes to the repository.
     - If there is nothing related to the investigation task in your assigned node, return immediately with a short message explaining the situation.
     - For large, complex investigations, delegate focused subagents to investigate other specific areas or subdirectories.
       Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be investigated.
@@ -64,7 +65,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     - When you discover important structural information about a directory (its purpose, API surface,
       or constraints) that is missing in the context, update the directory's CONTEXT.md using `write_context`. This persists
       your findings for future agents.
-    - You should NOT write or modify source code. Your only write operation is updating CONTEXT.md files through the `write_context` tool.
+    - You should NOT write or modify source code. Your only write operations are updating CONTEXT.md files through the `write_context` tool and running read-only shell commands.
     - When finished, call `complete_task` with a comprehensive report of your findings.
 
     ## Example
