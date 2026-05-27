@@ -65,3 +65,15 @@ A struct with fields `id` (atom), `root` (absolute path), and `name` (human-read
 - `PhyloGraphNode` maintains the invariant that `base_commit` is immutable after creation; only `current_commit` advances.
 - All `ContextNode` paths must be relative to the repository root using the `"./"` convention (e.g., `"./"` for root, `"./foo/bar"` for subdirectories); absolute or `..`-prefixed paths are rejected by `hierarchy_nodes/3`.
 - Directory naming follows `snake_case` Elixir convention; file names mirror their module name (`context_node.ex` → `ContextNode`).
+
+## Multi-Repo Integration
+
+These core data structures integrate with the broader EvoGit system as follows:
+
+1. **Configuration**: Foreign repos are declared in `evogit.toml` under `[foreign_repos]` (parsed by `EvoGit.ProjectConfig.foreign_repos/1`) or via CLI flags (`-R name:path`). Both produce `[ForeignRepo.t()]`.
+
+2. **Registration**: At startup, `EvoGit.Runtime` (Genesis/Evolution) calls `AgentScheduler.register_foreign_repos/1` to store the primary + all foreign repos in the scheduler's GenServer state.
+
+3. **Agent Spawning**: When an agent spawns a subagent with an absolute path, `EvoGit.Agent` (the macro-generated code) calls `ForeignRepo.resolve_path/2` to determine which repo owns the path. The resulting `repo_id` flows into the `AgentSpec` and ultimately controls which repo's `.evogit/workers/` directory hosts the worktree.
+
+4. **Context Loading**: `ContextNode.load/3` and `hierarchy_nodes/3` accept a `repo_id` parameter, ensuring the spatial context tree correctly identifies which repository each node belongs to.
