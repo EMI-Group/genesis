@@ -2,12 +2,13 @@
 
 ## Intent
 
-Defines the two foundational domain models of EvoGit — the **Spatial Dimension** and the **Temporal Dimension** — as pure data structures with domain logic. These modules encapsulate how EvoGit reasons about repository structure and history.
+Defines the foundational domain models of EvoGit — the **Spatial Dimension**, the **Temporal Dimension**, and **multi-repo references** — as pure data structures with domain logic. These modules encapsulate how EvoGit reasons about repository structure, history, and cross-repository relationships.
 
 - `ContextNode` models the Spatial Dimension: a tree of directories and files, each annotated with a `CONTEXT.md` contract that gives semantic meaning to AI agents.
 - `PhyloGraphNode` models the Temporal Dimension: a mapping from phylogenetic graph operations (mutation, crossover) to git operations (commit, merge), enabling evolutionary workflows on code.
+- `ForeignRepo` models a reference to a Git repository (primary or foreign), enabling multi-repo support with path resolution across repositories.
 
-Both modules delegate all low-level git interactions to `EvoGit.Adapters.Git`.
+`ContextNode` and `PhyloGraphNode` delegate all low-level git interactions to `EvoGit.Adapters.Git`.
 
 ## API Surface
 
@@ -41,6 +42,19 @@ A struct with fields `repo`, `base_commit`, and `current_commit`.
 | `list_directories/1` | `(t()) -> {:ok, [String]} \| {:error, term}` | Lists all directories at the node's commit |
 | `list_files/1` | `(t()) -> {:ok, [String]} \| {:error, term}` | Lists all files at the node's commit |
 | `list_immediate_children/2` | `(t(), path) -> {:ok, [String]} \| {:error, term}` | Lists direct children of a path at the node's commit |
+
+### `EvoGit.Core.ForeignRepo` (`foreign_repo.ex`)
+
+A struct with fields `id` (atom), `root` (absolute path), and `name` (human-readable string or nil). Represents a reference to a Git repository in the multi-repo system.
+
+| Function | Signature | Description |
+|---|---|---|
+| `new/3` | `(atom(), String.t(), keyword()) :: t()` | Creates a new ForeignRepo struct with expanded root path |
+| `primary_id/0` | `() :: :primary` | Returns the primary repo identifier |
+| `primary?/1` | `(atom()) :: boolean()` | Checks if the given repo id is the primary repo |
+| `normalize_path/2` | `(t(), String.t()) :: {:ok, String.t()} \| {:error, :not_in_repo}` | Normalizes an absolute path to a relative path within this repo |
+| `resolve_path/2` | `([t()], String.t()) :: {:ok, atom(), String.t()} \| {:error, :not_in_any_repo}` | Determines which repo a path belongs to and returns the repo id with relative path |
+| `absolute_path?/1` | `(String.t()) :: boolean()` | Checks if a path string is absolute (starts with /) |
 
 ## Constraints
 
