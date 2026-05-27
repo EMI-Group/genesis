@@ -15,6 +15,7 @@ defmodule EvoGit.Defaults do
 
   # Compile-time fallbacks
   @max_concurrency 3
+  @max_tool_concurrency 2
   @max_retries 15
   @agent_max_retries 3
   @max_agent_depth 8
@@ -27,6 +28,7 @@ defmodule EvoGit.Defaults do
   end
 
   def max_concurrency, do: get(:max_concurrency, @max_concurrency)
+  def max_tool_concurrency, do: get(:max_tool_concurrency, @max_tool_concurrency)
   def max_retries, do: get(:max_retries, @max_retries)
   def agent_max_retries, do: get(:agent_max_retries, @agent_max_retries)
   def max_agent_depth, do: get(:max_agent_depth, @max_agent_depth)
