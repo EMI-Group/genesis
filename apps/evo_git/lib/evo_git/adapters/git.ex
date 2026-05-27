@@ -176,6 +176,14 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Returns a short diff stat between two commits.
+  Shows files changed, insertions, and deletions.
+  """
+  def diff_stat(path, commit_a, commit_b) do
+    run(["diff", "--stat", commit_a, commit_b], path)
+  end
+
+  @doc """
   Adds a note to a given object (usually a commit).
 
   Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the

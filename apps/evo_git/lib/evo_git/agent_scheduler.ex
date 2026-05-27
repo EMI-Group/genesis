@@ -811,14 +811,26 @@ defmodule EvoGit.AgentScheduler do
       {:ok, _changes} ->
         Logger.info("AgentScheduler: Auto-committing pending changes for agent #{agent_id}")
 
-        # "discarding .gitignore files"
-        Path.join(wt, "**/.gitignore")
-        |> Path.wildcard(match_dot: true)
-        |> Enum.each(&File.rm/1)
+        {:ok, prev_sha} = Git.rev_parse(wt)
 
         Git.run(["add", "--all"], wt)
         objective = meta.spec.objective || "task"
         Git.commit(wt, "Agent: #{objective} (auto-commit)")
+
+        # Log diff stats for the auto-commit
+        case Git.rev_parse(wt) do
+          {:ok, ^prev_sha} ->
+            Logger.debug("AgentScheduler: Auto-commit for agent #{agent_id} resulted in no new commit")
+
+          {:ok, new_sha} ->
+            case Git.diff_stat(wt, prev_sha, new_sha) do
+              {:ok, stats} when stats != "" ->
+                Logger.info("AgentScheduler: Auto-commit stats for agent #{agent_id}:\n#{stats}")
+
+              _ ->
+                :ok
+            end
+        end
 
         sync_current_commit(agent_id, meta)
 
