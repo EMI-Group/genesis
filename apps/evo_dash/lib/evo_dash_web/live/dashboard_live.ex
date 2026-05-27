@@ -23,34 +23,98 @@ defmodule EvoDashWeb.DashboardLive do
         </:actions>
       </.header>
 
-      <div class="mt-6 mb-8">
-        <EvoDashWeb.DashboardComponents.task_form
-          path={@task_path}
-          prompt={@task_prompt}
-          mode={@task_mode}
-          concurrency={@task_concurrency}
-          retries={@task_retries}
-          agent_max_retries={@task_agent_max_retries}
-        />
-      </div>
+      <%= if @active_project do %>
+        <!-- Active Project State -->
+        <div class="mt-6 mb-2">
+          <EvoDashWeb.DashboardComponents.project_tabs
+            projects={@projects}
+            active_project={@active_project}
+          />
+        </div>
 
-      <div class="divider">Running & Recent Tasks</div>
-
-      <div class="space-y-4">
-        <%= if @tasks == [] do %>
-          <div class="text-center py-12 text-base-content/50">
-            <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
-            <p>No tasks yet. Start by creating a new Genesis or Evolve task.</p>
+        <%= if @show_open_project_form do %>
+          <div class="mb-8 bg-base-200/50 rounded-xl p-6 border border-base-200">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-lg font-semibold flex items-center gap-2">
+                <.icon name="hero-folder-open" class="size-5 text-primary" /> Open Another Project
+              </h3>
+              <button class="btn btn-sm btn-ghost" phx-click="hide_open_project_form">
+                <.icon name="hero-x-mark" class="size-4" /> Cancel
+              </button>
+            </div>
+            <.form for={%{}} phx-submit="open_project" class="flex gap-3">
+              <div class="relative flex-1">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                  <.icon name="hero-folder" class="size-5" />
+                </div>
+                <input
+                  type="text"
+                  name="path"
+                  class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
+                  placeholder="/path/to/another/repo"
+                  autofocus
+                />
+              </div>
+              <button type="submit" class="btn btn-primary">
+                <.icon name="hero-folder-open" class="size-5" /> Open
+              </button>
+            </.form>
           </div>
-        <% else %>
-          <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
-            <EvoDashWeb.DashboardComponents.task_card
-              task={task}
-              show_details={MapSet.member?(@expanded_task_ids, task.id)}
-            />
-          <% end %>
         <% end %>
-      </div>
+
+        <div class="mb-8">
+          <EvoDashWeb.DashboardComponents.task_form
+            prompt={@task_prompt}
+            mode={@task_mode}
+            mode_info={@task_mode_info}
+            concurrency={@task_concurrency}
+            retries={@task_retries}
+            agent_max_retries={@task_agent_max_retries}
+          />
+        </div>
+
+        <div class="divider">Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %></div>
+
+        <div class="space-y-4">
+          <%= if @tasks == [] do %>
+            <div class="text-center py-12 text-base-content/50">
+              <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
+              <p>No tasks for this project yet. Start by creating a new task above.</p>
+            </div>
+          <% else %>
+            <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
+              <EvoDashWeb.DashboardComponents.task_card
+                task={task}
+                show_details={MapSet.member?(@expanded_task_ids, task.id)}
+              />
+            <% end %>
+          <% end %>
+        </div>
+      <% else %>
+        <!-- No Active Project State -->
+        <div class="mt-6 mb-8">
+          <EvoDashWeb.DashboardComponents.open_project_form path="" />
+        </div>
+
+        <div class="divider">All Tasks</div>
+        <p class="text-sm text-base-content/50 mb-4 text-center">Open a project to filter tasks</p>
+
+        <div class="space-y-4">
+          <%= if @tasks == [] do %>
+            <div class="text-center py-12 text-base-content/50">
+              <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
+              <p>No tasks yet. Open a project to get started.</p>
+            </div>
+          <% else %>
+            <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
+              <EvoDashWeb.DashboardComponents.task_card
+                task={task}
+                show_details={MapSet.member?(@expanded_task_ids, task.id)}
+              />
+            <% end %>
+          <% end %>
+        </div>
+      <% end %>
     </div>
 
     <!-- Full Result Modal -->
@@ -197,6 +261,9 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:expanded_task_ids, MapSet.new())
       |> assign(:selected_result, nil)
       |> assign(:selected_options, nil)
+      |> assign(:projects, %{})
+      |> assign(:active_project, nil)
+      |> assign(:show_open_project_form, false)
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -204,8 +271,107 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_info(:refresh_tasks, socket) do
-    new_tasks = TaskRegistry.list_tasks()
+    new_tasks =
+      if socket.assigns.active_project do
+        TaskRegistry.list_tasks_by_path(socket.assigns.active_project)
+      else
+        TaskRegistry.list_tasks()
+      end
+
     {:noreply, assign(socket, :tasks, new_tasks)}
+  end
+
+  @impl true
+  def handle_event("open_project", %{"path" => path}, socket) do
+    expanded = Path.expand(path)
+
+    if File.dir?(expanded) do
+      project = %{path: expanded, name: Path.basename(expanded)}
+      projects = Map.put(socket.assigns.projects, expanded, project)
+      mode = detect_mode(expanded)
+      mode_info = mode_info_message(mode)
+
+      tasks = TaskRegistry.list_tasks_by_path(expanded)
+
+      {:noreply,
+       socket
+       |> assign(:projects, projects)
+       |> assign(:active_project, expanded)
+       |> assign(:tasks, tasks)
+       |> assign(:task_mode, mode)
+       |> assign(:task_mode_info, mode_info)
+       |> assign(:show_open_project_form, false)
+       |> put_flash(:info, mode_info)}
+    else
+      {:noreply,
+       socket
+       |> assign(:show_open_project_form, false)
+       |> put_flash(:error, "Directory does not exist: #{path}")}
+    end
+  end
+
+  @impl true
+  def handle_event("switch_project", %{"path" => path}, socket) do
+    mode = detect_mode(path)
+    mode_info = mode_info_message(mode)
+    tasks = TaskRegistry.list_tasks_by_path(path)
+
+    {:noreply,
+     socket
+     |> assign(:active_project, path)
+     |> assign(:tasks, tasks)
+     |> assign(:task_mode, mode)
+     |> assign(:task_mode_info, mode_info)}
+  end
+
+  @impl true
+  def handle_event("close_project", %{"path" => path}, socket) do
+    projects = Map.delete(socket.assigns.projects, path)
+
+    {active_project, tasks} =
+      if socket.assigns.active_project == path do
+        case Map.keys(projects) do
+          [next | _] ->
+            {next, TaskRegistry.list_tasks_by_path(next)}
+
+          [] ->
+            {nil, TaskRegistry.list_tasks()}
+        end
+      else
+        {socket.assigns.active_project, socket.assigns.tasks}
+      end
+
+    mode =
+      if active_project do
+        detect_mode(active_project)
+      else
+        "genesis_new"
+      end
+
+    mode_info =
+      if active_project do
+        mode_info_message(mode)
+      else
+        ""
+      end
+
+    {:noreply,
+     socket
+     |> assign(:projects, projects)
+     |> assign(:active_project, active_project)
+     |> assign(:tasks, tasks)
+     |> assign(:task_mode, mode)
+     |> assign(:task_mode_info, mode_info)}
+  end
+
+  @impl true
+  def handle_event("show_open_project", _params, socket) do
+    {:noreply, assign(socket, :show_open_project_form, true)}
+  end
+
+  @impl true
+  def handle_event("hide_open_project_form", _params, socket) do
+    {:noreply, assign(socket, :show_open_project_form, false)}
   end
 
   @impl true
@@ -214,7 +380,6 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:task_mode, params["mode"] || socket.assigns.task_mode)
      |> assign(:task_prompt, params["prompt"] || socket.assigns.task_prompt)
-     |> assign(:task_path, params["path"] || socket.assigns.task_path)
      |> assign(:task_concurrency, params["concurrency"] || socket.assigns.task_concurrency)
      |> assign(:task_retries, params["retries"] || socket.assigns.task_retries)
      |> assign(:task_agent_max_retries, params["agent_max_retries"] || socket.assigns.task_agent_max_retries)}
@@ -224,7 +389,6 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event(
         "task_submit",
         %{
-          "path" => path,
           "prompt" => prompt,
           "mode" => combined_mode,
           "concurrency" => concurrency,
@@ -233,44 +397,49 @@ defmodule EvoDashWeb.DashboardLive do
         },
         socket
       ) do
-    {task_type, mode} =
-      case combined_mode do
-        "genesis_new" -> {:genesis, "new"}
-        "genesis_existing" -> {:genesis, "existing"}
-        "evolve_simple" -> {:evolve, "simple"}
-        "evolve_complex" -> {:evolve, "complex"}
+    path = socket.assigns.active_project
+
+    if is_nil(path) do
+      {:noreply, put_flash(socket, :error, "No project selected. Please open a project first.")}
+    else
+      {task_type, mode} =
+        case combined_mode do
+          "genesis_new" -> {:genesis, "new"}
+          "genesis_existing" -> {:genesis, "existing"}
+          "evolve_simple" -> {:evolve, "simple"}
+          "evolve_complex" -> {:evolve, "complex"}
+        end
+
+      opts = [
+        path: path,
+        mode: mode,
+        concurrency: String.to_integer(concurrency),
+        retries: String.to_integer(retries),
+        agent_max_retries: String.to_integer(agent_max_retries)
+      ]
+
+      opts =
+        if task_type == :genesis do
+          Keyword.put(opts, :prompt, prompt)
+        else
+          Keyword.put(opts, :objective, prompt)
+        end
+
+      case TaskRegistry.start_task(task_type, opts) do
+        {:ok, task} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}")
+           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
+           |> assign(:task_prompt, prompt)
+           |> assign(:task_mode, combined_mode)
+           |> assign(:task_concurrency, concurrency)
+           |> assign(:task_retries, retries)
+           |> assign(:task_agent_max_retries, agent_max_retries)}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
       end
-
-    opts = [
-      path: path,
-      mode: mode,
-      concurrency: String.to_integer(concurrency),
-      retries: String.to_integer(retries),
-      agent_max_retries: String.to_integer(agent_max_retries)
-    ]
-
-    opts =
-      if task_type == :genesis do
-        Keyword.put(opts, :prompt, prompt)
-      else
-        Keyword.put(opts, :objective, prompt)
-      end
-
-    case TaskRegistry.start_task(task_type, opts) do
-      {:ok, task} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}")
-         |> assign(:tasks, TaskRegistry.list_tasks())
-         |> assign(:task_path, path)
-         |> assign(:task_prompt, prompt)
-         |> assign(:task_mode, combined_mode)
-         |> assign(:task_concurrency, concurrency)
-         |> assign(:task_retries, retries)
-         |> assign(:task_agent_max_retries, agent_max_retries)}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
     end
   end
 
@@ -282,7 +451,7 @@ defmodule EvoDashWeb.DashboardLive do
 
         {:noreply,
          socket
-         |> assign(:tasks, TaskRegistry.list_tasks())
+         |> assign(:tasks, current_tasks(socket))
          |> assign(:expanded_task_ids, expanded)}
 
       {:error, reason} ->
@@ -327,13 +496,49 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply, assign(socket, :selected_options, nil)}
   end
 
+  # Helpers
+
   defp assign_form_defaults(socket) do
     socket
-    |> assign(:task_path, File.cwd!())
     |> assign(:task_prompt, "")
     |> assign(:task_mode, "genesis_new")
+    |> assign(:task_mode_info, "")
     |> assign(:task_concurrency, to_string(EvoGit.Defaults.max_concurrency()))
     |> assign(:task_retries, to_string(EvoGit.Defaults.max_retries()))
     |> assign(:task_agent_max_retries, to_string(EvoGit.Defaults.agent_max_retries()))
   end
+
+  defp current_tasks(socket) do
+    if socket.assigns.active_project do
+      TaskRegistry.list_tasks_by_path(socket.assigns.active_project)
+    else
+      TaskRegistry.list_tasks()
+    end
+  end
+
+  defp detect_mode(path) do
+    path = Path.expand(path)
+
+    cond do
+      new_codebase?(path) -> "genesis_new"
+      not File.exists?(Path.join(path, "CONTEXT.md")) -> "genesis_existing"
+      true -> "evolve_simple"
+    end
+  end
+
+  defp new_codebase?(path) do
+    files =
+      case File.ls(path) do
+        {:ok, items} -> items -- [".git", "README.md", ".evogit", ".gitignore"]
+        _ -> []
+      end
+
+    Enum.empty?(files)
+  end
+
+  defp mode_info_message("genesis_new"), do: "Empty directory detected — New Codebase mode selected"
+  defp mode_info_message("genesis_existing"), do: "No CONTEXT.md found — Existing Codebase mode selected"
+  defp mode_info_message("evolve_simple"), do: "Context tree detected — Simple (Top-down) mode selected"
+  defp mode_info_message("evolve_complex"), do: "Context tree detected — Complex (Bottom-up) mode selected"
+  defp mode_info_message(_), do: ""
 end

@@ -2,7 +2,9 @@
 
 ## Intent
 
-EvoDash is the **web-based dashboard application** for the EvoGit umbrella project. It provides a real-time browser interface for launching and monitoring EvoGit tasks (genesis and evolve), inspecting the agent tree hierarchy, and viewing task logs — all powered by Phoenix LiveView with server-push updates.
+EvoDash is the **web-based dashboard application** for the EvoGit umbrella project. It provides a **project-based** real-time browser interface for launching and monitoring EvoGit tasks (genesis and evolve), inspecting the agent tree hierarchy, and viewing task logs — all powered by Phoenix LiveView with server-push updates.
+
+Users open a **Project** (a Git repository path), and the dashboard auto-detects the appropriate task mode based on the project state (empty directory, existing codebase with/without CONTEXT.md). Multiple projects can be open simultaneously with tab-based navigation.
 
 This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibling `:evo_git` application for all evolutionary code generation runtime operations.
 
@@ -32,14 +34,14 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 | Module | Route | Purpose |
 |--------|-------|---------|
-| `EvoDashWeb.DashboardLive` | `GET /` | Task launcher (genesis/evolve forms) + running task cards with logs |
+| `EvoDashWeb.DashboardLive` | `GET /` | Project-based task dashboard: open project tabs, auto-mode detection, task form, task cards with logs |
 | `EvoDashWeb.AgentsLive` | `GET /agents` | Recursive agent tree inspector with detail panels |
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 | Module | Purpose |
 |--------|---------|
 | `CoreComponents` | Phoenix 1.8 base components (header, flash, button, icon, input, table, theme_toggle) |
-| `DashboardComponents` | `genesis_form`, `evolve_form`, `task_card` with status badges and logs |
+| `DashboardComponents` | `project_tabs` (multi-project tab bar), `open_project_form` (landing path input), `task_form` (mode-aware, auto-detected), `task_card` with status badges and logs |
 | `AgentsComponents` | `agent_tree` — recursive tree with connector lines and status coloring |
 | `Layouts` | Root HTML layout with theme persistence and flash group |
 
@@ -59,11 +61,13 @@ Minimal coverage: controller tests (PageController, error handlers) via `EvoDash
 ```
 Browser ←→ Endpoint ←→ Router
                           ├─ DashboardLive ←→ TaskRegistry ←→ EvoGit.Runtime.Genesis / Evolution
+                          │   (project tabs, auto-mode, filtered task list)
                           └─ AgentsLive     ←→ (agent tree from EvoGit runtime)
 ```
 
 - `TaskRegistry.start_task(:genesis, opts)` spawns a linked process calling `EvoGit.Runtime.Genesis.run/2`
 - `TaskRegistry.start_task(:evolve, opts)` spawns a linked process calling `EvoGit.Runtime.Evolution.run/2`
+- `TaskRegistry.list_tasks_by_path(path)` filters tasks by project repo path
 - Task logs are piped back via `event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}`
 - LiveViews poll TaskRegistry on timers (1s for dashboard, 500ms for agents)
 
@@ -73,7 +77,7 @@ Browser ←→ Endpoint ←→ Router
 - **Port**: Runs on port **4100** in development
 - **Adapter**: Uses **Bandit** (not Cowboy) as the HTTP adapter
 - **CSS framework**: Tailwind CSS 4 + DaisyUI (no Node.js toolchain; vendor files managed manually)
-- **No database**: All task state is in-memory (ETS); lost on restart
+- **No database**: All task state is in-memory (ETS); project state is in LiveView socket assigns — lost on page reload
 - **Single-node**: DNSCluster configured but no distributed clustering logic yet
 - **Naming conventions**:
   - Domain modules: `./lib/evo_dash/<module>.ex`

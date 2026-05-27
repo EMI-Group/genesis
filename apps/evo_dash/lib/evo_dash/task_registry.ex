@@ -67,6 +67,18 @@ defmodule EvoDash.TaskRegistry do
     GenServer.cast(__MODULE__, {:append_log, task_id, log_entry})
   end
 
+  def list_tasks_by_path(path) do
+    GenServer.call(__MODULE__, {:list_tasks_by_path, path})
+  end
+
+  def get_unique_paths do
+    GenServer.call(__MODULE__, :get_unique_paths)
+  end
+
+  def delete_task(task_id) do
+    GenServer.cast(__MODULE__, {:delete_task, task_id})
+  end
+
   ## Server Callbacks
 
   @impl true
@@ -145,6 +157,31 @@ defmodule EvoDash.TaskRegistry do
   end
 
   @impl true
+  def handle_call({:list_tasks_by_path, path}, _from, state) do
+    expanded = Path.expand(path)
+
+    tasks =
+      :ets.tab2list(@table_name)
+      |> Enum.filter(fn {_id, task} ->
+        task.opts[:path] && Path.expand(task.opts[:path]) == expanded
+      end)
+      |> Enum.map(fn {_id, task} -> task end)
+
+    {:reply, tasks, state}
+  end
+
+  @impl true
+  def handle_call(:get_unique_paths, _from, state) do
+    paths =
+      :ets.tab2list(@table_name)
+      |> Enum.map(fn {_id, task} -> task.opts[:path] end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    {:reply, paths, state}
+  end
+
+  @impl true
   def handle_cast({:update_status, task_id, status, result}, state) do
     case :ets.lookup(@table_name, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
@@ -169,6 +206,12 @@ defmodule EvoDash.TaskRegistry do
         :ok
     end
 
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:delete_task, task_id}, state) do
+    :ets.delete(@table_name, task_id)
     {:noreply, state}
   end
 

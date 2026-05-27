@@ -27,9 +27,12 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 | `start_task(task_type, opts)` | Starts a `:genesis` or `:evolve` task; spawns a linked process running `EvoGit.Runtime.Genesis.run/2` or `EvoGit.Runtime.Evolution.run/2`. Returns `{:ok, task}`. |
 | `get_task(task_id)` | Retrieves a single task by ID. |
 | `list_tasks()` | Returns all tracked tasks. |
+| `list_tasks_by_path(path)` | Returns tasks filtered by repo path (path-expanded for consistent comparison). |
+| `get_unique_paths()` | Returns list of unique repo paths across all tasks. |
 | `cancel_task(task_id)` | Kills the task process and marks it `:cancelled`. |
 | `update_task_status(task_id, status, result \\ nil)` | Casts a status update (`:running`/`:completed`/`:failed`/`:cancelled`). |
 | `update_task_log(task_id, log_entry)` | Appends a log entry (prepending) to the task's log list. |
+| `delete_task(task_id)` | Removes a task from the ETS table. |
 
 **Task execution:**
 - Extracts options: `path`, `prompt`/`objective`, `mode`, `concurrency`, `retries`, `agent_max_retries`.
