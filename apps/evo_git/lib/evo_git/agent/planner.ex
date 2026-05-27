@@ -13,7 +13,8 @@ defmodule EvoGit.Agent.Planner do
   def subagent_tool_name, do: "subagent_planner"
 
   def subagent_tool_description do
-    "[Subagent] Plans and orchestrates multi-step code changes for top-down evolution."
+    "[Subagent] A planning and orchestration agent that breaks down objectives into logical steps and coordinates their execution. " <>
+      "Call this subagent when you need to plan and execute complex, multi-step code changes."
   end
 
   def subagent_modules do
@@ -72,7 +73,7 @@ defmodule EvoGit.Agent.Planner do
     - Review the result
     - Then spawn executor for step B
 
-    You can spawn independent steps in parallel by calling multiple `subagent_executor` tools in a single function call.
+    You can spawn independent steps in parallel by calling multiple `subagent_executor` tools in a single response.
 
     ## Commit Discipline
 

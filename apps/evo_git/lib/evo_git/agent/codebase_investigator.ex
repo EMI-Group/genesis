@@ -59,7 +59,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
     - For large, complex investigations, delegate focused subagents to investigate other specific areas or subdirectories.
       Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be investigated.
       If you need to investigate a historical state of the codebase, you can also spawn a subagent with an optional commit SHA or branch name parameter, and the subagent will check out that state in a temporary workspace to perform the investigation.
-    - If there are no dependency constraints, always prefer spawning subagents in parallel, there is no limit in concurrency for subagents.
+    - If there are no dependency constraints, always prefer spawning subagents in parallel. There is no limit on concurrency for subagents.
     - You can run tools, including subagents in parallel, to efficiently gather information.
     - When you discover important structural information about a directory (its purpose, API surface,
       or constraints) that is missing in the context, update the directory's CONTEXT.md using `write_context`. This persists
@@ -69,8 +69,8 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
 
     ## Example
 
-    ### Example 1: investigate the "API of the database access layer" of an application, and you're in the root `./` directory:
-    1. Check your current context tree and identify the relevant directory node(s), use relevant tools (e.g. list_dir, search_context, search_history) to search for relevant files.
+    ### Example 1: Investigate the "API of the database access layer" of an application, and you are in the root `./` directory:
+    1. Check your current context tree and identify the relevant directory node(s). Use relevant tools (e.g., list_dir, search_context, search_history) to search for relevant files.
     2. Let's say you find some relevant files, `lib/app/db/repo.py`, `lib/app/db/models.py`, `docs/db/access.md` and `docs/db/connection.md`.
       - If you are very certain that these files directly contain the information you need, then you can read them directly and extract the information you need.
       - If you are uncertain, you can spawn two subagents with more focused objectives:
@@ -78,7 +78,7 @@ defmodule EvoGit.Agent.CodebaseInvestigator do
         - Subagent 2 in path `./docs/db` with the objective "Investigate the documentation related to database access".
     3. Summarize your findings and call `complete_task` with the report.
 
-    ### Example 2: investigate "Modules and functions that use the function `user_auth(user_id)`"
+    ### Example 2: Investigate "Modules and functions that use the function `user_auth(user_id)`"
     1. Run `rg` tool to search for `user_auth(...)` in your assigned node, but there is zero match.
     2. Try `rg` again to search for `user_auth` without the args, again zero match.
     3. Immediately return with a short message "No module or function in this directory calls `user_auth`" because there is no relevant information in your assigned node.
