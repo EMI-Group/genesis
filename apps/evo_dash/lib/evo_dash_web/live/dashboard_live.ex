@@ -32,6 +32,36 @@ defmodule EvoDashWeb.DashboardLive do
           />
         </div>
 
+        <%= if @show_open_project_form do %>
+          <div class="mb-8 bg-base-200/50 rounded-xl p-6 border border-base-200">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-lg font-semibold flex items-center gap-2">
+                <.icon name="hero-folder-open" class="size-5 text-primary" /> Open Another Project
+              </h3>
+              <button class="btn btn-sm btn-ghost" phx-click="hide_open_project_form">
+                <.icon name="hero-x-mark" class="size-4" /> Cancel
+              </button>
+            </div>
+            <.form for={%{}} phx-submit="open_project" class="flex gap-3">
+              <div class="relative flex-1">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                  <.icon name="hero-folder" class="size-5" />
+                </div>
+                <input
+                  type="text"
+                  name="path"
+                  class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
+                  placeholder="/path/to/another/repo"
+                  autofocus
+                />
+              </div>
+              <button type="submit" class="btn btn-primary">
+                <.icon name="hero-folder-open" class="size-5" /> Open
+              </button>
+            </.form>
+          </div>
+        <% end %>
+
         <div class="mb-8">
           <EvoDashWeb.DashboardComponents.task_form
             prompt={@task_prompt}
@@ -233,6 +263,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:selected_options, nil)
       |> assign(:projects, %{})
       |> assign(:active_project, nil)
+      |> assign(:show_open_project_form, false)
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -269,9 +300,13 @@ defmodule EvoDashWeb.DashboardLive do
        |> assign(:tasks, tasks)
        |> assign(:task_mode, mode)
        |> assign(:task_mode_info, mode_info)
+       |> assign(:show_open_project_form, false)
        |> put_flash(:info, mode_info)}
     else
-      {:noreply, put_flash(socket, :error, "Directory does not exist: #{path}")}
+      {:noreply,
+       socket
+       |> assign(:show_open_project_form, false)
+       |> put_flash(:error, "Directory does not exist: #{path}")}
     end
   end
 
@@ -331,11 +366,12 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("show_open_project", _params, socket) do
-    # This event is handled client-side via the project_tabs component's button.
-    # For now, we just acknowledge it — the open_project_form is shown when no project is active.
-    # When a project IS active, we could show a modal, but per the spec, the button in project_tabs
-    # simply triggers this event. We'll scroll to top or handle as needed.
-    {:noreply, socket}
+    {:noreply, assign(socket, :show_open_project_form, true)}
+  end
+
+  @impl true
+  def handle_event("hide_open_project_form", _params, socket) do
+    {:noreply, assign(socket, :show_open_project_form, false)}
   end
 
   @impl true
