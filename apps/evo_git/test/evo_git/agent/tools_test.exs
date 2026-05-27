@@ -33,7 +33,9 @@ defmodule EvoGit.Agent.ToolsTest do
       file_path = Path.join(tmp_dir, "test.txt")
       File.write!(file_path, "hello world")
 
-      result = Tools.execute("read_file", %{"file_path" => "test.txt", "line_numbers" => false}, tmp_dir)
+      result =
+        Tools.execute("read_file", %{"file_path" => "test.txt", "line_numbers" => false}, tmp_dir)
+
       refute result =~ "1\thello world"
       assert result =~ "hello world"
     end
@@ -153,7 +155,12 @@ defmodule EvoGit.Agent.ToolsTest do
     end
 
     test "creates multiple directories", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("make_dir", %{"paths" => ["lib", "test", "config"], "commit" => false}, tmp_dir)
+      result =
+        Tools.execute(
+          "make_dir",
+          %{"paths" => ["lib", "test", "config"], "commit" => false},
+          tmp_dir
+        )
 
       assert result =~ "Successfully created 3 directories"
 
@@ -163,7 +170,12 @@ defmodule EvoGit.Agent.ToolsTest do
     end
 
     test "creates .gitkeep when specified", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("make_dir", %{"paths" => ["lib"], "keep_file" => ".gitkeep", "commit" => false}, tmp_dir)
+      result =
+        Tools.execute(
+          "make_dir",
+          %{"paths" => ["lib"], "keep_file" => ".gitkeep", "commit" => false},
+          tmp_dir
+        )
 
       assert result =~ "Successfully created 1 directory"
 
@@ -172,7 +184,12 @@ defmodule EvoGit.Agent.ToolsTest do
     end
 
     test "creates no placeholder file when keep_file is none", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("make_dir", %{"paths" => ["lib"], "keep_file" => "none", "commit" => false}, tmp_dir)
+      result =
+        Tools.execute(
+          "make_dir",
+          %{"paths" => ["lib"], "keep_file" => "none", "commit" => false},
+          tmp_dir
+        )
 
       assert result =~ "Successfully created 1 directory"
 
@@ -182,7 +199,8 @@ defmodule EvoGit.Agent.ToolsTest do
     end
 
     test "creates nested directories by default", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("make_dir", %{"paths" => ["lib/core/utils"], "commit" => false}, tmp_dir)
+      result =
+        Tools.execute("make_dir", %{"paths" => ["lib/core/utils"], "commit" => false}, tmp_dir)
 
       assert result =~ "Successfully created 1 directory"
 
@@ -213,7 +231,8 @@ defmodule EvoGit.Agent.ToolsTest do
       System.cmd("git", ["add", "README.md"], cd: tmp_dir)
       System.cmd("git", ["commit", "-m", "init commit"], cd: tmp_dir)
 
-      result = Tools.execute("make_dir", %{"paths" => ["lib"], "commit" => true}, tmp_dir, tmp_dir)
+      result =
+        Tools.execute("make_dir", %{"paths" => ["lib"], "commit" => true}, tmp_dir, tmp_dir)
 
       assert result =~ "Successfully created"
       assert result =~ "Changes committed"
@@ -310,7 +329,14 @@ defmodule EvoGit.Agent.ToolsTest do
       File.mkdir_p!(dir_path)
 
       # Pass repo_root as tmp_dir as well so that systemd-run has access to .git
-      result = Tools.execute("write_context", %{"dir_path" => "lib", "content" => "new context", "commit" => true}, tmp_dir, tmp_dir)
+      result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => "lib", "content" => "new context", "commit" => true},
+          tmp_dir,
+          tmp_dir
+        )
+
       assert result =~ "Successfully updated CONTEXT.md for directory 'lib'"
       assert result =~ "Committed:"
 
@@ -360,7 +386,7 @@ defmodule EvoGit.Agent.ToolsTest do
         )
 
       assert result =~ "Error creating directory"
-      assert result =~ "file already exists"
+      assert result =~ "not a directory"
     end
   end
 
