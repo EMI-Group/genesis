@@ -659,15 +659,42 @@ defmodule EvoGit.Agent do
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         parent_commit = agent_state.phylo_node.current_commit
 
-        successful_shas =
-          for {:ok, %{commit_sha: sha}} <- results, is_binary(sha), do: sha
+        # Separate same-repo and cross-repo results
+        # Cross-repo subagents commit to their own repo, no merge needed into parent
+        {same_repo_shas, cross_repo_count} =
+          Enum.reduce(Enum.zip(subagent_specs, results), {[], 0}, fn {spec, result}, {shas, count} ->
+            case result do
+              {:ok, %{commit_sha: sha}} when is_binary(sha) ->
+                if spec.repo_id == :primary do
+                  {[sha | shas], count}
+                else
+                  {shas, count + 1}
+                end
+
+              _ ->
+                {shas, count}
+            end
+          end)
+
+        successful_shas = Enum.reverse(same_repo_shas)
 
         repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
-        # Skip merge if no subagents returned successful commits
+        cross_repo_note =
+          if cross_repo_count > 0 do
+            "\nSystem Note: #{cross_repo_count} cross-repo subagent(s) completed. Their changes are in foreign repo worktrees (not merged here)."
+          else
+            ""
+          end
+
+        # Skip merge if no same-repo subagents returned successful commits
         merge_message =
           if successful_shas == [] do
-            nil
+            if cross_repo_count > 0 do
+              cross_repo_note
+            else
+              nil
+            end
           else
             case EvoGit.Adapters.Git.merge_octopus(repo_path, successful_shas) do
               {:ok, output} ->
@@ -677,16 +704,16 @@ defmodule EvoGit.Agent do
                     # No changes - all subagents returned the same commit
                     nil
 
-                  {:ok, new_commit} ->
+                  {:ok, _new_commit} ->
                     """
-                    System Note: Successfully auto-merged changes from subagents.
+                    System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
                     Merge output:
                     #{output}
                     """
 
                   _error ->
                     """
-                    System Note: Successfully auto-merged changes from subagents.
+                    System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
                     Merge output:
                     #{output}
                     """
@@ -698,7 +725,7 @@ defmodule EvoGit.Agent do
                 conflict_files_list = Enum.join(files, "\n")
 
                 """
-                System Note: Auto-merging subagent changes resulted in conflicts.
+                System Note: Auto-merging subagent changes resulted in conflicts.#{cross_repo_note}
                 Merge output:
                 #{output}
 
@@ -708,22 +735,22 @@ defmodule EvoGit.Agent do
 
               {:error, code, output} ->
                 """
-                System Note: Failed to auto-merge subagent changes (exit code #{code}).
+                System Note: Failed to auto-merge subagent changes (exit code #{code}).#{cross_repo_note}
                 Merge output:
                 #{output}
                 """
             end
           end
 
-        # Remove the branches created for subagents now that they're merged
-        successful_branches =
-          Enum.map(results, fn
-            {:ok, %{branch: branch}} when is_binary(branch) -> branch
-            _ -> nil
+        # Only delete branches for same-repo subagents
+        same_repo_branches =
+          Enum.zip(subagent_specs, results)
+          |> Enum.filter(fn {spec, result} ->
+            spec.repo_id == :primary and match?({:ok, %{branch: _}}, result)
           end)
-          |> Enum.reject(&is_nil/1)
+          |> Enum.map(fn {_, {:ok, %{branch: branch}}} -> branch end)
 
-        Enum.each(successful_branches, fn branch ->
+        Enum.each(same_repo_branches, fn branch ->
           EvoGit.Adapters.Git.delete_branch(repo_path, branch)
         end)
 
@@ -740,30 +767,42 @@ defmodule EvoGit.Agent do
       end
 
       defp build_subagent_specs(indexed_calls, state) do
+        {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
+        parent_repo_id = parent_state.repo_id
+
+        # Get all registered repos for path resolution
+        foreign_repos = EvoGit.AgentScheduler.get_foreign_repos()
+
         Enum.map(indexed_calls, fn {call, _index} ->
           mod = subagent_module_for(call.name)
-          {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
-
-          raw_path =
-            Map.get(call.arguments, "path") |> EvoGit.Core.ContextNode.normalize_relpath()
-
-          # If the LLM passed a file path, use its parent directory instead
-          path =
-            if File.regular?(Path.join(parent_state.phylo_node.repo, raw_path)) do
-              raw_path
-              |> Path.dirname()
-              |> EvoGit.Core.ContextNode.normalize_relpath()
-            else
-              raw_path
-            end
-
+          raw_path = Map.get(call.arguments, "path")
           objective = Map.get(call.arguments, "objective")
           commit_id = Map.get(call.arguments, "commit_id")
 
-          sub_context_node =
-            EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
+          # Determine if this is a cross-repo delegation (absolute path) or same-repo (relative)
+          {target_repo_id, target_repo_root, resolved_rel_path} =
+            resolve_subagent_path(raw_path, parent_state, foreign_repos)
 
-          # Use specified commit_id, or default to current commit
+          # If the LLM passed a file path, use its parent directory instead
+          path =
+            if File.regular?(Path.join(target_repo_root, resolved_rel_path)) do
+              resolved_rel_path
+              |> Path.dirname()
+              |> EvoGit.Core.ContextNode.normalize_relpath()
+            else
+              resolved_rel_path
+            end
+
+          # Load context node with the target repo_id
+          sub_context_node =
+            if target_repo_id == :primary do
+              EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
+            else
+              # For foreign repos, use the foreign repo root as the base
+              EvoGit.Core.ContextNode.load(path, target_repo_root, target_repo_id)
+            end
+
+          # Use specified commit_id, or default to current commit (only meaningful for primary repo)
           base_commit = commit_id || parent_state.phylo_node.current_commit
 
           sub_phylo_node = %EvoGit.Core.PhyloGraphNode{
@@ -772,8 +811,30 @@ defmodule EvoGit.Agent do
             current_commit: base_commit
           }
 
-          EvoGit.AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective)
+          EvoGit.AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
+            repo_id: target_repo_id
+          )
         end)
+      end
+
+      defp resolve_subagent_path(raw_path, parent_state, foreign_repos) do
+        if EvoGit.Core.ForeignRepo.absolute_path?(raw_path) do
+          # Absolute path — resolve to the correct foreign repo
+          case EvoGit.Core.ForeignRepo.resolve_path(foreign_repos, raw_path) do
+            {:ok, repo_id, rel_path} ->
+              repo = Enum.find(foreign_repos, &(&1.id == repo_id))
+              {repo_id, repo.root, rel_path}
+
+            {:error, :not_in_any_repo} ->
+              # Not in any known repo — treat as primary, let it fail naturally
+              Logger.warning("Agent: Absolute path '#{raw_path}' not in any known repo, treating as primary")
+              {:primary, parent_state.phylo_node.repo, EvoGit.Core.ContextNode.normalize_relpath(raw_path)}
+          end
+        else
+          # Relative path — same repo as parent
+          normalized = EvoGit.Core.ContextNode.normalize_relpath(raw_path)
+          {:primary, parent_state.phylo_node.repo, normalized}
+        end
       end
 
       defp process_subagent_result(call, index, result, state) do
@@ -1018,7 +1079,10 @@ defmodule EvoGit.Agent do
                 "path" => %{
                   "type" => "string",
                   "description" =>
-                    "The relative path to a DIRECTORY from the repository root where the subagent should operate (e.g., './src/auth', './lib/utils'). MUST be a directory node, NOT a file path. The subagent will operate on all files within this directory."
+                    "The path to a DIRECTORY where the subagent should operate. " <>
+                      "Use a RELATIVE path from the repository root for the current project (e.g., './src/auth', './lib/utils'). " <>
+                      "Use an ABSOLUTE path to delegate to a FOREIGN REPOSITORY configured in evogit.toml " <>
+                      "(e.g., '/Source/original-proj/src'). MUST be a directory node, NOT a file path."
                 },
                 "objective" => %{
                   "type" => "string",
