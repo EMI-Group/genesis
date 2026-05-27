@@ -678,16 +678,10 @@ defmodule EvoGit.Agent do
                     nil
 
                   {:ok, new_commit} ->
-                    diff_stats =
-                      case EvoGit.Adapters.Git.diff_stat(repo_path, parent_commit, new_commit) do
-                        {:ok, stats} when stats != "" -> "\n\n#{stats}"
-                        _ -> ""
-                      end
-
                     """
                     System Note: Successfully auto-merged changes from subagents.
                     Merge output:
-                    #{output}#{diff_stats}
+                    #{output}
                     """
 
                   _error ->
@@ -750,7 +744,8 @@ defmodule EvoGit.Agent do
           mod = subagent_module_for(call.name)
           {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
 
-          raw_path = Map.get(call.arguments, "path") |> EvoGit.Core.ContextNode.normalize_relpath()
+          raw_path =
+            Map.get(call.arguments, "path") |> EvoGit.Core.ContextNode.normalize_relpath()
 
           # If the LLM passed a file path, use its parent directory instead
           path =
