@@ -839,7 +839,7 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Agent Registry ---
 
-  defp register_agent(state, spec, from, parent_id, depth, task_id \\ nil) do
+  defp register_agent(state, spec, from, parent_id, depth, task_id) do
     id = state.next_agent_id
 
     # Resolve event_sink: explicit in opts, inherited from parent, or nil
