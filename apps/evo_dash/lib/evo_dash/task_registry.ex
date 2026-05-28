@@ -367,8 +367,7 @@ defmodule EvoDash.TaskRegistry do
 
   defp load_tasks_from_dets do
     try do
-      @dets_tasks
-      |> :dets.foldl(
+      :dets.foldl(
         fn
           {_key, %TaskInfo{} = task}, acc ->
             # Reset non-persistable fields
@@ -379,7 +378,8 @@ defmodule EvoDash.TaskRegistry do
           _other, acc ->
             acc
         end,
-        :ok
+        :ok,
+        @dets_tasks
       )
     rescue
       error ->
@@ -436,8 +436,7 @@ defmodule EvoDash.TaskRegistry do
 
   defp load_recent_projects_from_dets do
     try do
-      @dets_projects
-      |> :dets.foldl(
+      :dets.foldl(
         fn
           {_path, %{last_opened_at: %DateTime{}} = project}, acc ->
             :ets.insert(@recent_projects_table, {project.path, project})
@@ -446,7 +445,8 @@ defmodule EvoDash.TaskRegistry do
           _other, acc ->
             acc
         end,
-        :ok
+        :ok,
+        @dets_projects
       )
     rescue
       error ->
