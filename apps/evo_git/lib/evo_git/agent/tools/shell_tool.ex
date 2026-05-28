@@ -99,7 +99,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     """
     #{@shell_intro}
     Useful for running scripts, building, testing, git or executing common command-line tools.
-    The current working directory is automatically set to the repo path (the current git worktree path).
+    The current working directory is automatically set to the repo path (the current git worktree path). Do NOT use `cd` — the cwd is already correct.
 
     ## General Guidelines
     STRICT CONSTRAINTS:

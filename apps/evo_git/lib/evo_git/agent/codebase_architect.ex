@@ -29,7 +29,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
       - After that, implement the code based on the established architecture,
       - Finally, review and refine the overall structure and implementation, debug if necessary, and finalize the codebase.
     You only need to focus on the design, structure, and implementation of your assigned node, while any further architectural design for child nodes should be delegated to codebase architect subagents.
-    You are currently working in a worktree, and the current working directory is set to the path of that worktree.
+    You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives.
     IMPORTANT: Since you are working on a new codebase, missing files or APIs are expected. Focus on your assigned node and don't worry about others. If you need something from parent or sibling nodes, just return with a clear message explaining the situation to the user instead of doing it yourself.
 
     ## Context Tree Definition

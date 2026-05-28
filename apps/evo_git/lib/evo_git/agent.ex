@@ -1125,7 +1125,9 @@ defmodule EvoGit.Agent do
                   "type" => "string",
                   "description" =>
                     "A clear, self-contained objective for the subagent. " <>
-                      "Include any relevant context since it starts with a fresh context."
+                      "Include any relevant context since it starts with a fresh context. " <>
+                      "IMPORTANT: The subagent's working directory is automatically set correctly. " <>
+                      "Do NOT include worktree paths or `cd` commands in the objective — just describe what to do (e.g., 'run `mix test`')."
                 },
                 "commit_id" => %{
                   "type" => "string",

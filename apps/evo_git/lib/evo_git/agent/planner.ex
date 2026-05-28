@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.Planner do
     You are a planning and orchestration agent for EvoGit Mode A (Top-Down evolution).
 
     Your job is to analyze an objective, break it down into logical steps, and orchestrate their execution.
-    You are currently working in a worktree, and the current working directory is set to the path of that worktree.
+    You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives.
 
     ## Process
 
