@@ -29,7 +29,7 @@ defmodule EvoDashWeb.Layouts do
 
   attr :current_page, :atom,
     default: nil,
-    doc: "the current page atom (:dashboard, :agents) for active nav highlighting"
+    doc: "the current page atom (:dashboard, :agents, :config_help) for active nav highlighting"
 
   slot :inner_block, required: true
 
@@ -67,6 +67,15 @@ defmodule EvoDashWeb.Layouts do
                 <.icon name="hero-server" class="size-4" /> Agents
               </a>
             </li>
+            <li>
+              <a
+                href="/config-help"
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :config_help && "btn-active"]}
+                aria-current={@current_page == :config_help && "page"}
+              >
+                <.icon name="hero-cog-6-tooth" class="size-4" /> Config
+              </a>
+            </li>
           </ul>
           <div class="divider divider-horizontal mx-1 h-6"></div>
           <.theme_toggle />
@@ -94,6 +103,15 @@ defmodule EvoDashWeb.Layouts do
                 aria-current={@current_page == :agents && "page"}
               >
                 <.icon name="hero-server" class="size-4" /> Agents
+              </a>
+            </li>
+            <li>
+              <a
+                href="/config-help"
+                class={@current_page == :config_help && "active"}
+                aria-current={@current_page == :config_help && "page"}
+              >
+                <.icon name="hero-cog-6-tooth" class="size-4" /> Config Help
               </a>
             </li>
             <li class="mt-2 flex justify-center">
@@ -130,6 +148,7 @@ defmodule EvoDashWeb.Layouts do
     <div id={@id} aria-live="polite">
       <.flash kind={:info} flash={@flash} />
       <.flash kind={:error} flash={@flash} />
+      <.flash kind={:warning} flash={@flash} />
 
       <.flash
         id="client-error"

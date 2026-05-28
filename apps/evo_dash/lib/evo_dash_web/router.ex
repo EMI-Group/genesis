@@ -20,6 +20,7 @@ defmodule EvoDashWeb.Router do
 
     live "/", DashboardLive, :index
     live "/agents", AgentsLive, :index
+    live "/config-help", ConfigHelpLive, :index
     live_dashboard "/dashboard"
   end
 
