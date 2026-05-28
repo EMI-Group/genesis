@@ -14,6 +14,7 @@ defmodule EvoGit.CLI do
           help: :boolean,
           file: :string,
           concurrency: :integer,
+          tool_concurrency: :integer,
           retries: :integer,
           path: :string,
           model: :string,
@@ -44,6 +45,7 @@ defmodule EvoGit.CLI do
     scheduler_opts =
       []
       |> maybe_put(:max_concurrency, opts[:concurrency])
+      |> maybe_put(:max_tool_concurrency, opts[:tool_concurrency])
       |> maybe_put(:max_retries, opts[:retries])
       |> maybe_put(:llm_model, opts[:model])
 
@@ -210,6 +212,7 @@ defmodule EvoGit.CLI do
     Options:
       -f, --file <path>           Read prompt/objective from a file.
       -c, --concurrency <n>       Set number of concurrent workers (default: #{Defaults.max_concurrency()}).
+          --tool-concurrency <n>  Set number of concurrent tool executions (default: #{Defaults.max_tool_concurrency()}).
       -r, --retries <n>           Set max retries for failed agents (default: #{Defaults.agent_max_retries()}).
       -p, --path <path>           Path to the git repository (default: current directory).
       -m, --model <model>         Override the default LLM model (default: #{Defaults.llm_model()}).

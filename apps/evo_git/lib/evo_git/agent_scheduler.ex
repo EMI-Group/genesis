@@ -11,6 +11,7 @@ defmodule EvoGit.AgentScheduler do
   - Spawning and tracking agents (both top-level and subagents)
   - Transitioning agents between :pending, :running, :waiting, and :ready states
   - Lazy reclamation of worktrees from waiting agents when the pool is exhausted
+  - LLM and tool execution slot management with concurrency control and backoff
 
   ## ETS Tables
 
@@ -24,6 +25,20 @@ defmodule EvoGit.AgentScheduler do
   - **`:evogit_sched_meta`** — Owned by the scheduler process. Contains all
     scheduling bookkeeping: status, worktree assignment, task refs, parent/child
     tracking, retry counts, etc. Agents do not write to this table.
+
+  ## Slot Management
+
+  The scheduler manages two independent slot pools:
+
+  - **LLM slots** (`max_concurrency`) — Controls how many agents can make
+    concurrent LLM calls. Includes a global backoff mechanism for rate limit
+    errors (60-second cooldown).
+
+  - **Tool slots** (`max_tool_concurrency`) — Controls how many agents can
+    execute tools concurrently. Simple semaphore without backoff.
+
+  Both slot types use blocking calls — agents wait in queues when no slots
+  are available and are granted slots via `GenServer.reply/2` when freed.
   """
 
   use GenServer
@@ -121,8 +136,8 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Updates scheduler configuration at runtime without restarting the process.
 
-  Accepts a keyword list with any of: `:max_concurrency`, `:agent_max_retries`,
-  `:max_depth`. Only provided keys are updated; others remain unchanged.
+  Accepts a keyword list with any of: `:max_concurrency`, `:max_tool_concurrency`,
+  `:agent_max_retries`, `:max_depth`. Only provided keys are updated; others remain unchanged.
 
   If `:max_concurrency` changes and the worktree pool is already initialized,
   the pool is torn down and will be lazily re-created on the next `run_agent/2`
@@ -201,6 +216,51 @@ defmodule EvoGit.AgentScheduler do
     GenServer.call(__MODULE__, {:repo_root_for, repo_id})
   end
 
+  @doc """
+  Requests an LLM execution slot from the scheduler. Blocks the caller until a slot
+  is available (respects max_concurrency). Returns :ok when granted.
+  """
+  @spec request_llm_slot(pos_integer(), timeout()) :: :ok
+  def request_llm_slot(agent_id, timeout \\ :infinity) do
+    GenServer.call(__MODULE__, {:request_llm_slot, agent_id}, timeout)
+  end
+
+  @doc """
+  Releases an LLM execution slot back to the scheduler. Call this after the LLM
+  call completes (success or failure).
+  """
+  @spec release_llm_slot(pos_integer()) :: :ok
+  def release_llm_slot(agent_id) do
+    GenServer.call(__MODULE__, {:release_llm_slot, agent_id})
+  end
+
+  @doc """
+  Reports an LLM error that should trigger a global backoff period.
+  All agents waiting for LLM slots will be delayed until the backoff expires.
+  """
+  @spec report_llm_error(pos_integer(), atom()) :: :ok
+  def report_llm_error(agent_id, error_type) do
+    GenServer.call(__MODULE__, {:report_llm_error, agent_id, error_type})
+  end
+
+  @doc """
+  Requests a tool execution slot from the scheduler. Blocks the caller until a slot
+  is available (respects max_tool_concurrency). Returns :ok when granted.
+  """
+  @spec request_tool_slot(pos_integer(), timeout()) :: :ok
+  def request_tool_slot(agent_id, timeout \\ :infinity) do
+    GenServer.call(__MODULE__, {:request_tool_slot, agent_id}, timeout)
+  end
+
+  @doc """
+  Releases a tool execution slot back to the scheduler. Call this after tool
+  execution completes.
+  """
+  @spec release_tool_slot(pos_integer()) :: :ok
+  def release_tool_slot(agent_id) do
+    GenServer.call(__MODULE__, {:release_tool_slot, agent_id})
+  end
+
   # --- Server Callbacks ---
 
   @impl true
@@ -223,6 +283,9 @@ defmodule EvoGit.AgentScheduler do
     max_retries =
       Keyword.get(opts, :max_retries, Defaults.max_retries())
 
+    max_tool_concurrency =
+      Keyword.get(opts, :max_tool_concurrency, Defaults.max_tool_concurrency())
+
     {:ok,
      %{
        initialized: false,
@@ -237,7 +300,14 @@ defmodule EvoGit.AgentScheduler do
        next_agent_id: 1,
        running_count: 0,
        ref_to_agent: %{},
-       queue: :queue.new()
+       queue: :queue.new(),
+       llm_slots_available: max_concurrency,
+       llm_waiting: :queue.new(),
+       llm_backoff_until: nil,
+       tool_slots_available: max_tool_concurrency,
+       tool_waiting: :queue.new(),
+       max_tool_concurrency: max_tool_concurrency,
+       next_task_id: 1
      }}
   end
 
@@ -290,8 +360,10 @@ defmodule EvoGit.AgentScheduler do
     # Extract repo_path from the spec's phylo_node
     repo_path = spec.phylo_node.repo
     state = ensure_initialized(state, repo_path)
-    {agent_id, state} = register_agent(state, spec, from, _parent_id = nil, _depth = 0)
-    Logger.info("AgentScheduler: Spawning top-level agent #{agent_id}")
+    task_id = state.next_task_id
+    {agent_id, state} = register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
+    state = %{state | next_task_id: task_id + 1}
+    Logger.info("AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id})")
     state = try_dispatch(state, agent_id)
     {:noreply, state}
   end
@@ -314,6 +386,7 @@ defmodule EvoGit.AgentScheduler do
         |> maybe_update(:max_depth, opts)
         |> maybe_update(:llm_model, opts)
         |> maybe_update(:max_retries, opts)
+        |> maybe_update(:max_tool_concurrency, opts)
 
       # If concurrency changed, tear down the pool so it's lazily re-created
       state =
@@ -325,6 +398,7 @@ defmodule EvoGit.AgentScheduler do
 
       Logger.info(
         "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
+          "max_tool_concurrency: #{state.max_tool_concurrency}, " <>
           "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
       )
 
@@ -338,6 +412,74 @@ defmodule EvoGit.AgentScheduler do
     {:ok, parent} = get_sched_meta(parent_id)
 
     spawn_validated_subagents(parent_id, parent, specs, from, state)
+  end
+
+  # --- LLM and Tool Slot Management ---
+
+  @impl true
+  def handle_call({:request_llm_slot, agent_id}, from, state) do
+    now = System.monotonic_time(:millisecond)
+
+    # Check if we're in a global backoff period
+    if state.llm_backoff_until && now < state.llm_backoff_until do
+      # Still in backoff - queue the request
+      llm_waiting = :queue.in({agent_id, from, state.llm_backoff_until}, state.llm_waiting)
+      {:noreply, %{state | llm_waiting: llm_waiting}}
+    else
+      if state.llm_slots_available > 0 do
+        state = %{state | llm_slots_available: state.llm_slots_available - 1}
+        {:reply, :ok, state}
+      else
+        llm_waiting = :queue.in({agent_id, from, nil}, state.llm_waiting)
+        {:noreply, %{state | llm_waiting: llm_waiting}}
+      end
+    end
+  end
+
+  @impl true
+  def handle_call({:release_llm_slot, _agent_id}, _from, state) do
+    state = %{state | llm_slots_available: min(state.llm_slots_available + 1, state.max_concurrency)}
+    state = grant_pending_llm_slots(state)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:report_llm_error, _agent_id, :rate_limit}, _from, state) do
+    # Set global backoff: 60 seconds from now
+    backoff_until = System.monotonic_time(:millisecond) + 60_000
+    Logger.warning("AgentScheduler: LLM rate limit detected, global backoff until #{backoff_until}")
+
+    # Re-queue all currently waiting agents with the backoff timestamp
+    llm_waiting = update_waiting_with_backoff(state.llm_waiting, backoff_until)
+
+    # Schedule a retry after backoff expires to unstick waiting agents
+    Process.send_after(self(), :retry_llm_waiting, 65_000)
+
+    {:reply, :ok, %{state | llm_backoff_until: backoff_until, llm_waiting: llm_waiting}}
+  end
+
+  @impl true
+  def handle_call({:report_llm_error, _agent_id, _error_type}, _from, state) do
+    # Other error types don't trigger global backoff
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:request_tool_slot, agent_id}, from, state) do
+    if state.tool_slots_available > 0 do
+      state = %{state | tool_slots_available: state.tool_slots_available - 1}
+      {:reply, :ok, state}
+    else
+      tool_waiting = :queue.in({agent_id, from}, state.tool_waiting)
+      {:noreply, %{state | tool_waiting: tool_waiting}}
+    end
+  end
+
+  @impl true
+  def handle_call({:release_tool_slot, _agent_id}, _from, state) do
+    state = %{state | tool_slots_available: min(state.tool_slots_available + 1, state.max_tool_concurrency)}
+    state = grant_pending_tool_slots(state)
+    {:reply, :ok, state}
   end
 
   # --- Subagent-Level Validation and Spawning ---
@@ -381,7 +523,7 @@ defmodule EvoGit.AgentScheduler do
     # Register and spawn valid subagents
     {idx_to_sub_id, state} =
       Enum.map_reduce(valid_specs_with_idx, state, fn {spec, idx}, acc ->
-        {sub_id, acc} = register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1)
+        {sub_id, acc} = register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1, parent.task_id)
         {{idx, sub_id}, acc}
       end)
 
@@ -494,6 +636,13 @@ defmodule EvoGit.AgentScheduler do
 
   defp validate_spawn_spatiality(_parent_type, _parent_path, _child_type, _child_path), do: :ok
 
+  # Retry LLM waiting queue after backoff expiry
+  @impl true
+  def handle_info(:retry_llm_waiting, state) do
+    state = grant_pending_llm_slots(state)
+    {:noreply, state}
+  end
+
   # Task returned a result
   @impl true
   def handle_info({ref, result}, state) when is_reference(ref) do
@@ -577,6 +726,10 @@ defmodule EvoGit.AgentScheduler do
 
     File.rm_rf!(worker_base)
     Git.prune_worktrees(repo_root)
+
+    # Clean up orphaned evogit-agent branches from previous runs
+    clean_orphaned_branches(repo_root)
+
     File.mkdir_p!(worker_base)
 
     {:ok, current_sha} = Git.rev_parse(repo_root)
@@ -686,7 +839,7 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Agent Registry ---
 
-  defp register_agent(state, spec, from, parent_id, depth) do
+  defp register_agent(state, spec, from, parent_id, depth, task_id) do
     id = state.next_agent_id
 
     # Resolve event_sink: explicit in opts, inherited from parent, or nil
@@ -727,6 +880,7 @@ defmodule EvoGit.AgentScheduler do
       status: :pending,
       from: from,
       parent_id: parent_id,
+      task_id: task_id,
       spec: spec
     })
 
@@ -1131,5 +1285,99 @@ defmodule EvoGit.AgentScheduler do
     File.rm_rf!(path)
     Git.prune_worktrees(repo_root)
     Git.delete_branch(repo_root, branch_name)
+  end
+
+  # --- Orphaned Branch Cleanup ---
+
+  defp clean_orphaned_branches(repo_root) do
+    case System.cmd("git", ["branch", "--list", "evogit-agent*"], cd: repo_root) do
+      {output, 0} when is_binary(output) and byte_size(output) > 0 ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.map(&String.trim/1)
+        |> Enum.each(fn branch ->
+          Logger.info("AgentScheduler: Cleaning up orphaned branch #{branch}")
+          Git.delete_branch(repo_root, branch)
+        end)
+
+      _ ->
+        :ok
+    end
+  end
+
+  # --- LLM Slot Helpers ---
+
+  # Grants pending LLM slots that are no longer in backoff
+  defp grant_pending_llm_slots(%{llm_waiting: waiting, llm_slots_available: slots} = state)
+       when slots > 0 do
+    now = System.monotonic_time(:millisecond)
+
+    case :queue.out(waiting) do
+      {{:value, {_agent_id, from}}, rest_waiting} ->
+        # 2-tuple entry: no backoff, grant immediately
+        GenServer.reply(from, :ok)
+        state = maybe_clear_llm_backoff(state)
+        grant_pending_llm_slots(%{state | llm_waiting: rest_waiting, llm_slots_available: slots - 1})
+
+      {{:value, {agent_id, from, backoff_until}}, rest_waiting} ->
+        if backoff_until && now < backoff_until do
+          # Still in backoff - re-enqueue at front of rest and stop processing
+          state = maybe_clear_llm_backoff(state)
+          updated_waiting = :queue.in_r({agent_id, from, backoff_until}, rest_waiting)
+          grant_pending_llm_slots(%{state | llm_waiting: updated_waiting})
+        else
+          # Backoff expired or not set - grant the slot
+          GenServer.reply(from, :ok)
+          state = maybe_clear_llm_backoff(state)
+          grant_pending_llm_slots(%{state | llm_waiting: rest_waiting, llm_slots_available: slots - 1})
+        end
+
+      {:empty, _} ->
+        state
+    end
+  end
+
+  defp grant_pending_llm_slots(state), do: state
+
+  # Clears the global LLM backoff if it has expired
+  defp maybe_clear_llm_backoff(%{llm_backoff_until: backoff_until} = state) do
+    now = System.monotonic_time(:millisecond)
+
+    if backoff_until && now >= backoff_until do
+      Logger.info("AgentScheduler: LLM global backoff expired, resuming normal operations")
+      %{state | llm_backoff_until: nil}
+    else
+      state
+    end
+  end
+
+  # --- Tool Slot Helpers ---
+
+  # Grants pending tool slots
+  defp grant_pending_tool_slots(%{tool_waiting: waiting, tool_slots_available: slots} = state)
+       when slots > 0 do
+    case :queue.out(waiting) do
+      {{:value, {_agent_id, from}}, rest_waiting} ->
+        GenServer.reply(from, :ok)
+        grant_pending_tool_slots(%{state | tool_waiting: rest_waiting, tool_slots_available: slots - 1})
+
+      {:empty, _} ->
+        state
+    end
+  end
+
+  defp grant_pending_tool_slots(state), do: state
+
+  # Updates all waiting LLM entries with a new backoff timestamp
+  defp update_waiting_with_backoff(waiting, backoff_until) do
+    entries = :queue.to_list(waiting)
+
+    updated =
+      Enum.map(entries, fn
+        {agent_id, from, _old_backoff} -> {agent_id, from, backoff_until}
+        {agent_id, from} -> {agent_id, from, backoff_until}
+      end)
+
+    :queue.from_list(updated)
   end
 end
