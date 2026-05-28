@@ -127,7 +127,7 @@ defmodule EvoGit.Config do
     if File.exists?(path) do
       case File.read(path) do
         {:ok, contents} ->
-          case Toml.decode(contents) do
+          case TomlElixir.decode(contents) do
             {:ok, config} ->
               config
 
@@ -157,7 +157,7 @@ defmodule EvoGit.Config do
     if File.exists?(path) do
       case File.read(path) do
         {:ok, contents} ->
-          case Toml.decode(contents) do
+          case TomlElixir.decode(contents) do
             {:ok, creds} ->
               creds
 

@@ -86,7 +86,7 @@ defmodule EvoGit.ProjectConfig do
   end
 
   defp parse_toml(contents, path) do
-    case Toml.decode(contents) do
+    case TomlElixir.decode(contents) do
       {:ok, config} ->
         config
 
