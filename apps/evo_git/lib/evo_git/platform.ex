@@ -115,7 +115,8 @@ defmodule EvoGit.Platform do
   @spec data_dir(String.t()) :: String.t()
   def data_dir(app_name) do
     case os() do
-      :linux ->
+      os when os in [:linux, :unknown] ->
+        # XDG convention (Linux standard; fallback for unknown platforms)
         xdg = System.get_env("XDG_DATA_HOME")
         base = if xdg && xdg != "", do: xdg, else: Path.join(System.user_home!(), ".local/share")
         Path.join(base, app_name)
@@ -127,10 +128,6 @@ defmodule EvoGit.Platform do
         appdata = System.get_env("APPDATA")
         base = if appdata && appdata != "", do: appdata, else: System.user_home!()
         Path.join(base, app_name)
-
-      :unknown ->
-        # Fallback to XDG convention
-        Path.join([System.user_home!(), ".local", "share", app_name])
     end
   end
 
