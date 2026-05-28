@@ -51,7 +51,6 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
-  alias EvoGit.Defaults
 
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
@@ -134,10 +133,12 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Updates scheduler configuration at runtime without restarting the process.
+  Updates scheduler configuration at runtime (session-level override).
 
-  Accepts a keyword list with any of: `:max_concurrency`, `:max_tool_concurrency`,
-  `:agent_max_retries`, `:max_depth`. Only provided keys are updated; others remain unchanged.
+  This is the highest-priority configuration layer. Accepts a keyword list
+  with any of: `:max_concurrency`, `:max_tool_concurrency`,
+  `:agent_max_retries`, `:max_depth`, `:max_retries`, `:llm_model`.
+  Only provided keys are updated; others remain unchanged.
 
   If `:max_concurrency` changes and the worktree pool is already initialized,
   the pool is torn down and will be lazily re-created on the next `run_agent/2`
@@ -149,6 +150,29 @@ defmodule EvoGit.AgentScheduler do
   @spec update_config(keyword()) :: :ok | {:error, :agents_running}
   def update_config(opts) when is_list(opts) do
     GenServer.call(__MODULE__, {:update_config, opts})
+  end
+
+  @doc """
+  Returns the current scheduler configuration as a map.
+
+  Includes all runtime settings (some may have been overridden via `update_config/1`).
+  """
+  @spec get_config() :: map()
+  def get_config do
+    GenServer.call(__MODULE__, :get_config)
+  end
+
+  @doc """
+  Returns the value of a specific scheduler config key.
+
+  ## Example
+
+      AgentScheduler.get_config(:max_concurrency)
+      #=> 3
+  """
+  @spec get_config(atom()) :: term()
+  def get_config(key) when is_atom(key) do
+    GenServer.call(__MODULE__, {:get_config, key})
   end
 
   @doc """
@@ -305,23 +329,23 @@ defmodule EvoGit.AgentScheduler do
     :ets.new(@agent_table, [:named_table, :public, :set, read_concurrency: true])
     :ets.new(@sched_table, [:named_table, :public, :set, read_concurrency: true])
 
-    max_concurrency =
-      Keyword.get(opts, :max_concurrency, Defaults.max_concurrency())
+    config = EvoGit.Config.resolve()
+    scheduler_config = Map.get(config, :scheduler, %{})
 
-    agent_max_retries =
-      Keyword.get(opts, :agent_max_retries, Defaults.agent_max_retries())
+    max_concurrency = Map.get(scheduler_config, :max_concurrency, 3)
+    max_tool_concurrency = Map.get(scheduler_config, :max_tool_concurrency, 2)
+    agent_max_retries = Map.get(scheduler_config, :agent_max_retries, 3)
+    max_depth = Map.get(scheduler_config, :max_agent_depth, 8)
+    max_retries = Map.get(scheduler_config, :max_retries, 15)
+    llm_model = Map.get(config, :llm, %{}) |> Map.get(:model)
 
-    max_depth =
-      Keyword.get(opts, :max_depth, Defaults.max_agent_depth())
-
-    llm_model =
-      Keyword.get(opts, :llm_model, Defaults.llm_model())
-
-    max_retries =
-      Keyword.get(opts, :max_retries, Defaults.max_retries())
-
-    max_tool_concurrency =
-      Keyword.get(opts, :max_tool_concurrency, Defaults.max_tool_concurrency())
+    # Allow opts to override (for backward compat with CLI --flags)
+    max_concurrency = Keyword.get(opts, :max_concurrency, max_concurrency)
+    max_tool_concurrency = Keyword.get(opts, :max_tool_concurrency, max_tool_concurrency)
+    agent_max_retries = Keyword.get(opts, :agent_max_retries, agent_max_retries)
+    max_depth = Keyword.get(opts, :max_depth, max_depth)
+    max_retries = Keyword.get(opts, :max_retries, max_retries)
+    llm_model = Keyword.get(opts, :llm_model, llm_model)
 
     {:ok,
      %{
@@ -441,6 +465,36 @@ defmodule EvoGit.AgentScheduler do
 
       {:reply, :ok, state}
     end
+  end
+
+  @impl true
+  def handle_call(:get_config, _from, state) do
+    config = %{
+      max_concurrency: state.max_concurrency,
+      max_tool_concurrency: state.max_tool_concurrency,
+      agent_max_retries: state.agent_max_retries,
+      max_agent_depth: state.max_depth,
+      max_retries: state.max_retries,
+      llm_model: state.llm_model
+    }
+
+    {:reply, config, state}
+  end
+
+  @impl true
+  def handle_call({:get_config, key}, _from, state) do
+    value =
+      case key do
+        :max_concurrency -> state.max_concurrency
+        :max_tool_concurrency -> state.max_tool_concurrency
+        :agent_max_retries -> state.agent_max_retries
+        :max_agent_depth -> state.max_depth
+        :max_retries -> state.max_retries
+        :llm_model -> state.llm_model
+        _ -> nil
+      end
+
+    {:reply, value, state}
   end
 
   @impl true
