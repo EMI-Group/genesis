@@ -1,14 +1,31 @@
 # EvoGit Agent Behaviour & Tools
 
 ## Intent
-Contains the `EvoGit.Agent` behaviour module and its LLM tool definitions. Each agent is a stateless Elixir module that `use EvoGit.Agent` and provides a system prompt, optional tool overrides, and subagent delegation configuration. The `use` macro injects the complete agent loop (LLM turn cycle, tool dispatch, subagent management, context compression, budget warnings, and completion).
+Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, and extracted helper modules for context compression and subagent processing. Each agent is a stateless Elixir module that `use EvoGit.Agent` and provides a system prompt, optional tool overrides, and subagent delegation configuration. The `use` macro injects the complete agent loop (LLM turn cycle, tool dispatch, subagent management, context compression, budget warnings, and completion).
 
-**Note:** Agent type implementations (Generalist, Manager, Executor, etc.) have been moved to `../agents/`. This directory retains the behaviour module, tool library, and budget warnings.
+**Note:** Agent type implementations (Generalist, Manager, Executor, etc.) have been moved to `../agents/`. This directory retains the behaviour module, tool library, and extracted helper modules.
 
 ## Routing Table
 - `./tools/` → LLM tool modules (17+ tools for file I/O, context, search, shell, etc.)
+- `./context_compression.ex` → Context compression helper (compresses chat history when token threshold exceeded)
+- `./subagent_processing.ex` → Subagent call processing (builds specs, spawns subagents, merges results)
 
 ## API Surface
+
+### Extracted Helper Modules
+
+#### `EvoGit.Agent.ContextCompression`
+- `compress_if_needed/2` — Compresses agent chat context when `total_tokens` exceeds threshold
+- `format_messages_for_compression/1` — Formats messages into readable text for compression prompt
+- `format_single_message/1` — Formats a single message for compression
+- `extract_message_content/1` — Extracts text content from message parts
+
+#### `EvoGit.Agent.SubagentProcessing`
+- `process_subagent_calls/3` — Spawns subagents, merges results via octopus merge, returns `{indexed_results, merge_message}`
+- `build_subagent_specs/2` — Builds `AgentSpec` structs from tool calls with cross-repo path resolution
+- `resolve_subagent_path/3` — Resolves absolute vs relative paths for cross-repo support
+- `process_subagent_result/5` — Processes individual subagent results into indexed tuples
+- `format_subagent_result/1` — Formats subagent results for LLM context
 
 ### Tool Library (`EvoGit.Agent.Tools`)
 - **`tools.ex`** — Central dispatch: `schemas/0` returns 14 LLM tool schemas, `execute/5` dispatches by name
@@ -44,3 +61,4 @@ Contains the `EvoGit.Agent` behaviour module and its LLM tool definitions. Each 
 - The `complete_task` tool is always injected by the macro; agents need not include it.
 - Tool schemas use `ReqLLM.tool/2` format.
 - Agents commit before delegating subagents (enforced by auto-commit fallback in scheduler).
+- Context compression and subagent processing are extracted to dedicated modules but invoked from the agent loop via callbacks.

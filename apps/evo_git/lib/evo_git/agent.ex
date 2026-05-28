@@ -115,6 +115,7 @@ defmodule EvoGit.Agent do
 
           state = %{
             agent_id: agent_id,
+            agent_module: __MODULE__,
             depth: EvoGit.AgentScheduler.current_depth(),
             node_path: node_path,
             # Loaded from ETS each turn — see load_worktree_path/1
@@ -263,7 +264,13 @@ defmodule EvoGit.Agent do
       defp loop(state) do
         # Re-read worktree from ETS every turn
         state = load_worktree_path(state)
-        state = try_compress_chat(state)
+
+        state =
+          EvoGit.Agent.ContextCompression.compress_if_needed(state,
+            agent_id: state.agent_id,
+            llm_model: current_model()
+          )
+
         state = check_limit_warnings(state)
 
         # Sync context to ETS after any updates (compression, warnings)
@@ -329,7 +336,8 @@ defmodule EvoGit.Agent do
                     |> cap(60_000)
                     |> Stream.take(max_retries) do
               with llm_start <- System.monotonic_time(:millisecond),
-                   {:ok, stream_resp} <- ReqLLM.stream_text(current_model(), context, tools: tools),
+                   {:ok, stream_resp} <-
+                     ReqLLM.stream_text(current_model(), context, tools: tools),
                    {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
                    llm_end <- System.monotonic_time(:millisecond) do
                 {:ok, response, llm_end - llm_start}
@@ -512,7 +520,12 @@ defmodule EvoGit.Agent do
         indexed_standard_results = process_standard_calls(indexed_standard_calls, state)
 
         {indexed_subagent_results, merge_message} =
-          process_subagent_calls(indexed_subagent_calls, state)
+          EvoGit.Agent.SubagentProcessing.process_subagent_calls(
+            indexed_subagent_calls,
+            state,
+            stream_event_fn: &stream_event/3,
+            sync_commit_fn: &sync_current_commit_after_tools/1
+          )
 
         # 5. Re-sort: Merge and sort by index to restore original order
         all_indexed_results = indexed_subagent_results ++ indexed_standard_results
@@ -640,6 +653,7 @@ defmodule EvoGit.Agent do
 
       defp is_rate_limit_error?(reason) do
         reason_str = inspect(reason)
+
         String.contains?(reason_str, "rate_limit") or
           String.contains?(reason_str, "quota") or
           String.contains?(reason_str, "429") or
@@ -673,234 +687,6 @@ defmodule EvoGit.Agent do
 
       defp truncate_large_output(result, _name, _args), do: result
 
-      defp process_subagent_calls([], _state), do: {[], nil}
-
-      defp process_subagent_calls(indexed_calls, state) do
-        subagent_specs = build_subagent_specs(indexed_calls, state)
-        results = EvoGit.AgentScheduler.spawn_sub_agents(subagent_specs)
-
-        {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
-        parent_commit = agent_state.phylo_node.current_commit
-
-        # Separate same-repo and cross-repo results
-        # Cross-repo subagents commit to their own repo, no merge needed into parent
-        {same_repo_shas, cross_repo_count} =
-          Enum.reduce(Enum.zip(subagent_specs, results), {[], 0}, fn {spec, result}, {shas, count} ->
-            case result do
-              {:ok, %{commit_sha: sha}} when is_binary(sha) ->
-                if spec.repo_id == :primary do
-                  {[sha | shas], count}
-                else
-                  {shas, count + 1}
-                end
-
-              _ ->
-                {shas, count}
-            end
-          end)
-
-        successful_shas = Enum.reverse(same_repo_shas)
-
-        repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
-
-        cross_repo_note =
-          if cross_repo_count > 0 do
-            "\nSystem Note: #{cross_repo_count} cross-repo subagent(s) completed. Their changes are in foreign repo worktrees (not merged here)."
-          else
-            ""
-          end
-
-        # Skip merge if no same-repo subagents returned successful commits
-        merge_message =
-          if successful_shas == [] do
-            if cross_repo_count > 0 do
-              cross_repo_note
-            else
-              nil
-            end
-          else
-            case EvoGit.Adapters.Git.merge_octopus(repo_path, successful_shas) do
-              {:ok, output} ->
-                # Check if any actual changes were made by comparing commits
-                case EvoGit.Adapters.Git.rev_parse(repo_path) do
-                  {:ok, ^parent_commit} ->
-                    # No changes - all subagents returned the same commit
-                    nil
-
-                  {:ok, _new_commit} ->
-                    """
-                    System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
-                    Merge output:
-                    #{output}
-                    """
-
-                  _error ->
-                    """
-                    System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
-                    Merge output:
-                    #{output}
-                    """
-                end
-
-              {:conflict, output} ->
-                {:ok, files} = EvoGit.Adapters.Git.conflict_files(repo_path)
-
-                conflict_files_list = Enum.join(files, "\n")
-
-                """
-                System Note: Auto-merging subagent changes resulted in conflicts.#{cross_repo_note}
-                Merge output:
-                #{output}
-
-                Conflicting files:
-                #{conflict_files_list}
-                """
-
-              {:error, code, output} ->
-                """
-                System Note: Failed to auto-merge subagent changes (exit code #{code}).#{cross_repo_note}
-                Merge output:
-                #{output}
-                """
-            end
-          end
-
-        # Only delete branches for same-repo subagents
-        same_repo_branches =
-          Enum.zip(subagent_specs, results)
-          |> Enum.filter(fn {spec, result} ->
-            spec.repo_id == :primary and match?({:ok, %{branch: _}}, result)
-          end)
-          |> Enum.map(fn {_, {:ok, %{branch: branch}}} -> branch end)
-
-        Enum.each(same_repo_branches, fn branch ->
-          EvoGit.Adapters.Git.delete_branch(repo_path, branch)
-        end)
-
-        # Sync current_commit after subagents complete (parent worktree state may have changed)
-        sync_current_commit_after_tools(state)
-
-        indexed_results =
-          Enum.zip(indexed_calls, results)
-          |> Enum.map(fn {{call, index}, result} ->
-            process_subagent_result(call, index, result, state)
-          end)
-
-        {indexed_results, merge_message}
-      end
-
-      defp build_subagent_specs(indexed_calls, state) do
-        {:ok, parent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
-        parent_repo_id = parent_state.repo_id
-
-        # Get all registered repos for path resolution
-        foreign_repos = EvoGit.AgentScheduler.get_foreign_repos()
-
-        Enum.map(indexed_calls, fn {call, _index} ->
-          mod = subagent_module_for(call.name)
-          raw_path = Map.get(call.arguments, "path")
-          objective = Map.get(call.arguments, "objective")
-          commit_id = Map.get(call.arguments, "commit_id")
-
-          # Determine if this is a cross-repo delegation (absolute path) or same-repo (relative)
-          {target_repo_id, target_repo_root, resolved_rel_path} =
-            resolve_subagent_path(raw_path, parent_state, foreign_repos)
-
-          # If the LLM passed a file path, use its parent directory instead
-          path =
-            if File.regular?(Path.join(target_repo_root, resolved_rel_path)) do
-              resolved_rel_path
-              |> Path.dirname()
-              |> EvoGit.Core.ContextNode.normalize_relpath()
-            else
-              resolved_rel_path
-            end
-
-          # Load context node with the target repo_id
-          sub_context_node =
-            if target_repo_id == :primary do
-              EvoGit.Core.ContextNode.load(path, parent_state.phylo_node.repo)
-            else
-              # For foreign repos, use the foreign repo root as the base
-              EvoGit.Core.ContextNode.load(path, target_repo_root, target_repo_id)
-            end
-
-          # Use specified commit_id, or default to current commit (only meaningful for primary repo)
-          base_commit = commit_id || parent_state.phylo_node.current_commit
-
-          sub_phylo_node = %EvoGit.Core.PhyloGraphNode{
-            repo: parent_state.phylo_node.repo,
-            base_commit: base_commit,
-            current_commit: base_commit
-          }
-
-          EvoGit.AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
-            repo_id: target_repo_id
-          )
-        end)
-      end
-
-      defp resolve_subagent_path(raw_path, parent_state, foreign_repos) do
-        if EvoGit.Core.ForeignRepo.absolute_path?(raw_path) do
-          # Absolute path — resolve to the correct foreign repo
-          case EvoGit.Core.ForeignRepo.resolve_path(foreign_repos, raw_path) do
-            {:ok, repo_id, rel_path} ->
-              repo = Enum.find(foreign_repos, &(&1.id == repo_id))
-              {repo_id, repo.root, rel_path}
-
-            {:error, :not_in_any_repo} ->
-              # Not in any known repo — treat as primary, let it fail naturally
-              Logger.warning("Agent: Absolute path '#{raw_path}' not in any known repo, treating as primary")
-              {:primary, parent_state.phylo_node.repo, EvoGit.Core.ContextNode.normalize_relpath(raw_path)}
-          end
-        else
-          # Relative path — same repo as parent
-          normalized = EvoGit.Core.ContextNode.normalize_relpath(raw_path)
-          {:primary, parent_state.phylo_node.repo, normalized}
-        end
-      end
-
-      defp process_subagent_result(call, index, result, state) do
-        stream_event(state.agent_id, "TOOL_CALL_END", %{name: call.name})
-
-        output = format_subagent_result(result)
-
-        tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
-        {index, tool_call_id, call.name, output}
-      end
-
-      defp format_subagent_result({:error, :path_ignored}) do
-        "Error: Cannot spawn subagent in an ignored folder. The current working directory is ignored by git."
-      end
-
-      defp format_subagent_result({:error, :path_not_exist}) do
-        """
-        Error: The assigned node path does not exist in the repository.
-        Please verify that the path is correct and is in the repository.
-        Note: git does not track empty directories,
-        - If the path is a directory, ensure that the path contains at least one tracked file (empty CONTEXT.md or .gitkeep is a common choice), you can use the `make_dir` tool to create a directory and auto create a tracked file within and commit it.
-        - If the path is a file, ensure that the file is tracked by git. You can use the `touch` tool to create an empty file and auto commit it.
-        """
-      end
-
-      defp format_subagent_result({:error, reason}) do
-        "Error: Subagent failed: #{inspect(reason)}"
-      end
-
-      defp format_subagent_result({:ok, %{result: result, commit_sha: commit_sha}}) do
-        """
-        # Result
-        #{result}
-
-        # Final Commit
-        #{commit_sha}
-        """
-        |> String.trim()
-      end
-
-      defp format_subagent_result(text) when is_binary(text), do: text
-      defp format_subagent_result(other), do: inspect(other)
-
       # Formats git status --porcelain output for display
       # Format: "XY filename" where X = staged, Y = unstaged
       # --- Helpers ---
@@ -924,128 +710,6 @@ defmodule EvoGit.Agent do
           _ ->
             :ok
         end
-      end
-
-      defp try_compress_chat(state) do
-        threshold = Application.get_env(:evo_git, :compression_threshold_tokens, 100_000)
-
-        if state.total_tokens > threshold do
-          Logger.info(
-            "Agent #{state.agent_id}: Context length (#{state.total_tokens} tokens) exceeded compression threshold (#{threshold} tokens). Attempting compression..."
-          )
-
-          messages = ReqLLM.Context.to_list(state.context)
-
-          case messages do
-            [system_msg, initial_user_msg | rest_context] ->
-              interaction_history = format_messages_for_compression(rest_context)
-
-              prompt = """
-              Compress the following interaction context into a dense, structured summary to be passed to the next agent iteration.
-
-              Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
-
-              Output your summary strictly using the following format:
-
-              1. Current Progress:
-              [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
-
-              2. Key Findings & Decisions:
-              [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
-
-              3. SubAgent Ledger:
-              [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
-
-              4. Pending / Next Steps:
-              [What specifically needs to be executed next to advance the Current Objective.]
-
-              ---
-
-              [INTERACTION HISTORY BEGIN]
-
-              #{interaction_history}
-              """
-
-              compression_context = ReqLLM.Context.new([user(prompt)])
-
-              result =
-                AgentScheduler.with_llm_slot(state.agent_id, fn ->
-                  try do
-                    with {:ok, stream_response} <-
-                           ReqLLM.stream_text(current_model(), compression_context),
-                         {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-                         text <- ReqLLM.Response.text(response),
-                         summary_msg <- user("Summary of previous events:\n" <> text),
-                         new_context <- ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
-                      {:ok, %{state | context: new_context}}
-                    else
-                      _error -> {:error, state}
-                    end
-                  rescue
-                    e ->
-                      Logger.warning("Agent #{state.agent_id}: Compression LLM call failed: #{inspect(e)}")
-                      {:error, state}
-                  end
-                end)
-
-              case result do
-                {:ok, new_state} -> new_state
-                {:error, original_state} -> original_state
-              end
-
-            _ ->
-              state
-          end
-        else
-          state
-        end
-      end
-
-      # Formats a list of messages into a readable string for compression
-      defp format_messages_for_compression(messages) do
-        messages
-        |> Enum.map(&format_single_message/1)
-        |> Enum.join("\n\n")
-      end
-
-      # Formats a single message into a readable string
-      defp format_single_message(%{role: :tool, name: tool_name} = msg)
-           when is_binary(tool_name) do
-        header = "[TOOL: #{tool_name}]"
-        content = extract_message_content(msg)
-
-        if String.trim(content) == "" do
-          "#{header} <empty>"
-        else
-          "#{header}\n#{content}"
-        end
-      end
-
-      defp format_single_message(%{role: role} = msg) do
-        header = "[#{role |> to_string() |> String.upcase()}]"
-        content = extract_message_content(msg)
-
-        if String.trim(content) == "" do
-          "#{header} <empty>"
-        else
-          "#{header}\n#{content}"
-        end
-      end
-
-      # Extracts text content from a message's content parts
-      defp extract_message_content(msg) do
-        msg.content
-        |> Enum.map(fn
-          %{type: :text, text: text} when is_binary(text) -> text
-          %{type: :thinking, text: text} when is_binary(text) -> "[THINKING]\n#{text}"
-          %{type: :image_url} -> "[IMAGE]"
-          %{type: :video_url} -> "[VIDEO]"
-          %{type: :image} -> "[IMAGE]"
-          %{type: :file, filename: filename} -> "[FILE: #{filename}]"
-          _ -> ""
-        end)
-        |> Enum.reject(&(String.trim(&1) == ""))
-        |> Enum.join("\n")
       end
 
       def available_tools do
