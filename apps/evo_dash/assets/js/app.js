@@ -42,8 +42,10 @@ function longestCommonPrefix(strings) {
 const PathAutocomplete = {
   mounted() {
     const input = this.el;
+    let prevValue = input.value;
 
-    // Tab-key: complete to longest common prefix among all matching datalist options
+    // Tab-key: complete to longest common prefix among all matching datalist options.
+    // Always consumes the Tab event when there are matches, so focus stays in the input.
     input.addEventListener("keydown", (e) => {
       if (e.key === "Tab" && input.value.length > 0) {
         const listId = input.getAttribute("list");
@@ -51,30 +53,50 @@ const PathAutocomplete = {
         const datalist = document.getElementById(listId);
         if (!datalist) return;
         const options = Array.from(datalist.querySelectorAll('option'));
-        const matches = options.filter(opt => opt.value.startsWith(input.value));
+        const matches = options.filter(opt => opt.value.toLowerCase().startsWith(input.value.toLowerCase()));
         if (matches.length === 0) return;
+        // Always prevent default so Tab doesn't navigate away from the input
+        e.preventDefault();
         const lcp = longestCommonPrefix(matches.map(opt => opt.value));
         if (lcp !== input.value) {
-          e.preventDefault();
           input.value = lcp;
+        } else if (matches.length > 0) {
+          // LCP equals current input but there are multiple diverging matches.
+          // Complete to the first match so the user can cycle by pressing Tab again
+          // (the new value will then have a different LCP among remaining matches).
+          input.value = matches[0].value;
         }
       }
     });
 
-    // Real-time auto-complete: if there's exactly one matching prefix, fill it in
+    // Real-time auto-complete: if there's exactly one matching prefix, fill it in.
+    // Only auto-fills when the user is NOT deleting (i.e., the new value is not a
+    // shorter prefix of the previous value), so Backspace works correctly.
     input.addEventListener("input", () => {
-      if (input.value.length === 0) return;
+      const curValue = input.value;
+      if (curValue.length === 0) {
+        prevValue = curValue;
+        return;
+      }
       const listId = input.getAttribute("list");
-      if (!listId) return;
+      if (!listId) { prevValue = curValue; return; }
       const datalist = document.getElementById(listId);
-      if (!datalist) return;
+      if (!datalist) { prevValue = curValue; return; }
+
+      // Detect deletion: the new value is a strict prefix of the previous value
+      const isDeleting = prevValue.startsWith(curValue) && curValue.length < prevValue.length;
+      prevValue = curValue;
+
+      if (isDeleting) return;
+
       const options = Array.from(datalist.querySelectorAll('option'));
-      const matches = options.filter(opt => opt.value.toLowerCase().startsWith(input.value.toLowerCase()));
-      if (matches.length === 1 && matches[0].value !== input.value) {
-        const oldValue = input.value;
+      const matches = options.filter(opt => opt.value.toLowerCase().startsWith(curValue.toLowerCase()));
+      if (matches.length === 1 && matches[0].value !== curValue) {
+        const oldValue = curValue;
         input.value = matches[0].value;
         // Select the portion that was auto-completed so the user can keep typing
         input.setSelectionRange(oldValue.length, matches[0].value.length);
+        prevValue = matches[0].value;
       }
     });
   }
@@ -135,4 +157,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-
