@@ -209,7 +209,7 @@ defmodule EvoGit do
   end
 
   defp sandbox_enabled? do
-    case Application.get_env(:evo_git, :sandbox, :auto) do
+    case EvoGit.Defaults.sandbox() || :auto do
       :enabled -> true
       :disabled -> false
       :auto -> Platform.systemd_available?()
