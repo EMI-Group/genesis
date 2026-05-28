@@ -11,10 +11,10 @@ Contains all reusable UI component modules and layout templates for the EvoDash 
 ### Modules
 | Module | File | Purpose |
 |--------|------|---------|
-| `EvoDashWeb.CoreComponents` | `core_components.ex` | Phoenix 1.8 scaffolded building blocks: `header/1`, `flash/1`, `flash_group/1`, `simple_form/1`, `button/1`, `icon/1`, `input/1`, `table/1`, `theme_toggle/1`, plus JS commands (`show_notification`, `toggle_dropdown`, `focus`, `close_parent`) |
-| `EvoDashWeb.DashboardComponents` | `dashboard_components.ex` | Domain-specific LiveView components: `genesis_form/1`, `evolve_form/1`, `task_card/1` plus helpers for status badges, type icons, descriptions, and datetime formatting |
+| `EvoDashWeb.CoreComponents` | `core_components.ex` | Phoenix 1.8 scaffolded building blocks: `header/1`, `flash/1`, `flash_group/1`, `simple_form/1`, `button/1`, `icon/1`, `input/1`, `table/1`, `theme_toggle/1`, plus JS commands (`show_notification`, `toggle_dropdown`, `focus`, `close_parent`). The `flash/1` component supports three flash kinds: `:info`, `:error`, and `:warning` — each with appropriate styling (`alert-info`, `alert-error`, `alert-warning`) and corresponding Heroicon. |
+| `EvoDashWeb.DashboardComponents` | `dashboard_components.ex` | Domain-specific LiveView components: `genesis_form/1`, `evolve_form/1`, `task_card/1`, `scheduler_settings/1` plus helpers for status badges, type icons, descriptions, and datetime formatting |
 | `EvoDashWeb.AgentsComponents` | `agents_components.ex` | Agent tree visualization: recursive `agent_tree/1` with connector lines and status indicator helpers (color/background/border/icon) for pending/running/waiting states |
-| `EvoDashWeb.Layouts` | `layouts.ex` | Layout functions — exposes `flash_group/1` delegating to CoreComponents |
+| `EvoDashWeb.Layouts` | `layouts.ex` | Layout functions — `app/1` (shared app layout with sticky nav bar and flash group), `flash_group/1` (renders `:info`, `:error`, and `:warning` flashes), `theme_toggle/1` |
 
 ### Templates
 | Template | Path | Purpose |
@@ -27,7 +27,16 @@ All component modules use `use EvoDashWeb, :html` (which expands to `use Phoenix
 <.button phx-click="save">Save</.button>
 <.task_card task={@task} />
 <.agent_tree agents={@agents} />
+<.flash kind={:warning} flash={@flash} />
 ```
+
+### Flash Component Kinds
+The `flash/1` component in `CoreComponents` supports three kinds:
+| Kind | CSS Class | Icon | Use Case |
+|------|-----------|------|----------|
+| `:info` | `alert-info` | `hero-information-circle` | Success messages, informational notices |
+| `:error` | `alert-error` | `hero-exclamation-circle` | Error messages, validation failures |
+| `:warning` | `alert-warning` | `hero-exclamation-triangle` | Warnings, missing configuration alerts |
 
 ## Constraints
 - Every component module **must** use `use EvoDashWeb, :html`.

@@ -1,7 +1,7 @@
 # Config — Unified Configuration Resolver
 
 ## Intent
-Contains `EvoGit.Config`, the unified configuration resolver that merges application defaults, user config (`~/.config/evogit/config.toml`), and provides API key lookup from credentials files and environment variables. This module serves as the single source of truth for all non-project configuration. It is **read-only** — it never writes or persists config files.
+Contains `EvoGit.Config`, the unified configuration resolver that merges application defaults, user config (`~/.config/evogit/config.toml`), and provides API key lookup from credentials files and environment variables. This module serves as the single source of truth for all non-project configuration. It also provides write capability for persisting user config changes and a diagnostic function for checking configuration completeness.
 
 ## API Surface
 
@@ -11,6 +11,8 @@ Contains `EvoGit.Config`, the unified configuration resolver that merges applica
 | `resolve/0` | Returns fully merged config map (defaults + user config). Runtime overrides are NOT included — those live in `AgentScheduler` state. |
 | `resolve/1` | Returns resolved value for a specific key path (atom or list of atoms) |
 | `user_config/0` | Reads and returns parsed `config.toml`, or `%{}` if not found |
+| `save_user_config/1` | Persists a config map to `config.toml`. Creates the config directory if needed. Encodes the map as TOML via `TomlElixir.encode/1` (atom keys are stringified). Returns `:ok` or `{:error, reason}`. |
+| `config_status/0` | Returns diagnostic map with `:missing` (list of missing critical config key atoms), `:warnings` (human-readable warning messages), and `:ok?` (boolean). Checks for: LLM model, at least one API key, and GitHub username. |
 | `credentials/0` | Reads and returns parsed `credentials.toml`, or `%{}` if not found |
 | `api_key/1` | Gets a specific API key (checks credentials file → `EVOGIT_API_KEY_<PROVIDER>` env var → provider-specific env var) |
 | `defaults/0` | Returns the built-in application defaults map |
@@ -22,6 +24,28 @@ Contains `EvoGit.Config`, the unified configuration resolver that merges applica
 1. **Application defaults** — Hardcoded in `defaults/0` (no model, no username)
 2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant), parsed with `TomlElixir.decode/1`
 3. **Runtime overrides** — Session-level, stored in `AgentScheduler` GenServer state via `update_config/1`
+
+### `save_user_config/1`
+Persists user configuration to disk. Used by the EvoDash `HelpLive` page's TOML editor:
+- Accepts a map (atom or string keys)
+- Creates config directory via `File.mkdir_p/1` if needed
+- Stringifies atom keys for TOML compatibility
+- Encodes with `TomlElixir.encode/1` and writes to `config_path()`
+- Returns `:ok` on success, `{:error, reason}` on failure
+
+### `config_status/0`
+Returns a diagnostic map for UI display of configuration completeness:
+```elixir
+%{
+  missing: [:llm_model, :api_key],   # atoms for missing critical keys
+  warnings: ["LLM model is not configured...", ...],  # human-readable messages
+  ok?: false  # true when all critical config is present
+}
+```
+Checks three critical items:
+1. **LLM model** (`[llm] model`) — must be non-nil, non-empty
+2. **API key** — at least one provider key from credentials or env vars (google, zai, deepseek, groq, anthropic, openai)
+3. **GitHub username** (`[user] github_username`) — must be non-nil, non-empty
 
 ### Built-in Defaults (`defaults/0`)
 ```elixir
@@ -53,7 +77,7 @@ Contains `EvoGit.Config`, the unified configuration resolver that merges applica
 `google`, `zai`, `deepseek`, `groq`, `tavily`, `anthropic`, `openai`
 
 ## Constraints
-- **Read-only**: Uses `TomlElixir.decode/1` for parsing only — this module NEVER writes or persists config files. There is no `save_config` or `write_config` function anywhere in the codebase.
+- **Write capability is limited**: Only `save_user_config/1` writes to disk, and only to `config.toml`. Credentials are never written programmatically.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
 - Config directory follows XDG conventions via `EvoGit.Platform.os()`.
 - All file reads are wrapped in try/rescue-safe patterns with Logger warnings on failure.
