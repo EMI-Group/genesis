@@ -93,15 +93,16 @@ defmodule EvoDashWeb.DashboardComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # scheduler_settings/1 — Runtime scheduler configuration panel
+  # scheduler_settings/1 — Collapsible runtime scheduler configuration panel
   # ---------------------------------------------------------------------------
 
   attr :config, :map, required: true
 
   def scheduler_settings(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-      <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-6 md:p-8">
+    <div class="collapse collapse-arrow bg-base-100 rounded-2xl shadow-lg border border-base-200">
+      <input type="checkbox" />
+      <div class="collapse-title bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent">
         <div class="flex items-center gap-3">
           <div class="bg-secondary/15 text-secondary p-3 rounded-xl">
             <.icon name="hero-cog-6-tooth" class="size-6" />
@@ -112,7 +113,7 @@ defmodule EvoDashWeb.DashboardComponents do
           </div>
         </div>
       </div>
-      <div class="p-6 md:p-8 pt-4 md:pt-6">
+      <div class="collapse-content">
         <.form for={%{}} phx-submit="update_scheduler_config" phx-change="scheduler_config_change" class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div class="form-control">
