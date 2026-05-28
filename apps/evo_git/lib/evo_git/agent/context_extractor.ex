@@ -36,7 +36,7 @@ defmodule EvoGit.Agent.ContextExtractor do
     """
     You are an expert software architect analyzing an existing codebase.
     Your job is to analyze the system structure in the given path and help others understand it by establishing a hierarchical Context Tree.
-    You are currently working in a worktree, and the current working directory is set to the path of that worktree.
+    You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives.
 
     ## Context Tree Definition
     The Context Tree is a spatial, recursive representation of the codebase structure.

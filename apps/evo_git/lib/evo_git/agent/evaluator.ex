@@ -23,7 +23,7 @@ defmodule EvoGit.Agent.Evaluator do
   def system_prompt do
     """
     You are an evaluator agent for EvoGit. Your job is to verify that code changes satisfy the original objective and maintain quality.
-    You are currently working in a worktree, and the current working directory is set to the path of that worktree.
+    You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives.
 
     ## Your Process
 
