@@ -208,6 +208,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
   attr :path, :string, default: ""
   attr :recent_projects, :list, default: []
+  attr :path_suggestions, :list, default: []
 
   def open_project_form(assigns) do
     ~H"""
@@ -238,12 +239,14 @@ defmodule EvoDashWeb.DashboardComponents do
                   placeholder="/path/to/your/repo"
                   autofocus
                   phx-hook="PathAutocomplete"
+                  phx-change="path_input"
+                  phx-debounce="150"
                   id="initial-project-path-input"
                   list="path-suggestions"
                 />
                 <datalist id="path-suggestions">
-                  <%= for project <- @recent_projects do %>
-                    <option value={project.path}></option>
+                  <%= for suggestion <- @path_suggestions do %>
+                    <option value={suggestion}></option>
                   <% end %>
                 </datalist>
               </div>

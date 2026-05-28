@@ -25,12 +25,25 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
 
-// PathAutocomplete hook: real-time filtering and Tab-key completion from datalist suggestions
+// Compute the longest common prefix among an array of strings
+function longestCommonPrefix(strings) {
+  if (strings.length === 0) return "";
+  let prefix = strings[0];
+  for (let i = 1; i < strings.length; i++) {
+    while (!strings[i].startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+      if (prefix === "") return "";
+    }
+  }
+  return prefix;
+}
+
+// PathAutocomplete hook: shell-like Tab completion and real-time auto-complete from datalist suggestions
 const PathAutocomplete = {
   mounted() {
     const input = this.el;
 
-    // Tab-key: complete with first matching option
+    // Tab-key: complete to longest common prefix among all matching datalist options
     input.addEventListener("keydown", (e) => {
       if (e.key === "Tab" && input.value.length > 0) {
         const listId = input.getAttribute("list");
@@ -38,10 +51,12 @@ const PathAutocomplete = {
         const datalist = document.getElementById(listId);
         if (!datalist) return;
         const options = Array.from(datalist.querySelectorAll('option'));
-        const match = options.find(opt => opt.value.startsWith(input.value));
-        if (match) {
+        const matches = options.filter(opt => opt.value.startsWith(input.value));
+        if (matches.length === 0) return;
+        const lcp = longestCommonPrefix(matches.map(opt => opt.value));
+        if (lcp !== input.value) {
           e.preventDefault();
-          input.value = match.value;
+          input.value = lcp;
         }
       }
     });
