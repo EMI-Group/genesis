@@ -3,19 +3,19 @@
     <p class="text-base-content/60 text-sm">Visualize running agents and their relationships</p>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4">
     <!-- Agent Tree View -->
-    <div class="lg:col-span-2">
-      <div class="card bg-base-100 shadow-sm border border-base-200">
+    <div class="xl:col-span-2">
+      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
         <div class="card-body p-6">
           <h3 class="card-title mb-4">
             <.icon name="hero-squares-2x2" class="size-5" /> Agent Tree
           </h3>
 
           <%= if @agents == [] do %>
-            <div class="text-center py-12 text-base-content/50">
-              <.icon name="hero-server" class="size-16 mx-auto mb-4" />
-              <p>No agents currently registered.</p>
+            <div class="text-center py-16 text-base-content/50">
+              <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40" />
+              <p class="text-lg">No agents currently registered</p>
               <p class="text-sm mt-2">Start a task from the dashboard to see agents here.</p>
             </div>
           <% else %>
@@ -29,32 +29,32 @@
           <% end %>
         </div>
       </div>
-      
+
 <!-- Legend -->
-      <div class="card bg-base-100 shadow-sm border border-base-200 mt-6">
+      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl mt-6">
         <div class="card-body p-4">
           <h4 class="font-semibold text-sm mb-3">Status Legend</h4>
-          <div class="flex flex-wrap gap-4 text-sm">
+          <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <div class="flex items-center gap-2">
-              <span class="w-3 h-3 rounded-full bg-base-content/20"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-base-content/20"></span>
               <span>Pending</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="w-3 h-3 rounded-full bg-success"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-success"></span>
               <span>Running</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="w-3 h-3 rounded-full bg-warning"></span>
-              <span>Waiting (for subagents)</span>
+              <span class="w-2.5 h-2.5 rounded-full bg-warning"></span>
+              <span>Waiting</span>
             </div>
           </div>
         </div>
       </div>
     </div>
-    
+
 <!-- Agent Details Panel -->
-    <div class="lg:col-span-1">
-      <div class="card bg-base-100 shadow-sm border border-base-200 sticky top-20">
+    <div class="xl:col-span-1">
+      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl sticky top-16">
         <div class="card-body p-6">
           <%= if @selected_agent_id do %>
             <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
@@ -73,9 +73,9 @@
               
 <!-- Status Badge -->
               <div class="mb-4">
-                <div class={["badge badge-lg", status_color(agent.status)]}>
-                  <.icon name={status_icon(agent.status)} class="size-4 mr-1" />
-                  {String.upcase(to_string(agent.status))}
+                <div class={["badge badge-lg badge-outline", agent_status_border(agent.status), agent_status_bg(agent.status)]}>
+                  <.icon name={agent_status_icon(agent.status)} class={"size-4 mr-1 #{agent_status_color(agent.status)}"} />
+                  <span class={agent_status_color(agent.status)}>{String.upcase(to_string(agent.status))}</span>
                 </div>
               </div>
               
@@ -215,7 +215,7 @@
                     <div class="flex flex-wrap gap-1 mt-1">
                       <%= for {child_id, child_status} <- agent.children do %>
                         <button
-                          class={["badge btn-xs cursor-pointer", status_color(child_status)]}
+                          class={["badge badge-sm btn-xs cursor-pointer badge-outline", agent_status_border(child_status), agent_status_color(child_status)]}
                           phx-click="select_agent"
                           phx-value-id={child_id}
                         >
@@ -395,9 +395,9 @@
               <p class="text-base-content/50">Agent not found</p>
             <% end %>
           <% else %>
-            <div class="text-center py-12 text-base-content/50">
-              <.icon name="hero-finger-pointing" class="size-16 mx-auto mb-4" />
-              <p>Select an agent to view details</p>
+            <div class="text-center py-16 text-base-content/50">
+              <.icon name="hero-finger-pointing" class="size-20 mx-auto mb-4 opacity-40" />
+              <p class="text-lg">Select an agent to view details</p>
             </div>
           <% end %>
         </div>
