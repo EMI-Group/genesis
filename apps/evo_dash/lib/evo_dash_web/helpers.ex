@@ -8,8 +8,6 @@ defmodule EvoDashWeb.Helpers do
   """
 
   use Phoenix.Component
-  import Phoenix.HTML
-  alias Phoenix.LiveView.JS
 
   # ---------------------------------------------------------------------------
   # Agent Status Helpers
