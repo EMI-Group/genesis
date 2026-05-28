@@ -1,37 +1,44 @@
 defmodule EvoGit.Defaults do
   @moduledoc """
-  Single source of truth for all EvoGit runtime default values.
+  Backward-compatible accessor functions for EvoGit configuration.
 
-  Values are read from Application config (:evo_git), with fallback
-  to compile-time defaults if not configured.
+  Delegates to `EvoGit.Config` for all values. This module exists for
+  backward compatibility — new code should use `EvoGit.Config` directly.
 
-  Top-level entry points (CLI, TaskRegistry, AgentScheduler.init) may read
-  from Application env with these as fallbacks. Inner modules must receive
-  values explicitly through opts or state — they must not call
-  Application.get_env themselves.
+  ## Migration Guide
+
+  Replace:
+    `Defaults.max_concurrency()`
+  With:
+    `Config.resolve([:scheduler, :max_concurrency])`
   """
 
-  @app :evo_git
+  alias EvoGit.Config
 
-  # Compile-time fallbacks
-  @max_concurrency 3
-  @max_tool_concurrency 2
-  @max_retries 15
-  @agent_max_retries 3
-  @max_agent_depth 8
-  @llm_model "zai_coding_plan:glm-5"
-  @github_username "BillHuang2001"
+  @doc "Returns the max LLM concurrency limit."
+  def max_concurrency, do: Config.resolve([:scheduler, :max_concurrency])
 
-  @spec get(atom(), term()) :: term()
-  defp get(key, default) do
-    Application.get_env(@app, key, default)
-  end
+  @doc "Returns the max tool execution concurrency limit."
+  def max_tool_concurrency, do: Config.resolve([:scheduler, :max_tool_concurrency])
 
-  def max_concurrency, do: get(:max_concurrency, @max_concurrency)
-  def max_tool_concurrency, do: get(:max_tool_concurrency, @max_tool_concurrency)
-  def max_retries, do: get(:max_retries, @max_retries)
-  def agent_max_retries, do: get(:agent_max_retries, @agent_max_retries)
-  def max_agent_depth, do: get(:max_agent_depth, @max_agent_depth)
-  def llm_model, do: get(:llm_model, @llm_model)
-  def github_username, do: get(:github_username, @github_username)
+  @doc "Returns the max LLM API call retries."
+  def max_retries, do: Config.resolve([:scheduler, :max_retries])
+
+  @doc "Returns the max crash-retries per agent."
+  def agent_max_retries, do: Config.resolve([:scheduler, :agent_max_retries])
+
+  @doc "Returns the max subagent recursion depth."
+  def max_agent_depth, do: Config.resolve([:scheduler, :max_agent_depth])
+
+  @doc "Returns the default LLM model, or nil if not configured."
+  def llm_model, do: Config.resolve([:llm, :model])
+
+  @doc "Returns the github username, or nil if not configured."
+  def github_username, do: Config.resolve([:user, :github_username])
+
+  @doc "Returns the compression threshold in tokens."
+  def compression_threshold_tokens, do: Config.resolve([:llm, :compression_threshold_tokens])
+
+  @doc "Returns the sandbox mode (:auto, :enabled, or :disabled)."
+  def sandbox, do: Config.resolve([:sandbox, :mode])
 end
