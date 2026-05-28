@@ -13,6 +13,10 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 ┌──────────────────────────────────────────────────────────┐
 │                    EvoGit.CLI / Application              │  Entry points
 ├──────────────────────────────────────────────────────────┤
+│  EvoGit.Config (3-level resolver)                        │  Defaults → User Config → Runtime Override
+│    EvoGit.Defaults (compatibility shim → Config)         │
+│    EvoGit.Platform (config_dir, data_dir)                │
+├──────────────────────────────────────────────────────────┤
 │                    EvoGit.Runtime                        │  Genesis → Evolution phases
 │               ┌──────────────────────┐                   │
 │               │    Runtime.Prompts   │                   │  LLM prompt templates
@@ -39,7 +43,9 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 ├──────────────────────────────────────────────────────────┤
 │  EvoGit.ProjectConfig                                    │  Reads evogit.toml project config
 ├──────────────────────────────────────────────────────────┤
-│  EvoGit.Defaults                                         │  Single source of truth for runtime defaults
+│  EvoGit.Config                                           │  Unified 3-level configuration resolver
+│    EvoGit.Defaults (compatibility shim)                  │
+│    EvoGit.Platform (config_dir, data_dir)                │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -59,8 +65,9 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 | `EvoGit.Task` | `./lib/evo_git/task.ex` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
 | `EvoGit.Runtime` | `./lib/evo_git/runtime.ex` | Top-level coordinator: Genesis then Evolution |
 | `EvoGit.ProjectConfig` | `./lib/evo_git/project_config.ex` | Reads and parses `evogit.toml` from repo root; provides `worktree_script/1` accessor |
-| `EvoGit.Defaults` | `./lib/evo_git/defaults.ex` | Single source of truth for all runtime default values (max_concurrency, max_tool_concurrency, etc.) |
-| `EvoGit.Platform` | `./lib/evo_git/platform.ex` | Cross-platform OS detection and data directory resolution (`data_dir/0` respects XDG, macOS, Windows conventions) |
+| `EvoGit.Defaults` | `./lib/evo_git/defaults.ex` | Backward-compatible accessor functions delegating to `EvoGit.Config` for all values |
+| `EvoGit.Platform` | `./lib/evo_git/platform.ex` | Cross-platform OS detection, data directory resolution (`data_dir/0`), and config directory resolution (`config_dir/0`) — both respect XDG, macOS, Windows conventions |
+| `EvoGit.Config` | `./lib/evo_git/config/config.ex` | Unified 3-level configuration resolver: defaults + user TOML + runtime overrides. API key management from credentials file + env vars. |
 
 ### Subdirectories
 | Directory | Description |
@@ -71,6 +78,7 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 | `./lib/evo_git/agents/` | Agent type implementations (Generalist, Manager, Executor, Planner, CodebaseInvestigator, CodebaseArchitect, ContextExtractor, Evaluator) + Warnings utility |
 | `./lib/evo_git/runtime/` | Genesis (creation), Evolution (refinement loop), and Prompts (LLM templates) |
 | `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, and `Worktrees` structs/modules backing ETS tables and helper logic |
+| `./lib/evo_git/config/` | `EvoGit.Config` — unified configuration resolver (defaults, user TOML, credentials, API keys) |
 | `./test/` | ExUnit tests using real git operations on temp directories |
 
 ### Key Types
@@ -91,7 +99,7 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 ### Dependencies
 - `req_llm ~> 1.10` — LLM client for agent reasoning and tool calling
 - `retry ~> 0.19` — Retry logic for resilient operations
-- `toml ~> 0.7` — TOML configuration file parser for `evogit.toml` project config
+- `toml ~> 0.7` — TOML configuration parser for `evogit.toml` project config and `~/.config/evogit/config.toml` user config
 
 ## Constraints
 - Part of an **umbrella project** — build artifacts, deps, and lockfile live at the repository root (`../../_build`, `../../deps`, `../../mix.lock`).
@@ -101,6 +109,8 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 - The `EvoGit.Agent` `use` macro injects the agent loop, tool dispatch, subagent management, and `complete_task` tool automatically.
 - Subdirectories follow Elixir convention: `./lib/evo_git/<subdir>/` maps to `EvoGit.<Subdir>` namespace.
 - Project-level configuration is read from `evogit.toml` in the repo root via `EvoGit.ProjectConfig`. Currently supports `worktree.script` — a script that runs after worktree creation with `$SOURCE_REPO_PATH` and `$TARGET_WORKTREE_PATH` env vars.
+- **Three-level configuration**: Runtime settings come from `EvoGit.Config` which merges built-in defaults → user config (`~/.config/evogit/config.toml`) → runtime overrides (`AgentScheduler.update_config/1`). No default model or username is hardcoded.
+- `EvoGit.Defaults` is a backward-compatibility shim that delegates to `EvoGit.Config`. New code should use `EvoGit.Config` directly.
 - **LLM slot management**: All LLM calls must acquire a slot via `request_llm_slot/2` and release via `release_llm_slot/1`. Rate-limit errors trigger a global 60-second backoff across all agents.
 - **Tool slot management**: Tool executions are independently throttled via `request_tool_slot/2` / `release_tool_slot/1` with `max_tool_concurrency` (default: 2).
 - **Orphaned branch cleanup**: On initialization, the scheduler removes stale `evogit-agent*` branches from previous runs.
