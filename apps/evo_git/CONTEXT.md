@@ -58,6 +58,7 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 | `EvoGit.Runtime` | `./lib/evo_git/runtime.ex` | Top-level coordinator: Genesis then Evolution |
 | `EvoGit.ProjectConfig` | `./lib/evo_git/project_config.ex` | Reads and parses `evogit.toml` from repo root; provides `worktree_script/1` accessor |
 | `EvoGit.Defaults` | `./lib/evo_git/defaults.ex` | Single source of truth for all runtime default values (max_concurrency, max_tool_concurrency, etc.) |
+| `EvoGit.Platform` | `./lib/evo_git/platform.ex` | Cross-platform OS detection and data directory resolution (`data_dir/0` respects XDG, macOS, Windows conventions) |
 
 ### Subdirectories
 | Directory | Description |

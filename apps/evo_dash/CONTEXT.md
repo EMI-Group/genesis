@@ -20,7 +20,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 |--------|------|---------|
 | `EvoDash` | `./lib/evo_dash.ex` | Domain context placeholder |
 | `EvoDash.Application` | `./lib/evo_dash/application.ex` | OTP supervisor (Telemetry → DNSCluster → PubSub → TaskRegistry → Endpoint) |
-| `EvoDash.TaskRegistry` | `./lib/evo_dash/task_registry.ex` | ETS-backed GenServer tracking genesis/evolve tasks; spawns `EvoGit.Runtime.*` processes |
+| `EvoDash.TaskRegistry` | `./lib/evo_dash/task_registry.ex` | ETS+DETS-backed GenServer tracking genesis/evolve tasks; spawns `EvoGit.Runtime.*` processes; one-time JSON→DETS migration on startup |
 | `EvoDash.PubSub` | (started in app) | Phoenix PubSub for real-time event distribution |
 
 ### Web Layer (`lib/evo_dash_web/`)
@@ -73,7 +73,7 @@ Browser ←→ Endpoint ←→ Router
 - LiveViews poll TaskRegistry on timers (1s for dashboard, 500ms for agents)
 
 ### Persistence & State
-- **Task persistence**: Completed task records are saved to `~/.local/share/evogit/` so they survive page reloads and server restarts.
+- **Task persistence**: Completed task records are persisted via DETS (Erlang's built-in disk storage) to the platform-appropriate data directory (resolved by `EvoGit.Platform.data_dir/0`). This replaces the previous JSON-based approach, eliminating manual serialization boilerplate.
 - **Recent projects**: The dashboard tracks recently opened projects, allowing users to quickly reopen previously used repository paths.
 - **PathAutocomplete**: A client-side JS hook provides filesystem path autocompletion in the project path input field.
 
@@ -86,7 +86,7 @@ The dashboard uses a **modern Material Design-inspired theme** built on Tailwind
 - **Port**: Runs on port **4100** in development
 - **Adapter**: Uses **Bandit** (not Cowboy) as the HTTP adapter
 - **CSS framework**: Tailwind CSS 4 + DaisyUI (no Node.js toolchain; vendor files managed manually)
-- **No database**: All task state is persisted to `~/.local/share/evogit/` on disk; project state is in LiveView socket assigns — recent projects survive reloads via file persistence
+- **No database**: All task state is persisted via DETS to the platform-appropriate data directory (Linux: `$XDG_DATA_HOME/evogit`, macOS: `~/Library/Application Support/evogit`, Windows: `%APPDATA%/evogit`); project state is in LiveView socket assigns — recent projects survive reloads via DETS persistence
 - **Single-node**: DNSCluster configured but no distributed clustering logic yet
 - **Naming conventions**:
   - Domain modules: `./lib/evo_dash/<module>.ex`
