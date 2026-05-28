@@ -268,6 +268,188 @@ defmodule EvoGit.Config do
     Path.join(config_dir(), @credentials_filename)
   end
 
+  @doc """
+  Validates the current resolved configuration and returns a list of issues.
+
+  Each issue is a map with :field, :severity (:error or :warning), and :message.
+  """
+  @spec validate() :: [%{field: atom, severity: :error | :warning, message: String.t()}]
+  def validate do
+    config = resolve()
+    issues = []
+
+    # Check critical: LLM model is required
+    issues =
+      if get_in(config, [:llm, :model]) in [nil, ""] do
+        [
+          %{
+            field: :llm_model,
+            severity: :error,
+            message: "LLM model is required. Configure it in [llm] section of config.toml."
+          }
+          | issues
+        ]
+      else
+        issues
+      end
+
+    # Check recommended: github username
+    issues =
+      if get_in(config, [:user, :github_username]) in [nil, ""] do
+        [
+          %{
+            field: :github_username,
+            severity: :warning,
+            message:
+              "GitHub username is not configured. Some features may not work (e.g., PR creation)."
+          }
+          | issues
+        ]
+      else
+        issues
+      end
+
+    # Validate scheduler values are positive integers within range
+    scheduler_fields = [
+      {:max_concurrency, "Max concurrency", 1, 100},
+      {:max_tool_concurrency, "Tool concurrency", 1, 100},
+      {:agent_max_retries, "Agent max retries", 0, 100},
+      {:max_agent_depth, "Max agent depth", 1, 50},
+      {:max_retries, "Max retries", 1, 100}
+    ]
+
+    issues =
+      Enum.reduce(scheduler_fields, issues, fn {key, label, min, max}, acc ->
+        val = get_in(config, [:scheduler, key])
+
+        cond do
+          is_nil(val) ->
+            acc
+
+          not is_integer(val) ->
+            [
+              %{
+                field: key,
+                severity: :error,
+                message: "#{label} must be an integer, got: #{inspect(val)}"
+              }
+              | acc
+            ]
+
+          val < min ->
+            [
+              %{
+                field: key,
+                severity: :error,
+                message: "#{label} must be at least #{min}, got: #{val}"
+              }
+              | acc
+            ]
+
+          val > max ->
+            [
+              %{
+                field: key,
+                severity: :warning,
+                message: "#{label} is very high (#{val}). Recommended max: #{max}."
+              }
+              | acc
+            ]
+
+          true ->
+            acc
+        end
+      end)
+
+    # Check API keys - at least one should be configured
+    creds = credentials()
+    api_keys = Map.get(creds, "api_keys", %{})
+    has_any_key = api_keys |> Map.values() |> Enum.any?(&(&1 not in [nil, ""]))
+
+    issues =
+      if not has_any_key do
+        [
+          %{
+            field: :api_keys,
+            severity: :warning,
+            message: "No API keys configured. Add them to credentials.toml under [api_keys]."
+          }
+          | issues
+        ]
+      else
+        issues
+      end
+
+    Enum.reverse(issues)
+  end
+
+  @doc """
+  Reads the raw TOML content of the user config file.
+
+  Returns `{:ok, contents}` on success, `{:error, :not_found}` if the file
+  doesn't exist, or `{:error, reason}` for other read errors.
+  """
+  @spec read_user_config_toml() :: {:ok, String.t()} | {:error, :not_found | term()}
+  def read_user_config_toml do
+    path = config_path()
+
+    case File.read(path) do
+      {:ok, contents} -> {:ok, contents}
+      {:error, :enoent} -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Writes a TOML string to the user config file.
+
+  Validates that the TOML is parseable before writing. Creates the config
+  directory if it doesn't exist.
+
+  Returns `:ok` on success or `{:error, reason}` if validation or writing fails.
+  """
+  @spec write_user_config_toml(String.t()) :: :ok | {:error, term()}
+  def write_user_config_toml(toml_string) when is_binary(toml_string) do
+    case validate_toml(toml_string) do
+      :ok ->
+        path = config_path()
+        dir = config_dir()
+        File.mkdir_p(dir)
+        File.write(path, toml_string)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Returns a summary of the configuration status including file paths,
+  existence checks, and validation issues.
+
+  Useful for dashboard display and diagnostics.
+  """
+  @spec config_status() :: %{
+          config_dir: String.t(),
+          config_path: String.t(),
+          config_exists: boolean(),
+          credentials_path: String.t(),
+          credentials_exists: boolean(),
+          issues: [%{field: atom, severity: :error | :warning, message: String.t()}]
+        }
+  def config_status do
+    c_path = config_path()
+    cred_path = credentials_path()
+
+    %{
+      config_dir: config_dir(),
+      config_path: c_path,
+      config_exists: File.exists?(c_path),
+      credentials_path: cred_path,
+      credentials_exists: File.exists?(cred_path),
+      issues: validate()
+    }
+  end
+
   # --- Private Helpers ---
 
   defp get_from_credentials(provider_str) do
@@ -335,4 +517,13 @@ defmodule EvoGit.Config do
   end
 
   defp get_in_path(_map, _path), do: nil
+
+  defp validate_toml(toml_string) do
+    try do
+      TomlElixir.parse!(toml_string)
+      :ok
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
+  end
 end
