@@ -64,10 +64,12 @@ defmodule EvoDashWeb.DashboardLive do
             prompt={@task_prompt}
             mode={@task_mode}
             mode_info={@task_mode_info}
-            concurrency={@task_concurrency}
-            retries={@task_retries}
-            agent_max_retries={@task_agent_max_retries}
           />
+        </div>
+
+        <!-- Scheduler Settings -->
+        <div class="mt-6">
+          <EvoDashWeb.DashboardComponents.scheduler_settings config={@scheduler_config} />
         </div>
       <% else %>
         <!-- No Active Project State -->
@@ -269,6 +271,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:show_open_project_form, false)
       |> assign(:recent_projects, recent_projects)
       |> assign(:path_suggestions, [])
+      |> assign(:scheduler_config, load_scheduler_config())
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -393,22 +396,13 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:task_mode, params["mode"] || socket.assigns.task_mode)
-     |> assign(:task_prompt, params["prompt"] || socket.assigns.task_prompt)
-     |> assign(:task_concurrency, params["concurrency"] || socket.assigns.task_concurrency)
-     |> assign(:task_retries, params["retries"] || socket.assigns.task_retries)
-     |> assign(:task_agent_max_retries, params["agent_max_retries"] || socket.assigns.task_agent_max_retries)}
+     |> assign(:task_prompt, params["prompt"] || socket.assigns.task_prompt)}
   end
 
   @impl true
   def handle_event(
         "task_submit",
-        %{
-          "prompt" => prompt,
-          "mode" => combined_mode,
-          "concurrency" => concurrency,
-          "retries" => retries,
-          "agent_max_retries" => agent_max_retries
-        },
+        %{"prompt" => prompt, "mode" => combined_mode},
         socket
       ) do
     path = socket.assigns.active_project
@@ -426,10 +420,7 @@ defmodule EvoDashWeb.DashboardLive do
 
       opts = [
         path: path,
-        mode: mode,
-        concurrency: String.to_integer(concurrency),
-        retries: String.to_integer(retries),
-        agent_max_retries: String.to_integer(agent_max_retries)
+        mode: mode
       ]
 
       opts =
@@ -444,12 +435,7 @@ defmodule EvoDashWeb.DashboardLive do
           {:noreply,
            socket
            |> put_flash(:info, "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}")
-           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
-           |> assign(:task_prompt, prompt)
-           |> assign(:task_mode, combined_mode)
-           |> assign(:task_concurrency, concurrency)
-           |> assign(:task_retries, retries)
-           |> assign(:task_agent_max_retries, agent_max_retries)}
+           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))}
 
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
@@ -510,6 +496,36 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply, assign(socket, :selected_options, nil)}
   end
 
+  @impl true
+  def handle_event("scheduler_config_change", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("update_scheduler_config", params, socket) do
+    config_updates =
+      []
+      |> maybe_add_int(:max_concurrency, params["max_concurrency"])
+      |> maybe_add_int(:max_tool_concurrency, params["max_tool_concurrency"])
+      |> maybe_add_int(:agent_max_retries, params["agent_max_retries"])
+      |> maybe_add_int(:max_depth, params["max_agent_depth"])
+      |> maybe_add_int(:max_retries, params["max_retries"])
+      |> maybe_add_string(:llm_model, params["llm_model"])
+
+    case EvoGit.AgentScheduler.update_config(config_updates) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(:scheduler_config, load_scheduler_config())
+         |> put_flash(:info, "Scheduler settings updated successfully.")}
+
+      {:error, :agents_running} ->
+        {:noreply,
+         socket
+         |> put_flash(:warning, "Cannot update concurrency while agents are running. Other settings applied.")}
+    end
+  end
+
   # Helpers
 
   defp assign_form_defaults(socket) do
@@ -517,9 +533,6 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:task_prompt, "")
     |> assign(:task_mode, "genesis_new")
     |> assign(:task_mode_info, "")
-    |> assign(:task_concurrency, to_string(EvoGit.Defaults.max_concurrency()))
-    |> assign(:task_retries, to_string(EvoGit.Defaults.max_retries()))
-    |> assign(:task_agent_max_retries, to_string(EvoGit.Defaults.agent_max_retries()))
   end
 
   defp current_tasks(socket) do
@@ -591,4 +604,29 @@ defmodule EvoDashWeb.DashboardLive do
         []
     end
   end
+
+  defp load_scheduler_config do
+    try do
+      EvoGit.AgentScheduler.get_config()
+    rescue
+      _ -> %{}
+    catch
+      _, _ -> %{}
+    end
+  end
+
+  defp maybe_add_int(list, key, value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} -> Keyword.put(list, key, int)
+      _ -> list
+    end
+  end
+
+  defp maybe_add_int(list, _key, _value), do: list
+
+  defp maybe_add_string(list, key, value) when is_binary(value) and value != "" do
+    Keyword.put(list, key, value)
+  end
+
+  defp maybe_add_string(list, _key, _value), do: list
 end

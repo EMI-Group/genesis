@@ -46,9 +46,11 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-
 
 # Concurrency Options:
 #   -c, --concurrency <n>
-#       Set number of concurrent agents / LLM calls (default: 3).
+#       Set number of concurrent agents / LLM calls.
 #       --tool-concurrency <n>
-#       Set number of concurrent tool executions (default: 2).
+#       Set number of concurrent tool executions.
+#   Note: CLI flags apply session-level overrides. Default values come from
+#   user config (~/.config/evogit/config.toml).
 
 # Multi-Repo Options:
 #   -R, --foreign-repo <name:path | path>
@@ -76,6 +78,10 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-
 │  │  PhyloGraphNode (Temp.) │  │                           │ │
 │  │  Git Adapter (CLI)      │  │                           │ │
 │  │  ProjectConfig (evogit.toml)                              │
+│  │  Config (3-level resolver)   │                           │
+│  │  ├─ Defaults (built-in)     │                           │
+│  │  ├─ User Config (TOML)      │                           │
+│  │  └─ Runtime Override        │                           │
 │  └─────────────────────────┘  └───────────────────────────┘ │
 │                                                              │
 │  ┌─────────────────────────┐  ┌───────────────────────────┐ │
@@ -108,6 +114,44 @@ LLM returns rate_limit error → report_llm_error(agent_id, :rate_limit)
 Agent finishes LLM call → release_llm_slot(agent_id)
   → grant_pending_llm_slots drains queue (skipping still-in-backoff entries)
 ```
+
+### Configuration Architecture
+
+EvoGit uses a three-level configuration system with increasing priority:
+
+| Level | Source | Override Scope | Example |
+|-------|--------|---------------|---------|
+| **Defaults** | `EvoGit.Config.defaults/0` | All sessions | `max_concurrency: 3` |
+| **User Config** | `~/.config/evogit/config.toml` | All sessions | `[llm] model = "..."` |
+| **Runtime Override** | `AgentScheduler.update_config/1` | Current session only | CLI `-c 5` flag |
+
+**Key principle**: No default model or username — users must configure these via user config.
+
+#### User Config (`~/.config/evogit/config.toml`)
+```toml
+[scheduler]
+max_concurrency = 3
+max_tool_concurrency = 2
+agent_max_retries = 3
+max_agent_depth = 8
+max_retries = 15
+
+[llm]
+model = "zai_coding_plan:glm-5"
+compression_threshold_tokens = 100_000
+
+[user]
+github_username = "your-username"
+```
+
+#### Credentials (`~/.config/evogit/credentials.toml`)
+```toml
+[api_keys]
+google = "AIza..."
+zai = "sk-..."
+```
+
+API keys are resolved with fallback: credentials file → `EVOGIT_API_KEY_<PROVIDER>` env var → provider-specific env var (e.g., `GOOGLE_API_KEY`).
 
 ### Orphaned Branch Cleanup
 
@@ -182,6 +226,7 @@ Agent LLM calls subagent tool with path: "/Source/original-proj/src/main.py"
 5. **Project Configuration:** An optional `evogit.toml` file at the repo root allows project-level customization. Currently supports `worktree.script` for running initialization scripts after worktree creation.
 6. **Multi-Repo Support:** Agents can operate across multiple Git repositories simultaneously. Foreign repos are registered via CLI flags or `evogit.toml` configuration. Agents spawn subagents to foreign repos by specifying absolute paths, which are automatically resolved to the correct repo. Each repo maintains its own worktrees, commit history, and spatial contracts independently.
 7. **Slot-Based Concurrency:** LLM calls and tool executions are independently throttled via slot pools managed by the scheduler. LLM slots include a global backoff mechanism for rate-limit errors.
+8. **Three-Level Configuration**: Defaults → User Config (TOML) → Runtime Overrides. No hardcoded model or username defaults.
 
 ## Constraints
 - **Umbrella structure:** All dependencies, build artifacts, and the lockfile live at the root level (`./deps/`, `./_build/`, `mix.lock`).
@@ -195,6 +240,8 @@ Agent LLM calls subagent tool with path: "/Source/original-proj/src/main.py"
 - **Cross-repo results are not merged:** Subagents operating on foreign repos commit independently. Results are reported to the parent agent but no cross-repo merge is performed.
 - **LLM slot discipline:** All LLM calls must go through `request_llm_slot` / `release_llm_slot`. Rate-limit errors must be reported via `report_llm_error` to trigger global backoff.
 - **Tool slot discipline:** Tool executions must go through `request_tool_slot` / `release_tool_slot` to respect `max_tool_concurrency`.
+- **No hardcoded model/username defaults**: The `config/config.exs` only contains infrastructure settings. Model and user preferences must be configured via `~/.config/evogit/config.toml`.
+- **User config directory**: Follows XDG conventions — `$XDG_CONFIG_HOME/evogit` on Linux, `~/Library/Application Support/evogit` on macOS, `%APPDATA%/evogit` on Windows.
 
 ## Development Notes
 

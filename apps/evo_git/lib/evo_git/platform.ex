@@ -132,6 +132,41 @@ defmodule EvoGit.Platform do
   end
 
   @doc """
+  Returns the platform-appropriate config directory for EvoGit.
+
+  - **Linux**: `$XDG_CONFIG_HOME/evogit` (defaults to `~/.config/evogit`)
+  - **macOS**: `~/Library/Application Support/evogit`
+  - **Windows**: `%APPDATA%/evogit` (defaults to `~/evogit` if APPDATA not set)
+  """
+  @spec config_dir() :: String.t()
+  def config_dir, do: config_dir("evogit")
+
+  @doc """
+  Returns the platform-appropriate config directory for the given application name.
+
+  The directory is not created automatically — callers should use `File.mkdir_p!/1`
+  if needed.
+  """
+  @spec config_dir(String.t()) :: String.t()
+  def config_dir(app_name) do
+    case os() do
+      os when os in [:linux, :unknown] ->
+        # XDG convention (Linux standard; fallback for unknown platforms)
+        xdg = System.get_env("XDG_CONFIG_HOME")
+        base = if xdg && xdg != "", do: xdg, else: Path.join(System.user_home!(), ".config")
+        Path.join(base, app_name)
+
+      :macos ->
+        Path.join([System.user_home!(), "Library", "Application Support", app_name])
+
+      :windows ->
+        appdata = System.get_env("APPDATA")
+        base = if appdata && appdata != "", do: appdata, else: System.user_home!()
+        Path.join(base, app_name)
+    end
+  end
+
+  @doc """
   Returns true if `systemd-run` is likely available on this platform.
   
   Only returns true on Linux where systemd is the init system.

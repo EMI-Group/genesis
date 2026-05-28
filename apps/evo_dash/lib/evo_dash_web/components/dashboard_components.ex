@@ -1,10 +1,6 @@
 defmodule EvoDashWeb.DashboardComponents do
   use EvoDashWeb, :html
 
-  @default_concurrency to_string(EvoGit.Defaults.max_concurrency())
-  @default_retries to_string(EvoGit.Defaults.max_retries())
-  @default_agent_max_retries to_string(EvoGit.Defaults.agent_max_retries())
-
   # ---------------------------------------------------------------------------
   # task_form/1 — Modern card with gradient hero, better spacing
   # ---------------------------------------------------------------------------
@@ -12,9 +8,6 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :prompt, :string, default: ""
   attr :mode, :string, default: "genesis_new"
   attr :mode_info, :string, default: ""
-  attr :concurrency, :string, default: @default_concurrency
-  attr :retries, :string, default: @default_retries
-  attr :agent_max_retries, :string, default: @default_agent_max_retries
 
   def task_form(assigns) do
     ~H"""
@@ -78,56 +71,6 @@ defmodule EvoDashWeb.DashboardComponents do
               </label>
             </div>
 
-            <div>
-              <div class="divider text-xs text-base-content/40 uppercase tracking-widest my-2">
-                Advanced Config
-              </div>
-
-              <div class="space-y-4 bg-base-200/30 p-4 rounded-xl border border-base-200/50">
-                <div class="form-control">
-                  <label class="flex justify-between items-center mb-1">
-                    <span class="label-text text-xs font-medium text-base-content/70">Concurrency Limit</span>
-                    <span class="text-xs text-base-content/40" title="Max parallel tasks">
-                      <.icon name="hero-information-circle" class="size-3" />
-                    </span>
-                  </label>
-                  <input
-                    type="number"
-                    name="concurrency"
-                    value={@concurrency}
-                    min="1"
-                    max="10000"
-                    class="input input-sm input-bordered w-full focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono bg-base-100/50"
-                  />
-                </div>
-                <div class="form-control">
-                  <label class="flex justify-between items-center mb-1">
-                    <span class="label-text text-xs font-medium text-base-content/70">Max Retries</span>
-                  </label>
-                  <input
-                    type="number"
-                    name="retries"
-                    value={@retries}
-                    min="1"
-                    max="10000"
-                    class="input input-sm input-bordered w-full focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono bg-base-100/50"
-                  />
-                </div>
-                <div class="form-control">
-                  <label class="flex justify-between items-center mb-1">
-                    <span class="label-text text-xs font-medium text-base-content/70">Agent Max Retries</span>
-                  </label>
-                  <input
-                    type="number"
-                    name="agent_max_retries"
-                    value={@agent_max_retries}
-                    min="1"
-                    max="100"
-                    class="input input-sm input-bordered w-full focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono bg-base-100/50"
-                  />
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -146,6 +89,89 @@ defmodule EvoDashWeb.DashboardComponents do
         </button>
       </div>
     </.form>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # scheduler_settings/1 — Runtime scheduler configuration panel
+  # ---------------------------------------------------------------------------
+
+  attr :config, :map, required: true
+
+  def scheduler_settings(assigns) do
+    ~H"""
+    <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+      <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-6 md:p-8">
+        <div class="flex items-center gap-3">
+          <div class="bg-secondary/15 text-secondary p-3 rounded-xl">
+            <.icon name="hero-cog-6-tooth" class="size-6" />
+          </div>
+          <div>
+            <h2 class="text-xl font-bold">Scheduler Settings</h2>
+            <p class="text-sm text-base-content/60">Runtime configuration for agent execution</p>
+          </div>
+        </div>
+      </div>
+      <div class="p-6 md:p-8 pt-4 md:pt-6">
+        <.form for={%{}} phx-submit="update_scheduler_config" phx-change="scheduler_config_change" class="space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm font-medium">LLM Concurrency</span>
+              </label>
+              <input type="number" name="max_concurrency" value={@config[:max_concurrency]} min="1" max="100"
+                class="input input-bordered input-sm w-full font-mono" />
+              <label class="label"><span class="label-text-alt text-base-content/50">Max parallel LLM calls</span></label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm font-medium">Tool Concurrency</span>
+              </label>
+              <input type="number" name="max_tool_concurrency" value={@config[:max_tool_concurrency]} min="1" max="100"
+                class="input input-bordered input-sm w-full font-mono" />
+              <label class="label"><span class="label-text-alt text-base-content/50">Max parallel tool executions</span></label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm font-medium">Agent Max Retries</span>
+              </label>
+              <input type="number" name="agent_max_retries" value={@config[:agent_max_retries]} min="0" max="20"
+                class="input input-bordered input-sm w-full font-mono" />
+              <label class="label"><span class="label-text-alt text-base-content/50">Crash-retries per agent</span></label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm font-medium">Max Depth</span>
+              </label>
+              <input type="number" name="max_agent_depth" value={@config[:max_agent_depth]} min="1" max="20"
+                class="input input-bordered input-sm w-full font-mono" />
+              <label class="label"><span class="label-text-alt text-base-content/50">Max subagent recursion</span></label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm font-medium">LLM Retries</span>
+              </label>
+              <input type="number" name="max_retries" value={@config[:max_retries]} min="1" max="100"
+                class="input input-bordered input-sm w-full font-mono" />
+              <label class="label"><span class="label-text-alt text-base-content/50">API call retries</span></label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm font-medium">LLM Model</span>
+              </label>
+              <input type="text" name="llm_model" value={@config[:llm_model] || ""} 
+                class="input input-bordered input-sm w-full font-mono" placeholder="Configure in config.toml" />
+              <label class="label"><span class="label-text-alt text-base-content/50">Model identifier</span></label>
+            </div>
+          </div>
+          <div class="pt-2">
+            <button type="submit" class="btn btn-secondary btn-sm">
+              <.icon name="hero-arrow-path" class="size-4" /> Update Settings
+            </button>
+          </div>
+        </.form>
+      </div>
+    </div>
     """
   end
 
@@ -471,17 +497,11 @@ defmodule EvoDashWeb.DashboardComponents do
     primary_text = opts[:prompt] || opts[:objective] || ""
     mode = opts[:mode] || ""
     path = opts[:path] || ""
-    concurrency = opts[:concurrency]
-    retries = opts[:retries]
-    agent_max_retries = opts[:agent_max_retries]
 
     assigns = %{
       primary_text: primary_text,
       mode: mode,
-      path: path,
-      concurrency: concurrency,
-      retries: retries,
-      agent_max_retries: agent_max_retries
+      path: path
     }
 
     ~H"""
@@ -505,24 +525,6 @@ defmodule EvoDashWeb.DashboardComponents do
           <span class="badge badge-ghost font-mono">
             <.icon name="hero-folder" class="size-3 mr-1" />
             <%= @path %>
-          </span>
-        <% end %>
-        <%= if @concurrency do %>
-          <span class="badge badge-ghost font-mono">
-            <.icon name="hero-arrow-path-rounded-square" class="size-3 mr-1" />
-            concurrency: <%= @concurrency %>
-          </span>
-        <% end %>
-        <%= if @retries do %>
-          <span class="badge badge-ghost font-mono">
-            <.icon name="hero-arrow-uturn-right" class="size-3 mr-1" />
-            retries: <%= @retries %>
-          </span>
-        <% end %>
-        <%= if @agent_max_retries do %>
-          <span class="badge badge-ghost font-mono">
-            <.icon name="hero-arrow-uturn-down" class="size-3 mr-1" />
-            agent retries: <%= @agent_max_retries %>
           </span>
         <% end %>
       </div>

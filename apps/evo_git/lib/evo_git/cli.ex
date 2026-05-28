@@ -4,7 +4,6 @@ defmodule EvoGit.CLI do
   """
   alias EvoGit.Runtime.Genesis
   alias EvoGit.Runtime.Evolution
-  alias EvoGit.Defaults
   require Logger
 
   def main(args) do
@@ -50,7 +49,7 @@ defmodule EvoGit.CLI do
       |> maybe_put(:llm_model, opts[:model])
 
     if scheduler_opts != [] do
-      Logger.info("Reconfiguring AgentScheduler with opts: #{inspect(scheduler_opts)}")
+      Logger.info("Applying session-level config overrides: #{inspect(scheduler_opts)}")
       EvoGit.AgentScheduler.update_config(scheduler_opts)
     end
   end
@@ -78,16 +77,10 @@ defmodule EvoGit.CLI do
           end
 
         if proceed? do
-          # Pass runtime opts (like max_concurrency for task stream)
-          runtime_opts = []
-
-          runtime_opts =
-            if c = opts[:concurrency],
-              do: Keyword.put(runtime_opts, :max_concurrency, c),
-              else: runtime_opts
-
-          runtime_opts = Keyword.put(runtime_opts, :repo_path, repo_path)
-          runtime_opts = Keyword.put(runtime_opts, :mode, String.to_atom(mode))
+          runtime_opts = [
+            repo_path: repo_path,
+            mode: String.to_atom(mode)
+          ]
 
           foreign_repos = parse_foreign_repos(opts)
           runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
@@ -211,11 +204,11 @@ defmodule EvoGit.CLI do
 
     Options:
       -f, --file <path>           Read prompt/objective from a file.
-      -c, --concurrency <n>       Set number of concurrent workers (default: #{Defaults.max_concurrency()}).
-          --tool-concurrency <n>  Set number of concurrent tool executions (default: #{Defaults.max_tool_concurrency()}).
-      -r, --retries <n>           Set max retries for failed agents (default: #{Defaults.agent_max_retries()}).
+      -c, --concurrency <n>       Set number of concurrent workers.
+          --tool-concurrency <n>  Set number of concurrent tool executions.
+      -r, --retries <n>           Set max retries for failed agents.
       -p, --path <path>           Path to the git repository (default: current directory).
-      -m, --model <model>         Override the default LLM model (default: #{Defaults.llm_model()}).
+      -m, --model <model>         Override the default LLM model.
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).
       -R, --foreign-repo <name:path | path>
                                   Add a foreign repository for cross-repo operations.
