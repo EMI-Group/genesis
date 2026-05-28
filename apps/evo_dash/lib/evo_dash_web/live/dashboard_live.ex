@@ -5,27 +5,14 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.flash_group flash={@flash} />
-
-    <div class="container mx-auto px-4 py-8 max-w-6xl">
-      <.header>
-        EvoGit Dashboard
-        <:subtitle>
-          Manage your evolutionary software development tasks
-        </:subtitle>
-        <:actions>
-          <a href="/agents" class="btn btn-sm btn-ghost">
-            <.icon name="hero-server" class="size-4" /> Agents
-          </a>
-          <a href="https://github.com/your-repo/evogit" class="btn btn-sm btn-ghost" target="_blank">
-            <.icon name="hero-document-text" class="size-4" /> Docs
-          </a>
-        </:actions>
-      </.header>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard}>
+      <div>
+        <p class="text-base-content/60 text-sm">Manage your evolutionary software development tasks</p>
+      </div>
 
       <%= if @active_project do %>
         <!-- Active Project State -->
-        <div class="mt-6 mb-2">
+        <div class="mt-4 mb-2">
           <EvoDashWeb.DashboardComponents.project_tabs
             projects={@projects}
             active_project={@active_project}
@@ -92,7 +79,7 @@ defmodule EvoDashWeb.DashboardLive do
         </div>
       <% else %>
         <!-- No Active Project State -->
-        <div class="mt-6 mb-8">
+        <div class="mt-4 mb-8">
           <EvoDashWeb.DashboardComponents.open_project_form path="" />
         </div>
 
@@ -115,135 +102,135 @@ defmodule EvoDashWeb.DashboardLive do
           <% end %>
         </div>
       <% end %>
-    </div>
 
-    <!-- Full Result Modal -->
-    <%= if @selected_result do %>
-      <div class="modal modal-open bg-black/50">
-        <div class="modal-box w-11/12 max-w-5xl">
-          <%= case @selected_result do %>
-            <% {:ok, %{result: result, no_changes: true}} when is_binary(result) -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-information-circle" class="size-5 text-warning" />
-                No Changes
-              </h3>
-              <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
-              </div>
-              <div class="mt-4 bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <h4 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide">Agent Message</h4>
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-              </div>
+      <!-- Full Result Modal -->
+      <%= if @selected_result do %>
+        <div class="modal modal-open bg-black/50">
+          <div class="modal-box w-11/12 max-w-5xl">
+            <%= case @selected_result do %>
+              <% {:ok, %{result: result, no_changes: true}} when is_binary(result) -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-information-circle" class="size-5 text-warning" />
+                  No Changes
+                </h3>
+                <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
+                </div>
+                <div class="mt-4 bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <h4 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide">Agent Message</h4>
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+                </div>
 
-            <% {:ok, %{result: result, branch_name: branch_name} = data} when is_binary(result) -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-check-circle" class="size-5 text-success" />
-                Agent Message
-              </h3>
-              <div class="flex flex-wrap gap-2 mb-4">
-                <%= if branch_name do %>
-                  <span class="badge badge-primary font-mono text-sm">
-                    <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
-                    <%= branch_name %>
-                  </span>
-                <% end %>
-                <%= if Map.get(data, :pr_url) do %>
-                  <a href={Map.get(data, :pr_url)} target="_blank" class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity">
-                    <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
-                    View PR
-                  </a>
-                <% end %>
-              </div>
-              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-              </div>
+              <% {:ok, %{result: result, branch_name: branch_name} = data} when is_binary(result) -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="size-5 text-success" />
+                  Agent Message
+                </h3>
+                <div class="flex flex-wrap gap-2 mb-4">
+                  <%= if branch_name do %>
+                    <span class="badge badge-primary font-mono text-sm">
+                      <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
+                      <%= branch_name %>
+                    </span>
+                  <% end %>
+                  <%= if Map.get(data, :pr_url) do %>
+                    <a href={Map.get(data, :pr_url)} target="_blank" class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity">
+                      <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
+                      View PR
+                    </a>
+                  <% end %>
+                </div>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+                </div>
 
-            <% {%{result: result}} when is_binary(result) -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-check-circle" class="size-5 text-success" />
-                Agent Message
-              </h3>
-              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-              </div>
+              <% {%{result: result}} when is_binary(result) -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="size-5 text-success" />
+                  Agent Message
+                </h3>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+                </div>
 
-            <% {:error, reason} -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-x-circle" class="size-5 text-error" />
-                Task Failed
-              </h3>
-              <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
-              </div>
+              <% {:error, reason} -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-x-circle" class="size-5 text-error" />
+                  Task Failed
+                </h3>
+                <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
+                </div>
 
-            <% {:exit, reason} -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-x-circle" class="size-5 text-error" />
-                Task Crashed
-              </h3>
-              <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
-              </div>
+              <% {:exit, reason} -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-x-circle" class="size-5 text-error" />
+                  Task Crashed
+                </h3>
+                <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
+                </div>
 
-            <% {:ok, %{result: result}} -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-check-circle" class="size-5 text-success" />
-                Agent Message
-              </h3>
-              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
-              </div>
+              <% {:ok, %{result: result}} -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="size-5 text-success" />
+                  Agent Message
+                </h3>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
+                </div>
 
-            <% %{result: result} -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-check-circle" class="size-5 text-success" />
-                Agent Message
-              </h3>
-              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
-              </div>
+              <% %{result: result} -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="size-5 text-success" />
+                  Agent Message
+                </h3>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
+                </div>
 
-            <% _ -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                Result
-              </h3>
-              <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm overflow-x-auto"><%= inspect(@selected_result, pretty: true, limit: :infinity) %></pre>
-              </div>
-          <% end %>
+              <% _ -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+                  Result
+                </h3>
+                <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm overflow-x-auto"><%= inspect(@selected_result, pretty: true, limit: :infinity) %></pre>
+                </div>
+            <% end %>
 
-          <div class="modal-action">
-            <button class="btn" phx-click="close_result_modal">Close</button>
+            <div class="modal-action">
+              <button class="btn" phx-click="close_result_modal">Close</button>
+            </div>
+          </div>
+
+          <div class="modal-backdrop" phx-click="close_result_modal">
+            <button class="cursor-default">close</button>
           </div>
         </div>
+      <% end %>
 
-        <div class="modal-backdrop" phx-click="close_result_modal">
-          <button class="cursor-default">close</button>
-        </div>
-      </div>
-    <% end %>
-
-    <!-- Full Options Modal -->
-    <%= if @selected_options do %>
-      <div class="modal modal-open bg-black/50">
-        <div class="modal-box w-11/12 max-w-5xl">
-          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-            Full Objective
-          </h3>
-          <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-            <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+      <!-- Full Options Modal -->
+      <%= if @selected_options do %>
+        <div class="modal modal-open bg-black/50">
+          <div class="modal-box w-11/12 max-w-5xl">
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+              Full Objective
+            </h3>
+            <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+              <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+            </div>
+            <div class="modal-action">
+              <button class="btn" phx-click="close_options_modal">Close</button>
+            </div>
           </div>
-          <div class="modal-action">
-            <button class="btn" phx-click="close_options_modal">Close</button>
+          <div class="modal-backdrop" phx-click="close_options_modal">
+            <button class="cursor-default">close</button>
           </div>
         </div>
-        <div class="modal-backdrop" phx-click="close_options_modal">
-          <button class="cursor-default">close</button>
-        </div>
-      </div>
-    <% end %>
+      <% end %>
+    </EvoDashWeb.Layouts.app>
     """
   end
 

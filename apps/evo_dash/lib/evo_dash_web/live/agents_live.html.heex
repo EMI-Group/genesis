@@ -1,19 +1,9 @@
-<EvoDashWeb.Layouts.flash_group flash={@flash} />
+<EvoDashWeb.Layouts.app flash={@flash} current_page={:agents}>
+  <div>
+    <p class="text-base-content/60 text-sm">Visualize running agents and their relationships</p>
+  </div>
 
-<div class="container mx-auto px-4 py-8">
-  <.header>
-    Agent Inspector
-    <:subtitle>
-      Visualize running agents and their relationships
-    </:subtitle>
-    <:actions>
-      <a href="/" class="btn btn-sm btn-ghost">
-        <.icon name="hero-arrow-left" class="size-4" /> Back to Dashboard
-      </a>
-    </:actions>
-  </.header>
-
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
     <!-- Agent Tree View -->
     <div class="lg:col-span-2">
       <div class="card bg-base-100 shadow-sm border border-base-200">
@@ -64,7 +54,7 @@
     
 <!-- Agent Details Panel -->
     <div class="lg:col-span-1">
-      <div class="card bg-base-100 shadow-sm border border-base-200 sticky top-4">
+      <div class="card bg-base-100 shadow-sm border border-base-200 sticky top-20">
         <div class="card-body p-6">
           <%= if @selected_agent_id do %>
             <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
@@ -505,4 +495,4 @@
       </div>
     </div>
   <% end %>
-</div>
+</EvoDashWeb.Layouts.app>
