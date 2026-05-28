@@ -185,8 +185,6 @@ defmodule EvoDashWeb.AgentsLive do
 
   # Converts ReqLLM.Message structs to history entry format
   defp convert_messages_to_history(messages) when is_list(messages) do
-    base_time = System.system_time(:millisecond)
-
     messages
     |> Enum.with_index()
     |> Enum.map(fn {msg, index} ->
@@ -211,7 +209,6 @@ defmodule EvoDashWeb.AgentsLive do
         metadata: Map.get(msg, :metadata, %{})
       }
 
-      # Add tool-specific metadata
       data =
         case msg.role do
           :tool ->
@@ -225,7 +222,7 @@ defmodule EvoDashWeb.AgentsLive do
         end
 
       %{
-        timestamp: base_time + index * 1000,
+        turn: index + 1,
         type: Atom.to_string(msg.role),
         data: data
       }

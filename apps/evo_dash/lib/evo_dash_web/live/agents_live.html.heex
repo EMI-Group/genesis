@@ -267,7 +267,7 @@
                                 <.icon name="hero-arrows-pointing-out" class="size-3" />
                               </button>
                               <span class="text-xs text-base-content/40 ml-auto">
-                                {format_timestamp(entry.timestamp)}
+                                {format_turn(entry.turn)}
                               </span>
                             </div>
                             <%= case entry.type do %>
@@ -422,7 +422,7 @@
           <.icon name={history_entry_icon(@selected_history_entry.type)} class="size-5" />
           {@selected_history_entry.type}
           <span class="text-sm font-normal text-base-content/50 ml-auto">
-            {format_timestamp(@selected_history_entry.timestamp)}
+            {format_turn(@selected_history_entry.turn)}
           </span>
         </h3>
 
