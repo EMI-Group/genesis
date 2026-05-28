@@ -3,12 +3,14 @@ defmodule EvoDash.TaskRegistry do
   Registry for tracking running EvoGit tasks.
   Tasks are identified by unique IDs and tracked in-memory via ETS.
   Supports persistence of the 10 most recent finished tasks and
-  recently opened projects to disk (~/.local/share/evogit/).
+  recently opened projects to DETS (platform data directory via EvoGit.Platform).
   """
   use GenServer
 
   @table_name :evo_dash_tasks
   @recent_projects_table :evo_dash_recent_projects
+  @dets_tasks :evo_dash_tasks_dets
+  @dets_projects :evo_dash_projects_dets
   @max_persisted_tasks 10
   @max_recent_projects 10
 
@@ -112,17 +114,34 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def init(_opts) do
-    :ets.new(@table_name, [:named_table, :public, :set])
-    :ets.new(@recent_projects_table, [:named_table, :public, :set])
-
     # Ensure data directory exists
     File.mkdir_p!(data_dir())
 
-    # Load persisted data from disk
-    load_tasks_from_disk()
-    load_recent_projects_from_disk()
+    # Open or create DETS tables
+    {:ok, _} = :dets.open_file(@dets_tasks, type: :set, file: to_charlist(tasks_dets_path()))
+    {:ok, _} = :dets.open_file(@dets_projects, type: :set, file: to_charlist(recent_projects_dets_path()))
+
+    # Create ETS tables for fast in-memory access
+    :ets.new(@table_name, [:named_table, :public, :set])
+    :ets.new(@recent_projects_table, [:named_table, :public, :set])
+
+    # One-time migration from JSON to DETS
+    unless File.exists?(tasks_dets_path()) do
+      migrate_json_to_dets()
+    end
+
+    # Load persisted data from DETS into ETS
+    load_tasks_from_dets()
+    load_recent_projects_from_dets()
 
     {:ok, %{}}
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    :dets.close(@dets_tasks)
+    :dets.close(@dets_projects)
+    :ok
   end
 
   @impl true
@@ -177,7 +196,7 @@ defmodule EvoDash.TaskRegistry do
             Task.shutdown(task_ref, :brutal_kill)
             updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
             :ets.insert(@table_name, {task_id, updated})
-            persist_tasks_to_disk()
+            persist_tasks_to_dets()
             :ok
           else
             {:error, :not_running}
@@ -230,7 +249,7 @@ defmodule EvoDash.TaskRegistry do
 
     # Enforce max limit
     trim_recent_projects()
-    save_recent_projects_to_disk()
+    save_recent_projects_to_dets()
 
     {:reply, :ok, state}
   end
@@ -248,7 +267,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
     :ets.delete(@recent_projects_table, path)
-    save_recent_projects_to_disk()
+    save_recent_projects_to_dets()
     {:reply, :ok, state}
   end
 
@@ -260,7 +279,7 @@ defmodule EvoDash.TaskRegistry do
         :ets.insert(@table_name, {task_id, updated})
 
         if status in [:completed, :failed, :cancelled] do
-          persist_tasks_to_disk()
+          persist_tasks_to_dets()
         end
 
       _ ->
@@ -314,35 +333,40 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp data_dir do
-    Path.join([System.user_home!(), ".local", "share", "evogit"])
+    EvoGit.Platform.data_dir()
   end
 
-  defp tasks_file, do: Path.join(data_dir(), "tasks.json")
-  defp recent_projects_file, do: Path.join(data_dir(), "recent_projects.json")
+  defp tasks_dets_path, do: Path.join(data_dir(), "tasks.dets")
+  defp recent_projects_dets_path, do: Path.join(data_dir(), "recent_projects.dets")
 
-  # --- Task Persistence ---
+  # --- Task Persistence (DETS) ---
 
-  defp load_tasks_from_disk do
+  defp load_tasks_from_dets do
     try do
-      case File.read(tasks_file()) do
-        {:ok, content} ->
-          tasks = JSON.decode!(content)
-          now = DateTime.utc_now()
-
-          for task_map <- tasks do
-            task = deserialize_task(task_map, now)
+      @dets_tasks
+      |> :dets.foldl(
+        fn
+          {_key, %TaskInfo{} = task}, acc ->
+            # Reset non-persistable fields
+            task = %{task | ref: nil, status: maybe_reset_status(task.status)}
             :ets.insert(@table_name, {task.id, task})
-          end
+            acc
 
-        {:error, _} ->
-          :ok
-      end
+          _other, acc ->
+            acc
+        end,
+        :ok
+      )
     rescue
       _ -> :ok
     end
   end
 
-  defp persist_tasks_to_disk do
+  defp maybe_reset_status(:running), do: :pending
+  defp maybe_reset_status(:pending), do: :pending
+  defp maybe_reset_status(status), do: status
+
+  defp persist_tasks_to_dets do
     try do
       all_tasks =
         :ets.tab2list(@table_name)
@@ -358,131 +382,61 @@ defmodule EvoDash.TaskRegistry do
 
       tasks_to_save = running_tasks ++ finished_tasks
 
-      serialized = Enum.map(tasks_to_save, &serialize_task/1)
-      File.write!(tasks_file(), JSON.encode!(serialized))
-    rescue
-      _ -> :ok
-    end
-  end
+      # Clear existing DETS data and write new data
+      :dets.delete_all_objects(@dets_tasks)
 
-  defp serialize_task(%TaskInfo{} = task) do
-    task
-    |> Map.from_struct()
-    |> Map.drop([:ref])
-    |> serialize_datetime_field(:started_at)
-    |> serialize_datetime_field(:finished_at)
-    |> serialize_opts()
-  end
-
-  defp serialize_datetime_field(map, field) do
-    case Map.get(map, field) do
-      %DateTime{} = dt -> Map.put(map, field, DateTime.to_iso8601(dt))
-      _ -> map
-    end
-  end
-
-  defp serialize_opts(%{opts: opts} = map) when is_list(opts) do
-    # Convert keyword list to list of [key, value] pairs for JSON compatibility
-    serialized =
-      Enum.map(opts, fn
-        {k, v} when is_atom(k) -> [Atom.to_string(k), serialize_opt_value(v)]
-        other -> other
-      end)
-
-    Map.put(map, :opts, serialized)
-  end
-
-  defp serialize_opts(map), do: map
-
-  defp serialize_opt_value(v) when is_atom(v), do: Atom.to_string(v)
-  defp serialize_opt_value(v), do: v
-
-  defp deserialize_task(map, now) do
-    %TaskInfo{
-      id: map["id"],
-      type: deserialize_atom(map["type"]),
-      status: deserialize_atom(map["status"]) || :pending,
-      opts: deserialize_opts(map["opts"]),
-      ref: nil,
-      started_at: parse_datetime(map["started_at"]) || now,
-      finished_at: parse_datetime(map["finished_at"]),
-      logs: map["logs"] || [],
-      result: nil
-    }
-  end
-
-  defp deserialize_opts(nil), do: []
-
-  defp deserialize_opts(opts) when is_list(opts) do
-    Enum.map(opts, fn
-      [k, v] when is_binary(k) -> {String.to_atom(k), v}
-      {k, v} -> {k, v}
-      other -> other
-    end)
-  end
-
-  defp deserialize_atom(nil), do: nil
-  defp deserialize_atom(s) when is_binary(s), do: String.to_atom(s)
-  defp deserialize_atom(a) when is_atom(a), do: a
-
-  defp parse_datetime(nil), do: nil
-
-  defp parse_datetime(s) when is_binary(s) do
-    case DateTime.from_iso8601(s) do
-      {:ok, dt, _offset} -> dt
-      _ -> nil
-    end
-  end
-
-  defp parse_datetime(%DateTime{} = dt), do: dt
-
-  # --- Recent Projects ---
-
-  defp load_recent_projects_from_disk do
-    try do
-      case File.read(recent_projects_file()) do
-        {:ok, content} ->
-          projects = JSON.decode!(content)
-
-          for project_map <- projects do
-            project = %{
-              path: project_map["path"],
-              name: project_map["name"],
-              last_opened_at: parse_datetime(project_map["last_opened_at"]) || DateTime.utc_now()
-            }
-
-            :ets.insert(@recent_projects_table, {project.path, project})
-          end
-
-        {:error, _} ->
-          :ok
+      for task <- tasks_to_save do
+        # Drop non-serializable ref field before persisting
+        persistable = %{task | ref: nil}
+        :dets.insert(@dets_tasks, {task.id, persistable})
       end
+
+      :ok
     rescue
       _ -> :ok
     end
   end
 
-  defp save_recent_projects_to_disk do
+  # --- Recent Projects (DETS) ---
+
+  defp load_recent_projects_from_dets do
+    try do
+      @dets_projects
+      |> :dets.foldl(
+        fn
+          {_path, %{last_opened_at: %DateTime{}} = project}, acc ->
+            :ets.insert(@recent_projects_table, {project.path, project})
+            acc
+
+          _other, acc ->
+            acc
+        end,
+        :ok
+      )
+    rescue
+      _ -> :ok
+    end
+  end
+
+  defp save_recent_projects_to_dets do
     try do
       projects =
         :ets.tab2list(@recent_projects_table)
         |> Enum.map(fn {_path, project} -> project end)
         |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
         |> Enum.take(@max_recent_projects)
-        |> Enum.map(&serialize_recent_project/1)
 
-      File.write!(recent_projects_file(), JSON.encode!(projects))
+      # Clear existing DETS data and write new data
+      :dets.delete_all_objects(@dets_projects)
+
+      for project <- projects do
+        :dets.insert(@dets_projects, {project.path, project})
+      end
+
+      :ok
     rescue
       _ -> :ok
     end
-  end
-
-  defp serialize_recent_project(%{path: path, name: name, last_opened_at: dt}) do
-    %{
-      "path" => path,
-      "name" => name,
-      "last_opened_at" => DateTime.to_iso8601(dt)
-    }
   end
 
   defp trim_recent_projects do
@@ -501,6 +455,106 @@ defmodule EvoDash.TaskRegistry do
         end
     end
   end
+
+  # --- JSON → DETS Migration ---
+
+  defp migrate_json_to_dets do
+    # Migrate tasks
+    tasks_json = Path.join(data_dir(), "tasks.json")
+
+    if File.exists?(tasks_json) do
+      try do
+        case File.read(tasks_json) do
+          {:ok, content} ->
+            tasks = JSON.decode!(content)
+            now = DateTime.utc_now()
+
+            for task_map <- tasks do
+              task = deserialize_task_legacy(task_map, now)
+              persistable = %{task | ref: nil}
+              :dets.insert(@dets_tasks, {task.id, persistable})
+            end
+
+            # Delete old JSON file after successful migration
+            File.rm(tasks_json)
+
+          _ ->
+            :ok
+        end
+      rescue
+        _ -> :ok
+      end
+    end
+
+    # Migrate recent projects
+    projects_json = Path.join(data_dir(), "recent_projects.json")
+
+    if File.exists?(projects_json) do
+      try do
+        case File.read(projects_json) do
+          {:ok, content} ->
+            projects = JSON.decode!(content)
+
+            for project_map <- projects do
+              project = %{
+                path: project_map["path"],
+                name: project_map["name"],
+                last_opened_at: parse_datetime_legacy(project_map["last_opened_at"]) || DateTime.utc_now()
+              }
+
+              :dets.insert(@dets_projects, {project.path, project})
+            end
+
+            File.rm(projects_json)
+
+          _ ->
+            :ok
+        end
+      rescue
+        _ -> :ok
+      end
+    end
+  end
+
+  # Legacy deserialization helpers (for JSON → DETS migration only)
+  defp deserialize_task_legacy(map, now) do
+    %TaskInfo{
+      id: map["id"],
+      type: deserialize_atom_legacy(map["type"]),
+      status: deserialize_atom_legacy(map["status"]) || :pending,
+      opts: deserialize_opts_legacy(map["opts"]),
+      ref: nil,
+      started_at: parse_datetime_legacy(map["started_at"]) || now,
+      finished_at: parse_datetime_legacy(map["finished_at"]),
+      logs: map["logs"] || [],
+      result: nil
+    }
+  end
+
+  defp deserialize_opts_legacy(nil), do: []
+
+  defp deserialize_opts_legacy(opts) when is_list(opts) do
+    Enum.map(opts, fn
+      [k, v] when is_binary(k) -> {String.to_atom(k), v}
+      {k, v} -> {k, v}
+      other -> other
+    end)
+  end
+
+  defp deserialize_atom_legacy(nil), do: nil
+  defp deserialize_atom_legacy(s) when is_binary(s), do: String.to_atom(s)
+  defp deserialize_atom_legacy(a) when is_atom(a), do: a
+
+  defp parse_datetime_legacy(nil), do: nil
+
+  defp parse_datetime_legacy(s) when is_binary(s) do
+    case DateTime.from_iso8601(s) do
+      {:ok, dt, _offset} -> dt
+      _ -> nil
+    end
+  end
+
+  defp parse_datetime_legacy(%DateTime{} = dt), do: dt
 
   # --- Task Execution Helpers ---
 
