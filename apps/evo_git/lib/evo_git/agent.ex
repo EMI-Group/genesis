@@ -321,11 +321,8 @@ defmodule EvoGit.Agent do
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         max_retries = agent_state.max_retries
 
-        # Request LLM slot from scheduler (blocks if at concurrency limit)
-        AgentScheduler.request_llm_slot(state.agent_id)
-
         {:ok, response, llm_duration} =
-          try do
+          AgentScheduler.with_llm_slot(state.agent_id, fn ->
             retry with:
                     exponential_backoff(1_000)
                     |> randomize()
@@ -345,21 +342,18 @@ defmodule EvoGit.Agent do
                   {:error, reason}
               end
             end
-          else
-            {:ok, response, llm_duration} ->
-              AgentScheduler.release_llm_slot(state.agent_id)
-              {:ok, response, llm_duration}
+            |> case do
+              {:ok, response, llm_duration} = result ->
+                result
 
-            {:error, reason} = error ->
-              # Check if it's a rate limit error
-              if is_rate_limit_error?(reason) do
-                AgentScheduler.report_llm_error(state.agent_id, :rate_limit)
-              end
+              {:error, reason} ->
+                if is_rate_limit_error?(reason) do
+                  AgentScheduler.report_llm_error(state.agent_id, :rate_limit)
+                end
 
-              AgentScheduler.release_llm_slot(state.agent_id)
-              # Re-raise to be caught by the agent's crash handling
-              raise "LLM request failed after #{max_retries} retries: #{inspect(reason)}"
-          end
+                raise "LLM request failed after #{max_retries} retries: #{inspect(reason)}"
+            end
+          end)
 
         llm_end = System.monotonic_time(:millisecond)
         state = %{state | llm_time_ms: state.llm_time_ms + llm_duration}
@@ -589,39 +583,35 @@ defmodule EvoGit.Agent do
             tool_timeout = Map.get(call.arguments, "timeout", @default_tool_timeout)
             tool_timeout = min(tool_timeout, max_timeout)
 
-            # Request tool execution slot from scheduler (blocks if at concurrency limit)
-            AgentScheduler.request_tool_slot(agent_id)
-
-            task =
-              Task.async(fn ->
-                EvoGit.Agent.Tools.execute(
-                  call.name,
-                  call.arguments,
-                  repo_path,
-                  repo_root,
-                  node_path
-                )
-              end)
-
             output =
-              case Task.yield(task, tool_timeout) || Task.shutdown(task) do
-                {:ok, {:error, reason}} ->
-                  "Error: #{inspect(reason)}"
+              AgentScheduler.with_tool_slot(agent_id, fn ->
+                task =
+                  Task.async(fn ->
+                    EvoGit.Agent.Tools.execute(
+                      call.name,
+                      call.arguments,
+                      repo_path,
+                      repo_root,
+                      node_path
+                    )
+                  end)
 
-                {:ok, result} ->
-                  result
-                  |> ensure_utf8()
-                  |> truncate_large_output(call.name, call.arguments)
+                case Task.yield(task, tool_timeout) || Task.shutdown(task) do
+                  {:ok, {:error, reason}} ->
+                    "Error: #{inspect(reason)}"
 
-                {:exit, reason} ->
-                  "Error: Tool execution crashed: #{inspect(reason)}"
+                  {:ok, result} ->
+                    result
+                    |> ensure_utf8()
+                    |> truncate_large_output(call.name, call.arguments)
 
-                nil ->
-                  "Error: Tool execution timed out after #{tool_timeout}ms"
-              end
+                  {:exit, reason} ->
+                    "Error: Tool execution crashed: #{inspect(reason)}"
 
-            # Always release the tool slot after execution
-            AgentScheduler.release_tool_slot(agent_id)
+                  nil ->
+                    "Error: Tool execution timed out after #{tool_timeout}ms"
+                end
+              end)
 
             {index, tool_call_id, call.name, output}
           end)
@@ -978,27 +968,25 @@ defmodule EvoGit.Agent do
 
               compression_context = ReqLLM.Context.new([user(prompt)])
 
-              AgentScheduler.request_llm_slot(state.agent_id)
-
               result =
-                try do
-                  with {:ok, stream_response} <-
-                         ReqLLM.stream_text(current_model(), compression_context),
-                       {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-                       text <- ReqLLM.Response.text(response),
-                       summary_msg <- user("Summary of previous events:\n" <> text),
-                       new_context <- ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
-                    {:ok, %{state | context: new_context}}
-                  else
-                    _error -> {:error, state}
+                AgentScheduler.with_llm_slot(state.agent_id, fn ->
+                  try do
+                    with {:ok, stream_response} <-
+                           ReqLLM.stream_text(current_model(), compression_context),
+                         {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
+                         text <- ReqLLM.Response.text(response),
+                         summary_msg <- user("Summary of previous events:\n" <> text),
+                         new_context <- ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
+                      {:ok, %{state | context: new_context}}
+                    else
+                      _error -> {:error, state}
+                    end
+                  rescue
+                    e ->
+                      Logger.warning("Agent #{state.agent_id}: Compression LLM call failed: #{inspect(e)}")
+                      {:error, state}
                   end
-                rescue
-                  e ->
-                    Logger.warning("Agent #{state.agent_id}: Compression LLM call failed: #{inspect(e)}")
-                    {:error, state}
-                after
-                  AgentScheduler.release_llm_slot(state.agent_id)
-                end
+                end)
 
               case result do
                 {:ok, new_state} -> new_state
