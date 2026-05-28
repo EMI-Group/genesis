@@ -18,6 +18,7 @@ The parent module `EvoDashWeb` (at `lib/evo_dash_web.ex`, one level up) acts as 
 | `EvoDashWeb.Endpoint` | `endpoint.ex` | Phoenix endpoint — configures LiveView socket (`/live`), static file serving, code reloading, and the Plug pipeline (RequestId → Telemetry → Parsers → MethodOverride → Head → Session → Router). Sessions stored in signed cookies. |
 | `EvoDashWeb.Router` | `router.ex` | Routes with `:browser` pipeline (HTML, session, flash, root layout, CSRF, secure headers). Live routes: `GET /` → `DashboardLive`, `GET /agents` → `AgentsLive`. Includes a commented-out `:api` pipeline for future JSON endpoints. |
 | `EvoDashWeb.Telemetry` | `telemetry.ex` | Supervisor running `TelemetryPoller`. Defines summary metrics for Phoenix endpoint/router/channel performance, VM memory, and run queue lengths. |
+| `EvoDashWeb.Helpers` | `helpers.ex` | Shared utility functions used across components (status badge helpers, formatting, etc.). Provides centralized code deduplication for the component layer. |
 
 ### Subdirectories
 | Directory | Purpose | Key Exports |

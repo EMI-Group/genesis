@@ -25,11 +25,30 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
 
+// PathAutocomplete hook: Tab-key completion from datalist suggestions
+const PathAutocomplete = {
+  mounted() {
+    const input = this.el;
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Tab" && input.value.length > 0) {
+        const datalist = document.getElementById("path-suggestions");
+        if (!datalist) return;
+        const options = Array.from(datalist.options);
+        const match = options.find(opt => opt.value.startsWith(input.value));
+        if (match) {
+          e.preventDefault();
+          input.value = match.value;
+        }
+      }
+    });
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {...colocatedHooks, PathAutocomplete},
 })
 
 // Show progress bar on live navigation and form submits

@@ -27,43 +27,86 @@ defmodule EvoDashWeb.Layouts do
   """
   attr :flash, :map, required: true, doc: "the map of flash messages"
 
-  attr :current_scope, :map,
+  attr :current_page, :atom,
     default: nil,
-    doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
+    doc: "the current page atom (:dashboard, :agents) for active nav highlighting"
 
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
-      </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://hexdocs.pm/phoenix/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
-      </div>
+    <!-- Sticky Navigation Bar -->
+    <header class="sticky top-0 z-50 bg-base-100/80 backdrop-blur-md border-b border-base-200/50">
+      <nav class="navbar px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <!-- Left: Logo -->
+        <div class="flex-1">
+          <a href="/" class="flex items-center gap-2 text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
+            <.icon name="hero-code-bracket-square" class="size-6 text-primary" />
+            <span>EvoGit</span>
+          </a>
+        </div>
+
+        <!-- Right: Desktop Nav Links + Theme Toggle -->
+        <div class="flex-none hidden lg:flex items-center gap-1">
+          <ul class="flex items-center gap-1 px-2">
+            <li>
+              <a
+                href="/"
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
+                aria-current={@current_page == :dashboard && "page"}
+              >
+                <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
+              </a>
+            </li>
+            <li>
+              <a
+                href="/agents"
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :agents && "btn-active"]}
+                aria-current={@current_page == :agents && "page"}
+              >
+                <.icon name="hero-server" class="size-4" /> Agents
+              </a>
+            </li>
+          </ul>
+          <div class="divider divider-horizontal mx-1 h-6"></div>
+          <.theme_toggle />
+        </div>
+
+        <!-- Mobile: Hamburger Menu -->
+        <details class="dropdown dropdown-end lg:hidden flex-none">
+          <summary class="btn btn-ghost btn-sm">
+            <.icon name="hero-bars-3" class="size-5" />
+          </summary>
+          <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
+            <li>
+              <a
+                href="/"
+                class={@current_page == :dashboard && "active"}
+                aria-current={@current_page == :dashboard && "page"}
+              >
+                <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
+              </a>
+            </li>
+            <li>
+              <a
+                href="/agents"
+                class={@current_page == :agents && "active"}
+                aria-current={@current_page == :agents && "page"}
+              >
+                <.icon name="hero-server" class="size-4" /> Agents
+              </a>
+            </li>
+            <li class="mt-2 flex justify-center">
+              <.theme_toggle />
+            </li>
+          </ul>
+        </details>
+      </nav>
     </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
+    <!-- Main Content Area -->
+    <main class="px-4 pt-8 pb-12 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-7xl space-y-4">
         {render_slot(@inner_block)}
       </div>
     </main>

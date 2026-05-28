@@ -174,8 +174,8 @@ defmodule EvoDashWeb.AgentsLive do
           parts when is_list(parts) ->
             parts
             |> Enum.map(fn
+              %{type: :thinking} -> ""
               %{text: text} when is_binary(text) -> text
-              %{type: :thinking, text: text} -> "[thinking] #{text}"
               _ -> ""
             end)
             |> Enum.join("")
@@ -191,14 +191,17 @@ defmodule EvoDashWeb.AgentsLive do
       }
 
       # Add tool-specific metadata
-      data = case msg.role do
-        :tool ->
-          Map.put(base_data, :tool_name, Map.get(msg, :name))
-        :assistant ->
-          Map.put(base_data, :reasoning_details, Map.get(msg, :reasoning_details))
-        _ ->
-          base_data
-      end
+      data =
+        case msg.role do
+          :tool ->
+            Map.put(base_data, :tool_name, Map.get(msg, :name))
+
+          :assistant ->
+            Map.put(base_data, :reasoning_details, Map.get(msg, :reasoning_details))
+
+          _ ->
+            base_data
+        end
 
       %{
         timestamp: base_time + index * 1000,
@@ -217,80 +220,4 @@ defmodule EvoDashWeb.AgentsLive do
     end)
     |> Enum.sort_by(fn {id, _} -> id end)
   end
-
-  # Helper functions for the template
-  defp status_color(:pending), do: "badge-ghost"
-  defp status_color(:running), do: "badge-success badge-outline border-success/30 bg-success/10"
-  defp status_color(:waiting), do: "badge-warning badge-outline border-warning/30 bg-warning/10"
-  defp status_color(_), do: "badge-ghost"
-
-  defp status_icon(:pending), do: "hero-clock"
-  defp status_icon(:running), do: "hero-play-circle"
-  defp status_icon(:waiting), do: "hero-pause-circle"
-  defp status_icon(_), do: "hero-question-mark-circle"
-
-  # Message role icons and colors for ReqLLM.Message roles
-  defp history_entry_icon("system"), do: "hero-cog"
-  defp history_entry_icon("user"), do: "hero-chat-bubble-left-ellipsis"
-  defp history_entry_icon("assistant"), do: "hero-sparkles"
-  defp history_entry_icon("tool"), do: "hero-wrench-screwdriver"
-  defp history_entry_icon(_), do: "hero-document-text"
-
-  defp history_entry_color("system"), do: "text-accent"
-  defp history_entry_color("user"), do: "text-info"
-  defp history_entry_color("assistant"), do: "text-warning"
-  defp history_entry_color("tool"), do: "text-success"
-  defp history_entry_color(_), do: "text-base-content/70"
-
-  defp format_timestamp(timestamp_ms) do
-    datetime = DateTime.from_unix!(timestamp_ms, :millisecond)
-    Calendar.strftime(datetime, "%H:%M:%S")
-  end
-
-  # Safely extract tool call name from different formats
-  defp tool_call_name(call) when is_map(call) do
-    cond do
-      Map.has_key?(call, :function) and is_map(call.function) ->
-        Map.get(call.function, :name, "unknown")
-
-      Map.has_key?(call, "function") and is_map(call["function"]) ->
-        Map.get(call["function"], "name") || Map.get(call["function"], "name", "unknown")
-
-      Map.has_key?(call, :name) ->
-        call.name
-
-      Map.has_key?(call, "name") ->
-        call["name"]
-
-      true ->
-        "unknown"
-    end
-  end
-
-  defp tool_call_name(_), do: "unknown"
-
-  # Safely extract tool call arguments from different formats
-  defp tool_call_arguments(call) when is_map(call) do
-    cond do
-      Map.has_key?(call, :function) and is_map(call.function) ->
-        Map.get(call.function, :arguments_json) ||
-          Map.get(call.function, :arguments, "{}")
-
-      Map.has_key?(call, "function") and is_map(call["function"]) ->
-        Map.get(call["function"], "arguments_json") ||
-          Map.get(call["function"], "arguments") ||
-          Map.get(call["function"], "arguments", "{}")
-
-      Map.has_key?(call, :arguments) ->
-        call.arguments
-
-      Map.has_key?(call, "arguments") ->
-        call["arguments"]
-
-      true ->
-        "{}"
-    end
-  end
-
-  defp tool_call_arguments(_), do: "{}"
 end

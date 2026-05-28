@@ -5,27 +5,14 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.flash_group flash={@flash} />
-
-    <div class="container mx-auto px-4 py-8 max-w-6xl">
-      <.header>
-        EvoGit Dashboard
-        <:subtitle>
-          Manage your evolutionary software development tasks
-        </:subtitle>
-        <:actions>
-          <a href="/agents" class="btn btn-sm btn-ghost">
-            <.icon name="hero-server" class="size-4" /> Agents
-          </a>
-          <a href="https://github.com/your-repo/evogit" class="btn btn-sm btn-ghost" target="_blank">
-            <.icon name="hero-document-text" class="size-4" /> Docs
-          </a>
-        </:actions>
-      </.header>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard}>
+      <div>
+        <p class="text-base-content/60 text-sm">Manage your evolutionary software development tasks</p>
+      </div>
 
       <%= if @active_project do %>
         <!-- Active Project State -->
-        <div class="mt-6 mb-2">
+        <div class="mt-4 mb-2">
           <EvoDashWeb.DashboardComponents.project_tabs
             projects={@projects}
             active_project={@active_project}
@@ -72,178 +59,183 @@ defmodule EvoDashWeb.DashboardLive do
             agent_max_retries={@task_agent_max_retries}
           />
         </div>
-
-        <div class="divider">Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %></div>
-
-        <div class="space-y-4">
-          <%= if @tasks == [] do %>
-            <div class="text-center py-12 text-base-content/50">
-              <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
-              <p>No tasks for this project yet. Start by creating a new task above.</p>
-            </div>
-          <% else %>
-            <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
-              <EvoDashWeb.DashboardComponents.task_card
-                task={task}
-                show_details={MapSet.member?(@expanded_task_ids, task.id)}
-              />
-            <% end %>
-          <% end %>
-        </div>
       <% else %>
         <!-- No Active Project State -->
-        <div class="mt-6 mb-8">
-          <EvoDashWeb.DashboardComponents.open_project_form path="" />
-        </div>
-
-        <div class="divider">All Tasks</div>
-        <p class="text-sm text-base-content/50 mb-4 text-center">Open a project to filter tasks</p>
-
-        <div class="space-y-4">
-          <%= if @tasks == [] do %>
-            <div class="text-center py-12 text-base-content/50">
-              <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
-              <p>No tasks yet. Open a project to get started.</p>
-            </div>
-          <% else %>
-            <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
-              <EvoDashWeb.DashboardComponents.task_card
-                task={task}
-                show_details={MapSet.member?(@expanded_task_ids, task.id)}
-              />
-            <% end %>
-          <% end %>
+        <div class="mt-4 mb-8">
+          <EvoDashWeb.DashboardComponents.open_project_form path="" recent_projects={@recent_projects} />
         </div>
       <% end %>
-    </div>
 
-    <!-- Full Result Modal -->
-    <%= if @selected_result do %>
-      <div class="modal modal-open bg-black/50">
-        <div class="modal-box w-11/12 max-w-5xl">
-          <%= case @selected_result do %>
-            <% {:ok, %{result: result, no_changes: true}} when is_binary(result) -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-information-circle" class="size-5 text-warning" />
-                No Changes
-              </h3>
-              <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
-              </div>
-              <div class="mt-4 bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <h4 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide">Agent Message</h4>
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-              </div>
-
-            <% {:ok, %{result: result, branch_name: branch_name} = data} when is_binary(result) -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-check-circle" class="size-5 text-success" />
-                Agent Message
-              </h3>
-              <div class="flex flex-wrap gap-2 mb-4">
-                <%= if branch_name do %>
-                  <span class="badge badge-primary font-mono text-sm">
-                    <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
-                    <%= branch_name %>
-                  </span>
-                <% end %>
-                <%= if Map.get(data, :pr_url) do %>
-                  <a href={Map.get(data, :pr_url)} target="_blank" class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity">
-                    <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
-                    View PR
-                  </a>
-                <% end %>
-              </div>
-              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-              </div>
-
-            <% {%{result: result}} when is_binary(result) -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-check-circle" class="size-5 text-success" />
-                Agent Message
-              </h3>
-              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-              </div>
-
-            <% {:error, reason} -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-x-circle" class="size-5 text-error" />
-                Task Failed
-              </h3>
-              <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
-              </div>
-
-            <% {:exit, reason} -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-x-circle" class="size-5 text-error" />
-                Task Crashed
-              </h3>
-              <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
-              </div>
-
-            <% {:ok, %{result: result}} -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-check-circle" class="size-5 text-success" />
-                Agent Message
-              </h3>
-              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
-              </div>
-
-            <% %{result: result} -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-check-circle" class="size-5 text-success" />
-                Agent Message
-              </h3>
-              <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
-              </div>
-
-            <% _ -> %>
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                Result
-              </h3>
-              <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm overflow-x-auto"><%= inspect(@selected_result, pretty: true, limit: :infinity) %></pre>
-              </div>
+      <!-- Section Header -->
+      <div class="flex items-center gap-4 mt-8 mb-4">
+        <h2 class="text-lg font-semibold text-base-content/80 whitespace-nowrap">
+          <%= if @active_project do %>
+            Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %>
+          <% else %>
+            All Tasks
           <% end %>
-
-          <div class="modal-action">
-            <button class="btn" phx-click="close_result_modal">Close</button>
-          </div>
-        </div>
-
-        <div class="modal-backdrop" phx-click="close_result_modal">
-          <button class="cursor-default">close</button>
-        </div>
+        </h2>
+        <div class="flex-1 h-px bg-base-200"></div>
       </div>
-    <% end %>
 
-    <!-- Full Options Modal -->
-    <%= if @selected_options do %>
-      <div class="modal modal-open bg-black/50">
-        <div class="modal-box w-11/12 max-w-5xl">
-          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-            Full Objective
-          </h3>
-          <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-            <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+      <!-- Task List -->
+      <div class="space-y-4">
+        <%= if @tasks == [] do %>
+          <div class="text-center py-12 text-base-content/50">
+            <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
+            <p class="text-lg font-medium">
+              <%= if @active_project do %>
+                No tasks for this project yet
+              <% else %>
+                No tasks yet
+              <% end %>
+            </p>
+            <p class="text-sm mt-1">
+              <%= if @active_project do %>
+                Start by creating a new task above.
+              <% else %>
+                Open a project to get started.
+              <% end %>
+            </p>
           </div>
-          <div class="modal-action">
-            <button class="btn" phx-click="close_options_modal">Close</button>
-          </div>
-        </div>
-        <div class="modal-backdrop" phx-click="close_options_modal">
-          <button class="cursor-default">close</button>
-        </div>
+        <% else %>
+          <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
+            <EvoDashWeb.DashboardComponents.task_card
+              task={task}
+              show_details={MapSet.member?(@expanded_task_ids, task.id)}
+            />
+          <% end %>
+        <% end %>
       </div>
-    <% end %>
+
+      <!-- Full Result Modal -->
+      <%= if @selected_result do %>
+        <div class="modal modal-open bg-black/50">
+          <div class="modal-box w-11/12 max-w-5xl">
+            <%= case @selected_result do %>
+              <% {:ok, %{result: result, no_changes: true}} when is_binary(result) -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-information-circle" class="size-5 text-warning" />
+                  No Changes
+                </h3>
+                <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
+                </div>
+                <div class="mt-4 bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <h4 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide">Agent Message</h4>
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+                </div>
+
+              <% {:ok, %{result: result, branch_name: branch_name} = data} when is_binary(result) -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="size-5 text-success" />
+                  Agent Message
+                </h3>
+                <div class="flex flex-wrap gap-2 mb-4">
+                  <%= if branch_name do %>
+                    <span class="badge badge-primary font-mono text-sm">
+                      <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
+                      <%= branch_name %>
+                    </span>
+                  <% end %>
+                  <%= if Map.get(data, :pr_url) do %>
+                    <a href={Map.get(data, :pr_url)} target="_blank" class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity">
+                      <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
+                      View PR
+                    </a>
+                  <% end %>
+                </div>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+                </div>
+
+              <% {%{result: result}} when is_binary(result) -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="size-5 text-success" />
+                  Agent Message
+                </h3>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
+                </div>
+
+              <% {:error, reason} -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-x-circle" class="size-5 text-error" />
+                  Task Failed
+                </h3>
+                <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
+                </div>
+
+              <% {:exit, reason} -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-x-circle" class="size-5 text-error" />
+                  Task Crashed
+                </h3>
+                <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
+                </div>
+
+              <% {:ok, %{result: result}} -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="size-5 text-success" />
+                  Agent Message
+                </h3>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
+                </div>
+
+              <% %{result: result} -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="size-5 text-success" />
+                  Agent Message
+                </h3>
+                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
+                </div>
+
+              <% _ -> %>
+                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                  <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+                  Result
+                </h3>
+                <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                  <pre class="text-sm overflow-x-auto"><%= inspect(@selected_result, pretty: true, limit: :infinity) %></pre>
+                </div>
+            <% end %>
+
+            <div class="modal-action">
+              <button class="btn" phx-click="close_result_modal">Close</button>
+            </div>
+          </div>
+
+          <div class="modal-backdrop" phx-click="close_result_modal">
+            <button class="cursor-default">close</button>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Full Options Modal -->
+      <%= if @selected_options do %>
+        <div class="modal modal-open bg-black/50">
+          <div class="modal-box w-11/12 max-w-5xl">
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+              Full Objective
+            </h3>
+            <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+              <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+            </div>
+            <div class="modal-action">
+              <button class="btn" phx-click="close_options_modal">Close</button>
+            </div>
+          </div>
+          <div class="modal-backdrop" phx-click="close_options_modal">
+            <button class="cursor-default">close</button>
+          </div>
+        </div>
+      <% end %>
+    </EvoDashWeb.Layouts.app>
     """
   end
 
@@ -254,6 +246,7 @@ defmodule EvoDashWeb.DashboardLive do
     end
 
     tasks = TaskRegistry.list_tasks()
+    recent_projects = TaskRegistry.list_recent_projects()
 
     socket =
       socket
@@ -264,6 +257,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:projects, %{})
       |> assign(:active_project, nil)
       |> assign(:show_open_project_form, false)
+      |> assign(:recent_projects, recent_projects)
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -286,6 +280,8 @@ defmodule EvoDashWeb.DashboardLive do
     expanded = Path.expand(path)
 
     if File.dir?(expanded) do
+      TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+
       project = %{path: expanded, name: Path.basename(expanded)}
       projects = Map.put(socket.assigns.projects, expanded, project)
       mode = detect_mode(expanded)
@@ -301,6 +297,7 @@ defmodule EvoDashWeb.DashboardLive do
        |> assign(:task_mode, mode)
        |> assign(:task_mode_info, mode_info)
        |> assign(:show_open_project_form, false)
+       |> assign(:recent_projects, TaskRegistry.list_recent_projects())
        |> put_flash(:info, mode_info)}
     else
       {:noreply,
@@ -535,10 +532,4 @@ defmodule EvoDashWeb.DashboardLive do
 
     Enum.empty?(files)
   end
-
-  defp mode_info_message("genesis_new"), do: "Empty directory detected — New Codebase mode selected"
-  defp mode_info_message("genesis_existing"), do: "No CONTEXT.md found — Existing Codebase mode selected"
-  defp mode_info_message("evolve_simple"), do: "Context tree detected — Simple (Top-down) mode selected"
-  defp mode_info_message("evolve_complex"), do: "Context tree detected — Complex (Bottom-up) mode selected"
-  defp mode_info_message(_), do: ""
 end

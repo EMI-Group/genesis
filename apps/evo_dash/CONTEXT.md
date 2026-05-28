@@ -30,6 +30,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | `EvoDashWeb.Endpoint` | `./lib/evo_dash_web/endpoint.ex` | Phoenix endpoint (LiveView socket, static files, Plug pipeline) |
 | `EvoDashWeb.Router` | `./lib/evo_dash_web/router.ex` | Routes: `/` → DashboardLive, `/agents` → AgentsLive |
 | `EvoDashWeb.Telemetry` | `./lib/evo_dash_web/telemetry.ex` | Telemetry metrics supervisor (Phoenix + VM metrics) |
+| `EvoDashWeb.Helpers` | `./lib/evo_dash_web/helpers.ex` | Shared utility functions for UI components (status badges, formatting, code deduplication) |
 
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 | Module | Route | Purpose |
@@ -71,13 +72,21 @@ Browser ←→ Endpoint ←→ Router
 - Task logs are piped back via `event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}`
 - LiveViews poll TaskRegistry on timers (1s for dashboard, 500ms for agents)
 
+### Persistence & State
+- **Task persistence**: Completed task records are saved to `~/.local/share/evogit/` so they survive page reloads and server restarts.
+- **Recent projects**: The dashboard tracks recently opened projects, allowing users to quickly reopen previously used repository paths.
+- **PathAutocomplete**: A client-side JS hook provides filesystem path autocompletion in the project path input field.
+
+### UI Theme
+The dashboard uses a **modern Material Design-inspired theme** built on Tailwind CSS 4 + DaisyUI, with refined light/dark mode styling, consistent spacing, and polished visual hierarchy.
+
 ## Constraints
 
 - **Umbrella dependency**: Must have `:evo_git` available at compile and runtime
 - **Port**: Runs on port **4100** in development
 - **Adapter**: Uses **Bandit** (not Cowboy) as the HTTP adapter
 - **CSS framework**: Tailwind CSS 4 + DaisyUI (no Node.js toolchain; vendor files managed manually)
-- **No database**: All task state is in-memory (ETS); project state is in LiveView socket assigns — lost on page reload
+- **No database**: All task state is persisted to `~/.local/share/evogit/` on disk; project state is in LiveView socket assigns — recent projects survive reloads via file persistence
 - **Single-node**: DNSCluster configured but no distributed clustering logic yet
 - **Naming conventions**:
   - Domain modules: `./lib/evo_dash/<module>.ex`
