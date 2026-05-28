@@ -128,7 +128,7 @@ defmodule EvoGit.Config do
       case File.read(path) do
         {:ok, contents} ->
           try do
-            TomlElixir.decode(contents)
+            TomlElixir.parse!(contents)
           rescue
             e ->
               Logger.warning("Failed to parse config at #{path}: #{inspect(e)}")
@@ -157,7 +157,7 @@ defmodule EvoGit.Config do
       case File.read(path) do
         {:ok, contents} ->
           try do
-            TomlElixir.decode(contents)
+            TomlElixir.parse!(contents)
           rescue
             e ->
               Logger.warning("Failed to parse credentials at #{path}: #{inspect(e)}")

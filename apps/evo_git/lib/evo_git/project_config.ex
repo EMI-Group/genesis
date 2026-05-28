@@ -87,7 +87,7 @@ defmodule EvoGit.ProjectConfig do
 
   defp parse_toml(contents, path) do
     try do
-      TomlElixir.decode(contents)
+      TomlElixir.parse!(contents)
     rescue
       e ->
         Logger.warning("Failed to parse #{path}: #{inspect(e)}")
