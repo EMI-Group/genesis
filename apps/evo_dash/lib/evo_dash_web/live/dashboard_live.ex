@@ -1,6 +1,7 @@
 defmodule EvoDashWeb.DashboardLive do
   use EvoDashWeb, :live_view
   alias EvoDash.TaskRegistry
+  import EvoDashWeb.Helpers, only: [mode_info_message: 1]
 
   @impl true
   def render(assigns) do
@@ -59,49 +60,54 @@ defmodule EvoDashWeb.DashboardLive do
             agent_max_retries={@task_agent_max_retries}
           />
         </div>
-
-        <div class="divider">Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %></div>
-
-        <div class="space-y-4">
-          <%= if @tasks == [] do %>
-            <div class="text-center py-12 text-base-content/50">
-              <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
-              <p>No tasks for this project yet. Start by creating a new task above.</p>
-            </div>
-          <% else %>
-            <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
-              <EvoDashWeb.DashboardComponents.task_card
-                task={task}
-                show_details={MapSet.member?(@expanded_task_ids, task.id)}
-              />
-            <% end %>
-          <% end %>
-        </div>
       <% else %>
         <!-- No Active Project State -->
         <div class="mt-4 mb-8">
-          <EvoDashWeb.DashboardComponents.open_project_form path="" />
-        </div>
-
-        <div class="divider">All Tasks</div>
-        <p class="text-sm text-base-content/50 mb-4 text-center">Open a project to filter tasks</p>
-
-        <div class="space-y-4">
-          <%= if @tasks == [] do %>
-            <div class="text-center py-12 text-base-content/50">
-              <.icon name="hero-inbox" class="size-16 mx-auto mb-4" />
-              <p>No tasks yet. Open a project to get started.</p>
-            </div>
-          <% else %>
-            <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
-              <EvoDashWeb.DashboardComponents.task_card
-                task={task}
-                show_details={MapSet.member?(@expanded_task_ids, task.id)}
-              />
-            <% end %>
-          <% end %>
+          <EvoDashWeb.DashboardComponents.open_project_form path="" recent_projects={@recent_projects} />
         </div>
       <% end %>
+
+      <!-- Section Header -->
+      <div class="flex items-center gap-4 mt-8 mb-4">
+        <h2 class="text-lg font-semibold text-base-content/80 whitespace-nowrap">
+          <%= if @active_project do %>
+            Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %>
+          <% else %>
+            All Tasks
+          <% end %>
+        </h2>
+        <div class="flex-1 h-px bg-base-200"></div>
+      </div>
+
+      <!-- Task List -->
+      <div class="space-y-4">
+        <%= if @tasks == [] do %>
+          <div class="text-center py-12 text-base-content/50">
+            <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
+            <p class="text-lg font-medium">
+              <%= if @active_project do %>
+                No tasks for this project yet
+              <% else %>
+                No tasks yet
+              <% end %>
+            </p>
+            <p class="text-sm mt-1">
+              <%= if @active_project do %>
+                Start by creating a new task above.
+              <% else %>
+                Open a project to get started.
+              <% end %>
+            </p>
+          </div>
+        <% else %>
+          <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
+            <EvoDashWeb.DashboardComponents.task_card
+              task={task}
+              show_details={MapSet.member?(@expanded_task_ids, task.id)}
+            />
+          <% end %>
+        <% end %>
+      </div>
 
       <!-- Full Result Modal -->
       <%= if @selected_result do %>
@@ -241,6 +247,7 @@ defmodule EvoDashWeb.DashboardLive do
     end
 
     tasks = TaskRegistry.list_tasks()
+    recent_projects = TaskRegistry.list_recent_projects()
 
     socket =
       socket
@@ -251,6 +258,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:projects, %{})
       |> assign(:active_project, nil)
       |> assign(:show_open_project_form, false)
+      |> assign(:recent_projects, recent_projects)
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -273,6 +281,8 @@ defmodule EvoDashWeb.DashboardLive do
     expanded = Path.expand(path)
 
     if File.dir?(expanded) do
+      TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+
       project = %{path: expanded, name: Path.basename(expanded)}
       projects = Map.put(socket.assigns.projects, expanded, project)
       mode = detect_mode(expanded)
@@ -288,6 +298,7 @@ defmodule EvoDashWeb.DashboardLive do
        |> assign(:task_mode, mode)
        |> assign(:task_mode_info, mode_info)
        |> assign(:show_open_project_form, false)
+       |> assign(:recent_projects, TaskRegistry.list_recent_projects())
        |> put_flash(:info, mode_info)}
     else
       {:noreply,
@@ -522,10 +533,4 @@ defmodule EvoDashWeb.DashboardLive do
 
     Enum.empty?(files)
   end
-
-  defp mode_info_message("genesis_new"), do: "Empty directory detected — New Codebase mode selected"
-  defp mode_info_message("genesis_existing"), do: "No CONTEXT.md found — Existing Codebase mode selected"
-  defp mode_info_message("evolve_simple"), do: "Context tree detected — Simple (Top-down) mode selected"
-  defp mode_info_message("evolve_complex"), do: "Context tree detected — Complex (Bottom-up) mode selected"
-  defp mode_info_message(_), do: ""
 end

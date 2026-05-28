@@ -163,6 +163,7 @@ defmodule EvoDashWeb.DashboardComponents do
   end
 
   attr :path, :string, default: ""
+  attr :recent_projects, :list, default: []
 
   def open_project_form(assigns) do
     ~H"""
