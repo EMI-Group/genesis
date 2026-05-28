@@ -35,14 +35,14 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 | Module | Route | Purpose |
 |--------|-------|---------|
-| `EvoDashWeb.DashboardLive` | `GET /` | Project-based task dashboard: open project tabs, auto-mode detection, task form, task cards with logs |
+| `EvoDashWeb.DashboardLive` | `GET /` | Project-based task dashboard: open project tabs, auto-mode detection, task form (mode + prompt only), scheduler settings panel (concurrency, retries, depth, model), task cards with logs |
 | `EvoDashWeb.AgentsLive` | `GET /agents` | Recursive agent tree inspector with detail panels |
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 | Module | Purpose |
 |--------|---------|
 | `CoreComponents` | Phoenix 1.8 base components (header, flash, button, icon, input, table, theme_toggle) |
-| `DashboardComponents` | `project_tabs` (multi-project tab bar), `open_project_form` (landing path input), `task_form` (mode-aware, auto-detected), `task_card` with status badges and logs |
+| `DashboardComponents` | `project_tabs` (multi-project tab bar), `open_project_form` (landing path input), `task_form` (mode + prompt only, auto-detected mode), `scheduler_settings` (runtime config panel for concurrency, retries, depth, LLM model — values loaded from `EvoGit.AgentScheduler.get_config/0`), `task_card` with status badges and logs |
 | `AgentsComponents` | `agent_tree` — recursive tree with connector lines and status coloring |
 | `Layouts` | Root HTML layout with theme persistence and flash group |
 
@@ -71,11 +71,13 @@ Browser ←→ Endpoint ←→ Router
 - `TaskRegistry.list_tasks_by_path(path)` filters tasks by project repo path
 - Task logs are piped back via `event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}`
 - LiveViews poll TaskRegistry on timers (1s for dashboard, 500ms for agents)
+- **Scheduler settings** are loaded from `EvoGit.AgentScheduler.get_config/0` on mount and updated via `EvoGit.AgentScheduler.update_config/1` through the `"update_scheduler_config"` event; concurrency changes are blocked while agents are running (`{:error, :agents_running}`)
 
 ### Persistence & State
 - **Task persistence**: Completed task records are persisted via DETS (Erlang's built-in disk storage) to the platform-appropriate data directory (resolved by `EvoGit.Platform.data_dir/0`). This replaces the previous JSON-based approach, eliminating manual serialization boilerplate.
 - **Recent projects**: The dashboard tracks recently opened projects, allowing users to quickly reopen previously used repository paths.
 - **PathAutocomplete**: A client-side JS hook provides filesystem path autocompletion in the project path input field.
+- **Scheduler configuration**: Runtime scheduler settings (LLM concurrency, tool concurrency, agent max retries, max depth, max retries, LLM model) are displayed and editable via the scheduler settings panel. Current values are read from `EvoGit.AgentScheduler.get_config/0` (not per-task overrides). These are session-level runtime overrides per the three-level config architecture (defaults → user config TOML → runtime override).
 
 ### UI Theme
 The dashboard uses a **modern Material Design-inspired theme** built on Tailwind CSS 4 + DaisyUI, with refined light/dark mode styling, consistent spacing, and polished visual hierarchy.
