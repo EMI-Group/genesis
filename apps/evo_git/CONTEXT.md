@@ -67,7 +67,8 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 |---|---|
 | `./lib/evo_git/core/` | `ContextNode` (spatial tree) and `PhyloGraphNode` (temporal graph) data structures |
 | `./lib/evo_git/adapters/` | `Git` CLI adapter — thin wrapper around `System.cmd("git", ...)` |
-| `./lib/evo_git/agent/` | Agent implementations (Generalist, Investigator, Architect, ContextExtractor) + 14 LLM tool schemas |
+| `./lib/evo_git/agent/` | Agent behaviour module (`EvoGit.Agent`), tool library (14+ LLM tools), context compression, and subagent processing |
+| `./lib/evo_git/agents/` | Agent type implementations (Generalist, Manager, Executor, Planner, CodebaseInvestigator, CodebaseArchitect, ContextExtractor, Evaluator) + Warnings utility |
 | `./lib/evo_git/runtime/` | Genesis (creation), Evolution (refinement loop), and Prompts (LLM templates) |
 | `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, and `Worktrees` structs/modules backing ETS tables and helper logic |
 | `./test/` | ExUnit tests using real git operations on temp directories |

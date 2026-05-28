@@ -27,7 +27,7 @@ The design document referenced a centralized `EvoGit.Runtime.Prompts` module, bu
 
 3. **Agent loop generated prompts** — The `EvoGit.Agent` `use` macro automatically constructs the initial user prompt by combining the context tree + objective. It also injects budget warnings and recovery prompts dynamically.
 
-4. **Context compression prompt** — Defined inline in `agent.ex` `try_compress_chat/1` when token threshold is exceeded.
+4. **Context compression prompt** — Defined in `EvoGit.Agent.ContextCompression` (`agent/context_compression.ex`) when token threshold is exceeded.
 
 5. **Budget warnings** — Defined in `EvoGit.Agents.Warnings` as template functions at 25%, 50%, 80% thresholds for both time and turns.
 

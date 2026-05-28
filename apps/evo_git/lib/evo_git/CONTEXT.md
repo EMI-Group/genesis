@@ -7,7 +7,8 @@ This directory contains the core source code of the `:evo_git` OTP application. 
 The system supports operating across multiple Git repositories simultaneously. A **primary** repo (the project being evolved) can reference one or more **foreign repos** (e.g., an original codebase, a reference implementation). Foreign repos are configured in `evogit.toml` under `[foreign_repos]` and registered with the `AgentScheduler` at runtime. Agents can spawn **cross-repo subagents** by passing an absolute path to a node in a foreign repo — the system resolves the path to the correct repo, creates a worktree in that repo's `.evogit/workers/` directory, and runs the subagent there. Cross-repo subagent results are not merged back into the primary repo (they commit to their own repo's worktree).
 
 ## Routing Table
-- `./agent/` → Agent implementations (Generalist, CodebaseInvestigator, CodebaseArchitect, ContextExtractor, Planner, Executor, Manager, Evaluator) and 14+ LLM tool modules
+- `./agent/` → Agent behaviour module (`EvoGit.Agent`), tool library (14+ LLM tools), context compression, and subagent processing
+- `./agents/` → Agent type implementations (Generalist, Manager, Executor, Planner, CodebaseInvestigator, CodebaseArchitect, ContextExtractor, Evaluator) and Warnings utility
 - `./agent_scheduler/` → `AgentState` and `SchedMeta` structs for ETS-backed agent state
 - `./core/` → `ContextNode` (spatial tree), `PhyloGraphNode` (temporal graph), and `ForeignRepo` (multi-repo references) data structures
 - `./adapters/` → `Git` CLI adapter — worktree-focused wrapper around `System.cmd("git", ...)`
