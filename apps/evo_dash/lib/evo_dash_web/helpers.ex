@@ -87,6 +87,13 @@ defmodule EvoDashWeb.Helpers do
     Calendar.strftime(datetime, "%H:%M:%S")
   end
 
+  @doc """
+  Formats a turn number as "Turn N".
+  """
+  def format_turn(turn) when is_integer(turn) do
+    "Turn #{turn}"
+  end
+
   # ---------------------------------------------------------------------------
   # History / Message Helpers
   # ---------------------------------------------------------------------------
