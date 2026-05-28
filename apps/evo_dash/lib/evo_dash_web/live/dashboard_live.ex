@@ -6,6 +6,15 @@ defmodule EvoDashWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard}>
+      <%= if @config_issues |> Enum.any?(&(&1.severity == :error)) do %>
+        <div class="alert alert-error mb-4">
+          <.icon name="hero-exclamation-circle" class="size-5 shrink-0" />
+          <div>
+            <p class="font-semibold">Configuration Issues Detected</p>
+            <p>Some required configuration is missing or invalid. <a href="/config-help" class="link link-hover font-semibold">View Config Help →</a></p>
+          </div>
+        </div>
+      <% end %>
       <div>
         <p class="text-base-content/60 text-sm">Manage your evolutionary software development tasks</p>
       </div>
@@ -272,6 +281,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:recent_projects, recent_projects)
       |> assign(:path_suggestions, [])
       |> assign(:scheduler_config, load_scheduler_config())
+      |> assign(:config_issues, load_config_issues())
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -613,6 +623,15 @@ defmodule EvoDashWeb.DashboardLive do
     catch
       _, _ -> %{}
     end
+  end
+
+  defp load_config_issues do
+    case EvoGit.AgentScheduler.get_config_status() do
+      %{issues: issues} -> issues
+      _ -> []
+    end
+  rescue
+    _ -> []
   end
 
   defp maybe_add_int(list, key, value) when is_binary(value) do
