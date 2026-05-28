@@ -41,12 +41,14 @@ defmodule EvoDashWeb.DashboardLive do
                   placeholder="/path/to/another/repo"
                   autofocus
                   phx-hook="PathAutocomplete"
+                  phx-change="path_input"
+                  phx-debounce="150"
                   id="open-another-project-path-input"
                   list="path-suggestions-open"
                 />
                 <datalist id="path-suggestions-open">
-                  <%= for project <- @recent_projects do %>
-                    <option value={project.path}></option>
+                  <%= for suggestion <- @path_suggestions do %>
+                    <option value={suggestion}></option>
                   <% end %>
                 </datalist>
               </div>
@@ -70,7 +72,7 @@ defmodule EvoDashWeb.DashboardLive do
       <% else %>
         <!-- No Active Project State -->
         <div class="mt-4 mb-8">
-          <EvoDashWeb.DashboardComponents.open_project_form path="" recent_projects={@recent_projects} />
+          <EvoDashWeb.DashboardComponents.open_project_form path="" recent_projects={@recent_projects} path_suggestions={@path_suggestions} />
         </div>
       <% end %>
 
@@ -266,6 +268,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:active_project, nil)
       |> assign(:show_open_project_form, false)
       |> assign(:recent_projects, recent_projects)
+      |> assign(:path_suggestions, [])
       |> assign_form_defaults()
 
     {:ok, socket}
@@ -377,6 +380,12 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_event("hide_open_project_form", _params, socket) do
     {:noreply, assign(socket, :show_open_project_form, false)}
+  end
+
+  @impl true
+  def handle_event("path_input", %{"path" => value}, socket) do
+    suggestions = path_suggestions(value)
+    {:noreply, assign(socket, :path_suggestions, suggestions)}
   end
 
   @impl true
@@ -539,5 +548,47 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     Enum.empty?(files)
+  end
+
+  defp path_suggestions(value) when value == "" or is_nil(value) do
+    []
+  end
+
+  defp path_suggestions(value) do
+    expanded = Path.expand(value)
+
+    {dir, prefix} =
+      cond do
+        String.ends_with?(expanded, "/") ->
+          {expanded, ""}
+
+        String.contains?(expanded, "/") ->
+          dir = Path.dirname(expanded)
+          base = Path.basename(expanded)
+          {dir, base}
+
+        true ->
+          # No directory separator — use cwd as dir and whole value as prefix
+          {File.cwd!(), expanded}
+      end
+
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.filter(fn entry ->
+          String.starts_with?(String.downcase(entry), String.downcase(prefix))
+        end)
+        |> Enum.sort_by(fn entry ->
+          # Directories first, then alphabetical
+          {not File.dir?(Path.join(dir, entry)), String.downcase(entry)}
+        end)
+        |> Enum.take(15)
+        |> Enum.map(fn entry ->
+          Path.join(dir, entry)
+        end)
+
+      {:error, _} ->
+        []
+    end
   end
 end
