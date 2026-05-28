@@ -176,6 +176,15 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Returns the configuration status including file paths, existence checks,
+  and validation issues. Delegates to `EvoGit.Config.config_status/0`.
+  """
+  @spec get_config_status() :: map()
+  def get_config_status do
+    GenServer.call(__MODULE__, :get_config_status)
+  end
+
+  @doc """
   Reads the agent's live state from the agent state table.
   Called by agent processes every turn.
   """
@@ -498,6 +507,11 @@ defmodule EvoGit.AgentScheduler do
       end
 
     {:reply, value, state}
+  end
+
+  @impl true
+  def handle_call(:get_config_status, _from, state) do
+    {:reply, EvoGit.Config.config_status(), state}
   end
 
   @impl true
