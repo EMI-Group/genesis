@@ -51,13 +51,10 @@ config :logger, :default_formatter,
 config :phoenix, :json_library, Jason
 
 # EvoGit configuration
+# Note: Runtime defaults (concurrency, retries, model, etc.) are managed by
+# EvoGit.Config (defaults + user config + runtime overrides).
+# Application env is only used for infrastructure-level settings.
 config :evo_git,
-  max_concurrency: 3,
-  max_retries: 15,
-  agent_max_retries: 3,
-  max_agent_depth: 8,
-  llm_model: "zai_coding_plan:glm-5",
-  compression_threshold_tokens: 100_000,
   sandbox: :auto
 
 # config/config.exs
