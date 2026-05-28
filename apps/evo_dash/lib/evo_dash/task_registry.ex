@@ -7,6 +7,8 @@ defmodule EvoDash.TaskRegistry do
   """
   use GenServer
 
+  require Logger
+
   @table_name :evo_dash_tasks
   @recent_projects_table :evo_dash_recent_projects
   @dets_tasks :evo_dash_tasks_dets
@@ -162,6 +164,7 @@ defmodule EvoDash.TaskRegistry do
     }
 
     :ets.insert(@table_name, {task_id, task})
+    persist_tasks_to_dets()
     {:reply, {:ok, task}, state}
   end
 
@@ -301,6 +304,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
     :ets.delete(@table_name, task_id)
+    persist_tasks_to_dets()
     {:noreply, state}
   end
 
@@ -353,7 +357,9 @@ defmodule EvoDash.TaskRegistry do
         :ok
       )
     rescue
-      _ -> :ok
+      error ->
+        Logger.error("Failed to load tasks from DETS: #{inspect(error)}")
+        :ok
     end
   end
 
@@ -386,9 +392,13 @@ defmodule EvoDash.TaskRegistry do
         :dets.insert(@dets_tasks, {task.id, persistable})
       end
 
+      :dets.sync(@dets_tasks)
+
       :ok
     rescue
-      _ -> :ok
+      error ->
+        Logger.error("Failed to persist tasks: #{inspect(error)}")
+        :ok
     end
   end
 
@@ -409,7 +419,9 @@ defmodule EvoDash.TaskRegistry do
         :ok
       )
     rescue
-      _ -> :ok
+      error ->
+        Logger.error("Failed to load recent projects from DETS: #{inspect(error)}")
+        :ok
     end
   end
 
@@ -428,9 +440,13 @@ defmodule EvoDash.TaskRegistry do
         :dets.insert(@dets_projects, {project.path, project})
       end
 
+      :dets.sync(@dets_projects)
+
       :ok
     rescue
-      _ -> :ok
+      error ->
+        Logger.error("Failed to save recent projects to DETS: #{inspect(error)}")
+        :ok
     end
   end
 
