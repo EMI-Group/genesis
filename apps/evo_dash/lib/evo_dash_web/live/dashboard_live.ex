@@ -5,7 +5,7 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
       <div>
         <p class="text-base-content/60 text-sm">Manage your evolutionary software development tasks</p>
       </div>
@@ -268,6 +268,17 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:recent_projects, recent_projects)
       |> assign(:path_suggestions, [])
       |> assign_form_defaults()
+
+    config_status =
+      try do
+        EvoGit.Config.config_status()
+      rescue
+        _ -> %{missing: [], warnings: [], ok?: true}
+      catch
+        _, _ -> %{missing: [], warnings: [], ok?: true}
+      end
+
+    socket = assign(socket, :config_status, config_status)
 
     {:ok, socket}
   end

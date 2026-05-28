@@ -4,7 +4,7 @@ defmodule EvoDashWeb.HelpLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:help}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:help} config_status={@config_status}>
       <div class="flex items-center gap-3 mb-2">
         <div class="bg-accent/15 text-accent p-3 rounded-xl">
           <.icon name="hero-question-mark-circle" class="size-6" />
