@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.Executor do
+defmodule EvoGit.Agents.Executor do
   @moduledoc """
   Executor agent for implementing code changes.
 
@@ -12,7 +12,7 @@ defmodule EvoGit.Agent.Executor do
   def subagent_tool_name, do: "subagent_executor"
 
   def subagent_modules do
-    [EvoGit.Agent.CodebaseInvestigator, __MODULE__]
+    [EvoGit.Agents.CodebaseInvestigator, __MODULE__]
   end
 
   def subagent_tool_description do

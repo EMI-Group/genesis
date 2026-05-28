@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.Generalist do
+defmodule EvoGit.Agents.Generalist do
   @moduledoc """
   A generalist agent with the ability to delegate tasks to a codebase_investigator subagent.
   """
@@ -15,8 +15,8 @@ defmodule EvoGit.Agent.Generalist do
 
   def subagent_modules do
     [
-      EvoGit.Agent.CodebaseInvestigator,
-      EvoGit.Agent.Executor,
+      EvoGit.Agents.CodebaseInvestigator,
+      EvoGit.Agents.Executor,
       # Allow recursive delegation to other generalist subagents for child nodes
       __MODULE__
     ]

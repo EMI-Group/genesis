@@ -6,7 +6,7 @@ defmodule EvoGit.Task do
   worktree preparation and state management via ETS.
   """
   alias EvoGit.Adapters.Git
-  alias EvoGit.Agent.Generalist
+  alias EvoGit.Agents.Generalist
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
   require Logger

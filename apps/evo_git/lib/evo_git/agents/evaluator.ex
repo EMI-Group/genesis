@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.Evaluator do
+defmodule EvoGit.Agents.Evaluator do
   @moduledoc """
   Evaluator agent for verifying code changes.
 
@@ -17,7 +17,7 @@ defmodule EvoGit.Agent.Evaluator do
   end
 
   def subagent_modules do
-    [EvoGit.Agent.CodebaseInvestigator]
+    [EvoGit.Agents.CodebaseInvestigator]
   end
 
   def system_prompt do

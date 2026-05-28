@@ -22,9 +22,9 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 │               ┌──────────────────────┐                   │
 │               │   AgentScheduler     │                   │  GenServer: worktree pool, lifecycle, ETS state
 │               │   ├─ AgentState      │                   │  Agent spatial/temporal state + conversation context
-│               │   └─ SchedMeta       │                   │  Scheduling metadata (incl. task_id grouping)
-│               │   ├─ LLM Slots       │                   │  Concurrency + global backoff (60s rate-limit cooldown)
-│               │   └─ Tool Slots      │                   │  Independent tool execution semaphore
+│               │   ├─ SchedMeta       │                   │  Scheduling metadata (incl. task_id grouping)
+│               │   ├─ Slots           │                   │  LLM/tool slot management + global backoff
+│               │   └─ Worktrees       │                   │  Worktree lifecycle, init scripts, cleanup
 │               └──────────────────────┘                   │
 ├──────────────────────────────────────────────────────────┤
 │  Agents (use EvoGit.Agent behaviour)                     │
@@ -54,6 +54,8 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 | `EvoGit.Agent` | `./lib/evo_git/agent.ex` | Behaviour module for agents (`use EvoGit.Agent`); injects agent loop, subagent tools, `complete_task` |
 | `EvoGit.AgentSpec` | `./lib/evo_git/agent_spec.ex` | Structured specification for spawning agents (context_node, phylo_node, agent_module, objective) |
 | `EvoGit.AgentScheduler` | `./lib/evo_git/agent_scheduler.ex` | GenServer managing agent lifecycles, worktree pool, ETS state, LLM/tool slot management, and orphaned branch cleanup |
+| `EvoGit.AgentScheduler.Slots` | `./lib/evo_git/agent_scheduler/slots.ex` | LLM and tool slot management: request/release, backoff, pending queue grants |
+| `EvoGit.AgentScheduler.Worktrees` | `./lib/evo_git/agent_scheduler/worktrees.ex` | Worktree lifecycle: init, assignment, preparation, init scripts, deletion, orphan cleanup |
 | `EvoGit.Task` | `./lib/evo_git/task.ex` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
 | `EvoGit.Runtime` | `./lib/evo_git/runtime.ex` | Top-level coordinator: Genesis then Evolution |
 | `EvoGit.ProjectConfig` | `./lib/evo_git/project_config.ex` | Reads and parses `evogit.toml` from repo root; provides `worktree_script/1` accessor |
@@ -65,9 +67,10 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 |---|---|
 | `./lib/evo_git/core/` | `ContextNode` (spatial tree) and `PhyloGraphNode` (temporal graph) data structures |
 | `./lib/evo_git/adapters/` | `Git` CLI adapter — thin wrapper around `System.cmd("git", ...)` |
-| `./lib/evo_git/agent/` | Agent implementations (Generalist, Investigator, Architect, ContextExtractor) + 14 LLM tool schemas |
+| `./lib/evo_git/agent/` | Agent behaviour module (`EvoGit.Agent`), tool library (14+ LLM tools), context compression, and subagent processing |
+| `./lib/evo_git/agents/` | Agent type implementations (Generalist, Manager, Executor, Planner, CodebaseInvestigator, CodebaseArchitect, ContextExtractor, Evaluator) + Warnings utility |
 | `./lib/evo_git/runtime/` | Genesis (creation), Evolution (refinement loop), and Prompts (LLM templates) |
-| `./lib/evo_git/agent_scheduler/` | `AgentState` and `SchedMeta` structs backing ETS tables |
+| `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, and `Worktrees` structs/modules backing ETS tables and helper logic |
 | `./test/` | ExUnit tests using real git operations on temp directories |
 
 ### Key Types

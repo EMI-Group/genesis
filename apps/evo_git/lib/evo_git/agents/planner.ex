@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.Planner do
+defmodule EvoGit.Agents.Planner do
   @moduledoc """
   Planning and orchestration agent for Mode A (Top-Down) evolution.
 
@@ -19,9 +19,9 @@ defmodule EvoGit.Agent.Planner do
 
   def subagent_modules do
     [
-      EvoGit.Agent.Executor,
-      EvoGit.Agent.Evaluator,
-      EvoGit.Agent.CodebaseInvestigator
+      EvoGit.Agents.Executor,
+      EvoGit.Agents.Evaluator,
+      EvoGit.Agents.CodebaseInvestigator
     ]
   end
 

@@ -46,12 +46,12 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
+  alias EvoGit.AgentScheduler.Slots
+  alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Defaults
-  alias EvoGit.Platform
-  alias EvoGit.ProjectConfig
 
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
@@ -396,7 +396,7 @@ defmodule EvoGit.AgentScheduler do
   def handle_call({:run_agent, spec}, from, state) do
     # Extract repo_path from the spec's phylo_node
     repo_path = spec.phylo_node.repo
-    state = ensure_initialized(state, repo_path)
+    state = Worktrees.ensure_initialized(state, repo_path)
     task_id = state.next_task_id
     {agent_id, state} = register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
     state = %{state | next_task_id: task_id + 1}
@@ -428,7 +428,7 @@ defmodule EvoGit.AgentScheduler do
       # If concurrency changed, tear down the pool so it's lazily re-created
       state =
         if concurrency_changed and state.initialized do
-          teardown_worktrees(state)
+          Worktrees.teardown_worktrees(state)
         else
           state
         end
@@ -445,78 +445,40 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:spawn_sub_agents, parent_id, specs}, from, state) do
-    state = ensure_initialized(state)
+    state = Worktrees.ensure_initialized(state)
     {:ok, parent} = get_sched_meta(parent_id)
 
     spawn_validated_subagents(parent_id, parent, specs, from, state)
   end
 
-  # --- LLM and Tool Slot Management ---
+  # --- LLM and Tool Slot Management (delegated to Slots module) ---
 
   @impl true
   def handle_call({:request_llm_slot, agent_id}, from, state) do
-    now = System.monotonic_time(:millisecond)
-
-    # Check if we're in a global backoff period
-    if state.llm_backoff_until && now < state.llm_backoff_until do
-      # Still in backoff - queue the request
-      llm_waiting = :queue.in({agent_id, from, state.llm_backoff_until}, state.llm_waiting)
-      {:noreply, %{state | llm_waiting: llm_waiting}}
-    else
-      if state.llm_slots_available > 0 do
-        state = %{state | llm_slots_available: state.llm_slots_available - 1}
-        {:reply, :ok, state}
-      else
-        llm_waiting = :queue.in({agent_id, from, nil}, state.llm_waiting)
-        {:noreply, %{state | llm_waiting: llm_waiting}}
-      end
-    end
+    Slots.handle_request_llm_slot(agent_id, from, state)
   end
 
   @impl true
-  def handle_call({:release_llm_slot, _agent_id}, _from, state) do
-    state = %{state | llm_slots_available: min(state.llm_slots_available + 1, state.max_concurrency)}
-    state = grant_pending_llm_slots(state)
-    {:reply, :ok, state}
+  def handle_call({:release_llm_slot, agent_id}, from, state) do
+    Slots.handle_release_llm_slot(agent_id, state)
+    |> wrap_reply(from)
   end
 
   @impl true
-  def handle_call({:report_llm_error, _agent_id, :rate_limit}, _from, state) do
-    # Set global backoff: 60 seconds from now
-    backoff_until = System.monotonic_time(:millisecond) + 60_000
-    Logger.warning("AgentScheduler: LLM rate limit detected, global backoff until #{backoff_until}")
-
-    # Re-queue all currently waiting agents with the backoff timestamp
-    llm_waiting = update_waiting_with_backoff(state.llm_waiting, backoff_until)
-
-    # Schedule a retry after backoff expires to unstick waiting agents
-    Process.send_after(self(), :retry_llm_waiting, 65_000)
-
-    {:reply, :ok, %{state | llm_backoff_until: backoff_until, llm_waiting: llm_waiting}}
-  end
-
-  @impl true
-  def handle_call({:report_llm_error, _agent_id, _error_type}, _from, state) do
-    # Other error types don't trigger global backoff
-    {:reply, :ok, state}
+  def handle_call({:report_llm_error, agent_id, error_type}, from, state) do
+    Slots.handle_report_llm_error(agent_id, error_type, state)
+    |> wrap_reply(from)
   end
 
   @impl true
   def handle_call({:request_tool_slot, agent_id}, from, state) do
-    if state.tool_slots_available > 0 do
-      state = %{state | tool_slots_available: state.tool_slots_available - 1}
-      {:reply, :ok, state}
-    else
-      tool_waiting = :queue.in({agent_id, from}, state.tool_waiting)
-      {:noreply, %{state | tool_waiting: tool_waiting}}
-    end
+    Slots.handle_request_tool_slot(agent_id, from, state)
   end
 
   @impl true
-  def handle_call({:release_tool_slot, _agent_id}, _from, state) do
-    state = %{state | tool_slots_available: min(state.tool_slots_available + 1, state.max_tool_concurrency)}
-    state = grant_pending_tool_slots(state)
-    {:reply, :ok, state}
+  def handle_call({:release_tool_slot, agent_id}, from, state) do
+    Slots.handle_release_tool_slot(agent_id, state)
+    |> wrap_reply(from)
   end
 
   # --- Subagent-Level Validation and Spawning ---
@@ -673,11 +635,10 @@ defmodule EvoGit.AgentScheduler do
 
   defp validate_spawn_spatiality(_parent_type, _parent_path, _child_type, _child_path), do: :ok
 
-  # Retry LLM waiting queue after backoff expiry
+  # Retry LLM waiting queue after backoff expiry (delegated to Slots module)
   @impl true
   def handle_info(:retry_llm_waiting, state) do
-    state = grant_pending_llm_slots(state)
-    {:noreply, state}
+    Slots.handle_retry_llm_waiting(state)
   end
 
   # Task returned a result
@@ -727,71 +688,7 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  # --- Initialization ---
-
-  defp ensure_initialized(state, repo_path \\ nil)
-
-  defp ensure_initialized(%{initialized: true} = state, nil), do: state
-
-  defp ensure_initialized(%{initialized: true, repo_root: repo_root} = state, new_repo_path)
-       when repo_root == new_repo_path do
-    state
-  end
-
-  defp ensure_initialized(%{initialized: true} = state, new_repo_path) do
-    Logger.info(
-      "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing..."
-    )
-
-    state = teardown_worktrees(state)
-    do_initialize(state, new_repo_path)
-  end
-
-  defp ensure_initialized(_state, nil) do
-    raise ArgumentError, "repo_path is required for initial AgentScheduler initialization"
-  end
-
-  defp ensure_initialized(state, repo_path) do
-    repo_root = Path.expand(repo_path)
-    do_initialize(state, repo_root)
-  end
-
-  defp do_initialize(state, repo_root) do
-    worker_base = Path.join(repo_root, ".evogit/workers")
-
-    Logger.info("AgentScheduler: Initializing worktree directory at #{worker_base}")
-
-    File.rm_rf!(worker_base)
-    Git.prune_worktrees(repo_root)
-
-    # Clean up orphaned evogit-agent branches from previous runs
-    clean_orphaned_branches(repo_root)
-
-    File.mkdir_p!(worker_base)
-
-    {:ok, current_sha} = Git.rev_parse(repo_root)
-
-    # Register primary repo
-    primary_repo = ForeignRepo.new(:primary, repo_root)
-    repos = Map.put(state.repos, :primary, primary_repo)
-
-    %{
-      state
-      | initialized: true,
-        repo_root: repo_root,
-        repos: repos,
-        base_sha: current_sha
-    }
-  end
-
-  defp teardown_worktrees(%{repo_root: repo_root} = state) when is_binary(repo_root) do
-    worker_base = Path.join(repo_root, ".evogit/workers")
-    File.rm_rf!(worker_base)
-    Git.prune_worktrees(repo_root)
-    %{state | initialized: false}
-  end
-
-  defp teardown_worktrees(state), do: %{state | initialized: false}
+  # --- Config Helpers ---
 
   defp maybe_update(state, key, opts) do
     case Keyword.fetch(opts, key) do
@@ -925,84 +822,6 @@ defmodule EvoGit.AgentScheduler do
     {id, state}
   end
 
-  # --- Dispatch Helpers ---
-
-  defp assign_and_prepare_worktree(agent_id, wt) do
-    {:ok, meta} = get_sched_meta(agent_id)
-    {:ok, agent_state} = get_agent_state(agent_id)
-    spec = meta.spec
-
-    commit_sha = spec.phylo_node.current_commit
-
-    Git.clean(wt)
-    branch_name = "evogit-agent#{agent_id}"
-    Git.checkout(wt, branch_name)
-
-    # Build the worktree-bound phylo_node (repo points to worktree)
-    wt_phylo_node = %PhyloGraphNode{
-      repo: wt,
-      base_commit: spec.phylo_node.base_commit,
-      current_commit: commit_sha
-    }
-
-    put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
-
-    commit_sha
-  end
-
-  defp run_worktree_init_script(repo_root, worktree_path) do
-    case ProjectConfig.worktree_script(repo_root) do
-      nil ->
-        :ok
-
-      script_content ->
-        Logger.info("AgentScheduler: Running worktree init script")
-
-        # Detect shell from shebang, default to /bin/sh
-        shell =
-          case String.split(script_content, "\n") |> List.first() do
-            "#!" <> rest -> String.trim(rest)
-            _ -> Platform.shell()
-          end
-
-        cmd =
-          if Platform.windows?() do
-            """
-            $env:SOURCE_REPO_PATH = "#{repo_root}"
-            $env:TARGET_WORKTREE_PATH = "#{worktree_path}"
-            Set-Location "#{repo_root}"
-            #{script_content}
-            """
-          else
-            """
-            export SOURCE_REPO_PATH="#{repo_root}"
-            export TARGET_WORKTREE_PATH="#{worktree_path}"
-            cd "#{repo_root}"
-            #{script_content}
-            """
-          end
-
-        case System.cmd(shell, Platform.shell_args(cmd),
-               cd: repo_root,
-               stderr_to_stdout: true
-             ) do
-          {output, 0} ->
-            if output != "" do
-              Logger.info("AgentScheduler: Worktree init script output:\n#{output}")
-            end
-
-            Logger.info("AgentScheduler: Worktree init script completed successfully")
-
-          {output, exit_code} ->
-            Logger.warning(
-              "AgentScheduler: Worktree init script failed with exit code #{exit_code}:\n#{output}"
-            )
-        end
-
-        :ok
-    end
-  end
-
   # --- Dispatch ---
 
   defp try_dispatch(state, agent_id) do
@@ -1042,12 +861,12 @@ defmodule EvoGit.AgentScheduler do
         false
       end
 
-    assign_and_prepare_worktree(agent_id, worktree_path)
+    Worktrees.assign_and_prepare_worktree(agent_id, worktree_path)
 
     # Run worktree init script on first creation only, and only for the primary repo
     # (foreign repos are independent and should not inherit the primary repo's init script)
     if newly_created and spec.repo_id == :primary do
-      run_worktree_init_script(agent_repo_root, worktree_path)
+      Worktrees.run_init_script(agent_repo_root, worktree_path)
     end
 
     task =
@@ -1098,7 +917,7 @@ defmodule EvoGit.AgentScheduler do
        when not is_nil(wt) do
     case Git.status(wt) do
       {:ok, ""} ->
-        sync_current_commit(agent_id, meta)
+        Worktrees.sync_current_commit(agent_id, meta)
 
       {:ok, _changes} ->
         Logger.info("AgentScheduler: Auto-committing pending changes for agent #{agent_id}")
@@ -1124,7 +943,7 @@ defmodule EvoGit.AgentScheduler do
             end
         end
 
-        sync_current_commit(agent_id, meta)
+        Worktrees.sync_current_commit(agent_id, meta)
 
       _ ->
         meta
@@ -1132,34 +951,6 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp auto_commit_fallback(_agent_id, meta), do: meta
-
-  defp sync_current_commit(agent_id, %{worktree: wt} = meta) do
-    {:ok, current_sha} = Git.rev_parse(wt)
-    {:ok, agent_state} = get_agent_state(agent_id)
-
-    agent_needs_update? = agent_state.phylo_node.current_commit != current_sha
-    meta_needs_update? = meta.spec.phylo_node.current_commit != current_sha
-
-    if agent_needs_update? do
-      updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-      put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
-    end
-
-    if meta_needs_update? do
-      updated_spec_phylo = %{
-        meta.spec.phylo_node
-        | current_commit: current_sha
-      }
-
-      updated_spec = %{meta.spec | phylo_node: updated_spec_phylo}
-      updated_meta = %{meta | spec: updated_spec}
-      put_sched_meta(agent_id, updated_meta)
-
-      updated_meta
-    else
-      meta
-    end
-  end
 
   # --- Queue Processing ---
 
@@ -1250,7 +1041,7 @@ defmodule EvoGit.AgentScheduler do
 
     # Delete the agent's persistent worktree
     if meta.worktree do
-      delete_worktree(meta.worktree, state.repo_root)
+      Worktrees.delete(meta.worktree, state.repo_root)
     end
 
     delete_agent_state(agent_id)
@@ -1291,7 +1082,7 @@ defmodule EvoGit.AgentScheduler do
 
       # Delete the agent's persistent worktree on permanent failure
       if meta.worktree do
-        delete_worktree(meta.worktree, state.repo_root)
+        Worktrees.delete(meta.worktree, state.repo_root)
       end
 
       delete_agent_state(agent_id)
@@ -1311,110 +1102,8 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  defp delete_worktree(path, repo_root) do
-    Logger.info("AgentScheduler: Deleting worktree #{path}")
-    # Extract agent ID from path to derive branch name (e.g., worker_42 -> agent/42)
-    branch_name =
-      path
-      |> Path.basename()
-      |> String.replace_prefix("worker_", "evogit-agent")
+  # --- LLM/Tool Slot Delegation Helpers ---
 
-    File.rm_rf!(path)
-    Git.prune_worktrees(repo_root)
-    Git.delete_branch(repo_root, branch_name)
-  end
-
-  # --- Orphaned Branch Cleanup ---
-
-  defp clean_orphaned_branches(repo_root) do
-    case System.cmd("git", ["branch", "--list", "evogit-agent*"], cd: repo_root) do
-      {output, 0} when is_binary(output) and byte_size(output) > 0 ->
-        output
-        |> String.split("\n", trim: true)
-        |> Enum.map(&String.trim/1)
-        |> Enum.each(fn branch ->
-          Logger.info("AgentScheduler: Cleaning up orphaned branch #{branch}")
-          Git.delete_branch(repo_root, branch)
-        end)
-
-      _ ->
-        :ok
-    end
-  end
-
-  # --- LLM Slot Helpers ---
-
-  # Grants pending LLM slots that are no longer in backoff
-  defp grant_pending_llm_slots(%{llm_waiting: waiting, llm_slots_available: slots} = state)
-       when slots > 0 do
-    now = System.monotonic_time(:millisecond)
-
-    case :queue.out(waiting) do
-      {{:value, {_agent_id, from}}, rest_waiting} ->
-        # 2-tuple entry: no backoff, grant immediately
-        GenServer.reply(from, :ok)
-        state = maybe_clear_llm_backoff(state)
-        grant_pending_llm_slots(%{state | llm_waiting: rest_waiting, llm_slots_available: slots - 1})
-
-      {{:value, {agent_id, from, backoff_until}}, rest_waiting} ->
-        if backoff_until && now < backoff_until do
-          # Still in backoff - re-enqueue at front of rest and stop processing
-          state = maybe_clear_llm_backoff(state)
-          updated_waiting = :queue.in_r({agent_id, from, backoff_until}, rest_waiting)
-          grant_pending_llm_slots(%{state | llm_waiting: updated_waiting})
-        else
-          # Backoff expired or not set - grant the slot
-          GenServer.reply(from, :ok)
-          state = maybe_clear_llm_backoff(state)
-          grant_pending_llm_slots(%{state | llm_waiting: rest_waiting, llm_slots_available: slots - 1})
-        end
-
-      {:empty, _} ->
-        state
-    end
-  end
-
-  defp grant_pending_llm_slots(state), do: state
-
-  # Clears the global LLM backoff if it has expired
-  defp maybe_clear_llm_backoff(%{llm_backoff_until: backoff_until} = state) do
-    now = System.monotonic_time(:millisecond)
-
-    if backoff_until && now >= backoff_until do
-      Logger.info("AgentScheduler: LLM global backoff expired, resuming normal operations")
-      %{state | llm_backoff_until: nil}
-    else
-      state
-    end
-  end
-
-  # --- Tool Slot Helpers ---
-
-  # Grants pending tool slots
-  defp grant_pending_tool_slots(%{tool_waiting: waiting, tool_slots_available: slots} = state)
-       when slots > 0 do
-    case :queue.out(waiting) do
-      {{:value, {_agent_id, from}}, rest_waiting} ->
-        GenServer.reply(from, :ok)
-        grant_pending_tool_slots(%{state | tool_waiting: rest_waiting, tool_slots_available: slots - 1})
-
-      {:empty, _} ->
-        state
-    end
-  end
-
-  defp grant_pending_tool_slots(state), do: state
-
-  # Updates all waiting LLM entries with a new backoff timestamp
-  defp update_waiting_with_backoff(waiting, backoff_until) do
-    entries = :queue.to_list(waiting)
-
-    updated =
-      Enum.map(entries, fn
-        {agent_id, from, _old_backoff} -> {agent_id, from, backoff_until}
-        {agent_id, from} -> {agent_id, from, backoff_until}
-      end)
-
-    :queue.from_list(updated)
-  end
+  # Converts Slots module returns into proper GenServer callback tuples.
+  defp wrap_reply({:reply, reply, state}, _from), do: {:reply, reply, state}
 end

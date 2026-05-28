@@ -5,8 +5,8 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
-  alias EvoGit.Agent.CodebaseArchitect
-  alias EvoGit.Agent.ContextExtractor
+  alias EvoGit.Agents.CodebaseArchitect
+  alias EvoGit.Agents.ContextExtractor
   alias EvoGit.Runtime
   require Logger
 

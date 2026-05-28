@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.Warnings do
+defmodule EvoGit.Agents.Warnings do
   @moduledoc """
   Budget warning thresholds and messages for the agent loop.
 
