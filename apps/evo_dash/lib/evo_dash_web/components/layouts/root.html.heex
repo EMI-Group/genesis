@@ -2,9 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <.live_title default="EvoDash" suffix=" · Phoenix Framework">
+    <meta name="theme-color" content="#4f46e5" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="EvoGit" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <.live_title default="EvoDash" suffix=" · EvoGit">
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
@@ -20,13 +25,28 @@
             localStorage.setItem("phx:theme", theme);
             document.documentElement.setAttribute("data-theme", theme);
           }
+          updateThemeColor(theme);
         };
+
+        const updateThemeColor = (theme) => {
+          const meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) {
+            const isDark = theme === "dark" ||
+              (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+            meta.content = isDark ? "#312e81" : "#4f46e5";
+          }
+        };
+
         if (!document.documentElement.hasAttribute("data-theme")) {
           setTheme(localStorage.getItem("phx:theme") || "system");
         }
         window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
-        
+
         window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
+
+        window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+          if (!localStorage.getItem("phx:theme")) updateThemeColor("system");
+        });
       })();
     </script>
   </head>
