@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.CodebaseArchitect do
+defmodule EvoGit.Agents.CodebaseArchitect do
   @moduledoc """
   A specialized agent for codebase initialization and architectural design.
   It can write files, execute shell commands (for project initialization),
@@ -17,7 +17,7 @@ defmodule EvoGit.Agent.CodebaseArchitect do
 
   def subagent_modules, do: [
     __MODULE__,
-    EvoGit.Agent.Generalist,
+    EvoGit.Agents.Generalist,
   ]
 
   def system_prompt do

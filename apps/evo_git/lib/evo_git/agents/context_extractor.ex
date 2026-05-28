@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.ContextExtractor do
+defmodule EvoGit.Agents.ContextExtractor do
   @moduledoc """
   A specialized agent for extracting architectural context from an existing codebase
   and building a hierarchical semantic tree (Context Tree).

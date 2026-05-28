@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.CodebaseInvestigator do
+defmodule EvoGit.Agents.CodebaseInvestigator do
   @moduledoc """
   A specialized agent for codebase investigation, possessing read-only and search tools,
   plus the ability to delegate to sub-investigators and update directory context files.

@@ -196,11 +196,11 @@ defmodule EvoGit.Agent do
       end
 
       # Checks and sends warnings when approaching time/turn limits.
-      # Threshold configs and messages live in EvoGit.Agent.Warnings.
+      # Threshold configs and messages live in EvoGit.Agents.Warnings.
       defp check_limit_warnings(state) do
         state
-        |> maybe_warn_limit(:time, EvoGit.Agent.Warnings.time_thresholds(@timeout_ms))
-        |> maybe_warn_limit(:turns, EvoGit.Agent.Warnings.turn_thresholds(@max_turns))
+        |> maybe_warn_limit(:time, EvoGit.Agents.Warnings.time_thresholds(@timeout_ms))
+        |> maybe_warn_limit(:turns, EvoGit.Agents.Warnings.turn_thresholds(@max_turns))
       end
 
       defp maybe_warn_limit(state, :time, thresholds) do
@@ -1095,7 +1095,7 @@ defmodule EvoGit.Agent do
       ## Example
 
           def subagent_modules do
-            [EvoGit.Agent.CodebaseInvestigator]
+            [EvoGit.Agents.CodebaseInvestigator]
           end
       """
       def subagent_modules, do: []

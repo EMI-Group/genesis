@@ -1,26 +1,14 @@
-# EvoGit Agent Implementations
+# EvoGit Agent Behaviour & Tools
 
 ## Intent
-Contains agent module implementations and their LLM tool definitions. Each agent is a stateless Elixir module that `use EvoGit.Agent` and provides a system prompt, optional tool overrides, and subagent delegation configuration. The `use` macro injects the complete agent loop (LLM turn cycle, tool dispatch, subagent management, context compression, budget warnings, and completion).
+Contains the `EvoGit.Agent` behaviour module and its LLM tool definitions. Each agent is a stateless Elixir module that `use EvoGit.Agent` and provides a system prompt, optional tool overrides, and subagent delegation configuration. The `use` macro injects the complete agent loop (LLM turn cycle, tool dispatch, subagent management, context compression, budget warnings, and completion).
+
+**Note:** Agent type implementations (Generalist, Manager, Executor, etc.) have been moved to `../agents/`. This directory retains the behaviour module, tool library, and budget warnings.
 
 ## Routing Table
 - `./tools/` → LLM tool modules (17+ tools for file I/O, context, search, shell, etc.)
 
 ## API Surface
-
-### Agent Modules
-All agents `use EvoGit.Agent` and implement overridable callbacks.
-
-| Module | File | Role | Type | Subagents | Write Access |
-|---|---|---|---|---|---|
-| `Generalist` | `generalist.ex` | Versatile full-stack agent; delegates investigation and execution | `:read_write` | → CodebaseInvestigator, Executor, self (recursive) | ✅ Full |
-| `Manager` | `manager.ex` | Planning, delegation, validation orchestrator — does NOT implement features directly | `:read_write` | → self (recursive), Executor, CodebaseInvestigator | ✅ Full |
-| `Planner` | `planner.ex` | Top-down planning agent; breaks objectives into steps for executors | `:read` | → Executor, Evaluator, CodebaseInvestigator | CONTEXT.md only |
-| `Executor` | `executor.ex` | Implements precise, targeted code changes from a specific objective | `:read_write` | → CodebaseInvestigator, self (recursive) | ✅ Full |
-| `CodebaseInvestigator` | `codebase_investigator.ex` | Read-only deep codebase analysis; updates CONTEXT.md | `:read` | → self (recursive) | CONTEXT.md only |
-| `CodebaseArchitect` | `codebase_architect.ex` | Greenfield architecture design; creates project skeletons | `:read_write` | → self (recursive) | ✅ Full |
-| `ContextExtractor` | `context_extractor.ex` | Extracts semantic context from existing codebases into CONTEXT.md | `:read` | → self (recursive) | CONTEXT.md only |
-| `Evaluator` | `evaluator.ex` | Verifies code changes satisfy objectives via git diff review | `:read` | → CodebaseInvestigator | CONTEXT.md only |
 
 ### Tool Library (`EvoGit.Agent.Tools`)
 - **`tools.ex`** — Central dispatch: `schemas/0` returns 14 LLM tool schemas, `execute/5` dispatches by name

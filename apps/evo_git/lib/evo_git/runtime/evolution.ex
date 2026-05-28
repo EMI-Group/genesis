@@ -43,7 +43,7 @@ defmodule EvoGit.Runtime.Evolution do
     context_node = ContextNode.load("./", repo_path)
 
     # Manager plans and delegates the task to appropriate subagents
-    case AgentSpec.new(context_node, phylo_node, EvoGit.Agent.Manager, objective,
+    case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective,
            event_sink: Keyword.get(opts, :event_sink, self())
          )
          |> AgentScheduler.run_agent() do

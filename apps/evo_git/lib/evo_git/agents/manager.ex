@@ -1,4 +1,4 @@
-defmodule EvoGit.Agent.Manager do
+defmodule EvoGit.Agents.Manager do
   @moduledoc """
   Manager agent for planning, delegation, and validation.
 
@@ -22,9 +22,9 @@ defmodule EvoGit.Agent.Manager do
 
   def subagent_modules do
     [
-      EvoGit.Agent.Manager,
-      EvoGit.Agent.Executor,
-      EvoGit.Agent.CodebaseInvestigator
+      EvoGit.Agents.Manager,
+      EvoGit.Agents.Executor,
+      EvoGit.Agents.CodebaseInvestigator
     ]
   end
 

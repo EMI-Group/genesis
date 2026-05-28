@@ -29,12 +29,12 @@ The design document referenced a centralized `EvoGit.Runtime.Prompts` module, bu
 
 4. **Context compression prompt** — Defined inline in `agent.ex` `try_compress_chat/1` when token threshold is exceeded.
 
-5. **Budget warnings** — Defined in `EvoGit.Agent.Warnings` as template functions at 25%, 50%, 80% thresholds for both time and turns.
+5. **Budget warnings** — Defined in `EvoGit.Agents.Warnings` as template functions at 25%, 50%, 80% thresholds for both time and turns.
 
 ### Key Dependencies
 - `EvoGit.Core.PhyloGraphNode`, `EvoGit.Core.ContextNode` — Core data structures
 - `EvoGit.AgentScheduler`, `EvoGit.AgentSpec` — Agent execution
-- `EvoGit.Agent.CodebaseArchitect`, `EvoGit.Agent.ContextExtractor`, `EvoGit.Agent.Manager` — Agent modules
+- `EvoGit.Agents.CodebaseArchitect`, `EvoGit.Agents.ContextExtractor`, `EvoGit.Agents.Manager` — Agent modules
 - `EvoGit.Adapters.Git` — Git operations
 - `EvoGit.Task` — Diagnosis routing
 
