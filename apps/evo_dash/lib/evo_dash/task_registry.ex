@@ -119,9 +119,9 @@ defmodule EvoDash.TaskRegistry do
     # Ensure data directory exists
     File.mkdir_p!(data_dir())
 
-    # Open or create DETS tables
-    {:ok, _} = :dets.open_file(@dets_tasks, type: :set, file: to_charlist(tasks_dets_path()))
-    {:ok, _} = :dets.open_file(@dets_projects, type: :set, file: to_charlist(recent_projects_dets_path()))
+    # Open or create DETS tables (auto-recover from corruption)
+    open_or_reset_dets(@dets_tasks, tasks_dets_path())
+    open_or_reset_dets(@dets_projects, recent_projects_dets_path())
 
     # Create ETS tables for fast in-memory access
     :ets.new(@table_name, [:named_table, :public, :set])
@@ -338,6 +338,31 @@ defmodule EvoDash.TaskRegistry do
   defp tasks_dets_path, do: Path.join(data_dir(), "tasks.dets")
   defp recent_projects_dets_path, do: Path.join(data_dir(), "recent_projects.dets")
 
+  # --- DETS Corruption Recovery ---
+
+  defp open_or_reset_dets(table_name, file_path) do
+    case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to open DETS file #{file_path}: #{inspect(reason)}. Recreating."
+        )
+
+        _ = File.rm(file_path)
+        {:ok, _} = :dets.open_file(table_name, type: :set, file: to_charlist(file_path))
+        :ok
+    end
+  end
+
+  defp reset_dets_table(table_name, file_path) do
+    :dets.close(table_name)
+    _ = File.rm(file_path)
+    {:ok, _} = :dets.open_file(table_name, type: :set, file: to_charlist(file_path))
+    :ok
+  end
+
   # --- Task Persistence (DETS) ---
 
   defp load_tasks_from_dets do
@@ -358,7 +383,12 @@ defmodule EvoDash.TaskRegistry do
       )
     rescue
       error ->
-        Logger.error("Failed to load tasks from DETS: #{inspect(error)}")
+        Logger.error(
+          "Failed to load tasks from DETS: #{inspect(error)}. " <>
+            "Resetting corrupted tasks store."
+        )
+
+        reset_dets_table(@dets_tasks, tasks_dets_path())
         :ok
     end
   end
@@ -420,7 +450,12 @@ defmodule EvoDash.TaskRegistry do
       )
     rescue
       error ->
-        Logger.error("Failed to load recent projects from DETS: #{inspect(error)}")
+        Logger.error(
+          "Failed to load recent projects from DETS: #{inspect(error)}. " <>
+            "Resetting corrupted projects store."
+        )
+
+        reset_dets_table(@dets_projects, recent_projects_dets_path())
         :ok
     end
   end
