@@ -25,7 +25,7 @@ defmodule EvoGit.Agent.ContextCompression do
   @doc """
   Attempts to compress the agent's chat context if it exceeds the token threshold.
 
-  The threshold is read from `Application.get_env(:evo_git, :compression_threshold_tokens, 100_000)`.
+  The threshold is read from `EvoGit.Defaults.compression_threshold_tokens()` which resolves from user config.
 
   ## Options
 
@@ -38,7 +38,7 @@ defmodule EvoGit.Agent.ContextCompression do
   """
   @spec compress_if_needed(state :: map(), opts :: keyword()) :: map()
   def compress_if_needed(state, opts \\ []) do
-    threshold = Application.get_env(:evo_git, :compression_threshold_tokens, 100_000)
+    threshold = EvoGit.Defaults.compression_threshold_tokens() || 100_000
     agent_id = Keyword.fetch!(opts, :agent_id)
     llm_model = Keyword.fetch!(opts, :llm_model)
 
