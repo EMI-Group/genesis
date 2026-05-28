@@ -17,6 +17,10 @@ Contains `EvoGit.Config`, the unified configuration resolver that merges applica
 | `config_dir/0` | Returns the platform config directory path (XDG-compliant) |
 | `config_path/0` | Returns the full path to `config.toml` |
 | `credentials_path/0` | Returns the full path to `credentials.toml` |
+| `validate/0` | Validates resolved config, returns list of issues with severity (`:error`/`:warning`) |
+| `read_user_config_toml/0` | Reads raw TOML content of config file (`{:ok, String.t}` or `{:error, reason}`) |
+| `write_user_config_toml/1` | Writes TOML string to config file after validation; creates directory if needed |
+| `config_status/0` | Returns config status map (paths, existence, validation issues) for dashboard display |
 
 ### Configuration Levels (priority: low → high)
 1. **Application defaults** — Hardcoded in `defaults/0` (no model, no username)
@@ -28,8 +32,16 @@ Contains `EvoGit.Config`, the unified configuration resolver that merges applica
 2. `EVOGIT_API_KEY_<PROVIDER>` environment variable
 3. Provider-specific env var (e.g., `GOOGLE_API_KEY`, `OPENAI_API_KEY`)
 
+### Validation Checks (`validate/0`)
+| Check | Severity | Condition |
+|-------|----------|-----------|
+| LLM model | `:error` | Model is nil or empty string |
+| GitHub username | `:warning` | Not configured |
+| Scheduler fields | `:error` | Non-integer, below min, or above max |
+| API keys | `:warning` | No keys configured in credentials |
+
 ## Constraints
-- Uses `Toml.decode/1` for parsing (decode-only, never writes config files)
+- Uses `TomlElixir.parse!/1` for parsing; `write_user_config_toml/1` validates with same parser before writing
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately
 - Config directory follows XDG conventions via `EvoGit.Platform.os()`
 - All file reads are wrapped in try/rescue-safe patterns with Logger warnings on failure
