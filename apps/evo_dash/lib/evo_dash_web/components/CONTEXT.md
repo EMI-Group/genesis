@@ -35,3 +35,4 @@ All component modules use `use EvoDashWeb, :html` (which expands to `use Phoenix
 - Icons use the Heroicon set via the `icon/1` component (naming convention: `hero-<name>[-style]`).
 - Layout templates live under the `layouts/` subdirectory; only the root layout exists currently.
 - Components are pure functions — they receive assigns and return HEEx markup; no side effects or direct LiveView process calls.
+- Shared helpers from `EvoDashWeb.Helpers` should be used for cross-component utility functions (status badges, formatting, etc.) to avoid duplication between `DashboardComponents` and `AgentsComponents`.
