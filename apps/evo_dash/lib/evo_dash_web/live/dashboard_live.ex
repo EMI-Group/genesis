@@ -40,7 +40,16 @@ defmodule EvoDashWeb.DashboardLive do
                   class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
                   placeholder="/path/to/another/repo"
                   autofocus
+                  phx-hook="PathAutocomplete"
+                  id="open-another-project-path-input"
+                  list="path-suggestions-open"
+                  autocomplete="off"
                 />
+                <datalist id="path-suggestions-open">
+                  <%= for project <- @recent_projects do %>
+                    <option value={project.path} />
+                  <% end %>
+                </datalist>
               </div>
               <button type="submit" class="btn btn-primary">
                 <.icon name="hero-folder-open" class="size-5" /> Open
