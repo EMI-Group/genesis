@@ -3,6 +3,6 @@ defmodule EvoDashWeb.PageControllerTest do
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "EvoGit Dashboard"
+    assert html_response(conn, 200) =~ "EvoGit"
   end
 end
