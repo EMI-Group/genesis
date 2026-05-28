@@ -314,14 +314,14 @@ defmodule EvoDash.TaskRegistry do
   Execute a task. This function runs in a separate process under Task.Supervisor.
   """
   def execute_task(:genesis, opts, task_id) do
-    {input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id)
-    prompt = Keyword.get(opts, :prompt, input_arg)
+    {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id)
+    prompt = Keyword.get(opts, :prompt, "")
     EvoGit.Runtime.Genesis.run(prompt, runtime_opts)
   end
 
   def execute_task(:evolve, opts, task_id) do
-    {input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id)
-    objective = Keyword.get(opts, :objective, input_arg)
+    {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id)
+    objective = Keyword.get(opts, :objective, "")
     EvoGit.Runtime.Evolution.run(objective, runtime_opts)
   end
 
@@ -507,23 +507,12 @@ defmodule EvoDash.TaskRegistry do
   defp build_common_runtime_opts(opts, task_id) do
     repo_path = Keyword.fetch!(opts, :path)
     mode = Keyword.get(opts, :mode, "simple")
-    concurrency = Keyword.fetch!(opts, :concurrency)
-    retries = Keyword.fetch!(opts, :retries)
-    agent_max_retries = Keyword.fetch!(opts, :agent_max_retries)
 
     Application.ensure_all_started(:evo_git)
-
-    EvoGit.AgentScheduler.update_config(
-      max_concurrency: concurrency,
-      agent_max_retries: agent_max_retries
-    )
 
     runtime_opts = [
       repo_path: repo_path,
       mode: String.to_atom(mode),
-      concurrency: concurrency,
-      retries: retries,
-      agent_max_retries: agent_max_retries,
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
 
