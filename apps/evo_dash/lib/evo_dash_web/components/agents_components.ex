@@ -1,15 +1,6 @@
 defmodule EvoDashWeb.AgentsComponents do
   use EvoDashWeb, :html
 
-  import EvoDashWeb.Helpers,
-    only: [
-      agent_status_color: 1,
-      agent_status_bg: 1,
-      agent_status_border: 1,
-      agent_status_icon: 1,
-      format_module_name: 1
-    ]
-
   attr(:nodes, :list, required: true)
   attr(:depth, :integer, default: 0)
   attr(:selected_id, :any, default: nil)

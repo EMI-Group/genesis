@@ -7,7 +7,9 @@ defmodule EvoDashWeb.Helpers do
   This module is imported via `use EvoDashWeb, :html` and `use EvoDashWeb, :live_view`.
   """
 
-  use EvoDashWeb, :html
+  use Phoenix.Component
+  import Phoenix.HTML
+  alias Phoenix.LiveView.JS
 
   # ---------------------------------------------------------------------------
   # Agent Status Helpers

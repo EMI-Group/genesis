@@ -1,19 +1,6 @@
 defmodule EvoDashWeb.AgentsLive do
   use EvoDashWeb, :live_view
 
-  import EvoDashWeb.Helpers,
-    only: [
-      agent_status_color: 1,
-      agent_status_bg: 1,
-      agent_status_border: 1,
-      agent_status_icon: 1,
-      history_entry_icon: 1,
-      history_entry_color: 1,
-      format_timestamp: 1,
-      tool_call_name: 1,
-      tool_call_arguments: 1
-    ]
-
   @agent_state_table :evogit_agent_state
   @sched_meta_table :evogit_sched_meta
 

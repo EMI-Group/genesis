@@ -1,7 +1,6 @@
 defmodule EvoDashWeb.DashboardLive do
   use EvoDashWeb, :live_view
   alias EvoDash.TaskRegistry
-  import EvoDashWeb.Helpers, only: [mode_info_message: 1]
 
   @impl true
   def render(assigns) do

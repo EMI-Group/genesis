@@ -1,9 +1,6 @@
 defmodule EvoDashWeb.DashboardComponents do
   use EvoDashWeb, :html
 
-  import EvoDashWeb.Helpers,
-    only: [task_status_badge: 1, task_type_icon: 1, format_datetime: 1, format_datetime: 2, task_description: 1]
-
   @default_concurrency to_string(EvoGit.Defaults.max_concurrency())
   @default_retries to_string(EvoGit.Defaults.max_retries())
   @default_agent_max_retries to_string(EvoGit.Defaults.agent_max_retries())
