@@ -161,6 +161,24 @@ defmodule EvoDashWeb.Helpers do
 
   def tool_call_arguments(_), do: "{}"
 
+  @doc """
+  Extracts and joins reasoning text from a list of ReasoningDetails structs.
+  Returns `nil` if the list is empty or contains no text.
+  """
+  def format_reasoning_details(nil), do: nil
+
+  def format_reasoning_details(details) when is_list(details) do
+    text =
+      details
+      |> Enum.map(fn
+        %{text: text} when is_binary(text) -> text
+        _ -> ""
+      end)
+      |> Enum.join("")
+
+    if text == "", do: nil, else: text
+  end
+
   # ---------------------------------------------------------------------------
   # Formatting Helpers
   # ---------------------------------------------------------------------------

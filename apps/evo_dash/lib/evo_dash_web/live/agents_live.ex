@@ -174,8 +174,8 @@ defmodule EvoDashWeb.AgentsLive do
           parts when is_list(parts) ->
             parts
             |> Enum.map(fn
+              %{type: :thinking} -> ""
               %{text: text} when is_binary(text) -> text
-              %{type: :thinking, text: text} -> "[thinking] #{text}"
               _ -> ""
             end)
             |> Enum.join("")
