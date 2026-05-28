@@ -339,6 +339,25 @@ defmodule EvoGit.AgentScheduler do
     max_retries = Map.get(scheduler_config, :max_retries, 15)
     llm_model = Map.get(config, :llm, %{}) |> Map.get(:model)
 
+    # Validate llm_model is configured
+    unless llm_model do
+      raise """
+      LLM model not configured. Please set llm.model in your config file:
+
+      ~/.config/evogit/config.toml:
+
+          [llm]
+          model = "provider:model_name"
+
+      Example models:
+      - "anthropic:claude-sonnet-4-20250514"
+      - "google:gemini-2.0-flash-exp"
+      - "zai_coding_plan:glm-5.1"
+
+      See documentation for the full list of supported models.
+      """
+    end
+
     # Allow opts to override (for backward compat with CLI --flags)
     max_concurrency = Keyword.get(opts, :max_concurrency, max_concurrency)
     max_tool_concurrency = Keyword.get(opts, :max_tool_concurrency, max_tool_concurrency)
@@ -437,33 +456,17 @@ defmodule EvoGit.AgentScheduler do
       Keyword.has_key?(opts, :max_concurrency) and
         Keyword.get(opts, :max_concurrency) != state.max_concurrency
 
-    if concurrency_changed and has_active_agents do
-      {:reply, {:error, :agents_running}, state}
+    # Validate llm_model if being updated
+    if Keyword.has_key?(opts, :llm_model) do
+      new_model = Keyword.get(opts, :llm_model)
+
+      unless new_model do
+        {:reply, {:error, "llm_model cannot be nil"}, state}
+      else
+        do_update_config(opts, state, concurrency_changed, has_active_agents)
+      end
     else
-      state =
-        state
-        |> maybe_update(:max_concurrency, opts)
-        |> maybe_update(:agent_max_retries, opts)
-        |> maybe_update(:max_depth, opts)
-        |> maybe_update(:llm_model, opts)
-        |> maybe_update(:max_retries, opts)
-        |> maybe_update(:max_tool_concurrency, opts)
-
-      # If concurrency changed, tear down the pool so it's lazily re-created
-      state =
-        if concurrency_changed and state.initialized do
-          Worktrees.teardown_worktrees(state)
-        else
-          state
-        end
-
-      Logger.info(
-        "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
-          "max_tool_concurrency: #{state.max_tool_concurrency}, " <>
-          "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
-      )
-
-      {:reply, :ok, state}
+      do_update_config(opts, state, concurrency_changed, has_active_agents)
     end
   end
 
@@ -535,6 +538,39 @@ defmodule EvoGit.AgentScheduler do
     |> wrap_reply(from)
   end
 
+  # --- Private Helpers ---
+
+  defp do_update_config(opts, state, concurrency_changed, has_active_agents) do
+    if concurrency_changed and has_active_agents do
+      {:reply, {:error, :agents_running}, state}
+    else
+      state =
+        state
+        |> maybe_update(:max_concurrency, opts)
+        |> maybe_update(:agent_max_retries, opts)
+        |> maybe_update(:max_depth, opts)
+        |> maybe_update(:llm_model, opts)
+        |> maybe_update(:max_retries, opts)
+        |> maybe_update(:max_tool_concurrency, opts)
+
+      # If concurrency changed, tear down the pool so it's lazily re-created
+      state =
+        if concurrency_changed and state.initialized do
+          Worktrees.teardown_worktrees(state)
+        else
+          state
+        end
+
+      Logger.info(
+        "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
+          "max_tool_concurrency: #{state.max_tool_concurrency}, " <>
+          "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
+      )
+
+      {:reply, :ok, state}
+    end
+  end
+
   # --- Subagent-Level Validation and Spawning ---
 
   # Validates and spawns subagents. Each spec is validated independently;
@@ -576,7 +612,9 @@ defmodule EvoGit.AgentScheduler do
     # Register and spawn valid subagents
     {idx_to_sub_id, state} =
       Enum.map_reduce(valid_specs_with_idx, state, fn {spec, idx}, acc ->
-        {sub_id, acc} = register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1, parent.task_id)
+        {sub_id, acc} =
+          register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1, parent.task_id)
+
         {{idx, sub_id}, acc}
       end)
 
@@ -652,7 +690,11 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Spatial Contract Validation (Per-Subagent) ---
 
-  defp validate_spatial_contract_for_spec(_parent_id, %{context_node: parent_context, repo_id: parent_repo_id}, spec) do
+  defp validate_spatial_contract_for_spec(
+         _parent_id,
+         %{context_node: parent_context, repo_id: parent_repo_id},
+         spec
+       ) do
     # Cross-repo delegation: foreign repos are independent trees, skip spatial check
     if spec.repo_id != parent_repo_id do
       :ok
@@ -985,7 +1027,9 @@ defmodule EvoGit.AgentScheduler do
         # Log diff stats for the auto-commit
         case Git.rev_parse(wt) do
           {:ok, ^prev_sha} ->
-            Logger.debug("AgentScheduler: Auto-commit for agent #{agent_id} resulted in no new commit")
+            Logger.debug(
+              "AgentScheduler: Auto-commit for agent #{agent_id} resulted in no new commit"
+            )
 
           {:ok, new_sha} ->
             case Git.diff_stat(wt, prev_sha, new_sha) do

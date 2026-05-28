@@ -21,7 +21,12 @@ defmodule EvoGit.Config do
       max_retries = 15
 
       [llm]
-      model = "zai_coding_plan:glm-5"
+      # REQUIRED: LLM model identifier (format: "provider:model")
+      # Example models:
+      # - "anthropic:claude-sonnet-4-20250514"
+      # - "google:gemini-2.0-flash-exp"
+      # - "zai_coding_plan:glm-5.1"
+      model = "your-model-here"
       compression_threshold_tokens = 100_000
 
       [user]
@@ -173,7 +178,7 @@ defmodule EvoGit.Config do
     # 3. Check common provider-specific env vars
     common_env = common_env_var(provider)
 
-    file_key || System.get_env(evogit_env) || common_env && System.get_env(common_env)
+    file_key || System.get_env(evogit_env) || (common_env && System.get_env(common_env))
   end
 
   @doc """
