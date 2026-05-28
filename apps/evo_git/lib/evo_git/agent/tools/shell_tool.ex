@@ -34,12 +34,11 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   @ls_command if(@on_windows, do: "Get-ChildItem -Force", else: "ls -la")
 
   @no_shell_for_reads if(
-                         @on_windows,
-                         do:
-                           "Do NOT use PowerShell for file operations unless dedicated tools fail.",
-                         else:
-                           "Do NOT use bash for file operations unless dedicated tools fail."
-                       )
+                        @on_windows,
+                        do:
+                          "Do NOT use PowerShell for file operations unless dedicated tools fail.",
+                        else: "Do NOT use bash for file operations unless dedicated tools fail."
+                      )
 
   # 3 minutes timeout for running complex commands
   @default_timeout 180_000
@@ -57,7 +56,8 @@ defmodule EvoGit.Agent.Tools.ShellTool do
           "command" => %{"type" => "string", "description" => @command_description},
           "timeout" => %{
             "type" => "integer",
-            "description" => "Timeout in milliseconds for this tool execution. Default: #{@default_timeout}",
+            "description" =>
+              "Timeout in milliseconds for this tool execution. Default: #{@default_timeout}",
             "default" => @default_timeout
           }
         },
@@ -99,7 +99,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     """
     #{@shell_intro}
     Useful for running scripts, building, testing, git or executing common command-line tools.
-    The current working directory is automatically set to the repo path (the current git worktree path). Do NOT use `cd` — the cwd is already correct.
+    The current working directory is automatically set to the repo path (the current git worktree path). Avoid using `cd` — the cwd is already correct.
 
     ## General Guidelines
     STRICT CONSTRAINTS:
