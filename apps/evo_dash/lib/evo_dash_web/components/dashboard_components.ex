@@ -240,11 +240,10 @@ defmodule EvoDashWeb.DashboardComponents do
                   phx-hook="PathAutocomplete"
                   id="initial-project-path-input"
                   list="path-suggestions"
-                  autocomplete="off"
                 />
                 <datalist id="path-suggestions">
                   <%= for project <- @recent_projects do %>
-                    <option value={project.path} />
+                    <option value={project.path}></option>
                   <% end %>
                 </datalist>
               </div>

@@ -25,22 +25,41 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
 
-// PathAutocomplete hook: Tab-key completion from datalist suggestions
+// PathAutocomplete hook: real-time filtering and Tab-key completion from datalist suggestions
 const PathAutocomplete = {
   mounted() {
     const input = this.el;
+
+    // Tab-key: complete with first matching option
     input.addEventListener("keydown", (e) => {
       if (e.key === "Tab" && input.value.length > 0) {
         const listId = input.getAttribute("list");
         if (!listId) return;
         const datalist = document.getElementById(listId);
         if (!datalist) return;
-        const options = Array.from(datalist.options);
+        const options = Array.from(datalist.querySelectorAll('option'));
         const match = options.find(opt => opt.value.startsWith(input.value));
         if (match) {
           e.preventDefault();
           input.value = match.value;
         }
+      }
+    });
+
+    // Real-time auto-complete: if there's exactly one matching prefix, fill it in
+    input.addEventListener("input", () => {
+      if (input.value.length === 0) return;
+      const listId = input.getAttribute("list");
+      if (!listId) return;
+      const datalist = document.getElementById(listId);
+      if (!datalist) return;
+      const options = Array.from(datalist.querySelectorAll('option'));
+      const matches = options.filter(opt => opt.value.toLowerCase().startsWith(input.value.toLowerCase()));
+      if (matches.length === 1 && matches[0].value !== input.value) {
+        const oldValue = input.value;
+        input.value = matches[0].value;
+        // Select the portion that was auto-completed so the user can keep typing
+        input.setSelectionRange(oldValue.length, matches[0].value.length);
       }
     });
   }
