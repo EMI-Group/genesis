@@ -63,7 +63,30 @@ defmodule EvoGit.Config do
     defaults()
     |> deep_merge(user_config())
     |> atomize_keys()
+    |> atomize_enum_values()
   end
+
+  defp atomize_enum_values(config) when is_map(config) do
+    Enum.reduce(config, config, fn
+      # Sandbox mode: "auto" | "enabled" | "disabled" -> :auto | :enabled | :disabled
+      {:sandbox, sandbox_config}, acc when is_map(sandbox_config) ->
+        mode = Map.get(sandbox_config, :mode)
+        new_mode = atomize_if_string(mode, [:auto, :enabled, :disabled])
+        put_in(acc, [:sandbox, :mode], new_mode)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp atomize_if_string(value, valid_atoms) when is_binary(value) do
+    atom = String.to_existing_atom(value)
+    if atom in valid_atoms, do: atom, else: value
+  rescue
+    ArgumentError -> value
+  end
+
+  defp atomize_if_string(value, _valid_atoms), do: value
 
   @doc """
   Returns the resolved value for a specific key path.
