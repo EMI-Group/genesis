@@ -67,6 +67,24 @@ defmodule EvoDashWeb.Layouts do
                 <.icon name="hero-server" class="size-4" /> Agents
               </a>
             </li>
+            <li>
+              <a
+                href="/settings"
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :settings && "btn-active"]}
+                aria-current={@current_page == :settings && "page"}
+              >
+                <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
+              </a>
+            </li>
+            <li>
+              <a
+                href="/help"
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :help && "btn-active"]}
+                aria-current={@current_page == :help && "page"}
+              >
+                <.icon name="hero-question-mark-circle" class="size-4" /> Help
+              </a>
+            </li>
           </ul>
           <div class="divider divider-horizontal mx-1 h-6"></div>
           <.theme_toggle />
@@ -94,6 +112,24 @@ defmodule EvoDashWeb.Layouts do
                 aria-current={@current_page == :agents && "page"}
               >
                 <.icon name="hero-server" class="size-4" /> Agents
+              </a>
+            </li>
+            <li>
+              <a
+                href="/settings"
+                class={@current_page == :settings && "active"}
+                aria-current={@current_page == :settings && "page"}
+              >
+                <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
+              </a>
+            </li>
+            <li>
+              <a
+                href="/help"
+                class={@current_page == :help && "active"}
+                aria-current={@current_page == :help && "page"}
+              >
+                <.icon name="hero-question-mark-circle" class="size-4" /> Help
               </a>
             </li>
             <li class="mt-2 flex justify-center">
