@@ -28,7 +28,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 |--------|------|---------|
 | `EvoDashWeb` | `./lib/evo_dash_web.ex` | `use`-based macros for controller, live_view, html, etc. |
 | `EvoDashWeb.Endpoint` | `./lib/evo_dash_web/endpoint.ex` | Phoenix endpoint (LiveView socket, static files, Plug pipeline) |
-| `EvoDashWeb.Router` | `./lib/evo_dash_web/router.ex` | Routes: `/` → DashboardLive, `/agents` → AgentsLive |
+| `EvoDashWeb.Router` | `./lib/evo_dash_web/router.ex` | Routes: `/` → DashboardLive, `/agents` → AgentsLive, `/config-help` → ConfigHelpLive |
 | `EvoDashWeb.Telemetry` | `./lib/evo_dash_web/telemetry.ex` | Telemetry metrics supervisor (Phoenix + VM metrics) |
 | `EvoDashWeb.Helpers` | `./lib/evo_dash_web/helpers.ex` | Shared utility functions for UI components (status badges, formatting, code deduplication) |
 
@@ -37,12 +37,13 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 |--------|-------|---------|
 | `EvoDashWeb.DashboardLive` | `GET /` | Project-based task dashboard: open project tabs, auto-mode detection, task form (mode + prompt only), scheduler settings panel (concurrency, retries, depth, model), task cards with logs |
 | `EvoDashWeb.AgentsLive` | `GET /agents` | Recursive agent tree inspector with detail panels |
+| `EvoDashWeb.ConfigHelpLive` | `GET /config-help` | Configuration help page: config file status, validation issues, TOML editor, config reference |
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 | Module | Purpose |
 |--------|---------|
-| `CoreComponents` | Phoenix 1.8 base components (header, flash, button, icon, input, table, theme_toggle) |
-| `DashboardComponents` | `project_tabs` (multi-project tab bar), `open_project_form` (landing path input), `task_form` (mode + prompt only, auto-detected mode), `scheduler_settings` (runtime config panel for concurrency, retries, depth, LLM model — values loaded from `EvoGit.AgentScheduler.get_config/0`), `task_card` with status badges and logs |
+| `CoreComponents` | Phoenix 1.8 base components (header, flash, button, icon, input, table, theme_toggle); flash supports `:info`, `:warning`, and `:error` kinds |
+| `DashboardComponents` | `project_tabs` (multi-project tab bar), `open_project_form` (landing path input), `task_form` (mode + prompt only, auto-detected mode), `scheduler_settings` (runtime config panel for concurrency, retries, depth, LLM model — values loaded from `EvoGit.AgentScheduler.get_config/0`), `task_card` with status badges and logs, config issue warning banner (shown when `:error` severity issues exist) |
 | `AgentsComponents` | `agent_tree` — recursive tree with connector lines and status coloring |
 | `Layouts` | Root HTML layout with theme persistence and flash group |
 
