@@ -81,6 +81,8 @@ defmodule EvoDashWeb do
       import Phoenix.HTML
       # Core UI components
       import EvoDashWeb.CoreComponents
+      # Shared helpers (status colors, datetime formatting, modals, etc.)
+      import EvoDashWeb.Helpers
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS
