@@ -238,7 +238,7 @@ defmodule EvoDashWeb.DashboardComponents do
                   placeholder="/path/to/your/repo"
                   autofocus
                   phx-hook="PathAutocomplete"
-                  id="project-path-input"
+                  id="initial-project-path-input"
                   list="path-suggestions"
                   autocomplete="off"
                 />

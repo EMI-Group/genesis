@@ -31,7 +31,9 @@ const PathAutocomplete = {
     const input = this.el;
     input.addEventListener("keydown", (e) => {
       if (e.key === "Tab" && input.value.length > 0) {
-        const datalist = document.getElementById("path-suggestions");
+        const listId = input.getAttribute("list");
+        if (!listId) return;
+        const datalist = document.getElementById(listId);
         if (!datalist) return;
         const options = Array.from(datalist.options);
         const match = options.find(opt => opt.value.startsWith(input.value));
