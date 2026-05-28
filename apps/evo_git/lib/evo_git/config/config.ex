@@ -127,12 +127,11 @@ defmodule EvoGit.Config do
     if File.exists?(path) do
       case File.read(path) do
         {:ok, contents} ->
-          case Toml.decode(contents) do
-            {:ok, config} ->
-              config
-
-            {:error, reason} ->
-              Logger.warning("Failed to parse config at #{path}: #{inspect(reason)}")
+          try do
+            TomlElixir.decode(contents)
+          rescue
+            e ->
+              Logger.warning("Failed to parse config at #{path}: #{inspect(e)}")
               %{}
           end
 
@@ -157,12 +156,11 @@ defmodule EvoGit.Config do
     if File.exists?(path) do
       case File.read(path) do
         {:ok, contents} ->
-          case Toml.decode(contents) do
-            {:ok, creds} ->
-              creds
-
-            {:error, reason} ->
-              Logger.warning("Failed to parse credentials at #{path}: #{inspect(reason)}")
+          try do
+            TomlElixir.decode(contents)
+          rescue
+            e ->
+              Logger.warning("Failed to parse credentials at #{path}: #{inspect(e)}")
               %{}
           end
 

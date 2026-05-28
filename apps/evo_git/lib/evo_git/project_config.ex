@@ -86,12 +86,11 @@ defmodule EvoGit.ProjectConfig do
   end
 
   defp parse_toml(contents, path) do
-    case Toml.decode(contents) do
-      {:ok, config} ->
-        config
-
-      {:error, reason} ->
-        Logger.warning("Failed to parse #{path}: #{inspect(reason)}")
+    try do
+      TomlElixir.decode(contents)
+    rescue
+      e ->
+        Logger.warning("Failed to parse #{path}: #{inspect(e)}")
         nil
     end
   end
