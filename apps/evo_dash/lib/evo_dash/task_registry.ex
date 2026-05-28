@@ -125,11 +125,6 @@ defmodule EvoDash.TaskRegistry do
     :ets.new(@table_name, [:named_table, :public, :set])
     :ets.new(@recent_projects_table, [:named_table, :public, :set])
 
-    # One-time migration from JSON to DETS
-    unless File.exists?(tasks_dets_path()) do
-      migrate_json_to_dets()
-    end
-
     # Load persisted data from DETS into ETS
     load_tasks_from_dets()
     load_recent_projects_from_dets()
@@ -455,106 +450,6 @@ defmodule EvoDash.TaskRegistry do
         end
     end
   end
-
-  # --- JSON → DETS Migration ---
-
-  defp migrate_json_to_dets do
-    # Migrate tasks
-    tasks_json = Path.join(data_dir(), "tasks.json")
-
-    if File.exists?(tasks_json) do
-      try do
-        case File.read(tasks_json) do
-          {:ok, content} ->
-            tasks = JSON.decode!(content)
-            now = DateTime.utc_now()
-
-            for task_map <- tasks do
-              task = deserialize_task_legacy(task_map, now)
-              persistable = %{task | ref: nil}
-              :dets.insert(@dets_tasks, {task.id, persistable})
-            end
-
-            # Delete old JSON file after successful migration
-            File.rm(tasks_json)
-
-          _ ->
-            :ok
-        end
-      rescue
-        _ -> :ok
-      end
-    end
-
-    # Migrate recent projects
-    projects_json = Path.join(data_dir(), "recent_projects.json")
-
-    if File.exists?(projects_json) do
-      try do
-        case File.read(projects_json) do
-          {:ok, content} ->
-            projects = JSON.decode!(content)
-
-            for project_map <- projects do
-              project = %{
-                path: project_map["path"],
-                name: project_map["name"],
-                last_opened_at: parse_datetime_legacy(project_map["last_opened_at"]) || DateTime.utc_now()
-              }
-
-              :dets.insert(@dets_projects, {project.path, project})
-            end
-
-            File.rm(projects_json)
-
-          _ ->
-            :ok
-        end
-      rescue
-        _ -> :ok
-      end
-    end
-  end
-
-  # Legacy deserialization helpers (for JSON → DETS migration only)
-  defp deserialize_task_legacy(map, now) do
-    %TaskInfo{
-      id: map["id"],
-      type: deserialize_atom_legacy(map["type"]),
-      status: deserialize_atom_legacy(map["status"]) || :pending,
-      opts: deserialize_opts_legacy(map["opts"]),
-      ref: nil,
-      started_at: parse_datetime_legacy(map["started_at"]) || now,
-      finished_at: parse_datetime_legacy(map["finished_at"]),
-      logs: map["logs"] || [],
-      result: nil
-    }
-  end
-
-  defp deserialize_opts_legacy(nil), do: []
-
-  defp deserialize_opts_legacy(opts) when is_list(opts) do
-    Enum.map(opts, fn
-      [k, v] when is_binary(k) -> {String.to_atom(k), v}
-      {k, v} -> {k, v}
-      other -> other
-    end)
-  end
-
-  defp deserialize_atom_legacy(nil), do: nil
-  defp deserialize_atom_legacy(s) when is_binary(s), do: String.to_atom(s)
-  defp deserialize_atom_legacy(a) when is_atom(a), do: a
-
-  defp parse_datetime_legacy(nil), do: nil
-
-  defp parse_datetime_legacy(s) when is_binary(s) do
-    case DateTime.from_iso8601(s) do
-      {:ok, dt, _offset} -> dt
-      _ -> nil
-    end
-  end
-
-  defp parse_datetime_legacy(%DateTime{} = dt), do: dt
 
   # --- Task Execution Helpers ---
 
