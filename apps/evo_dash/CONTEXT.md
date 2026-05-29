@@ -38,7 +38,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | `GET /` | `DashboardLive` | Project-based task dashboard: open project tabs, auto-mode detection, task form, project settings (evogit.toml, foreign repos), task cards with logs |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with detail panels, chat history viewer |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration panel (concurrency, retries, depth, model) |
-| `GET /help` | `HelpLive` | Configuration file manager: view/edit user config.toml, config status, credentials reference |
+| `GET /help` | `HelpLive` | Configuration file manager: view/edit user config.toml, config status, .env reference |
 | `/dashboard` | Phoenix.LiveDashboard | Built-in Phoenix dashboard (metrics/telemetry) |
 
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
@@ -47,7 +47,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | `EvoDashWeb.DashboardLive` | `dashboard_live.ex` | Main dashboard. Manages project tabs, task form, task list with expand/collapse, result/options modals, inline project settings panel (evogit.toml config, foreign repo add/remove). Polls TaskRegistry every 1s. Auto-detects mode on project open. Uses `@active_project` directly for project config reads. |
 | `EvoDashWeb.AgentsLive` | `agents_live.ex` + `agents_live.html.heex` | Agent tree visualization. Reads directly from ETS tables (`evogit_agent_state`, `evogit_sched_meta`). Shows path-organized tree with expandable agent details, chat history, modals for full messages/objectives. Polls every 1s. |
 | `EvoDashWeb.SettingsLive` | `settings_live.ex` | Runtime scheduler settings. Reads from `EvoGit.AgentScheduler.get_config/0`. Updates via `EvoGit.AgentScheduler.update_config/1`. Blocks concurrency changes while agents running. Polls every 2s. |
-| `EvoDashWeb.HelpLive` | `help_live.ex` | Configuration management. Shows config status (missing fields), config file locations, TOML editor with save (validates TOML syntax before saving via `EvoGit.Config.save_user_config/1`), credentials reference (read-only), configuration reference. |
+| `EvoDashWeb.HelpLive` | `help_live.ex` | Configuration management. Shows config status (missing fields), config file locations, TOML editor with save (validates TOML syntax before saving via `EvoGit.Config.save_user_config/1`), .env reference (read-only), configuration reference. |
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 | Module | Purpose |
@@ -109,7 +109,7 @@ Browser ←→ Endpoint ←→ Router
 
 ### HelpLive ↔ EvoGit.Config
 - `EvoGit.Config.config_status/0` → %{missing, warnings, ok?}
-- `EvoGit.Config.config_dir/0`, `config_path/0`, `credentials_path/0` → file locations
+- `EvoGit.Config.config_dir/0`, `config_path/0`, `env_path/0` → file locations
 - `EvoGit.Config.save_user_config/1` → writes parsed TOML to config file
 
 ### Polling Intervals

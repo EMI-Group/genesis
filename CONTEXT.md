@@ -144,14 +144,16 @@ compression_threshold_tokens = 100_000
 github_username = "your-username"
 ```
 
-#### Credentials (`~/.config/evogit/credentials.toml`)
-```toml
-[api_keys]
-google = "AIza..."
-zai = "sk-..."
+#### Environment (`.env`)
+
+API keys are loaded at startup by `EvoGit.Config.load_env/0` from `~/.config/evogit/.env` using standard `KEY=VALUE` format (one per line):
+
+```env
+GOOGLE_API_KEY=AIza...
+ZAI_API_KEY=sk-...
 ```
 
-API keys are resolved with fallback: credentials file → `EVOGIT_API_KEY_<PROVIDER>` env var → provider-specific env var (e.g., `GOOGLE_API_KEY`).
+`load_env/0` sets these as environment variables, which ReqLLM and the `api_key/1` function read natively. Keys can also be set directly in the environment without a `.env` file.
 
 ### Orphaned Branch Cleanup
 

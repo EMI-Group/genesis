@@ -35,7 +35,7 @@ Contains Phoenix LiveView modules and templates that form the interactive UI lay
 
 - **`EvoDashWeb.HelpLive`** (`help_live.ex`) — Help & configuration page mounted at route `/help`.
   - Shows config status (ok/warning) with `EvoGit.Config.config_status/0`
-  - Displays config file locations (config directory, config.toml, credentials.toml) with existence indicators
+  - Displays config file locations (config directory, config.toml, .env) with existence indicators
   - Provides an in-browser TOML editor for `config.toml` (edit/save/cancel workflow)
   - Validates TOML syntax before saving via `TomlElixir.decode/1`
   - Persists config changes via `EvoGit.Config.save_user_config/1`
