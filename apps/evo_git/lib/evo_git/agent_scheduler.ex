@@ -1058,6 +1058,13 @@ defmodule EvoGit.AgentScheduler do
       end
 
     # Agent state table: live spatial/temporal state for the agent process
+    # Resolve repo root from scheduler state for display/grouping in the dashboard
+    agent_repo_root =
+      case Map.get(state.repos, spec.repo_id) do
+        %ForeignRepo{root: root} -> root
+        nil -> state.repo_root
+      end
+
     put_agent_state(id, %AgentState{
       context_node: spec.context_node,
       phylo_node: nil,
@@ -1068,6 +1075,7 @@ defmodule EvoGit.AgentScheduler do
       parent_id: parent_id,
       objective: spec.objective,
       repo_id: spec.repo_id,
+      repo_root: agent_repo_root,
       task_local_id: task_local_id
     })
 

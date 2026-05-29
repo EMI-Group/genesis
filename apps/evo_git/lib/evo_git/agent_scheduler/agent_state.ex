@@ -18,6 +18,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `parent_id` — the parent agent ID (if this is a subagent), or `nil`
   - `objective` — the objective/task the agent was given
   - `repo_id` — atom identifying which repo this agent belongs to (`:primary` for main, or a foreign repo id)
+  - `repo_root` — absolute filesystem path to the repo root (for display/grouping). Set from scheduler state at registration.
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
   """
 
@@ -25,7 +26,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   alias EvoGit.Core.PhyloGraphNode
 
   @enforce_keys [:context_node, :llm_model, :max_retries, :max_depth]
-  defstruct [:context, :context_node, :phylo_node, :event_sink, :llm_model, :max_retries, :max_depth, :parent_id, :objective, :task_local_id, repo_id: :primary]
+  defstruct [:context, :context_node, :phylo_node, :event_sink, :llm_model, :max_retries, :max_depth, :parent_id, :objective, :task_local_id, repo_id: :primary, repo_root: nil]
 
   @type t :: %__MODULE__{
           context: ReqLLM.Context.t() | nil,
@@ -38,6 +39,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           parent_id: pos_integer() | nil,
           objective: String.t() | nil,
           repo_id: atom(),
+          repo_root: String.t() | nil,
           task_local_id: pos_integer() | nil
         }
 end
