@@ -13,6 +13,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.Core.ForeignRepo
+  alias EvoGit.AgentScheduler.State
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
 
@@ -30,16 +31,18 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   - Not initialized with no path → raises
   - Not initialized with path → initialize
   """
+  @spec ensure_initialized(State.t(), String.t() | nil) :: State.t()
+
   def ensure_initialized(state, repo_path \\ nil)
 
-  def ensure_initialized(%{initialized: true} = state, nil), do: state
+  def ensure_initialized(%State{initialized: true} = state, nil), do: state
 
-  def ensure_initialized(%{initialized: true, repo_root: repo_root} = state, new_repo_path)
+  def ensure_initialized(%State{initialized: true, repo_root: repo_root} = state, new_repo_path)
       when repo_root == new_repo_path do
     state
   end
 
-  def ensure_initialized(%{initialized: true} = state, new_repo_path) do
+  def ensure_initialized(%State{initialized: true} = state, new_repo_path) do
     Logger.info(
       "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing..."
     )
@@ -57,7 +60,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     do_initialize(state, repo_root)
   end
 
-  defp do_initialize(state, repo_root) do
+  defp do_initialize(%State{} = state, repo_root) do
     worker_base = Path.join(repo_root, ".evogit/workers")
 
     Logger.info("AgentScheduler: Initializing worktree directory at #{worker_base}")
@@ -76,7 +79,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     primary_repo = ForeignRepo.new(:primary, repo_root)
     repos = Map.put(state.repos, :primary, primary_repo)
 
-    %{
+    %State{
       state
       | initialized: true,
         repo_root: repo_root,
@@ -91,14 +94,16 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   Removes the worker base directory, prunes worktrees, and resets
   the initialized flag.
   """
-  def teardown_worktrees(%{repo_root: repo_root} = state) when is_binary(repo_root) do
+  @spec teardown_worktrees(State.t()) :: State.t()
+
+  def teardown_worktrees(%State{repo_root: repo_root} = state) when is_binary(repo_root) do
     worker_base = Path.join(repo_root, ".evogit/workers")
     File.rm_rf!(worker_base)
     Git.prune_worktrees(repo_root)
-    %{state | initialized: false}
+    %State{state | initialized: false}
   end
 
-  def teardown_worktrees(state), do: %{state | initialized: false}
+  def teardown_worktrees(%State{} = state), do: %State{state | initialized: false}
 
   # --- Worktree Assignment and Preparation ---
 
@@ -109,6 +114,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   the agent's phylo_node with the worktree-bound repo path.
   Returns the commit SHA.
   """
+  @spec assign_and_prepare_worktree(pos_integer(), String.t()) :: String.t()
+
   def assign_and_prepare_worktree(agent_id, wt) do
     {:ok, meta} = get_sched_meta(agent_id)
     {:ok, agent_state} = get_agent_state(agent_id)
@@ -139,6 +146,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   Shell detection is done via shebang line, defaulting to the platform shell.
   Environment variables `SOURCE_REPO_PATH` and `TARGET_WORKTREE_PATH` are set.
   """
+  @spec run_init_script(String.t(), String.t()) :: :ok
+
   def run_init_script(repo_root, worktree_path) do
     case ProjectConfig.worktree_script(repo_root) do
       nil ->
@@ -200,6 +209,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   Extracts the agent ID from the path to derive the branch name
   (e.g., `worker_42` → `evogit-agent42`).
   """
+  @spec delete(String.t(), String.t()) :: :ok
+
   def delete(path, repo_root) do
     Logger.info("AgentScheduler: Deleting worktree #{path}")
     # Extract agent ID from path to derive branch name (e.g., worker_42 -> evogit-agent42)
@@ -221,6 +232,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   Lists all matching branches and deletes each one. This is called
   during initialization to prevent stale branches from accumulating.
   """
+  @spec clean_orphaned_branches(String.t()) :: :ok
+
   def clean_orphaned_branches(repo_root) do
     case System.cmd("git", ["branch", "--list", "evogit-agent*"], cd: repo_root) do
       {output, 0} when is_binary(output) and byte_size(output) > 0 ->
@@ -246,6 +259,9 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   `phylo_node.current_commit` in both ETS tables if it has changed.
   Returns the updated meta.
   """
+  @spec sync_current_commit(pos_integer(), EvoGit.AgentScheduler.SchedMeta.t()) ::
+          EvoGit.AgentScheduler.SchedMeta.t()
+
   def sync_current_commit(agent_id, %{worktree: wt} = meta) do
     {:ok, current_sha} = Git.rev_parse(wt)
     {:ok, agent_state} = get_agent_state(agent_id)
