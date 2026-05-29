@@ -561,46 +561,48 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:request_llm_slot, agent_id}, from, state) do
     case Slots.handle_request_llm_slot(agent_id, from, state) do
-      {:reply, :ok, _state, _} = result ->
-        result
-
-      {:noreply, state, status_updates} ->
+      {:reply, :ok, new_state, status_updates} ->
         apply_status_updates(status_updates)
-        {:noreply, state}
+        {:reply, :ok, new_state}
+
+      {:noreply, new_state, status_updates} ->
+        apply_status_updates(status_updates)
+        {:noreply, new_state}
     end
   end
 
   @impl true
   def handle_call({:release_llm_slot, agent_id}, _from, state) do
-    {:reply, :ok, state, status_updates} = Slots.handle_release_llm_slot(agent_id, state)
+    {:reply, :ok, new_state, status_updates} = Slots.handle_release_llm_slot(agent_id, state)
     apply_status_updates(status_updates)
-    {:reply, :ok, state}
+    {:reply, :ok, new_state}
   end
 
   @impl true
   def handle_call({:report_llm_error, agent_id, error_type}, _from, state) do
-    {:reply, :ok, state, status_updates} = Slots.handle_report_llm_error(agent_id, error_type, state)
+    {:reply, :ok, new_state, status_updates} = Slots.handle_report_llm_error(agent_id, error_type, state)
     apply_status_updates(status_updates)
-    {:reply, :ok, state}
+    {:reply, :ok, new_state}
   end
 
   @impl true
   def handle_call({:request_tool_slot, agent_id}, from, state) do
     case Slots.handle_request_tool_slot(agent_id, from, state) do
-      {:reply, :ok, _state, _} = result ->
-        result
-
-      {:noreply, state, status_updates} ->
+      {:reply, :ok, new_state, status_updates} ->
         apply_status_updates(status_updates)
-        {:noreply, state}
+        {:reply, :ok, new_state}
+
+      {:noreply, new_state, status_updates} ->
+        apply_status_updates(status_updates)
+        {:noreply, new_state}
     end
   end
 
   @impl true
   def handle_call({:release_tool_slot, agent_id}, _from, state) do
-    {:reply, :ok, state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
+    {:reply, :ok, new_state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
     apply_status_updates(status_updates)
-    {:reply, :ok, state}
+    {:reply, :ok, new_state}
   end
 
   # --- Private Helpers ---
