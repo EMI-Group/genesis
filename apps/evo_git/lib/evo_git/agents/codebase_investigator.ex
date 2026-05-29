@@ -37,6 +37,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
       ListDirectory.schema(),
       Context.read_schema(),
       Context.write_schema(),
+      Context.edit_schema(),
       WebSearch.schema(),
       Curl.schema(),
       ShellTool.schema(),
