@@ -20,6 +20,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
   require Logger
 
+  alias EvoGit.Agent.LoopState
   alias EvoGit.AgentScheduler
 
   @doc """
@@ -36,7 +37,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
   The updated state map (either compressed or unchanged).
   """
-  @spec compress_if_needed(state :: map(), opts :: keyword()) :: map()
+  @spec compress_if_needed(LoopState.t(), keyword()) :: LoopState.t()
   def compress_if_needed(state, opts \\ []) do
     threshold = EvoGit.Defaults.compression_threshold_tokens() || 100_000
     agent_id = Keyword.fetch!(opts, :agent_id)

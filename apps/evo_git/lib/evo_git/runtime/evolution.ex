@@ -5,6 +5,7 @@ defmodule EvoGit.Runtime.Evolution do
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
   alias EvoGit.Adapters.Git
+  alias EvoGit.Agent.Result
   alias EvoGit.Runtime
   require Logger
 
@@ -66,10 +67,10 @@ defmodule EvoGit.Runtime.Evolution do
     run_simple_mode(objective, repo_path, current_sha, opts)
   end
 
-  defp merge_and_report(repo_path, agent_output) do
-    final_sha = Map.get(agent_output, :commit_sha)
-    result = Map.get(agent_output, :result)
-    tag = Map.get(agent_output, :tag)
+  defp merge_and_report(repo_path, %Result{} = agent_output) do
+    final_sha = agent_output.commit_sha
+    result = agent_output.result
+    tag = agent_output.tag
 
     # Get the base commit (HEAD before any agent work)
     {:ok, base_sha} = Git.rev_parse(repo_path)
