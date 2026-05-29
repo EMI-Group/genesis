@@ -67,7 +67,7 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 | `EvoGit.ProjectConfig` | `./lib/evo_git/project_config.ex` | Reads and parses `evogit.toml` from repo root; provides `worktree_script/1` accessor |
 | `EvoGit.Defaults` | `./lib/evo_git/defaults.ex` | Backward-compatible accessor functions delegating to `EvoGit.Config` for all values |
 | `EvoGit.Platform` | `./lib/evo_git/platform.ex` | Cross-platform OS detection, data directory resolution (`data_dir/0`), and config directory resolution (`config_dir/0`) — both respect XDG, macOS, Windows conventions |
-| `EvoGit.Config` | `./lib/evo_git/config/config.ex` | Unified 3-level configuration resolver: defaults + user TOML + runtime overrides. API key management from credentials file + env vars. |
+| `EvoGit.Config` | `./lib/evo_git/config/config.ex` | Unified 3-level configuration resolver: defaults + user TOML + runtime overrides. Loads API keys from credentials file into environment variables. |
 
 ### Subdirectories
 | Directory | Description |
