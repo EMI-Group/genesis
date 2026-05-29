@@ -1031,6 +1031,10 @@ defmodule EvoGit.AgentScheduler do
   defp register_agent(state, spec, from, parent_id, depth, task_id) do
     id = state.next_agent_id
 
+    # Compute per-task local agent ID (display/branch naming only)
+    task_local_id = Map.get(state.task_local_counters, task_id, 1)
+    state = %{state | task_local_counters: Map.put(state.task_local_counters, task_id, task_local_id + 1)}
+
     # Resolve event_sink: explicit in opts, inherited from parent, or nil
     event_sink =
       case spec.opts do
@@ -1059,7 +1063,8 @@ defmodule EvoGit.AgentScheduler do
       max_depth: state.max_depth,
       parent_id: parent_id,
       objective: spec.objective,
-      repo_id: spec.repo_id
+      repo_id: spec.repo_id,
+      task_local_id: task_local_id
     })
 
     # Scheduler metadata table: scheduling bookkeeping
@@ -1081,10 +1086,13 @@ defmodule EvoGit.AgentScheduler do
 
   defp try_dispatch(state, agent_id) do
     {:ok, meta} = get_sched_meta(agent_id)
+    {:ok, agent_state} = get_agent_state(agent_id)
     retries = meta.retries
     spec = meta.spec
+    task_id = meta.task_id
+    task_local_id = agent_state.task_local_id
 
-    # Create a persistent worktree for this agent: worker_<agent_id>
+    # Create a persistent worktree for this agent: worker_T<task_id>_A<task_local_id>
     # Determine repo root from the agent's repo_id
     agent_repo_root =
       case Map.get(state.repos, spec.repo_id) do
@@ -1092,18 +1100,18 @@ defmodule EvoGit.AgentScheduler do
         nil -> state.repo_root
       end
 
-    worktree_path = Path.join([agent_repo_root, ".evogit/workers", "worker_#{agent_id}"])
+    worktree_path = Path.join([agent_repo_root, ".evogit/workers", "worker_T#{task_id}_A#{task_local_id}"])
 
     # Create the worktree if it doesn't exist (e.g., on first dispatch)
     newly_created =
       unless File.exists?(worktree_path) do
         commit_sha = spec.phylo_node.current_commit
-        branch_name = "evogit-agent#{agent_id}"
+        branch_name = "evogit-agent-T#{task_id}-A#{task_local_id}"
 
         case Git.add_worktree(agent_repo_root, worktree_path, commit_sha, branch_name) do
           {:ok, _} ->
             Logger.info(
-              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} on branch #{branch_name}"
+              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_id}-A#{task_local_id}) on branch #{branch_name}"
             )
 
           {:error, _, msg} ->

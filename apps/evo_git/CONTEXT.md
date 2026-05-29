@@ -113,5 +113,6 @@ The `:evo_git` OTP application is the heart of the EvoGit umbrella project. It i
 - `EvoGit.Defaults` is a backward-compatibility shim that delegates to `EvoGit.Config`. New code should use `EvoGit.Config` directly.
 - **LLM slot management**: All LLM calls must acquire a slot via `request_llm_slot/2` and release via `release_llm_slot/1`. Rate-limit errors trigger a global 60-second backoff across all agents.
 - **Tool slot management**: Tool executions are independently throttled via `request_tool_slot/2` / `release_tool_slot/1` with `max_tool_concurrency` (default: 2).
-- **Orphaned branch cleanup**: On initialization, the scheduler removes stale `evogit-agent*` branches from previous runs.
+- **Orphaned branch cleanup**: On initialization, the scheduler removes stale `evogit-agent-*` branches from previous runs.
 - **Task ID tracking**: Each top-level `run_agent` call is assigned a unique `task_id`; all subagents within that run inherit the same `task_id` for grouping.
+- **Task-scoped naming**: Worktree directories use `worker_T<task_id>_A<task_local_id>` and branches use `evogit-agent-T<task_id>-A<task_local_id>`, where `task_local_id` is a per-task counter starting at 1.

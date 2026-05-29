@@ -126,8 +126,10 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     objective = Keyword.get(opts, :objective)
     repo_path = Process.get(:repo_path)
 
-    # Branch name (created by scheduler at worktree creation, just record it here)
-    branch_name = "evogit-agent#{agent_id}"
+    # Derive branch name using task-scoped naming: evogit-agent-T<task_id>-A<task_local_id>
+    # Look up task_id from SchedMeta and task_local_id from AgentState via ETS
+    {task_id, task_local_id} = lookup_task_ids(agent_id)
+    branch_name = "evogit-agent-T#{task_id}-A#{task_local_id}"
 
     # Add metadata as git note (if we have the base commit)
     if base_commit do
@@ -148,6 +150,22 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       commit_sha: commit_sha,
       branch: branch_name
     }
+  end
+
+  defp lookup_task_ids(agent_id) do
+    task_id =
+      case :ets.lookup(:evogit_sched_meta, agent_id) do
+        [{^agent_id, %{task_id: tid}}] when is_integer(tid) -> tid
+        _ -> 0
+      end
+
+    task_local_id =
+      case :ets.lookup(:evogit_agent_state, agent_id) do
+        [{^agent_id, %{task_local_id: tlid}}] when is_integer(tlid) -> tlid
+        _ -> 0
+      end
+
+    {task_id, task_local_id}
   end
 
   defp add_metadata_note(repo_path, commit_sha, metadata) do

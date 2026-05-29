@@ -63,7 +63,7 @@ defmodule EvoDashWeb.AgentsComponents do
                         name={agent_status_icon(agent.status)}
                         class={"size-4 #{agent_status_color(agent.status)}"}
                       />
-                      <span class="font-bold text-sm">#{agent.id}</span>
+                      <span class="font-bold text-sm">#<%= agent.task_local_id || agent.id %></span>
                     </div>
                     <span class={[
                       "text-[10px] px-1.5 py-0.5 rounded uppercase font-bold",

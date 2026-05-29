@@ -12,6 +12,9 @@ defmodule EvoDashWeb.AgentsLive do
 
     agents = load_agents()
 
+    id_to_display =
+      Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
+
     config_status =
       try do
         EvoGit.Config.config_status()
@@ -27,7 +30,8 @@ defmodule EvoDashWeb.AgentsLive do
       |> assign(:selected_history_entry, nil)
       |> assign(:selected_objective, nil)
       |> assign(:agents, agents)
-      |> assign(:path_tree, build_path_tree(agents))
+      |> assign(:id_to_display, id_to_display)
+      |> assign(:repo_trees, build_repo_trees(agents))
       |> assign(:config_status, config_status)
 
     {:ok, socket}
@@ -36,7 +40,15 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_info(:refresh_agents, socket) do
     agents = load_agents()
-    {:noreply, socket |> assign(:agents, agents) |> assign(:path_tree, build_path_tree(agents))}
+
+    id_to_display =
+      Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
+
+    {:noreply,
+     socket
+     |> assign(:agents, agents)
+     |> assign(:id_to_display, id_to_display)
+     |> assign(:repo_trees, build_repo_trees(agents))}
   end
 
   @impl true
@@ -84,6 +96,23 @@ defmodule EvoDashWeb.AgentsLive do
   def handle_event("close_objective_modal", _params, socket) do
     {:noreply, assign(socket, :selected_objective, nil)}
   end
+
+  defp build_repo_trees(agents) do
+    agents
+    |> Enum.group_by(& &1.repo_id)
+    |> Enum.map(fn {repo_id, repo_agents} ->
+      {repo_display_name(repo_id), build_path_tree(repo_agents)}
+    end)
+    |> Enum.sort_by(fn {name, _} -> name end)
+  end
+
+  defp repo_display_name(:primary), do: "Primary Repo"
+  defp repo_display_name(nil), do: "Primary Repo"
+
+  defp repo_display_name(repo_id) when is_atom(repo_id),
+    do: "Repo: #{Atom.to_string(repo_id)}"
+
+  defp repo_display_name(_), do: "Unknown Repo"
 
   defp build_path_tree(agents) do
     tree =
@@ -156,6 +185,9 @@ defmodule EvoDashWeb.AgentsLive do
 
       %{
         id: id,
+        task_local_id: agent_state && agent_state.task_local_id,
+        repo_id: agent_state && agent_state.repo_id,
+        task_id: meta.task_id,
         status: meta.status,
         depth: meta.depth,
         parent_id: meta.parent_id,
