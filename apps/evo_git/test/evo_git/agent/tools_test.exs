@@ -404,7 +404,7 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "Successfully updated CONTEXT.md"
+      assert result =~ "has been updated successfully"
       assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "# My Context\n\nUpdated content"
     end
 
@@ -459,7 +459,7 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "old_string not found in CONTEXT.md"
+      assert result =~ "old_string not found in file"
     end
 
     test "returns error if CONTEXT.md does not exist", %{tmp_dir: tmp_dir} do
@@ -525,7 +525,7 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "Successfully updated CONTEXT.md"
+      assert result =~ "has been updated successfully"
       assert result =~ "Committed:"
       assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "new context"
 
@@ -546,7 +546,7 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "Successfully updated CONTEXT.md"
+      assert result =~ "has been updated successfully"
       refute result =~ "Committed:"
       assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "new context"
     end
@@ -563,7 +563,7 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "Successfully updated CONTEXT.md"
+      assert result =~ "has been updated successfully"
       assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "hello elixir"
     end
   end
