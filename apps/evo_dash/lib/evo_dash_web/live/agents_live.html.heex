@@ -166,39 +166,45 @@
                   <% end %>
                 </div>
 
-                <%= if agent.parent_id do %>
-                  <div>
+                <div class="flex gap-4">
+                  <div class="shrink-0">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      Parent Agent
+                      Parent
                     </h4>
-                    <button
-                      class="btn btn-sm btn-ghost btn-xs"
-                      phx-click="select_agent"
-                      phx-value-id={agent.parent_id}
-                    >
-                      #{agent.parent_id}
-                    </button>
+                    <%= if agent.parent_id do %>
+                      <button
+                        class="btn btn-sm btn-ghost btn-xs"
+                        phx-click="select_agent"
+                        phx-value-id={agent.parent_id}
+                      >
+                        #{agent.parent_id}
+                      </button>
+                    <% else %>
+                      <span class="text-sm text-base-content/50">None</span>
+                    <% end %>
                   </div>
-                <% end %>
 
-                <%= if agent.pending_sub_agents != [] do %>
-                  <div>
+                  <div class="flex-1 min-w-0">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      Pending SubAgents
+                      Children
                     </h4>
-                    <div class="flex flex-wrap gap-1 mt-1">
-                      <%= for sub_id <- agent.pending_sub_agents do %>
-                        <button
-                          class="badge badge-ghost btn-xs cursor-pointer"
-                          phx-click="select_agent"
-                          phx-value-id={sub_id}
-                        >
-                          #{sub_id}
-                        </button>
-                      <% end %>
-                    </div>
+                    <%= if agent.has_children do %>
+                      <div class="flex flex-wrap gap-1">
+                        <%= for {child_id, child_status} <- agent.children do %>
+                          <button
+                            class={["badge badge-sm btn-xs cursor-pointer badge-outline", agent_status_border(child_status), agent_status_color(child_status)]}
+                            phx-click="select_agent"
+                            phx-value-id={child_id}
+                          >
+                            #{child_id}
+                          </button>
+                        <% end %>
+                      </div>
+                    <% else %>
+                      <span class="text-sm text-base-content/50">None</span>
+                    <% end %>
                   </div>
-                <% end %>
+                </div>
 
                 <%= if map_size(agent.sub_agent_results) > 0 do %>
                   <div>
@@ -215,27 +221,6 @@
                     </div>
                   </div>
                 <% end %>
-
-                <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                    Children
-                  </h4>
-                  <%= if agent.has_children do %>
-                    <div class="flex flex-wrap gap-1 mt-1">
-                      <%= for {child_id, child_status} <- agent.children do %>
-                        <button
-                          class={["badge badge-sm btn-xs cursor-pointer badge-outline", agent_status_border(child_status), agent_status_color(child_status)]}
-                          phx-click="select_agent"
-                          phx-value-id={child_id}
-                        >
-                          #{child_id}
-                        </button>
-                      <% end %>
-                    </div>
-                  <% else %>
-                    <span class="text-sm text-base-content/50">None</span>
-                  <% end %>
-                </div>
 
                 <!-- Chat History -->
                 <div class="mt-6">
