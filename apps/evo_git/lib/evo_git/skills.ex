@@ -526,7 +526,7 @@ defmodule EvoGit.Skills do
       nil ->
         # Try with just --- at start (no closing ---)
         case Regex.run(~r/\A---\s*\n(.*)\z/s, content) do
-          [_, rest] ->
+          [_, _rest] ->
             # No frontmatter found; treat entire content as body
             {:ok, %{}, String.trim(content)}
 
@@ -575,8 +575,6 @@ defmodule EvoGit.Skills do
   end
 
   # Parameters section: look for "- name:" to start a new parameter
-  defp parse_yaml_lines([], acc, :parameters), do: {acc, []}
-
   defp parse_yaml_lines([line | rest], acc, :parameters) do
     cond do
       line == "" or String.trim(line) == "" ->
@@ -607,8 +605,6 @@ defmodule EvoGit.Skills do
     {param, rest} = consume_param_props(rest, param)
     {param, rest}
   end
-
-  defp parse_param_entry([]), do: {%{}, []}
 
   defp consume_param_props([line | rest], param) do
     case Regex.run(~r/^\s+(\w[\w_-]*):\s*(.*)/, line) do
