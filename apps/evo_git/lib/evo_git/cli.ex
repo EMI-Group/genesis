@@ -223,8 +223,7 @@ defmodule EvoGit.CLI do
         Windows: mkdir %APPDATA%\\evogit
 
       Step 2: Create credentials.toml with your API key(s)
-        echo '[api_keys]'                     > credentials.toml
-        echo 'google = "YOUR_API_KEY_HERE"'  >> credentials.toml
+        echo 'GOOGLE_API_KEY = "YOUR_API_KEY_HERE"' > credentials.toml
 
       Step 3: Create config.toml with your LLM model and username
         echo '[llm]'                                  > config.toml
@@ -245,23 +244,20 @@ defmodule EvoGit.CLI do
         Windows: %APPDATA%\\evogit\\credentials.toml
 
       credentials.toml format:
-        [api_keys]
-        google    = "AIza..."
-        zai       = "sk-..."
-        deepseek  = "sk-..."
-        groq      = "gsk_..."
-        tavily    = "tvly-..."
-        anthropic = "sk-ant-..."
-        openai    = "sk-..."
+        GOOGLE_API_KEY = "AIza..."
+        ZAI_API_KEY = "sk-..."
+        DEEPSEEK_API_KEY = "sk-..."
+        GROQ_API_KEY = "gsk_..."
+        TAVILY_API_KEY = "tvly-..."
+        ANTHROPIC_API_KEY = "sk-ant-..."
+        OPENAI_API_KEY = "sk-..."
 
       Note: Only one API key is required. Choose the provider matching your LLM model.
 
-      Tip: You can also set API keys via environment variables (see resolution order below).
+      Tip: You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).
 
-      API key resolution order (first match wins):
-        1. credentials.toml (recommended)
-        2. EVOGIT_API_KEY_<PROVIDER> environment variable
-        3. Provider-specific env var (e.g. GOOGLE_API_KEY, ANTHROPIC_API_KEY)
+      API keys from credentials.toml are automatically set as environment variables.
+      You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).
 
       At least one API key is required to use EvoGit.
 
