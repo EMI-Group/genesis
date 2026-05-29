@@ -216,6 +216,38 @@ defmodule EvoGit.CLI do
                                   the directory basename is used. (e.g., -R original:/Source/proj)
       -h, --help                  Show this help message.
 
+    Configuration:
+      EvoGit requires API keys to communicate with LLM providers. Keys are stored
+      in a credentials file (NOT in evogit.toml or environment variables alone).
+
+      Credentials file location (by platform):
+        Linux:   ~/.config/evogit/credentials.toml
+        macOS:   ~/Library/Application Support/evogit/credentials.toml
+        Windows: %APPDATA%\\evogit\\credentials.toml
+
+      credentials.toml format:
+        [api_keys]
+        google    = "AIza..."
+        zai       = "sk-..."
+        deepseek  = "sk-..."
+        groq      = "gsk_..."
+        tavily    = "tvly-..."
+        anthropic = "sk-ant-..."
+        openai    = "sk-..."
+
+      API key resolution order (first match wins):
+        1. credentials.toml (recommended)
+        2. EVOGIT_API_KEY_<PROVIDER> environment variable
+        3. Provider-specific env var (e.g. GOOGLE_API_KEY, ANTHROPIC_API_KEY)
+
+      At least one API key is required to use EvoGit.
+
+      Additional settings (scheduler, LLM model, user preferences) can be
+      configured in the user config file:
+        Linux:   ~/.config/evogit/config.toml
+        macOS:   ~/Library/Application Support/evogit/config.toml
+        Windows: %APPDATA%\\evogit\\config.toml
+
     Examples:
       evogit genesis "Create a snake game in Python" --mode new
       evogit genesis --mode existing -p /path/to/legacy/repo
