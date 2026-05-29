@@ -336,6 +336,13 @@
                                       <div>{String.slice(format_reasoning_details(entry.data.reasoning_details) || "", 0, 200)}{if String.length(format_reasoning_details(entry.data.reasoning_details) || "") > 200, do: "..."}</div>
                                     </div>
                                   <% end %>
+                                  <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
+                                    <div class="text-sm bg-warning/10 p-2 rounded text-warning">
+                                      {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
+                                    </div>
+                                  <% else %>
+                                    <div class="text-sm text-base-content/50 italic">&lt;no text content&gt;</div>
+                                  <% end %>
                                   <%= if entry.data.tool_calls && entry.data.tool_calls != [] do %>
                                     <div class="text-xs bg-secondary/10 p-2 rounded text-secondary">
                                       <div class="font-semibold mb-1">Tool Calls ({length(entry.data.tool_calls)})</div>
@@ -347,13 +354,6 @@
                                         <% end %>
                                       </div>
                                     </div>
-                                  <% end %>
-                                  <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
-                                    <div class="text-sm bg-warning/10 p-2 rounded text-warning">
-                                      {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
-                                    </div>
-                                  <% else %>
-                                    <div class="text-sm text-base-content/50 italic">&lt;no text content&gt;</div>
                                   <% end %>
                                 </div>
                               <% "tool" -> %>
@@ -447,6 +447,12 @@
                     <pre class="text-sm bg-warning/10 p-3 rounded overflow-x-auto"><%= format_reasoning_details(@selected_history_entry.data.reasoning_details) %></pre>
                   </div>
                 <% end %>
+                <%= if @selected_history_entry.data.content && String.trim(@selected_history_entry.data.content) != "" do %>
+                  <div>
+                    <h4 class="font-semibold text-warning mb-2">Response</h4>
+                    <pre class="text-sm whitespace-pre-wrap bg-warning/10 p-3 rounded"><%= @selected_history_entry.data.content %></pre>
+                  </div>
+                <% end %>
                 <%= if @selected_history_entry.data.tool_calls && @selected_history_entry.data.tool_calls != [] do %>
                   <div>
                     <h4 class="font-semibold text-secondary mb-2">Tool Calls</h4>
@@ -458,12 +464,6 @@
                         </div>
                       <% end %>
                     </div>
-                  </div>
-                <% end %>
-                <%= if @selected_history_entry.data.content && String.trim(@selected_history_entry.data.content) != "" do %>
-                  <div>
-                    <h4 class="font-semibold text-warning mb-2">Response</h4>
-                    <pre class="text-sm whitespace-pre-wrap bg-warning/10 p-3 rounded"><%= @selected_history_entry.data.content %></pre>
                   </div>
                 <% end %>
               </div>
