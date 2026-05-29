@@ -190,9 +190,12 @@ defmodule EvoGit.Agent.SubagentProcessing do
           foreign_repos :: [ForeignRepo.t()]
         ) :: {atom(), String.t(), String.t()}
   def resolve_subagent_path(raw_path, parent_state, foreign_repos) do
-    if ForeignRepo.absolute_path?(raw_path) do
+    # Default to parent's context node path if no path was provided by the LLM
+    path = raw_path || parent_state.context_node.path
+
+    if ForeignRepo.absolute_path?(path) do
       # Absolute path — resolve to the correct foreign repo
-      case ForeignRepo.resolve_path(foreign_repos, raw_path) do
+      case ForeignRepo.resolve_path(foreign_repos, path) do
         {:ok, repo_id, rel_path} ->
           repo = Enum.find(foreign_repos, &(&1.id == repo_id))
           {repo_id, repo.root, rel_path}
@@ -200,14 +203,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
         {:error, :not_in_any_repo} ->
           # Not in any known repo — treat as primary, let it fail naturally
           Logger.warning(
-            "Agent: Absolute path '#{raw_path}' not in any known repo, treating as primary"
+            "Agent: Absolute path '#{path}' not in any known repo, treating as primary"
           )
 
-          {:primary, parent_state.phylo_node.repo, ContextNode.normalize_relpath(raw_path)}
+          {:primary, parent_state.phylo_node.repo, ContextNode.normalize_relpath(path)}
       end
     else
       # Relative path — same repo as parent
-      normalized = ContextNode.normalize_relpath(raw_path)
+      normalized = ContextNode.normalize_relpath(path)
       {:primary, parent_state.phylo_node.repo, normalized}
     end
   end
