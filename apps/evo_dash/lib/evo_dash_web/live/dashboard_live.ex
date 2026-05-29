@@ -5,7 +5,7 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
       <div>
         <p class="text-base-content/60 text-sm">Manage your evolutionary software development tasks</p>
       </div>
@@ -67,10 +67,6 @@ defmodule EvoDashWeb.DashboardLive do
           />
         </div>
 
-        <!-- Scheduler Settings -->
-        <div class="mt-6">
-          <EvoDashWeb.DashboardComponents.scheduler_settings config={@scheduler_config} />
-        </div>
       <% else %>
         <!-- No Active Project State -->
         <div class="mt-4 mb-8">
@@ -271,8 +267,18 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:show_open_project_form, false)
       |> assign(:recent_projects, recent_projects)
       |> assign(:path_suggestions, [])
-      |> assign(:scheduler_config, load_scheduler_config())
       |> assign_form_defaults()
+
+    config_status =
+      try do
+        EvoGit.Config.config_status()
+      rescue
+        _ -> %{missing: [], warnings: [], ok?: true}
+      catch
+        _, _ -> %{missing: [], warnings: [], ok?: true}
+      end
+
+    socket = assign(socket, :config_status, config_status)
 
     {:ok, socket}
   end
@@ -496,36 +502,6 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply, assign(socket, :selected_options, nil)}
   end
 
-  @impl true
-  def handle_event("scheduler_config_change", _params, socket) do
-    {:noreply, socket}
-  end
-
-  @impl true
-  def handle_event("update_scheduler_config", params, socket) do
-    config_updates =
-      []
-      |> maybe_add_int(:max_concurrency, params["max_concurrency"])
-      |> maybe_add_int(:max_tool_concurrency, params["max_tool_concurrency"])
-      |> maybe_add_int(:agent_max_retries, params["agent_max_retries"])
-      |> maybe_add_int(:max_depth, params["max_agent_depth"])
-      |> maybe_add_int(:max_retries, params["max_retries"])
-      |> maybe_add_string(:llm_model, params["llm_model"])
-
-    case EvoGit.AgentScheduler.update_config(config_updates) do
-      :ok ->
-        {:noreply,
-         socket
-         |> assign(:scheduler_config, load_scheduler_config())
-         |> put_flash(:info, "Scheduler settings updated successfully.")}
-
-      {:error, :agents_running} ->
-        {:noreply,
-         socket
-         |> put_flash(:warning, "Cannot update concurrency while agents are running. Other settings applied.")}
-    end
-  end
-
   # Helpers
 
   defp assign_form_defaults(socket) do
@@ -605,28 +581,4 @@ defmodule EvoDashWeb.DashboardLive do
     end
   end
 
-  defp load_scheduler_config do
-    try do
-      EvoGit.AgentScheduler.get_config()
-    rescue
-      _ -> %{}
-    catch
-      _, _ -> %{}
-    end
-  end
-
-  defp maybe_add_int(list, key, value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, ""} -> Keyword.put(list, key, int)
-      _ -> list
-    end
-  end
-
-  defp maybe_add_int(list, _key, _value), do: list
-
-  defp maybe_add_string(list, key, value) when is_binary(value) and value != "" do
-    Keyword.put(list, key, value)
-  end
-
-  defp maybe_add_string(list, _key, _value), do: list
 end

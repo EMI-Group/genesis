@@ -146,6 +146,76 @@ defmodule EvoGit.Config do
   end
 
   @doc """
+  Writes the provided map to the user config TOML file.
+
+  Creates the config directory if it doesn't exist.
+  Atom keys are automatically converted to strings for TOML serialization.
+
+  Returns `:ok` on success, `{:error, reason}` on failure.
+  """
+  @spec save_user_config(map()) :: :ok | {:error, term()}
+  def save_user_config(config) when is_map(config) do
+    path = config_path()
+    dir = config_dir()
+
+    with :ok <- File.mkdir_p(dir),
+         string_config = stringify_keys(config),
+         {:ok, toml} <- TomlElixir.encode(string_config) do
+      File.write(path, toml)
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_keys(value)}
+      {key, value} -> {key, stringify_keys(value)}
+    end)
+  end
+
+  defp stringify_keys(value), do: value
+
+  @doc """
+  Returns the status of critical configuration values.
+
+  Checks for required settings and returns a map with:
+  - `:missing` — list of missing critical config keys (as atoms)
+  - `:warnings` — list of human-readable warning messages for missing values
+  - `:ok?` — boolean, true if all critical config is present
+  """
+  @spec config_status() :: %{missing: [atom()], warnings: [String.t()], ok?: boolean()}
+  def config_status do
+    resolved = resolve()
+
+    checks = [
+      {:llm_model, "LLM model is not configured. Set [llm] model in config.toml.", fn ->
+        case get_in(resolved, [:llm, :model]) do
+          nil -> true
+          "" -> true
+          _ -> false
+        end
+      end},
+      {:api_key, "No API key found. Add keys to credentials.toml or set environment variables.", fn ->
+        providers = [:google, :zai, :deepseek, :groq, :anthropic, :openai]
+        Enum.all?(providers, fn p -> api_key(p) == nil end)
+      end},
+      {:github_username, "GitHub username is not configured. Set [user] github_username in config.toml.", fn ->
+        case get_in(resolved, [:user, :github_username]) do
+          nil -> true
+          "" -> true
+          _ -> false
+        end
+      end}
+    ]
+
+    missing = for {key, _msg, check} <- checks, check.(), do: key
+    warnings = for {_key, msg, check} <- checks, check.(), do: msg
+
+    %{missing: missing, warnings: warnings, ok?: missing == []}
+  end
+
+  @doc """
   Reads and returns the parsed credentials TOML file.
 
   Returns `%{}` if the file is not found or cannot be parsed.

@@ -12,6 +12,15 @@ defmodule EvoDashWeb.AgentsLive do
 
     agents = load_agents()
 
+    config_status =
+      try do
+        EvoGit.Config.config_status()
+      rescue
+        _ -> %{missing: [], warnings: [], ok?: true}
+      catch
+        _, _ -> %{missing: [], warnings: [], ok?: true}
+      end
+
     socket =
       socket
       |> assign(:selected_agent_id, nil)
@@ -19,6 +28,7 @@ defmodule EvoDashWeb.AgentsLive do
       |> assign(:selected_objective, nil)
       |> assign(:agents, agents)
       |> assign(:path_tree, build_path_tree(agents))
+      |> assign(:config_status, config_status)
 
     {:ok, socket}
   end

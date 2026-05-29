@@ -31,6 +31,8 @@ defmodule EvoDashWeb.Layouts do
     default: nil,
     doc: "the current page atom (:dashboard, :agents) for active nav highlighting"
 
+  attr :config_status, :map, default: nil
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -67,6 +69,24 @@ defmodule EvoDashWeb.Layouts do
                 <.icon name="hero-server" class="size-4" /> Agents
               </a>
             </li>
+            <li>
+              <a
+                href="/settings"
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :settings && "btn-active"]}
+                aria-current={@current_page == :settings && "page"}
+              >
+                <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
+              </a>
+            </li>
+            <li>
+              <a
+                href="/help"
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :help && "btn-active"]}
+                aria-current={@current_page == :help && "page"}
+              >
+                <.icon name="hero-question-mark-circle" class="size-4" /> Help
+              </a>
+            </li>
           </ul>
           <div class="divider divider-horizontal mx-1 h-6"></div>
           <.theme_toggle />
@@ -96,6 +116,24 @@ defmodule EvoDashWeb.Layouts do
                 <.icon name="hero-server" class="size-4" /> Agents
               </a>
             </li>
+            <li>
+              <a
+                href="/settings"
+                class={@current_page == :settings && "active"}
+                aria-current={@current_page == :settings && "page"}
+              >
+                <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
+              </a>
+            </li>
+            <li>
+              <a
+                href="/help"
+                class={@current_page == :help && "active"}
+                aria-current={@current_page == :help && "page"}
+              >
+                <.icon name="hero-question-mark-circle" class="size-4" /> Help
+              </a>
+            </li>
             <li class="mt-2 flex justify-center">
               <.theme_toggle />
             </li>
@@ -110,6 +148,29 @@ defmodule EvoDashWeb.Layouts do
         {render_slot(@inner_block)}
       </div>
     </main>
+
+    <!-- Config Warning Banner -->
+    <%= if @config_status && not @config_status.ok? do %>
+      <div class="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-40">
+        <div class="bg-warning/95 text-warning-content rounded-xl shadow-2xl p-4 border border-warning/50">
+          <div class="flex items-start gap-3">
+            <.icon name="hero-exclamation-triangle" class="size-5 shrink-0 mt-0.5" />
+            <div class="flex-1 min-w-0">
+              <p class="font-semibold text-sm">Missing Configuration</p>
+              <ul class="mt-1 space-y-0.5">
+                <%= for warning <- @config_status.warnings do %>
+                  <li class="text-xs opacity-90">{warning}</li>
+                <% end %>
+              </ul>
+              <a href="/help" class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">Configure now →</a>
+            </div>
+            <button class="btn btn-xs btn-ghost text-warning-content" onclick="this.closest('.fixed').remove()">
+              <.icon name="hero-x-mark" class="size-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    <% end %>
 
     <.flash_group flash={@flash} />
     """
