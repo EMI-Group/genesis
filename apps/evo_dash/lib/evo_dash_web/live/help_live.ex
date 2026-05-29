@@ -73,6 +73,28 @@ defmodule EvoDashWeb.HelpLive do
         </div>
       </div>
 
+      <!-- Credentials Reference -->
+      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+        <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-6">
+          <h2 class="text-lg font-semibold flex items-center gap-2">
+            <.icon name="hero-key" class="size-5 text-accent" /> Credentials Reference
+          </h2>
+        </div>
+        <div class="p-6 pt-2">
+          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto"><%= @credentials_reference %></pre>
+          <div class="mt-3 space-y-1">
+            <p class="text-xs text-base-content/50 flex items-center gap-1.5">
+              <.icon name="hero-arrows-right-left" class="size-3.5 shrink-0" />
+              Resolution order: 1) credentials.toml → 2) EVOGIT_API_KEY_&lt;PROVIDER&gt; env var → 3) Provider-specific env var (e.g., GOOGLE_API_KEY)
+            </p>
+            <p class="text-xs text-base-content/50 flex items-center gap-1.5">
+              <.icon name="hero-shield-check" class="size-3.5 shrink-0" />
+              For security, credentials cannot be edited from this page. Edit the file directly on your system.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <!-- User Config Editor -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
         <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6">
@@ -174,6 +196,36 @@ github_username = "your-username"
 mode = "auto"
 """
 
+  @credentials_reference """
+# EvoGit Credentials Reference
+# Save this as: ~/.config/evogit/credentials.toml
+# 
+# API keys are stored separately from config.toml for security.
+# Only ONE key is required — choose the provider matching your LLM model.
+
+[api_keys]
+# Google Gemini (e.g., "google:gemini-2.0-flash-exp")
+google    = "AIza..."
+
+# ZAI (e.g., "zai_coding_plan:glm-5.1")
+zai       = "sk-..."
+
+# DeepSeek (e.g., "deepseek:deepseek-chat")
+deepseek  = "sk-..."
+
+# Groq (e.g., "groq:llama-3.1-8b-instant")
+groq      = "gsk_..."
+
+# Anthropic (e.g., "anthropic:claude-sonnet-4-20250514")
+anthropic = "sk-ant-..."
+
+# OpenAI (e.g., "openai:gpt-4o")
+openai    = "sk-..."
+
+# Tavily (optional — for web search tool)
+tavily    = "tvly-..."
+"""
+
   @impl true
   def mount(_params, _session, socket) do
     config_status = safe_config_status()
@@ -201,6 +253,7 @@ mode = "auto"
       |> assign(:config_edit, config_toml_content)
       |> assign(:editing, false)
       |> assign(:config_reference, @config_reference)
+      |> assign(:credentials_reference, @credentials_reference)
 
     {:ok, socket}
   end
