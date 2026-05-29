@@ -32,7 +32,7 @@ defmodule EvoGit.Agent.Tools.SkillRead do
   @doc """
   Executes the skill_read tool.
   """
-  def execute(args, repo_path, repo_root) do
+  def execute(args, _repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "name") do
       {:ok, name} ->
         EvoGit.Skills.read_skill(repo_root, name)

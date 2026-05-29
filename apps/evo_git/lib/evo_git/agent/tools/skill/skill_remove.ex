@@ -31,7 +31,7 @@ defmodule EvoGit.Agent.Tools.SkillRemove do
   @doc """
   Executes the skill_remove tool.
   """
-  def execute(args, repo_path, repo_root) do
+  def execute(args, _repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "name") do
       {:ok, name} ->
         case EvoGit.Skills.remove_skill(repo_root, name) do
