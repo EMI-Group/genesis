@@ -25,6 +25,7 @@ defmodule EvoGit.Agents.ContextExtractor do
       ListDirectory.schema(),
       Context.read_schema(),
       Context.write_schema(),
+      Context.edit_schema(),
       WebSearch.schema(),
       Curl.schema(),
       SearchContext.schema(),

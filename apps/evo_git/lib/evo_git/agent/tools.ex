@@ -37,6 +37,7 @@ alias EvoGit.Agent.Tools.SearchContext
       MakeDir.schema(),
       Context.read_schema(),
       Context.write_schema(),
+      Context.edit_schema(),
       ShellTool.schema(),
       Ripgrep.schema(),
       Glob.schema(),
@@ -99,6 +100,10 @@ alias EvoGit.Agent.Tools.SearchContext
 
   defp execute_tool("write_context", args, repo_path, repo_root, _node_path) do
     Context.execute_write(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("edit_context", args, repo_path, repo_root, _node_path) do
+    Context.execute_edit(args, repo_path, repo_root)
   end
 
   defp execute_tool(@shell_tool_name, args, repo_path, repo_root, _node_path) do

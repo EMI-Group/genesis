@@ -17,6 +17,7 @@ defmodule EvoGit.Agent.ToolsTest do
       assert "make_dir" in names
       assert "read_context" in names
       assert "write_context" in names
+      assert "edit_context" in names
     end
   end
 
@@ -387,6 +388,183 @@ defmodule EvoGit.Agent.ToolsTest do
 
       assert result =~ "Error creating directory"
       assert result =~ "not a directory"
+    end
+  end
+
+  describe "execute/4 - edit_context" do
+    test "edits existing CONTEXT.md with exact string replacement", %{tmp_dir: tmp_dir} do
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+      File.write!(Path.join(dir_path, "CONTEXT.md"), "# My Context\n\nSome content here")
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "lib", "old_string" => "Some content here", "new_string" => "Updated content", "commit" => false},
+          tmp_dir
+        )
+
+      assert result =~ "Successfully updated CONTEXT.md"
+      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "# My Context\n\nUpdated content"
+    end
+
+    test "replaces all occurrences when replace_all is true", %{tmp_dir: tmp_dir} do
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+      File.write!(Path.join(dir_path, "CONTEXT.md"), "hello world hello world")
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{
+            "dir_path" => "lib",
+            "old_string" => "hello",
+            "new_string" => "hi",
+            "replace_all" => true,
+            "commit" => false
+          },
+          tmp_dir
+        )
+
+      assert result =~ "All occurrences were successfully replaced"
+      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "hi world hi world"
+    end
+
+    test "returns error if multiple matches found without replace_all", %{tmp_dir: tmp_dir} do
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+      File.write!(Path.join(dir_path, "CONTEXT.md"), "hello world hello world")
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "lib", "old_string" => "hello", "new_string" => "hi", "commit" => false},
+          tmp_dir
+        )
+
+      assert result =~ "Found 2 matches"
+      assert result =~ "Set replace_all=true"
+      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "hello world hello world"
+    end
+
+    test "returns error if old_string not found", %{tmp_dir: tmp_dir} do
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+      File.write!(Path.join(dir_path, "CONTEXT.md"), "hello world")
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "lib", "old_string" => "missing", "new_string" => "replacement"},
+          tmp_dir
+        )
+
+      assert result =~ "old_string not found in CONTEXT.md"
+    end
+
+    test "returns error if CONTEXT.md does not exist", %{tmp_dir: tmp_dir} do
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "lib", "old_string" => "hello", "new_string" => "world"},
+          tmp_dir
+        )
+
+      assert result =~ "No CONTEXT.md found"
+    end
+
+    test "returns error if directory does not exist", %{tmp_dir: tmp_dir} do
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "missing", "old_string" => "hello", "new_string" => "world"},
+          tmp_dir
+        )
+
+      assert result =~ "does not exist"
+    end
+
+    test "returns error if path is a file", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "test.txt")
+      File.write!(file_path, "")
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "test.txt", "old_string" => "hello", "new_string" => "world"},
+          tmp_dir
+        )
+
+      assert result =~ "is a file, not a directory"
+    end
+
+    test "edits and commits CONTEXT.md", %{tmp_dir: tmp_dir} do
+      # Initialize a git repository
+      System.cmd("git", ["init"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
+
+      # Create an initial commit so we have a HEAD
+      File.write!(Path.join(tmp_dir, "README.md"), "init")
+      System.cmd("git", ["add", "README.md"], cd: tmp_dir)
+      System.cmd("git", ["commit", "-m", "init commit"], cd: tmp_dir)
+
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+      File.write!(Path.join(dir_path, "CONTEXT.md"), "old context")
+
+      # Pass repo_root as tmp_dir as well so that systemd-run has access to .git
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "lib", "old_string" => "old", "new_string" => "new", "commit" => true},
+          tmp_dir,
+          tmp_dir
+        )
+
+      assert result =~ "Successfully updated CONTEXT.md"
+      assert result =~ "Committed:"
+      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "new context"
+
+      # Check git log
+      {log, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
+      assert log =~ "Update CONTEXT.md for lib"
+    end
+
+    test "edits without committing when commit is false", %{tmp_dir: tmp_dir} do
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+      File.write!(Path.join(dir_path, "CONTEXT.md"), "old context")
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "lib", "old_string" => "old", "new_string" => "new", "commit" => false},
+          tmp_dir
+        )
+
+      assert result =~ "Successfully updated CONTEXT.md"
+      refute result =~ "Committed:"
+      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "new context"
+    end
+
+    test "strips trailing whitespace from new_string", %{tmp_dir: tmp_dir} do
+      dir_path = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(dir_path)
+      File.write!(Path.join(dir_path, "CONTEXT.md"), "hello world")
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{"dir_path" => "lib", "old_string" => "world", "new_string" => "elixir   \n\n", "commit" => false},
+          tmp_dir
+        )
+
+      assert result =~ "Successfully updated CONTEXT.md"
+      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "hello elixir"
     end
   end
 
