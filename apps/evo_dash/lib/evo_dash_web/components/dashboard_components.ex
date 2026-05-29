@@ -313,77 +313,88 @@ defmodule EvoDashWeb.DashboardComponents do
 
   def task_card(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden">
+    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative">
+      <!-- Three-dot kebab menu -->
+      <details class="dropdown dropdown-end absolute top-3 right-3 z-[1]">
+        <summary class="btn btn-xs btn-ghost btn-circle">
+          <.icon name="hero-ellipsis-vertical" class="size-4" />
+        </summary>
+        <ul class="menu menu-sm dropdown-content mt-1 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-40 border border-base-200">
+          <li>
+            <button class="text-error" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm="Delete this task?">
+              <.icon name="hero-trash" class="size-4" /> Delete
+            </button>
+          </li>
+        </ul>
+      </details>
+
       <div class="flex">
         <!-- Left accent bar -->
         <div class={["w-1 shrink-0", status_accent_color(@task.status)]}></div>
 
         <div class="flex-1 p-5 md:p-6">
-          <div class="flex items-start justify-between gap-4">
-            <div class="flex items-start gap-4 flex-1">
-              <div class="avatar placeholder mt-0.5">
-                <div class="bg-primary/10 text-primary rounded-xl w-12 h-12">
-                  <.icon name={task_type_icon(@task.type)} class="size-6" />
-                </div>
+          <div class="flex items-start gap-6">
+            <!-- Left side: type title + description -->
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-3 flex-wrap">
+                <h3 class="font-bold capitalize text-lg">{@task.type}</h3>
               </div>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-3 flex-wrap">
-                  <h3 class="font-bold capitalize text-lg">{@task.type}</h3>
-                  <span class="flex items-center gap-1.5">
-                    <span class={task_status_badge(@task.status)}>
-                      <%= if @task.status == :running do %>
-                        <span class="relative flex h-2 w-2 mr-1.5">
-                          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-info opacity-75"></span>
-                          <span class="relative inline-flex rounded-full h-2 w-2 bg-info"></span>
-                        </span>
-                      <% end %>
-                      {@task.status}
-                    </span>
-                  </span>
-                </div>
-                <p class="text-xs text-base-content/60 mt-1 flex items-center gap-1">
-                  <.icon name="hero-hashtag" class="size-3" />
-                  <code class="bg-base-200 px-1.5 py-0.5 rounded font-mono">{@task.id}</code>
-                </p>
-                <p class="text-sm mt-3 text-base-content/90 font-medium line-clamp-2 leading-relaxed">
-                  {task_description(@task)}
-                </p>
-                <div class="flex items-center gap-5 mt-4 text-xs font-medium text-base-content/60">
-                  <span class="flex items-center gap-1.5">
-                    <.icon name="hero-clock" class="size-4" />
-                    Started: {format_datetime(@task.started_at)}
-                  </span>
-                  <%= if Map.get(@task, :finished_at) do %>
-                    <span class="flex items-center gap-1.5">
-                      <.icon name="hero-check-circle" class="size-4 text-success" />
-                      Finished: {format_datetime(@task.finished_at)}
+              <p class="text-sm mt-2 text-base-content/90 font-medium line-clamp-3 leading-relaxed">
+                {task_description(@task)}
+              </p>
+            </div>
+
+            <!-- Right side: status, ID, times, buttons -->
+            <div class="flex-none w-48 flex flex-col gap-2 text-right pt-0.5">
+              <span class="flex items-center justify-end gap-1.5">
+                <span class={task_status_badge(@task.status)}>
+                  <%= if @task.status == :running do %>
+                    <span class="relative flex h-2 w-2 mr-1.5">
+                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-info opacity-75"></span>
+                      <span class="relative inline-flex rounded-full h-2 w-2 bg-info"></span>
                     </span>
                   <% end %>
-                </div>
-              </div>
-            </div>
-            <div class="flex flex-col sm:flex-row items-center gap-2">
-              <%= if @task.status == :running do %>
-                <button
-                  class="btn btn-sm btn-outline btn-error shadow-sm"
-                  phx-click="cancel_task"
-                  phx-value-task_id={@task.id}
-                  phx-confirm="Are you sure you want to cancel this task?"
-                >
-                  <.icon name="hero-x-mark" class="size-4" /> Cancel
-                </button>
-              <% end %>
-              <button
-                class="btn btn-sm btn-ghost bg-base-200/50 hover:bg-base-200"
-                phx-click="toggle_task_details"
-                phx-value-task_id={@task.id}
-              >
-                <%= if @show_details do %>
-                  Hide Details <.icon name="hero-chevron-up" class="size-4 ml-1" />
-                <% else %>
-                  View Details <.icon name="hero-chevron-down" class="size-4 ml-1" />
+                  {@task.status}
+                </span>
+              </span>
+              <p class="text-xs text-base-content/60 flex items-center justify-end gap-1">
+                <code class="bg-base-200 px-1.5 py-0.5 rounded font-mono">{@task.id}</code>
+              </p>
+              <div class="flex flex-col items-end gap-1 text-xs font-medium text-base-content/60">
+                <span class="flex items-center gap-1.5">
+                  <.icon name="hero-clock" class="size-4" />
+                  Started: {format_datetime(@task.started_at)}
+                </span>
+                <%= if Map.get(@task, :finished_at) do %>
+                  <span class="flex items-center gap-1.5">
+                    <.icon name="hero-check-circle" class="size-4 text-success" />
+                    Finished: {format_datetime(@task.finished_at)}
+                  </span>
                 <% end %>
-              </button>
+              </div>
+              <div class="flex items-center justify-end gap-2 mt-1">
+                <%= if @task.status == :running do %>
+                  <button
+                    class="btn btn-sm btn-outline btn-error shadow-sm"
+                    phx-click="cancel_task"
+                    phx-value-task_id={@task.id}
+                    phx-confirm="Are you sure you want to cancel this task?"
+                  >
+                    <.icon name="hero-x-mark" class="size-4" /> Cancel
+                  </button>
+                <% end %>
+                <button
+                  class="btn btn-sm btn-ghost bg-base-200/50 hover:bg-base-200"
+                  phx-click="toggle_task_details"
+                  phx-value-task_id={@task.id}
+                >
+                  <%= if @show_details do %>
+                    Hide Details <.icon name="hero-chevron-up" class="size-4 ml-1" />
+                  <% else %>
+                    View Details <.icon name="hero-chevron-down" class="size-4 ml-1" />
+                  <% end %>
+                </button>
+              </div>
             </div>
           </div>
 
