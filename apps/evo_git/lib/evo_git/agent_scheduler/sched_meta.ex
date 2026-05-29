@@ -10,11 +10,12 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
 
   - `id` — scheduler-assigned integer agent ID
   - `depth` — recursion depth (0 for top-level agents)
-  - `status` — `:pending | :running | :waiting | :ready`
+  - `status` — `:pending | :running | :waiting | :ready | :blocked`
     - :pending — just registered, ready to run when a worktree is available
     - :running — currently executing in a worktree
     - :waiting — execution paused due to subagent calls
     - :ready — execution paused, all subagents completed, ready to resume
+    - :blocked — waiting for an LLM or tool slot to become available
   - `worktree` — path to the assigned worktree, or `nil` when unassigned
   - `task_ref` — the `Task` monitor reference, or `nil`
   - `from` — the `GenServer.reply/2` destination for top-level agents
@@ -55,7 +56,7 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   @type t :: %__MODULE__{
           id: pos_integer(),
           depth: non_neg_integer(),
-          status: :pending | :running | :waiting | :ready,
+          status: :pending | :running | :waiting | :ready | :blocked,
           worktree: String.t() | nil,
           task_ref: reference() | nil,
           from: GenServer.from() | nil,

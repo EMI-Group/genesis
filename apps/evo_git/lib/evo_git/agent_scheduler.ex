@@ -560,30 +560,47 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:request_llm_slot, agent_id}, from, state) do
-    Slots.handle_request_llm_slot(agent_id, from, state)
+    case Slots.handle_request_llm_slot(agent_id, from, state) do
+      {:reply, :ok, _state, _} = result ->
+        result
+
+      {:noreply, state, status_updates} ->
+        apply_status_updates(status_updates)
+        {:noreply, state}
+    end
   end
 
   @impl true
-  def handle_call({:release_llm_slot, agent_id}, from, state) do
-    Slots.handle_release_llm_slot(agent_id, state)
-    |> wrap_reply(from)
+  def handle_call({:release_llm_slot, agent_id}, _from, state) do
+    {:reply, :ok, state, status_updates} = Slots.handle_release_llm_slot(agent_id, state)
+    apply_status_updates(status_updates)
+    {:reply, :ok, state}
   end
 
   @impl true
-  def handle_call({:report_llm_error, agent_id, error_type}, from, state) do
-    Slots.handle_report_llm_error(agent_id, error_type, state)
-    |> wrap_reply(from)
+  def handle_call({:report_llm_error, agent_id, error_type}, _from, state) do
+    {:reply, :ok, state, status_updates} = Slots.handle_report_llm_error(agent_id, error_type, state)
+    apply_status_updates(status_updates)
+    {:reply, :ok, state}
   end
 
   @impl true
   def handle_call({:request_tool_slot, agent_id}, from, state) do
-    Slots.handle_request_tool_slot(agent_id, from, state)
+    case Slots.handle_request_tool_slot(agent_id, from, state) do
+      {:reply, :ok, _state, _} = result ->
+        result
+
+      {:noreply, state, status_updates} ->
+        apply_status_updates(status_updates)
+        {:noreply, state}
+    end
   end
 
   @impl true
-  def handle_call({:release_tool_slot, agent_id}, from, state) do
-    Slots.handle_release_tool_slot(agent_id, state)
-    |> wrap_reply(from)
+  def handle_call({:release_tool_slot, agent_id}, _from, state) do
+    {:reply, :ok, state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
+    apply_status_updates(status_updates)
+    {:reply, :ok, state}
   end
 
   # --- Private Helpers ---
@@ -782,7 +799,9 @@ defmodule EvoGit.AgentScheduler do
   # Retry LLM waiting queue after backoff expiry (delegated to Slots module)
   @impl true
   def handle_info(:retry_llm_waiting, state) do
-    Slots.handle_retry_llm_waiting(state)
+    {:noreply, state, status_updates} = Slots.handle_retry_llm_waiting(state)
+    apply_status_updates(status_updates)
+    {:noreply, state}
   end
 
   # Task returned a result
@@ -866,6 +885,25 @@ defmodule EvoGit.AgentScheduler do
 
   defp delete_sched_meta(agent_id) do
     :ets.delete(@sched_table, agent_id)
+  end
+
+  # Applies a list of {agent_id, status} updates to the ETS SchedMeta table.
+  # Used by slot management to reflect blocked/running status in the dashboard.
+  defp apply_status_updates(status_updates) do
+    Enum.each(status_updates, fn {agent_id, new_status} ->
+      case get_sched_meta(agent_id) do
+        {:ok, meta} ->
+          # Only update running agents to blocked (don't overwrite :waiting or :ready)
+          # and only restore to :running from :blocked
+          if (new_status == :blocked and meta.status == :running) or
+               (new_status == :running and meta.status == :blocked) do
+            put_sched_meta(agent_id, %{meta | status: new_status})
+          end
+
+        :error ->
+          :ok
+      end
+    end)
   end
 
   # --- ETS Helpers (Agent History Table) ---
@@ -1248,8 +1286,4 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  # --- LLM/Tool Slot Delegation Helpers ---
-
-  # Converts Slots module returns into proper GenServer callback tuples.
-  defp wrap_reply({:reply, reply, state}, _from), do: {:reply, reply, state}
 end
