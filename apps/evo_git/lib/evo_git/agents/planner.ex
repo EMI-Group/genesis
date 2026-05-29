@@ -40,6 +40,7 @@ defmodule EvoGit.Agents.Planner do
        - Current architecture and patterns
        - Where changes need to be made
        - Dependencies between components
+       - For regressions or historical context: use `subagent_codebase_investigator` with a `commit_id` to investigate the codebase at an earlier commit and understand how things have changed
 
     3. **Plan the Steps**: Break down the objective into logical, executable steps.
        - Each step should be self-contained
@@ -63,7 +64,7 @@ defmodule EvoGit.Agents.Planner do
 
     - `subagent_executor`: Executes code changes. Use this for each step of your plan.
     - `subagent_evaluator`: Verifies changes satisfy the objective. Call this once after all executors finish.
-    - `subagent_codebase_investigator`: Investigates code structure. Use this to understand the codebase before planning.
+    - `subagent_codebase_investigator`: Investigates code structure. Use this to understand the codebase before planning. Pass a `commit_id` to investigate historical states — useful for understanding regressions or tracing the evolution of code.
 
     ## Execution Order
 
