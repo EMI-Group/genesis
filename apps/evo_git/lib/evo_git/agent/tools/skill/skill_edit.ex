@@ -36,7 +36,7 @@ defmodule EvoGit.Agent.Tools.SkillEdit do
   @doc """
   Executes the skill_edit tool.
   """
-  def execute(args, repo_path, repo_root) do
+  def execute(args, _repo_path, repo_root) do
     with {:ok, name} <- Shared.fetch_string_arg(args, "name"),
          {:ok, content} <- Shared.fetch_string_arg(args, "content") do
       case EvoGit.Skills.edit_skill(repo_root, name, content) do

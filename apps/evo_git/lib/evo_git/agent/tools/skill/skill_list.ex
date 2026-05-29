@@ -3,8 +3,6 @@ defmodule EvoGit.Agent.Tools.SkillList do
   Tool for listing all available skills from the `.agents/skills/` directory.
   """
 
-  alias EvoGit.Agent.Tools.Shared
-
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -27,7 +25,7 @@ defmodule EvoGit.Agent.Tools.SkillList do
   @doc """
   Executes the skill_list tool.
   """
-  def execute(args, repo_path, repo_root) do
+  def execute(_args, _repo_path, repo_root) do
     EvoGit.Skills.list_skills(repo_root)
   end
 end
