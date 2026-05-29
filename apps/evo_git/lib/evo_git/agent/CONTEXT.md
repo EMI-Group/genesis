@@ -1,37 +1,44 @@
 # EvoGit Agent Behaviour & Tools
 
 ## Intent
-Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, and extracted helper modules for context compression and subagent processing. Each agent is a stateless Elixir module that `use EvoGit.Agent` and provides a system prompt, optional tool overrides, and subagent delegation configuration. The `use` macro injects the complete agent loop (LLM turn cycle, tool dispatch, subagent management, context compression, budget warnings, and completion).
+Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data structs for agent state and results, and extracted helper modules for context compression and subagent processing. Each agent is a stateless Elixir module that `use EvoGit.Agent` and provides a system prompt, optional tool overrides, and subagent delegation configuration. The `use` macro injects the complete agent loop (LLM turn cycle, tool dispatch, subagent management, context compression, budget warnings, and completion).
 
-**Note:** Agent type implementations (Generalist, Manager, Executor, etc.) have been moved to `../agents/`. This directory retains the behaviour module, tool library, and extracted helper modules.
+**Note:** Agent type implementations (Generalist, Manager, Executor, etc.) have been moved to `../agents/`. This directory retains the behaviour module, tool library, data structs, and extracted helper modules.
 
 ## Routing Table
 - `./tools/` → LLM tool modules (17+ tools for file I/O, context, search, shell, etc.)
 - `./context_compression.ex` → Context compression helper (compresses chat history when token threshold exceeded)
 - `./subagent_processing.ex` → Subagent call processing (builds specs, spawns subagents, merges results)
+- `./loop_state.ex` → `LoopState` struct — agent loop state threaded through every turn
+- `./result.ex` → `Result` struct — structured output of a completed agent run
 
 ## API Surface
+
+### Data Structs
+
+#### `EvoGit.Agent.LoopState`
+The loop state struct threaded through the agent's turn loop. Created once when the agent starts, updated on every turn. Enforced keys: `[:agent_id, :agent_module, :depth, :node_path, :context]`. Remaining fields have defaults: `repo_path` (nil), `turn` (0), `in_grace_period` (false), `deadline` (0), `llm_time_ms` (0), `total_tokens` (0), `last_warned_time_percent` (0), `last_warned_turns_percent` (0). Referenced by `EvoGit.Agent.@type state`.
+
+#### `EvoGit.Agent.Result`
+Structured result of a completed agent run, produced by `CompleteTask.complete/4`. Enforced keys: `[:result, :commit_sha]`. Optional fields: `tag`, `branch`, `base_commit`. Constructor: `new/3`. Used throughout runtime modules (Genesis, Evolution) and subagent processing.
 
 ### Extracted Helper Modules
 
 #### `EvoGit.Agent.ContextCompression`
-- `compress_if_needed/2` — Compresses agent chat context when `total_tokens` exceeds threshold
-- `format_messages_for_compression/1` — Formats messages into readable text for compression prompt
-- `format_single_message/1` — Formats a single message for compression
-- `extract_message_content/1` — Extracts text content from message parts
+- `compress_if_needed/2` — Compresses agent chat context when `total_tokens` exceeds threshold. Takes and returns `LoopState.t()`.
 
 #### `EvoGit.Agent.SubagentProcessing`
-- `process_subagent_calls/3` — Spawns subagents, merges results via octopus merge, returns `{indexed_results, merge_message}`
+- `process_subagent_calls/3` — Spawns subagents, merges results via octopus merge, returns `{indexed_results, merge_message}`. Takes `LoopState.t()` as state param.
 - `build_subagent_specs/2` — Builds `AgentSpec` structs from tool calls with cross-repo path resolution
 - `resolve_subagent_path/3` — Resolves absolute vs relative paths for cross-repo support
 - `process_subagent_result/5` — Processes individual subagent results into indexed tuples
-- `format_subagent_result/1` — Formats subagent results for LLM context
+- `format_subagent_result/1` — Formats subagent results for LLM context (pattern matches on `%Result{}`)
 
 ### Tool Library (`EvoGit.Agent.Tools`)
 - **`tools.ex`** — Central dispatch: `schemas/0` returns 14 LLM tool schemas, `execute/5` dispatches by name
 - Available standard tools: `read_file`, `create_files`, `write_file`, `edit_file`, `make_dir`, `read_context`, `write_context`, `run_bash`/`run_powershell`, `rg`, `glob`, `list_dir`, `search_web`, `search_context`, `search_history`
 - Commented out (available but not in default set): `run_git`, `curl`
-- **`CompleteTask`** (`complete_task.ex`) — Special completion tool; NOT in standard schemas, injected separately by the `use` macro
+- **`CompleteTask`** (`complete_task.ex`) — Special completion tool; NOT in standard schemas, injected separately by the `use` macro. Returns `%Result{}` struct.
 
 ### How Tools Are Assigned to Agents
 1. Default `available_tools/0` = `EvoGit.Agent.Tools.schemas()` ++ `subagent_schemas()` ++ `[CompleteTask.schema()]`
@@ -62,3 +69,5 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, and extr
 - Tool schemas use `ReqLLM.tool/2` format.
 - Agents commit before delegating subagents (enforced by auto-commit fallback in scheduler).
 - Context compression and subagent processing are extracted to dedicated modules but invoked from the agent loop via callbacks.
+- **LoopState discipline**: The agent loop state must always be a `%LoopState{}` struct. All `%{state | ...}` update syntax preserves the struct type.
+- **Result discipline**: Agent completion produces `%Result{}` structs. Consumers pattern-match on struct fields rather than using `Map.get/2`.
