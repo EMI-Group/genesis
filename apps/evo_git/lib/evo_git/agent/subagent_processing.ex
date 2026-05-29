@@ -21,6 +21,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   require Logger
 
+  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.Result
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ForeignRepo
@@ -39,7 +41,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
   """
   @spec process_subagent_calls(
           indexed_calls :: [{map(), non_neg_integer()}],
-          state :: map(),
+          state :: LoopState.t(),
           opts :: keyword()
         ) :: {list(), String.t() | nil}
   def process_subagent_calls([], _state, _opts), do: {[], nil}
@@ -59,7 +61,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     {same_repo_shas, cross_repo_count} =
       Enum.reduce(Enum.zip(subagent_specs, results), {[], 0}, fn {spec, result}, {shas, count} ->
         case result do
-          {:ok, %{commit_sha: sha}} when is_binary(sha) ->
+          {:ok, %Result{commit_sha: sha}} when is_binary(sha) ->
             if spec.repo_id == :primary do
               {[sha | shas], count}
             else
@@ -98,9 +100,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
     same_repo_branches =
       Enum.zip(subagent_specs, results)
       |> Enum.filter(fn {spec, result} ->
-        spec.repo_id == :primary and match?({:ok, %{branch: _}}, result)
+        spec.repo_id == :primary and match?({:ok, %Result{branch: _}}, result)
       end)
-      |> Enum.map(fn {_, {:ok, %{branch: branch}}} -> branch end)
+      |> Enum.map(fn {_, {:ok, %Result{branch: branch}}} -> branch end)
 
     Enum.each(same_repo_branches, fn branch ->
       Git.delete_branch(repo_path, branch)
@@ -126,7 +128,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
   """
   @spec build_subagent_specs(
           indexed_calls :: [{map(), non_neg_integer()}],
-          state :: map()
+          state :: LoopState.t()
         ) :: [AgentSpec.t()]
   def build_subagent_specs(indexed_calls, state) do
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -219,7 +221,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
           call :: map(),
           index :: non_neg_integer(),
           result :: term(),
-          state :: map(),
+          state :: LoopState.t(),
           stream_event_fn :: function()
         ) :: {non_neg_integer(), String.t(), String.t(), String.t()}
   def process_subagent_result(call, index, result, state, stream_event_fn) do
@@ -253,7 +255,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "Error: Subagent failed: #{inspect(reason)}"
   end
 
-  def format_subagent_result({:ok, %{result: result, commit_sha: commit_sha}}) do
+  def format_subagent_result({:ok, %Result{result: result, commit_sha: commit_sha}}) do
     """
     # Result
     #{result}
