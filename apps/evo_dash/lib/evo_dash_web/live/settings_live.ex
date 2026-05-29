@@ -15,6 +15,42 @@ defmodule EvoDashWeb.SettingsLive do
         </div>
       </div>
 
+      <!-- Scheduler Pause/Resume Control -->
+      <div class="mt-4 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+        <div class="p-5 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class={[
+              "p-3 rounded-xl",
+              if(@scheduler_paused, do: "bg-warning/15 text-warning", else: "bg-success/15 text-success")
+            ]}>
+              <.icon name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"} class="size-6" />
+            </div>
+            <div>
+              <h2 class="text-base font-bold">
+                Scheduler {if @scheduler_paused, do: "Paused", else: "Active"}
+              </h2>
+              <p class="text-xs text-base-content/60">
+                <%= if @scheduler_paused do %>
+                  Running agents continue. No new slots or agents will be granted until resumed.
+                <% else %>
+                  Agents and slots are being granted normally.
+                <% end %>
+              </p>
+            </div>
+          </div>
+          <button
+            phx-click="toggle_pause"
+            class={[
+              "btn btn-sm",
+              if(@scheduler_paused, do: "btn-success", else: "btn-warning")
+            ]}
+          >
+            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-4" />
+            {if @scheduler_paused, do: "Resume Scheduler", else: "Pause Scheduler"}
+          </button>
+        </div>
+      </div>
+
       <!-- Config Status Warning -->
       <%= if not @config_status.ok? do %>
         <div class="mt-4 bg-warning/10 border border-warning/20 rounded-xl p-4">
@@ -50,6 +86,7 @@ defmodule EvoDashWeb.SettingsLive do
         <div class="p-6 pt-2">
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <%= for {label, key, value} <- [
+              {"Status", :paused, @scheduler_paused},
               {"LLM Concurrency", :max_concurrency, @scheduler_config[:max_concurrency]},
               {"Tool Concurrency", :max_tool_concurrency, @scheduler_config[:max_tool_concurrency]},
               {"Agent Max Retries", :agent_max_retries, @scheduler_config[:agent_max_retries]},
@@ -61,6 +98,8 @@ defmodule EvoDashWeb.SettingsLive do
                 <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{label}</p>
                 <p class="text-sm font-mono mt-1">
                   <%= case value do %>
+                    <% true -> %><span class="text-warning font-bold">Paused</span>
+                    <% false -> %><span class="text-success font-bold">Active</span>
                     <% nil -> %><span class="text-base-content/30">Not set</span>
                     <% v -> %><span>{v}</span>
                   <% end %>
@@ -92,6 +131,7 @@ defmodule EvoDashWeb.SettingsLive do
     socket =
       socket
       |> assign(:scheduler_config, load_scheduler_config())
+      |> assign(:scheduler_paused, load_paused_state())
       |> assign(:config_status, config_status)
 
     {:ok, socket}
@@ -99,12 +139,32 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_info(:refresh_config, socket) do
-    {:noreply, assign(socket, :scheduler_config, load_scheduler_config())}
+    {:noreply,
+     socket
+     |> assign(:scheduler_config, load_scheduler_config())
+     |> assign(:scheduler_paused, load_paused_state())}
   end
 
   @impl true
   def handle_event("scheduler_config_change", _params, socket) do
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_pause", _params, socket) do
+    if socket.assigns.scheduler_paused do
+      EvoGit.AgentScheduler.resume()
+      {:noreply,
+       socket
+       |> assign(:scheduler_paused, false)
+       |> put_flash(:info, "Scheduler resumed. New agents and slots are being granted.")}
+    else
+      EvoGit.AgentScheduler.pause()
+      {:noreply,
+       socket
+       |> assign(:scheduler_paused, true)
+       |> put_flash(:info, "Scheduler paused. Running agents continue, but no new slots or agents will be granted.")}
+    end
   end
 
   @impl true
@@ -144,6 +204,16 @@ defmodule EvoDashWeb.SettingsLive do
       _ -> %{}
     catch
       _, _ -> %{}
+    end
+  end
+
+  defp load_paused_state do
+    try do
+      EvoGit.AgentScheduler.get_config()[:paused] || false
+    rescue
+      _ -> false
+    catch
+      _, _ -> false
     end
   end
 

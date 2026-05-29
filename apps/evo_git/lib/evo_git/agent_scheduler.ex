@@ -164,6 +164,37 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Pauses the scheduler. Currently running agents continue to completion,
+  but no new LLM slots, tool slots, agent dispatches, or subagent spawns
+  will be granted until `resume/0` is called.
+
+  Returns `:ok` if already paused or successfully paused.
+  """
+  @spec pause() :: :ok
+  def pause do
+    GenServer.call(__MODULE__, :pause)
+  end
+
+  @doc """
+  Resumes the scheduler after a pause. Grants any pending slots and
+  dispatches any queued agents that were blocked while paused.
+
+  Returns `:ok`.
+  """
+  @spec resume() :: :ok
+  def resume do
+    GenServer.call(__MODULE__, :resume)
+  end
+
+  @doc """
+  Returns whether the scheduler is currently paused.
+  """
+  @spec paused?() :: boolean()
+  def paused? do
+    GenServer.call(__MODULE__, :paused?)
+  end
+
+  @doc """
   Returns the value of a specific scheduler config key.
 
   ## Example
@@ -493,8 +524,15 @@ defmodule EvoGit.AgentScheduler do
     {agent_id, state} = register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
     state = %{state | next_task_id: task_id + 1}
     Logger.info("AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id})")
-    state = try_dispatch(state, agent_id)
-    {:noreply, state}
+
+    if state.paused do
+      # Queue the agent for dispatch when resumed
+      state = %{state | queue: :queue.in(agent_id, state.queue)}
+      {:noreply, state}
+    else
+      state = try_dispatch(state, agent_id)
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -527,7 +565,8 @@ defmodule EvoGit.AgentScheduler do
       agent_max_retries: state.agent_max_retries,
       max_agent_depth: state.max_depth,
       max_retries: state.max_retries,
-      llm_model: state.llm_model
+      llm_model: state.llm_model,
+      paused: state.paused
     }
 
     {:reply, config, state}
@@ -543,10 +582,41 @@ defmodule EvoGit.AgentScheduler do
         :max_agent_depth -> state.max_depth
         :max_retries -> state.max_retries
         :llm_model -> state.llm_model
+        :paused -> state.paused
         _ -> nil
       end
 
     {:reply, value, state}
+  end
+
+  @impl true
+  def handle_call(:pause, _from, %State{} = state) do
+    if state.paused do
+      {:reply, :ok, state}
+    else
+      Logger.info("AgentScheduler: Pausing scheduler — no new slots or agents will be granted")
+      state = struct(state, paused: true)
+      {:reply, :ok, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:resume, _from, %State{} = state) do
+    if state.paused do
+      Logger.info("AgentScheduler: Resuming scheduler — granting pending slots and dispatching queued agents")
+      state = struct(state, paused: false)
+      {state, status_updates} = Slots.grant_pending_on_resume(state)
+      apply_status_updates(status_updates)
+      state = dispatch_queued_agents(state)
+      {:reply, :ok, state}
+    else
+      {:reply, :ok, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:paused?, _from, state) do
+    {:reply, state.paused, state}
   end
 
   @impl true
@@ -1140,6 +1210,19 @@ defmodule EvoGit.AgentScheduler do
   defp auto_commit_fallback(_agent_id, meta), do: meta
 
   # --- Queue Processing ---
+
+  # Drains the agent queue after a resume, dispatching each queued agent.
+  defp dispatch_queued_agents(%{queue: queue} = state) do
+    case :queue.out(queue) do
+      {{:value, agent_id}, rest_queue} ->
+        state = %{state | queue: rest_queue}
+        state = try_dispatch(state, agent_id)
+        dispatch_queued_agents(state)
+
+      {:empty, _} ->
+        state
+    end
+  end
 
   defp process_queue(%{queue: queue} = state) do
     case :queue.out(queue) do

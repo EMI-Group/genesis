@@ -41,6 +41,16 @@ defmodule EvoGit.AgentScheduler.Slots do
   """
   @spec handle_request_llm_slot(pos_integer(), GenServer.from(), State.t()) :: slot_result()
   def handle_request_llm_slot(agent_id, from, %State{} = state) do
+    # If scheduler is paused, queue the request
+    if state.paused do
+      llm_waiting = :queue.in({agent_id, from, nil}, state.llm_waiting)
+      {:noreply, %State{state | llm_waiting: llm_waiting}, [{agent_id, :blocked}]}
+    else
+      do_handle_request_llm_slot(agent_id, from, state)
+    end
+  end
+
+  defp do_handle_request_llm_slot(agent_id, from, %State{} = state) do
     now = System.monotonic_time(:millisecond)
 
     # Check if we're in a global backoff period
@@ -124,6 +134,16 @@ defmodule EvoGit.AgentScheduler.Slots do
   """
   @spec handle_request_tool_slot(pos_integer(), GenServer.from(), State.t()) :: slot_result()
   def handle_request_tool_slot(agent_id, from, %State{} = state) do
+    # If scheduler is paused, queue the request
+    if state.paused do
+      tool_waiting = :queue.in({agent_id, from}, state.tool_waiting)
+      {:noreply, %State{state | tool_waiting: tool_waiting}, [{agent_id, :blocked}]}
+    else
+      do_handle_request_tool_slot(agent_id, from, state)
+    end
+  end
+
+  defp do_handle_request_tool_slot(agent_id, from, %State{} = state) do
     if state.tool_slots_available > 0 do
       state = %State{state | tool_slots_available: state.tool_slots_available - 1}
       {:reply, :ok, state, []}
@@ -145,6 +165,20 @@ defmodule EvoGit.AgentScheduler.Slots do
     state = %State{state | tool_slots_available: min(state.tool_slots_available + 1, state.max_tool_concurrency)}
     {state, unblocked} = grant_pending_tool_slots(state)
     {:reply, :ok, state, unblocked}
+  end
+
+  @doc """
+  Grants all pending LLM and tool slots that are available.
+  Used when resuming from a paused state.
+
+  Returns `{state, status_updates}` where status_updates is a list of
+  `{agent_id, :running}` pairs for each agent that was unblocked.
+  """
+  @spec grant_pending_on_resume(State.t()) :: {State.t(), [{pos_integer(), atom()}]}
+  def grant_pending_on_resume(%State{} = state) do
+    {state, llm_unblocked} = grant_pending_llm_slots(state)
+    {state, tool_unblocked} = grant_pending_tool_slots(state)
+    {state, llm_unblocked ++ tool_unblocked}
   end
 
   # --- Private Helpers: LLM Slots ---
