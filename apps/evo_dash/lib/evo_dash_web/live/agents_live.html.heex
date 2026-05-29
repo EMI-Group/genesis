@@ -61,7 +61,7 @@
             <%= if agent do %>
               <div class="flex items-center justify-between mb-4">
                 <h3 class="card-title">
-                  <.icon name="hero-identification" class="size-5" /> Agent #{agent.id}
+                  <.icon name="hero-identification" class="size-5" /> #{agent.id}
                 </h3>
                 <button
                   class="btn btn-sm btn-ghost btn-circle"
@@ -98,6 +98,15 @@
                     {String.slice(agent.objective, 0, 150)}{if String.length(agent.objective) >
                                                                  150,
                                                                do: "..."}
+                    <%= if String.length(agent.objective) > 150 do %>
+                      <button
+                        class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/50 hover:text-base-content"
+                        phx-click="view_full_objective"
+                        title="View Full Objective"
+                      >
+                        <.icon name="hero-arrows-pointing-out" class="size-3" />
+                      </button>
+                    <% end %>
                   </p>
                 </div>
 
@@ -119,7 +128,7 @@
                   </code>
                 </div>
 
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-4 gap-2">
                   <div>
                     <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
                       Depth
@@ -167,7 +176,7 @@
                       phx-click="select_agent"
                       phx-value-id={agent.parent_id}
                     >
-                      Agent {agent.parent_id}
+                      #{agent.parent_id}
                     </button>
                   </div>
                 <% end %>
@@ -258,7 +267,7 @@
                                 <.icon name="hero-arrows-pointing-out" class="size-3" />
                               </button>
                               <span class="text-xs text-base-content/40 ml-auto">
-                                {format_timestamp(entry.timestamp)}
+                                {format_turn(entry.turn)}
                               </span>
                             </div>
                             <%= case entry.type do %>
@@ -413,7 +422,7 @@
           <.icon name={history_entry_icon(@selected_history_entry.type)} class="size-5" />
           {@selected_history_entry.type}
           <span class="text-sm font-normal text-base-content/50 ml-auto">
-            {format_timestamp(@selected_history_entry.timestamp)}
+            {format_turn(@selected_history_entry.turn)}
           </span>
         </h3>
 
@@ -491,6 +500,30 @@
       </div>
 
       <div class="modal-backdrop" phx-click="close_message_modal">
+        <button class="cursor-default">close</button>
+      </div>
+    </div>
+  <% end %>
+
+  <!-- Full Objective Modal -->
+  <%= if @selected_objective do %>
+    <div class="modal modal-open bg-black/50" id="full-objective-modal">
+      <div class="modal-box w-11/12 max-w-5xl">
+        <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+          <.icon name="hero-document-text" class="size-5" />
+          Full Objective
+        </h3>
+
+        <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+          <pre class="text-sm whitespace-pre-wrap"><%= @selected_objective %></pre>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn" phx-click="close_objective_modal">Close</button>
+        </div>
+      </div>
+
+      <div class="modal-backdrop" phx-click="close_objective_modal">
         <button class="cursor-default">close</button>
       </div>
     </div>

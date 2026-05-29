@@ -16,6 +16,7 @@ defmodule EvoDashWeb.AgentsLive do
       socket
       |> assign(:selected_agent_id, nil)
       |> assign(:selected_history_entry, nil)
+      |> assign(:selected_objective, nil)
       |> assign(:agents, agents)
       |> assign(:path_tree, build_path_tree(agents))
 
@@ -36,7 +37,11 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   def handle_event("close_details", _params, socket) do
-    {:noreply, socket |> assign(:selected_agent_id, nil) |> assign(:selected_history_entry, nil)}
+    {:noreply,
+     socket
+     |> assign(:selected_agent_id, nil)
+     |> assign(:selected_history_entry, nil)
+     |> assign(:selected_objective, nil)}
   end
 
   @impl true
@@ -52,6 +57,22 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_event("close_message_modal", _params, socket) do
     {:noreply, assign(socket, :selected_history_entry, nil)}
+  end
+
+  @impl true
+  def handle_event("view_full_objective", _params, socket) do
+    agent = Enum.find(socket.assigns.agents, &(&1.id == socket.assigns.selected_agent_id))
+
+    if agent do
+      {:noreply, assign(socket, :selected_objective, agent.objective)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("close_objective_modal", _params, socket) do
+    {:noreply, assign(socket, :selected_objective, nil)}
   end
 
   defp build_path_tree(agents) do
@@ -164,8 +185,6 @@ defmodule EvoDashWeb.AgentsLive do
 
   # Converts ReqLLM.Message structs to history entry format
   defp convert_messages_to_history(messages) when is_list(messages) do
-    base_time = System.system_time(:millisecond)
-
     messages
     |> Enum.with_index()
     |> Enum.map(fn {msg, index} ->
@@ -190,7 +209,6 @@ defmodule EvoDashWeb.AgentsLive do
         metadata: Map.get(msg, :metadata, %{})
       }
 
-      # Add tool-specific metadata
       data =
         case msg.role do
           :tool ->
@@ -204,7 +222,7 @@ defmodule EvoDashWeb.AgentsLive do
         end
 
       %{
-        timestamp: base_time + index * 1000,
+        turn: index + 1,
         type: Atom.to_string(msg.role),
         data: data
       }
