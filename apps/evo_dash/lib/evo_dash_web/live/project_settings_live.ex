@@ -274,45 +274,34 @@ defmodule EvoDashWeb.ProjectSettingsLive do
             ForeignRepo.new(repo_id, path)
           end
 
-        # Check if already exists
-        existing_ids =
-          try do
-            EvoGit.AgentScheduler.get_foreign_repos()
-            |> Enum.map(& &1.id)
-          rescue
-            _ -> []
-          catch
-            _, _ -> []
-          end
+        try do
+          case EvoGit.AgentScheduler.register_foreign_repo(repo) do
+            :ok ->
+              {foreign_repos, project_root} = load_repos_and_root()
 
-        if repo_id in existing_ids do
-          {:noreply,
-           socket
-           |> put_flash(:error, "Repo '#{repo_id_str}' already registered.")}
-        else
-          try do
-            :ok = EvoGit.AgentScheduler.register_foreign_repos([repo])
-
-            {foreign_repos, project_root} = load_repos_and_root()
-
-            {:noreply,
-             socket
-             |> assign(:foreign_repos, foreign_repos)
-             |> assign(:project_root, project_root)
-             |> assign(:show_add_form, false)
-             |> assign(:new_repo_id, "")
-             |> assign(:new_repo_path, "")
-             |> assign(:new_repo_name, "")
-             |> put_flash(:info, "Foreign repo '#{repo_id_str}' registered successfully.")}
-          rescue
-            e ->
               {:noreply,
                socket
-               |> put_flash(:error, "Failed to register repo: #{Exception.message(e)}")}
-          catch
-            _, _ ->
-              {:noreply, put_flash(socket, :error, "Failed to register repo: scheduler not available.")}
+               |> assign(:foreign_repos, foreign_repos)
+               |> assign(:project_root, project_root)
+               |> assign(:show_add_form, false)
+               |> assign(:new_repo_id, "")
+               |> assign(:new_repo_path, "")
+               |> assign(:new_repo_name, "")
+               |> put_flash(:info, "Foreign repo '#{repo_id_str}' registered successfully.")}
+
+            {:error, {:already_exists, id}} ->
+              {:noreply,
+               socket
+               |> put_flash(:error, "Repo '#{id}' is already registered.")}
           end
+        rescue
+          e ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "Failed to register repo: #{Exception.message(e)}")}
+        catch
+          _, _ ->
+            {:noreply, put_flash(socket, :error, "Failed to register repo: scheduler not available.")}
         end
     end
   end
@@ -322,18 +311,22 @@ defmodule EvoDashWeb.ProjectSettingsLive do
     repo_id = String.to_atom(repo_id_str)
 
     try do
-      # Get current repos, filter out the one to remove, and re-register the remaining
-      current_repos = EvoGit.AgentScheduler.get_foreign_repos()
-      remaining = Enum.reject(current_repos, &(&1.id == repo_id))
+      case EvoGit.AgentScheduler.unregister_foreign_repo(repo_id) do
+        :ok ->
+          {foreign_repos, project_root} = load_repos_and_root()
 
-      # The scheduler merges repos, so we can't directly remove.
-      # We need to stop the scheduler and restart, or we just show a warning.
-      # For now, show that removal requires a restart.
-      _remaining = remaining
+          {:noreply,
+           socket
+           |> assign(:foreign_repos, foreign_repos)
+           |> assign(:project_root, project_root)
+           |> put_flash(:info, "Foreign repo '#{repo_id_str}' removed successfully.")}
 
-      {:noreply,
-       socket
-       |> put_flash(:error, "Removing repos at runtime is not yet supported. Restart the scheduler to apply changes.")}
+        {:error, :cannot_unregister_primary} ->
+          {:noreply, put_flash(socket, :error, "Cannot remove the primary repository.")}
+
+        {:error, {:not_found, id}} ->
+          {:noreply, put_flash(socket, :error, "Repo '#{id}' not found.")}
+      end
     rescue
       e ->
         {:noreply,
