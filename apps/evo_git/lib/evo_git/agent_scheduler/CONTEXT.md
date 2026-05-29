@@ -7,10 +7,11 @@ Contains data struct models and extracted helper modules used internally by the 
 
 | Module | Description |
 |---|---|
+| `EvoGit.AgentScheduler.State` | GenServer state struct for the `AgentScheduler`. Typed struct with 20 fields covering initialization (`initialized`, `repo_root`, `repos`, `base_sha`), configuration (`max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_depth`, `llm_model`, `max_retries`), agent lifecycle (`next_agent_id`, `next_task_id`, `running_count`, `ref_to_agent`, `queue`), and slot management (`llm_slots_available`, `llm_waiting`, `llm_backoff_until`, `tool_slots_available`, `tool_waiting`). |
 | `EvoGit.AgentScheduler.AgentState` | Live spatial/temporal state for a **running** agent. Stored in `:evogit_agent_state` ETS. Fields: `context` (ReqLLM.Context \| nil), `context_node` (ContextNode), `phylo_node` (PhyloGraphNode \| nil), `event_sink` (pid \| nil), `llm_model`, `max_retries`, `max_depth`, `parent_id`, `objective`, `repo_id` (atom, default `:primary`). Enforced keys: `[:context_node, :llm_model, :max_retries, :max_depth]`. |
-| `EvoGit.AgentScheduler.SchedMeta` | Scheduling metadata for a **registered** agent. Stored in `:evogit_sched_meta` ETS. Fields: `id`, `depth`, `spec` (AgentSpec), `status` (`:pending \| :running \| :waiting \| :ready`), `worktree`, `task_ref`, `from`, `parent_id`, `task_id` (groups agents from the same top-level `run_agent` call), `retries`, `result_sent`, `sub_agent_from`, `total_sub_specs`, `pending_sub_agents` (MapSet), `sub_agent_results` (map), `sub_agent_indices` (map). Enforced keys: `[:id, :depth, :spec]`. |
-| `EvoGit.AgentScheduler.Slots` | LLM and tool slot management as pure functions operating on scheduler state. Handles request/release, global backoff for rate-limit errors, and pending queue grants. Extracted from the parent GenServer. |
-| `EvoGit.AgentScheduler.Worktrees` | Worktree lifecycle management as pure functions: initialization, teardown, assignment/preparation, init script execution, deletion, and orphaned branch cleanup. Extracted from the parent GenServer. |
+| `EvoGit.AgentScheduler.SchedMeta` | Scheduling metadata for a **registered** agent. Stored in `:evogit_sched_meta` ETS. Fields: `id`, `depth`, `spec` (AgentSpec), `status` (`:pending \| :running \| :waiting \| :ready \| :blocked`), `worktree`, `task_ref`, `from`, `parent_id`, `task_id` (groups agents from the same top-level `run_agent` call), `retries`, `result_sent`, `sub_agent_from`, `total_sub_specs`, `pending_sub_agents` (MapSet), `sub_agent_results` (map), `sub_agent_indices` (map). Enforced keys: `[:id, :depth, :spec]`. |
+| `EvoGit.AgentScheduler.Slots` | LLM and tool slot management as pure functions operating on `State.t()`. Handles request/release, global backoff for rate-limit errors, and pending queue grants. All public functions are fully typespec'd. |
+| `EvoGit.AgentScheduler.Worktrees` | Worktree lifecycle management as pure functions operating on `State.t()`: initialization, teardown, assignment/preparation, init script execution, deletion, and orphaned branch cleanup. All public functions are fully typespec'd. |
 
 ### ETS Table Layout
 
@@ -76,8 +77,9 @@ The dashboard polls every 1 second via `:timer.send_interval(1000, self(), :refr
 
 ## Constraints
 - Data structs are plain data with no behaviour or callbacks.
-- **Helper modules contain business logic**: `Slots` and `Worktrees` are pure-function modules that operate on the scheduler's state map. They are called by the parent GenServer's callbacks but do not maintain their own state.
+- **Helper modules contain business logic**: `Slots` and `Worktrees` are pure-function modules that operate on the scheduler's `State.t()` struct. They are called by the parent GenServer's callbacks but do not maintain their own state.
 - **Ownership model**: `AgentState` is primarily owned by agent processes (scheduler writes initial values, agents update `phylo_node` and `context`). `SchedMeta` is owned **exclusively** by the scheduler process; agents never read or write it.
 - Both structs are persisted in dedicated ETS tables created by the parent `AgentScheduler` GenServer, not in this directory.
 - New fields may be added to either struct as scheduling features evolve, but ownership boundaries must be respected.
 - The `Worktrees` module has its own private copies of the ETS helper functions (`get_sched_meta`, `put_sched_meta`, `get_agent_state`, `put_agent_state`) because it needs to update both tables during worktree operations but is not the GenServer itself.
+- **State struct discipline**: The `AgentScheduler` GenServer state must always be a `%State{}` struct. All updates must preserve the struct type (use `%State{state | ...}` syntax, not `Map.put/3`).
