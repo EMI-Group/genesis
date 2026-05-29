@@ -72,8 +72,8 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/settings"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :settings && "btn-active"]}
-                aria-current={@current_page == :settings && "page"}
+                class={["btn btn-sm btn-ghost gap-2", @current_page in [:settings, :project_settings] && "btn-active"]}
+                aria-current={@current_page in [:settings, :project_settings] && "page"}
               >
                 <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
               </.link>
@@ -119,8 +119,8 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/settings"}
-                class={@current_page == :settings && "active"}
-                aria-current={@current_page == :settings && "page"}
+                class={@current_page in [:settings, :project_settings] && "active"}
+                aria-current={@current_page in [:settings, :project_settings] && "page"}
               >
                 <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
               </.link>
