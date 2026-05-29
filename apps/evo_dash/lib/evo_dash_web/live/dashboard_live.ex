@@ -258,6 +258,18 @@ defmodule EvoDashWeb.DashboardLive do
           <% end %>
         </h2>
         <div class="flex-1 h-px bg-base-200"></div>
+        <details class="dropdown dropdown-end">
+          <summary class="btn btn-sm btn-ghost btn-circle">
+            <.icon name="hero-ellipsis-vertical" class="size-5" />
+          </summary>
+          <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
+            <li>
+              <button class="text-error" phx-click="clear_task_history" phx-confirm="Clear all finished task history? This cannot be undone.">
+                <.icon name="hero-trash" class="size-4" /> Clear Task History
+              </button>
+            </li>
+          </ul>
+        </details>
       </div>
 
       <!-- Task List -->
@@ -819,6 +831,42 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_event("close_options_modal", _params, socket) do
     {:noreply, assign(socket, :selected_options, nil)}
+  end
+
+  @impl true
+  def handle_event("clear_task_history", _params, socket) do
+    TaskRegistry.clear_finished_tasks()
+
+    tasks =
+      if socket.assigns.active_project do
+        TaskRegistry.list_tasks_by_path(socket.assigns.active_project)
+      else
+        TaskRegistry.list_tasks()
+      end
+
+    {:noreply,
+     socket
+     |> assign(:tasks, tasks)
+     |> assign(:expanded_task_ids, MapSet.new())}
+  end
+
+  @impl true
+  def handle_event("delete_task", %{"task_id" => task_id}, socket) do
+    TaskRegistry.delete_task(task_id)
+
+    expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+
+    tasks =
+      if socket.assigns.active_project do
+        TaskRegistry.list_tasks_by_path(socket.assigns.active_project)
+      else
+        TaskRegistry.list_tasks()
+      end
+
+    {:noreply,
+     socket
+     |> assign(:tasks, tasks)
+     |> assign(:expanded_task_ids, expanded)}
   end
 
   # Helpers
