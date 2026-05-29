@@ -153,7 +153,7 @@ defmodule EvoGit.AgentScheduler.Slots do
         if backoff_until && now < backoff_until do
           # Still in backoff - re-enqueue at front of rest and stop processing
           state = maybe_clear_llm_backoff(state)
-          updated_waiting = :queue.in_r({agent_id, from, backoff_until}, rest_waiting)
+          _updated_waiting = :queue.in_r({agent_id, from, backoff_until}, rest_waiting)
           {state, []}
         else
           # Backoff expired or not set - grant the slot
