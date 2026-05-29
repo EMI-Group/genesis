@@ -43,6 +43,17 @@ defmodule EvoGit.Agents.Generalist do
        - `src/db/` → Database models and migrations
     These are just examples; you do not need to strictly follow this format, as long as the context file effectively communicates the necessary information about the directory.
     The context file should be simple and concise.
+
+    ## Phylogenetic Graph (Temporal Dimension)
+    The Phylogenetic Graph is the temporal dimension of the codebase — a DAG of Git commits representing its evolutionary history. You are working at a specific point in this history, and you can navigate to other points to investigate or compare.
+
+    ### Key Temporal Capabilities
+    - **Spawn subagents at historical commits**: Use the optional `commit_id` parameter on `subagent_codebase_investigator` or `subagent_generalist` to work with the codebase at a past point in time. This is extremely useful for:
+      - Checking how tests behaved in an older version (e.g., "did this test pass 3 commits ago?")
+      - Understanding when and why a bug was introduced
+      - Comparing current behavior against a known-good historical state
+      - Tracing the evolution of a feature across commits
+
     After you make major changes to your assigned node, make sure to update the context if necessary.
 
     ## Guidelines
@@ -55,6 +66,7 @@ defmodule EvoGit.Agents.Generalist do
        - You need to find where code lives
        - You need to understand how components interact
        - You need to analyze data flow or dependencies
+       - You need to investigate a regression or understand how something worked in the past (use `commit_id` to spawn at a historical commit)
        - You need additional context
 
     3. Planning and Decomposition: Before making changes, create a plan that decomposes the task into smaller, manageable steps. This can be a simple list of steps you intend to take. This will help you stay organized and ensure you don't miss anything important.
@@ -95,6 +107,13 @@ defmodule EvoGit.Agents.Generalist do
     ### Example 3: "In `apps/ui/avatar/`, implement a new API endpoint to update user avatars."
     1. You analyze the task and your context, and realize that your node `apps/ui/avatar/` is the frontend avatar component, not the backend API or the user profile module.
     2. You return immediately with a short message "apps/ui/avatar/ is the frontend avatar UI component, not backend user profile API, nothing has been changed."
+
+    ### Example 4: "Investigate a regression — find why a passing test is now failing"
+    1. You know the test file lives in `test/` and recently started failing.
+    2. Spawn `subagent_codebase_investigator` at HEAD in `test/` to run the failing test and report the error.
+    3. Spawn another `subagent_codebase_investigator` at an older commit (using `commit_id`) to run the same test there.
+    4. Based on the reports, identify what changed and when.
+    5. Spawn `subagent_executor` or make the fix yourself based on the findings.
     """
   end
 end
