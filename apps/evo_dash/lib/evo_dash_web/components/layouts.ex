@@ -9,7 +9,7 @@ defmodule EvoDashWeb.Layouts do
   # The default root.html.heex file contains the HTML
   # skeleton of your application, namely HTML headers
   # and other static content.
-  embed_templates "layouts/*"
+  embed_templates("layouts/*")
 
   @doc """
   Renders your app layout.
@@ -25,15 +25,16 @@ defmodule EvoDashWeb.Layouts do
       </Layouts.app>
 
   """
-  attr :flash, :map, required: true, doc: "the map of flash messages"
+  attr(:flash, :map, required: true, doc: "the map of flash messages")
 
-  attr :current_page, :atom,
+  attr(:current_page, :atom,
     default: nil,
     doc: "the current page atom (:dashboard, :agents) for active nav highlighting"
+  )
 
-  attr :config_status, :map, default: nil
+  attr(:config_status, :map, default: nil)
 
-  slot :inner_block, required: true
+  slot(:inner_block, required: true)
 
   def app(assigns) do
     ~H"""
@@ -72,8 +73,8 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/settings"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page in [:settings, :project_settings] && "btn-active"]}
-                aria-current={@current_page in [:settings, :project_settings] && "page"}
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :settings && "btn-active"]}
+                aria-current={@current_page == :settings && "page"}
               >
                 <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
               </.link>
@@ -119,8 +120,8 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/settings"}
-                class={@current_page in [:settings, :project_settings] && "active"}
-                aria-current={@current_page in [:settings, :project_settings] && "page"}
+                class={@current_page == :settings && "active"}
+                aria-current={@current_page == :settings && "page"}
               >
                 <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
               </.link>
@@ -183,8 +184,8 @@ defmodule EvoDashWeb.Layouts do
 
       <.flash_group flash={@flash} />
   """
-  attr :flash, :map, required: true, doc: "the map of flash messages"
-  attr :id, :string, default: "flash-group", doc: "the optional id of flash container"
+  attr(:flash, :map, required: true, doc: "the map of flash messages")
+  attr(:id, :string, default: "flash-group", doc: "the optional id of flash container")
 
   def flash_group(assigns) do
     ~H"""

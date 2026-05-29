@@ -28,27 +28,25 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 |--------|------|---------|
 | `EvoDashWeb` | `./lib/evo_dash_web.ex` | `use`-based macros for controller, live_view, html, etc. Imports CoreComponents and Helpers into all HTML/LiveView modules. |
 | `EvoDashWeb.Endpoint` | `./lib/evo_dash_web/endpoint.ex` | Phoenix endpoint (LiveView socket, static files, Plug pipeline) |
-| `EvoDashWeb.Router` | `./lib/evo_dash_web/router.ex` | Routes: `/` → DashboardLive, `/agents` → AgentsLive, `/settings` → SettingsLive, `/settings/project` → ProjectSettingsLive, `/help` → HelpLive |
+| `EvoDashWeb.Router` | `./lib/evo_dash_web/router.ex` | Routes: `/` → DashboardLive, `/agents` → AgentsLive, `/settings` → SettingsLive, `/help` → HelpLive |
 | `EvoDashWeb.Telemetry` | `./lib/evo_dash_web/telemetry.ex` | Telemetry metrics supervisor (Phoenix + VM metrics) |
 | `EvoDashWeb.Helpers` | `./lib/evo_dash_web/helpers.ex` | Shared utility functions for UI components (status badges/colors, datetime formatting, icon mapping, modal component, tool call parsing, code deduplication) |
 
 ### Routes
 | Route | LiveView | Purpose |
 |-------|----------|---------|
-| `GET /` | `DashboardLive` | Project-based task dashboard: open project tabs, auto-mode detection, task form (mode + prompt only), task cards with logs |
+| `GET /` | `DashboardLive` | Project-based task dashboard: open project tabs, auto-mode detection, task form, project settings (evogit.toml, foreign repos), task cards with logs |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with detail panels, chat history viewer |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration panel (concurrency, retries, depth, model) |
-| `GET /settings/project` | `ProjectSettingsLive` | Per-project configuration: evogit.toml values, foreign repo management (add/remove) |
 | `GET /help` | `HelpLive` | Configuration file manager: view/edit user config.toml, config status, credentials reference |
 | `/dashboard` | Phoenix.LiveDashboard | Built-in Phoenix dashboard (metrics/telemetry) |
 
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 | Module | File | Purpose |
 |--------|------|---------|
-| `EvoDashWeb.DashboardLive` | `dashboard_live.ex` | Main dashboard. Manages project tabs, task form, task list with expand/collapse, result/options modals. Polls TaskRegistry every 1s. Auto-detects mode on project open. |
+| `EvoDashWeb.DashboardLive` | `dashboard_live.ex` | Main dashboard. Manages project tabs, task form, task list with expand/collapse, result/options modals, inline project settings panel (evogit.toml config, foreign repo add/remove). Polls TaskRegistry every 1s. Auto-detects mode on project open. Uses `@active_project` directly for project config reads. |
 | `EvoDashWeb.AgentsLive` | `agents_live.ex` + `agents_live.html.heex` | Agent tree visualization. Reads directly from ETS tables (`evogit_agent_state`, `evogit_sched_meta`). Shows path-organized tree with expandable agent details, chat history, modals for full messages/objectives. Polls every 1s. |
-| `EvoDashWeb.SettingsLive` | `settings_live.ex` | Runtime scheduler settings. Reads from `EvoGit.AgentScheduler.get_config/0`. Updates via `EvoGit.AgentScheduler.update_config/1`. Blocks concurrency changes while agents running. Polls every 2s. Includes link to Project Settings. |
-| `EvoDashWeb.ProjectSettingsLive` | `project_settings_live.ex` | Per-project configuration & foreign repo management. Reads evogit.toml via `EvoGit.ProjectConfig.read/1`, foreign repos from `EvoGit.AgentScheduler.get_foreign_repos/0`. Add foreign repos via `EvoGit.AgentScheduler.register_foreign_repos/1`. Polls every 3s. |
+| `EvoDashWeb.SettingsLive` | `settings_live.ex` | Runtime scheduler settings. Reads from `EvoGit.AgentScheduler.get_config/0`. Updates via `EvoGit.AgentScheduler.update_config/1`. Blocks concurrency changes while agents running. Polls every 2s. |
 | `EvoDashWeb.HelpLive` | `help_live.ex` | Configuration management. Shows config status (missing fields), config file locations, TOML editor with save (validates TOML syntax before saving via `EvoGit.Config.save_user_config/1`), credentials reference (read-only), configuration reference. |
 
 ### UI Components (`./lib/evo_dash_web/components/`)
@@ -68,7 +66,8 @@ Standard Phoenix boilerplate: `PageController` (home), `ErrorHTML`, `ErrorJSON`.
 - **Vendor**: daisyui.js, daisyui-theme.js, heroicons.js, topbar.js
 
 ### Test Suite (`./test/`)
-Minimal coverage: controller tests (PageController, error handlers) via `EvoDashWeb.ConnCase`. No LiveView tests yet.
+- **Controller tests**: PageController, error handlers via `EvoDashWeb.ConnCase`
+- **LiveView tests** (`test/evo_dash_web/live/dashboard_live_test.exs`): DashboardLive tests covering project settings integration — project open/close, settings panel toggle, config display, foreign repos, route removal verification (14 tests)
 
 ## Key Interactions
 
@@ -76,10 +75,10 @@ Minimal coverage: controller tests (PageController, error handlers) via `EvoDash
 Browser ←→ Endpoint ←→ Router
                           ├─ DashboardLive     ←→ TaskRegistry ←→ EvoGit.Runtime.Genesis / Evolution
                           │   (project tabs, auto-mode, filtered task list)
+                          │   ←→ EvoGit.AgentScheduler (get_foreign_repos, register/unregister_foreign_repo)
+                          │   ←→ EvoGit.ProjectConfig (read, worktree_script)
                           ├─ AgentsLive        ←→ ETS tables (evogit_agent_state, evogit_sched_meta)
                           ├─ SettingsLive      ←→ EvoGit.AgentScheduler (get_config/update_config)
-                          ├─ ProjectSettingsLive ←→ EvoGit.AgentScheduler (get_foreign_repos/register_foreign_repos)
-                          │                      ←→ EvoGit.ProjectConfig (read, worktree_script)
                           └─ HelpLive          ←→ EvoGit.Config (config_status, save_user_config, paths)
 ```
 
@@ -100,11 +99,12 @@ Browser ←→ Endpoint ←→ Router
 - `EvoGit.AgentScheduler.update_config/1` → update with `{:error, :agents_running}` guard
 - Config fields: max_concurrency, max_tool_concurrency, agent_max_retries, max_agent_depth, max_retries, llm_model
 
-### ProjectSettingsLive ↔ EvoGit.AgentScheduler + ProjectConfig
+### DashboardLive (Project Settings) ↔ EvoGit.AgentScheduler + ProjectConfig
 - `EvoGit.AgentScheduler.get_foreign_repos/0` → list of all registered ForeignRepo structs (including primary)
-- `EvoGit.AgentScheduler.register_foreign_repos/1` → add new foreign repos (merges with existing)
-- `EvoGit.ProjectConfig.read/1` → read evogit.toml config map from repo root
-- Project root is derived from the primary repo's root path in the scheduler state
+- `EvoGit.AgentScheduler.register_foreign_repo/1` → add a new foreign repo
+- `EvoGit.AgentScheduler.unregister_foreign_repo/1` → remove a foreign repo
+- `EvoGit.ProjectConfig.read/1` → read evogit.toml config map from project root (uses `@active_project`)
+- Project root comes directly from `@active_project` assign (not from scheduler state)
 - All calls wrapped in try/rescue for resilience when scheduler is not running
 
 ### HelpLive ↔ EvoGit.Config
@@ -115,10 +115,9 @@ Browser ←→ Endpoint ←→ Router
 ### Polling Intervals
 | LiveView | Timer Interval | Purpose |
 |----------|---------------|---------|
-| DashboardLive | 1000ms | Refresh task list |
+| DashboardLive | 1000ms | Refresh task list + refresh project settings when panel is open |
 | AgentsLive | 1000ms | Refresh agent tree |
 | SettingsLive | 2000ms | Refresh scheduler config |
-| ProjectSettingsLive | 3000ms | Refresh foreign repos & project config |
 
 ### Persistence & State
 - **Task persistence**: Completed task records are persisted via DETS (Erlang's built-in disk storage) to the platform-appropriate data directory (resolved by `EvoGit.Platform.data_dir/0`). Up to 10 most recent finished tasks are kept. DETS corruption is auto-recovered.

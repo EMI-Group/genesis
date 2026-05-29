@@ -70,12 +70,6 @@ defmodule EvoDashWeb.SettingsLive do
           </div>
         </div>
       </div>
-      <!-- Link to Project Settings -->
-      <div class="mt-6">
-        <.link navigate={~p"/settings/project"} class="btn btn-outline btn-sm gap-2">
-          <.icon name="hero-folder-open" class="size-4" /> Project Settings &amp; Foreign Repos
-        </.link>
-      </div>
     </EvoDashWeb.Layouts.app>
     """
   end
@@ -134,7 +128,10 @@ defmodule EvoDashWeb.SettingsLive do
       {:error, :agents_running} ->
         {:noreply,
          socket
-         |> put_flash(:error, "Cannot update concurrency while agents are running. Other settings applied.")}
+         |> put_flash(
+           :error,
+           "Cannot update concurrency while agents are running. Other settings applied."
+         )}
     end
   end
 
