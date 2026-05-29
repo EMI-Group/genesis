@@ -120,11 +120,14 @@ defmodule EvoGit.Core.ForeignRepo do
 
   @doc """
   Checks if a path string is absolute (starts with /).
+  Returns false for nil or non-binary values.
   """
-  @spec absolute_path?(String.t()) :: boolean()
+  @spec absolute_path?(String.t() | nil) :: boolean()
   def absolute_path?(path) when is_binary(path) do
     String.starts_with?(path, "/")
   end
+
+  def absolute_path?(_other), do: false
 
   # Normalizes a relative path to "./foo/bar" format
   defp normalize_relative(path) do
