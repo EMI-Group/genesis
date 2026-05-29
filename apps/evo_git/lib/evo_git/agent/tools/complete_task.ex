@@ -14,6 +14,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   require Logger
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.Agent.Result
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -109,7 +110,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   @doc """
   Performs the actual completion: records branch name, adds metadata note.
 
-  Returns {:ok, completion_map} with :result, :commit_sha, and :branch.
+  Returns a `%EvoGit.Agent.Result{}` struct with :result, :commit_sha, and :branch.
 
   ## Options
     - `:base_commit` - The commit SHA the agent started on (required for metadata)
@@ -117,6 +118,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     - `:depth` - The depth of this agent in the hierarchy
     - `:objective` - The objective/task this agent was working on
   """
+  @spec complete(pos_integer(), String.t(), String.t(), keyword()) :: Result.t()
   def complete(agent_id, result, commit_sha, opts \\ []) do
     base_commit = Keyword.get(opts, :base_commit)
     parent_id = Keyword.get(opts, :parent_id)
@@ -141,7 +143,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       })
     end
 
-    %{
+    %Result{
       result: result,
       commit_sha: commit_sha,
       branch: branch_name
