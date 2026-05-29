@@ -33,6 +33,9 @@ defmodule EvoGit.AgentScheduler.State do
   - `llm_waiting` — FIFO queue of `{agent_id, from}` pairs blocked on an LLM slot
   - `llm_backoff_until` — monotonic timestamp until which all LLM calls are paused (`nil` when none)
 
+  ### Pause Control
+  - `paused` — whether the scheduler is paused (no new slots or agent dispatches granted)
+
   ### Tool Slot Management
   - `tool_slots_available` — remaining tool slots in the pool
   - `tool_waiting` — FIFO queue of `{agent_id, from}` pairs blocked on a tool slot
@@ -61,7 +64,8 @@ defmodule EvoGit.AgentScheduler.State do
     tool_slots_available: 2,
     tool_waiting: :queue.new(),
     max_tool_concurrency: 2,
-    next_task_id: 1
+    next_task_id: 1,
+    paused: false
   ]
 
   @type t :: %__MODULE__{
@@ -84,6 +88,7 @@ defmodule EvoGit.AgentScheduler.State do
           tool_slots_available: non_neg_integer(),
           tool_waiting: :queue.queue(term()),
           max_tool_concurrency: pos_integer(),
-          next_task_id: pos_integer()
+          next_task_id: pos_integer(),
+          paused: boolean()
         }
 end
