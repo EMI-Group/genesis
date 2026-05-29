@@ -590,20 +590,21 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call(:pause, _from, state) do
+  def handle_call(:pause, _from, %State{} = state) do
     if state.paused do
       {:reply, :ok, state}
     else
       Logger.info("AgentScheduler: Pausing scheduler — no new slots or agents will be granted")
-      {:reply, :ok, %State{state | paused: true}}
+      state = struct(state, paused: true)
+      {:reply, :ok, state}
     end
   end
 
   @impl true
-  def handle_call(:resume, _from, state) do
+  def handle_call(:resume, _from, %State{} = state) do
     if state.paused do
       Logger.info("AgentScheduler: Resuming scheduler — granting pending slots and dispatching queued agents")
-      state = %State{state | paused: false}
+      state = struct(state, paused: false)
       {state, status_updates} = Slots.grant_pending_on_resume(state)
       apply_status_updates(status_updates)
       state = dispatch_queued_agents(state)
