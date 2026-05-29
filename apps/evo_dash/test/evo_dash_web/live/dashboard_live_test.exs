@@ -9,6 +9,14 @@ defmodule EvoDashWeb.DashboardLiveTest do
     File.mkdir_p!(tmp_dir)
 
     on_exit(fn ->
+      # Clean up the recent project entry to prevent DETS pollution
+      # (belt-and-suspenders with the XDG_DATA_HOME redirect in test_helper.exs)
+      try do
+        EvoDash.TaskRegistry.remove_recent_project(tmp_dir)
+      rescue
+        _ -> :ok
+      end
+
       File.rm_rf!(tmp_dir)
     end)
 
