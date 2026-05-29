@@ -42,50 +42,50 @@ defmodule EvoDashWeb.Layouts do
       <nav class="navbar px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         <!-- Left: Logo -->
         <div class="flex-1">
-          <a href="/" class="flex items-center gap-2 text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
+          <.link navigate={~p"/"} class="flex items-center gap-2 text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
             <.icon name="hero-code-bracket-square" class="size-6 text-primary" />
             <span>EvoGit</span>
-          </a>
+          </.link>
         </div>
 
         <!-- Right: Desktop Nav Links + Theme Toggle -->
         <div class="flex-none hidden lg:flex items-center gap-1">
           <ul class="flex items-center gap-1 px-2">
             <li>
-              <a
-                href="/"
+              <.link
+                navigate={~p"/"}
                 class={["btn btn-sm btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
                 aria-current={@current_page == :dashboard && "page"}
               >
                 <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
-              </a>
+              </.link>
             </li>
             <li>
-              <a
-                href="/agents"
+              <.link
+                navigate={~p"/agents"}
                 class={["btn btn-sm btn-ghost gap-2", @current_page == :agents && "btn-active"]}
                 aria-current={@current_page == :agents && "page"}
               >
                 <.icon name="hero-server" class="size-4" /> Agents
-              </a>
+              </.link>
             </li>
             <li>
-              <a
-                href="/settings"
+              <.link
+                navigate={~p"/settings"}
                 class={["btn btn-sm btn-ghost gap-2", @current_page == :settings && "btn-active"]}
                 aria-current={@current_page == :settings && "page"}
               >
                 <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
-              </a>
+              </.link>
             </li>
             <li>
-              <a
-                href="/help"
+              <.link
+                navigate={~p"/help"}
                 class={["btn btn-sm btn-ghost gap-2", @current_page == :help && "btn-active"]}
                 aria-current={@current_page == :help && "page"}
               >
                 <.icon name="hero-question-mark-circle" class="size-4" /> Help
-              </a>
+              </.link>
             </li>
           </ul>
           <div class="divider divider-horizontal mx-1 h-6"></div>
@@ -99,40 +99,40 @@ defmodule EvoDashWeb.Layouts do
           </summary>
           <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
             <li>
-              <a
-                href="/"
+              <.link
+                navigate={~p"/"}
                 class={@current_page == :dashboard && "active"}
                 aria-current={@current_page == :dashboard && "page"}
               >
                 <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
-              </a>
+              </.link>
             </li>
             <li>
-              <a
-                href="/agents"
+              <.link
+                navigate={~p"/agents"}
                 class={@current_page == :agents && "active"}
                 aria-current={@current_page == :agents && "page"}
               >
                 <.icon name="hero-server" class="size-4" /> Agents
-              </a>
+              </.link>
             </li>
             <li>
-              <a
-                href="/settings"
+              <.link
+                navigate={~p"/settings"}
                 class={@current_page == :settings && "active"}
                 aria-current={@current_page == :settings && "page"}
               >
                 <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
-              </a>
+              </.link>
             </li>
             <li>
-              <a
-                href="/help"
+              <.link
+                navigate={~p"/help"}
                 class={@current_page == :help && "active"}
                 aria-current={@current_page == :help && "page"}
               >
                 <.icon name="hero-question-mark-circle" class="size-4" /> Help
-              </a>
+              </.link>
             </li>
             <li class="mt-2 flex justify-center">
               <.theme_toggle />
@@ -162,7 +162,7 @@ defmodule EvoDashWeb.Layouts do
                   <li class="text-xs opacity-90">{warning}</li>
                 <% end %>
               </ul>
-              <a href="/help" class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">Configure now →</a>
+              <.link navigate={~p"/help"} class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">Configure now →</.link>
             </div>
             <button class="btn btn-xs btn-ghost text-warning-content" onclick="this.closest('.fixed').remove()">
               <.icon name="hero-x-mark" class="size-4" />
