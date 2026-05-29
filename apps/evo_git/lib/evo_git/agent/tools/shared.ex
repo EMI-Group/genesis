@@ -256,4 +256,69 @@ defmodule EvoGit.Agent.Tools.Shared do
     """
     |> String.trim()
   end
+
+  # --- Edit Utilities ---
+
+  @doc """
+  Validates the replace_all argument.
+  Returns {:ok, boolean} or {:error, message}.
+  """
+  def validate_replace_all(value) when is_boolean(value), do: {:ok, value}
+  def validate_replace_all(value),
+    do: {:error, "Argument 'replace_all' must be a boolean, got: #{inspect(value)}"}
+
+  @doc """
+  Applies a string replacement edit to file content.
+  Trims trailing whitespace from new_string before applying.
+  If replace_all is true, replaces all occurrences; otherwise just the first.
+  """
+  def apply_string_edit(content, old_string, new_string, replace_all) do
+    trimmed_new = String.trim_trailing(new_string)
+
+    if replace_all do
+      String.replace(content, old_string, trimmed_new)
+    else
+      String.replace(content, old_string, trimmed_new, global: false)
+    end
+  end
+
+  @doc """
+  Performs a string replacement edit on a file.
+  Reads the file, finds the old_string (with quote normalization),
+  validates uniqueness unless replace_all is true, applies the edit, and writes the result.
+  Returns a result string (success message or error message).
+  """
+  def perform_string_replace(file_path, display_path, old_string, new_string, replace_all) do
+    case File.read(file_path) do
+      {:ok, content} ->
+        actual_old = find_actual_string(content, old_string)
+
+        if is_nil(actual_old) do
+          "Error: old_string not found in file #{display_path}"
+        else
+          match_count = count_occurrences(content, actual_old)
+
+          if match_count > 1 and not replace_all do
+            "Error: Found #{match_count} matches of old_string in file. Set replace_all=true or provide more context."
+          else
+            updated_content = apply_string_edit(content, actual_old, new_string, replace_all)
+
+            case File.write(file_path, updated_content) do
+              :ok ->
+                if replace_all do
+                  "The file #{display_path} has been updated. All occurrences were successfully replaced."
+                else
+                  "The file #{display_path} has been updated successfully."
+                end
+
+              {:error, reason} ->
+                "Error writing file #{display_path}: #{:file.format_error(reason)}"
+            end
+          end
+        end
+
+      {:error, reason} ->
+        "Error reading file #{display_path}: #{:file.format_error(reason)}"
+    end
+  end
 end

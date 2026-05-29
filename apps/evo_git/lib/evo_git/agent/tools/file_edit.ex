@@ -51,68 +51,19 @@ defmodule EvoGit.Agent.Tools.FileEdit do
     with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),
          {:ok, old_string} <- Shared.fetch_string_arg(args, "old_string"),
          {:ok, new_string} <- Shared.fetch_string_arg(args, "new_string"),
-         {:ok, replace_all} <- validate_replace_all(Map.get(args, "replace_all", false)),
+         {:ok, replace_all} <- Shared.validate_replace_all(Map.get(args, "replace_all", false)),
          expanded_path = Shared.expand_path(file_path, repo_path) do
       do_edit(expanded_path, file_path, old_string, new_string, replace_all, repo_path, node_path)
     end
   end
 
-  defp validate_replace_all(value) when is_boolean(value), do: {:ok, value}
-
-  defp validate_replace_all(value),
-    do: {:error, "Argument 'replace_all' must be a boolean, got: #{inspect(value)}"}
-
   defp do_edit(file_path, display_path, old_string, new_string, replace_all, repo_path, node_path) do
     case Shared.validate_file_scope(file_path, node_path, repo_path) do
       :ok ->
-        perform_edit(file_path, display_path, old_string, new_string, replace_all)
+        Shared.perform_string_replace(file_path, display_path, old_string, new_string, replace_all)
 
       {:error, message} ->
         message
-    end
-  end
-
-  defp perform_edit(file_path, display_path, old_string, new_string, replace_all) do
-    case File.read(file_path) do
-      {:ok, content} ->
-        actual_old = Shared.find_actual_string(content, old_string)
-
-        if is_nil(actual_old) do
-          "Error: old_string not found in file #{display_path}"
-        else
-          match_count = Shared.count_occurrences(content, actual_old)
-
-          if match_count > 1 and not replace_all do
-            "Error: Found #{match_count} matches of old_string in file. Set replace_all=true or provide more context."
-          else
-            updated_content = apply_edit(content, actual_old, new_string, replace_all)
-
-            case File.write(file_path, updated_content) do
-              :ok ->
-                if replace_all do
-                  "The file #{display_path} has been updated. All occurrences were successfully replaced."
-                else
-                  "The file #{display_path} has been updated successfully."
-                end
-
-              {:error, reason} ->
-                "Error writing file #{display_path}: #{:file.format_error(reason)}"
-            end
-          end
-        end
-
-      {:error, reason} ->
-        "Error reading file #{display_path}: #{:file.format_error(reason)}"
-    end
-  end
-
-  defp apply_edit(content, old_string, new_string, replace_all) do
-    trimmed_new = String.trim_trailing(new_string)
-
-    if replace_all do
-      String.replace(content, old_string, trimmed_new)
-    else
-      String.replace(content, old_string, trimmed_new, global: false)
     end
   end
 end
