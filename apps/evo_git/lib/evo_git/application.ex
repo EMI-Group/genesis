@@ -7,6 +7,8 @@ defmodule EvoGit.Application do
 
   @impl true
   def start(_type, _args) do
+    EvoGit.Config.load_env()
+
     children = [
       {Task.Supervisor, name: EvoGit.TaskSupervisor},
       {EvoGit.AgentScheduler, []}
