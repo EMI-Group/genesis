@@ -47,6 +47,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Slots
+  alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ForeignRepo
@@ -388,7 +389,7 @@ defmodule EvoGit.AgentScheduler do
     llm_model = Keyword.get(opts, :llm_model, llm_model)
 
     {:ok,
-     %{
+     %State{
        initialized: false,
        repo_root: nil,
        repos: %{},
@@ -857,7 +858,7 @@ defmodule EvoGit.AgentScheduler do
 
   defp maybe_update(state, key, opts) do
     case Keyword.fetch(opts, key) do
-      {:ok, value} -> Map.put(state, key, value)
+      {:ok, value} -> struct(state, [{key, value}])
       :error -> state
     end
   end
