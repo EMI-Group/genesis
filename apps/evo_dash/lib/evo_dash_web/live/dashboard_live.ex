@@ -293,7 +293,7 @@ defmodule EvoDashWeb.DashboardLive do
             </p>
           </div>
         <% else %>
-          <%= for task <- Enum.sort_by(@tasks, & &1.started_at, :desc) do %>
+          <%= for task <- Enum.sort_by(@tasks, & &1.started_at, {:desc, DateTime}) do %>
             <EvoDashWeb.DashboardComponents.task_card
               task={task}
               show_details={MapSet.member?(@expanded_task_ids, task.id)}
