@@ -88,6 +88,10 @@ defmodule EvoDash.TaskRegistry do
     GenServer.cast(__MODULE__, {:delete_task, task_id})
   end
 
+  def clear_finished_tasks do
+    GenServer.call(__MODULE__, :clear_finished_tasks)
+  end
+
   ## Recent Projects Client API
 
   @doc """
@@ -234,6 +238,19 @@ defmodule EvoDash.TaskRegistry do
       |> Enum.uniq()
 
     {:reply, paths, state}
+  end
+
+  @impl true
+  def handle_call(:clear_finished_tasks, _from, state) do
+    :ets.tab2list(@table_name)
+    |> Enum.each(fn {id, task} ->
+      unless task.status in [:running, :pending] do
+        :ets.delete(@table_name, id)
+      end
+    end)
+
+    persist_tasks_to_dets()
+    {:reply, :ok, state}
   end
 
   ## Recent Projects Handlers
