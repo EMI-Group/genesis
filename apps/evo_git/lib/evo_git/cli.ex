@@ -216,6 +216,25 @@ defmodule EvoGit.CLI do
                                   the directory basename is used. (e.g., -R original:/Source/proj)
       -h, --help                  Show this help message.
 
+    Getting Started:
+      Step 1: Create the config directory
+        Linux:   mkdir -p ~/.config/evogit
+        macOS:   mkdir -p ~/Library/Application\\ Support/evogit
+        Windows: mkdir %APPDATA%\\evogit
+
+      Step 2: Create credentials.toml with your API key(s)
+        echo '[api_keys]'                     > credentials.toml
+        echo 'google = "YOUR_API_KEY_HERE"'  >> credentials.toml
+
+      Step 3: Create config.toml with your LLM model and username
+        echo '[llm]'                                  > config.toml
+        echo 'model = "your-model-name"'              >> config.toml
+        echo '[user]'                                 >> config.toml
+        echo 'github_username = "your-username"'      >> config.toml
+
+      Step 4: Run EvoGit!
+        evogit genesis "your prompt"
+
     Configuration:
       EvoGit requires API keys to communicate with LLM providers. Keys are stored
       in a credentials file (NOT in evogit.toml or environment variables alone).
@@ -234,6 +253,10 @@ defmodule EvoGit.CLI do
         tavily    = "tvly-..."
         anthropic = "sk-ant-..."
         openai    = "sk-..."
+
+      Note: Only one API key is required. Choose the provider matching your LLM model.
+
+      Tip: You can also set API keys via environment variables (see resolution order below).
 
       API key resolution order (first match wins):
         1. credentials.toml (recommended)
