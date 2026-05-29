@@ -19,12 +19,24 @@
               <p class="text-sm mt-2">Start a task from the dashboard to see agents here.</p>
             </div>
           <% else %>
-            <div class="space-y-2 font-mono text-sm">
-              <EvoDashWeb.AgentsComponents.path_tree
-                nodes={@path_tree}
-                depth={0}
-                selected_id={@selected_agent_id}
-              />
+            <div class="space-y-6">
+              <%= for {repo_name, tree_nodes} <- @repo_trees do %>
+                <div>
+                  <!-- Repo Header -->
+                  <div class="flex items-center gap-2 mb-3 pb-2 border-b border-base-200">
+                    <.icon name="hero-server-stack" class="size-5 text-primary" />
+                    <span class="font-bold text-base text-base-content"><%= repo_name %></span>
+                    <span class="text-xs text-base-content/50">(<%= length(tree_nodes) %> directories)</span>
+                  </div>
+                  <div class="space-y-2 font-mono text-sm">
+                    <EvoDashWeb.AgentsComponents.path_tree
+                      nodes={tree_nodes}
+                      depth={0}
+                      selected_id={@selected_agent_id}
+                    />
+                  </div>
+                </div>
+              <% end %>
             </div>
           <% end %>
         </div>
@@ -61,7 +73,7 @@
             <%= if agent do %>
               <div class="flex items-center justify-between mb-4">
                 <h3 class="card-title">
-                  <.icon name="hero-identification" class="size-5" /> #{agent.id}
+                  <.icon name="hero-identification" class="size-5" /> #<%= agent.task_local_id || agent.id %>
                 </h3>
                 <button
                   class="btn btn-sm btn-ghost btn-circle"
@@ -177,7 +189,7 @@
                         phx-click="select_agent"
                         phx-value-id={agent.parent_id}
                       >
-                        #{agent.parent_id}
+                        #<%= @id_to_display[agent.parent_id] || agent.parent_id %>
                       </button>
                     <% else %>
                       <span class="text-sm text-base-content/50">None</span>
@@ -196,7 +208,7 @@
                             phx-click="select_agent"
                             phx-value-id={child_id}
                           >
-                            #{child_id}
+                            #<%= @id_to_display[child_id] || child_id %>
                           </button>
                         <% end %>
                       </div>
