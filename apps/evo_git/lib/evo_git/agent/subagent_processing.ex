@@ -50,7 +50,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
     stream_event_fn = Keyword.fetch!(opts, :stream_event_fn)
     sync_commit_fn = Keyword.fetch!(opts, :sync_commit_fn)
 
-    subagent_specs = build_subagent_specs(indexed_calls, state)
+    # Validate calls: separate valid from those missing required 'path' argument.
+    # Invalid calls get immediate error results fed back to the LLM so it can correct them.
+    {valid_calls, invalid_results} = split_valid_subagent_calls(indexed_calls)
+
+    subagent_specs = build_subagent_specs(valid_calls, state)
     results = AgentScheduler.spawn_sub_agents(subagent_specs)
 
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -112,12 +116,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
     sync_commit_fn.(state)
 
     indexed_results =
-      Enum.zip(indexed_calls, results)
+      Enum.zip(valid_calls, results)
       |> Enum.map(fn {{call, index}, result} ->
         process_subagent_result(call, index, result, state, stream_event_fn)
       end)
 
-    {indexed_results, merge_message}
+    all_results = indexed_results ++ Enum.reverse(invalid_results)
+
+    {all_results, merge_message}
   end
 
   @doc """
@@ -270,6 +276,22 @@ defmodule EvoGit.Agent.SubagentProcessing do
   def format_subagent_result(other), do: inspect(other)
 
   # --- Private Helpers ---
+
+  # Separates indexed subagent calls into valid (have a path) and invalid (missing path).
+  # Invalid calls get immediate error results to feed back to the LLM.
+  defp split_valid_subagent_calls(indexed_calls) do
+    Enum.reduce(indexed_calls, {[], []}, fn {call, index} = indexed_call, {valid_acc, invalid_acc} ->
+      raw_path = Map.get(call.arguments, "path")
+
+      if is_nil(raw_path) or raw_path == "" do
+        tool_call_id = Map.get(call, :id) || call.name || "unknown"
+        error_msg = "Error: Missing required 'path' argument for subagent tool '#{call.name}'. Please specify a relative or absolute path for the subagent to operate in."
+        {valid_acc, [{index, tool_call_id, call.name, error_msg} | invalid_acc]}
+      else
+        {[indexed_call | valid_acc], invalid_acc}
+      end
+    end)
+  end
 
   defp perform_merge(repo_path, successful_shas, parent_commit, cross_repo_note) do
     case Git.merge_octopus(repo_path, successful_shas) do
