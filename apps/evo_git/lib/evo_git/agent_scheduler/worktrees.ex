@@ -124,7 +124,9 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     commit_sha = spec.phylo_node.current_commit
 
     Git.clean(wt)
-    branch_name = "evogit-agent#{agent_id}"
+    task_id = meta.task_id
+    task_local_id = agent_state.task_local_id
+    branch_name = "evogit-agent-T#{task_id}-A#{task_local_id}"
     Git.checkout(wt, branch_name)
 
     # Build the worktree-bound phylo_node (repo points to worktree)
@@ -206,18 +208,18 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @doc """
   Deletes a worktree directory and its associated git branch.
 
-  Extracts the agent ID from the path to derive the branch name
-  (e.g., `worker_42` → `evogit-agent42`).
+  Extracts the branch name from the directory name by replacing the
+  `worker_` prefix with `evogit-agent-` (e.g., `worker_T1_A42` → `evogit-agent-T1-A42`).
   """
   @spec delete(String.t(), String.t()) :: :ok
 
   def delete(path, repo_root) do
     Logger.info("AgentScheduler: Deleting worktree #{path}")
-    # Extract agent ID from path to derive branch name (e.g., worker_42 -> evogit-agent42)
+    # Derive branch name from directory name (e.g., worker_T1_A42 → evogit-agent-T1-A42)
     branch_name =
       path
       |> Path.basename()
-      |> String.replace_prefix("worker_", "evogit-agent")
+      |> String.replace_prefix("worker_", "evogit-agent-")
 
     File.rm_rf!(path)
     Git.prune_worktrees(repo_root)
@@ -227,15 +229,16 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   # --- Orphaned Branch Cleanup ---
 
   @doc """
-  Cleans up orphaned `evogit-agent*` branches from previous runs.
+  Cleans up orphaned `evogit-agent-*` branches from previous runs.
 
-  Lists all matching branches and deletes each one. This is called
-  during initialization to prevent stale branches from accumulating.
+  Matches all branches with the `evogit-agent-` prefix (e.g., `evogit-agent-T1-A1`,
+  `evogit-agent-T2-A5`) and deletes each one. This is called during initialization
+  to prevent stale branches from accumulating.
   """
   @spec clean_orphaned_branches(String.t()) :: :ok
 
   def clean_orphaned_branches(repo_root) do
-    case System.cmd("git", ["branch", "--list", "evogit-agent*"], cd: repo_root) do
+    case System.cmd("git", ["branch", "--list", "evogit-agent-*"], cd: repo_root) do
       {output, 0} when is_binary(output) and byte_size(output) > 0 ->
         output
         |> String.split("\n", trim: true)

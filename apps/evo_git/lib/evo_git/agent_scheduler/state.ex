@@ -24,6 +24,7 @@ defmodule EvoGit.AgentScheduler.State do
   ### Agent Lifecycle
   - `next_agent_id` — monotonically increasing agent ID counter
   - `next_task_id` — monotonically increasing task ID counter (groups subagents)
+  - `task_local_counters` — map of `task_id => next_local_id` for per-task agent numbering
   - `running_count` — number of currently executing agents
   - `ref_to_agent` — maps `Task` monitor references to agent IDs
   - `queue` — FIFO queue of agent IDs waiting for a worktree
@@ -65,6 +66,7 @@ defmodule EvoGit.AgentScheduler.State do
     tool_waiting: :queue.new(),
     max_tool_concurrency: 2,
     next_task_id: 1,
+    task_local_counters: %{},
     paused: false
   ]
 
@@ -89,6 +91,7 @@ defmodule EvoGit.AgentScheduler.State do
           tool_waiting: :queue.queue(term()),
           max_tool_concurrency: pos_integer(),
           next_task_id: pos_integer(),
+          task_local_counters: %{optional(pos_integer()) => pos_integer()},
           paused: boolean()
         }
 end

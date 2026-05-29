@@ -194,6 +194,15 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       {:ok, _} = Git.commit(tmp_dir, "Initial commit")
       {:ok, base_commit} = Git.rev_parse(tmp_dir, "HEAD")
 
+      # Ensure ETS tables exist for task-scoped naming lookups (create if not exist)
+      unless :ets.whereis(:evogit_sched_meta) != :undefined do
+        :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
+      end
+
+      unless :ets.whereis(:evogit_agent_state) != :undefined do
+        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      end
+
       on_exit(fn ->
         File.rm_rf!(tmp_dir)
       end)
@@ -201,19 +210,25 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       {:ok, %{tmp_dir: tmp_dir, base_commit: base_commit}}
     end
 
-    test "returns a branch name evogit-agent<agent_id> for the agent", %{
+    test "returns a branch name evogit-agent-T<task_id>-A<task_local_id> for the agent", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit
     } do
       Process.put(:repo_path, tmp_dir)
+
+      # Insert ETS entries for task-scoped naming
+      :ets.insert(:evogit_sched_meta, {"agent_123", %{task_id: 1}})
+      :ets.insert(:evogit_agent_state, {"agent_123", %{task_local_id: 1}})
 
       result =
         CompleteTask.complete("agent_123", "Task done", base_commit,
           base_commit: base_commit
         )
 
-      assert %{result: "Task done", commit_sha: ^base_commit, branch: "evogit-agentagent_123"} = result
+      assert %{result: "Task done", commit_sha: ^base_commit, branch: "evogit-agent-T1-A1"} = result
 
+      :ets.delete(:evogit_sched_meta, "agent_123")
+      :ets.delete(:evogit_agent_state, "agent_123")
       Process.delete(:repo_path)
     end
 
@@ -269,6 +284,10 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
+      # Insert ETS entries for task-scoped naming
+      :ets.insert(:evogit_sched_meta, {"agent_ret", %{task_id: 2}})
+      :ets.insert(:evogit_agent_state, {"agent_ret", %{task_local_id: 3}})
+
       result =
         CompleteTask.complete("agent_ret", "My findings", base_commit,
           base_commit: base_commit
@@ -280,8 +299,10 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert Map.has_key?(result, :branch)
       assert result.result == "My findings"
       assert result.commit_sha == base_commit
-      assert result.branch == "evogit-agentagent_ret"
+      assert result.branch == "evogit-agent-T2-A3"
 
+      :ets.delete(:evogit_sched_meta, "agent_ret")
+      :ets.delete(:evogit_agent_state, "agent_ret")
       Process.delete(:repo_path)
     end
 
@@ -313,14 +334,20 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
+      # Insert ETS entries for task-scoped naming
+      :ets.insert(:evogit_sched_meta, {"agent_defaults", %{task_id: 5}})
+      :ets.insert(:evogit_agent_state, {"agent_defaults", %{task_local_id: 7}})
+
       result = CompleteTask.complete("agent_defaults", "Simple result", base_commit)
 
-      assert result.branch == "evogit-agentagent_defaults"
+      assert result.branch == "evogit-agent-T5-A7"
       assert result.result == "Simple result"
 
       # No base_commit in opts, so no metadata note
       assert :error = Git.get_note(tmp_dir, base_commit, ["--ref=evogit"])
 
+      :ets.delete(:evogit_sched_meta, "agent_defaults")
+      :ets.delete(:evogit_agent_state, "agent_defaults")
       Process.delete(:repo_path)
     end
   end
