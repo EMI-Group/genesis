@@ -43,12 +43,39 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   end
 
   def ensure_initialized(%State{initialized: true} = state, new_repo_path) do
-    Logger.info(
-      "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing..."
-    )
+    # If agents are still running from a previous task, do NOT tear down
+    # their worktrees. Instead, update repos map additively and ensure the
+    # worker directory exists for the new repo.
+    if state.running_count > 0 do
+      Logger.warning(
+        "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path} " <>
+          "but #{state.running_count} agent(s) still running — skipping teardown, updating repos map"
+      )
 
-    state = teardown_worktrees(state)
-    do_initialize(state, new_repo_path)
+      new_root = Path.expand(new_repo_path)
+      worker_base = Path.join(new_root, ".evogit/workers")
+      File.mkdir_p!(worker_base)
+
+      # Add the new repo to the repos map (keeping existing entries)
+      new_primary = ForeignRepo.new(:primary, new_root)
+      repos = Map.put(state.repos, :primary, new_primary)
+
+      {:ok, current_sha} = Git.rev_parse(new_root)
+
+      %State{
+        state
+        | repo_root: new_root,
+          repos: repos,
+          base_sha: current_sha
+      }
+    else
+      Logger.info(
+        "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing..."
+      )
+
+      state = teardown_worktrees(state)
+      do_initialize(state, new_repo_path)
+    end
   end
 
   def ensure_initialized(_state, nil) do

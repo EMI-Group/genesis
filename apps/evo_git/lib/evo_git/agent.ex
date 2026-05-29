@@ -169,7 +169,12 @@ defmodule EvoGit.Agent do
       defp sync_and_get_current_commit(state) do
         repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-        {:ok, current_sha} = Git.rev_parse(repo_path)
+        current_sha =
+          case Git.rev_parse(repo_path) do
+            {:ok, sha} -> sha
+            {:error, code, msg} -> raise "Git rev_parse failed (#{code}): #{msg}"
+          end
+
         {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
 
         if agent_state.phylo_node.current_commit != current_sha do
