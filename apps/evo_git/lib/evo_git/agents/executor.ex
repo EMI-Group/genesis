@@ -29,7 +29,7 @@ defmodule EvoGit.Agents.Executor do
 
     ## Guidelines
     - Understand & Verify: Read the objective carefully. If the objective clearly does not belong to your assigned node or requires broader architectural changes outside your scope, return immediately with a short message.
-    - Investigate When Needed: If the implementation details are unclear, use `subagent_codebase_investigator` to find where functions are defined, understand component interactions, search for patterns, or analyze the architecture before making changes.
+    - Investigate When Needed: If the implementation details are unclear, use `subagent_codebase_investigator` to find where functions are defined, understand component interactions, search for patterns, or analyze the architecture before making changes. To understand how something worked before recent changes, spawn the investigator with a `commit_id` to explore an earlier commit.
     - Make Targeted Changes: Make minimal, focused changes to satisfy the objective. Follow existing code patterns and style. Avoid unnecessary refactoring, and preserve comments and documentation where appropriate.
     - Commit Your Work: Once the objective is satisfied, commit your changes with a clear commit message.
     - Complete: Call `complete_task` with a brief report of what was modified.

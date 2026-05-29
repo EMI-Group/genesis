@@ -55,6 +55,7 @@ defmodule EvoGit.Agents.ContextExtractor do
 
     ## Guidelines
     - Analyze the files and subdirectories in your assigned scope.
+    - Use `search_history` to find significant commits that shaped the architecture (e.g., major refactors, feature additions). You can then spawn a `subagent_context_extractor` with a `commit_id` to analyze the codebase at that historical point, helping you understand how and why the architecture evolved.
     - Early Exit Checks: Immediately after your initial analysis, check if you should exit early and call complete_task:
       - If you are in an unimportant directory (e.g., node_modules/, vendor/, __pycache__/) or an ignored directory, exit immediately.
       - If the current CONTEXT.md is already complete and fully satisfies your objective, exit immediately.
