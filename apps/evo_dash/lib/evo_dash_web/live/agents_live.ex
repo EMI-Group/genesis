@@ -125,6 +125,14 @@ defmodule EvoDashWeb.AgentsLive do
 
   defp repo_display_name(_), do: "Unknown Repo"
 
+  defp commit_bg_class(agent) do
+    if agent.current_commit != agent.base_commit do
+      "bg-warning/20"
+    else
+      "bg-base-200"
+    end
+  end
+
   defp build_path_tree(agents) do
     tree =
       Enum.reduce(agents, %{}, fn agent, acc ->
