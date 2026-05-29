@@ -24,14 +24,13 @@ defmodule EvoGit.Agent do
     the user's objective (the query) as user prompts.
   """
 
-  alias EvoGit.Core.ContextNode
-  alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
   alias EvoGit.Agent.Tools.CompleteTask
+  alias EvoGit.Agent.LoopState
 
-  @type state :: %{context_node: ContextNode.t(), phylo_node: PhyloGraphNode.t()}
+  @type state :: LoopState.t()
 
   @doc """
   Extracts the tool name from a tool schema struct.
@@ -113,24 +112,13 @@ defmodule EvoGit.Agent do
 
           context = ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)])
 
-          state = %{
+          state = %LoopState{
             agent_id: agent_id,
             agent_module: __MODULE__,
             depth: EvoGit.AgentScheduler.current_depth(),
             node_path: node_path,
-            # Loaded from ETS each turn — see load_worktree_path/1
-            repo_path: nil,
-            turn: 0,
             context: context,
-            in_grace_period: false,
-            deadline: System.monotonic_time(:millisecond) + @timeout_ms,
-            # Track accumulated LLM time only
-            llm_time_ms: 0,
-            # Track current context length (in tokens)
-            total_tokens: 0,
-            # Warning tracking: last percentage warned (starts at 0)
-            last_warned_time_percent: 0,
-            last_warned_turns_percent: 0
+            deadline: System.monotonic_time(:millisecond) + @timeout_ms
           }
 
           # Sync initial context to ETS for dashboard
