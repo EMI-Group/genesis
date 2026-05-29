@@ -115,23 +115,24 @@ defmodule EvoDash.TaskRegistry do
   ## Server Callbacks
 
   @impl true
-  def init(_opts) do
-    # Ensure data directory exists
-    File.mkdir_p!(data_dir())
+  def init(opts) do
+    # Allow data_dir to be overridden via opts (for testing), fallback to platform default
+    data_dir = Keyword.get(opts, :data_dir, EvoGit.Platform.data_dir())
+    File.mkdir_p!(data_dir)
 
     # Open or create DETS tables (auto-recover from corruption)
-    open_or_reset_dets(@dets_tasks, tasks_dets_path())
-    open_or_reset_dets(@dets_projects, recent_projects_dets_path())
+    open_or_reset_dets(@dets_tasks, Path.join(data_dir, "tasks.dets"))
+    open_or_reset_dets(@dets_projects, Path.join(data_dir, "recent_projects.dets"))
 
     # Create ETS tables for fast in-memory access
     :ets.new(@table_name, [:named_table, :public, :set])
     :ets.new(@recent_projects_table, [:named_table, :public, :set])
 
     # Load persisted data from DETS into ETS
-    load_tasks_from_dets()
-    load_recent_projects_from_dets()
+    load_tasks_from_dets(data_dir)
+    load_recent_projects_from_dets(data_dir)
 
-    {:ok, %{}}
+    {:ok, %{data_dir: data_dir}}
   end
 
   @impl true
@@ -331,12 +332,8 @@ defmodule EvoDash.TaskRegistry do
     :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
   end
 
-  defp data_dir do
-    EvoGit.Platform.data_dir()
-  end
-
-  defp tasks_dets_path, do: Path.join(data_dir(), "tasks.dets")
-  defp recent_projects_dets_path, do: Path.join(data_dir(), "recent_projects.dets")
+  defp tasks_dets_path(data_dir), do: Path.join(data_dir, "tasks.dets")
+  defp recent_projects_dets_path(data_dir), do: Path.join(data_dir, "recent_projects.dets")
 
   # --- DETS Corruption Recovery ---
 
@@ -365,7 +362,7 @@ defmodule EvoDash.TaskRegistry do
 
   # --- Task Persistence (DETS) ---
 
-  defp load_tasks_from_dets do
+  defp load_tasks_from_dets(data_dir) do
     try do
       :dets.foldl(
         fn
@@ -388,7 +385,7 @@ defmodule EvoDash.TaskRegistry do
             "Resetting corrupted tasks store."
         )
 
-        reset_dets_table(@dets_tasks, tasks_dets_path())
+        reset_dets_table(@dets_tasks, tasks_dets_path(data_dir))
         :ok
     end
   end
@@ -434,7 +431,7 @@ defmodule EvoDash.TaskRegistry do
 
   # --- Recent Projects (DETS) ---
 
-  defp load_recent_projects_from_dets do
+  defp load_recent_projects_from_dets(data_dir) do
     try do
       :dets.foldl(
         fn
@@ -455,7 +452,7 @@ defmodule EvoDash.TaskRegistry do
             "Resetting corrupted projects store."
         )
 
-        reset_dets_table(@dets_projects, recent_projects_dets_path())
+        reset_dets_table(@dets_projects, recent_projects_dets_path(data_dir))
         :ok
     end
   end
