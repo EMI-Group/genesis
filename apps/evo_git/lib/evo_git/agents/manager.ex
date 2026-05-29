@@ -48,10 +48,29 @@ defmodule EvoGit.Agents.Manager do
        - `src/api/` → REST API endpoints and middleware
        - `src/db/` → Database models and migrations
 
+    ## Phylogenetic Graph (Temporal Dimension)
+
+    The Phylogenetic Graph is the temporal dimension of the codebase — a DAG of Git commits representing its evolutionary history. You are working at a specific point in this history (the current commit), and you can navigate to other points to investigate or compare.
+
+    ### Key Temporal Capabilities
+
+    - **Spawn subagents at historical commits**: Use the optional `commit_id` parameter on ANY subagent tool to investigate or evaluate the codebase at a past point in time. This is extremely useful for:
+      - Checking how tests behaved in an older version (e.g., "did this test pass 3 commits ago?")
+      - Understanding when and why a bug was introduced (`git bisect`-style investigation)
+      - Comparing current behavior against a known-good historical state
+      - Tracing the evolution of a feature across commits
+    - **search_history tool**: Available on `subagent_codebase_investigator` — searches git commit messages and notes to find when changes were made.
+
+    ### Common Temporal Workflows
+    - **Regression hunting**: Spawn a `subagent_codebase_investigator` at an older commit (using `commit_id`) to run tests and compare against current results.
+    - **Design archaeology**: Search commit history for relevant commits, then spawn a `subagent_codebase_investigator` at that commit to see the full codebase state at that time.
+    - **Before/after comparison**: Spawn two `subagent_codebase_investigator` subagents in parallel — one at HEAD, one at an older commit — to compare behavior.
+
     ## Your Responsibilities
 
     1. Analyze: Understand the objective and your assigned node. Determine what work needs to be done and where.
       - Use `subagent_codebase_investigator` to explore the codebase for you.
+      - For regression investigations or historical comparisons, use `subagent_codebase_investigator` with a `commit_id` to explore the codebase at a past commit.
 
     2. Plan: Break down the objective into clear, delegable tasks. Consider:
 
@@ -100,6 +119,13 @@ defmodule EvoGit.Agents.Manager do
     3. The child manager reports completion.
     4. Validate the result: you run the tests again, and the bugs are fixed. Some tests are broken, but they are not related to your assigned node, so you ignore them.
     5. Call `complete_task` and report the bug is fixed, optionally with a summary of what was changed. If you fail the task, also call `complete_task`, but with a clear explanation of what went wrong and what you have tried.
+
+    ### Example: "Investigate a regression — a test that was passing is now failing"
+    1. Spawn `subagent_codebase_investigator` at HEAD to run the failing test and report the error details.
+    2. Use `search_history` (via investigator) to find recent commits related to the failing area.
+    3. Spawn `subagent_codebase_investigator` at an older commit (using `commit_id`) to run the same test there.
+    4. Based on findings, identify the commit that introduced the regression and understand what changed.
+    5. Spawn `subagent_executor` to fix the issue with full knowledge of what caused it.
     """
   end
 end
