@@ -85,7 +85,8 @@ defmodule EvoDashWeb.HelpLive do
           <div class="mt-3 space-y-1">
             <p class="text-xs text-base-content/50 flex items-center gap-1.5">
               <.icon name="hero-arrows-right-left" class="size-3.5 shrink-0" />
-              Resolution order: 1) credentials.toml → 2) EVOGIT_API_KEY_&lt;PROVIDER&gt; env var → 3) Provider-specific env var (e.g., GOOGLE_API_KEY)
+              Keys from credentials.toml are loaded as environment variables on startup.
+              You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).
             </p>
             <p class="text-xs text-base-content/50 flex items-center gap-1.5">
               <.icon name="hero-shield-check" class="size-3.5 shrink-0" />
@@ -202,28 +203,28 @@ mode = "auto"
 # 
 # API keys are stored separately from config.toml for security.
 # Only ONE key is required — choose the provider matching your LLM model.
+# Keys are set as environment variables on load.
 
-[api_keys]
 # Google Gemini (e.g., "google:gemini-2.0-flash-exp")
-google    = "AIza..."
+GOOGLE_API_KEY = "AIza..."
 
 # ZAI (e.g., "zai_coding_plan:glm-5.1")
-zai       = "sk-..."
+ZAI_API_KEY = "sk-..."
 
 # DeepSeek (e.g., "deepseek:deepseek-chat")
-deepseek  = "sk-..."
+DEEPSEEK_API_KEY = "sk-..."
 
 # Groq (e.g., "groq:llama-3.1-8b-instant")
-groq      = "gsk_..."
+GROQ_API_KEY = "gsk_..."
 
 # Anthropic (e.g., "anthropic:claude-sonnet-4-20250514")
-anthropic = "sk-ant-..."
+ANTHROPIC_API_KEY = "sk-ant-..."
 
 # OpenAI (e.g., "openai:gpt-4o")
-openai    = "sk-..."
+OPENAI_API_KEY = "sk-..."
 
 # Tavily (optional — for web search tool)
-tavily    = "tvly-..."
+TAVILY_API_KEY = "tvly-..."
 """
 
   @impl true
