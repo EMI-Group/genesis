@@ -66,7 +66,8 @@ Standard Phoenix boilerplate: `PageController` (home), `ErrorHTML`, `ErrorJSON`.
 - **Vendor**: daisyui.js, daisyui-theme.js, heroicons.js, topbar.js
 
 ### Test Suite (`./test/`)
-Minimal coverage: controller tests (PageController, error handlers) via `EvoDashWeb.ConnCase`. No LiveView tests yet.
+- **Controller tests**: PageController, error handlers via `EvoDashWeb.ConnCase`
+- **LiveView tests** (`test/evo_dash_web/live/dashboard_live_test.exs`): DashboardLive tests covering project settings integration — project open/close, settings panel toggle, config display, foreign repos, route removal verification (14 tests)
 
 ## Key Interactions
 
