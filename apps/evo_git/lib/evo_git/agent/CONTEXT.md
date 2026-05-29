@@ -36,7 +36,7 @@ Structured result of a completed agent run, produced by `CompleteTask.complete/4
 
 ### Tool Library (`EvoGit.Agent.Tools`)
 - **`tools.ex`** — Central dispatch: `schemas/0` returns 14 LLM tool schemas, `execute/5` dispatches by name
-- Available standard tools: `read_file`, `create_files`, `write_file`, `edit_file`, `make_dir`, `read_context`, `write_context`, `run_bash`/`run_powershell`, `rg`, `glob`, `list_dir`, `search_web`, `search_context`, `search_history`
+- Available standard tools: `read_file`, `create_files`, `write_file`, `edit_file`, `make_dir`, `read_context`, `write_context`, `edit_context`, `run_bash`/`run_powershell`, `rg`, `glob`, `list_dir`, `search_web`, `search_context`, `search_history`
 - Commented out (available but not in default set): `run_git`, `curl`
 - **`CompleteTask`** (`complete_task.ex`) — Special completion tool; NOT in standard schemas, injected separately by the `use` macro. Returns `%Result{}` struct.
 

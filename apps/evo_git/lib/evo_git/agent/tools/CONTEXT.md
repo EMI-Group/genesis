@@ -20,7 +20,7 @@ This directory contains all tool definitions and implementations for EvoGit's LL
 | `FileWrite` | `file_write.ex` | `write_file` | Write/overwrite file contents | Write | No (uses `File.write`) | Yes |
 | `FileEdit` | `file_edit.ex` | `edit_file` | Exact string replacement in files (diff-style editing) | Write | No (uses `File.read`/`File.write`) | Yes |
 | `MakeDir` | `make_dir.ex` | `make_dir` | Create directories with optional placeholder files (CONTEXT.md/.gitkeep) and auto-commit | Write | No (uses `File.mkdir_p`, `Git.run`/`Git.commit`) | Yes |
-| `Context` | `context.ex` | `read_context` / `write_context` | Read/write directory CONTEXT.md files (write auto-commits) | Read/Write | Yes (write only, via `EvoGit.sandbox_run` for git add/commit) | No |
+| `Context` | `context.ex` | `read_context` / `write_context` / `edit_context` | Read/write/edit directory CONTEXT.md files (write and edit auto-commit) | Read/Write | Yes (write/edit, via `EvoGit.sandbox_run` for git add/commit) | No |
 | `ShellTool` | `shell_tool.ex` | `run_bash` (Linux/macOS) / `run_powershell` (Windows) | Execute shell commands via sandboxed `systemd-run`; uses compile-time platform detection for tool name, description, and prompts | Read/Write | Yes (`EvoGit.sandbox_run`) | No |
 | `Ripgrep` | `ripgrep.ex` | `rg` | Search files with ripgrep patterns | Read | Yes (`EvoGit.sandbox_run`) | No |
 | `Git` | `git.ex` | `run_git` | Execute git commands (**commented out** in `schemas/0`) | Read/Write | Yes (`EvoGit.sandbox_run`) | No |
@@ -119,9 +119,9 @@ The `ShellTool` module uses compile-time module attributes to adapt its tool nam
 - `@shell_name`, `@shell_flag`, `@tmp_var` — platform-specific strings
 - `schema/0` uses these attributes; `execute/3` uses `Platform.shell()` and `Platform.shell_args()` at runtime
 
-### Special Case: Context Module (Two Schemas, One Module)
+### Special Case: Context Module (Three Schemas, One Module)
 
-The `Context` module defines two separate schemas (`read_schema/0` and `write_schema/0`) and two separate execute functions (`execute_read/3` and `execute_write/3`). This is the only module with multiple schemas.
+The `Context` module defines three separate schemas (`read_schema/0`, `write_schema/0`, and `edit_schema/0`) and three separate execute functions (`execute_read/3`, `execute_write/3`, and `execute_edit/3`). `write_context` performs a full overwrite of CONTEXT.md, while `edit_context` performs exact string replacement (reusing the same editing logic as `edit_file` — quote normalization, uniqueness enforcement, `replace_all` support). Both write and edit support auto-commit. This is the only module with multiple schemas.
 
 ### Special Case: CompleteTask Module
 
