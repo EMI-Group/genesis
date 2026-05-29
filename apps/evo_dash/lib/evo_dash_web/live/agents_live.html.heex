@@ -143,6 +143,13 @@
                 <div class="grid grid-cols-4 gap-2">
                   <div>
                     <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
+                      Task ID
+                    </h4>
+                    <span class="text-sm">#<%= agent.task_id %></span>
+                  </div>
+
+                  <div>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
                       Depth
                     </h4>
                     <span class="text-sm">{agent.depth}</span>
@@ -153,6 +160,13 @@
                       Retries
                     </h4>
                     <span class="text-sm">{agent.retries}</span>
+                  </div>
+
+                  <div>
+                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
+                      Repository
+                    </h4>
+                    <span class="text-sm">{repo_display_name(agent.repo_id)}</span>
                   </div>
 
                   <%= if agent.current_commit do %>

@@ -101,9 +101,20 @@ defmodule EvoDashWeb.AgentsLive do
     agents
     |> Enum.group_by(& &1.repo_id)
     |> Enum.map(fn {repo_id, repo_agents} ->
-      {repo_display_name(repo_id), build_path_tree(repo_agents)}
+      display_name = repo_display_name(repo_id)
+      tree = build_path_tree(repo_agents)
+      # Rename the "." root node to the repo display name so each repo has a distinct root
+      tree = rename_root(tree, display_name)
+      {display_name, tree}
     end)
     |> Enum.sort_by(fn {name, _} -> name end)
+  end
+
+  defp rename_root(nodes, new_name) do
+    Enum.map(nodes, fn
+      %{name: "."} = node -> %{node | name: new_name}
+      node -> node
+    end)
   end
 
   defp repo_display_name(:primary), do: "Primary Repo"
