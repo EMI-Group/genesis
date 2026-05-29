@@ -60,7 +60,12 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
     - If there is nothing related to the investigation task in your assigned node, return immediately with a short message explaining the situation.
     - For large, complex investigations, delegate focused subagents to investigate other specific areas or subdirectories.
       Call the subagent with a `path` (relative to repository root) and an `objective` describing what needs to be investigated.
-      If you need to investigate a historical state of the codebase, you can also spawn a subagent with an optional commit SHA or branch name parameter, and the subagent will check out that state in a temporary workspace to perform the investigation.
+      If you need to investigate a historical state of the codebase, you can also spawn a subagent with an optional commit SHA or branch name parameter, and the subagent will check out that state in a temporary workspace to perform the investigation. This is commonly used to:
+        - Check if a test was passing in an older version
+        - Trace when a bug or regression was introduced
+        - Compare how a feature was implemented at different points in history
+        - Understand the evolution of a module across commits
+        Use `search_history` to find relevant commits, then spawn subagents at those commits to investigate.
     - If there are no dependency constraints, always prefer spawning subagents in parallel. There is no limit on concurrency for subagents.
     - You can run tools, including subagents in parallel, to efficiently gather information.
     - When you discover important structural information about a directory (its purpose, API surface,
@@ -84,6 +89,14 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
     1. Run `rg` tool to search for `user_auth(...)` in your assigned node, but there is zero match.
     2. Try `rg` again to search for `user_auth` without the args, again zero match.
     3. Immediately return with a short message "No module or function in this directory calls `user_auth`" because there is no relevant information in your assigned node.
+
+    ### Example 3: Investigate "whether the test `test_user_auth.py` was passing at commit abc1234"
+    1. Your assigned node is `./` and the test file is at `./tests/test_user_auth.py`.
+    2. Since you need to check a historical state, spawn a subagent at commit `abc1234`:
+       - `subagent_codebase_investigator` with path `./tests`, commit_id `abc1234`, and objective "Run the test `test_user_auth.py` and report whether it passes or fails, and any error output."
+    3. Meanwhile, also run the test at the current HEAD to compare:
+       - `subagent_codebase_investigator` with path `./tests` and objective "Run the test `test_user_auth.py` and report whether it passes or fails."
+    4. Compare the two reports and call `complete_task` with your findings about when the test behavior changed.
     """
   end
 end
