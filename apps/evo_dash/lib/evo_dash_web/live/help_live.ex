@@ -53,7 +53,7 @@ defmodule EvoDashWeb.HelpLive do
           <%= for {label, path, exists} <- [
             {"Config Directory", @config_dir, File.dir?(@config_dir)},
             {"Config File", @config_path, File.exists?(@config_path)},
-            {"Credentials File", @credentials_path, File.exists?(@credentials_path)}
+            {"Env File", @env_path, File.exists?(@env_path)}
           ] do %>
             <div class="flex items-center gap-3 bg-base-200/40 rounded-lg p-3 border border-base-200">
               <%= if exists do %>
@@ -73,19 +73,19 @@ defmodule EvoDashWeb.HelpLive do
         </div>
       </div>
 
-      <!-- Credentials Reference -->
+      <!-- Env File Reference -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
         <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
-            <.icon name="hero-key" class="size-5 text-accent" /> Credentials Reference
+            <.icon name="hero-key" class="size-5 text-accent" /> Environment File Reference
           </h2>
         </div>
         <div class="p-6 pt-2">
-          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto"><%= @credentials_reference %></pre>
+          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto"><%= @env_reference %></pre>
           <div class="mt-3 space-y-1">
             <p class="text-xs text-base-content/50 flex items-center gap-1.5">
               <.icon name="hero-arrows-right-left" class="size-3.5 shrink-0" />
-              Resolution order: 1) credentials.toml → 2) EVOGIT_API_KEY_&lt;PROVIDER&gt; env var → 3) Provider-specific env var (e.g., GOOGLE_API_KEY)
+              Keys are loaded from the .env file at startup and set as environment variables.
             </p>
             <p class="text-xs text-base-content/50 flex items-center gap-1.5">
               <.icon name="hero-shield-check" class="size-3.5 shrink-0" />
@@ -196,34 +196,33 @@ github_username = "your-username"
 mode = "auto"
 """
 
-  @credentials_reference """
-# EvoGit Credentials Reference
-# Save this as: ~/.config/evogit/credentials.toml
-# 
-# API keys are stored separately from config.toml for security.
+  @env_reference """
+# EvoGit Environment File Reference
+# Save this as: ~/.config/evogit/.env
+#
+# API keys use standard KEY=VALUE format and are loaded at startup.
 # Only ONE key is required — choose the provider matching your LLM model.
 
-[api_keys]
 # Google Gemini (e.g., "google:gemini-2.0-flash-exp")
-google    = "AIza..."
-
-# ZAI (e.g., "zai_coding_plan:glm-5.1")
-zai       = "sk-..."
-
-# DeepSeek (e.g., "deepseek:deepseek-chat")
-deepseek  = "sk-..."
-
-# Groq (e.g., "groq:llama-3.1-8b-instant")
-groq      = "gsk_..."
+GOOGLE_API_KEY=AIza...
 
 # Anthropic (e.g., "anthropic:claude-sonnet-4-20250514")
-anthropic = "sk-ant-..."
+ANTHROPIC_API_KEY=sk-ant-...
 
 # OpenAI (e.g., "openai:gpt-4o")
-openai    = "sk-..."
+OPENAI_API_KEY=sk-...
+
+# ZAI (e.g., "zai_coding_plan:glm-5.1")
+ZAI_API_KEY=sk-...
+
+# DeepSeek (e.g., "deepseek:deepseek-chat")
+DEEPSEEK_API_KEY=sk-...
+
+# Groq (e.g., "groq:llama-3.1-8b-instant")
+GROQ_API_KEY=gsk_...
 
 # Tavily (optional — for web search tool)
-tavily    = "tvly-..."
+TAVILY_API_KEY=tvly-...
 """
 
   @impl true
@@ -231,7 +230,7 @@ tavily    = "tvly-..."
     config_status = safe_config_status()
     config_dir = EvoGit.Config.config_dir()
     config_path = EvoGit.Config.config_path()
-    credentials_path = EvoGit.Config.credentials_path()
+    env_path = EvoGit.Config.env_path()
     
     config_toml_content = 
       if File.exists?(config_path) do
@@ -248,12 +247,12 @@ tavily    = "tvly-..."
       |> assign(:config_status, config_status)
       |> assign(:config_dir, config_dir)
       |> assign(:config_path, config_path)
-      |> assign(:credentials_path, credentials_path)
+      |> assign(:env_path, env_path)
       |> assign(:config_toml_content, config_toml_content)
       |> assign(:config_edit, config_toml_content)
       |> assign(:editing, false)
       |> assign(:config_reference, @config_reference)
-      |> assign(:credentials_reference, @credentials_reference)
+      |> assign(:env_reference, @env_reference)
 
     {:ok, socket}
   end
