@@ -17,61 +17,48 @@ defmodule EvoDashWeb.DashboardComponents do
       phx-change="task_change"
       class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden"
     >
-      <!-- Hero Header -->
-      <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6 md:p-8">
-        <div class="flex items-center gap-3">
-          <div class="bg-primary/15 text-primary p-3 rounded-xl">
-            <.icon name="hero-sparkles" class="size-6" />
+      <!-- Hero Header with inline mode select -->
+      <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent px-6 py-4 md:px-8 md:py-5">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="bg-primary/15 text-primary p-2.5 rounded-xl">
+              <.icon name="hero-sparkles" class="size-5" />
+            </div>
+            <div>
+              <h2 class="text-lg font-bold">Configure Task</h2>
+              <p class="text-xs text-base-content/60">Bootstrap, analyze, or evolve your codebase</p>
+            </div>
           </div>
-          <div>
-            <h2 class="text-xl font-bold">Configure Task</h2>
-            <p class="text-sm text-base-content/60">Bootstrap, analyze, or evolve your codebase</p>
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-base-content/60 whitespace-nowrap">Task Mode</span>
+            <select
+              name="mode"
+              class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-medium bg-base-200/30"
+            >
+              <optgroup label="Genesis (Bootstrap & Analyze)">
+                <option value="genesis_new" selected={@mode == "genesis_new"}>New Codebase</option>
+                <option value="genesis_existing" selected={@mode == "genesis_existing"}>Existing Codebase</option>
+              </optgroup>
+              <optgroup label="Evolve (Mutate Code)">
+                <option value="evolve_simple" selected={@mode == "evolve_simple"}>Simple (Top-down)</option>
+                <option value="evolve_complex" selected={@mode == "evolve_complex"}>Complex (Bottom-up)</option>
+              </optgroup>
+            </select>
           </div>
         </div>
       </div>
 
       <!-- Body -->
       <div class="p-6 md:p-8 pt-4 md:pt-6">
-        <div class="grid grid-cols-1 md:grid-cols-12 gap-8">
-          <!-- Left Column: Prompt -->
-          <div class="md:col-span-8 flex flex-col gap-6">
-            <div class="form-control flex-1">
-              <label class="label">
-                <span class="label-text font-semibold text-base-content">Prompt / Objective</span>
-              </label>
-              <textarea
-                name="prompt"
-                class="textarea textarea-bordered w-full min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
-                placeholder="Describe the software you want to create or the change you want to make..."
-              ><%= @prompt %></textarea>
-            </div>
-          </div>
-
-          <!-- Right Column: Mode & Options -->
-          <div class="md:col-span-4 flex flex-col gap-6">
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text font-semibold text-base-content">Task Mode</span>
-              </label>
-              <select
-                name="mode"
-                class="select select-bordered w-full focus:outline-none focus:ring-2 focus:ring-primary/30 font-medium bg-base-200/30"
-              >
-                <optgroup label="Genesis (Bootstrap & Analyze)">
-                  <option value="genesis_new" selected={@mode == "genesis_new"}>New Codebase</option>
-                  <option value="genesis_existing" selected={@mode == "genesis_existing"}>Existing Codebase</option>
-                </optgroup>
-                <optgroup label="Evolve (Mutate Code)">
-                  <option value="evolve_simple" selected={@mode == "evolve_simple"}>Simple (Top-down)</option>
-                  <option value="evolve_complex" selected={@mode == "evolve_complex"}>Complex (Bottom-up)</option>
-                </optgroup>
-              </select>
-              <label class="label">
-                <span class="label-text-alt text-base-content/50 text-xs">Mode auto-detected. Change if needed.</span>
-              </label>
-            </div>
-
-          </div>
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text font-semibold text-base-content">Prompt / Objective</span>
+          </label>
+          <textarea
+            name="prompt"
+            class="textarea textarea-bordered w-full min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
+            placeholder="Describe the software you want to create or the change you want to make..."
+          ><%= @prompt %></textarea>
         </div>
       </div>
 
