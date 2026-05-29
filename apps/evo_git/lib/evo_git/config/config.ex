@@ -8,8 +8,8 @@ defmodule EvoGit.Config do
   2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant)
   3. **Runtime overrides** — Dynamic session-level settings via AgentScheduler
 
-  User credentials (API keys) are stored separately in
-  `~/.config/evogit/credentials.toml` for security.
+  User credentials (API keys) are stored in a plain `.env` file at
+  `~/.config/evogit/.env`. Environment variables are loaded at startup.
 
   ## Config File Format (config.toml)
 
@@ -34,23 +34,12 @@ defmodule EvoGit.Config do
 
       [sandbox]
       mode = "auto"  # "auto" | "enabled" | "disabled"
-
-  ## Credentials File Format (credentials.toml)
-
-      [api_keys]
-      google    = "AIza..."
-      zai       = "sk-..."
-      deepseek  = "sk-..."
-      groq      = "gsk_..."
-      tavily    = "tvly-..."
-      anthropic = "sk-ant-..."
-      openai    = "sk-..."
   """
 
   require Logger
 
   @config_filename "config.toml"
-  @credentials_filename "credentials.toml"
+  @env_filename ".env"
 
   # --- Public API ---
 
@@ -198,7 +187,7 @@ defmodule EvoGit.Config do
           _ -> false
         end
       end},
-      {:api_key, "No API key found. Add keys to credentials.toml or set environment variables.", fn ->
+      {:api_key, "No API key found. Add keys to the .env file or set environment variables.", fn ->
         providers = [:google, :zai, :deepseek, :groq, :anthropic, :openai]
         Enum.all?(providers, fn p -> api_key(p) == nil end)
       end},
@@ -218,62 +207,66 @@ defmodule EvoGit.Config do
   end
 
   @doc """
-  Reads and returns the parsed credentials TOML file.
+  Loads environment variables from the `.env` file into the system environment.
 
-  Returns `%{}` if the file is not found or cannot be parsed.
+  The `.env` file uses plain `KEY=VALUE` format (one per line).
+  Blank lines and lines starting with `#` are ignored.
+  Values may be optionally quoted with single or double quotes.
+
+  Returns `:ok` if the file is loaded or doesn't exist, `:error` on read failure.
   """
-  @spec credentials() :: map()
-  def credentials do
-    path = credentials_path()
+  @spec load_env() :: :ok | :error
+  def load_env do
+    path = env_path()
 
     if File.exists?(path) do
       case File.read(path) do
         {:ok, contents} ->
-          case TomlElixir.decode(contents) do
-            {:ok, creds} ->
-              creds
+          contents
+          |> String.split("\n")
+          |> Enum.each(fn line ->
+            line = String.trim(line)
 
-            {:error, reason} ->
-              Logger.warning("Failed to parse credentials at #{path}: #{inspect(reason)}")
-              %{}
-          end
+            if line != "" and not String.starts_with?(line, "#") do
+              case String.split(line, "=", parts: 2) do
+                [key, value] ->
+                  key = String.trim(key)
+                  value = value |> String.trim() |> String.trim("\"") |> String.trim("'")
+                  System.put_env(key, value)
+
+                _ ->
+                  :ok
+              end
+            end
+          end)
+
+          :ok
 
         {:error, reason} ->
-          Logger.warning("Failed to read credentials at #{path}: #{inspect(reason)}")
-          %{}
+          Logger.warning("Failed to read env file at #{path}: #{inspect(reason)}")
+          :error
       end
     else
-      %{}
+      :ok
     end
   end
 
   @doc """
-  Convenience function to get a specific API key.
+  Returns the API key for a given provider by checking the system environment.
 
-  Checks the credentials file first, then falls back to environment variables.
-  The env var convention is `EVOGIT_API_KEY_<PROVIDER>` (uppercase), then
-  common provider-specific env vars like `GOOGLE_API_KEY`, `ZAI_API_KEY`, etc.
+  The key must be set via the `.env` file or directly in the environment
+  using the standard provider-specific variable (e.g., `GOOGLE_API_KEY`).
 
   ## Examples
 
       Config.api_key(:google)
-      Config.api_key(:zai)
-      Config.api_key(:deepseek)
+      Config.api_key(:anthropic)
   """
   @spec api_key(atom()) :: String.t() | nil
   def api_key(provider) when is_atom(provider) do
-    provider_str = Atom.to_string(provider)
-
-    # 1. Check credentials file
-    file_key = get_from_credentials(provider_str)
-
-    # 2. Check EVOGIT_API_KEY_<PROVIDER> env var
-    evogit_env = "EVOGIT_API_KEY_#{String.upcase(provider_str)}"
-
-    # 3. Check common provider-specific env vars
-    common_env = common_env_var(provider)
-
-    file_key || System.get_env(evogit_env) || (common_env && System.get_env(common_env))
+    if env_var = common_env_var(provider) do
+      System.get_env(env_var)
+    end
   end
 
   @doc """
@@ -335,24 +328,14 @@ defmodule EvoGit.Config do
   end
 
   @doc """
-  Returns the full path to `credentials.toml`.
+  Returns the full path to the `.env` credentials file.
   """
-  @spec credentials_path() :: String.t()
-  def credentials_path do
-    Path.join(config_dir(), @credentials_filename)
+  @spec env_path() :: String.t()
+  def env_path do
+    Path.join(config_dir(), @env_filename)
   end
 
   # --- Private Helpers ---
-
-  defp get_from_credentials(provider_str) do
-    case credentials() do
-      %{"api_keys" => keys} when is_map(keys) ->
-        Map.get(keys, provider_str)
-
-      _ ->
-        nil
-    end
-  end
 
   # Maps provider atoms to their common environment variable names
   @common_env_vars %{
