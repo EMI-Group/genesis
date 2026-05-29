@@ -70,6 +70,12 @@ defmodule EvoDashWeb.SettingsLive do
           </div>
         </div>
       </div>
+      <!-- Link to Project Settings -->
+      <div class="mt-6">
+        <.link navigate={~p"/settings/project"} class="btn btn-outline btn-sm gap-2">
+          <.icon name="hero-folder-open" class="size-4" /> Project Settings &amp; Foreign Repos
+        </.link>
+      </div>
     </EvoDashWeb.Layouts.app>
     """
   end
