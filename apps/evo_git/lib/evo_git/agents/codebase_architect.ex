@@ -63,6 +63,7 @@ defmodule EvoGit.Agents.CodebaseArchitect do
     - PHASE 3: REVIEW & CONVERGENCE
       - Try to run tests, builds, etc., if possible to check for any issues.
       - If you find any architectural misalignment, compile errors, missing components, etc., spawn additional subagents to refine the structure or implementation.
+      - For debugging regressions: spawn `subagent_generalist` or `subagent_codebase_investigator` with a `commit_id` to investigate the codebase at an earlier, working commit and compare against the current state.
 
     - General Subagent Guidelines:
       - BEFORE calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
