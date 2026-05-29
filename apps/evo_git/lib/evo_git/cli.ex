@@ -222,9 +222,8 @@ defmodule EvoGit.CLI do
         macOS:   mkdir -p ~/Library/Application\\ Support/evogit
         Windows: mkdir %APPDATA%\\evogit
 
-      Step 2: Create credentials.toml with your API key(s)
-        echo '[api_keys]'                     > credentials.toml
-        echo 'google = "YOUR_API_KEY_HERE"'  >> credentials.toml
+      Step 2: Create .env with your API key(s)
+        echo 'GOOGLE_API_KEY=YOUR_API_KEY_HERE' > .env
 
       Step 3: Create config.toml with your LLM model and username
         echo '[llm]'                                  > config.toml
@@ -237,31 +236,26 @@ defmodule EvoGit.CLI do
 
     Configuration:
       EvoGit requires API keys to communicate with LLM providers. Keys are stored
-      in a credentials file (NOT in evogit.toml or environment variables alone).
+      in a plain .env file and loaded into the environment at startup.
 
-      Credentials file location (by platform):
-        Linux:   ~/.config/evogit/credentials.toml
-        macOS:   ~/Library/Application Support/evogit/credentials.toml
-        Windows: %APPDATA%\\evogit\\credentials.toml
+      .env file location (by platform):
+        Linux:   ~/.config/evogit/.env
+        macOS:   ~/Library/Application Support/evogit/.env
+        Windows: %APPDATA%\\evogit\\.env
 
-      credentials.toml format:
-        [api_keys]
-        google    = "AIza..."
-        zai       = "sk-..."
-        deepseek  = "sk-..."
-        groq      = "gsk_..."
-        tavily    = "tvly-..."
-        anthropic = "sk-ant-..."
-        openai    = "sk-..."
+      .env file format:
+        # EvoGit credentials — standard KEY=VALUE format
+        GOOGLE_API_KEY=AIza...
+        ANTHROPIC_API_KEY=sk-ant-...
+        OPENAI_API_KEY=sk-...
+        ZAI_API_KEY=sk-...
+        DEEPSEEK_API_KEY=sk-...
+        GROQ_API_KEY=gsk_...
+        TAVILY_API_KEY=tvly-...
 
       Note: Only one API key is required. Choose the provider matching your LLM model.
 
-      Tip: You can also set API keys via environment variables (see resolution order below).
-
-      API key resolution order (first match wins):
-        1. credentials.toml (recommended)
-        2. EVOGIT_API_KEY_<PROVIDER> environment variable
-        3. Provider-specific env var (e.g. GOOGLE_API_KEY, ANTHROPIC_API_KEY)
+      Tip: You can also set API keys directly as environment variables instead of using the .env file.
 
       At least one API key is required to use EvoGit.
 
