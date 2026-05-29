@@ -99,9 +99,9 @@ defmodule EvoDashWeb.AgentsLive do
 
   defp build_repo_trees(agents) do
     agents
-    |> Enum.group_by(& &1.repo_id)
-    |> Enum.map(fn {repo_id, repo_agents} ->
-      display_name = repo_display_name(repo_id)
+    |> Enum.group_by(&grouping_key/1)
+    |> Enum.map(fn {key, repo_agents} ->
+      display_name = repo_display_name(key)
       tree = build_path_tree(repo_agents)
       # Rename the "." root node to the repo display name so each repo has a distinct root
       tree = rename_root(tree, display_name)
@@ -110,11 +110,20 @@ defmodule EvoDashWeb.AgentsLive do
     |> Enum.sort_by(fn {name, _} -> name end)
   end
 
+  defp grouping_key(agent) do
+    agent.repo_root || agent.repo_id
+  end
+
   defp rename_root(nodes, new_name) do
     Enum.map(nodes, fn
       %{name: "."} = node -> %{node | name: new_name}
       node -> node
     end)
+  end
+
+  defp repo_display_name(key) when is_binary(key) do
+    # key is a repo root path; use the basename for display
+    Path.basename(key)
   end
 
   defp repo_display_name(:primary), do: "Primary Repo"
@@ -198,6 +207,7 @@ defmodule EvoDashWeb.AgentsLive do
         id: id,
         task_local_id: agent_state && agent_state.task_local_id,
         repo_id: agent_state && agent_state.repo_id,
+        repo_root: agent_state && agent_state.repo_root,
         task_id: meta.task_id,
         status: meta.status,
         depth: meta.depth,

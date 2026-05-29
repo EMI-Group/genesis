@@ -166,7 +166,7 @@
                     <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
                       Repository
                     </h4>
-                    <span class="text-sm">{repo_display_name(agent.repo_id)}</span>
+                    <span class="text-sm">{agent.repo_root || repo_display_name(agent.repo_id)}</span>
                   </div>
 
                   <%= if agent.current_commit do %>
