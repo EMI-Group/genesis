@@ -1093,12 +1093,8 @@ defmodule EvoGit.AgentScheduler do
     task_local_id = agent_state.task_local_id
 
     # Create a persistent worktree for this agent: worker_T<task_id>_A<task_local_id>
-    # Determine repo root from the agent's repo_id
-    agent_repo_root =
-      case Map.get(state.repos, spec.repo_id) do
-        %ForeignRepo{root: root} -> root
-        nil -> state.repo_root
-      end
+    # Determine repo root from the agent's spec data, with repos map as fallback
+    agent_repo_root = resolve_agent_repo_root(spec, state)
 
     worktree_path = Path.join([agent_repo_root, ".evogit/workers", "worker_T#{task_id}_A#{task_local_id}"])
 
@@ -1137,13 +1133,7 @@ defmodule EvoGit.AgentScheduler do
         Process.put(:evogit_agent_id, agent_id)
         Process.put(:evogit_agent_depth, meta.depth)
 
-        repo_root_val =
-          case Map.get(state.repos, spec.repo_id) do
-            %ForeignRepo{root: root} -> root
-            nil -> state.repo_root
-          end
-
-        Process.put(:evogit_repo_root, repo_root_val)
+        Process.put(:evogit_repo_root, agent_repo_root)
         Process.put(:evogit_repo_id, spec.repo_id)
         Process.put(:repo_path, worktree_path)
 
@@ -1172,6 +1162,29 @@ defmodule EvoGit.AgentScheduler do
       | running_count: state.running_count + 1,
         ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
     }
+  end
+
+  # Resolves the repo root for an agent from its spec data.
+  # For primary repo agents, derives from phylo_node.repo (which is either
+  # the repo root for top-level agents or a worktree path for subagents).
+  # For foreign repo agents, falls back to the state.repos map.
+  defp resolve_agent_repo_root(spec, state) do
+    if spec.repo_id == :primary do
+      # spec.phylo_node.repo is either:
+      # - A repo root (e.g., "/home/bill/Source/evoclass") for top-level agents
+      # - A worktree path (e.g., ".../.evogit/workers/worker_T1_A1") for subagents
+      # Derive the repo root by stripping the worktree suffix if present.
+      case String.split(spec.phylo_node.repo, "/.evogit/workers/", parts: 2) do
+        [root, _rest] -> root
+        [_] -> spec.phylo_node.repo
+      end
+    else
+      # Foreign repo — resolve from the repos map
+      case Map.get(state.repos, spec.repo_id) do
+        %ForeignRepo{root: root} -> root
+        nil -> state.repo_root
+      end
+    end
   end
 
   # --- Auto-Commit Fallback ---
@@ -1349,7 +1362,38 @@ defmodule EvoGit.AgentScheduler do
       {:ok, agent_state} = get_agent_state(agent_id)
       put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
 
-      state = try_dispatch(state, agent_id)
+      # Wrap dispatch in try/rescue to prevent GenServer crash on worktree creation failure
+      state =
+        try do
+          try_dispatch(state, agent_id)
+        rescue
+          e ->
+            Logger.error(
+              "AgentScheduler: Failed to retry dispatch for agent #{agent_id}: #{inspect(e)}. " <>
+                "Treating as permanent failure."
+            )
+
+            # Clean up and permanently fail the agent
+            if meta.worktree do
+              Worktrees.delete(meta.worktree, state.repo_root)
+            end
+
+            delete_agent_state(agent_id)
+            delete_sched_meta(agent_id)
+            updated_state = %{state | running_count: state.running_count - 1}
+
+            updated_state =
+              if meta.parent_id do
+                store_sub_result(meta.parent_id, agent_id, {:error, :worktree_creation_failed})
+                maybe_resume_parent(updated_state, meta.parent_id)
+              else
+                GenServer.reply(meta.from, {:error, :worktree_creation_failed})
+                updated_state
+              end
+
+            updated_state
+        end
+
       state = process_queue(state)
       {:noreply, state}
     else
