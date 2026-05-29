@@ -38,11 +38,13 @@ defmodule EvoGit.Config do
   ## Credentials File Format (credentials.toml)
 
       [api_keys]
-      google = "AIza..."
-      zai = "sk-..."
-      deepseek = "sk-..."
-      groq = "gsk_..."
-      tavily = "tvly-..."
+      google    = "AIza..."
+      zai       = "sk-..."
+      deepseek  = "sk-..."
+      groq      = "gsk_..."
+      tavily    = "tvly-..."
+      anthropic = "sk-ant-..."
+      openai    = "sk-..."
   """
 
   require Logger
