@@ -78,6 +78,54 @@ defmodule EvoGit.Agent.Tools.Context do
   end
 
   @doc """
+  Returns the tool schema for editing directory context.
+  """
+  def edit_schema do
+    ReqLLM.tool(
+      name: "edit_context",
+      description:
+        "Creates or updates a CONTEXT.md file for a directory via exact string replacement. " <>
+          "Similar to edit_file but specifically for CONTEXT.md files. " <>
+          "The old_string must match exactly (including whitespace and indentation). " <>
+          "The edit will FAIL if old_string is not unique in the file. " <>
+          "Either provide a larger string with more surrounding context to make it unique " <>
+          "or use replace_all to change every instance of old_string. " <>
+          "By default, the tool will create a git commit for the updated CONTEXT.md file.",
+      parameter_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "dir_path" => %{
+            "type" => "string",
+            "description" =>
+              "The relative path to the directory containing the CONTEXT.md file (e.g., './', './lib', './src/components')"
+          },
+          "old_string" => %{
+            "type" => "string",
+            "description" => "The exact text to find in CONTEXT.md"
+          },
+          "new_string" => %{
+            "type" => "string",
+            "description" => "The replacement text"
+          },
+          "replace_all" => %{
+            "type" => "boolean",
+            "description" => "Replace all occurrences of old_string (default: false)",
+            "default" => false
+          },
+          "commit" => %{
+            "type" => "boolean",
+            "description" =>
+              "Whether to create a git commit after editing the CONTEXT.md file. Defaults to true.",
+            "default" => true
+          }
+        },
+        "required" => ["dir_path", "old_string", "new_string"]
+      },
+      callback: fn _ -> {:ok, nil} end
+    )
+  end
+
+  @doc """
   Executes the read_context tool.
   """
   def execute_read(args, repo_path, _repo_root) do
@@ -88,6 +136,20 @@ defmodule EvoGit.Agent.Tools.Context do
 
       {:error, message} ->
         message
+    end
+  end
+
+  @doc """
+  Executes the edit_context tool.
+  """
+  def execute_edit(args, repo_path, repo_root) do
+    with {:ok, dir_path} <- Shared.fetch_string_arg(args, "dir_path"),
+         {:ok, old_string} <- Shared.fetch_string_arg(args, "old_string"),
+         {:ok, new_string} <- Shared.fetch_string_arg(args, "new_string"),
+         {:ok, replace_all} <- validate_replace_all(Map.get(args, "replace_all", false)),
+         {:ok, commit} <- validate_commit(Map.get(args, "commit", true)),
+         full_dir = Shared.expand_path(dir_path, repo_path) do
+      do_context_edit(full_dir, dir_path, old_string, new_string, replace_all, commit, repo_path, repo_root)
     end
   end
 
@@ -110,6 +172,79 @@ defmodule EvoGit.Agent.Tools.Context do
     end
   end
 
+  defp do_context_edit(full_dir, dir_path, old_string, new_string, replace_all, commit, repo_path, repo_root) do
+    cond do
+      not File.exists?(full_dir) ->
+        "Error: directory '#{dir_path}' does not exist"
+
+      not File.dir?(full_dir) ->
+        "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
+
+      true ->
+        context_path = Path.join(full_dir, "CONTEXT.md")
+
+        case File.read(context_path) do
+          {:ok, content} ->
+            actual_old = Shared.find_actual_string(content, old_string)
+
+            if is_nil(actual_old) do
+              "Error: old_string not found in CONTEXT.md for '#{dir_path}'"
+            else
+              match_count = Shared.count_occurrences(content, actual_old)
+
+              if match_count > 1 and not replace_all do
+                "Error: Found #{match_count} matches of old_string in CONTEXT.md. Set replace_all=true or provide more context."
+              else
+                updated_content = apply_edit(content, actual_old, new_string, replace_all)
+
+                case File.write(context_path, updated_content) do
+                  :ok ->
+                    result_msg =
+                      if replace_all do
+                        "Successfully updated CONTEXT.md for directory '#{dir_path}'. All occurrences were successfully replaced."
+                      else
+                        "Successfully updated CONTEXT.md for directory '#{dir_path}'"
+                      end
+
+                    if commit do
+                      relative_path = Path.join(dir_path, "CONTEXT.md")
+
+                      {add_output, _} =
+                        EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root)
+
+                      {commit_output, _} =
+                        EvoGit.sandbox_run(
+                          repo_path,
+                          "git",
+                          [
+                            "commit",
+                            "-m",
+                            "Update CONTEXT.md for #{dir_path}#{@co_author_trailer}"
+                          ],
+                          repo_root
+                        )
+
+                      result_msg <>
+                        "\n\nCommitted:\n#{add_output}#{commit_output}"
+                    else
+                      result_msg
+                    end
+
+                  {:error, reason} ->
+                    "Error writing CONTEXT.md: #{:file.format_error(reason)}"
+                end
+              end
+            end
+
+          {:error, :enoent} ->
+            "Error: No CONTEXT.md found in directory '#{dir_path}'"
+
+          {:error, reason} ->
+            "Error reading CONTEXT.md: #{:file.format_error(reason)}"
+        end
+    end
+  end
+
   @doc """
   Executes the write_context tool.
   """
@@ -126,6 +261,11 @@ defmodule EvoGit.Agent.Tools.Context do
 
   defp validate_commit(value),
     do: {:error, "Argument 'commit' must be a boolean, got: #{inspect(value)}"}
+
+  defp validate_replace_all(value) when is_boolean(value), do: {:ok, value}
+
+  defp validate_replace_all(value),
+    do: {:error, "Argument 'replace_all' must be a boolean, got: #{inspect(value)}"}
 
   defp do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root) do
     case File.mkdir_p(full_dir) do
@@ -172,6 +312,16 @@ defmodule EvoGit.Agent.Tools.Context do
 
       {:error, reason} ->
         "Error creating directory '#{dir_path}': #{:file.format_error(reason)}"
+    end
+  end
+
+  defp apply_edit(content, old_string, new_string, replace_all) do
+    trimmed_new = String.trim_trailing(new_string)
+
+    if replace_all do
+      String.replace(content, old_string, trimmed_new)
+    else
+      String.replace(content, old_string, trimmed_new, global: false)
     end
   end
 end
