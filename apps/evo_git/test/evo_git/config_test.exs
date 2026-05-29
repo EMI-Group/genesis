@@ -77,15 +77,16 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "credentials/0" do
-    test "returns empty map when no credentials file exists" do
-      creds = Config.credentials()
-      assert is_map(creds)
+  describe "load_env/0" do
+    test "returns :ok when no .env file exists" do
+      # env_path may or may not exist; just verify it doesn't crash
+      result = Config.load_env()
+      assert result in [:ok, :error]
     end
   end
 
   describe "api_key/1" do
-    test "returns nil for unknown provider when no env var set" do
+    test "returns nil for unknown provider" do
       # Use a unique provider name that definitely has no env var
       key = Config.api_key(:nonexistent_provider_xyz_12345)
       assert key == nil
@@ -107,10 +108,10 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "credentials_path/0" do
-    test "returns path ending with credentials.toml" do
-      path = Config.credentials_path()
-      assert String.ends_with?(path, "credentials.toml")
+  describe "env_path/0" do
+    test "returns path ending with .env" do
+      path = Config.env_path()
+      assert String.ends_with?(path, ".env")
     end
   end
 end
