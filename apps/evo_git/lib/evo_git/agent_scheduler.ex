@@ -232,6 +232,27 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Registers a single foreign repo at runtime.
+  Can be used to add repos dynamically (e.g., from the dashboard).
+  Returns `:ok` on success, `{:error, {:already_exists, id}}` if a repo with the same id already exists (except :primary).
+  """
+  @spec register_foreign_repo(ForeignRepo.t()) :: :ok | {:error, {:already_exists, atom()}}
+  def register_foreign_repo(%ForeignRepo{} = repo) do
+    GenServer.call(__MODULE__, {:register_foreign_repo, repo})
+  end
+
+  @doc """
+  Unregisters a foreign repo by its id.
+  Cannot unregister the :primary repo.
+  Returns `:ok` on success, `{:error, :cannot_unregister_primary}` if id is :primary,
+  `{:error, {:not_found, id}}` if the repo id doesn't exist.
+  """
+  @spec unregister_foreign_repo(atom()) :: :ok | {:error, term()}
+  def unregister_foreign_repo(repo_id) when is_atom(repo_id) do
+    GenServer.call(__MODULE__, {:unregister_foreign_repo, repo_id})
+  end
+
+  @doc """
   Returns the repo root path for the given repo_id.
   Raises if the repo_id is not registered.
   """
@@ -417,6 +438,33 @@ defmodule EvoGit.AgentScheduler do
   def handle_call(:get_foreign_repos, _from, state) do
     repos = Map.values(state.repos)
     {:reply, repos, state}
+  end
+
+  @impl true
+  def handle_call({:register_foreign_repo, repo}, _from, state) do
+    if Map.has_key?(state.repos, repo.id) do
+      {:reply, {:error, {:already_exists, repo.id}}, state}
+    else
+      repos = Map.put(state.repos, repo.id, repo)
+      Logger.info("AgentScheduler: Registered foreign repo #{repo.id} at #{repo.root}")
+      {:reply, :ok, %{state | repos: repos}}
+    end
+  end
+
+  @impl true
+  def handle_call({:unregister_foreign_repo, repo_id}, _from, state) do
+    cond do
+      repo_id == :primary ->
+        {:reply, {:error, :cannot_unregister_primary}, state}
+
+      not Map.has_key?(state.repos, repo_id) ->
+        {:reply, {:error, {:not_found, repo_id}}, state}
+
+      true ->
+        repos = Map.delete(state.repos, repo_id)
+        Logger.info("AgentScheduler: Unregistered foreign repo #{repo_id}")
+        {:reply, :ok, %{state | repos: repos}}
+    end
   end
 
   @impl true
