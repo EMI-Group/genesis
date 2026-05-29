@@ -82,13 +82,24 @@ defmodule EvoGit.ConfigTest do
       creds = Config.credentials()
       assert is_map(creds)
     end
-  end
 
-  describe "api_key/1" do
-    test "returns nil for unknown provider when no env var set" do
-      # Use a unique provider name that definitely has no env var
-      key = Config.api_key(:nonexistent_provider_xyz_12345)
-      assert key == nil
+    test "does not accidentally set environment variables when no credentials file exists" do
+      # Ensure a known test env var is not set after calling credentials/0
+      System.delete_env("TEST_CRED_KEY")
+      Config.credentials()
+      assert System.get_env("TEST_CRED_KEY") == nil
+    end
+
+    test "does not crash when GOOGLE_API_KEY environment variable is already set" do
+      # If GOOGLE_API_KEY is set in the environment, credentials/0 should
+      # still work without crashing or raising.
+      System.put_env("GOOGLE_API_KEY", "test-key-value")
+      try do
+        creds = Config.credentials()
+        assert is_map(creds)
+      after
+        System.delete_env("GOOGLE_API_KEY")
+      end
     end
   end
 

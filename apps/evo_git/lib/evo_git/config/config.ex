@@ -37,14 +37,14 @@ defmodule EvoGit.Config do
 
   ## Credentials File Format (credentials.toml)
 
-      [api_keys]
-      google    = "AIza..."
-      zai       = "sk-..."
-      deepseek  = "sk-..."
-      groq      = "gsk_..."
-      tavily    = "tvly-..."
-      anthropic = "sk-ant-..."
-      openai    = "sk-..."
+      # API keys as environment variable names — they are set as env vars on load
+      GOOGLE_API_KEY = "AIza..."
+      ZAI_API_KEY = "sk-..."
+      DEEPSEEK_API_KEY = "sk-..."
+      GROQ_API_KEY = "gsk_..."
+      TAVILY_API_KEY = "tvly-..."
+      ANTHROPIC_API_KEY = "sk-ant-..."
+      OPENAI_API_KEY = "sk-..."
   """
 
   require Logger
@@ -199,8 +199,8 @@ defmodule EvoGit.Config do
         end
       end},
       {:api_key, "No API key found. Add keys to credentials.toml or set environment variables.", fn ->
-        providers = [:google, :zai, :deepseek, :groq, :anthropic, :openai]
-        Enum.all?(providers, fn p -> api_key(p) == nil end)
+        providers = ["GOOGLE_API_KEY", "ZAI_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+        Enum.all?(providers, fn p -> System.get_env(p) == nil end)
       end},
       {:github_username, "GitHub username is not configured. Set [user] github_username in config.toml.", fn ->
         case get_in(resolved, [:user, :github_username]) do
@@ -231,6 +231,10 @@ defmodule EvoGit.Config do
         {:ok, contents} ->
           case TomlElixir.decode(contents) do
             {:ok, creds} ->
+              Enum.each(creds, fn {key, value} ->
+                if is_binary(value), do: System.put_env(key, value)
+              end)
+
               creds
 
             {:error, reason} ->
@@ -245,35 +249,6 @@ defmodule EvoGit.Config do
     else
       %{}
     end
-  end
-
-  @doc """
-  Convenience function to get a specific API key.
-
-  Checks the credentials file first, then falls back to environment variables.
-  The env var convention is `EVOGIT_API_KEY_<PROVIDER>` (uppercase), then
-  common provider-specific env vars like `GOOGLE_API_KEY`, `ZAI_API_KEY`, etc.
-
-  ## Examples
-
-      Config.api_key(:google)
-      Config.api_key(:zai)
-      Config.api_key(:deepseek)
-  """
-  @spec api_key(atom()) :: String.t() | nil
-  def api_key(provider) when is_atom(provider) do
-    provider_str = Atom.to_string(provider)
-
-    # 1. Check credentials file
-    file_key = get_from_credentials(provider_str)
-
-    # 2. Check EVOGIT_API_KEY_<PROVIDER> env var
-    evogit_env = "EVOGIT_API_KEY_#{String.upcase(provider_str)}"
-
-    # 3. Check common provider-specific env vars
-    common_env = common_env_var(provider)
-
-    file_key || System.get_env(evogit_env) || (common_env && System.get_env(common_env))
   end
 
   @doc """
@@ -343,31 +318,6 @@ defmodule EvoGit.Config do
   end
 
   # --- Private Helpers ---
-
-  defp get_from_credentials(provider_str) do
-    case credentials() do
-      %{"api_keys" => keys} when is_map(keys) ->
-        Map.get(keys, provider_str)
-
-      _ ->
-        nil
-    end
-  end
-
-  # Maps provider atoms to their common environment variable names
-  @common_env_vars %{
-    google: "GOOGLE_API_KEY",
-    zai: "ZAI_API_KEY",
-    deepseek: "DEEPSEEK_API_KEY",
-    groq: "GROQ_API_KEY",
-    tavily: "TAVILY_API_KEY",
-    anthropic: "ANTHROPIC_API_KEY",
-    openai: "OPENAI_API_KEY"
-  }
-
-  defp common_env_var(provider) do
-    Map.get(@common_env_vars, provider)
-  end
 
   # Deep merges two maps. `override` values take precedence.
   # Only merges maps; non-map values in `override` replace defaults.

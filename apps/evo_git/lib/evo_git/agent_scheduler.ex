@@ -383,6 +383,10 @@ defmodule EvoGit.AgentScheduler do
     :ets.new(@sched_table, [:named_table, :public, :set, read_concurrency: true])
 
     config = EvoGit.Config.resolve()
+
+    # Load API keys from credentials.toml into environment variables
+    _credentials = EvoGit.Config.credentials()
+
     scheduler_config = Map.get(config, :scheduler, %{})
 
     max_concurrency = Map.get(scheduler_config, :max_concurrency, 3)

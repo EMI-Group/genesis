@@ -1,7 +1,7 @@
 # Config — Unified Configuration Resolver
 
 ## Intent
-Contains `EvoGit.Config`, the unified configuration resolver that merges application defaults, user config (`~/.config/evogit/config.toml`), and provides API key lookup from credentials files and environment variables. This module serves as the single source of truth for all non-project configuration. It also provides write capability for persisting user config changes and a diagnostic function for checking configuration completeness.
+Contains `EvoGit.Config`, the unified configuration resolver that merges application defaults, user config (`~/.config/evogit/config.toml`), and loads API keys from credentials files into environment variables. This module serves as the single source of truth for all non-project configuration. It also provides write capability for persisting user config changes and a diagnostic function for checking configuration completeness.
 
 ## API Surface
 
@@ -13,8 +13,7 @@ Contains `EvoGit.Config`, the unified configuration resolver that merges applica
 | `user_config/0` | Reads and returns parsed `config.toml`, or `%{}` if not found |
 | `save_user_config/1` | Persists a config map to `config.toml`. Creates the config directory if needed. Encodes the map as TOML via `TomlElixir.encode/1` (atom keys are stringified). Returns `:ok` or `{:error, reason}`. |
 | `config_status/0` | Returns diagnostic map with `:missing` (list of missing critical config key atoms), `:warnings` (human-readable warning messages), and `:ok?` (boolean). Checks for: LLM model, at least one API key, and GitHub username. |
-| `credentials/0` | Reads and returns parsed `credentials.toml`, or `%{}` if not found |
-| `api_key/1` | Gets a specific API key (checks credentials file → `EVOGIT_API_KEY_<PROVIDER>` env var → provider-specific env var) |
+| `credentials/0` | Reads `credentials.toml`, sets each key-value pair as an env var via `System.put_env/2`, and returns the parsed map (or `%{}` if not found) |
 | `defaults/0` | Returns the built-in application defaults map |
 | `config_dir/0` | Returns the platform config directory path (XDG-compliant) |
 | `config_path/0` | Returns the full path to `config.toml` |
@@ -44,7 +43,7 @@ Returns a diagnostic map for UI display of configuration completeness:
 ```
 Checks three critical items:
 1. **LLM model** (`[llm] model`) — must be non-nil, non-empty
-2. **API key** — at least one provider key from credentials or env vars (google, zai, deepseek, groq, anthropic, openai)
+2. **API key** — at least one known provider env var set (GOOGLE_API_KEY, ZAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY)
 3. **GitHub username** (`[user] github_username`) — must be non-nil, non-empty
 
 ### Built-in Defaults (`defaults/0`)
@@ -63,18 +62,35 @@ Checks three critical items:
 }
 ```
 
-### API Key Resolution Order
-1. Credentials file (`credentials.toml` `[api_keys]` section)
-2. `EVOGIT_API_KEY_<PROVIDER>` environment variable
-3. Provider-specific env var (e.g., `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `ZAI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `TAVILY_API_KEY`)
+### Credentials Loading
+Credentials are loaded at scheduler startup via `credentials/0`, which:
+1. Reads `credentials.toml` from the XDG config directory
+2. Calls `System.put_env(key, value)` for each top-level key-value pair (string values only)
+3. Returns the parsed map for inspection
+
+This means API keys placed in `credentials.toml` are automatically available to `ReqLLM.Keys` and any other code that reads from `System.get_env`.
+
+Credentials file format (`credentials.toml`):
+```toml
+# API keys as environment variable names — they are set as env vars on load
+GOOGLE_API_KEY = "AIza..."
+ZAI_API_KEY = "sk-..."
+DEEPSEEK_API_KEY = "sk-..."
+GROQ_API_KEY = "gsk_..."
+TAVILY_API_KEY = "tvly-..."
+ANTHROPIC_API_KEY = "sk-ant-..."
+OPENAI_API_KEY = "sk-..."
+```
+
+Users can also set API keys directly via environment variables (e.g., `GOOGLE_API_KEY`), which is equivalent to placing them in `credentials.toml`.
+
+### Supported API Key Environment Variables
+`GOOGLE_API_KEY`, `ZAI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `TAVILY_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 
 ### Config File Locations (via `EvoGit.Platform`)
 - **Linux**: `$XDG_CONFIG_HOME/evogit` (defaults to `~/.config/evogit`)
 - **macOS**: `~/Library/Application Support/evogit`
 - **Windows**: `%APPDATA%/evogit`
-
-### Supported Providers for API Keys
-`google`, `zai`, `deepseek`, `groq`, `tavily`, `anthropic`, `openai`
 
 ## Constraints
 - **Write capability is limited**: Only `save_user_config/1` writes to disk, and only to `config.toml`. Credentials are never written programmatically.

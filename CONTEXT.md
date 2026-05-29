@@ -146,12 +146,18 @@ github_username = "your-username"
 
 #### Credentials (`~/.config/evogit/credentials.toml`)
 ```toml
-[api_keys]
-google = "AIza..."
-zai = "sk-..."
+# API keys as environment variable names — they are set as env vars on load
+GOOGLE_API_KEY = "AIza..."
+ZAI_API_KEY = "sk-..."
+DEEPSEEK_API_KEY = "sk-..."
+GROQ_API_KEY = "gsk_..."
+TAVILY_API_KEY = "tvly-..."
+ANTHROPIC_API_KEY = "sk-ant-..."
+OPENAI_API_KEY = "sk-..."
 ```
 
-API keys are resolved with fallback: credentials file → `EVOGIT_API_KEY_<PROVIDER>` env var → provider-specific env var (e.g., `GOOGLE_API_KEY`).
+API keys from `credentials.toml` are automatically set as environment variables at scheduler startup.
+Users can also set API keys directly via environment variables (e.g., `GOOGLE_API_KEY`).
 
 ### Orphaned Branch Cleanup
 
