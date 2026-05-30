@@ -49,6 +49,7 @@ defmodule EvoDashWeb.DashboardLive do
                 />
                 <button
                   type="button"
+                  id="open-another-project-picker-button"
                   class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
                   phx-click="pick_directory"
                   phx-hook="DirectoryPicker"

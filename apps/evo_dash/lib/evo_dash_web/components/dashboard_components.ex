@@ -259,6 +259,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 />
                 <button
                   type="button"
+                  id="project-path-picker-button"
                   class="absolute right-10 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
                   phx-click="pick_directory"
                   phx-hook="DirectoryPicker"
