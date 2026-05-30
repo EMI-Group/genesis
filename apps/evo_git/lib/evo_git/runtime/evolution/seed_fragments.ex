@@ -47,9 +47,10 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       iex> length(fragments)
       1
   """
-  @spec by_category(atom()) :: [Fragment.t()]
-  def by_category(category) when is_atom(category) do
-    Enum.filter(all(), &(&1.domain == category))
+  @spec by_category(atom() | String.t()) :: [Fragment.t()]
+  def by_category(category) when is_atom(category) or is_binary(category) do
+    cat_str = if is_atom(category), do: Atom.to_string(category), else: category
+    Enum.filter(all(), &(&1.domain == cat_str))
   end
 
   @doc """
@@ -149,11 +150,9 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
     Regex.scan(regex, text, capture: :all_but_first)
     |> Enum.map(fn [domain_str, code] ->
-      domain = String.to_atom(domain_str)
-
       Fragment.new(String.trim(code),
         language: "elixir",
-        domain: domain,
+        domain: domain_str,
         source: :generated
       )
     end)
@@ -230,7 +229,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :physics
+      domain: "physics"
     )
   end
 
@@ -314,7 +313,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :game_loop
+      domain: "game_loop"
     )
   end
 
@@ -399,7 +398,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :data_pipeline
+      domain: "data_pipeline"
     )
   end
 
@@ -482,7 +481,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :http_handler
+      domain: "http_handler"
     )
   end
 
@@ -579,7 +578,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :graph_algorithm
+      domain: "graph_algorithm"
     )
   end
 
@@ -646,7 +645,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :pattern_matching
+      domain: "pattern_matching"
     )
   end
 
@@ -755,7 +754,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :process_pool
+      domain: "process_pool"
     )
   end
 
@@ -851,7 +850,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :stream_processing
+      domain: "stream_processing"
     )
   end
 
@@ -935,7 +934,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :sorting
+      domain: "sorting"
     )
   end
 
@@ -1023,7 +1022,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :encoding
+      domain: "encoding"
     )
   end
 
@@ -1107,7 +1106,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :middleware
+      domain: "middleware"
     )
   end
 
@@ -1196,7 +1195,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :tree_traversal
+      domain: "tree_traversal"
     )
   end
 
@@ -1289,7 +1288,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :rate_limiter
+      domain: "rate_limiter"
     )
   end
 
@@ -1394,7 +1393,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :cache_ttl
+      domain: "cache_ttl"
     )
   end
 
@@ -1482,7 +1481,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       end
       """,
       language: "elixir",
-      domain: :event_emitter
+      domain: "event_emitter"
     )
   end
 end
