@@ -102,6 +102,40 @@ defmodule EvoDashWeb.Helpers do
     "Turn #{turn}"
   end
 
+  @doc """
+  Returns a human-friendly relative time string for a `DateTime`.
+
+  Computes the difference between `DateTime.utc_now()` and the given datetime.
+
+  ## Examples
+
+      iex> relative_time(DateTime.add!(DateTime.utc_now(), -5, :second))
+      "just now"
+
+      iex> relative_time(DateTime.add!(DateTime.utc_now(), -45, :second))
+      "45s ago"
+
+      iex> relative_time(DateTime.add!(DateTime.utc_now(), -120, :second))
+      "2m ago"
+
+      iex> relative_time(DateTime.add!(DateTime.utc_now(), -3600, :second))
+      "1h ago"
+
+      iex> relative_time(DateTime.add!(DateTime.utc_now(), -86400, :second))
+      "1d ago"
+  """
+  def relative_time(datetime) do
+    diff = DateTime.diff(DateTime.utc_now(), datetime)
+
+    cond do
+      diff < 10 -> "just now"
+      diff < 60 -> "#{diff}s ago"
+      diff < 3600 -> "#{div(diff, 60)}m ago"
+      diff < 86400 -> "#{div(diff, 3600)}h ago"
+      true -> "#{div(diff, 86400)}d ago"
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # History / Message Helpers
   # ---------------------------------------------------------------------------
