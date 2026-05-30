@@ -128,11 +128,16 @@ Agents call `AgentScheduler.spawn_sub_agents/2` (from within the agent process).
 
 ## Bottom-Up / Complex Evolution
 
-**Complex mode (`:complex`) is NOT YET IMPLEMENTED.** The `run_complex_mode/5` function in `evolution.ex` logs a warning and falls back to `run_simple_mode/5`. The CLI accepts `--mode complex` but it has no behavioral difference from `--mode simple`.
+**Complex mode (`:complex`)** is implemented in `EvoGit.Runtime.Evolution.Engine`. When `Evolution.run/2` is called with `mode: :complex`, it delegates to `Engine.run/5` which runs the full novelty-driven evolution loop:
 
-The design intent (documented in comments) is:
-- **`:simple` (Top-Down)**: Used for clear, well-defined tasks. Manager plans and delegates.
-- **`:complex` (Bottom-Up)**: For open-ended tasks requiring exploration. Not yet built.
+1. **Initialize**: Populate the Entropy Pool with 15 built-in seed fragments + LLM-generated diverse fragments. Extract structural features (AST analysis) and behavioral profiles (LLM), compute novelty scores.
+2. **Evolve**: Iterate generations of parent selection (top-k novel), child synthesis (LLM crossover + mutation), viability filtering, novelty scoring, and pool/archive insertion with redundancy eviction. Stops at max generations or stagnation limit.
+3. **Synthesize**: LLM generates a coherent implementation plan from the most novel evolved fragments.
+4. **Apply**: Spawn a Manager agent with the synthesized solution as its objective; agent makes code changes, commits, and creates branch/PR.
+
+The two modes serve different use cases:
+- **`:simple` (Top-Down)**: Used for clear, well-defined tasks. Manager plans and delegates directly.
+- **`:complex` (Bottom-Up)**: For open-ended, creative tasks requiring exploration. Engine evolves diverse genetic material before applying a synthesized solution.
 
 ## Phase Transitions
 
