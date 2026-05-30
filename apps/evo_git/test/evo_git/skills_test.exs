@@ -698,10 +698,17 @@ defmodule EvoGit.SkillsTest do
       assert names == ["child-only-skill", "root-skill", "shared-skill"]
     end
 
-    test "returns empty list when no CONTEXT.md has skills", %{tmp_dir: tmp_dir} do
-      empty_dir = Path.join(tmp_dir, "empty")
+    test "returns empty list when no CONTEXT.md has skills" do
+      dir = Path.join(System.tmp_dir!(), "evogit_no_skills_test_#{System.unique_integer()}")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "CONTEXT.md"), "# No front matter at all")
+
+      empty_dir = Path.join(dir, "empty")
       File.mkdir_p!(empty_dir)
-      skills = EvoGit.Skills.load_hierarchical_skills(tmp_dir, "./empty")
+
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      skills = EvoGit.Skills.load_hierarchical_skills(dir, "./empty")
       assert skills == []
     end
 
