@@ -617,6 +617,119 @@ defmodule EvoGit.SkillsTest do
   end
 
   # ---------------------------------------------------------------------------
+  # load_hierarchical_skills/2
+  # ---------------------------------------------------------------------------
+
+  describe "load_hierarchical_skills/2" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "evogit_hierarchical_skills_test_#{System.unique_integer()}")
+      File.mkdir_p!(tmp_dir)
+
+      # Create root CONTEXT.md with skills declaration
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - root-skill
+        - shared-skill
+      ---
+      # Root context
+      """)
+
+      # Create .agents/skills directory with skill files
+      skills_dir = Path.join(tmp_dir, ".agents/skills")
+      File.mkdir_p!(skills_dir)
+      File.write!(Path.join(skills_dir, "root-skill.md"), """
+      ---
+      name: root-skill
+      description: A skill declared at root level
+      ---
+      # Root Skill
+      """)
+      File.write!(Path.join(skills_dir, "shared-skill.md"), """
+      ---
+      name: shared-skill
+      description: A skill declared at multiple levels
+      ---
+      # Shared Skill
+      """)
+      File.write!(Path.join(skills_dir, "child-only-skill.md"), """
+      ---
+      name: child-only-skill
+      description: A skill only declared in child
+      ---
+      # Child Only Skill
+      """)
+      File.write!(Path.join(skills_dir, "orphan-skill.md"), """
+      ---
+      name: orphan-skill
+      description: A skill not declared in any CONTEXT.md
+      ---
+      # Orphan Skill
+      """)
+
+      # Create subdirectory with its own CONTEXT.md
+      child_dir = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(child_dir)
+      File.write!(Path.join(child_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - child-only-skill
+        - shared-skill
+      ---
+      # Child context
+      """)
+
+      on_exit(fn ->
+        File.rm_rf!(tmp_dir)
+      end)
+
+      {:ok, %{tmp_dir: tmp_dir}}
+    end
+
+    test "returns only skills declared in hierarchy from root", %{tmp_dir: tmp_dir} do
+      skills = EvoGit.Skills.load_hierarchical_skills(tmp_dir, "./")
+      names = EvoGit.Skills.skill_names(skills) |> Enum.sort()
+      assert names == ["root-skill", "shared-skill"]
+    end
+
+    test "returns union of skills from root to node", %{tmp_dir: tmp_dir} do
+      skills = EvoGit.Skills.load_hierarchical_skills(tmp_dir, "./lib")
+      names = EvoGit.Skills.skill_names(skills) |> Enum.sort()
+      assert names == ["child-only-skill", "root-skill", "shared-skill"]
+    end
+
+    test "returns empty list when no CONTEXT.md has skills" do
+      dir = Path.join(System.tmp_dir!(), "evogit_no_skills_test_#{System.unique_integer()}")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "CONTEXT.md"), "# No front matter at all")
+
+      empty_dir = Path.join(dir, "empty")
+      File.mkdir_p!(empty_dir)
+
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      skills = EvoGit.Skills.load_hierarchical_skills(dir, "./empty")
+      assert skills == []
+    end
+
+    test "returns empty list when CONTEXT.md exists but has no skills field", %{tmp_dir: tmp_dir} do
+      no_skills_dir = Path.join(tmp_dir, "noskills")
+      File.mkdir_p!(no_skills_dir)
+      File.write!(Path.join(no_skills_dir, "CONTEXT.md"), "# No front matter")
+      skills = EvoGit.Skills.load_hierarchical_skills(tmp_dir, "./noskills")
+      # At ./noskills, the root ./ CONTEXT.md declares root-skill and shared-skill
+      names = EvoGit.Skills.skill_names(skills) |> Enum.sort()
+      assert names == ["root-skill", "shared-skill"]
+    end
+
+    test "orphan skills (on disk but not in CONTEXT.md) are excluded", %{tmp_dir: tmp_dir} do
+      skills = EvoGit.Skills.load_hierarchical_skills(tmp_dir, "./")
+      names = EvoGit.Skills.skill_names(skills)
+      refute "orphan-skill" in names
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # parse_skill_file/1
   # ---------------------------------------------------------------------------
 
@@ -765,8 +878,7 @@ defmodule EvoGit.SkillsTest do
 
     test "list_skills returns placeholder text when no skills exist", %{tmp_dir: tmp_dir} do
       result = Skills.list_skills(tmp_dir)
-      assert result =~ "No skills defined"
-      assert result =~ ".agents/skills/"
+      assert result =~ "No skills available"
     end
 
     # read_skill/1
@@ -782,6 +894,75 @@ defmodule EvoGit.SkillsTest do
     test "read_skill returns error when skill not found", %{tmp_dir: tmp_dir} do
       result = Skills.read_skill(tmp_dir, "nonexistent")
       assert result =~ "Error: Skill 'nonexistent' not found"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # list_skills_from/1
+  # ---------------------------------------------------------------------------
+
+  describe "list_skills_from/1" do
+    test "returns placeholder when list is empty" do
+      result = EvoGit.Skills.list_skills_from([])
+      assert result =~ "No skills available"
+    end
+
+    test "lists skills from provided list" do
+      skill = %EvoGit.Skills.Skill{
+        name: "test-skill",
+        description: "A test skill",
+        parameters: [],
+        body: "body",
+        file_path: "/tmp/test.md"
+      }
+
+      result = EvoGit.Skills.list_skills_from([skill])
+      assert result =~ "test-skill"
+      assert result =~ "A test skill"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # read_skill_from/2
+  # ---------------------------------------------------------------------------
+
+  describe "read_skill_from/2" do
+    setup do
+      tmp_dir = Path.join(System.tmp_dir!(), "evogit_read_skill_from_test_#{System.unique_integer()}")
+      File.mkdir_p!(tmp_dir)
+      file_path = Path.join(tmp_dir, "test-skill.md")
+      File.write!(file_path, """
+      ---
+      name: test-skill
+      description: Test
+      ---
+      Body content.
+      """)
+
+      skill = %EvoGit.Skills.Skill{
+        name: "test-skill",
+        description: "Test",
+        parameters: [],
+        body: "Body content.",
+        file_path: file_path
+      }
+
+      on_exit(fn ->
+        File.rm_rf!(tmp_dir)
+      end)
+
+      {:ok, %{skill: skill}}
+    end
+
+    test "reads skill content when in list", %{skill: skill} do
+      result = EvoGit.Skills.read_skill_from([skill], "test-skill")
+      assert result =~ "name: test-skill"
+      assert result =~ "Body content"
+    end
+
+    test "returns error when skill not in list" do
+      result = EvoGit.Skills.read_skill_from([], "nonexistent")
+      assert result =~ "not found or not available"
     end
   end
 end
