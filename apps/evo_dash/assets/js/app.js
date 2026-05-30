@@ -102,11 +102,59 @@ const PathAutocomplete = {
   }
 };
 
+// DirectoryPicker hook: native directory picker via browser API or server fallback
+const DirectoryPicker = {
+  mounted() {
+    // Detect if browser is on the same machine as the server
+    const hostname = window.location.hostname;
+    this.el.dataset.isLocal =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]"
+        ? "true"
+        : "false";
+
+    // Listen for picker_result events pushed from the server
+    this.handleEvent("picker_result", ({path}) => {
+      if (path) {
+        // Find the nearest text input (sibling or parent-sibling) and set its value
+        const container = this.el.closest(".form-control, .relative");
+        if (container) {
+          const input = container.querySelector('input[type="text"]');
+          if (input) {
+            input.value = path;
+            // Trigger input event so LiveView picks up the change
+            input.dispatchEvent(new Event("input", {bubbles: true}));
+          }
+        }
+      }
+    });
+
+    this.el.addEventListener("click", async () => {
+      // Try the browser File System Access API (Chromium, secure context)
+      if (typeof window.showDirectoryPicker === "function") {
+        try {
+          const handle = await window.showDirectoryPicker();
+          // Note: handle.name only gives the directory basename, not the full path.
+          // We push what we have; the server-side fallback is the primary method.
+          this.pushEvent("directory_picked", {path: handle.name});
+          return;
+        } catch (_err) {
+          // User cancelled or API failed — fall through to server-side fallback
+        }
+      }
+
+      // Fallback: ask the server to open a native OS dialog
+      this.pushEvent("pick_directory", {});
+    });
+  },
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker},
 })
 
 // Show progress bar on live navigation and form submits

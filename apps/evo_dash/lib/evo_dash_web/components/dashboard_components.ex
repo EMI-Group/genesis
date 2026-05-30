@@ -248,7 +248,7 @@ defmodule EvoDashWeb.DashboardComponents do
                   type="text"
                   name="path"
                   value={@path}
-                  class="input input-bordered w-full pl-11 pr-4 h-12 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm bg-base-200/50"
+                  class="input input-bordered w-full pl-11 pr-12 h-12 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm bg-base-200/50"
                   placeholder="/path/to/your/repo"
                   autofocus
                   phx-hook="PathAutocomplete"
@@ -257,6 +257,15 @@ defmodule EvoDashWeb.DashboardComponents do
                   id="initial-project-path-input"
                   list="path-suggestions"
                 />
+                <button
+                  type="button"
+                  class="absolute right-10 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                  phx-click="pick_directory"
+                  phx-hook="DirectoryPicker"
+                  title="Browse for directory"
+                >
+                  <.icon name="hero-folder-open" class="size-5" />
+                </button>
                 <datalist id="path-suggestions">
                   <%= for suggestion <- @path_suggestions do %>
                     <option value={suggestion}></option>

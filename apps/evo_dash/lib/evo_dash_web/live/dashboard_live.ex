@@ -38,7 +38,7 @@ defmodule EvoDashWeb.DashboardLive do
                 <input
                   type="text"
                   name="path"
-                  class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
+                  class="input input-bordered w-full pl-10 pr-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
                   placeholder="/path/to/another/repo"
                   autofocus
                   phx-hook="PathAutocomplete"
@@ -47,6 +47,15 @@ defmodule EvoDashWeb.DashboardLive do
                   id="open-another-project-path-input"
                   list="path-suggestions-open"
                 />
+                <button
+                  type="button"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                  phx-click="pick_directory"
+                  phx-hook="DirectoryPicker"
+                  title="Browse for directory"
+                >
+                  <.icon name="hero-folder-open" class="size-5" />
+                </button>
                 <datalist id="path-suggestions-open">
                   <%= for suggestion <- @path_suggestions do %>
                     <option value={suggestion}></option>
@@ -656,6 +665,25 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event("path_input", %{"path" => value}, socket) do
     suggestions = path_suggestions(value)
     {:noreply, assign(socket, :path_suggestions, suggestions)}
+  end
+
+  @impl true
+  def handle_event("pick_directory", _params, socket) do
+    case EvoDashWeb.NativePicker.pick_directory() do
+      {:ok, path} ->
+        {:noreply, push_event(socket, "picker_result", %{path: path})}
+
+      {:error, :cancelled} ->
+        {:noreply, socket}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Could not open directory picker: #{reason}")}
+    end
+  end
+
+  @impl true
+  def handle_event("directory_picked", %{"path" => path}, socket) do
+    {:noreply, push_event(socket, "picker_result", %{path: path})}
   end
 
   @impl true
