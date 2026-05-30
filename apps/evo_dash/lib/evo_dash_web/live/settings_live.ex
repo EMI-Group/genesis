@@ -17,7 +17,7 @@ defmodule EvoDashWeb.SettingsLive do
 
       <!-- Scheduler Pause/Resume Control -->
       <div class="mt-4 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div class="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <div class="flex items-center gap-3">
             <div class={[
               "p-3 rounded-xl",
@@ -78,13 +78,13 @@ defmodule EvoDashWeb.SettingsLive do
 
       <!-- Current Config Summary -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-6">
+        <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <.icon name="hero-information-circle" class="size-5 text-info" /> Current Runtime Values
           </h2>
         </div>
-        <div class="p-6 pt-2">
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="p-4 sm:p-6 pt-2">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             <%= for {label, key, value} <- [
               {"Status", :paused, @scheduler_paused},
               {"LLM Concurrency", :max_concurrency, @scheduler_config[:max_concurrency]},

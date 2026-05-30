@@ -56,7 +56,7 @@ defmodule EvoDashWeb.DashboardComponents do
           </label>
           <textarea
             name="prompt"
-            class="textarea textarea-bordered w-full min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
+            class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
             placeholder="Describe the software you want to create or the change you want to make..."
           ><%= @prompt %></textarea>
         </div>
@@ -101,7 +101,7 @@ defmodule EvoDashWeb.DashboardComponents do
       </div>
       <div class="p-6 md:p-8 pt-4 md:pt-6">
         <.form for={%{}} phx-submit="update_scheduler_config" phx-change="scheduler_config_change" class="space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text text-sm font-medium">LLM Concurrency</span>
@@ -237,7 +237,7 @@ defmodule EvoDashWeb.DashboardComponents do
         </div>
 
         <!-- Form -->
-        <div class="p-6 pt-2">
+        <div class="p-4 sm:p-6 pt-2">
           <.form for={%{}} phx-submit="open_project" class="space-y-4">
             <div class="form-control relative">
               <div class="relative">
@@ -414,7 +414,7 @@ defmodule EvoDashWeb.DashboardComponents do
           <%= if @show_details do %>
             <div class="divider my-4"></div>
             <div class="space-y-4">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                 <div class="bg-base-200/40 p-4 rounded-xl border border-base-200">
                   <div class="flex items-center justify-between mb-3">
                     <h4 class="text-sm font-bold flex items-center gap-2">

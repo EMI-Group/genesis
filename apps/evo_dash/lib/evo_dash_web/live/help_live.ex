@@ -44,12 +44,12 @@ defmodule EvoDashWeb.HelpLive do
 
       <!-- Config File Locations -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-6">
+        <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <.icon name="hero-folder" class="size-5 text-primary" /> Configuration Files
           </h2>
         </div>
-        <div class="p-6 pt-2 space-y-3">
+        <div class="p-4 sm:p-6 pt-2 space-y-3">
           <%= for {label, path, exists} <- [
             {"Config Directory", @config_dir, File.dir?(@config_dir)},
             {"Config File", @config_path, File.exists?(@config_path)},
@@ -75,12 +75,12 @@ defmodule EvoDashWeb.HelpLive do
 
       <!-- Credentials Reference -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-6">
+        <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <.icon name="hero-key" class="size-5 text-accent" /> Credentials Reference
           </h2>
         </div>
-        <div class="p-6 pt-2">
+        <div class="p-4 sm:p-6 pt-2">
           <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto"><%= @credentials_reference %></pre>
           <div class="mt-3 space-y-1">
             <p class="text-xs text-base-content/50 flex items-center gap-1.5">
@@ -98,7 +98,7 @@ defmodule EvoDashWeb.HelpLive do
 
       <!-- User Config Editor -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6">
+        <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-4 sm:p-6">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <h2 class="text-lg font-semibold flex items-center gap-2">
               <.icon name="hero-document-text" class="size-5 text-primary" /> User Configuration
@@ -119,7 +119,7 @@ defmodule EvoDashWeb.HelpLive do
             </div>
           </div>
         </div>
-        <div class="p-6 pt-2">
+        <div class="p-4 sm:p-6 pt-2">
           <%= if @editing do %>
             <div class="form-control">
               <textarea
@@ -149,12 +149,12 @@ defmodule EvoDashWeb.HelpLive do
 
       <!-- Quick Reference -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="bg-gradient-to-br from-info/10 via-info/5 to-transparent p-6">
+        <div class="bg-gradient-to-br from-info/10 via-info/5 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <.icon name="hero-book-open" class="size-5 text-info" /> Configuration Reference
           </h2>
         </div>
-        <div class="p-6 pt-2">
+        <div class="p-4 sm:p-6 pt-2">
           <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto"><%= @config_reference %></pre>
         </div>
       </div>

@@ -21,7 +21,7 @@ defmodule EvoDashWeb.DashboardLive do
         </div>
 
         <%= if @show_open_project_form do %>
-          <div class="mb-8 bg-base-200/50 rounded-xl p-6 border border-base-200">
+          <div class="mb-8 bg-base-200/50 rounded-xl p-4 sm:p-6 border border-base-200">
             <div class="flex items-center justify-between mb-4">
               <h3 class="text-lg font-semibold flex items-center gap-2">
                 <.icon name="hero-folder-open" class="size-5 text-primary" /> Open Another Project
@@ -86,13 +86,13 @@ defmodule EvoDashWeb.DashboardLive do
         <%= if @show_project_settings do %>
           <!-- Project Config Section -->
           <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-            <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-6">
+            <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4 sm:p-6">
               <h2 class="text-lg font-semibold flex items-center gap-2">
                 <.icon name="hero-document-text" class="size-5 text-accent" /> evogit.toml Configuration
               </h2>
             </div>
-            <div class="p-6 pt-2">
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="p-4 sm:p-6 pt-2">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
                   <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">Project Root</p>
                   <p class="text-sm font-mono mt-1">{@active_project}</p>
@@ -127,12 +127,12 @@ defmodule EvoDashWeb.DashboardLive do
 
           <!-- Foreign Repos Section -->
           <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-            <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-6">
+            <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-4 sm:p-6">
               <h2 class="text-lg font-semibold flex items-center gap-2">
                 <.icon name="hero-server-stack" class="size-5 text-secondary" /> Foreign Repositories
               </h2>
             </div>
-            <div class="p-6 pt-2">
+            <div class="p-4 sm:p-6 pt-2">
               <%= if @foreign_repos == [] do %>
                 <div class="text-center py-8 text-base-content/40">
                   <.icon name="hero-folder-minus" class="size-12 mx-auto mb-2 opacity-30" />
@@ -171,14 +171,14 @@ defmodule EvoDashWeb.DashboardLive do
           <div class="mb-6">
             <%= if @show_add_foreign_repo_form do %>
               <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-                <div class="bg-gradient-to-br from-success/10 via-success/5 to-transparent p-6">
+                <div class="bg-gradient-to-br from-success/10 via-success/5 to-transparent p-4 sm:p-6">
                   <h2 class="text-lg font-semibold flex items-center gap-2">
                     <.icon name="hero-plus-circle" class="size-5 text-success" /> Add Foreign Repository
                   </h2>
                 </div>
-                <div class="p-6 pt-2">
+                <div class="p-4 sm:p-6 pt-2">
                   <.form for={%{}} phx-submit="add_foreign_repo" class="space-y-4">
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                       <div>
                         <label class="label">
                           <span class="label-text text-xs font-medium uppercase tracking-wide">Repo ID</span>
@@ -249,7 +249,7 @@ defmodule EvoDashWeb.DashboardLive do
       <% end %>
 
       <!-- Section Header -->
-      <div class="flex items-center gap-4 mt-8 mb-4">
+      <div class="flex items-center gap-2 sm:gap-4 mt-8 mb-4">
         <h2 class="text-lg font-semibold text-base-content/80 whitespace-nowrap">
           <%= if @active_project do %>
             Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %>
@@ -275,7 +275,7 @@ defmodule EvoDashWeb.DashboardLive do
       <!-- Task List -->
       <div class="space-y-4">
         <%= if @tasks == [] do %>
-          <div class="text-center py-12 text-base-content/50">
+          <div class="text-center py-8 sm:py-12 text-base-content/50">
             <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
             <p class="text-lg font-medium">
               <%= if @active_project do %>
