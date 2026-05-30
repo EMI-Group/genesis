@@ -60,7 +60,8 @@ defmodule EvoGit.Agents.CodebaseArchitect do
     - PHASE 2: IMPLEMENTATION
       - Once the skeleton is fully established, implement the code.
       - Spawn `subagent_generalist` subagents to generate code for specific files.
-        - For complex implementation tasks spanning multiple nodes, first spawn `subagent_planner` to produce a structured step-by-step plan, then follow the plan.
+        - For complex implementation tasks spanning multiple nodes where the dependency order is unclear, first spawn `subagent_planner` to produce a structured step-by-step plan, then follow the plan. Skip the planner for straightforward file implementations — delegate directly to generalists.
+        - Include architectural context from Phase 1 in each subagent's objective so they don't re-investigate the structure you already designed. For example: "Implement `connection.rs` following the pattern described in CONTEXT.md — it should use the pool module from `./database/pool.rs` (already implemented)."
         - Remind them that some sibling files / APIs might be missing, and they should strictly work on their own task.
 
     - PHASE 3: REVIEW & CONVERGENCE

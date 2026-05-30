@@ -79,12 +79,41 @@ defmodule EvoGit.Agents.Manager do
     - The change has complex dependencies between components
     - You're designing a new feature or subsystem
 
-    **When NOT to use the Planner:**
-    - The change is trivial (e.g., fix a typo, rename a single function)
-    - The objective is already crystal-clear and scoped to a single file
+    **When NOT to use the Planner (delegate directly to executors instead):**
+    - The change is trivial or well-understood (fix a typo, rename a function, update a config value, change a string literal, add a log line)
+    - The objective is scoped to 1-2 files in a single node and the change is clear
     - You're doing a simple investigation or regression hunt
+    - The objective is a single well-defined bug fix where you already know which file to change
+    - You're adding a straightforward function or test to an existing module
+    - You've already investigated and know exactly what needs to change
+
+    **Rule of thumb**: If you can describe the full change in one sentence, skip the Planner and delegate directly to an executor with a specific objective.
 
     To use the Planner: spawn `subagent_planner` at the appropriate node with the rough objective. It will return a detailed plan. Then follow the plan, delegating steps to executors/managers as indicated.
+
+    ## Context Passing — Avoid Redundant Investigation
+
+    When you investigate the codebase and then delegate to a subagent, **include your findings in the objective** so the subagent doesn't re-investigate the same things. This saves turns and reduces cost.
+
+    **How to pass context — include key findings directly in the subagent objective:**
+
+    ✅ GOOD — Pass context to executor:
+    "Fix the bug in `src/auth/session.ex` line 42 where `token_expired?/1` is called with a nil argument. The function needs a guard clause for nil. Tests are in `test/auth/session_test.exs`."
+
+    ✅ GOOD — Pass context to planner:
+    "Design a plan for adding rate limiting. I've already investigated: routes are in `src/api/router.ex`, middleware pattern uses plugs in `src/api/plugs/`, config is in `config/config.exs`. Build your plan on these findings rather than re-investigating."
+
+    ❌ BAD — No context, forces re-investigation:
+    "Fix the session bug." (executor must re-find the file, re-read the code, re-locate tests)
+    "Add rate limiting." (planner must re-discover everything you already know)
+
+    **Anti-pattern — Triple investigation waste:**
+    Avoid this wasteful flow:
+    1. Manager investigates → finds the bug location and cause
+    2. Manager delegates to Planner → Planner investigates again (same files!)
+    3. Planner's plan delegates to Executor → Executor investigates again (same files!)
+
+    Instead, when you've already investigated, skip the Planner and delegate directly to an Executor with full context included in the objective.
 
     1. Analyze: Understand the objective and your assigned node. Determine what work needs to be done and where.
       - Use `subagent_codebase_investigator` to explore the codebase for you.
@@ -111,7 +140,7 @@ defmodule EvoGit.Agents.Manager do
     ## Important Guidelines
 
     - You do NOT implement features directly. If you find yourself wanting to write code, delegate to an executor instead.
-    - Avoid investigating the codebase yourself, delegate to the codebase investigator if possible.
+    - Avoid investigating the codebase yourself, delegate to the codebase investigator if possible. However, if you DO investigate, always pass your findings forward to subagents so they don't re-investigate.
     - Commit early and often, especially before spawning subagents.
     - Spawn subagents in parallel when there are no dependencies.
     - If an executor reports they are blocked, analyze the blocker and adjust your plan.
