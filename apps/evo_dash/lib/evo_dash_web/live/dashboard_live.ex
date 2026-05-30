@@ -71,28 +71,11 @@ defmodule EvoDashWeb.DashboardLive do
         <% end %>
 
         <div class="mb-8">
-          <%= if @tasks != [] do %>
-            <%= if @show_task_form do %>
-              <EvoDashWeb.DashboardComponents.task_form
-                prompt={@task_prompt}
-                mode={@task_mode}
-                mode_info={@task_mode_info}
-              />
-            <% else %>
-              <button
-                class="btn btn-outline btn-sm gap-2 w-full"
-                phx-click="toggle_task_form"
-              >
-                <.icon name="hero-plus" class="size-4" /> New Task
-              </button>
-            <% end %>
-          <% else %>
-            <EvoDashWeb.DashboardComponents.task_form
-              prompt={@task_prompt}
-              mode={@task_mode}
-              mode_info={@task_mode_info}
-            />
-          <% end %>
+          <EvoDashWeb.DashboardComponents.task_form
+            prompt={@task_prompt}
+            mode={@task_mode}
+            mode_info={@task_mode_info}
+          />
         </div>
 
         <!-- Project Settings Toggle Button -->
@@ -402,7 +385,6 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:new_repo_id, "")
       |> assign(:new_repo_path, "")
       |> assign(:new_repo_name, "")
-      |> assign(:show_task_form, false)
       |> assign_form_defaults()
 
     config_status =
@@ -489,8 +471,7 @@ defmodule EvoDashWeb.DashboardLive do
      |> assign(:tasks, tasks)
      |> assign(:task_mode, mode)
      |> assign(:task_mode_info, mode_info)
-     |> assign(:show_project_settings, false)
-     |> assign(:show_task_form, false)}
+     |> assign(:show_project_settings, false)}
   end
 
   @impl true
@@ -734,8 +715,7 @@ defmodule EvoDashWeb.DashboardLive do
              :info,
              "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}"
            )
-           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
-           |> assign(:show_task_form, false)}
+           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))}
 
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
@@ -769,11 +749,6 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     {:noreply, assign(socket, :expanded_task_ids, expanded)}
-  end
-
-  @impl true
-  def handle_event("toggle_task_form", _params, socket) do
-    {:noreply, assign(socket, :show_task_form, !socket.assigns.show_task_form)}
   end
 
   @impl true
