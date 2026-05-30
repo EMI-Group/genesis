@@ -198,6 +198,10 @@ defmodule EvoGit.Core.ContextNode do
   Builds the string context representation for the AI by traversing the context tree.
   Per the design spec, only directories are included in the explicit context hierarchy.
   File-level context is handled implicitly by LLMs.
+
+  YAML front matter (delimited by `---`) in CONTEXT.md files is stripped before
+  inclusion. The front matter is used for metadata like skill configuration and
+  is not part of the visible context tree.
   """
   @spec build_context(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def build_context(relative_path, repo_path) do
@@ -229,13 +233,16 @@ defmodule EvoGit.Core.ContextNode do
 
             file = context_file_path(node)
 
+            # Strip YAML front matter before presenting to agents
+            display_content = EvoGit.Skills.strip_front_matter(content)
+
             truncated_content =
-              if byte_size(content) > @context_max_bytes do
+              if byte_size(display_content) > @context_max_bytes do
                 require Logger
                 Logger.warning("Content truncated for file: #{file}")
-                binary_part(content, 0, @context_max_bytes) <> "\n... [Content Truncated] ..."
+                binary_part(display_content, 0, @context_max_bytes) <> "\n... [Content Truncated] ..."
               else
-                content
+                display_content
               end
 
             "File: #{file}\n```\n#{truncated_content}\n```"
@@ -250,6 +257,22 @@ defmodule EvoGit.Core.ContextNode do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  @doc """
+  Builds the context tree AND extracts hierarchical skill names in a single pass.
+
+  Returns `{:ok, context_string, skill_names}` or `{:error, reason}`.
+  `skill_names` is a deduplicated list of skill name strings inherited from
+  root to the given node.
+  """
+  @spec build_context_with_skills(String.t(), String.t()) ::
+          {:ok, String.t(), [String.t()]} | {:error, term()}
+  def build_context_with_skills(relative_path, repo_path) do
+    with {:ok, context} <- build_context(relative_path, repo_path) do
+      skill_names = EvoGit.Skills.hierarchical_skill_names(relative_path, repo_path)
+      {:ok, context, skill_names}
     end
   end
 end
