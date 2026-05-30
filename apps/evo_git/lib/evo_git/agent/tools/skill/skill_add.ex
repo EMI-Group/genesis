@@ -44,11 +44,15 @@ defmodule EvoGit.Agent.Tools.SkillAdd do
   @doc """
   Executes the skill_add tool.
   """
-  def execute(args, _repo_path, repo_root) do
+  def execute(args, _repo_path, repo_root, _node_path) do
     case Shared.fetch_string_arg(args, "content") do
       {:ok, content} ->
         case EvoGit.Skills.add_skill(repo_root, content, "", %{}) do
-          {:ok, file_path} -> "Skill created successfully: #{file_path}"
+          {:ok, file_path} ->
+            "Skill created successfully: #{file_path}. " <>
+              "Note: This skill will not be available to agents until you add it " <>
+              "to the `skills` field in a CONTEXT.md file (e.g., using `edit_context` or `write_context`)."
+
           {:error, reason} -> "Error creating skill: #{reason}"
         end
 

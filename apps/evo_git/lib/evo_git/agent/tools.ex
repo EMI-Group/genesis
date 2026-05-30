@@ -152,31 +152,35 @@ defmodule EvoGit.Agent.Tools do
     SearchHistory.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("skill_list", args, repo_path, repo_root, _node_path) do
-    SkillList.execute(args, repo_path, repo_root)
+  defp execute_tool("skill_list", args, repo_path, repo_root, node_path) do
+    SkillList.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("skill_read", args, repo_path, repo_root, _node_path) do
-    SkillRead.execute(args, repo_path, repo_root)
+  defp execute_tool("skill_read", args, repo_path, repo_root, node_path) do
+    SkillRead.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("skill_add", args, repo_path, repo_root, _node_path) do
-    SkillAdd.execute(args, repo_path, repo_root)
+  defp execute_tool("skill_add", args, repo_path, repo_root, node_path) do
+    SkillAdd.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("skill_edit", args, repo_path, repo_root, _node_path) do
-    SkillEdit.execute(args, repo_path, repo_root)
+  defp execute_tool("skill_edit", args, repo_path, repo_root, node_path) do
+    SkillEdit.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("skill_remove", args, repo_path, repo_root, _node_path) do
-    SkillRemove.execute(args, repo_path, repo_root)
+  defp execute_tool("skill_remove", args, repo_path, repo_root, node_path) do
+    SkillRemove.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool(unknown_tool, args, repo_path, repo_root, _node_path) do
+  defp execute_tool(unknown_tool, args, repo_path, repo_root, node_path) do
     # Try dynamic skill execution — skills are loaded from .agents/skills/
     # and injected as tool schemas at agent startup
     if repo_root && is_binary(repo_root) do
-      skills = EvoGit.Skills.load_skills(repo_root)
+      skills = if node_path do
+        EvoGit.Skills.load_hierarchical_skills(repo_root, node_path)
+      else
+        EvoGit.Skills.load_skills(repo_root)
+      end
 
       if EvoGit.Skills.find_skill(skills, unknown_tool) do
         EvoGit.Skills.execute(skills, unknown_tool, args, repo_path)

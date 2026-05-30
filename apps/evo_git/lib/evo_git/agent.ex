@@ -116,7 +116,7 @@ defmodule EvoGit.Agent do
           repo_root = Process.get(:evogit_repo_root)
           skill_schemas = if repo_root && is_binary(repo_root) do
             repo_root
-            |> EvoGit.Skills.load_skills()
+            |> EvoGit.Skills.load_hierarchical_skills(node_path)
             |> EvoGit.Skills.to_tool_schemas()
           else
             []
