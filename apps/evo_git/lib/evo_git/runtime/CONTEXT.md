@@ -13,6 +13,13 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 | `EvoGit.Runtime.Genesis` | `genesis.ex` | `run/2` | Stage 1 — Creation/Analysis. Auto-detects mode. Returns `{:ok, %{commit_sha, result, tag, branch_name, pr_url}}` or `{:ok, %{..., no_changes: true}}`. |
 | `EvoGit.Runtime.Evolution` | `evolution.ex` | `run/2` | Stage 2 — Evolutionary Loop. Supports `:simple` and `:complex` modes. Same return shape as Genesis. |
 | `EvoGit.Runtime.PullRequest` | `pull_request.ex` | `try_create/4`, `generate_title/2`, `format_body/2` | Shared PR utilities: LLM-powered title generation, body formatting, push + PR creation via `gh` CLI. |
+| `EvoGit.Runtime.Evolution.Engine` | `evolution/engine.ex` | `run/5` | Complex Evolution orchestrator — novelty-driven evolution loop with MAP-Elites, LLM crossover/mutation, and solution synthesis. |
+| `EvoGit.Runtime.Evolution.Fragment` | `evolution/fragment.ex` | `new/2`, `extract_structural_features/1`, `to_feature_vector/1`, `summarize/1` | Code fragment data structure with AST feature extraction and feature vector conversion. |
+| `EvoGit.Runtime.Evolution.SeedFragments` | `evolution/seed_fragments.ex` | `all/0`, `by_category/1`, `random/1`, `generate_with_llm/3` | 15 built-in cross-domain seed fragments + LLM-powered diverse fragment generation. |
+| `EvoGit.Runtime.Evolution.EntropyPool` | `evolution/entropy_pool.ex` | `start_link/1`, `insert/1`, `insert_all/1`, `get/1`, `all/0`, `size/0`, `select_novel/1`, `select_random/1`, `evict_most_redundant/0`, `update_fragment/1`, `clear/0`, `stop/0` | ETS-backed GenServer for fragment storage with novelty-based selection and auto-eviction. |
+| `EvoGit.Runtime.Evolution.MapElites` | `evolution/map_elites.ex` | `start_link/1`, `insert/1`, `get_elites/0`, `get_elite/1`, `all_fragments/0`, `size/0`, `descriptor_for/1`, `clear/0`, `stop/0` | MAP-Elites quality diversity archive — grid indexed by complexity × paradigm. |
+| `EvoGit.Runtime.Evolution.NoveltyMetric` | `evolution/novelty_metric.ex` | `novelty_score/3`, `distance/2`, `batch_novelty_scores/3`, `structural_features/1`, `behavioral_profile/2`, `most_redundant/1` | k-NN novelty scoring in feature space, AST structural analysis, LLM behavioral profiling. |
+| `EvoGit.Runtime.Evolution.LLMSynthesis` | `evolution/llm_synthesis.ex` | `crossover/4`, `mutate/3`, `evaluate_viability/1`, `generate_diverse_fragments/4` | LLM-powered semantic crossover, mutation, syntax viability checking, and diverse fragment generation. |
 
 ### `Genesis.run/2` — Step by Step
 
