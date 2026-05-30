@@ -67,6 +67,13 @@ config :req_llm,
   # Extended timeout for reasoning models
   thinking_timeout: 1_000_000
 
+# Desktop mode configuration
+# Set desktop: true to launch as a native desktop app via elixir-desktop
+# The desktop_port should match the endpoint's http port
+config :evo_dash,
+  desktop: false,
+  desktop_port: 4100
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

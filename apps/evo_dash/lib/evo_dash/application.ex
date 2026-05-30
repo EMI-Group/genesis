@@ -7,15 +7,29 @@ defmodule EvoDash.Application do
 
   @impl true
   def start(_type, _args) do
+    desktop_children =
+      if Application.get_env(:evo_dash, :desktop, false) do
+        port = Application.get_env(:evo_dash, :desktop_port, 4100)
+
+        [{Desktop.Window,
+          [
+            app: :evo_dash,
+            id: :evo_dash_window,
+            title: "EvoGit Dashboard",
+            url: "http://localhost:#{port}/?client=desktop",
+            size: {1280, 800}
+          ]}]
+      else
+        []
+      end
+
     children = [
       EvoDashWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:evo_dash, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
-      EvoDash.TaskRegistry,
-      # Start a worker by calling: EvoDash.Worker.start_link(arg)
-      # {EvoDash.Worker, arg},
-      # Start to serve requests, typically the last entry
+      EvoDash.TaskRegistry
+    ] ++ desktop_children ++ [
       EvoDashWeb.Endpoint
     ]
 
