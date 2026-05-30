@@ -17,7 +17,7 @@ defmodule EvoDashWeb.SettingsLive do
 
       <!-- Scheduler Pause/Resume Control -->
       <div class="mt-4 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="p-5 flex items-center justify-between">
+        <div class="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div class="flex items-center gap-3">
             <div class={[
               "p-3 rounded-xl",

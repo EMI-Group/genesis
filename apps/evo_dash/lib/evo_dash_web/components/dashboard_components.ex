@@ -19,7 +19,7 @@ defmodule EvoDashWeb.DashboardComponents do
     >
       <!-- Hero Header with inline mode select -->
       <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent px-6 py-4 md:px-8 md:py-5">
-        <div class="flex items-center justify-between gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <div class="flex items-center gap-3">
             <div class="bg-primary/15 text-primary p-2.5 rounded-xl">
               <.icon name="hero-sparkles" class="size-5" />
@@ -228,7 +228,7 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class="max-w-2xl mx-auto">
       <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
         <!-- Hero section -->
-        <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-8 text-center">
+        <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6 sm:p-8 text-center">
           <div class="bg-primary/15 text-primary p-4 rounded-2xl w-fit mx-auto mb-4">
             <.icon name="hero-folder-open" class="size-10" />
           </div>
@@ -373,7 +373,7 @@ defmodule EvoDashWeb.DashboardComponents do
           <% end %>
 
           <!-- Footer row: timestamps | actions -->
-          <div class="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-base-200/50">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-3 pt-3 border-t border-base-200/50">
             <div class="flex items-center gap-3 text-xs text-base-content/50">
               <span class="flex items-center gap-1">
                 <.icon name="hero-clock" class="size-3.5" />

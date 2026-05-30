@@ -30,7 +30,7 @@ defmodule EvoDashWeb.DashboardLive do
                 <.icon name="hero-x-mark" class="size-4" /> Cancel
               </button>
             </div>
-            <.form for={%{}} phx-submit="open_project" class="flex gap-3">
+            <.form for={%{}} phx-submit="open_project" class="flex flex-col sm:flex-row gap-3">
               <div class="relative flex-1">
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
                   <.icon name="hero-folder" class="size-5" />
@@ -53,7 +53,7 @@ defmodule EvoDashWeb.DashboardLive do
                   <% end %>
                 </datalist>
               </div>
-              <button type="submit" class="btn btn-primary">
+              <button type="submit" class="btn btn-primary w-full sm:w-auto">
                 <.icon name="hero-folder-open" class="size-5" /> Open
               </button>
             </.form>

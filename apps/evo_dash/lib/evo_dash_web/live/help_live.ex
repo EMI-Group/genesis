@@ -99,7 +99,7 @@ defmodule EvoDashWeb.HelpLive do
       <!-- User Config Editor -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
         <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6">
-          <div class="flex items-center justify-between">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <h2 class="text-lg font-semibold flex items-center gap-2">
               <.icon name="hero-document-text" class="size-5 text-primary" /> User Configuration
             </h2>

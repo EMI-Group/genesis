@@ -140,7 +140,7 @@
                   </code>
                 </div>
 
-                <div class="grid grid-cols-4 gap-2">
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <div>
                     <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
                       Task ID
@@ -192,7 +192,7 @@
                   <% end %>
                 </div>
 
-                <div class="flex gap-4">
+                <div class="flex flex-col sm:flex-row gap-4">
                   <div class="shrink-0">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       Parent
@@ -258,7 +258,7 @@
                       <div class="divide-y divide-base-300">
                         <%= for {entry, index} <- Enum.with_index(agent.history) do %>
                           <div class="p-3 hover:bg-base-300/50">
-                            <div class="flex items-center gap-2 mb-1">
+                            <div class="flex flex-wrap items-center gap-2 mb-1">
                               <.icon
                                 name={history_entry_icon(entry.type)}
                                 class="size-4 shrink-0"
