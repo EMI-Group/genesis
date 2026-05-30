@@ -55,7 +55,7 @@ defmodule EvoDashWeb.HelpLive do
             {"Config File", @config_path, File.exists?(@config_path)},
             {"Credentials File", @credentials_path, File.exists?(@credentials_path)}
           ] do %>
-            <div class="flex items-center gap-3 bg-base-200/40 rounded-lg p-3 border border-base-200">
+            <div class="flex flex-wrap items-center gap-3 bg-base-200/40 rounded-lg p-3 border border-base-200">
               <%= if exists do %>
                 <.icon name="hero-check-circle" class="size-5 text-success shrink-0" />
               <% else %>

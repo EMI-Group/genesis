@@ -334,7 +334,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
         <div class="flex-1 p-4 md:p-5">
           <!-- Header row: type + mode badges | status + task ID -->
-          <div class="flex items-center justify-between gap-3 mb-3 pr-7">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3 pr-7">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="badge badge-outline badge-sm font-bold capitalize">
                 <.icon name={task_type_icon(@task.type)} class="size-3.5 mr-1" />
