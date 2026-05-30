@@ -160,7 +160,54 @@ defmodule EvoGit.Core.ContextNode do
     {:error, :invalid_path}
   end
 
-  # Reads the CONTEXT.md contract for a directory node.
+  @doc """
+  Returns the union of all skill names declared in CONTEXT.md front matter
+  from the root directory down to the given relative path.
+  """
+  @spec get_hierarchy_skills(String.t(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  def get_hierarchy_skills(relative_path, repo_path) do
+    case hierarchy_nodes(relative_path, repo_path) do
+      {:ok, nodes} ->
+        skills =
+          nodes
+          |> Enum.filter(fn node ->
+            abs_path = Path.expand(node.path, node.repo)
+            File.dir?(abs_path)
+          end)
+          |> Enum.flat_map(fn node ->
+            abs_path = Path.expand(node.path, node.repo)
+            contract_path = Path.join(abs_path, "CONTEXT.md")
+
+            case File.read(contract_path) do
+              {:ok, content} ->
+                case EvoGit.Skills.parse_frontmatter(content) do
+                  {:ok, metadata, _body} ->
+                    case Map.get(metadata, "skills") do
+                      skills_list when is_list(skills_list) ->
+                        Enum.filter(skills_list, &is_binary/1)
+
+                      _ ->
+                        []
+                    end
+
+                  {:error, _} ->
+                    []
+                end
+
+              {:error, _} ->
+                []
+            end
+          end)
+          |> Enum.uniq()
+
+        {:ok, skills}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Reads the CONTEXT.md contract for a directory node, stripping YAML front matter.
   # Per the design spec, only directories have explicit CONTEXT.md files.
   # File-level context is handled implicitly by LLMs, not explicitly modeled.
   @spec read_context(t()) :: {:ok, String.t()} | {:error, term()}
@@ -169,7 +216,17 @@ defmodule EvoGit.Core.ContextNode do
 
     if File.dir?(abs_path) do
       contract_path = Path.join(abs_path, "CONTEXT.md")
-      File.read(contract_path)
+
+      case File.read(contract_path) do
+        {:ok, content} ->
+          case EvoGit.Skills.parse_frontmatter(content) do
+            {:ok, _metadata, body} -> {:ok, body}
+            {:error, _reason} -> {:ok, content}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
     else
       # Files don't have explicit CONTEXT.md - LLMs handle file-level context naturally
       {:ok, ""}
