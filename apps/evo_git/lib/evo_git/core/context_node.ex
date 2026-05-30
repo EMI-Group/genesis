@@ -252,49 +252,6 @@ defmodule EvoGit.Core.ContextNode do
   end
 
   @doc """
-  Reads all CONTEXT.md files along the hierarchy from root to the given node path,
-  extracting the `skills` field from their YAML frontmatter.
-
-  Returns `{:ok, [skill_name_strings]}` on success, or `{:error, reason}`.
-  """
-  @spec get_hierarchy_skills(String.t(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
-  def get_hierarchy_skills(node_path, repo_root) do
-    case hierarchy_nodes(node_path, repo_root) do
-      {:ok, nodes} ->
-        skill_names =
-          nodes
-          |> Enum.filter(fn node ->
-            abs_path = Path.expand(node.path, node.repo)
-            File.dir?(abs_path)
-          end)
-          |> Enum.flat_map(fn node ->
-            abs_path = Path.expand(node.path, node.repo)
-            context_file = Path.join(abs_path, "CONTEXT.md")
-
-            case File.read(context_file) do
-              {:ok, content} ->
-                case EvoGit.Skills.parse_frontmatter(content) do
-                  {:ok, metadata, _body} ->
-                    Map.get(metadata, "skills", [])
-
-                  {:error, _} ->
-                    []
-                end
-
-              {:error, _} ->
-                []
-            end
-          end)
-          |> Enum.uniq()
-
-        {:ok, skill_names}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  @doc """
   Builds the string context representation for the AI by traversing the context tree.
   Per the design spec, only directories are included in the explicit context hierarchy.
   File-level context is handled implicitly by LLMs.
