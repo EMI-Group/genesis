@@ -274,21 +274,4 @@ defmodule EvoDashWeb.DashboardComponents do
   defp status_badge(:cancelled), do: "badge badge-warning badge-sm"
   defp status_badge(_), do: "badge badge-ghost badge-sm"
 
-  defp task_type_icon(:genesis), do: "hero-cube"
-  defp task_type_icon(:evolve), do: "hero-arrow-path"
-
-  defp task_description(%{type: :genesis, opts: opts}) do
-    "Mode: #{opts[:mode]} | #{String.slice(opts[:prompt] || "", 0, 50)}"
-  end
-
-  defp task_description(%{type: :evolve, opts: opts}) do
-    "Mode: #{opts[:mode]} | #{String.slice(opts[:objective] || "", 0, 50)}"
-  end
-
-  defp task_description(_), do: ""
-
-  defp format_datetime(datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
-
-  defp format_datetime(datetime, :time),
-    do: datetime.time |> Time.to_string() |> String.slice(0..7)
 end

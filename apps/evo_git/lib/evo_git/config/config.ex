@@ -35,6 +35,18 @@ defmodule EvoGit.Config do
       [sandbox]
       mode = "auto"  # "auto" | "enabled" | "disabled"
 
+      [evolution]
+      pool_size = 50
+      max_generations = 20
+      selection_size = 10
+      crossover_rate = 0.7
+      mutation_rate = 0.3
+      convergence_threshold = 0.01
+      novelty_neighbors = 5
+      stagnation_limit = 5
+      initial_seed_count = 15
+      llm_seed_count = 25
+
   ## Credentials File Format (credentials.toml)
 
       # API keys as environment variable names — they are set as env vars on load
@@ -271,6 +283,18 @@ defmodule EvoGit.Config do
       user: %{},
       sandbox: %{
         mode: :auto
+      },
+      evolution: %{
+        pool_size: 50,
+        max_generations: 20,
+        selection_size: 10,
+        crossover_rate: 0.7,
+        mutation_rate: 0.3,
+        convergence_threshold: 0.01,
+        novelty_neighbors: 5,
+        stagnation_limit: 5,
+        initial_seed_count: 15,
+        llm_seed_count: 25
       }
     }
   end
