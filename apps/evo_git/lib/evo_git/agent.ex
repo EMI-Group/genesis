@@ -112,13 +112,24 @@ defmodule EvoGit.Agent do
 
           context = ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)])
 
+          # Load skill schemas from .agents/skills/ for this repo
+          repo_root = Process.get(:evogit_repo_root)
+          skill_schemas = if repo_root && is_binary(repo_root) do
+            repo_root
+            |> EvoGit.Skills.load_skills()
+            |> EvoGit.Skills.to_tool_schemas()
+          else
+            []
+          end
+
           state = %LoopState{
             agent_id: agent_id,
             agent_module: __MODULE__,
             depth: EvoGit.AgentScheduler.current_depth(),
             node_path: node_path,
             context: context,
-            deadline: System.monotonic_time(:millisecond) + @timeout_ms
+            deadline: System.monotonic_time(:millisecond) + @timeout_ms,
+            skill_schemas: skill_schemas
           }
 
           # Sync initial context to ETS for dashboard
@@ -805,16 +816,19 @@ defmodule EvoGit.Agent do
       end
 
       defp effective_tools(state) do
+        skill_schemas = Map.get(state, :skill_schemas, [])
+        all_tools = available_tools() ++ skill_schemas
+
         if at_max_depth?(state) do
           excluded = MapSet.new(subagent_tools())
 
-          available_tools()
+          all_tools
           |> Enum.reject(fn tool ->
             name = EvoGit.Agent.tool_name(tool)
             name && MapSet.member?(excluded, name)
           end)
         else
-          available_tools()
+          all_tools
         end
       end
 

@@ -20,7 +20,12 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.WebSearch
   alias EvoGit.Agent.Tools.Curl
   alias EvoGit.Agent.Tools.SearchHistory
-alias EvoGit.Agent.Tools.SearchContext
+  alias EvoGit.Agent.Tools.SearchContext
+  alias EvoGit.Agent.Tools.SkillList
+  alias EvoGit.Agent.Tools.SkillRead
+  alias EvoGit.Agent.Tools.SkillAdd
+  alias EvoGit.Agent.Tools.SkillEdit
+  alias EvoGit.Agent.Tools.SkillRemove
 
   @doc """
   Returns a list of all available tool schemas for ReqLLM.
@@ -45,6 +50,11 @@ alias EvoGit.Agent.Tools.SearchContext
       WebSearch.schema(),
       SearchContext.schema(),
       SearchHistory.schema(),
+      SkillList.schema(),
+      SkillRead.schema(),
+      SkillAdd.schema(),
+      SkillEdit.schema(),
+      SkillRemove.schema(),
       # Git.schema(),
       # Curl.schema()
     ]
@@ -142,7 +152,39 @@ alias EvoGit.Agent.Tools.SearchContext
     SearchHistory.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool(unknown_tool, _args, _repo_path, _repo_root, _node_path) do
-    "Error: Unknown tool '#{unknown_tool}'"
+  defp execute_tool("skill_list", args, repo_path, repo_root, _node_path) do
+    SkillList.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("skill_read", args, repo_path, repo_root, _node_path) do
+    SkillRead.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("skill_add", args, repo_path, repo_root, _node_path) do
+    SkillAdd.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("skill_edit", args, repo_path, repo_root, _node_path) do
+    SkillEdit.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("skill_remove", args, repo_path, repo_root, _node_path) do
+    SkillRemove.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool(unknown_tool, args, repo_path, repo_root, _node_path) do
+    # Try dynamic skill execution — skills are loaded from .agents/skills/
+    # and injected as tool schemas at agent startup
+    if repo_root && is_binary(repo_root) do
+      skills = EvoGit.Skills.load_skills(repo_root)
+
+      if EvoGit.Skills.find_skill(skills, unknown_tool) do
+        EvoGit.Skills.execute(skills, unknown_tool, args, repo_path)
+      else
+        "Error: Unknown tool '#{unknown_tool}'"
+      end
+    else
+      "Error: Unknown tool '#{unknown_tool}'"
+    end
   end
 end

@@ -39,7 +39,8 @@ defmodule EvoGit.Agent.LoopState do
     llm_time_ms: 0,
     total_tokens: 0,
     last_warned_time_percent: 0,
-    last_warned_turns_percent: 0
+    last_warned_turns_percent: 0,
+    skill_schemas: []
   ]
 
   @type t :: %__MODULE__{
@@ -55,6 +56,7 @@ defmodule EvoGit.Agent.LoopState do
           llm_time_ms: non_neg_integer(),
           total_tokens: non_neg_integer(),
           last_warned_time_percent: non_neg_integer(),
-          last_warned_turns_percent: non_neg_integer()
+          last_warned_turns_percent: non_neg_integer(),
+          skill_schemas: [ReqLLM.Tool.t()]
         }
 end

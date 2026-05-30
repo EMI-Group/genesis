@@ -233,6 +233,7 @@ Agent LLM calls subagent tool with path: "/Source/original-proj/src/main.py"
 6. **Multi-Repo Support:** Agents can operate across multiple Git repositories simultaneously. Foreign repos are registered via CLI flags or `evogit.toml` configuration. Agents spawn subagents to foreign repos by specifying absolute paths, which are automatically resolved to the correct repo. Each repo maintains its own worktrees, commit history, and spatial contracts independently.
 7. **Slot-Based Concurrency:** LLM calls and tool executions are independently throttled via slot pools managed by the scheduler. LLM slots include a global backoff mechanism for rate-limit errors.
 8. **Three-Level Configuration**: Defaults → User Config (TOML) → Runtime Overrides. No hardcoded model or username defaults.
+9. **Skills System**: Custom tools defined as markdown files in `.agents/skills/` with YAML frontmatter. Skills are loaded at runtime and presented to agents as dynamically-generated tools alongside built-in tools. Supports bash command execution with `{{param}}` placeholder substitution. Agents can manage skills (CRUD) via dedicated `skill_*` tools.
 
 ## Constraints
 - **Umbrella structure:** All dependencies, build artifacts, and the lockfile live at the root level (`./deps/`, `./_build/`, `mix.lock`).
