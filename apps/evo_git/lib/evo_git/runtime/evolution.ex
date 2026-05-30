@@ -12,8 +12,9 @@ defmodule EvoGit.Runtime.Evolution do
 
   def run(objective, opts \\ []) do
     mode = Keyword.get(opts, :mode, :simple)
+    node_path = Keyword.get(opts, :node_path, "./")
 
-    Logger.info("Evolution: Starting for objective: #{objective} (mode: #{mode})")
+    Logger.info("Evolution: Starting for objective: #{objective} (mode: #{mode}, node: #{node_path})")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
     foreign_repos = Keyword.get(opts, :foreign_repos, [])
@@ -22,12 +23,17 @@ defmodule EvoGit.Runtime.Evolution do
     end
 
     with :ok <- Runtime.ensure_repo(repo_path),
-         {:ok, current_sha} <- PhyloGraphNode.current_head(repo_path) do
+         {:ok, current_sha} <- PhyloGraphNode.current_head(repo_path),
+         :ok <- validate_node_path(node_path, repo_path) do
       case mode do
-        :simple -> run_simple_mode(objective, repo_path, current_sha, opts)
-        :complex -> run_complex_mode(objective, repo_path, current_sha, opts)
+        :simple -> run_simple_mode(objective, repo_path, current_sha, node_path, opts)
+        :complex -> run_complex_mode(objective, repo_path, current_sha, node_path, opts)
       end
     else
+      {:error, {:invalid_node_path, message}} ->
+        Logger.error("Evolution: Invalid node path: #{message}")
+        {:error, {:invalid_node_path, message}}
+
       error ->
         Logger.error("Evolution failed to initialize: #{inspect(error)}")
         error
@@ -37,12 +43,12 @@ defmodule EvoGit.Runtime.Evolution do
   # Mode A: Top-Down Evolution (Simple)
   # Used for clear tasks with well-defined objectives.
   # The Manager agent plans and delegates the task to appropriate subagents.
-  defp run_simple_mode(objective, repo_path, current_sha, opts) do
+  defp run_simple_mode(objective, repo_path, current_sha, node_path, opts) do
     Logger.info("Evolution: Running Mode A (Top-Down)")
 
     # Use Manager agent for Mode A
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
-    context_node = ContextNode.load("./", repo_path)
+    context_node = ContextNode.load(node_path, repo_path)
 
     # Manager plans and delegates the task to appropriate subagents
     case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective,
@@ -61,11 +67,11 @@ defmodule EvoGit.Runtime.Evolution do
   # Mode B: Bottom-Up Evolution (Complex)
   # Used for open-ended tasks requiring exploration.
   # NOT YET IMPLEMENTED - falls back to simple mode with warning.
-  defp run_complex_mode(objective, repo_path, current_sha, opts) do
+  defp run_complex_mode(objective, repo_path, current_sha, node_path, opts) do
     Logger.warning("Evolution: Mode B (Complex/Bottom-Up) is not yet implemented, falling back to Mode A")
 
     # Fallback to Mode A for now
-    run_simple_mode(objective, repo_path, current_sha, opts)
+    run_simple_mode(objective, repo_path, current_sha, node_path, opts)
   end
 
   defp merge_and_report(repo_path, %Result{} = agent_output, objective) do
@@ -111,5 +117,27 @@ defmodule EvoGit.Runtime.Evolution do
   defp generate_branch_name(prefix) do
     short_id = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
     "evogit/#{prefix}_#{short_id}"
+  end
+
+  defp validate_node_path("./", _repo_path), do: :ok
+
+  defp validate_node_path(node_path, repo_path) do
+    if Path.type(node_path) == :absolute do
+      {:error, {:invalid_node_path, "Node path must be relative to the repository root, got absolute path: #{node_path}"}}
+    else
+      normalized = ContextNode.normalize_relpath(node_path)
+      abs_path = Path.join(repo_path, String.trim_leading(normalized, "./"))
+
+      cond do
+        not File.dir?(abs_path) ->
+          {:error, {:invalid_node_path, "Directory does not exist: #{node_path}"}}
+
+        not File.exists?(Path.join(abs_path, "CONTEXT.md")) ->
+          {:error, {:invalid_node_path, "No CONTEXT.md found at: #{node_path}"}}
+
+        true ->
+          :ok
+      end
+    end
   end
 end
