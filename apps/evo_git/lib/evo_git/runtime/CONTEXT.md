@@ -42,7 +42,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 4. **Validate node path**: `validate_node_path/2` ensures path is relative, directory exists, and contains `CONTEXT.md` (root `"./"` always passes).
 5. **Dispatch agent by mode**:
    - **`:simple`** → `Manager` agent (plans, delegates to Executor/Planner/Investigator subagents).
-   - **`:complex`** → **NOT YET IMPLEMENTED** — logs warning and falls back to `:simple`.
+   - **`:complex`** → `Engine.run/5` — novelty-driven evolution loop with MAP-Elites quality diversity, LLM-powered crossover/mutation, solution synthesis, and Manager agent application.
 6. **Post-processing**: Same `merge_and_report/3` pattern — creates `evogit/evolve_<hex>` branch, optionally PR.
 
 ### `PullRequest.try_create/4` — Step by Step
