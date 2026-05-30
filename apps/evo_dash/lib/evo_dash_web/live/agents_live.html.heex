@@ -142,40 +142,42 @@
 
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       Task ID
                     </h4>
                     <span class="text-sm">#<%= agent.task_id %></span>
                   </div>
 
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       Depth
                     </h4>
                     <span class="text-sm">{agent.depth}</span>
                   </div>
 
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       Retries
                     </h4>
                     <span class="text-sm">{agent.retries}</span>
                   </div>
 
                   <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/50 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       Repository
                     </h4>
                     <span class="text-sm">{agent.repo_root || repo_display_name(agent.repo_id)}</span>
                   </div>
+                </div>
 
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <%= if agent.base_commit do %>
                     <div>
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                        Base Commit
+                        <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> Base Commit
                       </h4>
-                      <code class="text-xs bg-base-200 px-2 py-1 rounded">
-                        {String.slice(agent.base_commit, 0, 12)}
+                      <code class="text-xs font-mono bg-base-200 px-3 py-1.5 rounded block truncate" title={agent.base_commit}>
+                        {agent.base_commit}
                       </code>
                     </div>
                   <% end %>
@@ -183,10 +185,10 @@
                   <%= if agent.current_commit do %>
                     <div>
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                        Current Commit
+                        <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> Current Commit
                       </h4>
-                      <code class={"text-xs px-2 py-1 rounded " <> commit_bg_class(agent)}>
-                        {String.slice(agent.current_commit, 0, 12)}
+                      <code class={"text-xs font-mono px-3 py-1.5 rounded block truncate " <> commit_bg_class(agent)} title={agent.current_commit}>
+                        {agent.current_commit}
                       </code>
                     </div>
                   <% end %>
