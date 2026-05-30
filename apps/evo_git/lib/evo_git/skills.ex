@@ -81,6 +81,31 @@ defmodule EvoGit.Skills do
   end
 
   @doc """
+  Loads skills available at the given node path by checking the hierarchy
+  of CONTEXT.md files from root to the node for declared skills.
+
+  Returns only those skills whose names appear in the `skills` field of
+  at least one CONTEXT.md along the hierarchy path.
+  """
+  @spec load_hierarchical_skills(String.t(), String.t()) :: [Skill.t()]
+  def load_hierarchical_skills(repo_root, node_path) do
+    all_skills = load_skills(repo_root)
+
+    case EvoGit.Core.ContextNode.get_hierarchy_skills(node_path, repo_root) do
+      {:ok, allowed_names} ->
+        if Enum.empty?(allowed_names) do
+          []
+        else
+          allowed_set = MapSet.new(allowed_names)
+          Enum.filter(all_skills, fn skill -> MapSet.member?(allowed_set, skill.name) end)
+        end
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  @doc """
   Parses a single skill markdown file.
 
   Returns `%Skill{}` on success, `nil` if the file can't be read or parsed.
@@ -406,10 +431,18 @@ defmodule EvoGit.Skills do
   """
   @spec list_skills(String.t()) :: String.t()
   def list_skills(repo_root) do
-    skills = load_skills(repo_root)
+    repo_root
+    |> load_skills()
+    |> list_skills_from()
+  end
 
+  @doc """
+  Lists skills from a pre-loaded list of skills.
+  """
+  @spec list_skills_from([Skill.t()]) :: String.t()
+  def list_skills_from(skills) do
     if Enum.empty?(skills) do
-      "No skills defined. Skills live in #{@skills_dir}/ as markdown files with YAML frontmatter."
+      "No skills available at your current context level. Skills are declared via the `skills` field in CONTEXT.md front matter."
     else
       lines =
         Enum.map(skills, fn skill ->
@@ -429,7 +462,7 @@ defmodule EvoGit.Skills do
           "* **#{skill.name}** — #{skill.description}#{param_str}"
         end)
 
-      "Available skills in #{@skills_dir}/:\n\n#{Enum.join(lines, "\n\n")}"
+      "Available skills at your current context level:\n\n#{Enum.join(lines, "\n\n")}"
     end
   end
 
@@ -448,6 +481,23 @@ defmodule EvoGit.Skills do
 
       path ->
         case File.read(path) do
+          {:ok, content} -> content
+          {:error, reason} -> "Error reading skill '#{name}': #{:file.format_error(reason)}"
+        end
+    end
+  end
+
+  @doc """
+  Reads a skill file's full content by name from a pre-loaded skills list.
+  """
+  @spec read_skill_from([Skill.t()], String.t()) :: String.t()
+  def read_skill_from(skills, name) do
+    case find_skill(skills, name) do
+      nil ->
+        "Error: Skill '#{name}' not found or not available at your current context level."
+
+      skill ->
+        case File.read(skill.file_path) do
           {:ok, content} -> content
           {:error, reason} -> "Error reading skill '#{name}': #{:file.format_error(reason)}"
         end
