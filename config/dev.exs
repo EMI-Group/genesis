@@ -79,9 +79,9 @@ config :phoenix_live_view,
 # The watchers configuration can be used to run external
 # watchers to your application.
 
-# Enable desktop mode for local development
+# Disable desktop mode for local development
 # Comment out to run as web-only
-config :evo_dash, desktop: true
+config :evo_dash, desktop: false
 
 # Import local configuration if it exists, which is ignored by git
 if File.exists?("config/dev.local.exs") do
