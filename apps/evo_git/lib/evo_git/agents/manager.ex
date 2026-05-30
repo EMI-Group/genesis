@@ -24,6 +24,7 @@ defmodule EvoGit.Agents.Manager do
     [
       EvoGit.Agents.Manager,
       EvoGit.Agents.Executor,
+      EvoGit.Agents.Planner,
       EvoGit.Agents.CodebaseInvestigator
     ]
   end
@@ -68,6 +69,23 @@ defmodule EvoGit.Agents.Manager do
 
     ## Your Responsibilities
 
+    ## Using the Planner for Big Changes
+
+    For complex, multi-step, or cross-node objectives, delegate to `subagent_planner` BEFORE implementing anything. The Planner is a read-only agent that will investigate the codebase and return a structured markdown plan with sequential steps, parallel sub-tasks, and clear node paths. This saves turns and reduces errors.
+
+    **When to use the Planner:**
+    - The objective spans multiple directories/nodes
+    - You're unsure about the full scope of changes needed
+    - The change has complex dependencies between components
+    - You're designing a new feature or subsystem
+
+    **When NOT to use the Planner:**
+    - The change is trivial (e.g., fix a typo, rename a single function)
+    - The objective is already crystal-clear and scoped to a single file
+    - You're doing a simple investigation or regression hunt
+
+    To use the Planner: spawn `subagent_planner` at the appropriate node with the rough objective. It will return a detailed plan. Then follow the plan, delegating steps to executors/managers as indicated.
+
     1. Analyze: Understand the objective and your assigned node. Determine what work needs to be done and where.
       - Use `subagent_codebase_investigator` to explore the codebase for you.
       - For regression investigations or historical comparisons, use `subagent_codebase_investigator` with a `commit_id` to explore the codebase at a past commit.
@@ -75,6 +93,7 @@ defmodule EvoGit.Agents.Manager do
     2. Plan: Break down the objective into clear, delegable tasks. Consider:
 
     3. Delegate: Assign tasks to appropriate subagents:
+      - `subagent_planner`: For complex, multi-step changes — use BEFORE implementing. Returns a structured plan with sequential steps and parallel sub-tasks, each annotated with target node paths.
       - `subagent_manager`: For managing work in child nodes or subtrees. Assign them objectives that require coordination of multiple files or components within that subtree.
       - `subagent_executor`: For implementing specific code changes. Give them specific, actionable objectives.
       - `subagent_codebase_investigator`: For investigating the codebase (finding code, understanding patterns, analyzing dependencies).

@@ -18,6 +18,7 @@ defmodule EvoGit.Agents.CodebaseArchitect do
   def subagent_modules, do: [
     __MODULE__,
     EvoGit.Agents.Generalist,
+    EvoGit.Agents.Planner,
   ]
 
   def system_prompt do
@@ -52,12 +53,14 @@ defmodule EvoGit.Agents.CodebaseArchitect do
       - Use the shell tool to run initialization commands like `npm init`, `cargo init`, configure `.gitignore`, etc., if you are in the root node `./`.
       - Create necessary directories and optionally empty code files at your level to realize your architectural vision.
       - Delegate architectural tasks to subagents: Spawn `subagent_codebase_architect` subagents to architect specific child directories.
+        - For large-scale architecture planning before creating the skeleton, spawn `subagent_planner` to produce a detailed step-by-step architectural plan.
       - You MUST WAIT for all architectural subagents to finish and ensure the entire skeleton (Context Tree and empty files) is created before proceeding to Phase 2.
       - Check and commit your changes.
 
     - PHASE 2: IMPLEMENTATION
       - Once the skeleton is fully established, implement the code.
       - Spawn `subagent_generalist` subagents to generate code for specific files.
+        - For complex implementation tasks spanning multiple nodes, first spawn `subagent_planner` to produce a structured step-by-step plan, then follow the plan.
         - Remind them that some sibling files / APIs might be missing, and they should strictly work on their own task.
 
     - PHASE 3: REVIEW & CONVERGENCE
