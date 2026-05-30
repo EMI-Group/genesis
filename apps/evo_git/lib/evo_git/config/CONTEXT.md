@@ -1,100 +1,31 @@
 # Config — Unified Configuration Resolver
 
 ## Intent
-Contains `EvoGit.Config`, the unified configuration resolver that merges application defaults, user config (`~/.config/evogit/config.toml`), and loads API keys from credentials files into environment variables. This module serves as the single source of truth for all non-project configuration. It also provides write capability for persisting user config changes and a diagnostic function for checking configuration completeness.
+Contains `EvoGit.Config`, the single source of truth for non-project configuration. Merges application defaults with user config (`~/.config/evogit/config.toml`), loads API keys from credentials into env vars, and provides write capability for persisting user config changes plus a diagnostic function for configuration completeness.
 
 ## API Surface
 
 ### `EvoGit.Config`
 | Function | Description |
 |----------|-------------|
-| `resolve/0` | Returns fully merged config map (defaults + user config). Runtime overrides are NOT included — those live in `AgentScheduler` state. |
+| `resolve/0` | Returns merged config map (defaults + user config). Runtime overrides live in `AgentScheduler` state, not here. |
 | `resolve/1` | Returns resolved value for a specific key path (atom or list of atoms) |
 | `user_config/0` | Reads and returns parsed `config.toml`, or `%{}` if not found |
-| `save_user_config/1` | Persists a config map to `config.toml`. Creates the config directory if needed. Encodes the map as TOML via `TomlElixir.encode/1` (atom keys are stringified). Returns `:ok` or `{:error, reason}`. |
-| `config_status/0` | Returns diagnostic map with `:missing` (list of missing critical config key atoms), `:warnings` (human-readable warning messages), and `:ok?` (boolean). Checks for: LLM model, at least one API key, and GitHub username. |
-| `credentials/0` | Reads `credentials.toml`, sets each key-value pair as an env var via `System.put_env/2`, and returns the parsed map (or `%{}` if not found) |
-| `defaults/0` | Returns the built-in application defaults map |
-| `config_dir/0` | Returns the platform config directory path (XDG-compliant) |
+| `save_user_config/1` | Persists a config map to `config.toml`. Creates config directory if needed. Returns `:ok` or `{:error, reason}`. |
+| `config_status/0` | Returns diagnostic map with `:missing`, `:warnings`, and `:ok?`. Checks LLM model, API key presence, and GitHub username. |
+| `credentials/0` | Reads `credentials.toml`, sets each key-value pair as an env var, returns parsed map |
+| `defaults/0` | Returns built-in application defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode) |
 | `config_path/0` | Returns the full path to `config.toml` |
-| `credentials_path/0` | Returns the full path to `credentials.toml` |
 
 ### Configuration Levels (priority: low → high)
 1. **Application defaults** — Hardcoded in `defaults/0` (no model, no username)
 2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant), parsed with `TomlElixir.decode/1`
-3. **Runtime overrides** — Session-level, stored in `AgentScheduler` GenServer state via `update_config/1`
-
-### `save_user_config/1`
-Persists user configuration to disk. Used by the EvoDash `HelpLive` page's TOML editor:
-- Accepts a map (atom or string keys)
-- Creates config directory via `File.mkdir_p/1` if needed
-- Stringifies atom keys for TOML compatibility
-- Encodes with `TomlElixir.encode/1` and writes to `config_path()`
-- Returns `:ok` on success, `{:error, reason}` on failure
-
-### `config_status/0`
-Returns a diagnostic map for UI display of configuration completeness:
-```elixir
-%{
-  missing: [:llm_model, :api_key],   # atoms for missing critical keys
-  warnings: ["LLM model is not configured...", ...],  # human-readable messages
-  ok?: false  # true when all critical config is present
-}
-```
-Checks three critical items:
-1. **LLM model** (`[llm] model`) — must be non-nil, non-empty
-2. **API key** — at least one known provider env var set (GOOGLE_API_KEY, ZAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY)
-3. **GitHub username** (`[user] github_username`) — must be non-nil, non-empty
-
-### Built-in Defaults (`defaults/0`)
-```elixir
-%{
-  scheduler: %{
-    max_concurrency: 3,
-    max_tool_concurrency: 2,
-    agent_max_retries: 3,
-    max_agent_depth: 8,
-    max_retries: 15
-  },
-  llm: %{},           # No default model — user MUST configure
-  user: %{},          # No default username — user MUST configure
-  sandbox: %{mode: :auto}
-}
-```
-
-### Credentials Loading
-Credentials are loaded at scheduler startup via `credentials/0`, which:
-1. Reads `credentials.toml` from the XDG config directory
-2. Calls `System.put_env(key, value)` for each top-level key-value pair (string values only)
-3. Returns the parsed map for inspection
-
-This means API keys placed in `credentials.toml` are automatically available to `ReqLLM.Keys` and any other code that reads from `System.get_env`.
-
-Credentials file format (`credentials.toml`):
-```toml
-# API keys as environment variable names — they are set as env vars on load
-GOOGLE_API_KEY = "AIza..."
-ZAI_API_KEY = "sk-..."
-DEEPSEEK_API_KEY = "sk-..."
-GROQ_API_KEY = "gsk_..."
-TAVILY_API_KEY = "tvly-..."
-ANTHROPIC_API_KEY = "sk-ant-..."
-OPENAI_API_KEY = "sk-..."
-```
-
-Users can also set API keys directly via environment variables (e.g., `GOOGLE_API_KEY`), which is equivalent to placing them in `credentials.toml`.
-
-### Supported API Key Environment Variables
-`GOOGLE_API_KEY`, `ZAI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `TAVILY_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
-
-### Config File Locations (via `EvoGit.Platform`)
-- **Linux**: `$XDG_CONFIG_HOME/evogit` (defaults to `~/.config/evogit`)
-- **macOS**: `~/Library/Application Support/evogit`
-- **Windows**: `%APPDATA%/evogit`
+3. **Runtime overrides** — Session-level, stored in `AgentScheduler` GenServer state
 
 ## Constraints
-- **Write capability is limited**: Only `save_user_config/1` writes to disk, and only to `config.toml`. Credentials are never written programmatically.
+- Only `save_user_config/1` writes to disk, and only to `config.toml`. Credentials are never written programmatically.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
 - Config directory follows XDG conventions via `EvoGit.Platform.os()`.
 - All file reads are wrapped in try/rescue-safe patterns with Logger warnings on failure.
 - `EvoGit.Defaults` is a backward-compatibility shim that delegates all calls to this module.
+- Details (credentials format, defaults structure, API key env vars) live in module documentation.
