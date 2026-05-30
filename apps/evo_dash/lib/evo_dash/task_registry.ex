@@ -521,6 +521,7 @@ defmodule EvoDash.TaskRegistry do
   defp build_common_runtime_opts(opts, task_id) do
     repo_path = Keyword.fetch!(opts, :path)
     mode = Keyword.get(opts, :mode, "simple")
+    node_path = Keyword.get(opts, :node_path)
 
     Application.ensure_all_started(:evo_git)
 
@@ -529,6 +530,8 @@ defmodule EvoDash.TaskRegistry do
       mode: String.to_atom(mode),
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
+
+    runtime_opts = if node_path, do: Keyword.put(runtime_opts, :node_path, node_path), else: runtime_opts
 
     {nil, runtime_opts}
   end

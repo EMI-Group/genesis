@@ -8,6 +8,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :prompt, :string, default: ""
   attr :mode, :string, default: "genesis_new"
   attr :mode_info, :string, default: ""
+  attr :node_path, :string, default: ""
 
   def task_form(assigns) do
     ~H"""
@@ -49,7 +50,24 @@ defmodule EvoDashWeb.DashboardComponents do
       </div>
 
       <!-- Body -->
-      <div class="p-6 md:p-8 pt-4 md:pt-6">
+      <div class="p-6 md:p-8 pt-4 md:pt-6 space-y-4">
+        <%= if String.starts_with?(@mode, "evolve") do %>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text font-semibold text-base-content">Starting Node</span>
+            </label>
+            <input
+              type="text"
+              name="node_path"
+              value={@node_path}
+              class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+              placeholder="e.g., ./src/components"
+            />
+            <label class="label">
+              <span class="label-text-alt text-base-content/50">Subdirectory to start evolution from (optional)</span>
+            </label>
+          </div>
+        <% end %>
         <div class="form-control">
           <label class="label">
             <span class="label-text font-semibold text-base-content">Prompt / Objective</span>

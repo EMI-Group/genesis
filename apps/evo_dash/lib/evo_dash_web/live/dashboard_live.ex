@@ -76,6 +76,7 @@ defmodule EvoDashWeb.DashboardLive do
             prompt={@task_prompt}
             mode={@task_mode}
             mode_info={@task_mode_info}
+            node_path={@task_node_path}
           />
         </div>
 
@@ -677,7 +678,8 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:task_mode, params["mode"] || socket.assigns.task_mode)
-     |> assign(:task_prompt, params["prompt"] || socket.assigns.task_prompt)}
+     |> assign(:task_prompt, params["prompt"] || socket.assigns.task_prompt)
+     |> assign(:task_node_path, params["node_path"] || "")}
   end
 
   @impl true
@@ -699,6 +701,8 @@ defmodule EvoDashWeb.DashboardLive do
           "evolve_complex" -> {:evolve, "complex"}
         end
 
+      node_path = socket.assigns[:task_node_path]
+
       opts = [
         path: path,
         mode: mode
@@ -709,6 +713,13 @@ defmodule EvoDashWeb.DashboardLive do
           Keyword.put(opts, :prompt, prompt)
         else
           Keyword.put(opts, :objective, prompt)
+        end
+
+      opts =
+        if task_type == :evolve and is_binary(node_path) and String.trim(node_path) != "" do
+          Keyword.put(opts, :node_path, String.trim(node_path))
+        else
+          opts
         end
 
       case TaskRegistry.start_task(task_type, opts) do
@@ -823,6 +834,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:task_prompt, "")
     |> assign(:task_mode, "genesis_new")
     |> assign(:task_mode_info, "")
+    |> assign(:task_node_path, "")
   end
 
   defp current_tasks(socket) do
