@@ -112,11 +112,14 @@ defmodule EvoGit.Agent do
 
           context = ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)])
 
-          # Load skill schemas from .agents/skills/ for this repo
+          # Load skill schemas hierarchically — only skills enabled in the
+          # Context Tree (from root to this agent's node) are available.
           repo_root = Process.get(:evogit_repo_root)
           skill_schemas = if repo_root && is_binary(repo_root) do
-            repo_root
-            |> EvoGit.Skills.load_skills()
+            all_skills = EvoGit.Skills.load_skills(repo_root)
+            skill_names = EvoGit.Skills.hierarchical_skill_names(node_path, repo_path)
+            all_skills
+            |> EvoGit.Skills.filter_skills(skill_names)
             |> EvoGit.Skills.to_tool_schemas()
           else
             []

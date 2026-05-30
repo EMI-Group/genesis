@@ -26,6 +26,9 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.SkillAdd
   alias EvoGit.Agent.Tools.SkillEdit
   alias EvoGit.Agent.Tools.SkillRemove
+  alias EvoGit.Agent.Tools.SkillEnable
+  alias EvoGit.Agent.Tools.SkillDisable
+  alias EvoGit.Agent.Tools.SkillWhere
 
   @doc """
   Returns a list of all available tool schemas for ReqLLM.
@@ -55,6 +58,9 @@ defmodule EvoGit.Agent.Tools do
       SkillAdd.schema(),
       SkillEdit.schema(),
       SkillRemove.schema(),
+      SkillEnable.schema(),
+      SkillDisable.schema(),
+      SkillWhere.schema(),
       # Git.schema(),
       # Curl.schema()
     ]
@@ -170,6 +176,18 @@ defmodule EvoGit.Agent.Tools do
 
   defp execute_tool("skill_remove", args, repo_path, repo_root, _node_path) do
     SkillRemove.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("skill_enable", args, repo_path, repo_root, node_path) do
+    SkillEnable.execute(args, repo_path, repo_root, node_path)
+  end
+
+  defp execute_tool("skill_disable", args, repo_path, repo_root, node_path) do
+    SkillDisable.execute(args, repo_path, repo_root, node_path)
+  end
+
+  defp execute_tool("skill_where", args, repo_path, repo_root, _node_path) do
+    SkillWhere.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool(unknown_tool, args, repo_path, repo_root, _node_path) do
