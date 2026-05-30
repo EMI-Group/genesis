@@ -172,7 +172,14 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Agents.Generalist` | General-purpose subagent (used by CodebaseArchitect for implementation) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
 | `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |
-| `ReqLLM` | LLM streaming for PR title generation in `PullRequest` |
+| `ReqLLM` | LLM streaming for PR title generation in `PullRequest`, and for evolution synthesis/behavioral profiling |
+| `EvoGit.Runtime.Evolution.Engine` | Complex mode orchestrator — novelty-driven evolution loop |
+| `EvoGit.Runtime.Evolution.Fragment` | Code fragment data structure with structural features and behavioral profiles |
+| `EvoGit.Runtime.Evolution.SeedFragments` | Built-in + LLM-generated diverse seed fragments for pool initialization |
+| `EvoGit.Runtime.Evolution.EntropyPool` | ETS-backed GenServer for fragment storage with novelty-based selection |
+| `EvoGit.Runtime.Evolution.MapElites` | Quality diversity archive — grid of behavior descriptors to elite solutions |
+| `EvoGit.Runtime.Evolution.NoveltyMetric` | k-NN novelty scoring, AST structural analysis, LLM behavioral profiling |
+| `EvoGit.Runtime.Evolution.LLMSynthesis` | LLM-powered semantic crossover, mutation, and viability evaluation |
 
 ## Constraints
 
