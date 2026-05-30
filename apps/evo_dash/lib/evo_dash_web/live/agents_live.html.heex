@@ -140,7 +140,7 @@
                   </code>
                 </div>
 
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   <div>
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       Task ID
@@ -160,13 +160,6 @@
                       Retries
                     </h4>
                     <span class="text-sm">{agent.retries}</span>
-                  </div>
-
-                  <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      Repository
-                    </h4>
-                    <span class="text-sm">{agent.repo_root || repo_display_name(agent.repo_id)}</span>
                   </div>
                 </div>
 
