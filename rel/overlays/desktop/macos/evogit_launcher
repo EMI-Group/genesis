@@ -9,6 +9,7 @@ RELEASE_DIR="${CONTENTS_DIR}/release"
 export SECRET_KEY_BASE="EvoGitDesktopLocalSecretKeyBaseDoNotUseInProduction2025abcdef1234567890"
 export PHX_SERVER=true
 export EVOGIT_DESKTOP=1
+export PORT=4100
 export EVOGIT_DESKTOP_PORT=4100
 export RELEASE_DISTRIBUTION=none
 
