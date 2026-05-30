@@ -35,7 +35,7 @@ defmodule EvoDashWeb.NativePicker do
       dialog =
         :wxDirDialog.new(
           :wx.null(),
-          message: ~c"Select Project Directory",
+          title: ~c"Select Project Directory",
           style: 0
         )
 
