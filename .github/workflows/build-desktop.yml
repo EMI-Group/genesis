@@ -1,0 +1,164 @@
+name: Build Desktop App
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.1.0)'
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ELIXIR_VERSION: "1.18.4"
+  OTP_VERSION: "27.3.4.1"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+
+      - name: Restore dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile dependencies
+        run: mix deps.compile
+
+      - name: Build assets
+        run: |
+          mix assets.setup
+          mix assets.deploy
+
+      - name: Build release
+        run: MIX_ENV=prod mix release evogit
+
+      - name: Package .app bundle
+        run: |
+          APP_NAME="EvoGit"
+          STAGING="EvoGit.app"
+
+          # Create .app bundle structure
+          mkdir -p "${STAGING}/Contents/MacOS"
+          mkdir -p "${STAGING}/Contents/Resources"
+          mkdir -p "${STAGING}/Contents/Frameworks"
+
+          # Copy release into Contents/release/
+          cp -r _build/prod/rel/evogit "${STAGING}/Contents/release"
+
+          # Copy launcher script
+          cp rel/overlays/desktop/macos/evogit_launcher "${STAGING}/Contents/MacOS/evogit_launcher"
+          chmod +x "${STAGING}/Contents/MacOS/evogit_launcher"
+
+          # Copy Info.plist
+          cp rel/overlays/desktop/macos/Info.plist "${STAGING}/Contents/Info.plist"
+
+          # Copy icon as placeholder
+          cp apps/evo_dash/priv/static/favicon.ico "${STAGING}/Contents/Resources/favicon.ico" 2>/dev/null || true
+
+          # Zip the .app
+          ARCHIVE_NAME="EvoGit-macOS-${{ matrix.arch }}.zip"
+          zip -r "${ARCHIVE_NAME}" "${STAGING}"
+
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          files: ${{ env.ARCHIVE_NAME }}
+
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+
+      - name: Restore dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile dependencies
+        run: mix deps.compile
+
+      - name: Build assets
+        run: |
+          mix assets.setup
+          mix assets.deploy
+
+      - name: Build release
+        run: MIX_ENV=prod mix release evogit
+        shell: bash
+
+      - name: Package Windows distribution
+        shell: bash
+        run: |
+          STAGING="EvoGit-Windows"
+
+          mkdir -p "${STAGING}"
+
+          # Copy release
+          cp -r _build/prod/rel/evogit/* "${STAGING}/"
+
+          # Copy launcher script
+          cp rel/overlays/desktop/windows/evogit_launcher.bat "${STAGING}/"
+
+          # Zip
+          ARCHIVE_NAME="EvoGit-Windows-x64.zip"
+          7z a -tzip "${ARCHIVE_NAME}" "${STAGING}"
+
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          files: ${{ env.ARCHIVE_NAME }}

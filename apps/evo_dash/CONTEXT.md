@@ -48,6 +48,54 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 - `AgentsComponents` — Recursive path tree with connector lines and status coloring
 - `Layouts` — App layout with navbar, theme toggle, flash group
 
+## Desktop Mode
+
+EvoDash can run as a native desktop application using the `:desktop` Hex package (v1.5.3) and Erlang `:wx`. When enabled, it opens a native OS window wrapping the Phoenix web interface.
+
+### Activation
+
+Desktop mode is controlled by two config flags, both of which must be set:
+
+1. **`config :evo_dash, desktop: true`** — Application-level config (compile-time default: `false`)
+2. **`config :evo_dash, desktop_port: 4100`** — Port for the embedded HTTP server
+
+At runtime, set env var `EVOGIT_DESKTOP=1` (and optionally `EVOGIT_DESKTOP_PORT`) to activate. In `config/runtime.exs`, these are read and applied as application env. In dev mode (`config/dev.exs`), desktop is explicitly set to `false`.
+
+### Architecture
+
+- **`EvoDash.Application`** — Conditionally adds `{Desktop.Window, [...]}` to the supervision tree when `:desktop` is `true`. The window is configured with title "EvoGit Dashboard", size `{1280, 800}`, and loads `http://localhost:<port>/?client=desktop`.
+- **`EvoDashWeb.Router`** — Contains a custom plug `detect_desktop_client/2` that checks for `?client=desktop` query param and sets `session[:is_desktop] = true`.
+- **`EvoDashWeb.NativePicker`** — Server-side native OS directory picker using Erlang's `:wxDirDialog`. Runs in a separate `Task` process with 120s timeout. Requires `:wx` extra application (declared in `mix.exs`).
+- **`DashboardLive`** — Reads `session["is_desktop"]` and assigns it as `@is_desktop`, passes it to `DirectoryPicker` JS hook via `data-is-desktop` attribute.
+- **`DirectoryPicker` JS hook** — In desktop mode (`data-is-desktop="true"`), bypasses browser File System Access API and directly calls server-side `pick_directory` event (→ `NativePicker.pick_directory()`).
+
+### Native Window Configuration
+
+```elixir
+{Desktop.Window, [
+  app: :evo_dash,
+  id: :evo_dash_window,
+  title: "EvoGit Dashboard",
+  url: "http://localhost:#{port}/?client=desktop",
+  size: {1280, 800}
+]}
+```
+
+### Release Configuration
+
+- **No `rel/` directory exists** — no custom release steps, no Dockerfile, no CI configuration.
+- The umbrella `mix.exs` defines a release named `:evogit` including both apps (`evo_git: :permanent`, `evo_dash: :permanent`).
+- `config/runtime.exs` handles `PHX_SERVER=true` to enable the Phoenix server in release mode.
+- Production requires `SECRET_KEY_BASE` and `PHX_HOST` env vars.
+
+### Static Assets (`priv/static/`)
+
+| File | Purpose |
+|------|---------|
+| `favicon.ico` | Browser tab icon |
+| `robots.txt` | Standard web crawler directives (all commented out) |
+| `images/logo.svg` | Default Phoenix logo SVG (not EvoGit-branded) |
+
 ## Constraints
 
 - Depends on `:evo_git` at compile and runtime
@@ -57,3 +105,6 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 - Single-node (DNSCluster configured but no distributed clustering)
 - Naming conventions: domain modules in `./lib/evo_dash/`, web modules in `./lib/evo_dash_web/`
 - Build: `mix assets.build` (esbuild + tailwind), `mix assets.deploy` (minified + digested)
+- Desktop mode requires Erlang `:wx` — not available in all OTP builds (headless servers)
+- No CI/CD pipeline, no Docker, no `rel/` directory — release packaging not yet configured
+- The `:desktop` dependency (hex package v1.5.3) provides the native window wrapper via `Desktop.Window`
