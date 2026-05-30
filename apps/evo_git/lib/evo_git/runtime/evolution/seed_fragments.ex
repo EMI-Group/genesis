@@ -166,7 +166,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp physics_fragment do
     Fragment.new(
-      """
+      '''
       defmodule Physics.Particle do
         @moduledoc "Simple 2D particle simulation with velocity and acceleration."
 
@@ -227,7 +227,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           end)
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "physics"
     )
@@ -235,7 +235,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp game_loop_fragment do
     Fragment.new(
-      """
+      '''
       defmodule GameLoop.State do
         @moduledoc "2D game state machine with update/render cycle."
 
@@ -311,7 +311,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
         defp render_char(:player), do: "@"
         defp render_char(:enemy), do: "E"
       end
-      """,
+      ''',
       language: "elixir",
       domain: "game_loop"
     )
@@ -319,7 +319,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp data_pipeline_fragment do
     Fragment.new(
-      """
+      '''
       defmodule DataPipeline do
         @moduledoc "Stream-based data transformation with map/reduce/filter."
 
@@ -396,7 +396,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           }
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "data_pipeline"
     )
@@ -404,7 +404,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp http_handler_fragment do
     Fragment.new(
-      """
+      '''
       defmodule HTTPHandler do
         @moduledoc "HTTP request handler with pattern matching on routes."
 
@@ -479,7 +479,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           [%{id: "a1", name: "Alice", role: "admin"}, %{id: "b2", name: "Bob", role: "user"}]
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "http_handler"
     )
@@ -487,7 +487,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp graph_algorithm_fragment do
     Fragment.new(
-      """
+      '''
       defmodule GraphAlgorithm do
         @moduledoc "BFS/DFS graph traversal with adjacency list."
 
@@ -576,7 +576,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           "digraph G {\\n" <> Enum.join(edges, "\\n") <> "\\n}"
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "graph_algorithm"
     )
@@ -584,7 +584,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp pattern_matching_fragment do
     Fragment.new(
-      """
+      '''
       defmodule PatternMatching do
         @moduledoc "Recursive pattern matching on nested data structures."
 
@@ -643,7 +643,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
         def transform(data, fun) when is_binary(data), do: fun.(data)
         def transform(data, _fun), do: data
       end
-      """,
+      ''',
       language: "elixir",
       domain: "pattern_matching"
     )
@@ -651,7 +651,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp process_pool_fragment do
     Fragment.new(
-      """
+      '''
       defmodule ProcessPool do
         @moduledoc "GenServer-based worker pool with task dispatch."
 
@@ -752,7 +752,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           end
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "process_pool"
     )
@@ -760,7 +760,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp stream_processing_fragment do
     Fragment.new(
-      """
+      '''
       defmodule StreamProcessor do
         @moduledoc "Backpressure-aware stream processor with configurable stages."
 
@@ -848,7 +848,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           %{items_processed: length(result), elapsed_ms: elapsed, per_second: div(length(result) * 1000, max(elapsed, 1))}
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "stream_processing"
     )
@@ -856,7 +856,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp sorting_fragment do
     Fragment.new(
-      """
+      '''
       defmodule Sorting.MergeSort do
         @moduledoc "Merge sort implementation with configurable comparator."
 
@@ -932,7 +932,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           sort_by(less, key_fun) ++ [pivot] ++ sort_by(greater, key_fun)
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "sorting"
     )
@@ -940,7 +940,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp encoding_fragment do
     Fragment.new(
-      """
+      '''
       defmodule Encoding.BinaryProtocol do
         @moduledoc "Custom binary serialization and deserialization."
 
@@ -1020,7 +1020,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           decoded == data
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "encoding"
     )
@@ -1028,7 +1028,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp middleware_fragment do
     Fragment.new(
-      """
+      '''
       defmodule Middleware do
         @moduledoc "Plug-like middleware chain with composition."
 
@@ -1104,7 +1104,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           if state.key != key, do: Map.put(request, :rate_limit_state, %{key: key, count: 0, max: max_rps}), else: request
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "middleware"
     )
@@ -1112,7 +1112,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp tree_traversal_fragment do
     Fragment.new(
-      """
+      '''
       defmodule TreeTraversal do
         @moduledoc "Recursive tree walker with accumulation and multiple strategies."
 
@@ -1193,7 +1193,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           Enum.flat_map(c, &do_paths(&1, [v | prefix]))
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "tree_traversal"
     )
@@ -1201,7 +1201,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp rate_limiter_fragment do
     Fragment.new(
-      """
+      '''
       defmodule RateLimiter do
         @moduledoc "Token bucket rate limiter with sliding window."
 
@@ -1286,7 +1286,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           %{limiter | tokens: limiter.max_tokens, requests: [], last_refill: System.monotonic_time(:millisecond)}
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "rate_limiter"
     )
@@ -1294,7 +1294,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp cache_ttl_fragment do
     Fragment.new(
-      """
+      '''
       defmodule CacheTTL do
         @moduledoc "TTL-based cache with automatic expiration and lazy cleanup."
 
@@ -1391,7 +1391,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
         defp update_stats(cache, :hit), do: %{cache | stats: Map.update!(cache.stats, :hits, &(&1 + 1))}
         defp update_stats(cache, :eviction), do: %{cache | stats: Map.update!(cache.stats, :evictions, &(&1 + 1))}
       end
-      """,
+      ''',
       language: "elixir",
       domain: "cache_ttl"
     )
@@ -1399,7 +1399,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   defp event_emitter_fragment do
     Fragment.new(
-      """
+      '''
       defmodule EventEmitter do
         @moduledoc "Pub/sub event system with pattern-based subscriptions."
 
@@ -1479,7 +1479,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
           |> then(&Regex.compile!("^#{&1}$"))
         end
       end
-      """,
+      ''',
       language: "elixir",
       domain: "event_emitter"
     )
