@@ -38,7 +38,7 @@ defmodule EvoDashWeb.DashboardLive do
                 <input
                   type="text"
                   name="path"
-                  class="input input-bordered w-full pl-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
+                  class="input input-bordered w-full pl-10 pr-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
                   placeholder="/path/to/another/repo"
                   autofocus
                   phx-hook="PathAutocomplete"
@@ -47,6 +47,16 @@ defmodule EvoDashWeb.DashboardLive do
                   id="open-another-project-path-input"
                   list="path-suggestions-open"
                 />
+                <button
+                  type="button"
+                  id="open-another-project-picker-button"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                  phx-click="pick_directory"
+                  phx-hook="DirectoryPicker"
+                  title="Browse for directory"
+                >
+                  <.icon name="hero-folder-open" class="size-5" />
+                </button>
                 <datalist id="path-suggestions-open">
                   <%= for suggestion <- @path_suggestions do %>
                     <option value={suggestion}></option>
@@ -61,11 +71,28 @@ defmodule EvoDashWeb.DashboardLive do
         <% end %>
 
         <div class="mb-8">
-          <EvoDashWeb.DashboardComponents.task_form
-            prompt={@task_prompt}
-            mode={@task_mode}
-            mode_info={@task_mode_info}
-          />
+          <%= if @tasks != [] do %>
+            <%= if @show_task_form do %>
+              <EvoDashWeb.DashboardComponents.task_form
+                prompt={@task_prompt}
+                mode={@task_mode}
+                mode_info={@task_mode_info}
+              />
+            <% else %>
+              <button
+                class="btn btn-outline btn-sm gap-2 w-full"
+                phx-click="toggle_task_form"
+              >
+                <.icon name="hero-plus" class="size-4" /> New Task
+              </button>
+            <% end %>
+          <% else %>
+            <EvoDashWeb.DashboardComponents.task_form
+              prompt={@task_prompt}
+              mode={@task_mode}
+              mode_info={@task_mode_info}
+            />
+          <% end %>
         </div>
 
         <!-- Project Settings Toggle Button -->
@@ -273,7 +300,7 @@ defmodule EvoDashWeb.DashboardLive do
       </div>
 
       <!-- Task List -->
-      <div class="space-y-4">
+      <div class="space-y-3">
         <%= if @tasks == [] do %>
           <div class="text-center py-8 sm:py-12 text-base-content/50">
             <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
@@ -306,103 +333,17 @@ defmodule EvoDashWeb.DashboardLive do
       <%= if @selected_result do %>
         <div class="modal modal-open bg-black/50">
           <div class="modal-box w-11/12 max-w-5xl">
-            <%= case @selected_result do %>
-              <% {:ok, %{result: result, no_changes: true}} when is_binary(result) -> %>
-                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                  <.icon name="hero-information-circle" class="size-5 text-warning" />
-                  No Changes
-                </h3>
-                <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
-                </div>
-                <div class="mt-4 bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <h4 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide">Agent Message</h4>
-                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-                </div>
-
-              <% {:ok, %{result: result, branch_name: branch_name} = data} when is_binary(result) -> %>
-                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                  <.icon name="hero-check-circle" class="size-5 text-success" />
-                  Agent Message
-                </h3>
-                <div class="flex flex-wrap gap-2 mb-4">
-                  <%= if branch_name do %>
-                    <span class="badge badge-primary font-mono text-sm">
-                      <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
-                      <%= branch_name %>
-                    </span>
-                  <% end %>
-                  <%= if Map.get(data, :pr_url) do %>
-                    <a href={Map.get(data, :pr_url)} target="_blank" class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity">
-                      <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
-                      View PR
-                    </a>
-                  <% end %>
-                </div>
-                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-                </div>
-
-              <% {%{result: result}} when is_binary(result) -> %>
-                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                  <.icon name="hero-check-circle" class="size-5 text-success" />
-                  Agent Message
-                </h3>
-                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <pre class="text-sm whitespace-pre-wrap break-words"><%= result %></pre>
-                </div>
-
-              <% {:error, reason} -> %>
-                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                  <.icon name="hero-x-circle" class="size-5 text-error" />
-                  Task Failed
-                </h3>
-                <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
-                </div>
-
-              <% {:exit, reason} -> %>
-                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                  <.icon name="hero-x-circle" class="size-5 text-error" />
-                  Task Crashed
-                </h3>
-                <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= inspect(reason, limit: :infinity) %></pre>
-                </div>
-
-              <% {:ok, %{result: result}} -> %>
-                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                  <.icon name="hero-check-circle" class="size-5 text-success" />
-                  Agent Message
-                </h3>
-                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
-                </div>
-
-              <% %{result: result} -> %>
-                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                  <.icon name="hero-check-circle" class="size-5 text-success" />
-                  Agent Message
-                </h3>
-                <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <pre class="text-sm whitespace-pre-wrap break-words"><%= inspect(result, limit: :infinity) %></pre>
-                </div>
-
-              <% _ -> %>
-                <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                  <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                  Result
-                </h3>
-                <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                  <pre class="text-sm overflow-x-auto"><%= inspect(@selected_result, pretty: true, limit: :infinity) %></pre>
-                </div>
-            <% end %>
-
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+              <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+              Task Result
+            </h3>
+            <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+              {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
+            </div>
             <div class="modal-action">
               <button class="btn" phx-click="close_result_modal">Close</button>
             </div>
           </div>
-
           <div class="modal-backdrop" phx-click="close_result_modal">
             <button class="cursor-default">close</button>
           </div>
@@ -461,6 +402,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:new_repo_id, "")
       |> assign(:new_repo_path, "")
       |> assign(:new_repo_name, "")
+      |> assign(:show_task_form, false)
       |> assign_form_defaults()
 
     config_status =
@@ -547,7 +489,8 @@ defmodule EvoDashWeb.DashboardLive do
      |> assign(:tasks, tasks)
      |> assign(:task_mode, mode)
      |> assign(:task_mode_info, mode_info)
-     |> assign(:show_project_settings, false)}
+     |> assign(:show_project_settings, false)
+     |> assign(:show_task_form, false)}
   end
 
   @impl true
@@ -726,6 +669,25 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("pick_directory", _params, socket) do
+    case EvoDashWeb.NativePicker.pick_directory() do
+      {:ok, path} ->
+        {:noreply, push_event(socket, "picker_result", %{path: path})}
+
+      {:error, :cancelled} ->
+        {:noreply, socket}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Could not open directory picker: #{reason}")}
+    end
+  end
+
+  @impl true
+  def handle_event("directory_picked", %{"path" => path}, socket) do
+    {:noreply, push_event(socket, "picker_result", %{path: path})}
+  end
+
+  @impl true
   def handle_event("task_change", params, socket) do
     {:noreply,
      socket
@@ -772,7 +734,8 @@ defmodule EvoDashWeb.DashboardLive do
              :info,
              "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}"
            )
-           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))}
+           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
+           |> assign(:show_task_form, false)}
 
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
@@ -806,6 +769,11 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     {:noreply, assign(socket, :expanded_task_ids, expanded)}
+  end
+
+  @impl true
+  def handle_event("toggle_task_form", _params, socket) do
+    {:noreply, assign(socket, :show_task_form, !socket.assigns.show_task_form)}
   end
 
   @impl true
