@@ -18,7 +18,8 @@ defmodule EvoGit.CLI do
           path: :string,
           model: :string,
           mode: :string,
-          foreign_repo: [:string, :keep]
+          foreign_repo: [:string, :keep],
+          node: :string
         ],
         aliases: [
           h: :help,
@@ -28,7 +29,8 @@ defmodule EvoGit.CLI do
           p: :path,
           m: :model,
           d: :mode,
-          R: :foreign_repo
+          R: :foreign_repo,
+          n: :node
         ]
       )
 
@@ -109,6 +111,7 @@ defmodule EvoGit.CLI do
 
         foreign_repos = parse_foreign_repos(opts)
         runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
+        runtime_opts = maybe_put(runtime_opts, :node_path, opts[:node])
 
         Evolution.run(objective, runtime_opts)
       else
@@ -214,6 +217,8 @@ defmodule EvoGit.CLI do
                                   Add a foreign repository for cross-repo operations.
                                   Can be specified multiple times. If name is omitted,
                                   the directory basename is used. (e.g., -R original:/Source/proj)
+      -n, --node <path>           Starting node path for evolution (subdirectory within
+                                  repo, default: root). Only used with 'evolve'.
       -h, --help                  Show this help message.
 
     Getting Started:
