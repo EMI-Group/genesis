@@ -53,6 +53,7 @@ defmodule EvoDashWeb.DashboardLive do
                   class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
                   phx-click="pick_directory"
                   phx-hook="DirectoryPicker"
+                  data-is-desktop={to_string(@is_desktop)}
                   title="Browse for directory"
                 >
                   <.icon name="hero-folder-open" class="size-5" />
@@ -375,7 +376,9 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
+    is_desktop = Map.get(session, "is_desktop", false)
+
     if connected?(socket) do
       :timer.send_interval(1000, self(), :refresh_tasks)
     end
@@ -385,6 +388,7 @@ defmodule EvoDashWeb.DashboardLive do
 
     socket =
       socket
+      |> assign(:is_desktop, is_desktop)
       |> assign(:tasks, tasks)
       |> assign(:expanded_task_ids, MapSet.new())
       |> assign(:selected_result, nil)

@@ -131,12 +131,16 @@ const DirectoryPicker = {
     });
 
     this.el.addEventListener("click", async () => {
+      // In desktop mode, go straight to server-side picker
+      if (this.el.dataset.isDesktop === "true") {
+        this.pushEvent("pick_directory", {});
+        return;
+      }
+
       // Try the browser File System Access API (Chromium, secure context)
       if (typeof window.showDirectoryPicker === "function") {
         try {
           const handle = await window.showDirectoryPicker();
-          // Note: handle.name only gives the directory basename, not the full path.
-          // We push what we have; the server-side fallback is the primary method.
           this.pushEvent("directory_picked", {path: handle.name});
           return;
         } catch (_err) {
