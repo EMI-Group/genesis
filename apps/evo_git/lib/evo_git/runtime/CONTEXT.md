@@ -106,6 +106,17 @@ Manager (target node)
   └── ...
 ```
 
+**Evolution Complex Mode**:
+```
+Engine.run/5 (orchestrator)
+  ├── EntropyPool (GenServer — fragment storage)
+  ├── MapElites (GenServer — quality diversity archive)
+  │   [NoveltyMetric, LLMSynthesis, SeedFragments — pure modules]
+  └── Manager (final phase — applies synthesized solution to codebase)
+        ├── subagent_executor (code changes)
+        └── ...
+```
+
 ### Subagent Spawning Mechanics
 
 Agents call `AgentScheduler.spawn_sub_agents/2` (from within the agent process). The scheduler:
