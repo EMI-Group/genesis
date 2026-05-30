@@ -96,7 +96,7 @@ allowing the agent to use it as instructions with its other tools.
 - **Skills directory**: `<repo_root>/.agents/skills/` (created automatically if missing)
 - **Skill filenames**: derived from name as `{name}.md`
 - **Bash execution**: Scripts run in the repo root directory, output is captured
-- **No YAML library dependency**: Uses a custom simple-YAML parser (`parse_yaml_simple/1`) supporting string scalars and parameters lists only
+- **YAML parsing**: Uses `yaml_elixir` (`~> 2.11`) for frontmatter parsing via `parse_yaml_simple/1`
 - **Parameter substitution**: `{{param_name}}` placeholders in bash blocks; missing params use default values or empty strings
 - **Skill lookup**: Case-insensitive filename matching as fallback
 - **Dynamically loaded**: Skills are reloaded on each `load_skills/1` call (no caching)
