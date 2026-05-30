@@ -19,7 +19,7 @@ defmodule EvoDashWeb.DashboardComponents do
     >
       <!-- Hero Header with inline mode select -->
       <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent px-6 py-4 md:px-8 md:py-5">
-        <div class="flex items-center justify-between gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <div class="flex items-center gap-3">
             <div class="bg-primary/15 text-primary p-2.5 rounded-xl">
               <.icon name="hero-sparkles" class="size-5" />
@@ -56,7 +56,7 @@ defmodule EvoDashWeb.DashboardComponents do
           </label>
           <textarea
             name="prompt"
-            class="textarea textarea-bordered w-full min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
+            class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
             placeholder="Describe the software you want to create or the change you want to make..."
           ><%= @prompt %></textarea>
         </div>
@@ -101,7 +101,7 @@ defmodule EvoDashWeb.DashboardComponents do
       </div>
       <div class="p-6 md:p-8 pt-4 md:pt-6">
         <.form for={%{}} phx-submit="update_scheduler_config" phx-change="scheduler_config_change" class="space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text text-sm font-medium">LLM Concurrency</span>
@@ -228,7 +228,7 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class="max-w-2xl mx-auto">
       <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
         <!-- Hero section -->
-        <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-8 text-center">
+        <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6 sm:p-8 text-center">
           <div class="bg-primary/15 text-primary p-4 rounded-2xl w-fit mx-auto mb-4">
             <.icon name="hero-folder-open" class="size-10" />
           </div>
@@ -237,7 +237,7 @@ defmodule EvoDashWeb.DashboardComponents do
         </div>
 
         <!-- Form -->
-        <div class="p-6 pt-2">
+        <div class="p-4 sm:p-6 pt-2">
           <.form for={%{}} phx-submit="open_project" class="space-y-4">
             <div class="form-control relative">
               <div class="relative">
@@ -334,7 +334,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
         <div class="flex-1 p-4 md:p-5">
           <!-- Header row: type + mode badges | status + task ID -->
-          <div class="flex items-center justify-between gap-3 mb-3 pr-7">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3 pr-7">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="badge badge-outline badge-sm font-bold capitalize">
                 <.icon name={task_type_icon(@task.type)} class="size-3.5 mr-1" />
@@ -373,7 +373,7 @@ defmodule EvoDashWeb.DashboardComponents do
           <% end %>
 
           <!-- Footer row: timestamps | actions -->
-          <div class="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-base-200/50">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-3 pt-3 border-t border-base-200/50">
             <div class="flex items-center gap-3 text-xs text-base-content/50">
               <span class="flex items-center gap-1">
                 <.icon name="hero-clock" class="size-3.5" />
@@ -414,7 +414,7 @@ defmodule EvoDashWeb.DashboardComponents do
           <%= if @show_details do %>
             <div class="divider my-4"></div>
             <div class="space-y-4">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                 <div class="bg-base-200/40 p-4 rounded-xl border border-base-200">
                   <div class="flex items-center justify-between mb-3">
                     <h4 class="text-sm font-bold flex items-center gap-2">

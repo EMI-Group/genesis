@@ -18,18 +18,18 @@ defmodule EvoDashWeb.AgentsComponents do
     <% total_nodes = length(@nodes) %>
     <%= for {node, index} <- Enum.with_index(@nodes) do %>
       <% is_last = index == total_nodes - 1 %>
-      <div class={["relative", @depth > 0 && "ml-6"]}>
+      <div class={["relative", @depth > 0 && "ml-3 sm:ml-6"]}>
         <!-- Tree connector lines for nested items -->
         <%= if @depth > 0 do %>
           <!-- Vertical line -->
           <div class={[
-            "absolute -left-3 border-l-2 border-base-content/10 z-0",
+            "absolute -left-1.5 sm:-left-3 border-l-2 border-base-content/10 z-0",
             is_last && "top-0 h-6",
             !is_last && "top-0 bottom-0"
           ]}>
           </div>
           <!-- Horizontal line -->
-          <div class="absolute -left-3 top-6 w-3 border-t-2 border-base-content/10 z-0"></div>
+          <div class="absolute -left-1.5 sm:-left-3 top-6 w-3 border-t-2 border-base-content/10 z-0"></div>
         <% end %>
 
     <!-- Path and Agents Row -->
@@ -49,7 +49,7 @@ defmodule EvoDashWeb.AgentsComponents do
               <%= for agent <- node.agents do %>
                 <div
                   class={[
-                    "flex flex-col gap-1 p-2.5 rounded-xl border shadow-sm transition-all cursor-pointer hover:bg-base-200/80 min-w-[140px]",
+                    "flex flex-col gap-1 p-2.5 rounded-xl border shadow-sm transition-all cursor-pointer hover:bg-base-200/80 min-w-[120px] sm:min-w-[140px]",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
                     @selected_id == agent.id && "ring-2 ring-primary ring-offset-1"
