@@ -109,4 +109,137 @@ defmodule EvoGit.Core.ContextNodeTest do
     assert Enum.at(hierarchy, 1).path == "./nested"
     assert Enum.at(hierarchy, 2).path == "./nested/deep"
   end
+
+  describe "get_hierarchy_skills/2" do
+    test "returns skills from root CONTEXT.md", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - skill-a
+        - skill-b
+      ---
+      # Root context
+      """)
+
+      assert {:ok, skills} = ContextNode.get_hierarchy_skills("./", tmp_dir)
+      assert Enum.sort(skills) == ["skill-a", "skill-b"]
+    end
+
+    test "returns union of skills from root to node", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - root-skill
+      ---
+      # Root context
+      """)
+
+      child_dir = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(child_dir)
+      File.write!(Path.join(child_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - child-skill
+      ---
+      # Child context
+      """)
+
+      assert {:ok, skills} = ContextNode.get_hierarchy_skills("./lib", tmp_dir)
+      assert Enum.sort(skills) == ["child-skill", "root-skill"]
+    end
+
+    test "returns empty list when no CONTEXT.md has skills", %{tmp_dir: tmp_dir} do
+      assert {:ok, skills} = ContextNode.get_hierarchy_skills("./", tmp_dir)
+      assert skills == []
+    end
+
+    test "returns empty list when CONTEXT.md has no front matter", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), "# Just markdown, no front matter")
+      assert {:ok, skills} = ContextNode.get_hierarchy_skills("./", tmp_dir)
+      assert skills == []
+    end
+
+    test "filters out non-string skill entries", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - valid-skill
+        - 123
+        - true
+      ---
+      # Root context
+      """)
+
+      assert {:ok, skills} = ContextNode.get_hierarchy_skills("./", tmp_dir)
+      assert skills == ["valid-skill"]
+    end
+
+    test "deduplicates skills across hierarchy levels", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - shared-skill
+      ---
+      # Root context
+      """)
+
+      child_dir = Path.join(tmp_dir, "lib")
+      File.mkdir_p!(child_dir)
+      File.write!(Path.join(child_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - shared-skill
+      ---
+      # Child context with same skill
+      """)
+
+      assert {:ok, skills} = ContextNode.get_hierarchy_skills("./lib", tmp_dir)
+      assert skills == ["shared-skill"]
+    end
+
+    test "returns error on invalid path", %{tmp_dir: tmp_dir} do
+      assert {:error, :invalid_path} = ContextNode.get_hierarchy_skills("../outside", tmp_dir)
+    end
+
+    test "handles non-existent intermediate directories gracefully", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - root-skill
+      ---
+      # Root context
+      """)
+
+      # ./nested doesn't exist as a directory in the filesystem, so it won't have a CONTEXT.md
+      assert {:ok, skills} = ContextNode.get_hierarchy_skills("./nested/deep", tmp_dir)
+      assert skills == ["root-skill"]
+    end
+  end
+
+  describe "build_context strips YAML front matter" do
+    test "strips front matter from CONTEXT.md in context output", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), """
+      ---
+      skills:
+        - some-skill
+      ---
+      # Root context
+      This is the actual body.
+      """)
+
+      {:ok, context} = ContextNode.build_context("./", tmp_dir)
+      # Should contain the body content
+      assert context =~ "This is the actual body"
+      # Should NOT contain the front matter
+      refute context =~ "some-skill"
+      refute context =~ "skills:"
+    end
+
+    test "context without front matter works as before", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), "# Just markdown\n\nNo front matter here.")
+      {:ok, context} = ContextNode.build_context("./", tmp_dir)
+      assert context =~ "No front matter here"
+      assert context =~ "# Just markdown"
+    end
+  end
 end
