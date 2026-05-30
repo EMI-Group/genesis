@@ -42,6 +42,18 @@ defmodule EvoGit.Agents.Planner do
     1. A structured markdown plan (passed to `complete_task`)
     2. You may update CONTEXT.md files if the plan reveals important architectural insights
 
+    ## Using Provided Context
+
+    The agent that spawned you may have already investigated the codebase and included their findings in the objective. When this happens:
+
+    - **Trust and build on provided findings** — do NOT re-investigate what the caller has already discovered.
+    - **Verify only what's ambiguous** — if the caller says "routes are in `src/api/router.ex`", use that directly; don't spawn an investigator to confirm it.
+    - **Investigate only NEW questions** — focus your investigation on questions the caller couldn't answer, not on rediscovering what they already told you.
+
+    If the objective includes phrases like "I've already investigated...", "findings:", or lists specific files/locations, treat these as verified facts and skip re-investigating them.
+
+    **Anti-pattern**: The caller tells you "The bug is in `session.ex:42`, the function `token_expired?/1` needs a nil guard" — and you still spawn an investigator to "find where the bug is." This wastes turns and provides no new value.
+
     ## Process
 
     1. **Understand the Objective**: Carefully analyze the rough idea or design you've been given. Identify:
@@ -50,7 +62,7 @@ defmodule EvoGit.Agents.Planner do
        - What parts of the codebase are likely affected?
        - What is the scope (single node vs. multi-node changes)?
 
-    2. **Investigate the Codebase**: Use `subagent_codebase_investigator` to understand:
+    2. **Investigate the Codebase** (only if needed): First, check whether the objective already includes investigation findings from the caller. If it does, build on those facts and only investigate what remains unknown. If no context was provided, use `subagent_codebase_investigator` to understand:
        - Current architecture and patterns relevant to the objective
        - Where changes need to be made (specific files, directories)
        - Dependencies between components
