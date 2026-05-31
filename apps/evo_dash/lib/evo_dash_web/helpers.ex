@@ -8,7 +8,7 @@ defmodule EvoDashWeb.Helpers do
   """
 
   use Phoenix.Component
-  import EvoDashWeb.Gettext
+  use Gettext, backend: EvoDashWeb.Gettext
 
   # ---------------------------------------------------------------------------
   # Agent Status Helpers

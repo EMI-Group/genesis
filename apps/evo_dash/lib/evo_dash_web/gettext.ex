@@ -6,5 +6,5 @@ defmodule EvoDashWeb.Gettext do
   your module gains a set of macros for translations. See
   the [Gettext Docs](https://hexdocs.pm/gettext/gettext.html) for detailed usage.
   """
-  use Gettext, otp_app: :evo_dash
+  use Gettext.Backend, otp_app: :evo_dash
 end

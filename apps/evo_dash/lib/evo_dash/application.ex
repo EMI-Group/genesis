@@ -4,7 +4,7 @@ defmodule EvoDash.Application do
   @moduledoc false
 
   use Application
-  import EvoDashWeb.Gettext
+  use Gettext, backend: EvoDashWeb.Gettext
 
   @impl true
   def start(_type, _args) do

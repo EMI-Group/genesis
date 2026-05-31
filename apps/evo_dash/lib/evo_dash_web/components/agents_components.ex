@@ -1,6 +1,6 @@
 defmodule EvoDashWeb.AgentsComponents do
   use EvoDashWeb, :html
-  import EvoDashWeb.Gettext
+  use Gettext, backend: EvoDashWeb.Gettext
 
   attr(:nodes, :list, required: true)
   attr(:depth, :integer, default: 0)
