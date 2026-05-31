@@ -27,6 +27,7 @@ defmodule EvoGit.Agent do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
+  alias EvoGit.Agent.OutputSanitizer
   alias EvoGit.Agent.Tools.CompleteTask
   alias EvoGit.Agent.LoopState
 
@@ -54,10 +55,6 @@ defmodule EvoGit.Agent do
       @default_tool_timeout 10_000
       @max_tool_timeout 1_800_000
       @complete_tool "complete_task"
-
-      # Tool output truncation thresholds
-      @tool_output_max_bytes 128 * 1024
-      @tool_output_truncate_size 8192
 
       import ReqLLM.Context, only: [user: 1, assistant: 1, system: 1, tool_result: 3]
 
@@ -621,9 +618,7 @@ defmodule EvoGit.Agent do
                     "Error: #{inspect(reason)}"
 
                   {:ok, result} ->
-                    result
-                    |> ensure_utf8()
-                    |> truncate_large_output(call.name, call.arguments)
+                    EvoGit.Agent.OutputSanitizer.sanitize_and_truncate(result, call.name, call.arguments)
 
                   {:exit, reason} ->
                     "Error: Tool execution crashed: #{inspect(reason)}"
@@ -639,25 +634,6 @@ defmodule EvoGit.Agent do
         results
       end
 
-      defp ensure_utf8(result) when is_binary(result) do
-        if String.valid?(result) do
-          result
-        else
-          case :unicode.characters_to_binary(result, :utf8, :utf8) do
-            {:error, valid, _} ->
-              valid <> "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
-
-            {:incomplete, valid, _} ->
-              valid <> "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
-
-            valid when is_binary(valid) ->
-              valid
-          end
-        end
-      end
-
-      defp ensure_utf8(result), do: result
-
       defp is_rate_limit_error?(reason) do
         reason_str = inspect(reason)
 
@@ -666,33 +642,6 @@ defmodule EvoGit.Agent do
           String.contains?(reason_str, "429") or
           String.contains?(reason_str, "resource_exhausted")
       end
-
-      # Truncates large tool outputs to prevent context bloat
-      defp truncate_large_output(result, name, args) when is_binary(result) do
-        if String.length(result) > @tool_output_max_bytes do
-          Logger.warning(
-            "Output truncated for tool: #{name}, arguments: #{inspect(args)}, result length: #{String.length(result)}"
-          )
-
-          half_size = div(@tool_output_truncate_size, 2)
-          first_part = String.slice(result, 0, half_size)
-          last_part = String.slice(result, -half_size, half_size)
-
-          """
-          [WARNING: Output exceeded #{@tool_output_max_bytes} bytes and was truncated to #{@tool_output_truncate_size} bytes]
-          The output from '#{name}' was too large. Consider using more specific arguments
-          or alternative tools to retrieve only the relevant portion of data.
-          #{first_part}
-          ... [#{String.length(result) - @tool_output_truncate_size} bytes omitted] ...
-          #{last_part}
-          """
-          |> String.trim()
-        else
-          result
-        end
-      end
-
-      defp truncate_large_output(result, _name, _args), do: result
 
       # Formats git status --porcelain output for display
       # Format: "XY filename" where X = staged, Y = unstaged
