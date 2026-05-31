@@ -37,11 +37,13 @@ defmodule EvoDashWeb.DashboardLiveTest do
       refute html =~ "Project Settings"
     end
 
-    test "shows All Tasks header when no project is open", %{conn: conn} do
+    test "shows task management UI when no project is open", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
-      # When no project is active, the section header says "All Tasks"
-      assert html =~ "All Tasks"
+      # When no project is active, the open project form is shown
+      assert html =~ "Open a Project"
+      # And the page description is visible
+      assert html =~ "Manage your evolutionary software development tasks"
     end
   end
 
@@ -66,7 +68,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "Project Settings"
     end
 
-    test "shows project-specific task header after opening project", %{
+    test "shows active project UI after opening project", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
@@ -78,9 +80,11 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       html = render(view)
 
-      # Should show project name in task header (basename of tmp_dir)
+      # Should show Active tasks section header
+      assert html =~ "Active"
+      # Should show project tabs with project name
       project_name = Path.basename(tmp_dir)
-      assert html =~ "Tasks for #{project_name}"
+      assert html =~ project_name
     end
 
     test "detects genesis_new mode for empty directory", %{
@@ -119,7 +123,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       # Should show project root
       assert html =~ tmp_dir
       # Should show Foreign Repositories section
-      assert html =~ "Foreign Repositories"
+      assert html =~ "Foreign Repos"
 
       # Click again to hide
       html = render_click(view, "toggle_project_settings", %{})
@@ -141,7 +145,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       html = render_click(view, "toggle_project_settings", %{})
 
       # Empty directory has no evogit.toml
-      assert html =~ "Not found"
+      assert html =~ "Missing"
     end
 
     test "project settings shows worktree init script status", %{
@@ -158,8 +162,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       # Toggle settings open
       html = render_click(view, "toggle_project_settings", %{})
 
-      # No worktree script configured
-      assert html =~ "Not configured"
+      # No worktree script configured — section not shown
+      refute html =~ "Worktree Script"
     end
 
     test "project settings shows no foreign repos by default", %{
@@ -177,7 +181,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       html = render_click(view, "toggle_project_settings", %{})
 
       # No foreign repos registered (scheduler likely not running in tests)
-      assert html =~ "No repositories registered"
+      assert html =~ "No foreign repos registered"
     end
   end
 
