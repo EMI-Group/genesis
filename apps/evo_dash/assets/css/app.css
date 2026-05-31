@@ -153,3 +153,206 @@ input, textarea, select, button, a {
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
+
+/* ============================================
+   Native App-Like Animation Utilities
+   ============================================ */
+
+/* 1. Viewport lock utility */
+.viewport-lock {
+  height: 100dvh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* 2. Page transition animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out both;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.4s ease-out both;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s ease-out both;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.3s ease-out both;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.25s ease-out both;
+}
+
+/* 3. Staggered list animation */
+.stagger-item {
+  opacity: 0;
+  animation: slideUp 0.4s ease-out both;
+  animation-delay: var(--stagger-delay, 0ms);
+}
+
+/* 4. Glass morphism utilities (extending existing pattern) */
+.glass-nav {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+.glass-overlay {
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+
+/* 5. Pulse glow for running indicators */
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.65 0.18 255 / 0.4); }
+  50% { box-shadow: 0 0 0 8px oklch(0.65 0.18 255 / 0); }
+}
+
+.pulse-glow {
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
+/* 6. Bottom sheet animation */
+@keyframes bottomSheetIn {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes bottomSheetOut {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes overlayOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.bottom-sheet-enter {
+  animation: bottomSheetIn 0.35s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.bottom-sheet-exit {
+  animation: bottomSheetOut 0.25s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.overlay-enter {
+  animation: overlayIn 0.25s ease-out both;
+}
+
+.overlay-exit {
+  animation: overlayOut 0.2s ease-in both;
+}
+
+/* 7. FAB animation */
+@keyframes fabPop {
+  0% { transform: scale(0) rotate(-45deg); }
+  60% { transform: scale(1.15) rotate(0deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+.fab-pop {
+  animation: fabPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* 8. Content area smooth scrolling */
+.content-scroll {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.content-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.content-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.content-scroll::-webkit-scrollbar-thumb {
+  background-color: oklch(0.7 0 0 / 0.2);
+  border-radius: 3px;
+}
+
+.content-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(0.7 0 0 / 0.4);
+}
+
+/* 9. Sidebar transition */
+.sidebar-link {
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.sidebar-link::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 0;
+  background: oklch(0.7 0.2 265);
+  border-radius: 0 2px 2px 0;
+  transition: height 0.2s ease;
+}
+
+.sidebar-link.active::before {
+  height: 60%;
+}
+
+.sidebar-link.active {
+  background: oklch(0.7 0.2 265 / 0.1);
+  color: oklch(0.7 0.2 265);
+}
+
+/* 10. Safe area padding for mobile */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-bottom, 0px);
+}
+
+/* 11. Card press effect */
+.card-press {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-press:active {
+  transform: scale(0.98);
+}
