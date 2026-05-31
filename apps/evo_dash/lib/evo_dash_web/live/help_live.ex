@@ -5,7 +5,7 @@ defmodule EvoDashWeb.HelpLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:help} config_status={@config_status}>
-      <div class="flex items-center gap-3 mb-2">
+      <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
         <div class="bg-accent/15 text-accent p-3 rounded-xl">
           <.icon name="hero-question-mark-circle" class="size-6" />
         </div>
@@ -43,7 +43,7 @@ defmodule EvoDashWeb.HelpLive do
       </div>
 
       <!-- Config File Locations -->
-      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-100">
         <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <.icon name="hero-folder" class="size-5 text-primary" /> Configuration Files
@@ -74,7 +74,7 @@ defmodule EvoDashWeb.HelpLive do
       </div>
 
       <!-- Credentials Reference -->
-      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-200">
         <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <.icon name="hero-key" class="size-5 text-accent" /> Credentials Reference
