@@ -104,7 +104,7 @@ defmodule EvoDashWeb.DashboardComponents do
         </span>
         <button
           type="submit"
-          class="btn btn-primary px-8 h-12 text-base shadow-md hover:shadow-lg transition-all w-full sm:w-auto"
+          class="btn btn-primary px-8 h-12 text-base shadow-md hover:shadow-lg transition-all w-full sm:w-auto active:scale-[0.98]"
         >
           <.icon name="hero-rocket-launch" class="size-5" /> Execute Task
         </button>
@@ -358,7 +358,7 @@ defmodule EvoDashWeb.DashboardComponents do
   def task_card(assigns) do
     ~H"""
     <div class={[
-      "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative",
+      "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative card-press",
       @task.status == :completed && "bg-success/5",
       @task.status == :running && "bg-info/5"
     ]}>

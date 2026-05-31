@@ -5,6 +5,7 @@ defmodule EvoDashWeb.SettingsLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status}>
+    <div class="animate-fade-in">
       <div class="flex items-center gap-3 mb-2">
         <div class="bg-secondary/15 text-secondary p-3 rounded-xl">
           <.icon name="hero-cog-6-tooth" class="size-6" />
@@ -109,6 +110,7 @@ defmodule EvoDashWeb.SettingsLive do
           </div>
         </div>
       </div>
+    </div>
     </EvoDashWeb.Layouts.app>
     """
   end

@@ -5,6 +5,7 @@ defmodule EvoDashWeb.HelpLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:help} config_status={@config_status}>
+    <div class="animate-fade-in">
       <div class="flex items-center gap-3 mb-2">
         <div class="bg-accent/15 text-accent p-3 rounded-xl">
           <.icon name="hero-question-mark-circle" class="size-6" />
@@ -158,6 +159,7 @@ defmodule EvoDashWeb.HelpLive do
           <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto"><%= @config_reference %></pre>
         </div>
       </div>
+    </div>
     </EvoDashWeb.Layouts.app>
     """
   end

@@ -3,7 +3,7 @@
     <p class="text-base-content/60 text-sm">Visualize running agents and their relationships</p>
   </div>
 
-  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4">
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-2 animate-fade-in">
     <!-- Agent Tree View -->
     <div class="xl:col-span-2">
       <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
@@ -66,7 +66,7 @@
 
 <!-- Agent Details Panel -->
     <div class="xl:col-span-1">
-      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl sticky top-16">
+      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
         <div class="card-body p-6">
           <%= if @selected_agent_id do %>
             <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
