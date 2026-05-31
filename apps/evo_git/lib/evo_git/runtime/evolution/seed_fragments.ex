@@ -9,6 +9,8 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   alias EvoGit.Runtime.Evolution.Fragment
 
+  require Logger
+
   @doc """
   Returns all built-in seed fragments.
 
@@ -93,24 +95,64 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
         parse_code_blocks(text)
       else
         {:error, reason} ->
-          require Logger
           Logger.warning("SeedFragments LLM generation failed: #{inspect(reason)}")
           []
 
         _ ->
-          require Logger
           Logger.warning("SeedFragments LLM generation returned unexpected result")
           []
       end
     rescue
       e ->
-        require Logger
         Logger.warning("SeedFragments LLM generation raised: #{Exception.message(e)}")
         []
     end
   end
 
   def generate_with_llm(_objective, _n, _config), do: []
+
+  @doc """
+  Loads seed fragments from user-provided file paths.
+
+  Each file is read and converted to a Fragment with the language inferred from
+  the file extension. Invalid paths are logged as warnings and skipped.
+
+  Returns a list of `Fragment.t` with `source: :seed` and `domain: "user_seed"`.
+  """
+  @spec load_user_seeds([String.t()]) :: [Fragment.t()]
+  def load_user_seeds(file_paths) when is_list(file_paths) do
+    file_paths
+    |> Enum.flat_map(fn path ->
+      case File.read(path) do
+        {:ok, content} ->
+          language = infer_language(path)
+          [Fragment.new(content, language: language, domain: "user_seed", source: :seed)]
+
+        {:error, reason} ->
+          Logger.warning("SeedFragments: Failed to read seed file #{path}: #{inspect(reason)}")
+          []
+      end
+    end)
+  end
+
+  @doc """
+  Creates seed fragments from pasted text content.
+
+  Splits the content on blank lines as a heuristic for separating multiple seed
+  fragments. Each resulting fragment gets `language: "unknown"` and
+  `domain: "user_seed"`.
+
+  Returns a list of `Fragment.t` with `source: :seed`.
+  """
+  @spec seeds_from_content(String.t()) :: [Fragment.t()]
+  def seeds_from_content(content) when is_binary(content) do
+    content
+    |> String.split(~r/\n\s*\n/, trim: true)
+    |> Enum.reject(&(String.trim(&1) == ""))
+    |> Enum.map(fn fragment_content ->
+      Fragment.new(fragment_content, language: "unknown", domain: "user_seed", source: :seed)
+    end)
+  end
 
   # ---------------------------------------------------------------------------
   # Prompt construction
@@ -1483,5 +1525,36 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
       language: "elixir",
       domain: "event_emitter"
     )
+  end
+
+  defp infer_language(path) do
+    ext = Path.extname(path) |> String.downcase()
+
+    case ext do
+      ".ex" -> "elixir"
+      ".exs" -> "elixir"
+      ".py" -> "python"
+      ".js" -> "javascript"
+      ".ts" -> "typescript"
+      ".rs" -> "rust"
+      ".go" -> "go"
+      ".rb" -> "ruby"
+      ".java" -> "java"
+      ".kt" -> "kotlin"
+      ".c" -> "c"
+      ".cpp" -> "cpp"
+      ".h" -> "c"
+      ".hpp" -> "cpp"
+      ".cs" -> "csharp"
+      ".swift" -> "swift"
+      ".scala" -> "scala"
+      ".hs" -> "haskell"
+      ".clj" -> "clojure"
+      ".lua" -> "lua"
+      ".php" -> "php"
+      ".sh" -> "shell"
+      ".sql" -> "sql"
+      _ -> "unknown"
+    end
   end
 end
