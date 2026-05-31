@@ -11,6 +11,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 - `./subagent_processing.ex` → Subagent call processing (builds specs, spawns subagents, merges results)
 - `./loop_state.ex` → `LoopState` struct — agent loop state threaded through every turn
 - `./result.ex` → `Result` struct — structured output of a completed agent run
+- `./output_sanitizer.ex` → Tool output sanitization (UTF-8 repair, ANSI stripping, progress bar removal, configurable truncation)
 
 ## API Surface
 
