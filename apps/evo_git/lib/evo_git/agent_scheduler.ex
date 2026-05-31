@@ -676,7 +676,7 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Private Helpers ---
 
-  defp do_update_config(opts, state) do
+  defp do_update_config(opts, %State{} = state) do
     # Capture old values for slot adjustment
     old_max_concurrency = state.max_concurrency
     old_max_tool_concurrency = state.max_tool_concurrency
@@ -696,7 +696,7 @@ defmodule EvoGit.AgentScheduler do
       if state.max_concurrency != old_max_concurrency do
         delta = state.max_concurrency - old_max_concurrency
         new_available = max(state.llm_slots_available + delta, 0)
-        %State{state | llm_slots_available: new_available}
+        struct(state, llm_slots_available: new_available)
       else
         state
       end
@@ -706,7 +706,7 @@ defmodule EvoGit.AgentScheduler do
       if state.max_tool_concurrency != old_max_tool_concurrency do
         delta = state.max_tool_concurrency - old_max_tool_concurrency
         new_available = max(state.tool_slots_available + delta, 0)
-        %State{state | tool_slots_available: new_available}
+        struct(state, tool_slots_available: new_available)
       else
         state
       end
