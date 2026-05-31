@@ -101,9 +101,6 @@
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
-/* Smooth scrolling */
-html { scroll-behavior: smooth; }
-
 /* Better scrollbar styling */
 .scrollbar-thin {
   scrollbar-width: thin;
@@ -126,6 +123,7 @@ html { scroll-behavior: smooth; }
 
 /* Glass morphism effect */
 .glass-card {
+  background-color: oklch(0 0 0 / 0.05);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -152,4 +150,145 @@ input, textarea, select, button, a {
   background: linear-gradient(90deg, oklch(0.9 0 0 / 0.1) 25%, oklch(0.95 0 0 / 0.2) 50%, oklch(0.9 0 0 / 0.1) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
+}
+
+/* ── Native App Animations & Utilities ─────────────────────────────── */
+
+/* Scroll Region — strict scrolling containers */
+.scroll-region {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.7 0 0 / 0.3) transparent;
+}
+
+.scroll-region::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scroll-region::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-region::-webkit-scrollbar-thumb {
+  background-color: oklch(0.7 0 0 / 0.3);
+  border-radius: 3px;
+}
+
+/* Press scale — tactile button/card press */
+.press-scale {
+  transition: transform 150ms ease;
+}
+.press-scale:active {
+  transform: scale(0.97);
+}
+
+/* Touch target — minimum 44px for mobile accessibility */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* FAB — Floating Action Button */
+.fab {
+  position: fixed;
+  bottom: 5.5rem;
+  right: 1.25rem;
+  z-index: 40;
+  width: 56px;
+  height: 56px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 25px -5px oklch(0 0 0 / 0.25), 0 8px 10px -6px oklch(0 0 0 / 0.15);
+  transition: transform 200ms ease, box-shadow 200ms ease;
+}
+.fab:active {
+  transform: scale(0.92);
+}
+.fab:hover {
+  box-shadow: 0 20px 40px -10px oklch(0 0 0 / 0.3), 0 10px 15px -8px oklch(0 0 0 / 0.15);
+}
+
+/* Bottom Sheet — slide-up panel */
+@keyframes slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.bottom-sheet {
+  animation: slide-up 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Slide Over — right panel slide-in */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.slide-over {
+  animation: slide-in-right 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Fade in */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.fade-in {
+  animation: fade-in 200ms ease-out;
+}
+
+/* Scale in (entrance animation for cards) */
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.scale-in {
+  animation: scale-in 250ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Staggered entrance animation for list items */
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.stagger-in {
+  animation: stagger-in 300ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+/* Pulse glow for active/running states */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.7 0.2 250 / 0.4); }
+  50% { box-shadow: 0 0 20px 4px oklch(0.7 0.2 250 / 0.15); }
+}
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Backdrop overlay */
+.backdrop-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: oklch(0 0 0 / 0.5);
+  z-index: 45;
+  animation: fade-in 200ms ease-out;
+}
+
+/* Bottom nav safe area padding */
+.pb-safe {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+/* Sidebar nav transition */
+.sidebar-nav-item {
+  transition: all 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.sidebar-nav-item:hover {
+  transform: translateX(2px);
+}
+
+/* Smooth height transition for expandable content */
+.expand-height {
+  transition: max-height 300ms cubic-bezier(0.32, 0.72, 0, 1), opacity 200ms ease;
+  overflow: hidden;
 }
