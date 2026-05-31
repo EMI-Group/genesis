@@ -99,7 +99,7 @@ CodebaseArchitect (root)
 **Evolution Simple Mode**:
 ```
 Manager (target node)
-  ├── subagent_planner (complex objectives — produces structured plan)
+  ├── subagent_task_scheduler (complex objectives — produces execution sequence)
   ├── subagent_codebase_investigator (codebase exploration)
   ├── subagent_executor (code changes)
   ├── subagent_manager (delegation to child nodes)
