@@ -168,7 +168,7 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Agents.ContextExtractor` | Genesis Mode A agent — read-only context extraction |
 | `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation |
 | `EvoGit.Agents.Executor` | Code implementation subagent (spawned by Manager) |
-| `EvoGit.Agents.Planner` | Read-only planning subagent (spawned by Manager for complex tasks) |
+| `EvoGit.Agents.TaskScheduler` | Lightweight task scheduling subagent (spawned by Manager for complex tasks) |
 | `EvoGit.Agents.Generalist` | General-purpose subagent (used by CodebaseArchitect for implementation) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
 | `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |
