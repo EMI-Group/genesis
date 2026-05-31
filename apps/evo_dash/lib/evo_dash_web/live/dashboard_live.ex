@@ -257,11 +257,8 @@ defmodule EvoDashWeb.DashboardLive do
                   <.icon name="hero-rocket-launch" class="size-10 mx-auto mb-2 opacity-30" />
                   <p class="text-sm">No active tasks</p>
                   <p class="text-xs mt-1 text-base-content/30">
-                    <%= if lg?(@socket) do %>
-                      Create one from the sidebar
-                    <% else %>
-                      Tap + to create a task
-                    <% end %>
+                    <span class="hidden lg:inline">Create one from the sidebar</span>
+                    <span class="lg:hidden">Tap + to create a task</span>
                   </p>
                 </div>
               <% else %>
@@ -561,12 +558,7 @@ defmodule EvoDashWeb.DashboardLive do
     """
   end
 
-  # Helper to detect desktop viewport (used in template for conditional text)
-  defp lg?(_socket) do
-    # This is a simple heuristic - the actual responsive behavior is CSS-driven
-    # We use this only for hint text
-    false
-  end
+
 
   @impl true
   def mount(_params, session, socket) do
