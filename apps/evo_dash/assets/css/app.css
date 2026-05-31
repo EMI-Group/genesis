@@ -183,10 +183,10 @@ input, textarea, select, button, a {
 /* Pulse glow for running task indicators */
 @keyframes pulse-glow {
   0%, 100% {
-    box-shadow: 0 0 0 0 oklch(65% 0.18 255 / 0.4);
+    box-shadow: 0 0 0 0 oklch(67% 0.15 160 / 0.3);
   }
   50% {
-    box-shadow: 0 0 0 8px oklch(65% 0.18 255 / 0);
+    box-shadow: 0 0 0 8px oklch(67% 0.15 160 / 0);
   }
 }
 
@@ -250,7 +250,7 @@ input, textarea, select, button, a {
 }
 
 .animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
+  animation: pulse-glow 4s ease-in-out infinite;
 }
 
 .animate-slide-down {

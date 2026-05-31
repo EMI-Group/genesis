@@ -61,8 +61,8 @@ defmodule EvoDashWeb.Helpers do
   Returns badge class string for task status (`:running`, `:completed`, `:failed`,
   `:cancelled`, `:pending`).
   """
-  def task_status_badge(:running), do: "badge badge-info"
-  def task_status_badge(:completed), do: "badge badge-success"
+  def task_status_badge(:running), do: "badge badge-success"
+  def task_status_badge(:completed), do: "badge badge-info"
   def task_status_badge(:failed), do: "badge badge-error"
   def task_status_badge(:cancelled), do: "badge badge-warning"
   def task_status_badge(_), do: "badge badge-ghost"
