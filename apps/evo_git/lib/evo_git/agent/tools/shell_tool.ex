@@ -190,13 +190,13 @@ defmodule EvoGit.Agent.Tools.ShellTool do
 
         String.starts_with?(target, worktree_base <> "/") ->
           [
-            "⚠️ You are trying to `cd` into another agent's worktree (`#{target}`). Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
+            "⚠️ You are trying to `cd` into another agent's worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
             | acc
           ]
 
         target == repo_root ->
           [
-            "⚠️ You are trying to `cd` into the repository root (`#{repo_root}`), which is NOT your worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
+            "⚠️ You are trying to `cd` into the repository root, which is NOT your worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
             | acc
           ]
 
