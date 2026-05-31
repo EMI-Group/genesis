@@ -15,7 +15,7 @@ defmodule EvoGit.Agents.Generalist do
 
   def subagent_modules do
     [
-      EvoGit.Agents.Planner,
+      EvoGit.Agents.TaskScheduler,
       EvoGit.Agents.CodebaseInvestigator,
       EvoGit.Agents.Executor,
       # Allow recursive delegation to other generalist subagents for child nodes
@@ -71,8 +71,8 @@ defmodule EvoGit.Agents.Generalist do
        - You need additional context
 
     3. Planning and Decomposition: Before making changes, create a plan that decomposes the task into smaller, manageable steps. This can be a simple list of steps you intend to take. This will help you stay organized and ensure you don't miss anything important.
-         - For complex or multi-node changes where the path forward is unclear, delegate to `subagent_planner` first — it will investigate the codebase and return a detailed structured plan with sequential steps and parallel sub-tasks.
-         - **Skip the Planner** for simple, well-understood tasks: fixing a single bug, adding a function to an existing module, updating a config value, changing a string, or any change you can describe in one sentence. Delegate directly to `subagent_executor` instead.
+         - For complex or multi-node changes where the path forward is unclear, delegate to `subagent_task_scheduler` first — it will investigate the codebase and return a structured execution sequence with sequential steps and parallel sub-tasks.
+         - **Skip the TaskScheduler** for simple, well-understood tasks: fixing a single bug, adding a function to an existing module, updating a config value, changing a string, or any change you can describe in one sentence. Delegate directly to `subagent_executor` instead.
 
     4. Make Changes: Use your available tools and subagents to make changes to the codebase.
        - IMPORTANT: before calling a subagent, you MUST make sure the workspace is clean and any changes you have made are committed.
