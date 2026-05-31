@@ -5,7 +5,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 
 ## Routing Table
 - `./agent/` → Agent behaviour, tool library, context compression, subagent processing
-- `./agents/` → Agent implementations (Generalist, Manager, Executor, Planner, Investigator, Architect, Extractor, Evaluator)
+- `./agents/` → Agent implementations (Generalist, Manager, Executor, TaskScheduler, Investigator, Architect, Extractor, Evaluator)
 - `./agent_scheduler/` → AgentState, SchedMeta, Slots, Worktrees — ETS schemas and helpers
 - `./core/` → ContextNode, PhyloGraphNode, ForeignRepo data structures
 - `./adapters/` → Git CLI adapter — all git operations go through this module
