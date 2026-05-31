@@ -5,7 +5,7 @@ defmodule EvoDashWeb.SettingsLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status}>
-      <div class="flex items-center gap-3 mb-2">
+      <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
         <div class="bg-secondary/15 text-secondary p-3 rounded-xl">
           <.icon name="hero-cog-6-tooth" class="size-6" />
         </div>
@@ -16,7 +16,7 @@ defmodule EvoDashWeb.SettingsLive do
       </div>
 
       <!-- Scheduler Pause/Resume Control -->
-      <div class="mt-4 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+      <div class="mt-4 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-100">
         <div class="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <div class="flex items-center gap-3">
             <div class={[
@@ -72,12 +72,12 @@ defmodule EvoDashWeb.SettingsLive do
       <% end %>
 
       <!-- Scheduler Settings Form -->
-      <div class="mt-6">
+      <div class="mt-6 animate-fade-in-up animation-delay-200">
         <EvoDashWeb.DashboardComponents.scheduler_settings config={@scheduler_config} />
       </div>
 
       <!-- Current Config Summary -->
-      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-300">
         <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <.icon name="hero-information-circle" class="size-5 text-info" /> Current Runtime Values

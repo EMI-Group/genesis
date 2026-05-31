@@ -212,7 +212,7 @@ defmodule EvoDashWeb.DashboardComponents do
             phx-click="switch_project"
             phx-value-path={project.path}
             class={[
-              "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium cursor-pointer transition-all whitespace-nowrap",
+              "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium cursor-pointer transition-all whitespace-nowrap hover-lift",
               @active_project == project.path && "bg-primary text-primary-content shadow-md",
               @active_project != project.path &&
                 "bg-base-200/70 hover:bg-base-300 text-base-content/70 hover:text-base-content"
@@ -358,7 +358,7 @@ defmodule EvoDashWeb.DashboardComponents do
   def task_card(assigns) do
     ~H"""
     <div class={[
-      "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative",
+      "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative hover-lift",
       @task.status == :completed && "bg-success/5",
       @task.status == :running && "bg-info/5"
     ]}>
