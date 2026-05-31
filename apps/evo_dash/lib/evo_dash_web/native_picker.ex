@@ -7,6 +7,8 @@ defmodule EvoDashWeb.NativePicker do
   since the dialog opens on the server side.
   """
 
+  import EvoDashWeb.Gettext
+
   @doc """
   Opens a native OS directory picker dialog and returns the selected path.
 
@@ -23,7 +25,7 @@ defmodule EvoDashWeb.NativePicker do
 
     case Task.yield(task, 120_000) || Task.shutdown(task) do
       {:ok, result} -> result
-      nil -> {:error, "Directory picker timed out"}
+      nil -> {:error, gettext("Directory picker timed out")}
     end
   end
 
@@ -35,7 +37,7 @@ defmodule EvoDashWeb.NativePicker do
       dialog =
         :wxDirDialog.new(
           :wx.null(),
-          title: ~c"Select Project Directory",
+          title: ~c"#{gettext("Select Project Directory")}",
           style: 0
         )
 
@@ -54,7 +56,7 @@ defmodule EvoDashWeb.NativePicker do
       result
     rescue
       e ->
-        {:error, "wx directory picker failed: #{Exception.message(e)}"}
+        {:error, gettext("wx directory picker failed: %{message}", message: Exception.message(e))}
     after
       :wx.destroy()
     end

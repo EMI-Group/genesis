@@ -4,6 +4,7 @@ defmodule EvoDash.Application do
   @moduledoc false
 
   use Application
+  import EvoDashWeb.Gettext
 
   @impl true
   def start(_type, _args) do
@@ -15,7 +16,7 @@ defmodule EvoDash.Application do
           [
             app: :evo_dash,
             id: :evo_dash_window,
-            title: "EvoGit Dashboard",
+            title: gettext("EvoGit Dashboard"),
             url: "http://localhost:#{port}/?client=desktop",
             size: {1280, 800}
           ]}]

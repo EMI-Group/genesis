@@ -58,7 +58,7 @@ defmodule EvoDashWeb.Layouts do
                 class={["btn btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
                 aria-current={@current_page == :dashboard && "page"}
               >
-                <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
+                <.icon name="hero-squares-2x2" class="size-4" /> {gettext("Dashboard")}
               </.link>
             </li>
             <li>
@@ -67,7 +67,7 @@ defmodule EvoDashWeb.Layouts do
                 class={["btn btn-ghost gap-2", @current_page == :tasks && "btn-active"]}
                 aria-current={@current_page == :tasks && "page"}
               >
-                <.icon name="hero-clipboard-document-list" class="size-4" /> Tasks
+                <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext("Tasks")}
               </.link>
             </li>
             <li>
@@ -76,7 +76,7 @@ defmodule EvoDashWeb.Layouts do
                 class={["btn btn-ghost gap-2", @current_page == :agents && "btn-active"]}
                 aria-current={@current_page == :agents && "page"}
               >
-                <.icon name="hero-server" class="size-4" /> Agents
+                <.icon name="hero-server" class="size-4" /> {gettext("Agents")}
               </.link>
             </li>
             <li>
@@ -85,7 +85,7 @@ defmodule EvoDashWeb.Layouts do
                 class={["btn btn-ghost gap-2", @current_page == :settings && "btn-active"]}
                 aria-current={@current_page == :settings && "page"}
               >
-                <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
+                <.icon name="hero-cog-6-tooth" class="size-4" /> {gettext("Settings")}
               </.link>
             </li>
             <li>
@@ -94,7 +94,7 @@ defmodule EvoDashWeb.Layouts do
                 class={["btn btn-ghost gap-2", @current_page == :help && "btn-active"]}
                 aria-current={@current_page == :help && "page"}
               >
-                <.icon name="hero-question-mark-circle" class="size-4" /> Help
+                <.icon name="hero-question-mark-circle" class="size-4" /> {gettext("Help")}
               </.link>
             </li>
           </ul>
@@ -114,7 +114,7 @@ defmodule EvoDashWeb.Layouts do
                 class={@current_page == :dashboard && "active"}
                 aria-current={@current_page == :dashboard && "page"}
               >
-                <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
+                <.icon name="hero-squares-2x2" class="size-4" /> {gettext("Dashboard")}
               </.link>
             </li>
             <li>
@@ -123,7 +123,7 @@ defmodule EvoDashWeb.Layouts do
                 class={@current_page == :tasks && "active"}
                 aria-current={@current_page == :tasks && "page"}
               >
-                <.icon name="hero-clipboard-document-list" class="size-4" /> Tasks
+                <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext("Tasks")}
               </.link>
             </li>
             <li>
@@ -132,7 +132,7 @@ defmodule EvoDashWeb.Layouts do
                 class={@current_page == :agents && "active"}
                 aria-current={@current_page == :agents && "page"}
               >
-                <.icon name="hero-server" class="size-4" /> Agents
+                <.icon name="hero-server" class="size-4" /> {gettext("Agents")}
               </.link>
             </li>
             <li>
@@ -141,7 +141,7 @@ defmodule EvoDashWeb.Layouts do
                 class={@current_page == :settings && "active"}
                 aria-current={@current_page == :settings && "page"}
               >
-                <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
+                <.icon name="hero-cog-6-tooth" class="size-4" /> {gettext("Settings")}
               </.link>
             </li>
             <li>
@@ -150,7 +150,7 @@ defmodule EvoDashWeb.Layouts do
                 class={@current_page == :help && "active"}
                 aria-current={@current_page == :help && "page"}
               >
-                <.icon name="hero-question-mark-circle" class="size-4" /> Help
+                <.icon name="hero-question-mark-circle" class="size-4" /> {gettext("Help")}
               </.link>
             </li>
             <li class="mt-2 flex justify-center">
@@ -175,13 +175,13 @@ defmodule EvoDashWeb.Layouts do
           <div class="flex items-start gap-3">
             <.icon name="hero-exclamation-triangle" class="size-5 shrink-0 mt-0.5" />
             <div class="flex-1 min-w-0">
-              <p class="font-semibold text-sm">Missing Configuration</p>
+              <p class="font-semibold text-sm">{gettext("Missing Configuration")}</p>
               <ul class="mt-1 space-y-0.5">
                 <%= for warning <- @config_status.warnings do %>
                   <li class="text-xs opacity-90">{warning}</li>
                 <% end %>
               </ul>
-              <.link navigate={~p"/help"} class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">Configure now →</.link>
+              <.link navigate={~p"/help"} class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">{gettext("Configure now →")}</.link>
             </div>
             <button class="btn btn-sm btn-ghost text-warning-content" onclick="this.closest('.fixed').remove()">
               <.icon name="hero-x-mark" class="size-4" />
@@ -214,24 +214,24 @@ defmodule EvoDashWeb.Layouts do
       <.flash
         id="client-error"
         kind={:error}
-        title="We can't find the internet"
+        title={gettext("We can't find the internet")}
         phx-disconnected={show(".phx-client-error #client-error") |> JS.remove_attribute("hidden")}
         phx-connected={hide("#client-error") |> JS.set_attribute({"hidden", ""})}
         hidden
       >
-        Attempting to reconnect
+        {gettext("Attempting to reconnect")}
         <.icon name="hero-arrow-path" class="ml-1 size-3 motion-safe:animate-spin" />
       </.flash>
 
       <.flash
         id="server-error"
         kind={:error}
-        title="Something went wrong!"
+        title={gettext("Something went wrong!")}
         phx-disconnected={show(".phx-server-error #server-error") |> JS.remove_attribute("hidden")}
         phx-connected={hide("#server-error") |> JS.set_attribute({"hidden", ""})}
         hidden
       >
-        Attempting to reconnect
+        {gettext("Attempting to reconnect")}
         <.icon name="hero-arrow-path" class="ml-1 size-3 motion-safe:animate-spin" />
       </.flash>
     </div>
