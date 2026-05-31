@@ -16,14 +16,16 @@ Implements the open-ended evolution engine for Mode B (Complex Evolution). Uses 
 | `EvoGit.Runtime.Evolution.MapElites` | `map_elites.ex` | `start_link/1`, `insert/1`, `get_elites/0`, `get_elite/1`, `all_fragments/0`, `size/0`, `descriptor_for/1`, `clear/0`, `stop/0` | MAP-Elites quality diversity archive. Grid indexed by behavior descriptors (complexity × paradigm). Retains only the most novel fragment per cell. |
 | `EvoGit.Runtime.Evolution.NoveltyMetric` | `novelty_metric.ex` | `novelty_score/3`, `distance/2`, `batch_novelty_scores/3`, `structural_features/1`, `behavioral_profile/2`, `most_redundant/1` | Novelty search scoring via k-nearest-neighbor distance in feature space. Includes LLM-based behavioral profiling and pure AST structural analysis. |
 | `EvoGit.Runtime.Evolution.LLMSynthesis` | `llm_synthesis.ex` | `crossover/4`, `mutate/3`, `evaluate_viability/1`, `generate_diverse_fragments/4` | LLM-powered crossover (semantic fusion of two fragments) and mutation (structural transformation of one fragment). Includes syntax viability checking and diverse fragment generation. |
+| `EvoGit.Runtime.Evolution.ConceptExpander` | `concept_expander.ex` | `expand/2`, `expand_to_subtopics/2`, `expand_to_implementations/2`, `generate_fragment/3` | Multi-stage LLM pipeline that expands rough concept prompts into diverse code fragments. Pipeline: concept → sub-topics → concrete implementations → code. Used for generating hundreds of fragments from a single concept idea (e.g., "animal social behavior simulations" → 10 sub-topics × 5 implementations = ~50 fragments). Configurable via `concept_breadth` (default 10) and `implementation_depth` (default 5). Fragments have `source: :concept_expanded`. |
 
 ### `Engine.run/5` — Step by Step
 
 1. **Build state**: Reads evolution config from `EvoGit.Config.resolve(:evolution)`, resolves model, constructs engine state with tunable parameters (max_generations, pool_size, crossover_rate, mutation_rate, convergence_threshold, stagnation_limit, novelty_neighbors).
 2. **Start supervisor**: Starts a temporary `Supervisor` with `EntropyPool` and `MapElites` as children.
 3. **Initialize** (`initialize/1`):
-   - Loads 15 built-in seed fragments from `SeedFragments`.
+   - Loads 15 built-in seed fragments from `SeedFragments` (or user-provided seeds via `-S`).
    - Generates additional LLM seed fragments via `SeedFragments.generate_with_llm/3`.
+   - Expands concept prompts into code fragments via `ConceptExpander.expand/2` (if `-C` concepts provided). Each concept goes through a 3-stage LLM pipeline: concept → sub-topics → implementations → code. Concept expansion is additive to other seed sources.
    - Extracts structural features (AST analysis) and behavioral profiles (LLM) for each fragment.
    - Computes novelty scores against the growing reference set.
    - Inserts all fragments into `EntropyPool` and `MapElites`.

@@ -12,7 +12,7 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
           content: String.t(),
           language: String.t(),
           domain: String.t(),
-          source: :seed | :generated | :crossover | :mutation,
+          source: :seed | :generated | :crossover | :mutation | :concept_expanded,
           generation: non_neg_integer(),
           behavioral_profile: map(),
           structural_features: map(),
@@ -43,7 +43,7 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
 
     * `:language` — the programming language (default: `"elixir"`)
     * `:domain` — the domain label (required)
-    * `:source` — `:seed`, `:generated`, `:crossover`, or `:mutation` (default: `:seed`)
+    * `:source` — `:seed`, `:generated`, `:crossover`, `:mutation`, or `:concept_expanded` (default: `:seed`)
     * `:generation` — evolution generation (default: `0`)
     * `:parents` — list of parent fragment IDs (default: `[]`)
   """

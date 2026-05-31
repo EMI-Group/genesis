@@ -24,7 +24,8 @@ defmodule EvoGit.CLI do
           generations: :integer,
           crossover_rate: :float,
           mutation_rate: :float,
-          seeds: [:string, :keep]
+          seeds: [:string, :keep],
+          concepts: [:string, :keep]
         ],
         aliases: [
           h: :help,
@@ -38,7 +39,8 @@ defmodule EvoGit.CLI do
           n: :node,
           s: :pool_size,
           g: :generations,
-          S: :seeds
+          S: :seeds,
+          C: :concepts
         ]
       )
 
@@ -126,6 +128,8 @@ defmodule EvoGit.CLI do
         runtime_opts = maybe_put(runtime_opts, :mutation_rate, opts[:mutation_rate])
         seeds = parse_seeds(opts)
         runtime_opts = if seeds, do: Keyword.put(runtime_opts, :seeds, seeds), else: runtime_opts
+        concepts = parse_concepts(opts)
+        runtime_opts = if concepts, do: Keyword.put(runtime_opts, :concepts, concepts), else: runtime_opts
 
         Evolution.run(objective, runtime_opts)
       else
@@ -190,6 +194,13 @@ defmodule EvoGit.CLI do
     end
   end
 
+  defp parse_concepts(opts) do
+    case Keyword.get_values(opts, :concepts) do
+      [] -> nil
+      concepts -> concepts
+    end
+  end
+
   defp parse_foreign_repos(opts) do
     case Keyword.get_values(opts, :foreign_repo) do
       [] -> []
@@ -241,6 +252,11 @@ defmodule EvoGit.CLI do
       -S, --seeds <path>          Path to a seed code file for bottom-up evolution.
                                   Can be specified multiple times. User seeds are
                                   preferred over built-in seeds. (complex mode only)
+      -C, --concepts <idea>       Rough concept/idea for concept expansion seeding.
+                                  The LLM expands each concept into sub-topics, then
+                                  into concrete implementations, generating hundreds of
+                                  diverse code fragments. Can be specified multiple times.
+                                  (complex mode only)
       -n, --node <path>           Starting node path for evolution (subdirectory within
                                   repo, default: root). Only used with 'evolve'.
       -s, --pool-size <n>         Max fragments in entropy pool (default: 50).
