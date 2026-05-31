@@ -62,46 +62,40 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
   end
 
   @doc """
-  Extracts structural features from the fragment's content via AST analysis.
+  Extracts structural features from the fragment's content via text/regex analysis.
+  Works for any programming language.
 
-  Returns a map with:
-    * `:ast_depth` — maximum nesting depth of the AST
-    * `:function_count` — number of function definitions (def, defp, defmacro, defmacrop)
-    * `:pattern_match_count` — number of match operators (=)
-    * `:macro_count` — number of use/import/require directives
-    * `:module_count` — number of defmodule
-    * `:guard_count` — number of when clauses
-    * `:pipeline_count` — number of |> operators
-    * `:struct_count` — number of struct/map creations
+  Returns a map with 10 structural dimensions:
+    * `:nesting_depth` — maximum indentation nesting depth
+    * `:function_count` — number of function/method definitions
+    * `:control_flow_count` — number of control flow constructs (if, for, while, etc.)
+    * `:comment_density` — percentage of lines that are comments (0.0–100.0)
+    * `:import_count` — number of import/use/require/include directives
+    * `:avg_line_length` — average length of non-empty lines
+    * `:string_literal_count` — number of string literals
+    * `:numeric_literal_count` — number of numeric literals
     * `:line_count` — number of lines
     * `:char_count` — string length
-
-  Returns `%{parse_error: true, line_count: ..., char_count: ...}` if parsing fails.
   """
   @spec extract_structural_features(t()) :: map()
   def extract_structural_features(%__MODULE__{content: content}) do
     lines = String.split(content, "\n", trim: true)
     line_count = length(lines)
     char_count = String.length(content)
+    non_empty_lines = Enum.reject(lines, &(&1 == ""))
 
-    case Code.string_to_quoted(content, literal_encoder: &{:ok, {:__block__, &1, [&2]}}) do
-      {:ok, ast} ->
-        %{
-          ast_depth: compute_ast_depth(ast),
-          function_count: count_nodes(ast, &function_def?/1),
-          pattern_match_count: count_nodes(ast, &match_op?/1),
-          macro_count: count_nodes(ast, &macro_directive?/1),
-          module_count: count_nodes(ast, &module_def?/1),
-          guard_count: count_nodes(ast, &guard_clause?/1),
-          pipeline_count: count_nodes(ast, &pipeline_op?/1),
-          struct_count: count_nodes(ast, &struct_creation?/1),
-          line_count: line_count,
-          char_count: char_count
-        }
-
-      {:error, _} ->
-        %{parse_error: true, line_count: line_count, char_count: char_count}
-    end
+    %{
+      nesting_depth: compute_nesting_depth(lines),
+      function_count: count_matches(content, ~r/\b(def|defp|function|fn|func|void|class|method|sub|defn)\s+\w/),
+      control_flow_count: count_matches(content, ~r/\b(if|else|elif|for|while|switch|case|cond|match|try|catch|unless|foreach)\b/),
+      comment_density: compute_comment_density(lines),
+      import_count: count_matches(content, ~r/\b(use|import|require|include|from\s+\w+\s+import|#include|#import)\b/),
+      avg_line_length: compute_avg_line_length(non_empty_lines),
+      string_literal_count: count_matches(content, ~r/"[^"]*"|'[^']*'/),
+      numeric_literal_count: count_matches(content, ~r/\b\d+\.?\d*\b/),
+      line_count: line_count,
+      char_count: char_count
+    }
   end
 
   @doc """
@@ -118,18 +112,18 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
         behavioral_profile: bp
       }) do
     struct_vec =
-      if sf == %{} or Map.get(sf, :parse_error) do
+      if sf == %{} do
         []
       else
         [
-          normalize(sf[:ast_depth], 20),
+          normalize(sf[:nesting_depth], 20),
           normalize(sf[:function_count], 10),
-          normalize(sf[:pattern_match_count], 10),
-          normalize(sf[:macro_count], 5),
-          normalize(sf[:module_count], 5),
-          normalize(sf[:guard_count], 5),
-          normalize(sf[:pipeline_count], 10),
-          normalize(sf[:struct_count], 10),
+          normalize(sf[:control_flow_count], 20),
+          normalize(sf[:comment_density], 100),
+          normalize(sf[:import_count], 10),
+          normalize(sf[:avg_line_length], 120),
+          normalize(sf[:string_literal_count], 20),
+          normalize(sf[:numeric_literal_count], 20),
           normalize(sf[:line_count], 100),
           normalize(sf[:char_count], 10_000)
         ]
@@ -183,96 +177,55 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
   defp normalize(value, max) when max > 0, do: min(value / max, 1.0)
   defp normalize(_, _max), do: 0.0
 
-  # AST depth computation
-  defp compute_ast_depth(ast) when is_tuple(ast) do
-    [_head | args] = Tuple.to_list(ast)
+  # Language-agnostic feature extraction helpers
 
-    child_depths =
-      Enum.map(args, fn
-        list when is_list(list) ->
-          list
-          |> Enum.map(&compute_ast_depth/1)
-          |> Enum.max(fn -> 0 end)
+  defp compute_nesting_depth(lines) do
+    lines
+    |> Enum.map(fn line ->
+      case Regex.run(~r/^(\s+)/, line) do
+        [_, spaces] ->
+          # Count indentation level: tabs count as 4, spaces count as-is
+          spaces
+          |> String.replace("\t", "    ")
+          |> String.length()
+          |> Kernel./(2)
+          |> round()
 
-        node ->
-          compute_ast_depth(node)
-      end)
-
-    max_child = Enum.max(child_depths, fn -> 0 end)
-    1 + max_child
-  end
-
-  defp compute_ast_depth(list) when is_list(list) do
-    list
-    |> Enum.map(&compute_ast_depth/1)
+        _ ->
+          0
+      end
+    end)
     |> Enum.max(fn -> 0 end)
   end
 
-  defp compute_ast_depth(_), do: 0
-
-  # Node counting via AST traversal
-  defp count_nodes(ast, predicate) do
-    {_, count} = walk_and_count(ast, predicate)
-    count
+  defp count_matches(content, regex) do
+    Regex.scan(regex, content) |> length()
   end
 
-  defp walk_and_count(ast, predicate) when is_tuple(ast) do
-    count = if predicate.(ast), do: 1, else: 0
+  defp compute_comment_density(lines) do
+    if lines == [] do
+      0.0
+    else
+      comment_count =
+        Enum.count(lines, fn line ->
+          trimmed = String.trim(line)
 
-    [_head | args] = Tuple.to_list(ast)
+          String.starts_with?(trimmed, "#") or
+            String.starts_with?(trimmed, "//") or
+            String.starts_with?(trimmed, "/*") or
+            String.starts_with?(trimmed, "--") or
+            String.starts_with?(trimmed, ";") or
+            String.starts_with?(trimmed, "%")
+        end)
 
-    child_counts =
-      Enum.map(args, fn
-        list when is_list(list) ->
-          list
-          |> Enum.map(&walk_and_count(&1, predicate))
-          |> Enum.reduce(0, fn {_, c}, acc -> acc + c end)
-
-        node ->
-          {_, c} = walk_and_count(node, predicate)
-          c
-      end)
-
-    {:ok, count + Enum.sum(child_counts)}
+      comment_count / length(lines) * 100
+    end
   end
 
-  defp walk_and_count(list, predicate) when is_list(list) do
-    count =
-      list
-      |> Enum.map(&walk_and_count(&1, predicate))
-      |> Enum.reduce(0, fn {_, c}, acc -> acc + c end)
+  defp compute_avg_line_length([]), do: 0.0
 
-    {:ok, count}
+  defp compute_avg_line_length(lines) do
+    total = Enum.reduce(lines, 0, fn line, acc -> acc + String.length(line) end)
+    total / length(lines)
   end
-
-  defp walk_and_count(_, _), do: {:ok, 0}
-
-  # AST predicate helpers
-  defp function_def?({name, _, _})
-       when name in [:def, :defp, :defmacro, :defmacrop],
-       do: true
-
-  defp function_def?(_), do: false
-
-  defp match_op?({:=, _, _}), do: true
-  defp match_op?(_), do: false
-
-  defp macro_directive?({name, _, _})
-       when name in [:use, :import, :require],
-       do: true
-
-  defp macro_directive?(_), do: false
-
-  defp module_def?({:defmodule, _, _}), do: true
-  defp module_def?(_), do: false
-
-  defp guard_clause?({:when, _, _}), do: true
-  defp guard_clause?(_), do: false
-
-  defp pipeline_op?({:|>, _, _}), do: true
-  defp pipeline_op?(_), do: false
-
-  defp struct_creation?({:%{}, _, _}), do: true
-  defp struct_creation?({:%, _, _}), do: true
-  defp struct_creation?(_), do: false
 end
