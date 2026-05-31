@@ -1,6 +1,6 @@
 defmodule EvoDashWeb.TasksLive do
   use EvoDashWeb, :live_view
-  import EvoDashWeb.Gettext, only: [gettext: 1, gettext: 2, dngettext: 4]
+  use Gettext, backend: EvoDashWeb.Gettext
   alias EvoDash.TaskRegistry
 
   @impl true

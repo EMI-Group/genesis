@@ -84,7 +84,7 @@ defmodule EvoDashWeb do
       # Shared helpers (status colors, datetime formatting, modals, etc.)
       import EvoDashWeb.Helpers
       # Translation support
-      import EvoDashWeb.Gettext
+      use Gettext, backend: EvoDashWeb.Gettext
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS

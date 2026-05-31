@@ -7,7 +7,7 @@ defmodule EvoDashWeb.NativePicker do
   since the dialog opens on the server side.
   """
 
-  import EvoDashWeb.Gettext
+  use Gettext, backend: EvoDashWeb.Gettext
 
   @doc """
   Opens a native OS directory picker dialog and returns the selected path.
