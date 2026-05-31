@@ -154,11 +154,41 @@ const DirectoryPicker = {
   },
 };
 
+// BottomSheet hook: manages open/close with backdrop
+const BottomSheet = {
+  mounted() {
+    this.handleBackdropClick = (e) => {
+      if (e.target === this.el) {
+        this.pushEvent("close_bottom_sheet", {});
+      }
+    };
+    this.el.addEventListener("click", this.handleBackdropClick);
+  },
+  destroyed() {
+    this.el.removeEventListener("click", this.handleBackdropClick);
+  }
+};
+
+// SlideOver hook: right-panel slide with backdrop dismiss
+const SlideOver = {
+  mounted() {
+    this.handleBackdropClick = (e) => {
+      if (e.target === this.el) {
+        this.pushEvent("close_slide_over", {});
+      }
+    };
+    this.el.addEventListener("click", this.handleBackdropClick);
+  },
+  destroyed() {
+    this.el.removeEventListener("click", this.handleBackdropClick);
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, BottomSheet, SlideOver},
 })
 
 // Show progress bar on live navigation and form submits
