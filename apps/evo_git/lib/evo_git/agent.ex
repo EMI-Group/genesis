@@ -618,7 +618,7 @@ defmodule EvoGit.Agent do
                     "Error: #{inspect(reason)}"
 
                   {:ok, result} ->
-                    EvoGit.Agent.OutputSanitizer.sanitize_and_truncate(result, call.name, call.arguments)
+                    OutputSanitizer.sanitize_and_truncate(result, call.name, call.arguments)
 
                   {:exit, reason} ->
                     "Error: Tool execution crashed: #{inspect(reason)}"
