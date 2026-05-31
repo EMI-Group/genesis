@@ -17,8 +17,6 @@ defmodule EvoGit.Core.ContextNode do
 
   alias EvoGit.Adapters.Git
 
-  @context_max_bytes 64 * 1024
-
   @type t :: %__MODULE__{
           path: String.t(),
           repo: String.t(),
@@ -237,10 +235,10 @@ defmodule EvoGit.Core.ContextNode do
             display_content = EvoGit.Skills.strip_front_matter(content)
 
             truncated_content =
-              if byte_size(display_content) > @context_max_bytes do
+              if byte_size(display_content) > context_max_bytes() do
                 require Logger
                 Logger.warning("Content truncated for file: #{file}")
-                binary_part(display_content, 0, @context_max_bytes) <> "\n... [Content Truncated] ..."
+                binary_part(display_content, 0, context_max_bytes()) <> "\n... [Content Truncated] ..."
               else
                 display_content
               end
@@ -274,5 +272,9 @@ defmodule EvoGit.Core.ContextNode do
       skill_names = EvoGit.Skills.hierarchical_skill_names(relative_path, repo_path)
       {:ok, context, skill_names}
     end
+  end
+
+  defp context_max_bytes do
+    EvoGit.Config.resolve([:truncation, :context_max_bytes]) || 64 * 1024
   end
 end
