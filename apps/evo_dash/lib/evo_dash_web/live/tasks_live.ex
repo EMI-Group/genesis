@@ -18,7 +18,7 @@ defmodule EvoDashWeb.TasksLive do
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <.link navigate={~p"/"} class="btn btn-sm btn-ghost gap-2">
+          <.link navigate={~p"/"} class="btn btn-ghost gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> Dashboard
           </.link>
         </div>
@@ -75,14 +75,14 @@ defmodule EvoDashWeb.TasksLive do
           <!-- Actions -->
           <div class="flex items-center gap-2 shrink-0">
             <button
-              class="btn btn-sm btn-ghost"
+              class="btn btn-ghost"
               phx-click="reset_filters"
               title="Reset all filters"
             >
               <.icon name="hero-x-mark" class="size-4" /> Reset
             </button>
             <button
-              class="btn btn-sm btn-outline btn-error"
+              class="btn btn-outline btn-error"
               phx-click="clear_task_history"
               phx-confirm="Clear all finished task history? This cannot be undone."
             >
@@ -96,19 +96,19 @@ defmodule EvoDashWeb.TasksLive do
           <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
             <span class="text-xs text-base-content/50">Active filters:</span>
             <%= if @status_filter != "all" do %>
-              <span class="badge badge-primary badge-sm gap-1">
+              <span class="badge badge-primary gap-1">
                 {@status_filter}
                 <button phx-click="clear_filter" phx-value-filter="status" class="hover:opacity-70">×</button>
               </span>
             <% end %>
             <%= if @project_filter != "all" do %>
-              <span class="badge badge-secondary badge-sm gap-1">
+              <span class="badge badge-secondary gap-1">
                 {Path.basename(@project_filter)}
                 <button phx-click="clear_filter" phx-value-filter="project" class="hover:opacity-70">×</button>
               </span>
             <% end %>
             <%= if @search_query != "" do %>
-              <span class="badge badge-accent badge-sm gap-1">
+              <span class="badge badge-accent gap-1">
                 "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20, do: "..."}"
                 <button phx-click="clear_filter" phx-value-filter="search" class="hover:opacity-70">×</button>
               </span>

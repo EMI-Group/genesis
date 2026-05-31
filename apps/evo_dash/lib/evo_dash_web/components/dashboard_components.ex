@@ -72,7 +72,7 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if @mode == "evolve_complex" do %>
           <div class="form-control">
             <label class="label">
-              <span class="label-text font-semibold text-base-content">Seed Code <span class="badge badge-ghost badge-sm">optional</span></span>
+              <span class="label-text font-semibold text-base-content">Seed Code <span class="badge badge-ghost">optional</span></span>
             </label>
             <textarea
               name="seeds"
@@ -186,7 +186,7 @@ defmodule EvoDashWeb.DashboardComponents do
             </div>
           </div>
           <div class="pt-2">
-            <button type="submit" class="btn btn-secondary btn-sm">
+            <button type="submit" class="btn btn-secondary">
               <.icon name="hero-arrow-path" class="size-4" /> Update Settings
             </button>
           </div>
@@ -259,7 +259,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
   def open_project_form(assigns) do
     ~H"""
-    <div class="max-w-2xl mx-auto">
+    <div class="max-w-5xl mx-auto">
       <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
         <!-- Hero section -->
         <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6 sm:p-8 text-center">
@@ -270,78 +270,113 @@ defmodule EvoDashWeb.DashboardComponents do
           <p class="text-base-content/60 mt-2">Enter the path to a Git repository to get started</p>
         </div>
 
-        <!-- Form -->
-        <div class="p-4 sm:p-6 pt-2">
-          <.form for={%{}} phx-submit="open_project" class="space-y-4">
-            <div class="form-control relative">
-              <div class="relative">
-                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-base-content/40">
-                  <.icon name="hero-folder" class="size-5" />
-                </div>
-                <input
-                  type="text"
-                  name="path"
-                  value={@path}
-                  class="input input-bordered w-full pl-11 pr-12 h-12 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm bg-base-200/50"
-                  placeholder="/path/to/your/repo"
-                  autofocus
-                  phx-hook="PathAutocomplete"
-                  phx-change="path_input"
-                  phx-debounce="150"
-                  id="initial-project-path-input"
-                  list="path-suggestions"
-                />
-                <button
-                  type="button"
-                  id="project-path-picker-button"
-                  class="absolute right-10 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
-                  phx-click="pick_directory"
-                  phx-hook="DirectoryPicker"
-                  title="Browse for directory"
-                >
-                  <.icon name="hero-folder-open" class="size-5" />
-                </button>
-                <datalist id="path-suggestions">
-                  <%= for suggestion <- @path_suggestions do %>
-                    <option value={suggestion}></option>
-                  <% end %>
-                </datalist>
-              </div>
-            </div>
-            <button type="submit" class="btn btn-primary w-full h-12 text-base">
-              <.icon name="hero-folder-open" class="size-5" /> Open Project
-            </button>
-          </.form>
-
-          <!-- Recent Projects -->
-          <%= if @recent_projects != [] do %>
-            <div class="mt-6">
-              <h3 class="text-sm font-semibold text-base-content/50 uppercase tracking-wider mb-3">
-                Recent Projects
-              </h3>
-              <div class="space-y-1">
-                <%= for project <- Enum.take(@recent_projects, 5) do %>
+        <!-- Two-column content -->
+        <div class="p-4 sm:p-6 pt-2 lg:grid lg:grid-cols-5 lg:gap-8">
+          <!-- Left: Form + Recent Projects (3/5) -->
+          <div class="lg:col-span-3">
+            <.form for={%{}} phx-submit="open_project" class="space-y-4">
+              <div class="form-control relative">
+                <div class="relative">
+                  <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-base-content/40">
+                    <.icon name="hero-folder" class="size-5" />
+                  </div>
+                  <input
+                    type="text"
+                    name="path"
+                    value={@path}
+                    class="input input-bordered w-full pl-11 pr-12 h-12 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm bg-base-200/50"
+                    placeholder="/path/to/your/repo"
+                    autofocus
+                    phx-hook="PathAutocomplete"
+                    phx-change="path_input"
+                    phx-debounce="150"
+                    id="initial-project-path-input"
+                    list="path-suggestions"
+                  />
                   <button
-                    class="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-base-200/70 transition-colors text-left group"
-                    phx-click="open_project"
-                    phx-value-path={project.path}
+                    type="button"
+                    id="project-path-picker-button"
+                    class="absolute right-10 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                    phx-click="pick_directory"
+                    phx-hook="DirectoryPicker"
+                    title="Browse for directory"
                   >
-                    <div class="bg-base-200 p-2 rounded-lg group-hover:bg-base-300 transition-colors">
-                      <.icon name="hero-folder" class="size-4 text-base-content/60" />
-                    </div>
-                    <div class="flex-1 min-w-0">
-                      <p class="font-medium text-sm truncate">{project.name}</p>
-                      <p class="text-xs text-base-content/40 font-mono truncate">{project.path}</p>
-                    </div>
-                    <.icon
-                      name="hero-chevron-right"
-                      class="size-4 text-base-content/30 group-hover:text-base-content/60 transition-colors"
-                    />
+                    <.icon name="hero-folder-open" class="size-5" />
                   </button>
-                <% end %>
+                  <datalist id="path-suggestions">
+                    <%= for suggestion <- @path_suggestions do %>
+                      <option value={suggestion}></option>
+                    <% end %>
+                  </datalist>
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary w-full h-12 text-base">
+                <.icon name="hero-folder-open" class="size-5" /> Open Project
+              </button>
+            </.form>
+
+            <!-- Recent Projects -->
+            <%= if @recent_projects != [] do %>
+              <div class="mt-6">
+                <h3 class="text-sm font-semibold text-base-content/50 uppercase tracking-wider mb-3">
+                  Recent Projects
+                </h3>
+                <div class="space-y-1">
+                  <%= for project <- Enum.take(@recent_projects, 5) do %>
+                    <button
+                      class="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-base-200/70 transition-colors text-left group"
+                      phx-click="open_project"
+                      phx-value-path={project.path}
+                    >
+                      <div class="bg-base-200 p-2 rounded-lg group-hover:bg-base-300 transition-colors">
+                        <.icon name="hero-folder" class="size-4 text-base-content/60" />
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <p class="font-medium text-sm truncate">{project.name}</p>
+                        <p class="text-xs text-base-content/40 font-mono truncate">{project.path}</p>
+                      </div>
+                      <.icon
+                        name="hero-chevron-right"
+                        class="size-4 text-base-content/30 group-hover:text-base-content/60 transition-colors"
+                      />
+                    </button>
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
+          </div>
+
+          <!-- Right: Getting Started Panel (2/5, hidden on mobile) -->
+          <div class="hidden lg:block lg:col-span-2">
+            <div class="bg-base-200/40 rounded-xl p-5 border border-base-200 h-full">
+              <h3 class="font-semibold text-base flex items-center gap-2 mb-4">
+                <.icon name="hero-sparkles" class="size-5 text-primary" /> Welcome to EvoGit
+              </h3>
+              <ul class="space-y-3 text-sm text-base-content/70">
+                <li class="flex items-start gap-2">
+                  <.icon name="hero-cube" class="size-4 text-primary mt-0.5 shrink-0" />
+                  <span><strong class="text-base-content">Genesis</strong> — Create entire codebases from natural language prompts</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <.icon name="hero-arrow-path" class="size-4 text-secondary mt-0.5 shrink-0" />
+                  <span><strong class="text-base-content">Evolve</strong> — Modify and improve existing codebases with AI agents</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <.icon name="hero-folder-open" class="size-4 text-accent mt-0.5 shrink-0" />
+                  <span><strong class="text-base-content">Context Tree</strong> — Hierarchical code understanding for precise changes</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <.icon name="hero-code-bracket" class="size-4 text-info mt-0.5 shrink-0" />
+                  <span><strong class="text-base-content">Git-Native</strong> — Every change is a clean, reviewable commit</span>
+                </li>
+              </ul>
+              <div class="mt-5 pt-4 border-t border-base-300/50">
+                <p class="text-xs text-base-content/50">
+                  Open a Git repository above to begin. EvoGit auto-detects the project state and suggests the right task mode.
+                </p>
               </div>
             </div>
-          <% end %>
+          </div>
         </div>
       </div>
     </div>
@@ -364,7 +399,7 @@ defmodule EvoDashWeb.DashboardComponents do
     ]}>
       <!-- Three-dot kebab menu -->
       <details class="dropdown dropdown-end absolute top-3 right-3 z-[1]">
-        <summary class="btn btn-xs btn-ghost btn-circle">
+        <summary class="btn btn-sm btn-ghost btn-circle">
           <.icon name="hero-ellipsis-vertical" class="size-4" />
         </summary>
         <ul class="menu menu-sm dropdown-content mt-1 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-40 border border-base-200">
@@ -433,7 +468,7 @@ defmodule EvoDashWeb.DashboardComponents do
             <div class="flex items-center gap-2 shrink-0">
               <%= if @task.status == :running do %>
                 <button
-                  class="btn btn-sm btn-outline btn-error shadow-sm"
+                  class="btn btn-outline btn-error shadow-sm"
                   phx-click="cancel_task"
                   phx-value-task_id={@task.id}
                   phx-confirm="Are you sure you want to cancel this task?"
@@ -442,7 +477,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 </button>
               <% end %>
               <button
-                class="btn btn-sm btn-ghost bg-base-200/50 hover:bg-base-200"
+                class="btn btn-ghost bg-base-200/50 hover:bg-base-200"
                 phx-click="toggle_task_details"
                 phx-value-task_id={@task.id}
               >
@@ -465,7 +500,7 @@ defmodule EvoDashWeb.DashboardComponents do
                         <.icon name="hero-cog-8-tooth" class="size-4 text-primary" /> Options
                       </h4>
                       <button
-                        class="btn btn-xs btn-ghost"
+                        class="btn btn-sm btn-ghost"
                         phx-click="view_full_options"
                         phx-value-task_id={@task.id}
                       >
@@ -482,7 +517,7 @@ defmodule EvoDashWeb.DashboardComponents do
                           <.icon name="hero-check-badge" class="size-4 text-success" /> Result
                         </h4>
                         <button
-                          class="btn btn-xs btn-ghost"
+                          class="btn btn-sm btn-ghost"
                           phx-click="view_full_result"
                           phx-value-task_id={@task.id}
                         >

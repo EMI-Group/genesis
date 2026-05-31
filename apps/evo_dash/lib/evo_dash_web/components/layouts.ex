@@ -55,7 +55,7 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
+                class={["btn btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
                 aria-current={@current_page == :dashboard && "page"}
               >
                 <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
@@ -64,7 +64,7 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/tasks"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :tasks && "btn-active"]}
+                class={["btn btn-ghost gap-2", @current_page == :tasks && "btn-active"]}
                 aria-current={@current_page == :tasks && "page"}
               >
                 <.icon name="hero-clipboard-document-list" class="size-4" /> Tasks
@@ -73,7 +73,7 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/agents"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :agents && "btn-active"]}
+                class={["btn btn-ghost gap-2", @current_page == :agents && "btn-active"]}
                 aria-current={@current_page == :agents && "page"}
               >
                 <.icon name="hero-server" class="size-4" /> Agents
@@ -82,7 +82,7 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/settings"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :settings && "btn-active"]}
+                class={["btn btn-ghost gap-2", @current_page == :settings && "btn-active"]}
                 aria-current={@current_page == :settings && "page"}
               >
                 <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
@@ -91,7 +91,7 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link
                 navigate={~p"/help"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :help && "btn-active"]}
+                class={["btn btn-ghost gap-2", @current_page == :help && "btn-active"]}
                 aria-current={@current_page == :help && "page"}
               >
                 <.icon name="hero-question-mark-circle" class="size-4" /> Help
@@ -104,7 +104,7 @@ defmodule EvoDashWeb.Layouts do
 
         <!-- Mobile: Hamburger Menu -->
         <details class="dropdown dropdown-end lg:hidden flex-none">
-          <summary class="btn btn-ghost btn-sm">
+          <summary class="btn btn-ghost">
             <.icon name="hero-bars-3" class="size-5" />
           </summary>
           <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
@@ -183,7 +183,7 @@ defmodule EvoDashWeb.Layouts do
               </ul>
               <.link navigate={~p"/help"} class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">Configure now →</.link>
             </div>
-            <button class="btn btn-xs btn-ghost text-warning-content" onclick="this.closest('.fixed').remove()">
+            <button class="btn btn-sm btn-ghost text-warning-content" onclick="this.closest('.fixed').remove()">
               <.icon name="hero-x-mark" class="size-4" />
             </button>
           </div>
