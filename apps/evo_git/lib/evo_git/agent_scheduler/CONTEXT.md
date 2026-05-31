@@ -1,4 +1,4 @@
-# Agent Scheduler Data Structures
+# Agent Scheduler Data Structures and Helper Modules
 
 ## Intent
 Contains data structs and extracted helper modules used internally by `EvoGit.AgentScheduler` GenServer. The data structs back two ETS tables (`:evogit_agent_state` and `:evogit_sched_meta`) tracking agent execution state and scheduling metadata. Helper modules (`Slots`, `Worktrees`) encapsulate slot management and worktree lifecycle logic.
@@ -22,6 +22,8 @@ Two independent slot pools with FIFO queuing:
 | LLM slots | `llm_slots_available`, `llm_waiting`, `llm_backoff_until` | `max_concurrency` (3) | 60s global cooldown on `:rate_limit` errors |
 | Tool slots | `tool_slots_available`, `tool_waiting` | `max_tool_concurrency` (2) | None |
 
+All slot functions return `{result, state, status_updates}` where `status_updates` is a list of `{agent_id, :blocked | :running}` tuples applied to ETS SchedMeta for dashboard visibility.
+
 ### Worktree Lifecycle (Worktrees module)
 
 Worktrees are **persistent per-agent** (created on dispatch, reused on retry, deleted on recycle):
@@ -39,3 +41,4 @@ Worktrees are **persistent per-agent** (created on dispatch, reused on retry, de
 - `AgentState` is shared (scheduler + agent processes); `SchedMeta` is scheduler-exclusive.
 - Both ETS tables are created by parent `AgentScheduler` GenServer, not in this directory.
 - GenServer state must always be `%State{}`; use struct update syntax, not `Map.put/3`.
+- `Worktrees` module has private ETS helpers (`get_sched_meta`, `put_sched_meta`, etc.) that directly access the same named tables — this is an intentional coupling since the module is only called from the scheduler process context.

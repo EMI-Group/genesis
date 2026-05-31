@@ -64,14 +64,17 @@ defmodule EvoGit.Runtime.Evolution do
     end
   end
 
-  # Mode B: Bottom-Up Evolution (Complex)
-  # Used for open-ended tasks requiring exploration.
-  # NOT YET IMPLEMENTED - falls back to simple mode with warning.
   defp run_complex_mode(objective, repo_path, current_sha, node_path, opts) do
-    Logger.warning("Evolution: Mode B (Complex/Bottom-Up) is not yet implemented, falling back to Mode A")
+    Logger.info("Evolution: Running Mode B (Open-Ended/Bottom-Up)")
 
-    # Fallback to Mode A for now
-    run_simple_mode(objective, repo_path, current_sha, node_path, opts)
+    case EvoGit.Runtime.Evolution.Engine.run(objective, repo_path, current_sha, node_path, opts) do
+      {:ok, agent_output} ->
+        merge_and_report(repo_path, agent_output, objective)
+
+      error ->
+        Logger.error("Evolution Mode B failed: #{inspect(error)}")
+        error
+    end
   end
 
   defp merge_and_report(repo_path, %Result{} = agent_output, objective) do

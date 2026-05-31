@@ -19,7 +19,11 @@ defmodule EvoGit.CLI do
           model: :string,
           mode: :string,
           foreign_repo: [:string, :keep],
-          node: :string
+          node: :string,
+          pool_size: :integer,
+          generations: :integer,
+          crossover_rate: :float,
+          mutation_rate: :float
         ],
         aliases: [
           h: :help,
@@ -30,7 +34,9 @@ defmodule EvoGit.CLI do
           m: :model,
           d: :mode,
           R: :foreign_repo,
-          n: :node
+          n: :node,
+          s: :pool_size,
+          g: :generations
         ]
       )
 
@@ -112,6 +118,10 @@ defmodule EvoGit.CLI do
         foreign_repos = parse_foreign_repos(opts)
         runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
         runtime_opts = maybe_put(runtime_opts, :node_path, opts[:node])
+        runtime_opts = maybe_put(runtime_opts, :pool_size, opts[:pool_size])
+        runtime_opts = maybe_put(runtime_opts, :max_generations, opts[:generations])
+        runtime_opts = maybe_put(runtime_opts, :crossover_rate, opts[:crossover_rate])
+        runtime_opts = maybe_put(runtime_opts, :mutation_rate, opts[:mutation_rate])
 
         Evolution.run(objective, runtime_opts)
       else
@@ -219,6 +229,10 @@ defmodule EvoGit.CLI do
                                   the directory basename is used. (e.g., -R original:/Source/proj)
       -n, --node <path>           Starting node path for evolution (subdirectory within
                                   repo, default: root). Only used with 'evolve'.
+      -s, --pool-size <n>         Max fragments in entropy pool (default: 50).
+      -g, --generations <n>       Max evolution generations (default: 20).
+          --crossover-rate <f>    Crossover probability 0.0-1.0 (default: 0.7).
+          --mutation-rate <f>     Mutation probability 0.0-1.0 (default: 0.3).
       -h, --help                  Show this help message.
 
     Getting Started:
