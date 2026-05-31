@@ -41,7 +41,7 @@ defmodule EvoDashWeb.SettingsLive do
           <button
             phx-click="toggle_pause"
             class={[
-              "btn btn-sm",
+              "btn",
               if(@scheduler_paused, do: "btn-success", else: "btn-warning")
             ]}
           >

@@ -65,7 +65,7 @@ defmodule EvoDashWeb.HelpLive do
                 <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{label}</p>
                 <p class="text-sm font-mono truncate">{path}</p>
               </div>
-              <span class={["badge badge-sm", exists && "badge-success", not exists && "badge-ghost"]}>
+              <span class={["badge", exists && "badge-success", not exists && "badge-ghost"]}>
                 <%= if exists, do: "Exists", else: "Missing" %>
               </span>
             </div>
@@ -105,14 +105,14 @@ defmodule EvoDashWeb.HelpLive do
             </h2>
             <div class="flex gap-2">
               <%= if @editing do %>
-                <button class="btn btn-sm btn-ghost" phx-click="cancel_edit">
+                <button class="btn btn-ghost" phx-click="cancel_edit">
                   <.icon name="hero-x-mark" class="size-4" /> Cancel
                 </button>
-                <button class="btn btn-sm btn-primary" phx-click="save_config">
+                <button class="btn btn-primary" phx-click="save_config">
                   <.icon name="hero-check" class="size-4" /> Save
                 </button>
               <% else %>
-                <button class="btn btn-sm btn-primary" phx-click="edit_config">
+                <button class="btn btn-primary" phx-click="edit_config">
                   <.icon name="hero-pencil" class="size-4" /> Edit Config
                 </button>
               <% end %>

@@ -81,7 +81,7 @@ defmodule EvoDashWeb.AgentsComponents do
                     <div class="flex items-center gap-1">
                       <span class="text-[10px] text-base-content/40 font-mono" title={"Task ##{agent.task_id}"}>T{agent.task_id}</span>
                       <%= if agent.retries > 0 do %>
-                        <span class="badge badge-warning badge-xs">Retry {agent.retries}</span>
+                        <span class="badge badge-warning badge-sm">Retry {agent.retries}</span>
                       <% end %>
                     </div>
                   </div>
