@@ -159,10 +159,56 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     shell_args = Platform.shell_args(command)
     {output, exit_code} = EvoGit.sandbox_run(repo_path, shell, shell_args, repo_root)
 
-    if exit_code == 0 do
-      "Command executed successfully.\nOutput:\n#{output}"
-    else
-      "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+    base =
+      if exit_code == 0 do
+        "Command executed successfully.\nOutput:\n#{output}"
+      else
+        "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+      end
+
+    case detect_cd_warnings(command, repo_path, repo_root) do
+      nil -> base
+      warning -> base <> "\n\n" <> warning
+    end
+  end
+
+  @doc false
+  def detect_cd_warnings(command, repo_path, repo_root) do
+    worktree_base = Path.join([repo_root, ".evogit", "workers"])
+
+    ~r/\bcd\s+["']?(\/[^\s"'&|;]+)/
+    |> Regex.scan(command, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+    |> Enum.reduce([], fn target, acc ->
+      cond do
+        target == repo_path ->
+          [
+            "⚠️ You don't need to `cd` into your worktree — your working directory is already set to it (`#{repo_path}`). Just run commands directly without changing directory."
+            | acc
+          ]
+
+        String.starts_with?(target, worktree_base <> "/") ->
+          [
+            "⚠️ You are trying to `cd` into another agent's worktree (`#{target}`). Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
+            | acc
+          ]
+
+        target == repo_root ->
+          [
+            "⚠️ You are trying to `cd` into the repository root (`#{repo_root}`), which is NOT your worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
+            | acc
+          ]
+
+        true ->
+          acc
+      end
+    end)
+    |> Enum.reverse()
+    |> Enum.uniq()
+    |> case do
+      [] -> nil
+      warnings -> Enum.join(warnings, "\n")
     end
   end
 end
