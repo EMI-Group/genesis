@@ -12,7 +12,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
   require Logger
 
   alias EvoGit.Runtime.Evolution.{Fragment, SeedFragments, EntropyPool, MapElites,
-    NoveltyMetric, LLMSynthesis}
+    NoveltyMetric, LLMSynthesis, ConceptExpander}
 
   alias EvoGit.{AgentSpec, AgentScheduler, Config, Defaults}
   alias EvoGit.Core.{ContextNode, PhyloGraphNode}
@@ -27,6 +27,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     :generation, :max_generations, :pool_size, :selection_size,
     :crossover_rate, :mutation_rate, :convergence_threshold,
     :novelty_neighbors, :stagnation_limit, :event_sink, :user_seeds,
+    :concepts,
     :supervisor,
     best_novelty: 0.0, stagnation_count: 0, started_at: nil
   ]
@@ -42,6 +43,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
   @default_novelty_neighbors 5
   @default_stagnation_limit 3
   @default_llm_seeds 10
+  @default_concept_breadth 10
+  @default_implementation_depth 5
 
   # ── Public API ────────────────────────────────────────────────────
 
@@ -111,7 +114,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       novelty_neighbors: Keyword.get(opts, :novelty_neighbors, Map.get(evo_config, :novelty_neighbors, @default_novelty_neighbors)),
       stagnation_limit: Keyword.get(opts, :stagnation_limit, Map.get(evo_config, :stagnation_limit, @default_stagnation_limit)),
       event_sink: Keyword.get(opts, :event_sink),
-      user_seeds: load_user_seeds_from_opts(opts)
+      user_seeds: load_user_seeds_from_opts(opts),
+      concepts: Keyword.get(opts, :concepts, [])
     }
   end
 
@@ -215,8 +219,28 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
     Logger.debug("Evolution Engine: Generated #{length(llm_seeds)} LLM seed fragments")
 
+    # 2b. Expand concepts into code fragments (if provided)
+    concept_fragments =
+      state.concepts
+      |> Enum.flat_map(fn concept ->
+        Logger.info("Evolution Engine: Expanding concept '#{concept}' into fragments...")
+
+        expand_opts = [
+          model: state.model,
+          concept_breadth: Keyword.get(opts_from_state(state), :concept_breadth, @default_concept_breadth),
+          implementation_depth: Keyword.get(opts_from_state(state), :implementation_depth, @default_implementation_depth)
+        ]
+
+        safe_llm_call({:evolution, :concept_expand, concept}, fn ->
+          ConceptExpander.expand(concept, expand_opts)
+        end)
+        |> List.wrap()
+      end)
+
+    Logger.debug("Evolution Engine: Generated #{length(concept_fragments)} concept expansion fragments")
+
     # 3. Process all fragments: extract features, compute profiles, score novelty
-    all_raw = seeds ++ llm_seeds
+    all_raw = seeds ++ llm_seeds ++ concept_fragments
 
     # Extract structural features (no LLM needed)
     all_with_features =
@@ -617,6 +641,15 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       end)
 
     Enum.reverse(scored)
+  end
+
+  defp opts_from_state(state) do
+    evo_config = get_evolution_config()
+
+    [
+      concept_breadth: Map.get(evo_config, :concept_breadth, @default_concept_breadth),
+      implementation_depth: Map.get(evo_config, :implementation_depth, @default_implementation_depth)
+    ]
   end
 
   defp safe_llm_call(agent_id, fun) do
