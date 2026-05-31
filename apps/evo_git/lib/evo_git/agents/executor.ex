@@ -2,7 +2,7 @@ defmodule EvoGit.Agents.Executor do
   @moduledoc """
   Executor agent for implementing code changes.
 
-  This agent receives a specific objective from a Planner agent
+  This agent receives a specific objective from a manager or higher-level agent
   and executes the necessary code changes to satisfy it.
   """
   use EvoGit.Agent

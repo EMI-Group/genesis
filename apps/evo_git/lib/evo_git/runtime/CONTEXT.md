@@ -41,7 +41,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 3. **Ensure repo + get HEAD**: Same as Genesis.
 4. **Validate node path**: `validate_node_path/2` ensures path is relative, directory exists, and contains `CONTEXT.md` (root `"./"` always passes).
 5. **Dispatch agent by mode**:
-   - **`:simple`** → `Manager` agent (plans, delegates to Executor/Planner/Investigator subagents).
+   - **`:simple`** → `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents).
    - **`:complex`** → `Engine.run/5` — novelty-driven evolution loop with MAP-Elites quality diversity, LLM-powered crossover/mutation, solution synthesis, and Manager agent application.
 6. **Post-processing**: Same `merge_and_report/3` pattern — creates `evogit/evolve_<hex>` branch, optionally PR.
 
@@ -89,7 +89,7 @@ ContextExtractor (root)
 **Genesis Mode B (New Codebase)**:
 ```
 CodebaseArchitect (root)
-  ├── subagent_planner (optional — complex architecture planning)
+  ├── subagent_task_scheduler (optional — complex architecture scheduling)
   ├── subagent_codebase_architect (child dir)
   │     ├── subagent_codebase_architect (grandchild...)
   │     └── subagent_generalist (implementation)
@@ -99,7 +99,7 @@ CodebaseArchitect (root)
 **Evolution Simple Mode**:
 ```
 Manager (target node)
-  ├── subagent_planner (complex objectives — produces structured plan)
+  ├── subagent_task_scheduler (complex objectives — produces execution sequence)
   ├── subagent_codebase_investigator (codebase exploration)
   ├── subagent_executor (code changes)
   ├── subagent_manager (delegation to child nodes)
@@ -168,7 +168,7 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Agents.ContextExtractor` | Genesis Mode A agent — read-only context extraction |
 | `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation |
 | `EvoGit.Agents.Executor` | Code implementation subagent (spawned by Manager) |
-| `EvoGit.Agents.Planner` | Read-only planning subagent (spawned by Manager for complex tasks) |
+| `EvoGit.Agents.TaskScheduler` | Lightweight task scheduling subagent (spawned by Manager for complex tasks) |
 | `EvoGit.Agents.Generalist` | General-purpose subagent (used by CodebaseArchitect for implementation) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
 | `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |

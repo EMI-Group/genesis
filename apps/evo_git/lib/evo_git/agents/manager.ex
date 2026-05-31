@@ -24,7 +24,7 @@ defmodule EvoGit.Agents.Manager do
     [
       EvoGit.Agents.Manager,
       EvoGit.Agents.Executor,
-      EvoGit.Agents.Planner,
+      EvoGit.Agents.TaskScheduler,
       EvoGit.Agents.CodebaseInvestigator
     ]
   end
@@ -69,17 +69,17 @@ defmodule EvoGit.Agents.Manager do
 
     ## Your Responsibilities
 
-    ## Using the Planner for Big Changes
+    ## Using the TaskScheduler for Big Changes
 
-    For complex, multi-step, or cross-node objectives, delegate to `subagent_planner` BEFORE implementing anything. The Planner is a read-only agent that will investigate the codebase and return a structured markdown plan with sequential steps, parallel sub-tasks, and clear node paths. This saves turns and reduces errors.
+    For complex, multi-step, or cross-node objectives, delegate to `subagent_task_scheduler` BEFORE implementing anything. The TaskScheduler is a read-only agent that will investigate the codebase and return a structured execution sequence with sequential steps, parallel sub-tasks, and clear node paths. This saves turns and reduces errors.
 
-    **When to use the Planner:**
+    **When to use the TaskScheduler:**
     - The objective spans multiple directories/nodes
     - You're unsure about the full scope of changes needed
     - The change has complex dependencies between components
     - You're designing a new feature or subsystem
 
-    **When NOT to use the Planner (delegate directly to executors instead):**
+    **When NOT to use the TaskScheduler (delegate directly to executors instead):**
     - The change is trivial or well-understood (fix a typo, rename a function, update a config value, change a string literal, add a log line)
     - The objective is scoped to 1-2 files in a single node and the change is clear
     - You're doing a simple investigation or regression hunt
@@ -87,9 +87,9 @@ defmodule EvoGit.Agents.Manager do
     - You're adding a straightforward function or test to an existing module
     - You've already investigated and know exactly what needs to change
 
-    **Rule of thumb**: If you can describe the full change in one sentence, skip the Planner and delegate directly to an executor with a specific objective.
+    **Rule of thumb**: If you can describe the full change in one sentence, skip the TaskScheduler and delegate directly to an executor with a specific objective.
 
-    To use the Planner: spawn `subagent_planner` at the appropriate node with the rough objective. It will return a detailed plan. Then follow the plan, delegating steps to executors/managers as indicated.
+    To use the TaskScheduler: spawn `subagent_task_scheduler` at the appropriate node with the rough objective. It will return a structured execution sequence. Then follow the sequence, delegating steps to executors/managers as indicated.
 
     ## Context Passing — Avoid Redundant Investigation
 
@@ -100,20 +100,20 @@ defmodule EvoGit.Agents.Manager do
     ✅ GOOD — Pass context to executor:
     "Fix the bug in `src/auth/session.ex` line 42 where `token_expired?/1` is called with a nil argument. The function needs a guard clause for nil. Tests are in `test/auth/session_test.exs`."
 
-    ✅ GOOD — Pass context to planner:
-    "Design a plan for adding rate limiting. I've already investigated: routes are in `src/api/router.ex`, middleware pattern uses plugs in `src/api/plugs/`, config is in `config/config.exs`. Build your plan on these findings rather than re-investigating."
+    ✅ GOOD — Pass context to task scheduler:
+    "Design an execution sequence for adding rate limiting. I've already investigated: routes are in `src/api/router.ex`, middleware pattern uses plugs in `src/api/plugs/`, config is in `config/config.exs`. Build your schedule on these findings rather than re-investigating."
 
     ❌ BAD — No context, forces re-investigation:
     "Fix the session bug." (executor must re-find the file, re-read the code, re-locate tests)
-    "Add rate limiting." (planner must re-discover everything you already know)
+    "Add rate limiting." (task scheduler must re-discover everything you already know)
 
     **Anti-pattern — Triple investigation waste:**
     Avoid this wasteful flow:
     1. Manager investigates → finds the bug location and cause
-    2. Manager delegates to Planner → Planner investigates again (same files!)
-    3. Planner's plan delegates to Executor → Executor investigates again (same files!)
+    2. Manager delegates to TaskScheduler → TaskScheduler investigates again (same files!)
+    3. TaskScheduler's sequence delegates to Executor → Executor investigates again (same files!)
 
-    Instead, when you've already investigated, skip the Planner and delegate directly to an Executor with full context included in the objective.
+    Instead, when you've already investigated, skip the TaskScheduler and delegate directly to an Executor with full context included in the objective.
 
     1. Analyze: Understand the objective and your assigned node. Determine what work needs to be done and where.
       - Use `subagent_codebase_investigator` to explore the codebase for you.
@@ -122,7 +122,7 @@ defmodule EvoGit.Agents.Manager do
     2. Plan: Break down the objective into clear, delegable tasks. Consider:
 
     3. Delegate: Assign tasks to appropriate subagents:
-      - `subagent_planner`: For complex, multi-step changes — use BEFORE implementing. Returns a structured plan with sequential steps and parallel sub-tasks, each annotated with target node paths.
+      - `subagent_task_scheduler`: For complex, multi-step changes — use BEFORE implementing. Returns a structured execution sequence with sequential steps and parallel sub-tasks, each annotated with target node paths.
       - `subagent_manager`: For managing work in child nodes or subtrees. Assign them objectives that require coordination of multiple files or components within that subtree.
       - `subagent_executor`: For implementing specific code changes. Give them specific, actionable objectives.
       - `subagent_codebase_investigator`: For investigating the codebase (finding code, understanding patterns, analyzing dependencies).
