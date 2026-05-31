@@ -10,8 +10,8 @@ defmodule EvoDashWeb.HelpLive do
           <.icon name="hero-question-mark-circle" class="size-6" />
         </div>
         <div>
-          <h1 class="text-xl font-bold">Help & Configuration</h1>
-          <p class="text-sm text-base-content/60">Manage your EvoGit configuration files</p>
+          <h1 class="text-xl font-bold">{gettext("Help & Configuration")}</h1>
+          <p class="text-sm text-base-content/60">{gettext("Manage your EvoGit configuration files")}</p>
         </div>
       </div>
 
@@ -21,14 +21,14 @@ defmodule EvoDashWeb.HelpLive do
           <div class="bg-success/10 border border-success/20 rounded-xl p-4 flex items-center gap-3">
             <.icon name="hero-check-circle" class="size-5 text-success shrink-0" />
             <div>
-              <p class="font-semibold text-success">All configured</p>
-              <p class="text-xs text-success/70">All critical configuration values are set</p>
+              <p class="font-semibold text-success">{gettext("All configured")}</p>
+              <p class="text-xs text-success/70">{gettext("All critical configuration values are set")}</p>
             </div>
           </div>
         <% else %>
           <div class="bg-warning/10 border border-warning/20 rounded-xl p-4">
             <h3 class="font-semibold text-warning flex items-center gap-2 mb-2">
-              <.icon name="hero-exclamation-triangle" class="size-5" /> Missing Configuration
+              <.icon name="hero-exclamation-triangle" class="size-5" /> {gettext("Missing Configuration")}
             </h3>
             <ul class="space-y-1">
               <%= for warning <- @config_status.warnings do %>
@@ -46,14 +46,14 @@ defmodule EvoDashWeb.HelpLive do
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-100">
         <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
-            <.icon name="hero-folder" class="size-5 text-primary" /> Configuration Files
+            <.icon name="hero-folder" class="size-5 text-primary" /> {gettext("Configuration Files")}
           </h2>
         </div>
         <div class="p-4 sm:p-6 pt-2 space-y-3">
           <%= for {label, path, exists} <- [
-            {"Config Directory", @config_dir, File.dir?(@config_dir)},
-            {"Config File", @config_path, File.exists?(@config_path)},
-            {"Credentials File", @credentials_path, File.exists?(@credentials_path)}
+            {gettext("Config Directory"), @config_dir, File.dir?(@config_dir)},
+            {gettext("Config File"), @config_path, File.exists?(@config_path)},
+            {gettext("Credentials File"), @credentials_path, File.exists?(@credentials_path)}
           ] do %>
             <div class="flex flex-wrap items-center gap-3 bg-base-200/40 rounded-lg p-3 border border-base-200">
               <%= if exists do %>
@@ -66,7 +66,7 @@ defmodule EvoDashWeb.HelpLive do
                 <p class="text-sm font-mono truncate">{path}</p>
               </div>
               <span class={["badge", exists && "badge-success", not exists && "badge-ghost"]}>
-                <%= if exists, do: "Exists", else: "Missing" %>
+                <%= if exists, do: gettext("Exists"), else: gettext("Missing") %>
               </span>
             </div>
           <% end %>
@@ -77,7 +77,7 @@ defmodule EvoDashWeb.HelpLive do
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-200">
         <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
-            <.icon name="hero-key" class="size-5 text-accent" /> Credentials Reference
+            <.icon name="hero-key" class="size-5 text-accent" /> {gettext("Credentials Reference")}
           </h2>
         </div>
         <div class="p-4 sm:p-6 pt-2">
@@ -85,12 +85,11 @@ defmodule EvoDashWeb.HelpLive do
           <div class="mt-3 space-y-1">
             <p class="text-xs text-base-content/50 flex items-center gap-1.5">
               <.icon name="hero-arrows-right-left" class="size-3.5 shrink-0" />
-              Keys from credentials.toml are loaded as environment variables on startup.
-              You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).
+              {gettext("Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).")}
             </p>
             <p class="text-xs text-base-content/50 flex items-center gap-1.5">
               <.icon name="hero-shield-check" class="size-3.5 shrink-0" />
-              For security, credentials cannot be edited from this page. Edit the file directly on your system.
+              {gettext("For security, credentials cannot be edited from this page. Edit the file directly on your system.")}
             </p>
           </div>
         </div>
@@ -101,19 +100,19 @@ defmodule EvoDashWeb.HelpLive do
         <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-4 sm:p-6">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <h2 class="text-lg font-semibold flex items-center gap-2">
-              <.icon name="hero-document-text" class="size-5 text-primary" /> User Configuration
+              <.icon name="hero-document-text" class="size-5 text-primary" /> {gettext("User Configuration")}
             </h2>
             <div class="flex gap-2">
               <%= if @editing do %>
                 <button class="btn btn-ghost" phx-click="cancel_edit">
-                  <.icon name="hero-x-mark" class="size-4" /> Cancel
+                  <.icon name="hero-x-mark" class="size-4" /> {gettext("Cancel")}
                 </button>
                 <button class="btn btn-primary" phx-click="save_config">
-                  <.icon name="hero-check" class="size-4" /> Save
+                  <.icon name="hero-check" class="size-4" /> {gettext("Save")}
                 </button>
               <% else %>
                 <button class="btn btn-primary" phx-click="edit_config">
-                  <.icon name="hero-pencil" class="size-4" /> Edit Config
+                  <.icon name="hero-pencil" class="size-4" /> {gettext("Edit Config")}
                 </button>
               <% end %>
             </div>
@@ -129,7 +128,7 @@ defmodule EvoDashWeb.HelpLive do
                 phx-debounce="300"
               ><%= @config_edit %></textarea>
               <label class="label">
-                <span class="label-text-alt text-base-content/50">Editing: <%= @config_path %></span>
+                <span class="label-text-alt text-base-content/50">{gettext("Editing:")} <%= @config_path %></span>
               </label>
             </div>
           <% else %>
@@ -139,7 +138,7 @@ defmodule EvoDashWeb.HelpLive do
               <% else %>
                 <div class="text-center py-8 text-base-content/40">
                   <.icon name="hero-document-plus" class="size-10 mx-auto mb-2 opacity-50" />
-                  <p class="text-sm">No config file found. Click "Edit Config" to create one.</p>
+                  <p class="text-sm">{gettext(~s|No config file found. Click "Edit Config" to create one.|)}</p>
                 </div>
               <% end %>
             </div>
@@ -151,7 +150,7 @@ defmodule EvoDashWeb.HelpLive do
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
         <div class="bg-gradient-to-br from-info/10 via-info/5 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
-            <.icon name="hero-book-open" class="size-5 text-info" /> Configuration Reference
+            <.icon name="hero-book-open" class="size-5 text-info" /> {gettext("Configuration Reference")}
           </h2>
         </div>
         <div class="p-4 sm:p-6 pt-2">
@@ -319,18 +318,18 @@ TAVILY_API_KEY = "tvly-..."
              |> assign(:editing, false)
              |> assign(:config_toml_content, config_toml_content)
              |> assign(:config_status, safe_config_status())
-             |> put_flash(:info, "Configuration saved successfully.")}
+             |> put_flash(:info, gettext("Configuration saved successfully."))}
 
           {:error, reason} ->
             {:noreply,
              socket
-             |> put_flash(:error, "Failed to save configuration: #{inspect(reason)}")}
+             |> put_flash(:error, gettext("Failed to save configuration: %{reason}", reason: inspect(reason)))}
         end
 
       {:error, reason} ->
         {:noreply,
          socket
-         |> put_flash(:error, "Invalid TOML syntax: #{inspect(reason)}")}
+         |> put_flash(:error, gettext("Invalid TOML syntax: %{reason}", reason: inspect(reason)))}
     end
   end
 

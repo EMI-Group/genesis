@@ -341,7 +341,7 @@ defmodule EvoDashWeb.CoreComponents do
           <tr>
             <th :for={col <- @col}>{col[:label]}</th>
             <th :if={@action != []}>
-              <span class="sr-only">Actions</span>
+              <span class="sr-only">{Gettext.gettext(EvoDashWeb.Gettext, "Actions")}</span>
             </th>
           </tr>
         </thead>
@@ -449,18 +449,11 @@ defmodule EvoDashWeb.CoreComponents do
   Translates an error message using gettext.
   """
   def translate_error({msg, opts}) do
-    # You can make use of gettext to translate error messages by
-    # uncommenting and adjusting the following code:
-
-    # if count = opts[:count] do
-    #   Gettext.dngettext(EvoDashWeb.Gettext, "errors", msg, msg, count, opts)
-    # else
-    #   Gettext.dgettext(EvoDashWeb.Gettext, "errors", msg, opts)
-    # end
-
-    Enum.reduce(opts, msg, fn {key, value}, acc ->
-      String.replace(acc, "%{#{key}}", fn _ -> to_string(value) end)
-    end)
+    if count = opts[:count] do
+      Gettext.dngettext(EvoDashWeb.Gettext, "errors", msg, msg, count, opts)
+    else
+      Gettext.dgettext(EvoDashWeb.Gettext, "errors", msg, opts)
+    end
   end
 
   @doc """

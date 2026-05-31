@@ -1,5 +1,6 @@
 defmodule EvoDashWeb.AgentsComponents do
   use EvoDashWeb, :html
+  import EvoDashWeb.Gettext
 
   attr(:nodes, :list, required: true)
   attr(:depth, :integer, default: 0)
@@ -88,7 +89,7 @@ defmodule EvoDashWeb.AgentsComponents do
 
                   <%= if agent.has_children do %>
                     <div class="text-[10px] text-base-content/50">
-                      {length(agent.children)} child{if length(agent.children) != 1, do: "ren"}
+                      {dngettext("default", "%{count} child", "%{count} children", length(agent.children), count: length(agent.children))}
                     </div>
                   <% end %>
                 </div>

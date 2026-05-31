@@ -8,6 +8,7 @@ defmodule EvoDashWeb.Helpers do
   """
 
   use Phoenix.Component
+  import EvoDashWeb.Gettext
 
   # ---------------------------------------------------------------------------
   # Agent Status Helpers
@@ -99,7 +100,7 @@ defmodule EvoDashWeb.Helpers do
   Formats a turn number as "Turn N".
   """
   def format_turn(turn) when is_integer(turn) do
-    "Turn #{turn}"
+    gettext("Turn %{turn}", turn: turn)
   end
 
   @doc """
@@ -128,11 +129,11 @@ defmodule EvoDashWeb.Helpers do
     diff = DateTime.diff(DateTime.utc_now(), datetime)
 
     cond do
-      diff < 10 -> "just now"
-      diff < 60 -> "#{diff}s ago"
-      diff < 3600 -> "#{div(diff, 60)}m ago"
-      diff < 86400 -> "#{div(diff, 3600)}h ago"
-      true -> "#{div(diff, 86400)}d ago"
+      diff < 10 -> gettext("just now")
+      diff < 60 -> gettext("%{count}s ago", count: diff)
+      diff < 3600 -> gettext("%{count}m ago", count: div(diff, 60))
+      diff < 86400 -> gettext("%{count}h ago", count: div(diff, 3600))
+      true -> gettext("%{count}d ago", count: div(diff, 86400))
     end
   end
 
@@ -243,19 +244,19 @@ defmodule EvoDashWeb.Helpers do
     |> List.last()
   end
 
-  def format_module_name(_), do: "Unknown"
+  def format_module_name(_), do: gettext("Unknown")
 
   @doc """
   Returns a short description string for a task map based on its type and opts.
   """
   def task_description(%{type: :genesis, opts: opts}) do
     prompt = opts[:prompt] || ""
-    "Mode: #{opts[:mode]} | #{String.slice(prompt, 0, 200)}"
+    gettext("Mode: %{mode} | %{prompt}", mode: opts[:mode], prompt: String.slice(prompt, 0, 200))
   end
 
   def task_description(%{type: :evolve, opts: opts}) do
     objective = opts[:objective] || ""
-    "Mode: #{opts[:mode]} | #{String.slice(objective, 0, 200)}"
+    gettext("Mode: %{mode} | %{prompt}", mode: opts[:mode], prompt: String.slice(objective, 0, 200))
   end
 
   def task_description(_), do: ""
@@ -264,16 +265,16 @@ defmodule EvoDashWeb.Helpers do
   Returns an info message string for the given auto-detected mode identifier.
   """
   def mode_info_message("genesis_new"),
-    do: "Empty directory detected — New Codebase mode selected"
+    do: gettext("Empty directory detected — New Codebase mode selected")
 
   def mode_info_message("genesis_existing"),
-    do: "No CONTEXT.md found — Existing Codebase mode selected"
+    do: gettext("No CONTEXT.md found — Existing Codebase mode selected")
 
   def mode_info_message("evolve_simple"),
-    do: "Context tree detected — Simple (Top-down) mode selected"
+    do: gettext("Context tree detected — Simple (Top-down) mode selected")
 
   def mode_info_message("evolve_complex"),
-    do: "Context tree detected — Complex (Bottom-up) mode selected"
+    do: gettext("Context tree detected — Complex (Bottom-up) mode selected")
 
   def mode_info_message(_), do: ""
 
@@ -316,13 +317,13 @@ defmodule EvoDashWeb.Helpers do
         </div>
 
         <div class="modal-action">
-          <button class="btn" phx-click={@on_close}>Close</button>
+          <button class="btn" phx-click={@on_close}>{gettext("Close")}</button>
           {render_slot(@actions)}
         </div>
       </div>
 
       <div class="modal-backdrop" phx-click={@on_close}>
-        <button class="cursor-default">close</button>
+        <button class="cursor-default">{gettext("close")}</button>
       </div>
     </div>
     """

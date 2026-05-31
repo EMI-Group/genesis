@@ -8,7 +8,7 @@ defmodule EvoDashWeb.DashboardLive do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
       <div class="animate-fade-in-up">
-        <p class="text-base-content/60 text-sm">Manage your evolutionary software development tasks</p>
+        <p class="text-base-content/60 text-sm">{gettext("Manage your evolutionary software development tasks")}</p>
       </div>
 
       <%= if @active_project do %>
@@ -24,10 +24,10 @@ defmodule EvoDashWeb.DashboardLive do
           <div class="mb-8 bg-base-200/50 rounded-xl p-4 sm:p-6 border border-base-200 animate-scale-in">
             <div class="flex items-center justify-between mb-4">
               <h3 class="text-lg font-semibold flex items-center gap-2">
-                <.icon name="hero-folder-open" class="size-5 text-primary" /> Open Another Project
+                <.icon name="hero-folder-open" class="size-5 text-primary" /> {gettext("Open Another Project")}
               </h3>
               <button class="btn btn-ghost" phx-click="hide_open_project_form">
-                <.icon name="hero-x-mark" class="size-4" /> Cancel
+                <.icon name="hero-x-mark" class="size-4" /> {gettext("Cancel")}
               </button>
             </div>
             <.form for={%{}} phx-submit="open_project" class="flex flex-col sm:flex-row gap-3">
@@ -39,7 +39,7 @@ defmodule EvoDashWeb.DashboardLive do
                   type="text"
                   name="path"
                   class="input input-bordered w-full pl-10 pr-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
-                  placeholder="/path/to/another/repo"
+                  placeholder={gettext("/path/to/another/repo")}
                   autofocus
                   phx-hook="PathAutocomplete"
                   phx-change="path_input"
@@ -54,7 +54,7 @@ defmodule EvoDashWeb.DashboardLive do
                   phx-click="pick_directory"
                   phx-hook="DirectoryPicker"
                   data-is-desktop={to_string(@is_desktop)}
-                  title="Browse for directory"
+                  title={gettext("Browse for directory")}
                 >
                   <.icon name="hero-folder-open" class="size-5" />
                 </button>
@@ -65,7 +65,7 @@ defmodule EvoDashWeb.DashboardLive do
                 </datalist>
               </div>
               <button type="submit" class="btn btn-primary w-full sm:w-auto">
-                <.icon name="hero-folder-open" class="size-5" /> Open
+                <.icon name="hero-folder-open" class="size-5" /> {gettext("Open")}
               </button>
             </.form>
           </div>
@@ -89,9 +89,9 @@ defmodule EvoDashWeb.DashboardLive do
           >
             <.icon name="hero-cog-6-tooth" class="size-4" />
             <%= if @show_project_settings do %>
-              Hide Project Settings
+              {gettext("Hide Project Settings")}
             <% else %>
-              Project Settings
+              {gettext("Project Settings")}
             <% end %>
           </button>
         </div>
@@ -101,36 +101,36 @@ defmodule EvoDashWeb.DashboardLive do
           <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-slide-down">
             <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4 sm:p-6">
               <h2 class="text-lg font-semibold flex items-center gap-2">
-                <.icon name="hero-document-text" class="size-5 text-accent" /> evogit.toml Configuration
+                <.icon name="hero-document-text" class="size-5 text-accent" /> {gettext("evogit.toml Configuration")}
               </h2>
             </div>
             <div class="p-4 sm:p-6 pt-2">
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
-                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">Project Root</p>
+                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Project Root")}</p>
                   <p class="text-sm font-mono mt-1">{@active_project}</p>
                 </div>
                 <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
-                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">Config File</p>
+                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Config File")}</p>
                   <p class="text-sm mt-1">
                     <%= if @project_config do %>
                       <span class="badge badge-success badge-sm gap-1">
-                        <.icon name="hero-check-circle" class="size-3" /> Present
+                        <.icon name="hero-check-circle" class="size-3" /> {gettext("Present")}
                       </span>
                     <% else %>
                       <span class="badge badge-ghost badge-sm gap-1">
-                        <.icon name="hero-x-circle" class="size-3" /> Not found
+                        <.icon name="hero-x-circle" class="size-3" /> {gettext("Not found")}
                       </span>
                     <% end %>
                   </p>
                 </div>
                 <div class="bg-base-200/40 rounded-lg p-3 border border-base-200 sm:col-span-2">
-                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">Worktree Init Script</p>
+                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Worktree Init Script")}</p>
                   <p class="text-sm font-mono mt-1">
                     <%= if @worktree_script do %>
                       <span>{@worktree_script}</span>
                     <% else %>
-                      <span class="text-base-content/30">Not configured</span>
+                      <span class="text-base-content/30">{gettext("Not configured")}</span>
                     <% end %>
                   </p>
                 </div>
@@ -142,14 +142,14 @@ defmodule EvoDashWeb.DashboardLive do
           <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-slide-down animation-delay-100">
             <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-4 sm:p-6">
               <h2 class="text-lg font-semibold flex items-center gap-2">
-                <.icon name="hero-server-stack" class="size-5 text-secondary" /> Foreign Repositories
+                <.icon name="hero-server-stack" class="size-5 text-secondary" /> {gettext("Foreign Repositories")}
               </h2>
             </div>
             <div class="p-4 sm:p-6 pt-2">
               <%= if @foreign_repos == [] do %>
                 <div class="text-center py-8 text-base-content/40">
                   <.icon name="hero-folder-minus" class="size-12 mx-auto mb-2 opacity-30" />
-                  <p class="text-sm">No repositories registered</p>
+                  <p class="text-sm">{gettext("No repositories registered")}</p>
                 </div>
               <% else %>
                 <div class="space-y-3">
@@ -186,7 +186,7 @@ defmodule EvoDashWeb.DashboardLive do
               <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-scale-in">
                 <div class="bg-gradient-to-br from-success/10 via-success/5 to-transparent p-4 sm:p-6">
                   <h2 class="text-lg font-semibold flex items-center gap-2">
-                    <.icon name="hero-plus-circle" class="size-5 text-success" /> Add Foreign Repository
+                    <.icon name="hero-plus-circle" class="size-5 text-success" /> {gettext("Add Foreign Repository")}
                   </h2>
                 </div>
                 <div class="p-4 sm:p-6 pt-2">
@@ -194,53 +194,53 @@ defmodule EvoDashWeb.DashboardLive do
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                       <div>
                         <label class="label">
-                          <span class="label-text text-xs font-medium uppercase tracking-wide">Repo ID</span>
+                          <span class="label-text text-xs font-medium uppercase tracking-wide">{gettext("Repo ID")}</span>
                         </label>
                         <input
                           type="text"
                           name="repo_id"
                           value={@new_repo_id}
-                          placeholder="e.g., original"
+                          placeholder={gettext("e.g., original")}
                           class="input input-bordered input-sm w-full font-mono"
                           required
                         />
                       </div>
                       <div>
                         <label class="label">
-                          <span class="label-text text-xs font-medium uppercase tracking-wide">Path</span>
+                          <span class="label-text text-xs font-medium uppercase tracking-wide">{gettext("Path")}</span>
                         </label>
                         <input
                           type="text"
                           name="path"
                           value={@new_repo_path}
-                          placeholder="/absolute/path/to/repo"
+                          placeholder={gettext("/absolute/path/to/repo")}
                           class="input input-bordered input-sm w-full font-mono"
                           required
                         />
                       </div>
                       <div>
                         <label class="label">
-                          <span class="label-text text-xs font-medium uppercase tracking-wide">Name (optional)</span>
+                          <span class="label-text text-xs font-medium uppercase tracking-wide">{gettext("Name (optional)")}</span>
                         </label>
                         <input
                           type="text"
                           name="name"
                           value={@new_repo_name}
-                          placeholder="Human-readable name"
+                          placeholder={gettext("Human-readable name")}
                           class="input input-bordered input-sm w-full"
                         />
                       </div>
                     </div>
                     <div class="flex gap-2">
                       <button type="submit" class="btn btn-primary gap-2">
-                        <.icon name="hero-plus" class="size-4" /> Add Repository
+                        <.icon name="hero-plus" class="size-4" /> {gettext("Add Repository")}
                       </button>
                       <button
                         type="button"
                         class="btn btn-ghost"
                         phx-click="toggle_add_foreign_repo_form"
                       >
-                        Cancel
+                        {gettext("Cancel")}
                       </button>
                     </div>
                   </.form>
@@ -248,7 +248,7 @@ defmodule EvoDashWeb.DashboardLive do
               </div>
             <% else %>
               <button class="btn btn-ghost gap-2" phx-click="toggle_add_foreign_repo_form">
-                <.icon name="hero-plus-circle" class="size-4" /> Add Foreign Repo
+                <.icon name="hero-plus-circle" class="size-4" /> {gettext("Add Foreign Repo")}
               </button>
             <% end %>
           </div>
@@ -268,7 +268,7 @@ defmodule EvoDashWeb.DashboardLive do
             <div class="bg-success/15 text-success p-2 rounded-lg">
               <.icon name="hero-play-circle" class="size-5" />
             </div>
-            <h2 class="text-lg font-semibold text-base-content/80">Active Tasks</h2>
+            <h2 class="text-lg font-semibold text-base-content/80">{gettext("Active Tasks")}</h2>
             <span class="badge badge-success">{length(@running_tasks)}</span>
           </div>
           <div class="space-y-3">
@@ -291,7 +291,7 @@ defmodule EvoDashWeb.DashboardLive do
             <div class="bg-info/15 text-info p-2 rounded-lg">
               <.icon name="hero-clock" class="size-5" />
             </div>
-            <h2 class="text-lg font-semibold text-base-content/80">Recently Finished</h2>
+            <h2 class="text-lg font-semibold text-base-content/80">{gettext("Recently Finished")}</h2>
             <span class="badge badge-ghost">{length(@recent_tasks)}</span>
           </div>
           <div class="space-y-3">
@@ -313,16 +313,16 @@ defmodule EvoDashWeb.DashboardLive do
           </div>
           <p class="text-lg font-medium">
             <%= if @active_project do %>
-              No tasks yet
+              {gettext("No tasks yet")}
             <% else %>
-              No tasks yet
+              {gettext("No tasks yet")}
             <% end %>
           </p>
           <p class="text-sm mt-1">
             <%= if @active_project do %>
-              Start by creating a new task above.
+              {gettext("Start by creating a new task above.")}
             <% else %>
-              Open a project to get started.
+              {gettext("Open a project to get started.")}
             <% end %>
           </p>
         </div>
@@ -332,7 +332,7 @@ defmodule EvoDashWeb.DashboardLive do
       <%= if @running_tasks != [] or @recent_tasks != [] do %>
         <div class="mt-6 text-center animate-fade-in-up animation-delay-200">
           <.link navigate={~p"/tasks"} class="btn btn-ghost gap-2 hover-lift">
-            <.icon name="hero-clipboard-document-list" class="size-4" /> View Full Task History
+            <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext("View Full Task History")}
             <.icon name="hero-arrow-right" class="size-4" />
           </.link>
         </div>
@@ -344,17 +344,17 @@ defmodule EvoDashWeb.DashboardLive do
           <div class="modal-box w-11/12 max-w-5xl">
             <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
               <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-              Task Result
+              {gettext("Task Result")}
             </h3>
             <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
               {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
             </div>
             <div class="modal-action">
-              <button class="btn" phx-click="close_result_modal">Close</button>
+              <button class="btn" phx-click="close_result_modal">{gettext("Close")}</button>
             </div>
           </div>
           <div class="modal-backdrop" phx-click="close_result_modal">
-            <button class="cursor-default">close</button>
+            <button class="cursor-default">{gettext("close")}</button>
           </div>
         </div>
       <% end %>
@@ -365,17 +365,17 @@ defmodule EvoDashWeb.DashboardLive do
           <div class="modal-box w-11/12 max-w-5xl">
             <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
               <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-              Full Objective
+              {gettext("Full Objective")}
             </h3>
             <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
               <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
             </div>
             <div class="modal-action">
-              <button class="btn" phx-click="close_options_modal">Close</button>
+              <button class="btn" phx-click="close_options_modal">{gettext("Close")}</button>
             </div>
           </div>
           <div class="modal-backdrop" phx-click="close_options_modal">
-            <button class="cursor-default">close</button>
+            <button class="cursor-default">{gettext("close")}</button>
           </div>
         </div>
       <% end %>
@@ -489,7 +489,7 @@ defmodule EvoDashWeb.DashboardLive do
       {:noreply,
        socket
        |> assign(:show_open_project_form, false)
-       |> put_flash(:error, "Directory does not exist: #{path}")}
+       |> put_flash(:error, gettext("Directory does not exist: %{path}", path: path))}
     end
   end
 
@@ -598,13 +598,13 @@ defmodule EvoDashWeb.DashboardLive do
 
     cond do
       repo_id_str == "" ->
-        {:noreply, put_flash(socket, :error, "Repo ID cannot be empty.")}
+        {:noreply, put_flash(socket, :error, gettext("Repo ID cannot be empty."))}
 
       path == "" ->
-        {:noreply, put_flash(socket, :error, "Path cannot be empty.")}
+        {:noreply, put_flash(socket, :error, gettext("Path cannot be empty."))}
 
       not String.starts_with?(path, "/") ->
-        {:noreply, put_flash(socket, :error, "Path must be absolute (start with /).")}
+        {:noreply, put_flash(socket, :error, gettext("Path must be absolute (start with /)."))}
 
       true ->
         repo_id = String.to_atom(repo_id_str)
@@ -628,22 +628,22 @@ defmodule EvoDashWeb.DashboardLive do
                |> assign(:new_repo_id, "")
                |> assign(:new_repo_path, "")
                |> assign(:new_repo_name, "")
-               |> put_flash(:info, "Foreign repo '#{repo_id_str}' registered successfully.")}
+               |> put_flash(:info, gettext("Foreign repo '%{repo_id}' registered successfully.", repo_id: repo_id_str))}
 
             {:error, {:already_exists, id}} ->
               {:noreply,
                socket
-               |> put_flash(:error, "Repo '#{id}' is already registered.")}
+               |> put_flash(:error, gettext("Repo '%{id}' is already registered.", id: id))}
           end
         rescue
           e ->
             {:noreply,
              socket
-             |> put_flash(:error, "Failed to register repo: #{Exception.message(e)}")}
+             |> put_flash(:error, gettext("Failed to register repo: %{reason}", reason: Exception.message(e)))}
         catch
           _, _ ->
             {:noreply,
-             put_flash(socket, :error, "Failed to register repo: scheduler not available.")}
+             put_flash(socket, :error, gettext("Failed to register repo: scheduler not available."))}
         end
     end
   end
@@ -660,22 +660,22 @@ defmodule EvoDashWeb.DashboardLive do
           {:noreply,
            socket
            |> assign(:foreign_repos, foreign_repos)
-           |> put_flash(:info, "Foreign repo '#{repo_id_str}' removed successfully.")}
+           |> put_flash(:info, gettext("Foreign repo '%{repo_id}' removed successfully.", repo_id: repo_id_str))}
 
         {:error, :cannot_unregister_primary} ->
-          {:noreply, put_flash(socket, :error, "Cannot remove the primary repository.")}
+          {:noreply, put_flash(socket, :error, gettext("Cannot remove the primary repository."))}
 
         {:error, {:not_found, id}} ->
-          {:noreply, put_flash(socket, :error, "Repo '#{id}' not found.")}
+          {:noreply, put_flash(socket, :error, gettext("Repo '%{id}' not found.", id: id))}
       end
     rescue
       e ->
         {:noreply,
          socket
-         |> put_flash(:error, "Failed to remove repo: #{Exception.message(e)}")}
+         |> put_flash(:error, gettext("Failed to remove repo: %{reason}", reason: Exception.message(e)))}
     catch
       _, _ ->
-        {:noreply, put_flash(socket, :error, "Failed to remove repo: scheduler not available.")}
+        {:noreply, put_flash(socket, :error, gettext("Failed to remove repo: scheduler not available."))}
     end
   end
 
@@ -695,7 +695,7 @@ defmodule EvoDashWeb.DashboardLive do
         {:noreply, socket}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Could not open directory picker: #{reason}")}
+        {:noreply, put_flash(socket, :error, gettext("Could not open directory picker: %{reason}", reason: reason))}
     end
   end
 
@@ -723,7 +723,7 @@ defmodule EvoDashWeb.DashboardLive do
     path = socket.assigns.active_project
 
     if is_nil(path) do
-      {:noreply, put_flash(socket, :error, "No project selected. Please open a project first.")}
+      {:noreply, put_flash(socket, :error, gettext("No project selected. Please open a project first."))}
     else
       {task_type, mode} =
         case combined_mode do
@@ -769,13 +769,13 @@ defmodule EvoDashWeb.DashboardLive do
            socket
            |> put_flash(
              :info,
-             "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}"
+             gettext("%{type} task started with ID: %{id}", type: String.capitalize(to_string(task_type)), id: task.id)
            )
            |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
            |> assign_running_and_recent_tasks()}
 
         {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
+          {:noreply, put_flash(socket, :error, gettext("Failed to start task: %{reason}", reason: inspect(reason)))}
       end
     end
   end
@@ -793,7 +793,7 @@ defmodule EvoDashWeb.DashboardLive do
          |> assign_running_and_recent_tasks()}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to cancel task: #{inspect(reason)}")}
+        {:noreply, put_flash(socket, :error, gettext("Failed to cancel task: %{reason}", reason: inspect(reason)))}
     end
   end
 

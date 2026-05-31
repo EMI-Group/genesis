@@ -1,5 +1,6 @@
 defmodule EvoDashWeb.TasksLive do
   use EvoDashWeb, :live_view
+  import EvoDashWeb.Gettext, only: [gettext: 1, gettext: 2, dngettext: 4]
   alias EvoDash.TaskRegistry
 
   @impl true
@@ -13,13 +14,13 @@ defmodule EvoDashWeb.TasksLive do
             <.icon name="hero-clipboard-document-list" class="size-6" />
           </div>
           <div>
-            <h1 class="text-xl font-bold">Task History</h1>
-            <p class="text-sm text-base-content/60">View and manage all tasks across projects</p>
+            <h1 class="text-xl font-bold">{gettext("Task History")}</h1>
+            <p class="text-sm text-base-content/60">{gettext("View and manage all tasks across projects")}</p>
           </div>
         </div>
         <div class="flex items-center gap-2">
           <.link navigate={~p"/"} class="btn btn-ghost gap-2">
-            <.icon name="hero-arrow-left" class="size-4" /> Dashboard
+            <.icon name="hero-arrow-left" class="size-4" /> {gettext("Dashboard")}
           </.link>
         </div>
       </div>
@@ -34,12 +35,12 @@ defmodule EvoDashWeb.TasksLive do
               class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
               phx-change="filter_tasks"
             >
-              <option value="all" selected={@status_filter == "all"}>All Statuses</option>
-              <option value="running" selected={@status_filter == "running"}>Running</option>
-              <option value="pending" selected={@status_filter == "pending"}>Pending</option>
-              <option value="completed" selected={@status_filter == "completed"}>Completed</option>
-              <option value="failed" selected={@status_filter == "failed"}>Failed</option>
-              <option value="cancelled" selected={@status_filter == "cancelled"}>Cancelled</option>
+              <option value="all" selected={@status_filter == "all"}>{gettext("All Statuses")}</option>
+              <option value="running" selected={@status_filter == "running"}>{gettext("Running")}</option>
+              <option value="pending" selected={@status_filter == "pending"}>{gettext("Pending")}</option>
+              <option value="completed" selected={@status_filter == "completed"}>{gettext("Completed")}</option>
+              <option value="failed" selected={@status_filter == "failed"}>{gettext("Failed")}</option>
+              <option value="cancelled" selected={@status_filter == "cancelled"}>{gettext("Cancelled")}</option>
             </select>
           </div>
 
@@ -50,7 +51,7 @@ defmodule EvoDashWeb.TasksLive do
               class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
               phx-change="filter_tasks"
             >
-              <option value="all" selected={@project_filter == "all"}>All Projects</option>
+              <option value="all" selected={@project_filter == "all"}>{gettext("All Projects")}</option>
               <%= for path <- @project_paths do %>
                 <option value={path} selected={@project_filter == path}>
                   <%= Path.basename(path) %> (<%= String.slice(path, 0, 30) %>...)
@@ -66,7 +67,7 @@ defmodule EvoDashWeb.TasksLive do
               name="search_query"
               value={@search_query}
               class="input input-bordered input-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
-              placeholder="Search by task ID, prompt, or objective..."
+              placeholder={gettext("Search by task ID, prompt, or objective...")}
               phx-change="search_tasks"
               phx-debounce="200"
             />
@@ -77,16 +78,16 @@ defmodule EvoDashWeb.TasksLive do
             <button
               class="btn btn-ghost"
               phx-click="reset_filters"
-              title="Reset all filters"
+              title={gettext("Reset all filters")}
             >
-              <.icon name="hero-x-mark" class="size-4" /> Reset
+              <.icon name="hero-x-mark" class="size-4" /> {gettext("Reset")}
             </button>
             <button
               class="btn btn-outline btn-error"
               phx-click="clear_task_history"
-              phx-confirm="Clear all finished task history? This cannot be undone."
+              phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
             >
-              <.icon name="hero-trash" class="size-4" /> Clear History
+              <.icon name="hero-trash" class="size-4" /> {gettext("Clear History")}
             </button>
           </div>
         </div>
@@ -94,7 +95,7 @@ defmodule EvoDashWeb.TasksLive do
         <!-- Active filters indicator -->
         <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" do %>
           <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
-            <span class="text-xs text-base-content/50">Active filters:</span>
+            <span class="text-xs text-base-content/50">{gettext("Active filters:")}</span>
             <%= if @status_filter != "all" do %>
               <span class="badge badge-primary gap-1">
                 {@status_filter}
@@ -120,7 +121,7 @@ defmodule EvoDashWeb.TasksLive do
       <!-- Task Count -->
       <div class="flex items-center justify-between mb-4">
         <p class="text-sm text-base-content/60">
-          {length(@filtered_tasks)} task<%= if length(@filtered_tasks) != 1, do: "s" %> found
+          {dngettext("default", "%{count} task found", "%{count} tasks found", length(@filtered_tasks))}
         </p>
       </div>
 
@@ -131,12 +132,12 @@ defmodule EvoDashWeb.TasksLive do
             <div class="animate-float">
               <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
             </div>
-            <p class="text-lg font-medium">No tasks found</p>
+            <p class="text-lg font-medium">{gettext("No tasks found")}</p>
             <p class="text-sm mt-1">
               <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" do %>
-                Try adjusting your filters or search query.
+                {gettext("Try adjusting your filters or search query.")}
               <% else %>
-                Tasks will appear here once you start them from the dashboard.
+                {gettext("Tasks will appear here once you start them from the dashboard.")}
               <% end %>
             </p>
           </div>
@@ -158,13 +159,13 @@ defmodule EvoDashWeb.TasksLive do
           <div class="modal-box w-11/12 max-w-5xl">
             <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
               <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-              Task Result
+              {gettext("Task Result")}
             </h3>
             <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
               {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
             </div>
             <div class="modal-action">
-              <button class="btn" phx-click="close_result_modal">Close</button>
+              <button class="btn" phx-click="close_result_modal">{gettext("Close")}</button>
             </div>
           </div>
           <div class="modal-backdrop" phx-click="close_result_modal">
@@ -179,13 +180,13 @@ defmodule EvoDashWeb.TasksLive do
           <div class="modal-box w-11/12 max-w-5xl">
             <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
               <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-              Full Objective
+              {gettext("Full Objective")}
             </h3>
             <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
               <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
             </div>
             <div class="modal-action">
-              <button class="btn" phx-click="close_options_modal">Close</button>
+              <button class="btn" phx-click="close_options_modal">{gettext("Close")}</button>
             </div>
           </div>
           <div class="modal-backdrop" phx-click="close_options_modal">
@@ -360,7 +361,7 @@ defmodule EvoDashWeb.TasksLive do
          |> assign_filtered_tasks()}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to cancel task: #{inspect(reason)}")}
+        {:noreply, put_flash(socket, :error, gettext("Failed to cancel task: %{reason}", reason: inspect(reason)))}
     end
   end
 

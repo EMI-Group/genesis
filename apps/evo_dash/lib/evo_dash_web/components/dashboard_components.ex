@@ -27,23 +27,23 @@ defmodule EvoDashWeb.DashboardComponents do
               <.icon name="hero-sparkles" class="size-5" />
             </div>
             <div>
-              <h2 class="text-lg font-bold">Configure Task</h2>
-              <p class="text-xs text-base-content/60">Bootstrap, analyze, or evolve your codebase</p>
+              <h2 class="text-lg font-bold">{gettext("Configure Task")}</h2>
+              <p class="text-xs text-base-content/60">{gettext("Bootstrap, analyze, or evolve your codebase")}</p>
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <span class="text-sm text-base-content/60 whitespace-nowrap">Task Mode</span>
+            <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Task Mode")}</span>
             <select
               name="mode"
               class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-medium bg-base-200/30"
             >
-              <optgroup label="Genesis (Bootstrap & Analyze)">
-                <option value="genesis_new" selected={@mode == "genesis_new"}>New Codebase</option>
-                <option value="genesis_existing" selected={@mode == "genesis_existing"}>Existing Codebase</option>
+              <optgroup label={gettext("Genesis (Bootstrap & Analyze)")}>
+                <option value="genesis_new" selected={@mode == "genesis_new"}>{gettext("New Codebase")}</option>
+                <option value="genesis_existing" selected={@mode == "genesis_existing"}>{gettext("Existing Codebase")}</option>
               </optgroup>
-              <optgroup label="Evolve (Mutate Code)">
-                <option value="evolve_simple" selected={@mode == "evolve_simple"}>Simple (Top-down)</option>
-                <option value="evolve_complex" selected={@mode == "evolve_complex"}>Complex (Bottom-up)</option>
+              <optgroup label={gettext("Evolve (Mutate Code)")}>
+                <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Simple (Top-down)")}</option>
+                <option value="evolve_complex" selected={@mode == "evolve_complex"}>{gettext("Complex (Bottom-up)")}</option>
               </optgroup>
             </select>
           </div>
@@ -55,43 +55,43 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if String.starts_with?(@mode, "evolve") do %>
           <div class="form-control">
             <label class="label">
-              <span class="label-text font-semibold text-base-content">Starting Node</span>
+              <span class="label-text font-semibold text-base-content">{gettext("Starting Node")}</span>
             </label>
             <input
               type="text"
               name="node_path"
               value={@node_path}
               class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
-              placeholder="e.g., ./src/components"
+              placeholder={gettext("e.g., ./src/components")}
             />
             <label class="label">
-              <span class="label-text-alt text-base-content/50">Subdirectory to start evolution from (optional)</span>
+              <span class="label-text-alt text-base-content/50">{gettext("Subdirectory to start evolution from (optional)")}</span>
             </label>
           </div>
         <% end %>
         <%= if @mode == "evolve_complex" do %>
           <div class="form-control">
             <label class="label">
-              <span class="label-text font-semibold text-base-content">Seed Code <span class="badge badge-ghost">optional</span></span>
+              <span class="label-text font-semibold text-base-content">{gettext("Seed Code")} <span class="badge badge-ghost">{gettext("optional")}</span></span>
             </label>
             <textarea
               name="seeds"
               class="textarea textarea-bordered w-full min-h-[120px] text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
-              placeholder="Paste seed code here. Separate multiple fragments with blank lines..."
+              placeholder={gettext("Paste seed code here. Separate multiple fragments with blank lines...")}
             ><%= @seeds %></textarea>
             <label class="label">
-              <span class="label-text-alt text-base-content/50">User seeds are preferred over built-in seeds during evolution</span>
+              <span class="label-text-alt text-base-content/50">{gettext("User seeds are preferred over built-in seeds during evolution")}</span>
             </label>
           </div>
         <% end %>
         <div class="form-control">
           <label class="label">
-            <span class="label-text font-semibold text-base-content">Prompt / Objective</span>
+            <span class="label-text font-semibold text-base-content">{gettext("Prompt / Objective")}</span>
           </label>
           <textarea
             name="prompt"
             class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
-            placeholder="Describe the software you want to create or the change you want to make..."
+            placeholder={gettext("Describe the software you want to create or the change you want to make...")}
           ><%= @prompt %></textarea>
         </div>
       </div>
@@ -100,13 +100,13 @@ defmodule EvoDashWeb.DashboardComponents do
       <div class="bg-base-200/50 px-6 py-4 md:px-8 border-t border-base-200 flex flex-col sm:flex-row items-center justify-between gap-4">
         <span class="text-sm text-base-content/60 flex items-center gap-2">
           <.icon name="hero-light-bulb" class="size-5 text-warning" />
-          Ready to execute. Mode was auto-detected based on project state.
+          {gettext("Ready to execute. Mode was auto-detected based on project state.")}
         </span>
         <button
           type="submit"
           class="btn btn-primary px-8 h-12 text-base shadow-md hover:shadow-lg transition-all w-full sm:w-auto"
         >
-          <.icon name="hero-rocket-launch" class="size-5" /> Execute Task
+          <.icon name="hero-rocket-launch" class="size-5" /> {gettext("Execute Task")}
         </button>
       </div>
     </.form>
@@ -128,8 +128,8 @@ defmodule EvoDashWeb.DashboardComponents do
             <.icon name="hero-cog-6-tooth" class="size-6" />
           </div>
           <div>
-            <h2 class="text-xl font-bold">Scheduler Settings</h2>
-            <p class="text-sm text-base-content/60">Runtime configuration for agent execution</p>
+            <h2 class="text-xl font-bold">{gettext("Scheduler Settings")}</h2>
+            <p class="text-sm text-base-content/60">{gettext("Runtime configuration for agent execution")}</p>
           </div>
         </div>
       </div>
@@ -138,56 +138,56 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
             <div class="form-control">
               <label class="label">
-                <span class="label-text text-sm font-medium">LLM Concurrency</span>
+                <span class="label-text text-sm font-medium">{gettext("LLM Concurrency")}</span>
               </label>
               <input type="number" name="max_concurrency" value={@config[:max_concurrency]} min="1" max="100"
                 class="input input-bordered input-sm w-full font-mono" />
-              <label class="label"><span class="label-text-alt text-base-content/50">Max parallel LLM calls</span></label>
+              <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max parallel LLM calls")}</span></label>
             </div>
             <div class="form-control">
               <label class="label">
-                <span class="label-text text-sm font-medium">Tool Concurrency</span>
+                <span class="label-text text-sm font-medium">{gettext("Tool Concurrency")}</span>
               </label>
               <input type="number" name="max_tool_concurrency" value={@config[:max_tool_concurrency]} min="1" max="100"
                 class="input input-bordered input-sm w-full font-mono" />
-              <label class="label"><span class="label-text-alt text-base-content/50">Max parallel tool executions</span></label>
+              <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max parallel tool executions")}</span></label>
             </div>
             <div class="form-control">
               <label class="label">
-                <span class="label-text text-sm font-medium">Agent Max Retries</span>
+                <span class="label-text text-sm font-medium">{gettext("Agent Max Retries")}</span>
               </label>
               <input type="number" name="agent_max_retries" value={@config[:agent_max_retries]} min="0" max="20"
                 class="input input-bordered input-sm w-full font-mono" />
-              <label class="label"><span class="label-text-alt text-base-content/50">Crash-retries per agent</span></label>
+              <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Crash-retries per agent")}</span></label>
             </div>
             <div class="form-control">
               <label class="label">
-                <span class="label-text text-sm font-medium">Max Depth</span>
+                <span class="label-text text-sm font-medium">{gettext("Max Depth")}</span>
               </label>
               <input type="number" name="max_agent_depth" value={@config[:max_agent_depth]} min="1" max="20"
                 class="input input-bordered input-sm w-full font-mono" />
-              <label class="label"><span class="label-text-alt text-base-content/50">Max subagent recursion</span></label>
+              <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max subagent recursion")}</span></label>
             </div>
             <div class="form-control">
               <label class="label">
-                <span class="label-text text-sm font-medium">LLM Retries</span>
+                <span class="label-text text-sm font-medium">{gettext("LLM Retries")}</span>
               </label>
               <input type="number" name="max_retries" value={@config[:max_retries]} min="1" max="100"
                 class="input input-bordered input-sm w-full font-mono" />
-              <label class="label"><span class="label-text-alt text-base-content/50">API call retries</span></label>
+              <label class="label"><span class="label-text-alt text-base-content/50">{gettext("API call retries")}</span></label>
             </div>
             <div class="form-control">
               <label class="label">
-                <span class="label-text text-sm font-medium">LLM Model</span>
+                <span class="label-text text-sm font-medium">{gettext("LLM Model")}</span>
               </label>
               <input type="text" name="llm_model" value={@config[:llm_model] || ""} 
-                class="input input-bordered input-sm w-full font-mono" placeholder="Configure in config.toml" />
-              <label class="label"><span class="label-text-alt text-base-content/50">Model identifier</span></label>
+                class="input input-bordered input-sm w-full font-mono" placeholder={gettext("Configure in config.toml")} />
+              <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Model identifier")}</span></label>
             </div>
           </div>
           <div class="pt-2">
             <button type="submit" class="btn btn-secondary">
-              <.icon name="hero-arrow-path" class="size-4" /> Update Settings
+              <.icon name="hero-arrow-path" class="size-4" /> {gettext("Update Settings")}
             </button>
           </div>
         </.form>
@@ -231,7 +231,7 @@ defmodule EvoDashWeb.DashboardComponents do
               @active_project != project.path &&
                 "text-base-content/30 hover:text-error hover:bg-error/10"
             ]}
-            title="Close project"
+            title={gettext("Close project")}
           >
             <.icon name="hero-x-mark" class="size-3" />
           </button>
@@ -241,7 +241,7 @@ defmodule EvoDashWeb.DashboardComponents do
       <button
         class="flex items-center justify-center w-8 h-8 rounded-full bg-base-200/50 hover:bg-base-300 text-base-content/50 hover:text-primary transition-all"
         phx-click="show_open_project"
-        title="Open Project"
+        title={gettext("Open Project")}
       >
         <.icon name="hero-plus" class="size-4" />
       </button>
@@ -266,8 +266,8 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="bg-primary/15 text-primary p-4 rounded-2xl w-fit mx-auto mb-4">
             <.icon name="hero-folder-open" class="size-10" />
           </div>
-          <h2 class="text-2xl font-bold">Open a Project</h2>
-          <p class="text-base-content/60 mt-2">Enter the path to a Git repository to get started</p>
+          <h2 class="text-2xl font-bold">{gettext("Open a Project")}</h2>
+          <p class="text-base-content/60 mt-2">{gettext("Enter the path to a Git repository to get started")}</p>
         </div>
 
         <!-- Two-column content -->
@@ -285,7 +285,7 @@ defmodule EvoDashWeb.DashboardComponents do
                     name="path"
                     value={@path}
                     class="input input-bordered w-full pl-11 pr-12 h-12 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm bg-base-200/50"
-                    placeholder="/path/to/your/repo"
+                    placeholder={gettext("/path/to/your/repo")}
                     autofocus
                     phx-hook="PathAutocomplete"
                     phx-change="path_input"
@@ -299,7 +299,7 @@ defmodule EvoDashWeb.DashboardComponents do
                     class="absolute right-10 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors z-10"
                     phx-click="pick_directory"
                     phx-hook="DirectoryPicker"
-                    title="Browse for directory"
+                    title={gettext("Browse for directory")}
                   >
                     <.icon name="hero-folder-open" class="size-5" />
                   </button>
@@ -311,7 +311,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 </div>
               </div>
               <button type="submit" class="btn btn-primary w-full h-12 text-base">
-                <.icon name="hero-folder-open" class="size-5" /> Open Project
+                <.icon name="hero-folder-open" class="size-5" /> {gettext("Open Project")}
               </button>
             </.form>
 
@@ -319,7 +319,7 @@ defmodule EvoDashWeb.DashboardComponents do
             <%= if @recent_projects != [] do %>
               <div class="mt-6">
                 <h3 class="text-sm font-semibold text-base-content/50 uppercase tracking-wider mb-3">
-                  Recent Projects
+                  {gettext("Recent Projects")}
                 </h3>
                 <div class="space-y-1">
                   <%= for project <- Enum.take(@recent_projects, 5) do %>
@@ -350,29 +350,29 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="hidden lg:block lg:col-span-2">
             <div class="bg-base-200/40 rounded-xl p-5 border border-base-200 h-full">
               <h3 class="font-semibold text-base flex items-center gap-2 mb-4">
-                <.icon name="hero-sparkles" class="size-5 text-primary" /> Welcome to EvoGit
+                <.icon name="hero-sparkles" class="size-5 text-primary" /> {gettext("Welcome to EvoGit")}
               </h3>
               <ul class="space-y-3 text-sm text-base-content/70">
                 <li class="flex items-start gap-2">
                   <.icon name="hero-cube" class="size-4 text-primary mt-0.5 shrink-0" />
-                  <span><strong class="text-base-content">Genesis</strong> — Create entire codebases from natural language prompts</span>
+                  <span><strong class="text-base-content"><%= gettext("Genesis") %></strong> — <%= gettext("Create entire codebases from natural language prompts") %></span>
                 </li>
                 <li class="flex items-start gap-2">
                   <.icon name="hero-arrow-path" class="size-4 text-secondary mt-0.5 shrink-0" />
-                  <span><strong class="text-base-content">Evolve</strong> — Modify and improve existing codebases with AI agents</span>
+                  <span><strong class="text-base-content"><%= gettext("Evolve") %></strong> — <%= gettext("Modify and improve existing codebases with AI agents") %></span>
                 </li>
                 <li class="flex items-start gap-2">
                   <.icon name="hero-folder-open" class="size-4 text-accent mt-0.5 shrink-0" />
-                  <span><strong class="text-base-content">Context Tree</strong> — Hierarchical code understanding for precise changes</span>
+                  <span><strong class="text-base-content"><%= gettext("Context Tree") %></strong> — <%= gettext("Hierarchical code understanding for precise changes") %></span>
                 </li>
                 <li class="flex items-start gap-2">
                   <.icon name="hero-code-bracket" class="size-4 text-info mt-0.5 shrink-0" />
-                  <span><strong class="text-base-content">Git-Native</strong> — Every change is a clean, reviewable commit</span>
+                  <span><strong class="text-base-content"><%= gettext("Git-Native") %></strong> — <%= gettext("Every change is a clean, reviewable commit") %></span>
                 </li>
               </ul>
               <div class="mt-5 pt-4 border-t border-base-300/50">
                 <p class="text-xs text-base-content/50">
-                  Open a Git repository above to begin. EvoGit auto-detects the project state and suggests the right task mode.
+                  {gettext("Open a Git repository above to begin. EvoGit auto-detects the project state and suggests the right task mode.")}
                 </p>
               </div>
             </div>
@@ -404,8 +404,8 @@ defmodule EvoDashWeb.DashboardComponents do
         </summary>
         <ul class="menu menu-sm dropdown-content mt-1 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-40 border border-base-200">
           <li>
-            <button class="text-error" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm="Delete this task?">
-              <.icon name="hero-trash" class="size-4" /> Delete
+            <button class="text-error" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm={gettext("Delete this task?")}>
+              <.icon name="hero-trash" class="size-4" /> {gettext("Delete")}
             </button>
           </li>
         </ul>
@@ -456,12 +456,12 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-base-200/50">
             <div class="flex items-center gap-1 text-xs text-base-content/50 min-w-0">
               <span class="flex items-center gap-1 shrink-0">
-                Started {relative_time(@task.started_at)}
+                {gettext("Started")} {relative_time(@task.started_at)}
               </span>
               <%= if Map.get(@task, :finished_at) do %>
                 <span class="text-base-content/30">·</span>
                 <span class="flex items-center gap-1 shrink-0">
-                  Finished {relative_time(@task.finished_at)}
+                  {gettext("Finished")} {relative_time(@task.finished_at)}
                 </span>
               <% end %>
             </div>
@@ -471,9 +471,9 @@ defmodule EvoDashWeb.DashboardComponents do
                   class="btn btn-outline btn-error shadow-sm"
                   phx-click="cancel_task"
                   phx-value-task_id={@task.id}
-                  phx-confirm="Are you sure you want to cancel this task?"
+                  phx-confirm={gettext("Are you sure you want to cancel this task?")}
                 >
-                  <.icon name="hero-x-mark" class="size-4" /> Cancel
+                  <.icon name="hero-x-mark" class="size-4" /> {gettext("Cancel")}
                 </button>
               <% end %>
               <button
@@ -482,9 +482,9 @@ defmodule EvoDashWeb.DashboardComponents do
                 phx-value-task_id={@task.id}
               >
                 <%= if @show_details do %>
-                  Hide Details <.icon name="hero-chevron-up" class="size-4 ml-1" />
+                  {gettext("Hide Details")} <.icon name="hero-chevron-up" class="size-4 ml-1" />
                 <% else %>
-                  View Details <.icon name="hero-chevron-down" class="size-4 ml-1" />
+                  {gettext("View Details")} <.icon name="hero-chevron-down" class="size-4 ml-1" />
                 <% end %>
               </button>
             </div>
@@ -497,7 +497,7 @@ defmodule EvoDashWeb.DashboardComponents do
                   <div class="bg-base-200/20 p-4 rounded-xl border border-base-200/60">
                     <div class="flex items-center justify-between mb-3">
                       <h4 class="text-sm font-bold flex items-center gap-2">
-                        <.icon name="hero-cog-8-tooth" class="size-4 text-primary" /> Options
+                        <.icon name="hero-cog-8-tooth" class="size-4 text-primary" /> {gettext("Options")}
                       </h4>
                       <button
                         class="btn btn-sm btn-ghost"
@@ -505,7 +505,7 @@ defmodule EvoDashWeb.DashboardComponents do
                         phx-value-task_id={@task.id}
                       >
                         <.icon name="hero-arrows-pointing-out" class="size-4" />
-                        View Full
+                        {gettext("View Full")}
                       </button>
                     </div>
                     {render_options(@task.opts)}
@@ -514,7 +514,7 @@ defmodule EvoDashWeb.DashboardComponents do
                     <div class="bg-base-200/20 p-4 rounded-xl border border-base-200/60">
                       <div class="flex items-center justify-between mb-3">
                         <h4 class="text-sm font-bold flex items-center gap-2">
-                          <.icon name="hero-check-badge" class="size-4 text-success" /> Result
+                          <.icon name="hero-check-badge" class="size-4 text-success" /> {gettext("Result")}
                         </h4>
                         <button
                           class="btn btn-sm btn-ghost"
@@ -522,7 +522,7 @@ defmodule EvoDashWeb.DashboardComponents do
                           phx-value-task_id={@task.id}
                         >
                           <.icon name="hero-arrows-pointing-out" class="size-4" />
-                          View Full
+                          {gettext("View Full")}
                         </button>
                       </div>
                       {render_result(@task.result)}
@@ -534,7 +534,7 @@ defmodule EvoDashWeb.DashboardComponents do
                   <details class="bg-base-200/20 p-4 rounded-xl border border-base-200/60">
                     <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none">
                       <.icon name="hero-command-line" class="size-4 text-base-content/70" />
-                      Logs (<%= if log_count > 20, do: "last 20 of #{log_count}", else: "#{log_count} entries" %>)
+                      {gettext("Logs")} (<%= if log_count > 20, do: gettext("last 20 of %{count}", count: log_count), else: gettext("%{count} entries", count: log_count) %>)
                     </summary>
                     <div class="bg-base-300/50 p-3 rounded-lg max-h-64 overflow-y-auto text-xs font-mono space-y-px border border-base-300 shadow-inner mt-3">
                       <%= for {log, idx} <- Enum.with_index(Enum.reverse(@task.logs)) do %>
@@ -601,7 +601,7 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class="space-y-3">
       <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
         <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Objective
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Objective")}
         </h5>
         <div class="text-sm whitespace-pre-wrap break-words">
           {String.slice(@primary_text, 0, 300)}{if String.length(@primary_text) > 300, do: "..."}
@@ -639,7 +639,7 @@ defmodule EvoDashWeb.DashboardComponents do
     ~H"""
     <div class="bg-error/10 border border-error/20 p-3 rounded-lg">
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
-        <.icon name="hero-x-circle" class="size-3" /> Error
+        <.icon name="hero-x-circle" class="size-3" /> {gettext("Error")}
       </h5>
       <pre class="text-xs text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
     </div>
@@ -652,7 +652,7 @@ defmodule EvoDashWeb.DashboardComponents do
     ~H"""
     <div class="bg-error/10 border border-error/20 p-3 rounded-lg">
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
-        <.icon name="hero-x-circle" class="size-3" /> Crashed
+        <.icon name="hero-x-circle" class="size-3" /> {gettext("Crashed")}
       </h5>
       <pre class="text-xs text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
     </div>
@@ -666,7 +666,7 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class="space-y-3">
       <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
         <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Agent Message
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
         </h5>
         <div class="text-sm whitespace-pre-wrap break-words">
           {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
@@ -674,9 +674,9 @@ defmodule EvoDashWeb.DashboardComponents do
       </div>
       <div class="bg-warning/10 border border-warning/20 p-3 rounded-lg">
         <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-information-circle" class="size-3" /> No Changes
+          <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
         </h5>
-        <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
+        <p class="text-sm text-warning">{gettext("The agent completed without making any changes to the codebase.")}</p>
       </div>
     </div>
     """
@@ -695,7 +695,7 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class="space-y-3">
       <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
         <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Agent Message
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
         </h5>
         <div class="text-sm whitespace-pre-wrap break-words">
           {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
@@ -727,7 +727,7 @@ defmodule EvoDashWeb.DashboardComponents do
             class="badge badge-success font-mono hover:opacity-80 transition-opacity"
           >
             <.icon name="hero-arrow-top-right-on-square" class="size-3 mr-1" />
-            View PR
+            {gettext("View PR")}
           </a>
         <% end %>
       </div>
@@ -762,7 +762,7 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class="space-y-3">
       <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
         <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Objective
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Objective")}
         </h5>
         <div class="text-sm whitespace-pre-wrap break-words">
           <%= @primary_text %>
@@ -800,7 +800,7 @@ defmodule EvoDashWeb.DashboardComponents do
     ~H"""
     <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
-        <.icon name="hero-x-circle" class="size-3" /> Error
+        <.icon name="hero-x-circle" class="size-3" /> {gettext("Error")}
       </h5>
       <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
     </div>
@@ -813,7 +813,7 @@ defmodule EvoDashWeb.DashboardComponents do
     ~H"""
     <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
-        <.icon name="hero-x-circle" class="size-3" /> Crashed
+        <.icon name="hero-x-circle" class="size-3" /> {gettext("Crashed")}
       </h5>
       <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
     </div>
@@ -827,13 +827,13 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class="space-y-4">
       <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
         <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-information-circle" class="size-3" /> No Changes
+          <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
         </h5>
-        <p class="text-sm text-warning">The agent completed without making any changes to the codebase.</p>
+        <p class="text-sm text-warning">{gettext("The agent completed without making any changes to the codebase.")}</p>
       </div>
       <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
         <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> Agent Message
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
         </h5>
         <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
       </div>
@@ -878,7 +878,7 @@ defmodule EvoDashWeb.DashboardComponents do
             class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity"
           >
             <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
-            View PR
+            {gettext("View PR")}
           </a>
         <% end %>
       </div>
