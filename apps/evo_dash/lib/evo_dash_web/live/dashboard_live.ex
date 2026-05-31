@@ -7,355 +7,320 @@ defmodule EvoDashWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
-      <div>
-        <p class="text-base-content/60 text-sm">Manage your evolutionary software development tasks</p>
-      </div>
+      <div class="h-full overflow-hidden">
+        <%= if @active_project do %>
+          <!-- ACTIVE PROJECT: Split-pane Desktop / Single-pane Mobile -->
+          <div class="h-full flex flex-col lg:flex-row">
 
-      <%= if @active_project do %>
-        <!-- Active Project State -->
-        <div class="mt-4 mb-2">
-          <EvoDashWeb.DashboardComponents.project_tabs
-            projects={@projects}
-            active_project={@active_project}
-          />
-        </div>
-
-        <%= if @show_open_project_form do %>
-          <div class="mb-8 bg-base-200/50 rounded-xl p-4 sm:p-6 border border-base-200">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="text-lg font-semibold flex items-center gap-2">
-                <.icon name="hero-folder-open" class="size-5 text-primary" /> Open Another Project
-              </h3>
-              <button class="btn btn-sm btn-ghost" phx-click="hide_open_project_form">
-                <.icon name="hero-x-mark" class="size-4" /> Cancel
-              </button>
-            </div>
-            <.form for={%{}} phx-submit="open_project" class="flex flex-col sm:flex-row gap-3">
-              <div class="relative flex-1">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
-                  <.icon name="hero-folder" class="size-5" />
-                </div>
-                <input
-                  type="text"
-                  name="path"
-                  class="input input-bordered w-full pl-10 pr-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
-                  placeholder="/path/to/another/repo"
-                  autofocus
-                  phx-hook="PathAutocomplete"
-                  phx-change="path_input"
-                  phx-debounce="150"
-                  id="open-another-project-path-input"
-                  list="path-suggestions-open"
+            <!-- LEFT PANE: Task Form (Desktop) / Hidden on Mobile -->
+            <div class="hidden lg:flex lg:w-[420px] xl:w-[480px] shrink-0 flex-col border-r border-base-200/50">
+              <!-- Project Tabs -->
+              <div class="px-4 pt-4 pb-2 shrink-0">
+                <EvoDashWeb.DashboardComponents.project_tabs
+                  projects={@projects}
+                  active_project={@active_project}
                 />
-                <button
-                  type="button"
-                  id="open-another-project-picker-button"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
-                  phx-click="pick_directory"
-                  phx-hook="DirectoryPicker"
-                  data-is-desktop={to_string(@is_desktop)}
-                  title="Browse for directory"
-                >
-                  <.icon name="hero-folder-open" class="size-5" />
-                </button>
-                <datalist id="path-suggestions-open">
-                  <%= for suggestion <- @path_suggestions do %>
-                    <option value={suggestion}></option>
-                  <% end %>
-                </datalist>
               </div>
-              <button type="submit" class="btn btn-primary w-full sm:w-auto">
-                <.icon name="hero-folder-open" class="size-5" /> Open
-              </button>
-            </.form>
-          </div>
-        <% end %>
 
-        <div class="mb-8">
-          <EvoDashWeb.DashboardComponents.task_form
-            prompt={@task_prompt}
-            mode={@task_mode}
-            mode_info={@task_mode_info}
-            node_path={@task_node_path}
-            seeds={@task_seeds}
-          />
-        </div>
+              <%= if @show_open_project_form do %>
+                <div class="px-4 pb-4">
+                  <div class="bg-base-200/50 rounded-xl p-4 border border-base-200">
+                    <div class="flex items-center justify-between mb-4">
+                      <h3 class="text-lg font-semibold flex items-center gap-2">
+                        <.icon name="hero-folder-open" class="size-5 text-primary" /> Open Another Project
+                      </h3>
+                      <button class="btn btn-sm btn-ghost press-scale" phx-click="hide_open_project_form">
+                        <.icon name="hero-x-mark" class="size-4" /> Cancel
+                      </button>
+                    </div>
+                    <.form for={%{}} phx-submit="open_project" class="flex flex-col gap-3">
+                      <div class="relative flex-1">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                          <.icon name="hero-folder" class="size-5" />
+                        </div>
+                        <input type="text" name="path" class="input input-bordered w-full pl-10 pr-10 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm" placeholder="/path/to/another/repo" autofocus phx-hook="PathAutocomplete" phx-change="path_input" phx-debounce="150" id="open-another-project-path-input" list="path-suggestions-open" />
+                        <button type="button" id="open-another-project-picker-button" class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors" phx-click="pick_directory" phx-hook="DirectoryPicker" data-is-desktop={to_string(@is_desktop)} title="Browse for directory">
+                          <.icon name="hero-folder-open" class="size-5" />
+                        </button>
+                        <datalist id="path-suggestions-open">
+                          <%= for suggestion <- @path_suggestions do %>
+                            <option value={suggestion}></option>
+                          <% end %>
+                        </datalist>
+                      </div>
+                      <button type="submit" class="btn btn-primary press-scale">
+                        <.icon name="hero-folder-open" class="size-5" /> Open
+                      </button>
+                    </.form>
+                  </div>
+                </div>
+              <% end %>
 
-        <!-- Project Settings Toggle Button -->
-        <div class="mb-4">
-          <button
-            class="btn btn-sm gap-2"
-            phx-click="toggle_project_settings"
-          >
-            <.icon name="hero-cog-6-tooth" class="size-4" />
-            <%= if @show_project_settings do %>
-              Hide Project Settings
-            <% else %>
-              Project Settings
-            <% end %>
-          </button>
-        </div>
+              <!-- Task Form (scrollable) -->
+              <div class="flex-1 overflow-y-auto scroll-region px-4 pb-4">
+                <EvoDashWeb.DashboardComponents.task_form
+                  prompt={@task_prompt}
+                  mode={@task_mode}
+                  mode_info={@task_mode_info}
+                  node_path={@task_node_path}
+                  seeds={@task_seeds}
+                />
 
-        <%= if @show_project_settings do %>
-          <!-- Project Config Section -->
-          <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-            <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4 sm:p-6">
-              <h2 class="text-lg font-semibold flex items-center gap-2">
-                <.icon name="hero-document-text" class="size-5 text-accent" /> evogit.toml Configuration
-              </h2>
-            </div>
-            <div class="p-4 sm:p-6 pt-2">
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
-                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">Project Root</p>
-                  <p class="text-sm font-mono mt-1">{@active_project}</p>
+                <!-- Project Settings (inline below form on desktop) -->
+                <div class="mt-4">
+                  <button class="btn btn-sm gap-2 press-scale" phx-click="toggle_project_settings">
+                    <.icon name="hero-cog-6-tooth" class="size-4" />
+                    <%= if @show_project_settings do %> Hide Settings <% else %> Project Settings <% end %>
+                  </button>
                 </div>
-                <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
-                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">Config File</p>
-                  <p class="text-sm mt-1">
-                    <%= if @project_config do %>
-                      <span class="badge badge-success badge-sm gap-1">
-                        <.icon name="hero-check-circle" class="size-3" /> Present
-                      </span>
-                    <% else %>
-                      <span class="badge badge-ghost badge-sm gap-1">
-                        <.icon name="hero-x-circle" class="size-3" /> Not found
-                      </span>
-                    <% end %>
-                  </p>
-                </div>
-                <div class="bg-base-200/40 rounded-lg p-3 border border-base-200 sm:col-span-2">
-                  <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">Worktree Init Script</p>
-                  <p class="text-sm font-mono mt-1">
-                    <%= if @worktree_script do %>
-                      <span>{@worktree_script}</span>
-                    <% else %>
-                      <span class="text-base-content/30">Not configured</span>
-                    <% end %>
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
 
-          <!-- Foreign Repos Section -->
-          <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-            <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-4 sm:p-6">
-              <h2 class="text-lg font-semibold flex items-center gap-2">
-                <.icon name="hero-server-stack" class="size-5 text-secondary" /> Foreign Repositories
-              </h2>
-            </div>
-            <div class="p-4 sm:p-6 pt-2">
-              <%= if @foreign_repos == [] do %>
-                <div class="text-center py-8 text-base-content/40">
-                  <.icon name="hero-folder-minus" class="size-12 mx-auto mb-2 opacity-30" />
-                  <p class="text-sm">No repositories registered</p>
-                </div>
-              <% else %>
-                <div class="space-y-3">
-                  <%= for repo <- @foreign_repos do %>
-                    <div class="flex items-center gap-3 bg-base-200/40 rounded-lg p-3 border border-base-200">
-                      <span class={"badge #{if ForeignRepo.primary?(repo.id), do: "badge-primary", else: "badge-ghost"} badge-sm font-mono"}>
-                        {repo.id}
-                      </span>
-                      <div class="flex-1 min-w-0">
-                        <p class="text-sm font-mono truncate">{repo.root}</p>
-                        <%= if repo.name && repo.name != Atom.to_string(repo.id) do %>
-                          <p class="text-xs text-base-content/50">{repo.name}</p>
+                <%= if @show_project_settings do %>
+                  <div class="mt-4 space-y-4 fade-in">
+                    <!-- Project Config Card -->
+                    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
+                      <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4">
+                        <h2 class="text-sm font-semibold flex items-center gap-2">
+                          <.icon name="hero-document-text" class="size-4 text-accent" /> evogit.toml
+                        </h2>
+                      </div>
+                      <div class="p-4 pt-2">
+                        <div class="grid grid-cols-1 gap-2">
+                          <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
+                            <p class="text-[10px] text-base-content/50 font-medium uppercase tracking-wide">Root</p>
+                            <p class="text-xs font-mono mt-0.5">{@active_project}</p>
+                          </div>
+                          <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
+                            <p class="text-[10px] text-base-content/50 font-medium uppercase tracking-wide">Config</p>
+                            <p class="text-xs mt-0.5">
+                              <%= if @project_config do %>
+                                <span class="badge badge-success badge-sm gap-1"><.icon name="hero-check-circle" class="size-3" /> Present</span>
+                              <% else %>
+                                <span class="badge badge-ghost badge-sm gap-1"><.icon name="hero-x-circle" class="size-3" /> Not found</span>
+                              <% end %>
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Foreign Repos Card -->
+                    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
+                      <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-4">
+                        <h2 class="text-sm font-semibold flex items-center gap-2">
+                          <.icon name="hero-server-stack" class="size-4 text-secondary" /> Foreign Repos
+                        </h2>
+                      </div>
+                      <div class="p-4 pt-2">
+                        <%= if @foreign_repos == [] do %>
+                          <p class="text-xs text-base-content/40 text-center py-4">No repositories registered</p>
+                        <% else %>
+                          <div class="space-y-2">
+                            <%= for repo <- @foreign_repos do %>
+                              <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2 border border-base-200">
+                                <span class={"badge #{if ForeignRepo.primary?(repo.id), do: "badge-primary", else: "badge-ghost"} badge-xs font-mono"}>{repo.id}</span>
+                                <span class="text-xs font-mono truncate flex-1">{repo.root}</span>
+                                <%= unless ForeignRepo.primary?(repo.id) do %>
+                                  <button class="btn btn-ghost btn-xs text-error press-scale" phx-click="remove_foreign_repo" phx-value-repo_id={repo.id}>
+                                    <.icon name="hero-trash" class="size-3" />
+                                  </button>
+                                <% end %>
+                              </div>
+                            <% end %>
+                          </div>
+                        <% end %>
+                        <%= if @show_add_foreign_repo_form do %>
+                          <.form for={%{}} phx-submit="add_foreign_repo" class="mt-3 space-y-2">
+                            <input type="text" name="repo_id" value={@new_repo_id} placeholder="Repo ID" class="input input-bordered input-xs w-full font-mono" required />
+                            <input type="text" name="path" value={@new_repo_path} placeholder="/absolute/path" class="input input-bordered input-xs w-full font-mono" required />
+                            <input type="text" name="name" value={@new_repo_name} placeholder="Name (optional)" class="input input-bordered input-xs w-full" />
+                            <div class="flex gap-2">
+                              <button type="submit" class="btn btn-primary btn-xs press-scale"><.icon name="hero-plus" class="size-3" /> Add</button>
+                              <button type="button" class="btn btn-ghost btn-xs" phx-click="toggle_add_foreign_repo_form">Cancel</button>
+                            </div>
+                          </.form>
+                        <% else %>
+                          <button class="btn btn-outline btn-xs mt-2 press-scale" phx-click="toggle_add_foreign_repo_form">
+                            <.icon name="hero-plus-circle" class="size-3" /> Add Repo
+                          </button>
                         <% end %>
                       </div>
-                      <%= unless ForeignRepo.primary?(repo.id) do %>
-                        <button
-                          class="btn btn-ghost btn-xs text-error"
-                          phx-click="remove_foreign_repo"
-                          phx-value-repo_id={repo.id}
-                        >
-                          <.icon name="hero-trash" class="size-3.5" />
-                        </button>
-                      <% end %>
                     </div>
+                  </div>
+                <% end %>
+              </div>
+            </div>
+
+            <!-- RIGHT PANE: Task List (both Desktop and Mobile) -->
+            <div class="flex-1 flex flex-col min-w-0 h-full">
+              <!-- Mobile Project Tabs (scrollable strip) -->
+              <div class="lg:hidden px-3 pt-3 pb-1 shrink-0">
+                <EvoDashWeb.DashboardComponents.project_tabs projects={@projects} active_project={@active_project} />
+              </div>
+
+              <!-- Section Header -->
+              <div class="flex items-center gap-2 sm:gap-4 px-4 lg:px-6 py-3 shrink-0">
+                <h2 class="text-base font-semibold text-base-content/80 whitespace-nowrap">
+                  <%= if @active_project do %>
+                    Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %>
+                  <% else %>
+                    All Tasks
+                  <% end %>
+                </h2>
+                <div class="flex-1 h-px bg-base-200"></div>
+                <details class="dropdown dropdown-end">
+                  <summary class="btn btn-sm btn-ghost btn-circle press-scale">
+                    <.icon name="hero-ellipsis-vertical" class="size-5" />
+                  </summary>
+                  <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
+                    <li>
+                      <button class="text-error" phx-click="clear_task_history" phx-confirm="Clear all finished task history? This cannot be undone.">
+                        <.icon name="hero-trash" class="size-4" /> Clear Task History
+                      </button>
+                    </li>
+                  </ul>
+                </details>
+              </div>
+
+              <!-- Task List (scrollable) -->
+              <div class="flex-1 overflow-y-auto scroll-region px-4 lg:px-6 pb-4">
+                <div class="space-y-3">
+                  <%= if @tasks == [] do %>
+                    <div class="text-center py-12 sm:py-16 text-base-content/50 fade-in">
+                      <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
+                      <p class="text-lg font-medium">
+                        <%= if @active_project do %> No tasks for this project yet <% else %> No tasks yet <% end %>
+                      </p>
+                      <p class="text-sm mt-1">
+                        <%= if @active_project do %> Create a new task to get started. <% else %> Open a project to get started. <% end %>
+                      </p>
+                    </div>
+                  <% else %>
+                    <%= for {task, idx} <- Enum.with_index(Enum.sort_by(@tasks, & &1.started_at, {:desc, DateTime})) do %>
+                      <div class="stagger-in" style={"animation-delay: #{min(idx * 50, 500)}ms"}>
+                        <EvoDashWeb.DashboardComponents.task_card
+                          task={task}
+                          show_details={MapSet.member?(@expanded_task_ids, task.id)}
+                        />
+                      </div>
+                    <% end %>
                   <% end %>
                 </div>
-              <% end %>
+              </div>
             </div>
           </div>
 
-          <!-- Add Foreign Repo -->
-          <div class="mb-6">
-            <%= if @show_add_foreign_repo_form do %>
-              <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-                <div class="bg-gradient-to-br from-success/10 via-success/5 to-transparent p-4 sm:p-6">
-                  <h2 class="text-lg font-semibold flex items-center gap-2">
-                    <.icon name="hero-plus-circle" class="size-5 text-success" /> Add Foreign Repository
-                  </h2>
+          <!-- Mobile: FAB to open task form -->
+          <button class="lg:hidden fab btn btn-primary btn-circle press-scale" phx-click="open_task_form_sheet">
+            <.icon name="hero-plus" class="size-6" />
+          </button>
+
+          <!-- Mobile: Bottom Sheet with task form -->
+          <%= if @show_task_form_sheet do %>
+            <div class="lg:hidden fixed inset-0 z-50" phx-hook="BottomSheet">
+              <div class="backdrop-overlay"></div>
+              <div class="fixed inset-x-0 bottom-0 z-50 bg-base-100 rounded-t-2xl shadow-2xl border-t border-base-200 max-h-[85vh] flex flex-col bottom-sheet">
+                <!-- Sheet Handle -->
+                <div class="flex justify-center pt-2 pb-1 shrink-0">
+                  <div class="w-10 h-1 rounded-full bg-base-300"></div>
                 </div>
-                <div class="p-4 sm:p-6 pt-2">
-                  <.form for={%{}} phx-submit="add_foreign_repo" class="space-y-4">
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                      <div>
-                        <label class="label">
-                          <span class="label-text text-xs font-medium uppercase tracking-wide">Repo ID</span>
-                        </label>
-                        <input
-                          type="text"
-                          name="repo_id"
-                          value={@new_repo_id}
-                          placeholder="e.g., original"
-                          class="input input-bordered input-sm w-full font-mono"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label class="label">
-                          <span class="label-text text-xs font-medium uppercase tracking-wide">Path</span>
-                        </label>
-                        <input
-                          type="text"
-                          name="path"
-                          value={@new_repo_path}
-                          placeholder="/absolute/path/to/repo"
-                          class="input input-bordered input-sm w-full font-mono"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label class="label">
-                          <span class="label-text text-xs font-medium uppercase tracking-wide">Name (optional)</span>
-                        </label>
-                        <input
-                          type="text"
-                          name="name"
-                          value={@new_repo_name}
-                          placeholder="Human-readable name"
-                          class="input input-bordered input-sm w-full"
-                        />
-                      </div>
-                    </div>
-                    <div class="flex gap-2">
-                      <button type="submit" class="btn btn-primary btn-sm gap-2">
-                        <.icon name="hero-plus" class="size-4" /> Add Repository
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-ghost btn-sm"
-                        phx-click="toggle_add_foreign_repo_form"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </.form>
+                <!-- Sheet Header -->
+                <div class="flex items-center justify-between px-4 pb-2 shrink-0">
+                  <h3 class="font-bold text-lg">New Task</h3>
+                  <button class="btn btn-sm btn-ghost btn-circle press-scale" phx-click="close_bottom_sheet">
+                    <.icon name="hero-x-mark" class="size-5" />
+                  </button>
+                </div>
+                <!-- Sheet Content (scrollable) -->
+                <div class="flex-1 overflow-y-auto scroll-region px-4 pb-4">
+                  <EvoDashWeb.DashboardComponents.task_form
+                    prompt={@task_prompt}
+                    mode={@task_mode}
+                    mode_info={@task_mode_info}
+                    node_path={@task_node_path}
+                    seeds={@task_seeds}
+                  />
                 </div>
               </div>
-            <% else %>
-              <button class="btn btn-outline btn-sm gap-2" phx-click="toggle_add_foreign_repo_form">
-                <.icon name="hero-plus-circle" class="size-4" /> Add Foreign Repo
-              </button>
-            <% end %>
-          </div>
-        <% end %>
-
-      <% else %>
-        <!-- No Active Project State -->
-        <div class="mt-4 mb-8">
-          <EvoDashWeb.DashboardComponents.open_project_form path="" recent_projects={@recent_projects} path_suggestions={@path_suggestions} />
-        </div>
-      <% end %>
-
-      <!-- Section Header -->
-      <div class="flex items-center gap-2 sm:gap-4 mt-8 mb-4">
-        <h2 class="text-lg font-semibold text-base-content/80 whitespace-nowrap">
-          <%= if @active_project do %>
-            Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %>
-          <% else %>
-            All Tasks
+            </div>
           <% end %>
-        </h2>
-        <div class="flex-1 h-px bg-base-200"></div>
-        <details class="dropdown dropdown-end">
-          <summary class="btn btn-sm btn-ghost btn-circle">
-            <.icon name="hero-ellipsis-vertical" class="size-5" />
-          </summary>
-          <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
-            <li>
-              <button class="text-error" phx-click="clear_task_history" phx-confirm="Clear all finished task history? This cannot be undone.">
-                <.icon name="hero-trash" class="size-4" /> Clear Task History
-              </button>
-            </li>
-          </ul>
-        </details>
-      </div>
 
-      <!-- Task List -->
-      <div class="space-y-3">
-        <%= if @tasks == [] do %>
-          <div class="text-center py-8 sm:py-12 text-base-content/50">
-            <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
-            <p class="text-lg font-medium">
-              <%= if @active_project do %>
-                No tasks for this project yet
-              <% else %>
-                No tasks yet
-              <% end %>
-            </p>
-            <p class="text-sm mt-1">
-              <%= if @active_project do %>
-                Start by creating a new task above.
-              <% else %>
-                Open a project to get started.
-              <% end %>
-            </p>
-          </div>
         <% else %>
-          <%= for task <- Enum.sort_by(@tasks, & &1.started_at, {:desc, DateTime}) do %>
-            <EvoDashWeb.DashboardComponents.task_card
-              task={task}
-              show_details={MapSet.member?(@expanded_task_ids, task.id)}
-            />
-          <% end %>
+          <!-- NO ACTIVE PROJECT: Full-screen open project form -->
+          <div class="h-full overflow-y-auto scroll-region">
+            <div class="px-4 pt-6 pb-8 sm:px-6 lg:px-8">
+              <div class="mx-auto max-w-2xl">
+                <p class="text-base-content/60 text-sm mb-4">Manage your evolutionary software development tasks</p>
+                <EvoDashWeb.DashboardComponents.open_project_form path="" recent_projects={@recent_projects} path_suggestions={@path_suggestions} />
+              </div>
+
+              <!-- Task list below for projects without active project -->
+              <div class="mx-auto max-w-7xl mt-8">
+                <div class="flex items-center gap-2 sm:gap-4 mb-4">
+                  <h2 class="text-lg font-semibold text-base-content/80 whitespace-nowrap">All Tasks</h2>
+                  <div class="flex-1 h-px bg-base-200"></div>
+                </div>
+                <div class="space-y-3">
+                  <%= if @tasks == [] do %>
+                    <div class="text-center py-12 text-base-content/50 fade-in">
+                      <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
+                      <p class="text-lg font-medium">No tasks yet</p>
+                      <p class="text-sm mt-1">Open a project to get started.</p>
+                    </div>
+                  <% else %>
+                    <%= for {task, idx} <- Enum.with_index(Enum.sort_by(@tasks, & &1.started_at, {:desc, DateTime})) do %>
+                      <div class="stagger-in" style={"animation-delay: #{min(idx * 50, 500)}ms"}>
+                        <EvoDashWeb.DashboardComponents.task_card task={task} show_details={MapSet.member?(@expanded_task_ids, task.id)} />
+                      </div>
+                    <% end %>
+                  <% end %>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% end %>
+
+        <!-- Full Result Modal -->
+        <%= if @selected_result do %>
+          <div class="modal modal-open bg-black/50 fade-in">
+            <div class="modal-box w-11/12 max-w-5xl scale-in">
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+                Task Result
+              </h3>
+              <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+                {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
+              </div>
+              <div class="modal-action">
+                <button class="btn press-scale" phx-click="close_result_modal">Close</button>
+              </div>
+            </div>
+            <div class="modal-backdrop" phx-click="close_result_modal">
+              <button class="cursor-default">close</button>
+            </div>
+          </div>
+        <% end %>
+
+        <!-- Full Options Modal -->
+        <%= if @selected_options do %>
+          <div class="modal modal-open bg-black/50 fade-in">
+            <div class="modal-box w-11/12 max-w-5xl scale-in">
+              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+                Full Objective
+              </h3>
+              <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+              </div>
+              <div class="modal-action">
+                <button class="btn press-scale" phx-click="close_options_modal">Close</button>
+              </div>
+            </div>
+            <div class="modal-backdrop" phx-click="close_options_modal">
+              <button class="cursor-default">close</button>
+            </div>
+          </div>
         <% end %>
       </div>
-
-      <!-- Full Result Modal -->
-      <%= if @selected_result do %>
-        <div class="modal modal-open bg-black/50">
-          <div class="modal-box w-11/12 max-w-5xl">
-            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-              <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-              Task Result
-            </h3>
-            <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
-              {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
-            </div>
-            <div class="modal-action">
-              <button class="btn" phx-click="close_result_modal">Close</button>
-            </div>
-          </div>
-          <div class="modal-backdrop" phx-click="close_result_modal">
-            <button class="cursor-default">close</button>
-          </div>
-        </div>
-      <% end %>
-
-      <!-- Full Options Modal -->
-      <%= if @selected_options do %>
-        <div class="modal modal-open bg-black/50">
-          <div class="modal-box w-11/12 max-w-5xl">
-            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-              Full Objective
-            </h3>
-            <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-              <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
-            </div>
-            <div class="modal-action">
-              <button class="btn" phx-click="close_options_modal">Close</button>
-            </div>
-          </div>
-          <div class="modal-backdrop" phx-click="close_options_modal">
-            <button class="cursor-default">close</button>
-          </div>
-        </div>
-      <% end %>
     </EvoDashWeb.Layouts.app>
     """
   end
@@ -391,6 +356,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:new_repo_id, "")
       |> assign(:new_repo_path, "")
       |> assign(:new_repo_name, "")
+      |> assign(:show_task_form_sheet, false)
       |> assign_form_defaults()
 
     config_status =
@@ -836,6 +802,16 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:tasks, tasks)
      |> assign(:expanded_task_ids, expanded)}
+  end
+
+  @impl true
+  def handle_event("open_task_form_sheet", _params, socket) do
+    {:noreply, assign(socket, :show_task_form_sheet, true)}
+  end
+
+  @impl true
+  def handle_event("close_bottom_sheet", _params, socket) do
+    {:noreply, assign(socket, :show_task_form_sheet, false)}
   end
 
   # Helpers
