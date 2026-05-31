@@ -28,25 +28,27 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 | Route | LiveView | Purpose |
 |-------|----------|---------|
-| `GET /` | `DashboardLive` | Project-based task dashboard with auto-mode detection, task form, project settings |
+| `GET /` | `DashboardLive` | Focused task dashboard: active tasks, recently finished, split-pane project management |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with chat history viewer |
+| `GET /tasks` | `TasksLive` | Full task history list with filtering by status |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration panel |
 | `GET /help` | `HelpLive` | User config file manager and credentials reference |
 | `/dashboard` | Phoenix.LiveDashboard | Built-in metrics/telemetry dashboard |
 
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 
-- `DashboardLive` — Main dashboard: project tabs, task form, task cards with logs, inline project settings (evogit.toml, foreign repos)
+- `DashboardLive` — Split-pane dashboard: desktop sidebar (project tabs + task form + settings) + main pane (active + recently finished tasks); mobile FAB + bottom sheet for task creation
 - `AgentsLive` — Agent tree visualization reading directly from ETS tables (`evogit_agent_state`, `evogit_sched_meta`)
+- `TasksLive` — Dedicated full task list page showing all tasks grouped by active/finished, with details modals
 - `SettingsLive` — Runtime scheduler settings (concurrency, retries, depth, model)
 - `HelpLive` — Configuration management (config status, TOML editor, credentials reference)
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 
 - `CoreComponents` — Phoenix 1.8 base components
-- `DashboardComponents` — Task form, scheduler settings, project tabs, task cards
+- `DashboardComponents` — Task form, scheduler settings, project tabs, task cards with animations
 - `AgentsComponents` — Recursive path tree with connector lines and status coloring
-- `Layouts` — App layout with navbar, theme toggle, flash group
+- `Layouts` — Native app shell: desktop sidebar navigation + mobile bottom nav bar, theme toggle, flash group
 
 ## Desktop Mode
 
