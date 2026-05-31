@@ -41,4 +41,13 @@ defmodule EvoGit.Defaults do
 
   @doc "Returns the sandbox mode (:auto, :enabled, or :disabled)."
   def sandbox, do: Config.resolve([:sandbox, :mode])
+
+  @doc "Returns the max tool output size in bytes before truncation (default: 131_072)."
+  def tool_output_max_bytes, do: Config.resolve([:truncation, :tool_output_max_bytes])
+
+  @doc "Returns the truncated output size in bytes (default: 8_192)."
+  def tool_output_truncate_size, do: Config.resolve([:truncation, :tool_output_truncate_size])
+
+  @doc "Returns the max CONTEXT.md file size in bytes before truncation (default: 65_536)."
+  def context_max_bytes, do: Config.resolve([:truncation, :context_max_bytes])
 end
