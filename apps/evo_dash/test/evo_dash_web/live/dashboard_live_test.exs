@@ -66,7 +66,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "Project Settings"
     end
 
-    test "shows project-specific task header after opening project", %{
+    test "shows active and recent task sections after opening project", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
@@ -78,9 +78,10 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       html = render(view)
 
-      # Should show project name in task header (basename of tmp_dir)
-      project_name = Path.basename(tmp_dir)
-      assert html =~ "Tasks for #{project_name}"
+      # Should show the empty state (no running or recent tasks yet)
+      assert html =~ "No tasks yet"
+      # Should show task form for the project
+      assert html =~ "Configure Task"
     end
 
     test "detects genesis_new mode for empty directory", %{
