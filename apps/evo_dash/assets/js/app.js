@@ -38,6 +38,103 @@ function longestCommonPrefix(strings) {
   return prefix;
 }
 
+// FAB Toggle Hook - manages floating action button open/close state
+const FabToggle = {
+  mounted() {
+    this.isOpen = false;
+    this.fab = this.el;
+    this.menu = document.getElementById(this.el.dataset.menuId);
+
+    this.handleClick = () => {
+      this.isOpen = !this.isOpen;
+      if (this.isOpen) {
+        this.fab.classList.add("rotate-45", "scale-110");
+        if (this.menu) {
+          this.menu.classList.remove("hidden");
+          this.menu.classList.add("fab-pop");
+        }
+      } else {
+        this.fab.classList.remove("rotate-45", "scale-110");
+        if (this.menu) {
+          this.menu.classList.add("hidden");
+          this.menu.classList.remove("fab-pop");
+        }
+      }
+    };
+
+    this.handleClickOutside = (e) => {
+      if (this.isOpen && !this.el.contains(e.target) && (!this.menu || !this.menu.contains(e.target))) {
+        this.isOpen = false;
+        this.fab.classList.remove("rotate-45", "scale-110");
+        if (this.menu) {
+          this.menu.classList.add("hidden");
+          this.menu.classList.remove("fab-pop");
+        }
+      }
+    };
+
+    this.el.addEventListener("click", this.handleClick);
+    document.addEventListener("click", this.handleClickOutside);
+  },
+
+  destroyed() {
+    this.el.removeEventListener("click", this.handleClick);
+    document.removeEventListener("click", this.handleClickOutside);
+  }
+};
+
+// Bottom Sheet Hook - manages slide-up bottom sheet with drag-to-dismiss
+const BottomSheet = {
+  mounted() {
+    this.overlay = this.el.querySelector("[data-bottom-sheet-overlay]");
+    this.content = this.el.querySelector("[data-bottom-sheet-content]");
+    this.startY = 0;
+    this.currentY = 0;
+    this.isDragging = false;
+
+    this.handleTouchStart = (e) => {
+      this.startY = e.touches[0].clientY;
+      this.isDragging = true;
+      this.content.style.transition = "none";
+    };
+
+    this.handleTouchMove = (e) => {
+      if (!this.isDragging) return;
+      this.currentY = e.touches[0].clientY - this.startY;
+      if (this.currentY > 0) {
+        this.content.style.transform = `translateY(${this.currentY}px)`;
+        this.overlay.style.opacity = Math.max(0, 1 - this.currentY / 300);
+      }
+    };
+
+    this.handleTouchEnd = () => {
+      this.isDragging = false;
+      this.content.style.transition = "";
+      if (this.currentY > 100) {
+        this.pushEvent("close_bottom_sheet");
+      } else {
+        this.content.style.transform = "";
+        this.overlay.style.opacity = "";
+      }
+      this.currentY = 0;
+    };
+
+    if (this.content) {
+      this.content.addEventListener("touchstart", this.handleTouchStart, { passive: true });
+      this.content.addEventListener("touchmove", this.handleTouchMove, { passive: true });
+      this.content.addEventListener("touchend", this.handleTouchEnd);
+    }
+  },
+
+  destroyed() {
+    if (this.content) {
+      this.content.removeEventListener("touchstart", this.handleTouchStart);
+      this.content.removeEventListener("touchmove", this.handleTouchMove);
+      this.content.removeEventListener("touchend", this.handleTouchEnd);
+    }
+  }
+};
+
 // PathAutocomplete hook: shell-like Tab completion and real-time auto-complete from datalist suggestions
 const PathAutocomplete = {
   mounted() {
@@ -158,7 +255,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker},
+  hooks: {...colocatedHooks, FabToggle, BottomSheet, PathAutocomplete, DirectoryPicker},
 })
 
 // Show progress bar on live navigation and form submits
