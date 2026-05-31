@@ -50,7 +50,7 @@ defmodule EvoDashWeb.DashboardLive do
                 <button
                   type="button"
                   id="open-another-project-picker-button"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors z-10"
                   phx-click="pick_directory"
                   phx-hook="DirectoryPicker"
                   data-is-desktop={to_string(@is_desktop)}
@@ -247,7 +247,7 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               </div>
             <% else %>
-              <button class="btn btn-outline gap-2" phx-click="toggle_add_foreign_repo_form">
+              <button class="btn btn-ghost gap-2" phx-click="toggle_add_foreign_repo_form">
                 <.icon name="hero-plus-circle" class="size-4" /> Add Foreign Repo
               </button>
             <% end %>
@@ -265,11 +265,11 @@ defmodule EvoDashWeb.DashboardLive do
       <%= if @running_tasks != [] do %>
         <div class="mt-8 animate-fade-in-up">
           <div class="flex items-center gap-2 mb-4">
-            <div class="bg-info/15 text-info p-2 rounded-lg">
+            <div class="bg-success/15 text-success p-2 rounded-lg">
               <.icon name="hero-play-circle" class="size-5" />
             </div>
             <h2 class="text-lg font-semibold text-base-content/80">Active Tasks</h2>
-            <span class="badge badge-info">{length(@running_tasks)}</span>
+            <span class="badge badge-success">{length(@running_tasks)}</span>
           </div>
           <div class="space-y-3">
             <%= for task <- Enum.sort_by(@running_tasks, & &1.started_at, {:asc, DateTime}) do %>
@@ -288,7 +288,7 @@ defmodule EvoDashWeb.DashboardLive do
       <%= if @recent_tasks != [] do %>
         <div class="mt-8 animate-fade-in-up animation-delay-100">
           <div class="flex items-center gap-2 mb-4">
-            <div class="bg-success/15 text-success p-2 rounded-lg">
+            <div class="bg-info/15 text-info p-2 rounded-lg">
               <.icon name="hero-clock" class="size-5" />
             </div>
             <h2 class="text-lg font-semibold text-base-content/80">Recently Finished</h2>
@@ -331,7 +331,7 @@ defmodule EvoDashWeb.DashboardLive do
       <!-- View All Tasks Link -->
       <%= if @running_tasks != [] or @recent_tasks != [] do %>
         <div class="mt-6 text-center animate-fade-in-up animation-delay-200">
-          <.link navigate={~p"/tasks"} class="btn btn-outline gap-2 hover-lift">
+          <.link navigate={~p"/tasks"} class="btn btn-ghost gap-2 hover-lift">
             <.icon name="hero-clipboard-document-list" class="size-4" /> View Full Task History
             <.icon name="hero-arrow-right" class="size-4" />
           </.link>

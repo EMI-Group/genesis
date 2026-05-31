@@ -296,7 +296,7 @@ defmodule EvoDashWeb.DashboardComponents do
                   <button
                     type="button"
                     id="project-path-picker-button"
-                    class="absolute right-10 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                    class="absolute right-10 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors z-10"
                     phx-click="pick_directory"
                     phx-hook="DirectoryPicker"
                     title="Browse for directory"
@@ -394,8 +394,8 @@ defmodule EvoDashWeb.DashboardComponents do
     ~H"""
     <div class={[
       "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative hover-lift",
-      @task.status == :completed && "bg-success/5",
-      @task.status == :running && "bg-info/5"
+      @task.status == :completed && "bg-info/5",
+      @task.status == :running && "bg-success/5"
     ]}>
       <!-- Three-dot kebab menu -->
       <details class="dropdown dropdown-end absolute top-3 right-3 z-[1]">
@@ -427,8 +427,8 @@ defmodule EvoDashWeb.DashboardComponents do
               <span class={task_status_badge(@task.status)}>
                 <%= if @task.status == :running do %>
                   <span class="relative flex h-2 w-2 mr-1.5">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-info opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-2 w-2 bg-info"></span>
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" style="animation-duration: 2s"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
                   </span>
                 <% end %>
                 {@task.status}
@@ -576,8 +576,8 @@ defmodule EvoDashWeb.DashboardComponents do
   # Private helpers — accent color for task_card status bar
   # ---------------------------------------------------------------------------
 
-  defp status_accent_color(:running), do: "bg-info"
-  defp status_accent_color(:completed), do: "bg-success"
+  defp status_accent_color(:running), do: "bg-success"
+  defp status_accent_color(:completed), do: "bg-info"
   defp status_accent_color(:failed), do: "bg-error"
   defp status_accent_color(:cancelled), do: "bg-warning"
   defp status_accent_color(_), do: "bg-base-300"
