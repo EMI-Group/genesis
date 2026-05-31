@@ -7,6 +7,19 @@ defmodule EvoGit.Agent.ContextCompression do
   This prevents context window overflow while preserving essential progress
   information.
 
+  ## Cache Reuse
+
+  The original message list is preserved and the compression instruction is
+  appended as a new user message. This allows the LLM provider to reuse its
+  cached prefix from previous turns, significantly improving cache hit rate
+  and reducing latency/cost.
+
+  ## Token Reset
+
+  After a successful compression, `total_tokens` is reset to 0. This prevents
+  the stale high token count from triggering redundant compressions before
+  the next LLM call updates the count.
+
   ## Usage
 
   Called from the agent loop after each turn to check if compression is needed:
@@ -51,36 +64,56 @@ defmodule EvoGit.Agent.ContextCompression do
       messages = ReqLLM.Context.to_list(state.context)
 
       case messages do
-        [system_msg, initial_user_msg | rest_context] ->
-          interaction_history = format_messages_for_compression(rest_context)
+        [system_msg, initial_user_msg | _rest] ->
+          compression_instruction = """
+          <context_compression>
+          Review the conversation above and create a dense, comprehensive summary that preserves all information needed to continue the work without loss.
 
-          prompt = """
-          Compress the following interaction context into a dense, structured summary to be passed to the next agent iteration.
+          PRESERVE THESE EXACTLY (never paraphrase):
+          - File paths, module names, function names, variable names
+          - Error messages and stack traces
+          - Configuration values and settings
+          - Architectural decisions and their reasoning
 
-          Your goal is to preserve architectural context and progress while stripping out conversational filler, raw tool syntax, and large code blocks.
+          SUMMARIZE THESE:
+          - Tool call results (preserve conclusions, drop raw output)
+          - Code explorations (preserve findings, drop search syntax)
+          - Multi-step reasoning (preserve conclusions, drop intermediate steps)
+          - Conversational exchanges (preserve decisions, drop pleasantries)
 
-          Output your summary strictly using the following format:
+          DISCARD COMPLETELY:
+          - Acknowledgments, greetings, filler phrases
+          - Repeated or redundant information
+          - Raw tool syntax/JSON that isn't essential
 
-          1. Current Progress:
-          [1-5 sentences defining the overarching goal currently being worked on and the current state of progress.]
+          First, silently identify the most critical information. Then output a structured summary using EXACTLY this format:
 
-          2. Key Findings & Decisions:
-          [Crucial context discovered, architectural decisions made, or constraints identified during the interaction.]
+          ## Objective
+          [1-2 sentences: the current goal being worked on]
 
-          3. SubAgent Ledger:
-          [List previously spawned subagents and a short summary of their objectives and results, if applicable. This helps maintain a memory of delegated work.]
+          ## Completed
+          [Bulleted list of what has been done. Include exact file paths for all files created/modified/deleted.]
 
-          4. Pending / Next Steps:
-          [What specifically needs to be executed next to advance the Current Objective.]
+          ## Key Findings
+          [Important discoveries, constraints, dependencies found. Include exact names and paths.]
 
-          ---
+          ## Decisions Made
+          [Architectural or design decisions with their rationale.]
 
-          [INTERACTION HISTORY BEGIN]
+          ## SubAgents Dispatched
+          [Each subagent: type, objective, node path, result status.]
 
-          #{interaction_history}
+          ## Errors Encountered
+          [Failed approaches, bugs found, blockers. Include exact error messages and what was tried.]
+
+          ## Next Steps
+          [Precise, actionable next steps. Reference specific files and functions.]
+          </context_compression>
           """
 
-          compression_context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
+          compression_context =
+            state.context
+            |> ReqLLM.Context.append(ReqLLM.Context.user(compression_instruction))
 
           result =
             AgentScheduler.with_llm_slot(agent_id, fn ->
@@ -92,7 +125,7 @@ defmodule EvoGit.Agent.ContextCompression do
                      summary_msg <- ReqLLM.Context.user("Summary of previous events:\n" <> text),
                      new_context <-
                        ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
-                  {:ok, %{state | context: new_context}}
+                  {:ok, %{state | context: new_context, total_tokens: 0}}
                 else
                   _error -> {:error, state}
                 end
