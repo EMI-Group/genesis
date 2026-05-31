@@ -562,7 +562,7 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   # Helper to detect desktop viewport (used in template for conditional text)
-  defp lg?(socket) do
+  defp lg?(_socket) do
     # This is a simple heuristic - the actual responsive behavior is CSS-driven
     # We use this only for hint text
     false
