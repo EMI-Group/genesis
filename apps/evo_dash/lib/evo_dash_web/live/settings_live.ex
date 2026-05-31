@@ -10,8 +10,8 @@ defmodule EvoDashWeb.SettingsLive do
           <.icon name="hero-cog-6-tooth" class="size-6" />
         </div>
         <div>
-          <h1 class="text-xl font-bold">Scheduler Settings</h1>
-          <p class="text-sm text-base-content/60">Runtime configuration for agent execution</p>
+          <h1 class="text-xl font-bold">{gettext("Scheduler Settings")}</h1>
+          <p class="text-sm text-base-content/60">{gettext("Runtime configuration for agent execution")}</p>
         </div>
       </div>
 
@@ -27,13 +27,13 @@ defmodule EvoDashWeb.SettingsLive do
             </div>
             <div>
               <h2 class="text-base font-bold">
-                Scheduler {if @scheduler_paused, do: "Paused", else: "Active"}
+                {if @scheduler_paused, do: gettext("Scheduler Paused"), else: gettext("Scheduler Active")}
               </h2>
               <p class="text-xs text-base-content/60">
                 <%= if @scheduler_paused do %>
-                  Running agents continue. No new slots or agents will be granted until resumed.
+                  {gettext("Running agents continue. No new slots or agents will be granted until resumed.")}
                 <% else %>
-                  Agents and slots are being granted normally.
+                  {gettext("Agents and slots are being granted normally.")}
                 <% end %>
               </p>
             </div>
@@ -46,7 +46,7 @@ defmodule EvoDashWeb.SettingsLive do
             ]}
           >
             <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-4" />
-            {if @scheduler_paused, do: "Resume Scheduler", else: "Pause Scheduler"}
+            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")}
           </button>
         </div>
       </div>
@@ -55,7 +55,7 @@ defmodule EvoDashWeb.SettingsLive do
       <%= if not @config_status.ok? do %>
         <div class="mt-4 bg-warning/10 border border-warning/20 rounded-xl p-4">
           <h3 class="font-semibold text-warning flex items-center gap-2 mb-2">
-            <.icon name="hero-exclamation-triangle" class="size-5" /> Missing Configuration
+            <.icon name="hero-exclamation-triangle" class="size-5" /> {gettext("Missing Configuration")}
           </h3>
           <ul class="space-y-1">
             <%= for warning <- @config_status.warnings do %>
@@ -66,7 +66,7 @@ defmodule EvoDashWeb.SettingsLive do
             <% end %>
           </ul>
           <p class="text-xs text-base-content/50 mt-2">
-            Visit the <a href="/help" class="link link-primary">Help &amp; Config</a> page to set up your configuration.
+            {gettext("Visit the")} <a href="/help" class="link link-primary">{gettext("Help & Config")}</a> {gettext("page to set up your configuration.")}
           </p>
         </div>
       <% end %>
@@ -80,27 +80,27 @@ defmodule EvoDashWeb.SettingsLive do
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-300">
         <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
           <h2 class="text-lg font-semibold flex items-center gap-2">
-            <.icon name="hero-information-circle" class="size-5 text-info" /> Current Runtime Values
+            <.icon name="hero-information-circle" class="size-5 text-info" /> {gettext("Current Runtime Values")}
           </h2>
         </div>
         <div class="p-4 sm:p-6 pt-2">
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             <%= for {label, key, value} <- [
-              {"Status", :paused, @scheduler_paused},
-              {"LLM Concurrency", :max_concurrency, @scheduler_config[:max_concurrency]},
-              {"Tool Concurrency", :max_tool_concurrency, @scheduler_config[:max_tool_concurrency]},
-              {"Agent Max Retries", :agent_max_retries, @scheduler_config[:agent_max_retries]},
-              {"Max Depth", :max_agent_depth, @scheduler_config[:max_agent_depth]},
-              {"LLM Retries", :max_retries, @scheduler_config[:max_retries]},
-              {"LLM Model", :llm_model, @scheduler_config[:llm_model]}
+              {gettext("Status"), :paused, @scheduler_paused},
+              {gettext("LLM Concurrency"), :max_concurrency, @scheduler_config[:max_concurrency]},
+              {gettext("Tool Concurrency"), :max_tool_concurrency, @scheduler_config[:max_tool_concurrency]},
+              {gettext("Agent Max Retries"), :agent_max_retries, @scheduler_config[:agent_max_retries]},
+              {gettext("Max Depth"), :max_agent_depth, @scheduler_config[:max_agent_depth]},
+              {gettext("LLM Retries"), :max_retries, @scheduler_config[:max_retries]},
+              {gettext("LLM Model"), :llm_model, @scheduler_config[:llm_model]}
             ] do %>
               <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
                 <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{label}</p>
                 <p class="text-sm font-mono mt-1">
                   <%= case value do %>
-                    <% true -> %><span class="text-warning font-bold">Paused</span>
-                    <% false -> %><span class="text-success font-bold">Active</span>
-                    <% nil -> %><span class="text-base-content/30">Not set</span>
+                    <% true -> %><span class="text-warning font-bold">{gettext("Paused")}</span>
+                    <% false -> %><span class="text-success font-bold">{gettext("Active")}</span>
+                    <% nil -> %><span class="text-base-content/30">{gettext("Not set")}</span>
                     <% v -> %><span>{v}</span>
                   <% end %>
                 </p>
@@ -157,13 +157,13 @@ defmodule EvoDashWeb.SettingsLive do
       {:noreply,
        socket
        |> assign(:scheduler_paused, false)
-       |> put_flash(:info, "Scheduler resumed. New agents and slots are being granted.")}
+       |> put_flash(:info, gettext("Scheduler resumed. New agents and slots are being granted."))}
     else
       EvoGit.AgentScheduler.pause()
       {:noreply,
        socket
        |> assign(:scheduler_paused, true)
-       |> put_flash(:info, "Scheduler paused. Running agents continue, but no new slots or agents will be granted.")}
+       |> put_flash(:info, gettext("Scheduler paused. Running agents continue, but no new slots or agents will be granted."))}
     end
   end
 
@@ -183,14 +183,14 @@ defmodule EvoDashWeb.SettingsLive do
         {:noreply,
          socket
          |> assign(:scheduler_config, load_scheduler_config())
-         |> put_flash(:info, "Scheduler settings updated successfully.")}
+         |> put_flash(:info, gettext("Scheduler settings updated successfully."))}
 
       {:error, :agents_running} ->
         {:noreply,
          socket
          |> put_flash(
            :error,
-           "Cannot update concurrency while agents are running. Other settings applied."
+           gettext("Cannot update concurrency while agents are running. Other settings applied.")
          )}
     end
   end
