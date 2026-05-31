@@ -38,121 +38,95 @@ defmodule EvoDashWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <!-- Sticky Navigation Bar -->
-    <header class="sticky top-0 z-50 bg-base-100/80 backdrop-blur-md border-b border-base-200/50">
-      <nav class="navbar px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-        <!-- Left: Logo -->
-        <div class="flex-1">
-          <.link navigate={~p"/"} class="flex items-center gap-2 text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
-            <.icon name="hero-code-bracket-square" class="size-6 text-primary" />
-            <span>EvoGit</span>
+    <div class="flex h-full">
+      <!-- Desktop Sidebar (lg+) -->
+      <aside class="hidden lg:flex flex-col w-16 hover:w-56 transition-all duration-300 ease-in-out bg-base-200/50 border-r border-base-200/50 shrink-0 overflow-hidden group/sidebar z-40">
+        <!-- Logo -->
+        <div class="flex items-center gap-3 px-4 h-16 shrink-0 border-b border-base-200/50">
+          <.link navigate={~p"/"} class="flex items-center gap-3 text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
+            <.icon name="hero-code-bracket-square" class="size-6 text-primary shrink-0" />
+            <span class="whitespace-nowrap opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200">EvoGit</span>
           </.link>
         </div>
 
-        <!-- Right: Desktop Nav Links + Theme Toggle -->
-        <div class="flex-none hidden lg:flex items-center gap-1">
-          <ul class="flex items-center gap-1 px-2">
-            <li>
-              <.link
-                navigate={~p"/"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
-                aria-current={@current_page == :dashboard && "page"}
-              >
-                <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/agents"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :agents && "btn-active"]}
-                aria-current={@current_page == :agents && "page"}
-              >
-                <.icon name="hero-server" class="size-4" /> Agents
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/settings"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :settings && "btn-active"]}
-                aria-current={@current_page == :settings && "page"}
-              >
-                <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/help"}
-                class={["btn btn-sm btn-ghost gap-2", @current_page == :help && "btn-active"]}
-                aria-current={@current_page == :help && "page"}
-              >
-                <.icon name="hero-question-mark-circle" class="size-4" /> Help
-              </.link>
-            </li>
-          </ul>
-          <div class="divider divider-horizontal mx-1 h-6"></div>
-          <.theme_toggle />
+        <!-- Nav Links -->
+        <nav class="flex-1 py-4 space-y-1 px-2">
+          <.link navigate={~p"/"} class={["sidebar-nav-item flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium", @current_page == :dashboard && "bg-primary/10 text-primary", @current_page != :dashboard && "text-base-content/60 hover:bg-base-200/80 hover:text-base-content"]}>
+            <.icon name="hero-squares-2x2" class="size-5 shrink-0" />
+            <span class="whitespace-nowrap opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200">Dashboard</span>
+          </.link>
+          <.link navigate={~p"/agents"} class={["sidebar-nav-item flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium", @current_page == :agents && "bg-primary/10 text-primary", @current_page != :agents && "text-base-content/60 hover:bg-base-200/80 hover:text-base-content"]}>
+            <.icon name="hero-server" class="size-5 shrink-0" />
+            <span class="whitespace-nowrap opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200">Agents</span>
+          </.link>
+          <.link navigate={~p"/settings"} class={["sidebar-nav-item flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium", @current_page == :settings && "bg-primary/10 text-primary", @current_page != :settings && "text-base-content/60 hover:bg-base-200/80 hover:text-base-content"]}>
+            <.icon name="hero-cog-6-tooth" class="size-5 shrink-0" />
+            <span class="whitespace-nowrap opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200">Settings</span>
+          </.link>
+          <.link navigate={~p"/help"} class={["sidebar-nav-item flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium", @current_page == :help && "bg-primary/10 text-primary", @current_page != :help && "text-base-content/60 hover:bg-base-200/80 hover:text-base-content"]}>
+            <.icon name="hero-question-mark-circle" class="size-5 shrink-0" />
+            <span class="whitespace-nowrap opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200">Help</span>
+          </.link>
+        </nav>
+
+        <!-- Theme toggle at bottom of sidebar -->
+        <div class="py-4 px-2 border-t border-base-200/50 flex justify-center group-hover/sidebar:justify-start group-hover/sidebar:px-3 transition-all duration-200">
+          <div class="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200">
+            <.theme_toggle />
+          </div>
+          <div class="group-hover/sidebar:hidden flex items-center justify-center w-10 h-10">
+            <.icon name="hero-swatch" class="size-5 text-base-content/40" />
+          </div>
         </div>
+      </aside>
 
-        <!-- Mobile: Hamburger Menu -->
-        <details class="dropdown dropdown-end lg:hidden flex-none">
-          <summary class="btn btn-ghost btn-sm">
-            <.icon name="hero-bars-3" class="size-5" />
-          </summary>
-          <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
-            <li>
-              <.link
-                navigate={~p"/"}
-                class={@current_page == :dashboard && "active"}
-                aria-current={@current_page == :dashboard && "page"}
-              >
-                <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/agents"}
-                class={@current_page == :agents && "active"}
-                aria-current={@current_page == :agents && "page"}
-              >
-                <.icon name="hero-server" class="size-4" /> Agents
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/settings"}
-                class={@current_page == :settings && "active"}
-                aria-current={@current_page == :settings && "page"}
-              >
-                <.icon name="hero-cog-6-tooth" class="size-4" /> Settings
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/help"}
-                class={@current_page == :help && "active"}
-                aria-current={@current_page == :help && "page"}
-              >
-                <.icon name="hero-question-mark-circle" class="size-4" /> Help
-              </.link>
-            </li>
-            <li class="mt-2 flex justify-center">
-              <.theme_toggle />
-            </li>
-          </ul>
-        </details>
-      </nav>
-    </header>
+      <!-- Main Content Area -->
+      <div class="flex-1 flex flex-col min-w-0 h-full">
+        <!-- Mobile Top Bar (header, < lg) -->
+        <header class="lg:hidden sticky top-0 z-40 bg-base-100/80 backdrop-blur-xl border-b border-base-200/50 shrink-0">
+          <div class="flex items-center justify-between px-4 h-14">
+            <.link navigate={~p"/"} class="flex items-center gap-2 text-lg font-bold tracking-tight">
+              <.icon name="hero-code-bracket-square" class="size-6 text-primary" />
+              <span>EvoGit</span>
+            </.link>
+            <.theme_toggle />
+          </div>
+        </header>
 
-    <!-- Main Content Area -->
-    <main class="px-4 pt-8 pb-12 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-7xl space-y-4">
-        {render_slot(@inner_block)}
+        <!-- Page Content (scroll region managed by pages) -->
+        <main class="flex-1 overflow-hidden pb-0 lg:pb-0">
+          <div class="h-full pb-20 lg:pb-0">
+            {render_slot(@inner_block)}
+          </div>
+        </main>
       </div>
-    </main>
+    </div>
+
+    <!-- Mobile Bottom Navigation (< lg) -->
+    <nav class="lg:hidden fixed bottom-0 inset-x-0 z-50 bg-base-100/80 backdrop-blur-xl border-t border-base-200/50 pb-safe">
+      <div class="flex items-center justify-around h-16">
+        <.link navigate={~p"/"} class={["flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] press-scale", @current_page == :dashboard && "text-primary", @current_page != :dashboard && "text-base-content/50"]}>
+          <.icon name="hero-squares-2x2" class="size-5" />
+          <span class="text-[10px] font-medium">Dashboard</span>
+        </.link>
+        <.link navigate={~p"/agents"} class={["flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] press-scale", @current_page == :agents && "text-primary", @current_page != :agents && "text-base-content/50"]}>
+          <.icon name="hero-server" class="size-5" />
+          <span class="text-[10px] font-medium">Agents</span>
+        </.link>
+        <.link navigate={~p"/settings"} class={["flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] press-scale", @current_page == :settings && "text-primary", @current_page != :settings && "text-base-content/50"]}>
+          <.icon name="hero-cog-6-tooth" class="size-5" />
+          <span class="text-[10px] font-medium">Settings</span>
+        </.link>
+        <.link navigate={~p"/help"} class={["flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] press-scale", @current_page == :help && "text-primary", @current_page != :help && "text-base-content/50"]}>
+          <.icon name="hero-question-mark-circle" class="size-5" />
+          <span class="text-[10px] font-medium">Help</span>
+        </.link>
+      </div>
+    </nav>
 
     <!-- Config Warning Banner -->
     <%= if @config_status && not @config_status.ok? do %>
-      <div class="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-40">
+      <div class="fixed bottom-20 lg:bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-40 fade-in">
         <div class="bg-warning/95 text-warning-content rounded-xl shadow-2xl p-4 border border-warning/50">
           <div class="flex items-start gap-3">
             <.icon name="hero-exclamation-triangle" class="size-5 shrink-0 mt-0.5" />
