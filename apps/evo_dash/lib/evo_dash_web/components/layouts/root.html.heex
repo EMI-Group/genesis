@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang={Gettext.get_locale(EvoDashWeb.Gettext)}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -7,9 +7,9 @@
     <meta name="theme-color" content="#4f46e5" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="EvoGit" />
+    <meta name="apple-mobile-web-app-title" content={gettext("EvoGit")} />
     <meta name="mobile-web-app-capable" content="yes" />
-    <.live_title default="EvoDash" suffix=" · EvoGit">
+    <.live_title default="EvoDash" suffix={" · " <> gettext("EvoGit")}>
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />

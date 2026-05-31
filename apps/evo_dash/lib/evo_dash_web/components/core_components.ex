@@ -341,7 +341,7 @@ defmodule EvoDashWeb.CoreComponents do
           <tr>
             <th :for={col <- @col}>{col[:label]}</th>
             <th :if={@action != []}>
-              <span class="sr-only">Actions</span>
+              <span class="sr-only">{Gettext.gettext(EvoDashWeb.Gettext, "Actions")}</span>
             </th>
           </tr>
         </thead>
