@@ -44,7 +44,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-c 
 mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-R name:path]
 ```
 
-Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots, `-R name:/path` for foreign repos (repeatable).
+Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots, `-R name:/path` for foreign repos (repeatable), `-C` / `--concepts` for concept expansion seeding (repeatable, complex mode only).
 
 ## Architecture Summary
 
