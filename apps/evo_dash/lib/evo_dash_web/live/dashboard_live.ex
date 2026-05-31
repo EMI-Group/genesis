@@ -26,7 +26,7 @@ defmodule EvoDashWeb.DashboardLive do
               <h3 class="text-lg font-semibold flex items-center gap-2">
                 <.icon name="hero-folder-open" class="size-5 text-primary" /> Open Another Project
               </h3>
-              <button class="btn btn-sm btn-ghost" phx-click="hide_open_project_form">
+              <button class="btn btn-ghost" phx-click="hide_open_project_form">
                 <.icon name="hero-x-mark" class="size-4" /> Cancel
               </button>
             </div>
@@ -84,7 +84,7 @@ defmodule EvoDashWeb.DashboardLive do
         <!-- Project Settings Toggle Button -->
         <div class="mb-4">
           <button
-            class="btn btn-sm gap-2"
+            class="btn gap-2"
             phx-click="toggle_project_settings"
           >
             <.icon name="hero-cog-6-tooth" class="size-4" />
@@ -166,7 +166,7 @@ defmodule EvoDashWeb.DashboardLive do
                       </div>
                       <%= unless ForeignRepo.primary?(repo.id) do %>
                         <button
-                          class="btn btn-ghost btn-xs text-error"
+                          class="btn btn-ghost btn-sm text-error"
                           phx-click="remove_foreign_repo"
                           phx-value-repo_id={repo.id}
                         >
@@ -232,12 +232,12 @@ defmodule EvoDashWeb.DashboardLive do
                       </div>
                     </div>
                     <div class="flex gap-2">
-                      <button type="submit" class="btn btn-primary btn-sm gap-2">
+                      <button type="submit" class="btn btn-primary gap-2">
                         <.icon name="hero-plus" class="size-4" /> Add Repository
                       </button>
                       <button
                         type="button"
-                        class="btn btn-ghost btn-sm"
+                        class="btn btn-ghost"
                         phx-click="toggle_add_foreign_repo_form"
                       >
                         Cancel
@@ -247,7 +247,7 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               </div>
             <% else %>
-              <button class="btn btn-outline btn-sm gap-2" phx-click="toggle_add_foreign_repo_form">
+              <button class="btn btn-outline gap-2" phx-click="toggle_add_foreign_repo_form">
                 <.icon name="hero-plus-circle" class="size-4" /> Add Foreign Repo
               </button>
             <% end %>
@@ -269,7 +269,7 @@ defmodule EvoDashWeb.DashboardLive do
               <.icon name="hero-play-circle" class="size-5" />
             </div>
             <h2 class="text-lg font-semibold text-base-content/80">Active Tasks</h2>
-            <span class="badge badge-info badge-sm">{length(@running_tasks)}</span>
+            <span class="badge badge-info">{length(@running_tasks)}</span>
           </div>
           <div class="space-y-3">
             <%= for task <- Enum.sort_by(@running_tasks, & &1.started_at, {:asc, DateTime}) do %>
@@ -292,7 +292,7 @@ defmodule EvoDashWeb.DashboardLive do
               <.icon name="hero-clock" class="size-5" />
             </div>
             <h2 class="text-lg font-semibold text-base-content/80">Recently Finished</h2>
-            <span class="badge badge-ghost badge-sm">{length(@recent_tasks)}</span>
+            <span class="badge badge-ghost">{length(@recent_tasks)}</span>
           </div>
           <div class="space-y-3">
             <%= for task <- @recent_tasks do %>
@@ -331,7 +331,7 @@ defmodule EvoDashWeb.DashboardLive do
       <!-- View All Tasks Link -->
       <%= if @running_tasks != [] or @recent_tasks != [] do %>
         <div class="mt-6 text-center animate-fade-in-up animation-delay-200">
-          <.link navigate={~p"/tasks"} class="btn btn-outline btn-sm gap-2 hover-lift">
+          <.link navigate={~p"/tasks"} class="btn btn-outline gap-2 hover-lift">
             <.icon name="hero-clipboard-document-list" class="size-4" /> View Full Task History
             <.icon name="hero-arrow-right" class="size-4" />
           </.link>

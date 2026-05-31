@@ -72,7 +72,7 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if @mode == "evolve_complex" do %>
           <div class="form-control">
             <label class="label">
-              <span class="label-text font-semibold text-base-content">Seed Code <span class="badge badge-ghost badge-sm">optional</span></span>
+              <span class="label-text font-semibold text-base-content">Seed Code <span class="badge badge-ghost">optional</span></span>
             </label>
             <textarea
               name="seeds"
@@ -186,7 +186,7 @@ defmodule EvoDashWeb.DashboardComponents do
             </div>
           </div>
           <div class="pt-2">
-            <button type="submit" class="btn btn-secondary btn-sm">
+            <button type="submit" class="btn btn-secondary">
               <.icon name="hero-arrow-path" class="size-4" /> Update Settings
             </button>
           </div>
@@ -364,7 +364,7 @@ defmodule EvoDashWeb.DashboardComponents do
     ]}>
       <!-- Three-dot kebab menu -->
       <details class="dropdown dropdown-end absolute top-3 right-3 z-[1]">
-        <summary class="btn btn-xs btn-ghost btn-circle">
+        <summary class="btn btn-sm btn-ghost btn-circle">
           <.icon name="hero-ellipsis-vertical" class="size-4" />
         </summary>
         <ul class="menu menu-sm dropdown-content mt-1 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-40 border border-base-200">
@@ -433,7 +433,7 @@ defmodule EvoDashWeb.DashboardComponents do
             <div class="flex items-center gap-2 shrink-0">
               <%= if @task.status == :running do %>
                 <button
-                  class="btn btn-sm btn-outline btn-error shadow-sm"
+                  class="btn btn-outline btn-error shadow-sm"
                   phx-click="cancel_task"
                   phx-value-task_id={@task.id}
                   phx-confirm="Are you sure you want to cancel this task?"
@@ -442,7 +442,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 </button>
               <% end %>
               <button
-                class="btn btn-sm btn-ghost bg-base-200/50 hover:bg-base-200"
+                class="btn btn-ghost bg-base-200/50 hover:bg-base-200"
                 phx-click="toggle_task_details"
                 phx-value-task_id={@task.id}
               >
@@ -465,7 +465,7 @@ defmodule EvoDashWeb.DashboardComponents do
                         <.icon name="hero-cog-8-tooth" class="size-4 text-primary" /> Options
                       </h4>
                       <button
-                        class="btn btn-xs btn-ghost"
+                        class="btn btn-sm btn-ghost"
                         phx-click="view_full_options"
                         phx-value-task_id={@task.id}
                       >
@@ -482,7 +482,7 @@ defmodule EvoDashWeb.DashboardComponents do
                           <.icon name="hero-check-badge" class="size-4 text-success" /> Result
                         </h4>
                         <button
-                          class="btn btn-xs btn-ghost"
+                          class="btn btn-sm btn-ghost"
                           phx-click="view_full_result"
                           phx-value-task_id={@task.id}
                         >
