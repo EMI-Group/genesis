@@ -119,7 +119,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       # Should show project root
       assert html =~ tmp_dir
       # Should show Foreign Repositories section
-      assert html =~ "Foreign Repositories"
+      assert html =~ "Foreign Repos"
 
       # Click again to hide
       html = render_click(view, "toggle_project_settings", %{})
@@ -159,7 +159,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       html = render_click(view, "toggle_project_settings", %{})
 
       # No worktree script configured
-      assert html =~ "Not configured"
+      assert html =~ "Not found"
     end
 
     test "project settings shows no foreign repos by default", %{
