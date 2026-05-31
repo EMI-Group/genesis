@@ -9,6 +9,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :mode, :string, default: "genesis_new"
   attr :mode_info, :string, default: ""
   attr :node_path, :string, default: ""
+  attr :seeds, :string, default: ""
 
   def task_form(assigns) do
     ~H"""
@@ -65,6 +66,21 @@ defmodule EvoDashWeb.DashboardComponents do
             />
             <label class="label">
               <span class="label-text-alt text-base-content/50">Subdirectory to start evolution from (optional)</span>
+            </label>
+          </div>
+        <% end %>
+        <%= if @mode == "evolve_complex" do %>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text font-semibold text-base-content">Seed Code <span class="badge badge-ghost badge-sm">optional</span></span>
+            </label>
+            <textarea
+              name="seeds"
+              class="textarea textarea-bordered w-full min-h-[120px] text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
+              placeholder="Paste seed code here. Separate multiple fragments with blank lines..."
+            ><%= @seeds %></textarea>
+            <label class="label">
+              <span class="label-text-alt text-base-content/50">User seeds are preferred over built-in seeds during evolution</span>
             </label>
           </div>
         <% end %>

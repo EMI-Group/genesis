@@ -533,6 +533,9 @@ defmodule EvoDash.TaskRegistry do
 
     runtime_opts = if node_path, do: Keyword.put(runtime_opts, :node_path, node_path), else: runtime_opts
 
+    seed_content = Keyword.get(opts, :seed_content)
+    runtime_opts = if seed_content, do: Keyword.put(runtime_opts, :seed_content, seed_content), else: runtime_opts
+
     {nil, runtime_opts}
   end
 
