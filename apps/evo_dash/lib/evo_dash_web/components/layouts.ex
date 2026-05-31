@@ -40,7 +40,7 @@ defmodule EvoDashWeb.Layouts do
     ~H"""
     <!-- Sticky Navigation Bar -->
     <header class="sticky top-0 z-50 bg-base-100/80 backdrop-blur-md border-b border-base-200/50">
-      <nav class="navbar px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+      <nav class="navbar px-6 sm:px-8 lg:px-12 xl:px-16">
         <!-- Left: Logo -->
         <div class="flex-1">
           <.link navigate={~p"/"} class="flex items-center gap-2 text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
@@ -59,6 +59,15 @@ defmodule EvoDashWeb.Layouts do
                 aria-current={@current_page == :dashboard && "page"}
               >
                 <.icon name="hero-squares-2x2" class="size-4" /> Dashboard
+              </.link>
+            </li>
+            <li>
+              <.link
+                navigate={~p"/tasks"}
+                class={["btn btn-sm btn-ghost gap-2", @current_page == :tasks && "btn-active"]}
+                aria-current={@current_page == :tasks && "page"}
+              >
+                <.icon name="hero-clipboard-document-list" class="size-4" /> Tasks
               </.link>
             </li>
             <li>
@@ -110,6 +119,15 @@ defmodule EvoDashWeb.Layouts do
             </li>
             <li>
               <.link
+                navigate={~p"/tasks"}
+                class={@current_page == :tasks && "active"}
+                aria-current={@current_page == :tasks && "page"}
+              >
+                <.icon name="hero-clipboard-document-list" class="size-4" /> Tasks
+              </.link>
+            </li>
+            <li>
+              <.link
                 navigate={~p"/agents"}
                 class={@current_page == :agents && "active"}
                 aria-current={@current_page == :agents && "page"}
@@ -145,7 +163,7 @@ defmodule EvoDashWeb.Layouts do
 
     <!-- Main Content Area -->
     <main class="px-4 pt-8 pb-12 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-7xl space-y-4">
+      <div class="mx-auto space-y-4">
         {render_slot(@inner_block)}
       </div>
     </main>
