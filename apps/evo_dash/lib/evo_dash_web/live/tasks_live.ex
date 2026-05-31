@@ -142,7 +142,7 @@ defmodule EvoDashWeb.TasksLive do
           </div>
         <% else %>
           <%= for {task, idx} <- Enum.with_index(@filtered_tasks) do %>
-            <div class="animate-fade-in-up <%= if idx > 0, do: animation_delay_class(idx) %>">
+            <div class={["animate-fade-in-up", animation_delay_class(idx)]}>
               <EvoDashWeb.DashboardComponents.task_card
                 task={task}
                 show_details={MapSet.member?(@expanded_task_ids, task.id)}
