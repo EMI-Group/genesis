@@ -216,7 +216,7 @@ defmodule EvoDashWeb.DashboardLive do
 
           <!-- Mobile: Bottom Sheet with task form -->
           <%= if @show_task_form_sheet do %>
-            <div class="lg:hidden fixed inset-0 z-50" phx-hook="BottomSheet">
+            <div id="task-form-bottom-sheet" class="lg:hidden fixed inset-0 z-50" phx-hook="BottomSheet">
               <div class="backdrop-overlay"></div>
               <div class="fixed inset-x-0 bottom-0 z-50 bg-base-100 rounded-t-2xl shadow-2xl border-t border-base-200 max-h-[85vh] flex flex-col bottom-sheet">
                 <!-- Sheet Handle -->

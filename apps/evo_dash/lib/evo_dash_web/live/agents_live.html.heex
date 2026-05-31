@@ -214,7 +214,7 @@
 
       <!-- Mobile: Slide-Over for agent detail -->
       <%= if @selected_agent_id do %>
-        <div class="lg:hidden fixed inset-0 z-50" phx-hook="SlideOver">
+        <div id="agent-slide-over" class="lg:hidden fixed inset-0 z-50" phx-hook="SlideOver">
           <div class="backdrop-overlay" phx-click="close_slide_over"></div>
           <div class="fixed inset-y-0 right-0 w-full sm:w-[400px] z-50 bg-base-100 shadow-2xl flex flex-col slide-over">
             <!-- Slide-Over Header -->
