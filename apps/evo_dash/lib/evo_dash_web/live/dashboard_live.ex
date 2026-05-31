@@ -7,13 +7,13 @@ defmodule EvoDashWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
-      <div>
+      <div class="animate-fade-in-up">
         <p class="text-base-content/60 text-sm">Manage your evolutionary software development tasks</p>
       </div>
 
       <%= if @active_project do %>
         <!-- Active Project State -->
-        <div class="mt-4 mb-2">
+        <div class="mt-4 mb-2 animate-fade-in-up animation-delay-100">
           <EvoDashWeb.DashboardComponents.project_tabs
             projects={@projects}
             active_project={@active_project}
@@ -21,7 +21,7 @@ defmodule EvoDashWeb.DashboardLive do
         </div>
 
         <%= if @show_open_project_form do %>
-          <div class="mb-8 bg-base-200/50 rounded-xl p-4 sm:p-6 border border-base-200">
+          <div class="mb-8 bg-base-200/50 rounded-xl p-4 sm:p-6 border border-base-200 animate-scale-in">
             <div class="flex items-center justify-between mb-4">
               <h3 class="text-lg font-semibold flex items-center gap-2">
                 <.icon name="hero-folder-open" class="size-5 text-primary" /> Open Another Project
@@ -71,7 +71,7 @@ defmodule EvoDashWeb.DashboardLive do
           </div>
         <% end %>
 
-        <div class="mb-8">
+        <div class="mb-8 animate-fade-in-up animation-delay-200">
           <EvoDashWeb.DashboardComponents.task_form
             prompt={@task_prompt}
             mode={@task_mode}
@@ -98,7 +98,7 @@ defmodule EvoDashWeb.DashboardLive do
 
         <%= if @show_project_settings do %>
           <!-- Project Config Section -->
-          <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+          <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-slide-down">
             <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4 sm:p-6">
               <h2 class="text-lg font-semibold flex items-center gap-2">
                 <.icon name="hero-document-text" class="size-5 text-accent" /> evogit.toml Configuration
@@ -139,7 +139,7 @@ defmodule EvoDashWeb.DashboardLive do
           </div>
 
           <!-- Foreign Repos Section -->
-          <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+          <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-slide-down animation-delay-100">
             <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-4 sm:p-6">
               <h2 class="text-lg font-semibold flex items-center gap-2">
                 <.icon name="hero-server-stack" class="size-5 text-secondary" /> Foreign Repositories
@@ -183,7 +183,7 @@ defmodule EvoDashWeb.DashboardLive do
           <!-- Add Foreign Repo -->
           <div class="mb-6">
             <%= if @show_add_foreign_repo_form do %>
-              <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+              <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-scale-in">
                 <div class="bg-gradient-to-br from-success/10 via-success/5 to-transparent p-4 sm:p-6">
                   <h2 class="text-lg font-semibold flex items-center gap-2">
                     <.icon name="hero-plus-circle" class="size-5 text-success" /> Add Foreign Repository
@@ -256,64 +256,87 @@ defmodule EvoDashWeb.DashboardLive do
 
       <% else %>
         <!-- No Active Project State -->
-        <div class="mt-4 mb-8">
+        <div class="mt-4 mb-8 animate-scale-in">
           <EvoDashWeb.DashboardComponents.open_project_form path="" recent_projects={@recent_projects} path_suggestions={@path_suggestions} />
         </div>
       <% end %>
 
-      <!-- Section Header -->
-      <div class="flex items-center gap-2 sm:gap-4 mt-8 mb-4">
-        <h2 class="text-lg font-semibold text-base-content/80 whitespace-nowrap">
-          <%= if @active_project do %>
-            Tasks for <%= Map.get(@projects[@active_project] || %{}, :name, @active_project) %>
-          <% else %>
-            All Tasks
-          <% end %>
-        </h2>
-        <div class="flex-1 h-px bg-base-200"></div>
-        <details class="dropdown dropdown-end">
-          <summary class="btn btn-sm btn-ghost btn-circle">
-            <.icon name="hero-ellipsis-vertical" class="size-5" />
-          </summary>
-          <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
-            <li>
-              <button class="text-error" phx-click="clear_task_history" phx-confirm="Clear all finished task history? This cannot be undone.">
-                <.icon name="hero-trash" class="size-4" /> Clear Task History
-              </button>
-            </li>
-          </ul>
-        </details>
-      </div>
-
-      <!-- Task List -->
-      <div class="space-y-3">
-        <%= if @tasks == [] do %>
-          <div class="text-center py-8 sm:py-12 text-base-content/50">
-            <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
-            <p class="text-lg font-medium">
-              <%= if @active_project do %>
-                No tasks for this project yet
-              <% else %>
-                No tasks yet
-              <% end %>
-            </p>
-            <p class="text-sm mt-1">
-              <%= if @active_project do %>
-                Start by creating a new task above.
-              <% else %>
-                Open a project to get started.
-              <% end %>
-            </p>
+      <!-- Running Tasks Section -->
+      <%= if @running_tasks != [] do %>
+        <div class="mt-8 animate-fade-in-up">
+          <div class="flex items-center gap-2 mb-4">
+            <div class="bg-info/15 text-info p-2 rounded-lg">
+              <.icon name="hero-play-circle" class="size-5" />
+            </div>
+            <h2 class="text-lg font-semibold text-base-content/80">Active Tasks</h2>
+            <span class="badge badge-info badge-sm">{length(@running_tasks)}</span>
           </div>
-        <% else %>
-          <%= for task <- Enum.sort_by(@tasks, & &1.started_at, {:desc, DateTime}) do %>
-            <EvoDashWeb.DashboardComponents.task_card
-              task={task}
-              show_details={MapSet.member?(@expanded_task_ids, task.id)}
-            />
-          <% end %>
-        <% end %>
-      </div>
+          <div class="space-y-3">
+            <%= for task <- Enum.sort_by(@running_tasks, & &1.started_at, {:asc, DateTime}) do %>
+              <div class="animate-pulse-glow rounded-2xl">
+                <EvoDashWeb.DashboardComponents.task_card
+                  task={task}
+                  show_details={MapSet.member?(@expanded_task_ids, task.id)}
+                />
+              </div>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Recently Finished Tasks Section -->
+      <%= if @recent_tasks != [] do %>
+        <div class="mt-8 animate-fade-in-up animation-delay-100">
+          <div class="flex items-center gap-2 mb-4">
+            <div class="bg-success/15 text-success p-2 rounded-lg">
+              <.icon name="hero-clock" class="size-5" />
+            </div>
+            <h2 class="text-lg font-semibold text-base-content/80">Recently Finished</h2>
+            <span class="badge badge-ghost badge-sm">{length(@recent_tasks)}</span>
+          </div>
+          <div class="space-y-3">
+            <%= for task <- @recent_tasks do %>
+              <EvoDashWeb.DashboardComponents.task_card
+                task={task}
+                show_details={MapSet.member?(@expanded_task_ids, task.id)}
+              />
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Empty State (no tasks at all) -->
+      <%= if @running_tasks == [] and @recent_tasks == [] do %>
+        <div class="mt-8 text-center py-12 sm:py-16 text-base-content/50 animate-fade-in-up">
+          <div class="animate-float">
+            <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
+          </div>
+          <p class="text-lg font-medium">
+            <%= if @active_project do %>
+              No tasks yet
+            <% else %>
+              No tasks yet
+            <% end %>
+          </p>
+          <p class="text-sm mt-1">
+            <%= if @active_project do %>
+              Start by creating a new task above.
+            <% else %>
+              Open a project to get started.
+            <% end %>
+          </p>
+        </div>
+      <% end %>
+
+      <!-- View All Tasks Link -->
+      <%= if @running_tasks != [] or @recent_tasks != [] do %>
+        <div class="mt-6 text-center animate-fade-in-up animation-delay-200">
+          <.link navigate={~p"/tasks"} class="btn btn-outline btn-sm gap-2 hover-lift">
+            <.icon name="hero-clipboard-document-list" class="size-4" /> View Full Task History
+            <.icon name="hero-arrow-right" class="size-4" />
+          </.link>
+        </div>
+      <% end %>
 
       <!-- Full Result Modal -->
       <%= if @selected_result do %>
@@ -392,6 +415,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:new_repo_path, "")
       |> assign(:new_repo_name, "")
       |> assign_form_defaults()
+      |> assign_running_and_recent_tasks()
 
     config_status =
       try do
@@ -429,7 +453,10 @@ defmodule EvoDashWeb.DashboardLive do
         socket
       end
 
-    {:noreply, assign(socket, :tasks, new_tasks)}
+    {:noreply,
+     socket
+     |> assign(:tasks, new_tasks)
+     |> assign_running_and_recent_tasks()}
   end
 
   @impl true
@@ -456,6 +483,7 @@ defmodule EvoDashWeb.DashboardLive do
        |> assign(:show_open_project_form, false)
        |> assign(:show_project_settings, false)
        |> assign(:recent_projects, TaskRegistry.list_recent_projects())
+       |> assign_running_and_recent_tasks()
        |> put_flash(:info, mode_info)}
     else
       {:noreply,
@@ -477,7 +505,8 @@ defmodule EvoDashWeb.DashboardLive do
      |> assign(:tasks, tasks)
      |> assign(:task_mode, mode)
      |> assign(:task_mode_info, mode_info)
-     |> assign(:show_project_settings, false)}
+     |> assign(:show_project_settings, false)
+     |> assign_running_and_recent_tasks()}
   end
 
   @impl true
@@ -517,7 +546,8 @@ defmodule EvoDashWeb.DashboardLive do
      |> assign(:active_project, active_project)
      |> assign(:tasks, tasks)
      |> assign(:task_mode, mode)
-     |> assign(:task_mode_info, mode_info)}
+     |> assign(:task_mode_info, mode_info)
+     |> assign_running_and_recent_tasks()}
   end
 
   @impl true
@@ -741,7 +771,8 @@ defmodule EvoDashWeb.DashboardLive do
              :info,
              "#{String.capitalize(to_string(task_type))} task started with ID: #{task.id}"
            )
-           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))}
+           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
+           |> assign_running_and_recent_tasks()}
 
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, "Failed to start task: #{inspect(reason)}")}
@@ -758,7 +789,8 @@ defmodule EvoDashWeb.DashboardLive do
         {:noreply,
          socket
          |> assign(:tasks, current_tasks(socket))
-         |> assign(:expanded_task_ids, expanded)}
+         |> assign(:expanded_task_ids, expanded)
+         |> assign_running_and_recent_tasks()}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to cancel task: #{inspect(reason)}")}
@@ -816,7 +848,8 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:tasks, tasks)
-     |> assign(:expanded_task_ids, MapSet.new())}
+     |> assign(:expanded_task_ids, MapSet.new())
+     |> assign_running_and_recent_tasks()}
   end
 
   @impl true
@@ -835,10 +868,27 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:tasks, tasks)
-     |> assign(:expanded_task_ids, expanded)}
+     |> assign(:expanded_task_ids, expanded)
+     |> assign_running_and_recent_tasks()}
   end
 
   # Helpers
+
+  defp assign_running_and_recent_tasks(socket) do
+    all_tasks = socket.assigns.tasks
+
+    running_tasks = Enum.filter(all_tasks, &(&1.status in [:running, :pending]))
+
+    recent_tasks =
+      all_tasks
+      |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+      |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
+      |> Enum.take(5)
+
+    socket
+    |> assign(:running_tasks, running_tasks)
+    |> assign(:recent_tasks, recent_tasks)
+  end
 
   defp assign_form_defaults(socket) do
     socket
