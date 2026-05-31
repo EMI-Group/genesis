@@ -153,3 +153,177 @@ input, textarea, select, button, a {
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
+
+/* === Playful & Expressive Animations === */
+
+/* Entrance: fade in + slide up */
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Entrance: scale in (subtle) */
+@keyframes scale-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Pulse glow for running task indicators */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(65% 0.18 255 / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px oklch(65% 0.18 255 / 0);
+  }
+}
+
+/* Slide down for collapsible sections */
+@keyframes slide-down {
+  0% {
+    opacity: 0;
+    max-height: 0;
+  }
+  100% {
+    opacity: 1;
+    max-height: 1000px;
+  }
+}
+
+/* Subtle bounce entrance */
+@keyframes bounce-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+  70% {
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Float animation for empty states */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* Shimmer gradient sweep for active cards */
+@keyframes shimmer-sweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Utility classes */
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out both;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.3s ease-out both;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-slide-down {
+  animation: slide-down 0.3s ease-out both;
+}
+
+.animate-bounce-in {
+  animation: bounce-in 0.5s ease-out both;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Staggered delay classes */
+.animation-delay-100 { animation-delay: 100ms; }
+.animation-delay-200 { animation-delay: 200ms; }
+.animation-delay-300 { animation-delay: 300ms; }
+.animation-delay-400 { animation-delay: 400ms; }
+.animation-delay-500 { animation-delay: 500ms; }
+
+/* Hover micro-interactions */
+.hover-lift {
+  transition: transform 200ms ease, box-shadow 200ms ease;
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px -5px oklch(0 0 0 / 0.1), 0 4px 10px -6px oklch(0 0 0 / 0.05);
+}
+
+.hover-glow {
+  transition: box-shadow 200ms ease;
+}
+.hover-glow:hover {
+  box-shadow: 0 0 0 3px oklch(55% 0.2 265 / 0.15), 0 4px 15px -3px oklch(55% 0.2 265 / 0.1);
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up,
+  .animate-scale-in,
+  .animate-pulse-glow,
+  .animate-slide-down,
+  .animate-bounce-in,
+  .animate-float {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .animation-delay-100,
+  .animation-delay-200,
+  .animation-delay-300,
+  .animation-delay-400,
+  .animation-delay-500 {
+    animation-delay: 0ms;
+  }
+
+  .hover-lift:hover {
+    transform: none;
+  }
+}
+
+/* Active card shimmer for running tasks */
+.task-card-active {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    oklch(65% 0.18 255 / 0.03) 25%,
+    oklch(65% 0.18 255 / 0.06) 50%,
+    oklch(65% 0.18 255 / 0.03) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 3s ease-in-out infinite;
+}
