@@ -89,7 +89,7 @@ ContextExtractor (root)
 **Genesis Mode B (New Codebase)**:
 ```
 CodebaseArchitect (root)
-  ├── subagent_planner (optional — complex architecture planning)
+  ├── subagent_task_scheduler (optional — complex architecture scheduling)
   ├── subagent_codebase_architect (child dir)
   │     ├── subagent_codebase_architect (grandchild...)
   │     └── subagent_generalist (implementation)
