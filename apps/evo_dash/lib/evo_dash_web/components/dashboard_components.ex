@@ -104,7 +104,7 @@ defmodule EvoDashWeb.DashboardComponents do
         </span>
         <button
           type="submit"
-          class="btn btn-primary px-8 h-12 text-base shadow-md hover:shadow-lg transition-all w-full sm:w-auto"
+          class="btn btn-primary px-8 h-12 text-base shadow-md hover:shadow-lg transition-all w-full sm:w-auto press-scale"
         >
           <.icon name="hero-rocket-launch" class="size-5" /> Execute Task
         </button>
@@ -186,7 +186,7 @@ defmodule EvoDashWeb.DashboardComponents do
             </div>
           </div>
           <div class="pt-2">
-            <button type="submit" class="btn btn-secondary btn-sm">
+            <button type="submit" class="btn btn-secondary btn-sm press-scale">
               <.icon name="hero-arrow-path" class="size-4" /> Update Settings
             </button>
           </div>
@@ -212,7 +212,7 @@ defmodule EvoDashWeb.DashboardComponents do
             phx-click="switch_project"
             phx-value-path={project.path}
             class={[
-              "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium cursor-pointer transition-all whitespace-nowrap",
+              "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium cursor-pointer transition-all whitespace-nowrap press-scale",
               @active_project == project.path && "bg-primary text-primary-content shadow-md",
               @active_project != project.path &&
                 "bg-base-200/70 hover:bg-base-300 text-base-content/70 hover:text-base-content"
@@ -225,7 +225,7 @@ defmodule EvoDashWeb.DashboardComponents do
             phx-click="close_project"
             phx-value-path={project.path}
             class={[
-              "-ml-1 flex items-center justify-center w-6 h-6 rounded-full transition-all",
+              "-ml-1 flex items-center justify-center w-6 h-6 rounded-full transition-all press-scale",
               @active_project == project.path &&
                 "text-primary-content/70 hover:text-primary-content hover:bg-primary-content/20",
               @active_project != project.path &&
@@ -239,7 +239,7 @@ defmodule EvoDashWeb.DashboardComponents do
       <% end %>
       <!-- Add project button -->
       <button
-        class="flex items-center justify-center w-8 h-8 rounded-full bg-base-200/50 hover:bg-base-300 text-base-content/50 hover:text-primary transition-all"
+        class="flex items-center justify-center w-8 h-8 rounded-full bg-base-200/50 hover:bg-base-300 text-base-content/50 hover:text-primary transition-all press-scale"
         phx-click="show_open_project"
         title="Open Project"
       >
@@ -308,7 +308,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 </datalist>
               </div>
             </div>
-            <button type="submit" class="btn btn-primary w-full h-12 text-base">
+            <button type="submit" class="btn btn-primary w-full h-12 text-base press-scale">
               <.icon name="hero-folder-open" class="size-5" /> Open Project
             </button>
           </.form>
@@ -322,7 +322,7 @@ defmodule EvoDashWeb.DashboardComponents do
               <div class="space-y-1">
                 <%= for project <- Enum.take(@recent_projects, 5) do %>
                   <button
-                    class="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-base-200/70 transition-colors text-left group"
+                    class="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-base-200/70 transition-colors text-left group press-scale"
                     phx-click="open_project"
                     phx-value-path={project.path}
                   >
@@ -358,7 +358,7 @@ defmodule EvoDashWeb.DashboardComponents do
   def task_card(assigns) do
     ~H"""
     <div class={[
-      "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative",
+      "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative press-scale",
       @task.status == :completed && "bg-success/5",
       @task.status == :running && "bg-info/5"
     ]}>
@@ -433,7 +433,7 @@ defmodule EvoDashWeb.DashboardComponents do
             <div class="flex items-center gap-2 shrink-0">
               <%= if @task.status == :running do %>
                 <button
-                  class="btn btn-sm btn-outline btn-error shadow-sm"
+                  class="btn btn-sm btn-outline btn-error shadow-sm press-scale"
                   phx-click="cancel_task"
                   phx-value-task_id={@task.id}
                   phx-confirm="Are you sure you want to cancel this task?"
@@ -442,7 +442,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 </button>
               <% end %>
               <button
-                class="btn btn-sm btn-ghost bg-base-200/50 hover:bg-base-200"
+                class="btn btn-sm btn-ghost bg-base-200/50 hover:bg-base-200 press-scale"
                 phx-click="toggle_task_details"
                 phx-value-task_id={@task.id}
               >
@@ -465,7 +465,7 @@ defmodule EvoDashWeb.DashboardComponents do
                         <.icon name="hero-cog-8-tooth" class="size-4 text-primary" /> Options
                       </h4>
                       <button
-                        class="btn btn-xs btn-ghost"
+                        class="btn btn-xs btn-ghost press-scale"
                         phx-click="view_full_options"
                         phx-value-task_id={@task.id}
                       >
@@ -482,7 +482,7 @@ defmodule EvoDashWeb.DashboardComponents do
                           <.icon name="hero-check-badge" class="size-4 text-success" /> Result
                         </h4>
                         <button
-                          class="btn btn-xs btn-ghost"
+                          class="btn btn-xs btn-ghost press-scale"
                           phx-click="view_full_result"
                           phx-value-task_id={@task.id}
                         >
