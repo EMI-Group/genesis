@@ -67,6 +67,15 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  def handle_event("close_slide_over", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_agent_id, nil)
+     |> assign(:selected_history_entry, nil)
+     |> assign(:selected_objective, nil)}
+  end
+
+  @impl true
   def handle_event("view_full_message", %{"index" => index}, socket) do
     index = String.to_integer(index)
 
