@@ -227,8 +227,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
         expand_opts = [
           model: state.model,
-          concept_breadth: Keyword.get(opts_from_state(state), :concept_breadth, @default_concept_breadth),
-          implementation_depth: Keyword.get(opts_from_state(state), :implementation_depth, @default_implementation_depth)
+          concept_breadth: get_concept_config(:concept_breadth, @default_concept_breadth),
+          implementation_depth: get_concept_config(:implementation_depth, @default_implementation_depth)
         ]
 
         safe_llm_call({:evolution, :concept_expand, concept}, fn ->
@@ -643,13 +643,9 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     Enum.reverse(scored)
   end
 
-  defp opts_from_state(state) do
+  defp get_concept_config(key, default) do
     evo_config = get_evolution_config()
-
-    [
-      concept_breadth: Map.get(evo_config, :concept_breadth, @default_concept_breadth),
-      implementation_depth: Map.get(evo_config, :implementation_depth, @default_implementation_depth)
-    ]
+    Map.get(evo_config, key, default)
   end
 
   defp safe_llm_call(agent_id, fun) do
