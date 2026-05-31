@@ -386,6 +386,7 @@ defmodule EvoDash.TaskRegistry do
           {_key, %TaskInfo{} = task}, acc ->
             # Reset non-persistable fields
             task = %{task | ref: nil, status: maybe_reset_status(task.status)}
+            task = set_crash_details(task)
             :ets.insert(@table_name, {task.id, task})
             acc
 
@@ -407,9 +408,14 @@ defmodule EvoDash.TaskRegistry do
     end
   end
 
-  defp maybe_reset_status(:running), do: :pending
-  defp maybe_reset_status(:pending), do: :pending
+  defp maybe_reset_status(:running), do: :failed
+  defp maybe_reset_status(:pending), do: :failed
   defp maybe_reset_status(status), do: status
+
+  defp set_crash_details(%{status: :failed, finished_at: nil} = task) do
+    %{task | finished_at: DateTime.utc_now(), result: "Process crashed while task was running"}
+  end
+  defp set_crash_details(task), do: task
 
   defp persist_tasks_to_dets do
     try do
