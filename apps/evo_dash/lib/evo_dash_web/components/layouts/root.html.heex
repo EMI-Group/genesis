@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-screen overflow-hidden">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -50,7 +50,9 @@
       })();
     </script>
   </head>
-  <body>
-    {@inner_content}
+  <body class="h-full overflow-hidden">
+    <div class="h-screen w-screen overflow-hidden flex flex-col bg-base-100">
+      {@inner_content}
+    </div>
   </body>
 </html>
