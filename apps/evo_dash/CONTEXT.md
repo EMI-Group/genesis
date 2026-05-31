@@ -96,6 +96,17 @@ At runtime, set env var `EVOGIT_DESKTOP=1` (and optionally `EVOGIT_DESKTOP_PORT`
 | `robots.txt` | Standard web crawler directives (all commented out) |
 | `images/logo.svg` | Default Phoenix logo SVG (not EvoGit-branded) |
 
+## Internationalization (i18n)
+
+EvoDash uses **Gettext** for internationalization. All user-facing strings in LiveViews, components, helpers, and templates are wrapped with `gettext/1,2` calls.
+
+- **Backend**: `EvoDashWeb.Gettext` (`lib/evo_dash_web/gettext.ex`) — `use Gettext, otp_app: :evo_dash`
+- **Import**: `import EvoDashWeb.Gettext` in `evo_dash_web.ex` `html_helpers/0` — available in all LiveViews and HTML components
+- **Translation files**: `priv/gettext/default.pot` (template, 253 messages), `priv/gettext/en/LC_MESSAGES/default.po` (English source strings)
+- **Dynamic locale**: `root.html.heex` uses `Gettext.get_locale(EvoDashWeb.Gettext)` for the `<html lang>` attribute
+- **Workflow**: `mix gettext.extract` → `mix gettext.merge priv/gettext --locale=<lang>` to add new languages
+- **CLI excluded**: The `:evo_git` CLI interface does NOT use gettext — only the web dashboard is internationalized
+
 ## Constraints
 
 - Depends on `:evo_git` at compile and runtime
