@@ -23,7 +23,8 @@ defmodule EvoGit.CLI do
           pool_size: :integer,
           generations: :integer,
           crossover_rate: :float,
-          mutation_rate: :float
+          mutation_rate: :float,
+          seeds: [:string, :keep]
         ],
         aliases: [
           h: :help,
@@ -36,7 +37,8 @@ defmodule EvoGit.CLI do
           R: :foreign_repo,
           n: :node,
           s: :pool_size,
-          g: :generations
+          g: :generations,
+          S: :seeds
         ]
       )
 
@@ -122,6 +124,8 @@ defmodule EvoGit.CLI do
         runtime_opts = maybe_put(runtime_opts, :max_generations, opts[:generations])
         runtime_opts = maybe_put(runtime_opts, :crossover_rate, opts[:crossover_rate])
         runtime_opts = maybe_put(runtime_opts, :mutation_rate, opts[:mutation_rate])
+        seeds = parse_seeds(opts)
+        runtime_opts = if seeds, do: Keyword.put(runtime_opts, :seeds, seeds), else: runtime_opts
 
         Evolution.run(objective, runtime_opts)
       else
@@ -179,6 +183,13 @@ defmodule EvoGit.CLI do
     end
   end
 
+  defp parse_seeds(opts) do
+    case Keyword.get_values(opts, :seeds) do
+      [] -> nil
+      paths -> Enum.map(paths, &Path.expand/1)
+    end
+  end
+
   defp parse_foreign_repos(opts) do
     case Keyword.get_values(opts, :foreign_repo) do
       [] -> []
@@ -227,6 +238,9 @@ defmodule EvoGit.CLI do
                                   Add a foreign repository for cross-repo operations.
                                   Can be specified multiple times. If name is omitted,
                                   the directory basename is used. (e.g., -R original:/Source/proj)
+      -S, --seeds <path>          Path to a seed code file for bottom-up evolution.
+                                  Can be specified multiple times. User seeds are
+                                  preferred over built-in seeds. (complex mode only)
       -n, --node <path>           Starting node path for evolution (subdirectory within
                                   repo, default: root). Only used with 'evolve'.
       -s, --pool-size <n>         Max fragments in entropy pool (default: 50).

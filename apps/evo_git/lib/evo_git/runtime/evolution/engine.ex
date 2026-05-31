@@ -26,7 +26,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     :objective, :repo_path, :base_sha, :node_path, :model,
     :generation, :max_generations, :pool_size, :selection_size,
     :crossover_rate, :mutation_rate, :convergence_threshold,
-    :novelty_neighbors, :stagnation_limit, :event_sink,
+    :novelty_neighbors, :stagnation_limit, :event_sink, :user_seeds,
     :supervisor,
     best_novelty: 0.0, stagnation_count: 0, started_at: nil
   ]
@@ -110,7 +110,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       convergence_threshold: Keyword.get(opts, :convergence_threshold, Map.get(evo_config, :convergence_threshold, @default_convergence_threshold)),
       novelty_neighbors: Keyword.get(opts, :novelty_neighbors, Map.get(evo_config, :novelty_neighbors, @default_novelty_neighbors)),
       stagnation_limit: Keyword.get(opts, :stagnation_limit, Map.get(evo_config, :stagnation_limit, @default_stagnation_limit)),
-      event_sink: Keyword.get(opts, :event_sink)
+      event_sink: Keyword.get(opts, :event_sink),
+      user_seeds: load_user_seeds_from_opts(opts)
     }
   end
 
@@ -120,6 +121,22 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       config when is_map(config) -> config
       _ -> %{}
     end
+  end
+
+  defp load_user_seeds_from_opts(opts) do
+    file_seeds =
+      case Keyword.get(opts, :seeds) do
+        nil -> []
+        paths when is_list(paths) -> SeedFragments.load_user_seeds(paths)
+      end
+
+    content_seeds =
+      case Keyword.get(opts, :seed_content) do
+        nil -> []
+        content when is_binary(content) -> SeedFragments.seeds_from_content(content)
+      end
+
+    file_seeds ++ content_seeds
   end
 
   defp resolve_model(opts) do
@@ -173,9 +190,17 @@ defmodule EvoGit.Runtime.Evolution.Engine do
   defp initialize(state) do
     Logger.info("Evolution Engine: Initializing entropy pool")
 
-    # 1. Get built-in seed fragments
-    seeds = SeedFragments.all()
-    Logger.debug("Evolution Engine: Loaded #{length(seeds)} built-in seed fragments")
+    # 1. Load user seeds (if provided) or fall back to built-in seeds
+    user_seeds = state.user_seeds || []
+
+    {seeds, seed_label} =
+      if user_seeds != [] do
+        {user_seeds, "user-provided"}
+      else
+        {SeedFragments.all(), "built-in"}
+      end
+
+    Logger.debug("Evolution Engine: Loaded #{length(seeds)} #{seed_label} seed fragments")
 
     # 2. Generate additional fragments via LLM
     llm_seeds =

@@ -79,38 +79,15 @@ defmodule EvoGit.Runtime.Evolution.NoveltyMetric do
   end
 
   @doc """
-  Pure AST analysis of a code string.
+  Language-agnostic structural feature extraction of a code string.
 
-  Same metrics as `Fragment.extract_structural_features/1` but takes a raw
-  string instead of a `Fragment.t`. Uses `Code.string_to_quoted/2` to parse
-  and recursively walks the AST counting structural features.
-
-  Returns `%{parse_error: true, line_count: ..., char_count: ...}` on parse failure.
+  Delegates to `Fragment.extract_structural_features/1` to avoid code duplication.
+  Works for any programming language.
   """
   @spec structural_features(String.t()) :: map()
   def structural_features(content) when is_binary(content) do
-    lines = String.split(content, "\n", trim: true)
-    line_count = length(lines)
-    char_count = String.length(content)
-
-    case Code.string_to_quoted(content, literal_encoder: &{:ok, {:__block__, &1, [&2]}}) do
-      {:ok, ast} ->
-        %{
-          ast_depth: compute_ast_depth(ast),
-          function_count: count_nodes(ast, &function_def?/1),
-          pattern_match_count: count_nodes(ast, &match_op?/1),
-          macro_count: count_nodes(ast, &macro_directive?/1),
-          module_count: count_nodes(ast, &module_def?/1),
-          guard_count: count_nodes(ast, &guard_clause?/1),
-          pipeline_count: count_nodes(ast, &pipeline_op?/1),
-          struct_count: count_nodes(ast, &struct_creation?/1),
-          line_count: line_count,
-          char_count: char_count
-        }
-
-      {:error, _} ->
-        %{parse_error: true, line_count: line_count, char_count: char_count}
-    end
+    fragment = Fragment.new(content, domain: "temp")
+    Fragment.extract_structural_features(fragment)
   end
 
   @doc """
@@ -221,96 +198,4 @@ defmodule EvoGit.Runtime.Evolution.NoveltyMetric do
     :math.sqrt(sum_of_squares)
   end
 
-  # AST depth computation
-  defp compute_ast_depth(ast) when is_tuple(ast) do
-    [_head | args] = Tuple.to_list(ast)
-
-    child_depths =
-      Enum.map(args, fn
-        list when is_list(list) ->
-          list
-          |> Enum.map(&compute_ast_depth/1)
-          |> Enum.max(fn -> 0 end)
-
-        node ->
-          compute_ast_depth(node)
-      end)
-
-    max_child = Enum.max(child_depths, fn -> 0 end)
-    1 + max_child
-  end
-
-  defp compute_ast_depth(list) when is_list(list) do
-    list
-    |> Enum.map(&compute_ast_depth/1)
-    |> Enum.max(fn -> 0 end)
-  end
-
-  defp compute_ast_depth(_), do: 0
-
-  # Node counting via AST traversal
-  defp count_nodes(ast, predicate) do
-    {_, count} = walk_and_count(ast, predicate)
-    count
-  end
-
-  defp walk_and_count(ast, predicate) when is_tuple(ast) do
-    count = if predicate.(ast), do: 1, else: 0
-
-    [_head | args] = Tuple.to_list(ast)
-
-    child_counts =
-      Enum.map(args, fn
-        list when is_list(list) ->
-          list
-          |> Enum.map(&walk_and_count(&1, predicate))
-          |> Enum.reduce(0, fn {_, c}, acc -> acc + c end)
-
-        node ->
-          {_, c} = walk_and_count(node, predicate)
-          c
-      end)
-
-    {:ok, count + Enum.sum(child_counts)}
-  end
-
-  defp walk_and_count(list, predicate) when is_list(list) do
-    count =
-      list
-      |> Enum.map(&walk_and_count(&1, predicate))
-      |> Enum.reduce(0, fn {_, c}, acc -> acc + c end)
-
-    {:ok, count}
-  end
-
-  defp walk_and_count(_, _), do: {:ok, 0}
-
-  # AST predicate helpers
-  defp function_def?({name, _, _})
-       when name in [:def, :defp, :defmacro, :defmacrop],
-       do: true
-
-  defp function_def?(_), do: false
-
-  defp match_op?({:=, _, _}), do: true
-  defp match_op?(_), do: false
-
-  defp macro_directive?({name, _, _})
-       when name in [:use, :import, :require],
-       do: true
-
-  defp macro_directive?(_), do: false
-
-  defp module_def?({:defmodule, _, _}), do: true
-  defp module_def?(_), do: false
-
-  defp guard_clause?({:when, _, _}), do: true
-  defp guard_clause?(_), do: false
-
-  defp pipeline_op?({:|>, _, _}), do: true
-  defp pipeline_op?(_), do: false
-
-  defp struct_creation?({:%{}, _, _}), do: true
-  defp struct_creation?({:%, _, _}), do: true
-  defp struct_creation?(_), do: false
 end
