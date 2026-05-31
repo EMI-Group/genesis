@@ -23,8 +23,9 @@ Implements the open-ended evolution engine for Mode B (Complex Evolution). Uses 
 1. **Build state**: Reads evolution config from `EvoGit.Config.resolve(:evolution)`, resolves model, constructs engine state with tunable parameters (max_generations, pool_size, crossover_rate, mutation_rate, convergence_threshold, stagnation_limit, novelty_neighbors).
 2. **Start supervisor**: Starts a temporary `Supervisor` with `EntropyPool` and `MapElites` as children.
 3. **Initialize** (`initialize/1`):
-   - Loads 15 built-in seed fragments from `SeedFragments`.
+   - Loads 15 built-in seed fragments from `SeedFragments` (or user-provided seeds via `-S`).
    - Generates additional LLM seed fragments via `SeedFragments.generate_with_llm/3`.
+   - Expands concept prompts into code fragments via `ConceptExpander.expand/2` (if `-C` concepts provided). Each concept goes through a 3-stage LLM pipeline: concept → sub-topics → implementations → code. Concept expansion is additive to other seed sources.
    - Extracts structural features (AST analysis) and behavioral profiles (LLM) for each fragment.
    - Computes novelty scores against the growing reference set.
    - Inserts all fragments into `EntropyPool` and `MapElites`.
