@@ -163,7 +163,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     start_link(children, opts)
   end
 
-  defp cleanup_genservers(state, supervisor_name) do
+  defp cleanup_genservers(_state, supervisor_name) do
     # Stop the supervisor — this terminates all children (EntropyPool, MapElites)
     case Process.whereis(supervisor_name) do
       nil -> :ok
@@ -184,7 +184,6 @@ defmodule EvoGit.Runtime.Evolution.Engine do
   defp pool_all(_state), do: EntropyPool.all()
   defp pool_select_novel(_state, n), do: EntropyPool.select_novel(n)
   defp pool_evict_redundant(_state), do: EntropyPool.evict_most_redundant()
-  defp pool_update(_state, fragment), do: EntropyPool.update_fragment(fragment)
 
   defp elites_insert(_state, fragment), do: MapElites.insert(fragment)
   defp elites_all(_state), do: MapElites.all_fragments()
