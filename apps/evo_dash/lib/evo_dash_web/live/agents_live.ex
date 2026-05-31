@@ -126,13 +126,13 @@ defmodule EvoDashWeb.AgentsLive do
     Path.basename(key)
   end
 
-  defp repo_display_name(:primary), do: "Primary Repo"
-  defp repo_display_name(nil), do: "Primary Repo"
+  defp repo_display_name(:primary), do: gettext("Primary Repo")
+  defp repo_display_name(nil), do: gettext("Primary Repo")
 
   defp repo_display_name(repo_id) when is_atom(repo_id),
-    do: "Repo: #{Atom.to_string(repo_id)}"
+    do: gettext("Repo: %{repo_id}", repo_id: Atom.to_string(repo_id))
 
-  defp repo_display_name(_), do: "Unknown Repo"
+  defp repo_display_name(_), do: gettext("Unknown Repo")
 
   defp commit_bg_class(agent) do
     if agent.current_commit != agent.base_commit do
