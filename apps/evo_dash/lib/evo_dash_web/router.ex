@@ -20,6 +20,7 @@ defmodule EvoDashWeb.Router do
     pipe_through(:browser)
 
     live("/", DashboardLive, :index)
+    live("/tasks", TasksLive, :index)
     live("/agents", AgentsLive, :index)
     live("/settings", SettingsLive, :index)
     live("/help", HelpLive, :index)
