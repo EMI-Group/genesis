@@ -181,7 +181,7 @@ defmodule EvoDashWeb.Layouts do
                   <li class="text-xs opacity-90">{warning}</li>
                 <% end %>
               </ul>
-              <.link navigate={~p"/help"} class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">{gettext("Configure now →")}</.link>
+              <.link navigate={~p"/settings"} class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">{gettext("Configure now →")}</.link>
             </div>
             <button class="btn btn-sm btn-ghost text-warning-content" onclick="this.closest('.fixed').remove()">
               <.icon name="hero-x-mark" class="size-4" />

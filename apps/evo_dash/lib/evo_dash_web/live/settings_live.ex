@@ -66,13 +66,32 @@ defmodule EvoDashWeb.SettingsLive do
             <% end %>
           </ul>
           <p class="text-xs text-base-content/50 mt-2">
-            {gettext("Visit the")} <a href="/help" class="link link-primary">{gettext("Help & Config")}</a> {gettext("page to set up your configuration.")}
+            {gettext("Set your LLM model in the scheduler settings below to resolve these issues.")}
           </p>
         </div>
       <% end %>
 
       <!-- Scheduler Settings Form -->
       <div class="mt-6 animate-fade-in-up animation-delay-200">
+        <%= if is_nil(@scheduler_config[:llm_model]) do %>
+          <div class="mb-4 bg-error/10 border border-error/20 rounded-xl p-4">
+            <div class="flex items-start gap-3">
+              <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
+              <div>
+                <h3 class="font-semibold text-error">{gettext("No LLM Model Configured")}</h3>
+                <p class="text-sm text-error/80 mt-1">
+                  {gettext("Agents cannot run until you set a model. Fill in the LLM Model field below and click Save.")}
+                </p>
+                <p class="text-xs text-base-content/50 mt-2">
+                  {gettext("Example model names:")} <code class="bg-base-200 px-1 rounded text-xs">anthropic/claude-sonnet-4-20250514</code>, <code class="bg-base-200 px-1 rounded text-xs">openai/gpt-4.1</code>
+                </p>
+                <p class="text-xs text-base-content/40 mt-1">
+                  {gettext("Or set it in")} <code class="bg-base-200 px-1 rounded text-xs">~/.config/evogit/config.toml</code>: <code class="bg-base-200 px-1 rounded text-xs">llm_model = "provider/model"</code>
+                </p>
+              </div>
+            </div>
+          </div>
+        <% end %>
         <EvoDashWeb.DashboardComponents.scheduler_settings config={@scheduler_config} />
       </div>
 
@@ -180,10 +199,21 @@ defmodule EvoDashWeb.SettingsLive do
 
     case EvoGit.AgentScheduler.update_config(config_updates) do
       :ok ->
+        new_config = load_scheduler_config()
+        had_no_model = is_nil(socket.assigns.scheduler_config[:llm_model])
+        now_has_model = not is_nil(new_config[:llm_model])
+        flash_msg =
+          cond do
+            had_no_model and now_has_model ->
+              gettext("LLM model configured — agents are now available.")
+            true ->
+              gettext("Scheduler settings updated successfully.")
+          end
+
         {:noreply,
          socket
-         |> assign(:scheduler_config, load_scheduler_config())
-         |> put_flash(:info, gettext("Scheduler settings updated successfully."))}
+         |> assign(:scheduler_config, new_config)
+         |> put_flash(:info, flash_msg)}
 
       {:error, message} ->
         {:noreply,
