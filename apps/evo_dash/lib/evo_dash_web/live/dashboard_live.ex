@@ -388,7 +388,8 @@ defmodule EvoDashWeb.DashboardLive do
     is_desktop = Map.get(session, "is_desktop", false)
 
     if connected?(socket) do
-      :timer.send_interval(1000, self(), :refresh_tasks)
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
     end
 
     tasks = TaskRegistry.list_tasks()
@@ -433,7 +434,7 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_info(:refresh_tasks, socket) do
+  def handle_info({:tasks_updated}, socket) do
     new_tasks =
       if socket.assigns.active_project do
         TaskRegistry.list_tasks_by_path(socket.assigns.active_project)
@@ -481,6 +482,12 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:tasks, new_tasks)
      |> assign_running_and_recent_tasks()}
+  end
+
+  @impl true
+  def handle_info({:recent_projects_updated}, socket) do
+    recent_projects = TaskRegistry.list_recent_projects()
+    {:noreply, assign(socket, :recent_projects, recent_projects)}
   end
 
   @impl true

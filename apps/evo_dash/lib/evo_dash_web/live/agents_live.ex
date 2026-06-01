@@ -7,7 +7,7 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      :timer.send_interval(1000, self(), :refresh_agents)
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
     end
 
     agents = load_agents()
@@ -38,7 +38,7 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  def handle_info(:refresh_agents, socket) do
+  def handle_info({:agents_updated}, socket) do
     agents = load_agents()
 
     id_to_display =

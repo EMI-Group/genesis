@@ -135,7 +135,7 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      :timer.send_interval(2000, self(), :refresh_config)
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "scheduler_config")
     end
 
     config_status =
@@ -157,7 +157,7 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_info(:refresh_config, socket) do
+  def handle_info({:scheduler_config_updated}, socket) do
     {:noreply,
      socket
      |> assign(:scheduler_config, load_scheduler_config())

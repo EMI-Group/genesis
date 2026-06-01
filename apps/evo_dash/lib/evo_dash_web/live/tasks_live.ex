@@ -201,7 +201,7 @@ defmodule EvoDashWeb.TasksLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      :timer.send_interval(1000, self(), :refresh_tasks)
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end
 
     tasks = TaskRegistry.list_tasks()
@@ -233,7 +233,7 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
-  def handle_info(:refresh_tasks, socket) do
+  def handle_info({:tasks_updated}, socket) do
     tasks = TaskRegistry.list_tasks()
     project_paths = TaskRegistry.get_unique_paths()
 
