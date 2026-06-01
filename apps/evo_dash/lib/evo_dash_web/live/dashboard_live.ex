@@ -729,19 +729,14 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("task_change", params, socket) do
-    {:noreply,
-     socket
-     |> assign(:task_mode, params["mode"] || socket.assigns.task_mode)
-     |> assign(:task_prompt, params["prompt"] || socket.assigns.task_prompt)
-     |> assign(:task_node_path, params["node_path"] || "")
-     |> assign(:task_seeds, params["seeds"] || socket.assigns[:task_seeds] || "")}
+  def handle_event("task_change", %{"mode" => mode}, socket) do
+    {:noreply, assign(socket, :task_mode, mode)}
   end
 
   @impl true
   def handle_event(
         "task_submit",
-        %{"prompt" => prompt, "mode" => combined_mode},
+        %{"prompt" => prompt, "mode" => combined_mode} = params,
         socket
       ) do
     path = socket.assigns.active_project
@@ -757,7 +752,7 @@ defmodule EvoDashWeb.DashboardLive do
           "evolve_complex" -> {:evolve, "complex"}
         end
 
-      node_path = socket.assigns[:task_node_path]
+      node_path = params["node_path"]
 
       opts = [
         path: path,
@@ -778,7 +773,7 @@ defmodule EvoDashWeb.DashboardLive do
           opts
         end
 
-      seeds_content = socket.assigns[:task_seeds]
+      seeds_content = params["seeds"]
 
       opts =
         if task_type == :evolve and mode == "complex" and is_binary(seeds_content) and String.trim(seeds_content) != "" do
@@ -796,7 +791,10 @@ defmodule EvoDashWeb.DashboardLive do
              gettext("%{type} task started with ID: %{id}", type: String.capitalize(to_string(task_type)), id: task.id)
            )
            |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
-           |> assign_running_and_recent_tasks()}
+           |> assign_running_and_recent_tasks()
+           |> assign(:task_prompt, "")
+           |> assign(:task_node_path, "")
+           |> assign(:task_seeds, "")}
 
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, gettext("Failed to start task: %{reason}", reason: inspect(reason)))}

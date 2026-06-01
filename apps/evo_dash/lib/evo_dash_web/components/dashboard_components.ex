@@ -16,7 +16,6 @@ defmodule EvoDashWeb.DashboardComponents do
     <.form
       for={%{}}
       phx-submit="task_submit"
-      phx-change="task_change"
       class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden"
     >
       <!-- Hero Header with inline mode select -->
@@ -35,6 +34,7 @@ defmodule EvoDashWeb.DashboardComponents do
             <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Task Mode")}</span>
             <select
               name="mode"
+              phx-change="task_change"
               class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-medium bg-base-200/30"
             >
               <optgroup label={gettext("Genesis (Bootstrap & Analyze)")}>
