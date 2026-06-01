@@ -418,7 +418,7 @@ defmodule EvoDashWeb.DashboardComponents do
         <!-- Left accent bar -->
         <div class={["w-1 shrink-0", status_accent_color(@task.status)]}></div>
 
-        <div class="flex-1 p-4 md:p-5">
+        <div class="flex-1 p-4 md:p-5 min-w-0">
           <!-- Compact header — single row: type · mode | status · short ID -->
           <div class="flex items-center justify-between gap-3 mb-2 pr-7">
             <div class="flex items-center gap-1 text-xs text-base-content/60 min-w-0">
