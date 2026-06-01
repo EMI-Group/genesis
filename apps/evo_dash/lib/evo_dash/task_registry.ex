@@ -136,6 +136,9 @@ defmodule EvoDash.TaskRegistry do
     load_tasks_from_dets(data_dir)
     load_recent_projects_from_dets(data_dir)
 
+    # Subscribe to task status events from EvoGit.PubSub
+    Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+
     {:ok, %{data_dir: data_dir}}
   end
 
@@ -548,6 +551,25 @@ defmodule EvoDash.TaskRegistry do
   end
 
   ## GenServer Info Handlers
+
+  @impl true
+  def handle_info({:task_status, task_id, status}, state) do
+    case :ets.lookup(@table_name, task_id) do
+      [{^task_id, %TaskInfo{} = task}] ->
+        finished_at = if status in [:completed, :failed, :cancelled], do: DateTime.utc_now(), else: task.finished_at
+        updated = %{task | status: status, finished_at: finished_at}
+        :ets.insert(@table_name, {task_id, updated})
+
+        if status in [:completed, :failed, :cancelled] do
+          persist_tasks_to_dets()
+        end
+
+      _ ->
+        :ok
+    end
+
+    {:noreply, state}
+  end
 
   @impl true
   def handle_info({ref, result}, state) when is_reference(ref) do
