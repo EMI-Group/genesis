@@ -130,7 +130,10 @@ defmodule EvoGit.Runtime.Genesis do
 
   defp notify_finalizing(opts) do
     if task_id = Keyword.get(opts, :task_id) do
-      EvoDash.TaskRegistry.update_task_status(task_id, :finalizing)
+      case Code.ensure_compiled(EvoDash.TaskRegistry) do
+        {:module, mod} -> apply(mod, :update_task_status, [task_id, :finalizing])
+        {:error, _} -> :ok
+      end
     end
   end
 
