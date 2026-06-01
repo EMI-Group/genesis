@@ -61,6 +61,7 @@ defmodule EvoDashWeb.DashboardComponents do
               type="text"
               name="node_path"
               value={@node_path}
+              phx-debounce="300"
               class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
               placeholder={gettext("e.g., ./src/components")}
             />
@@ -76,6 +77,7 @@ defmodule EvoDashWeb.DashboardComponents do
             </label>
             <textarea
               name="seeds"
+              phx-debounce="300"
               class="textarea textarea-bordered w-full min-h-[120px] text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
               placeholder={gettext("Paste seed code here. Separate multiple fragments with blank lines...")}
             ><%= @seeds %></textarea>
@@ -90,6 +92,7 @@ defmodule EvoDashWeb.DashboardComponents do
           </label>
           <textarea
             name="prompt"
+            phx-debounce="300"
             class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
             placeholder={gettext("Describe the software you want to create or the change you want to make...")}
           ><%= @prompt %></textarea>
