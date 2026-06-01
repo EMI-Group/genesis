@@ -8,14 +8,49 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 
 ## Routing Table
 
-- `./evo_dash/` → Domain & business logic (Application supervisor, TaskRegistry)
-- `./evo_dash_web/` → Web interface (LiveViews, components, router, templates, helpers)
+- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `TaskRegistry` (ETS+DETS GenServer)
+- `./evo_dash_web/` → Web interface: LiveViews, components, router, endpoint, helpers
+- `./evo_dash_web.ex` → Web module macro (`use EvoDashWeb, :live_view` / `:html` / `:controller` etc.)
 
 ## API Surface
 
+### Domain Modules (`./evo_dash/`)
+
+| Module | Purpose |
+|--------|---------|
+| `EvoDash.Application` | OTP supervisor tree (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskRegistry → Endpoint) |
+| `EvoDash.TaskRegistry` | ETS+DETS GenServer for task tracking; spawns `EvoGit.Runtime.*` processes |
+
+### Web Modules (`./evo_dash_web/`)
+
+| Module | Purpose |
+|--------|---------|
+| `EvoDashWeb.Endpoint` | Phoenix endpoint |
+| `EvoDashWeb.Router` | Routes to LiveViews and LiveDashboard |
+| `EvoDashWeb.Helpers` | Shared UI utilities (status badges, datetime, icons, modals) |
+| `EvoDashWeb.Gettext` | i18n backend |
+
+#### LiveViews (`./evo_dash_web/live/`)
+
+| LiveView | Route | Purpose |
+|----------|-------|---------|
+| `DashboardLive` | `GET /` | Main dashboard: project tabs, task form, task cards, project settings |
+| `AgentsLive` | `GET /agents` | Agent tree inspector with chat history |
+| `SettingsLive` | `GET /settings` | Runtime scheduler config (concurrency, retries, depth, model, pause/resume) |
+| `HelpLive` | `GET /help` | User config file manager, TOML editor, credentials reference |
+
+#### Components (`./evo_dash_web/components/`)
+
+| Component | Purpose |
+|-----------|---------|
+| `CoreComponents` | Phoenix 1.8 base components (input, button, flash, table, list, icon) |
+| `DashboardComponents` | Task form, scheduler settings, project tabs, task cards, open project form |
+| `AgentsComponents` | Recursive agent path tree with connector lines and status coloring |
+| `Layouts` | App layout with navbar, theme toggle, flash group |
+
 ### Cross-App Communication: EvoDash → EvoGit
 
-All communication from EvoDash to EvoGit is **direct function calls** (synchronous GenServer calls and direct module calls). There is no message queue, no REST API, and no custom IPC — both apps run in the same BEAM VM.
+All communication from EvoDash to EvoGit is **direct function calls** (synchronous GenServer calls and direct module calls). Both apps run in the same BEAM VM — no network boundary or serialization.
 
 #### 1. Task Execution (TaskRegistry → EvoGit.Runtime)
 
@@ -34,7 +69,7 @@ The `event_sink` is `{EvoDash.TaskRegistry, :update_task_log, [task_id]}` — Ev
 - `EvoGit.AgentScheduler.update_config(keyword_list)` — push runtime config changes (max_concurrency, max_tool_concurrency, agent_max_retries, max_agent_depth, max_retries, llm_model)
 - `EvoGit.AgentScheduler.pause()` / `EvoGit.AgentScheduler.resume()` — toggle scheduler pause state
 
-When AgentScheduler processes these, it broadcasts `{:scheduler_config_updated}` on `EvoGit.PubSub` topic `"scheduler_config"` (via `EvoGit.AgentScheduler.PubSub.broadcast_config_updated/0`).
+When AgentScheduler processes these, it broadcasts `{:scheduler_config_updated}` on `EvoGit.PubSub` topic `"scheduler_config"`.
 
 #### 3. Foreign Repository Management (DashboardLive → EvoGit.AgentScheduler)
 
@@ -51,30 +86,27 @@ When AgentScheduler processes these, it broadcasts `{:scheduler_config_updated}`
 
 #### 5. PubSub Topics (EvoGit.PubSub — owned by evo_git)
 
-EvoDash subscribes to these `EvoGit.PubSub` topics:
-- `"tasks"` — TaskRegistry broadcasts `{:tasks_updated}` on task status changes; LiveViews subscribe to refresh UI
-- `"agents"` — AgentScheduler broadcasts `{:agents_updated}` on agent state changes; AgentsLive subscribes
-- `"scheduler_config"` — broadcasts `{:scheduler_config_updated}` on config/pause/resume; SettingsLive subscribes
-- `"recent_projects"` — TaskRegistry broadcasts `{:recent_projects_updated}`; DashboardLive subscribes
+| Topic | Events | Subscribers |
+|-------|--------|-------------|
+| `"tasks"` | `{:tasks_updated}` | TaskRegistry, DashboardLive |
+| `"agents"` | `{:agents_updated}` | AgentsLive |
+| `"scheduler_config"` | `{:scheduler_config_updated}` | SettingsLive |
+| `"recent_projects"` | `{:recent_projects_updated}` | DashboardLive |
 
-Note: EvoDash also has its own `EvoDash.PubSub` (started in its supervision tree) but it is not used for cross-app communication. All cross-app events go through `EvoGit.PubSub`.
+EvoDash has its own `EvoDash.PubSub` but it is not used for cross-app communication.
 
 #### 6. Shared ETS Tables (owned by EvoGit.AgentScheduler)
 
-AgentsLive reads directly from two ETS tables owned by the AgentScheduler:
-- `:evogit_agent_state` — agent spatial/temporal state, event_sink, context, phylo_node
-- `:evogit_sched_meta` — scheduling metadata (status, worktree, depth, parent, retries, spec)
+AgentsLive reads directly from two public ETS tables:
+- `:evogit_agent_state` — agent spatial/temporal state
+- `:evogit_sched_meta` — scheduling metadata (status, worktree, depth, retries, spec)
 
-These are `:public` named tables. AgentsLive uses `:ets.whereis/1` to check existence before reading.
-
-#### 7. Application.put_env / Application.get_env
-
-No `Application.put_env` calls to `:evo_git` exist in EvoDash. All config changes go through the `EvoGit.AgentScheduler.update_config/1` GenServer call. EvoDash only uses `Application.get_env(:evo_dash, ...)` for its own desktop mode settings.
+No `Application.put_env` calls to `:evo_git` exist in EvoDash. All config changes go through `EvoGit.AgentScheduler.update_config/1`.
 
 ## Constraints
 
-- No `Application.put_env` is used to modify EvoGit configuration — all changes go through the AgentScheduler GenServer API
-- EvoDash directly calls EvoGit GenServers (same BEAM VM) — no network boundary or serialization
-- All EvoGit.PubSub subscriptions are conditional on `connected?(socket)` in LiveViews to avoid stale subscriptions
-- AgentsLive reads ETS directly (no GenServer call) for performance — tables are public
+- Domain modules in `./evo_dash/`, web modules in `./evo_dash_web/`
+- All LiveViews use `EvoDashWeb.Gettext` for i18n
+- No database — state in ETS/DETS and socket assigns
+- All EvoGit.PubSub subscriptions are conditional on `connected?(socket)` in LiveViews
 - EvoGit.PubSub is owned by the evo_git application; EvoDash subscribes as a consumer
