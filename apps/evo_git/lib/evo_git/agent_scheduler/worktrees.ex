@@ -12,7 +12,6 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
-  alias EvoGit.Core.ForeignRepo
   alias EvoGit.AgentScheduler.State
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
@@ -48,6 +47,15 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
   def ensure_initialized(%State{initialized: true} = state, nil), do: state
 
+  def ensure_initialized(_state, nil) do
+    raise ArgumentError, "repo_path is required for initial AgentScheduler initialization"
+  end
+
+  def ensure_initialized(state, repo_path) do
+    repo_root = Path.expand(repo_path)
+    do_initialize(state, repo_root)
+  end
+
   defp ensure_initialized_new_repo(%State{initialized: true} = state, new_root, new_repo_path) do
     # If agents are still running, don't tear down worktrees — just register
     # the new repo path in initialized_repos and create the worker directory.
@@ -75,15 +83,6 @@ defmodule EvoGit.AgentScheduler.Worktrees do
       state = teardown_worktrees(state, new_root)
       do_initialize(state, new_root)
     end
-  end
-
-  def ensure_initialized(_state, nil) do
-    raise ArgumentError, "repo_path is required for initial AgentScheduler initialization"
-  end
-
-  def ensure_initialized(state, repo_path) do
-    repo_root = Path.expand(repo_path)
-    do_initialize(state, repo_root)
   end
 
   defp do_initialize(%State{} = state, repo_root) do

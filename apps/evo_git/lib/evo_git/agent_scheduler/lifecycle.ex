@@ -45,7 +45,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       end
 
     # Delete the agent's persistent worktree
-    if meta.worktree and agent_repo_root do
+    if meta.worktree && agent_repo_root do
       Worktrees.delete(meta.worktree, agent_repo_root)
     end
 
@@ -104,7 +104,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
                 _ -> nil
               end
 
-            if meta.worktree and agent_repo_root do
+            if meta.worktree && agent_repo_root do
               Worktrees.delete(meta.worktree, agent_repo_root)
             end
 
@@ -139,7 +139,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
           _ -> nil
         end
 
-      if meta.worktree and agent_repo_root do
+      if meta.worktree && agent_repo_root do
         Worktrees.delete(meta.worktree, agent_repo_root)
       end
 
