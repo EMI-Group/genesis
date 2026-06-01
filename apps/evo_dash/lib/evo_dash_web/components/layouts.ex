@@ -43,9 +43,12 @@ defmodule EvoDashWeb.Layouts do
       <nav class="navbar px-6 sm:px-8 lg:px-12 xl:px-16">
         <!-- Left: Logo -->
         <div class="flex-1">
-          <.link navigate={~p"/"} class="flex items-center gap-2 text-lg font-bold tracking-tight hover:opacity-80 transition-opacity">
-            <.icon name="hero-code-bracket-square" class="size-6 text-primary" />
-            <span>EvoGit</span>
+          <.link navigate={~p"/"} class="flex items-center gap-2.5 hover:opacity-80 transition-opacity group">
+            <img src={~p"/images/logo.svg"} class="h-8 w-auto block dark:hidden" alt="EvoGit" />
+            <img src={~p"/images/logo-alt.svg"} class="h-8 w-auto hidden dark:block" alt="EvoGit" />
+            <span class="text-xl font-extrabold tracking-tight">
+              Evo<span class="text-primary">Git</span>
+            </span>
           </.link>
         </div>
 
