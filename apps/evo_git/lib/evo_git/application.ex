@@ -8,6 +8,7 @@ defmodule EvoGit.Application do
   @impl true
   def start(_type, _args) do
     children = [
+      {Phoenix.PubSub, name: EvoGit.PubSub},
       {Task.Supervisor, name: EvoGit.TaskSupervisor},
       {EvoGit.AgentScheduler, []}
     ]

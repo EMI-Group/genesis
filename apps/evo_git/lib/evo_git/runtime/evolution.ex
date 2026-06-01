@@ -122,7 +122,7 @@ defmodule EvoGit.Runtime.Evolution do
 
   defp notify_finalizing(opts) do
     if task_id = Keyword.get(opts, :task_id) do
-      EvoDash.TaskRegistry.update_task_status(task_id, :finalizing)
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
     end
   end
 
