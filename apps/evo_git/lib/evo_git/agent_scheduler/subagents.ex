@@ -315,7 +315,4 @@ defmodule EvoGit.AgentScheduler.Subagents do
     end
   end
 
-  defp put_agent_state(agent_id, agent_state) do
-    :ets.insert(@agent_table, {agent_id, agent_state})
-  end
 end
