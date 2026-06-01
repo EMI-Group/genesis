@@ -65,6 +65,7 @@ defmodule EvoDash.MixProject do
       {:jason, "~> 1.2"},
       {:gettext, "~> 0.26"},
       {:dns_cluster, "~> 0.2.0"},
+      {:phoenix_pubsub, "~> 2.2"},
       {:bandit, "~> 1.5"},
       {:desktop, "~> 1.5"}
     ]
