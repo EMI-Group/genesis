@@ -15,7 +15,7 @@ defmodule EvoGit.Runtime.PullRequest do
   Returns the PR URL on success, `nil` otherwise.
   Never raises — all failures are logged and return `nil`.
   """
-  @spec try_create(String.t(), String.t(), String.t(), String.t()) :: String.t() | nil
+  @spec try_create(String.t(), String.t(), String.t(), String.t()) :: {String.t(), String.t()} | {nil, nil}
   def try_create(repo_path, head_branch, objective, agent_result) do
     if Git.gh_available?() do
       with true <-
@@ -38,33 +38,33 @@ defmodule EvoGit.Runtime.PullRequest do
             case Git.create_pull_request(repo_path, head_branch, base_branch, pr_title, pr_body) do
               {:ok, pr_url} ->
                 Logger.info("Created pull request: #{pr_url}")
-                pr_url
+                {pr_url, pr_title}
 
               {:error, _code, output} ->
                 Logger.warning("Failed to create pull request: #{output}")
-                nil
+                {nil, nil}
             end
 
           {:error, _code, output} ->
             Logger.warning("Failed to push branch '#{head_branch}': #{output}")
-            nil
+            {nil, nil}
 
           {:conflict, output} ->
             Logger.warning("Conflict pushing branch '#{head_branch}': #{output}")
-            nil
+            {nil, nil}
         end
       else
         {:error, _code, output} ->
           Logger.warning("Failed to create remote repository: #{output}")
-          nil
+          {nil, nil}
 
         _ ->
           Logger.warning("Failed to set up remote repository")
-          nil
+          {nil, nil}
       end
     else
       Logger.info("'gh' CLI not available, skipping PR creation")
-      nil
+      {nil, nil}
     end
   end
 
