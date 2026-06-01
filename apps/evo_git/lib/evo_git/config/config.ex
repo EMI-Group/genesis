@@ -47,6 +47,11 @@ defmodule EvoGit.Config do
       initial_seed_count = 15
       llm_seed_count = 25
 
+      [truncation]
+      tool_output_max_bytes = 131_072    # 128 KB — threshold to trigger truncation
+      tool_output_truncate_size = 8_192  # 8 KB — size of truncated output
+      context_max_bytes = 65_536         # 64 KB — max CONTEXT.md file size
+
   ## Credentials File Format (credentials.toml)
 
       # API keys as environment variable names — they are set as env vars on load
@@ -295,6 +300,11 @@ defmodule EvoGit.Config do
         stagnation_limit: 5,
         initial_seed_count: 15,
         llm_seed_count: 25
+      },
+      truncation: %{
+        tool_output_max_bytes: 131_072,
+        tool_output_truncate_size: 8_192,
+        context_max_bytes: 65_536
       }
     }
   end
