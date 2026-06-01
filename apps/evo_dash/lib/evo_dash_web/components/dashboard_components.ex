@@ -200,6 +200,96 @@ defmodule EvoDashWeb.DashboardComponents do
   end
 
   # ---------------------------------------------------------------------------
+  # sandbox_settings/1 — Sandbox configuration panel
+  # ---------------------------------------------------------------------------
+
+  attr :config, :map, required: true
+
+  def sandbox_settings(assigns) do
+    ~H"""
+    <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
+      <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-6 md:p-8">
+        <div class="flex items-center gap-3">
+          <div class="bg-accent/15 text-accent p-3 rounded-xl">
+            <.icon name="hero-shield-check" class="size-6" />
+          </div>
+          <div>
+            <h2 class="text-xl font-bold">{gettext("Sandbox Settings")}</h2>
+            <p class="text-sm text-base-content/60">{gettext("Resource isolation for agent-executed commands")}</p>
+          </div>
+        </div>
+      </div>
+      <div class="p-6 md:p-8 pt-4 md:pt-6">
+        <.form for={%{}} phx-submit="update_sandbox_config" phx-change="sandbox_config_change" class="space-y-4">
+          <div class="space-y-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm font-medium">{gettext("Sandbox Mode")}</span>
+              </label>
+              <select name="sandbox_mode" class="select select-bordered select-sm w-full font-mono">
+                <option value="auto" selected={(@config[:sandbox_mode] || :auto) == :auto}>{gettext("Auto (default)")}</option>
+                <option value="enabled" selected={@config[:sandbox_mode] == :enabled}>{gettext("Enabled")}</option>
+                <option value="disabled" selected={@config[:sandbox_mode] == :disabled}>{gettext("Disabled")}</option>
+              </select>
+              <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Controls sandbox activation")}</span></label>
+            </div>
+            <div class={if @config[:sandbox_mode] == :disabled, do: "opacity-50 pointer-events-none select-none", else: ""}>
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text text-sm font-medium">{gettext("CPU Weight")}</span>
+                  </label>
+                  <input type="number" name="cpu_weight" value={@config[:sandbox_resources][:cpu_weight] || 30} min="1" max="10000"
+                    class="input input-bordered input-sm w-full font-mono" />
+                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("CPU allocation weight (1-10000)")}</span></label>
+                </div>
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text text-sm font-medium">{gettext("Memory Max")}</span>
+                  </label>
+                  <input type="text" name="memory_max" value={@config[:sandbox_resources][:memory_max] || "16G"}
+                    class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 16G, 8G, 512M" />
+                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Memory limit for all sandboxed processes")}</span></label>
+                </div>
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text text-sm font-medium">{gettext("Tasks Max")}</span>
+                  </label>
+                  <input type="number" name="tasks_max" value={@config[:sandbox_resources][:tasks_max] || 8196} min="1"
+                    class="input input-bordered input-sm w-full font-mono" />
+                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max concurrent tasks/processes")}</span></label>
+                </div>
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text text-sm font-medium">{gettext("Open Files Limit")}</span>
+                  </label>
+                  <input type="number" name="limit_nofile" value={@config[:sandbox_resources][:limit_nofile] || 65536} min="1"
+                    class="input input-bordered input-sm w-full font-mono" />
+                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max open file descriptors")}</span></label>
+                </div>
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text text-sm font-medium">{gettext("OOM Score Adjust")}</span>
+                  </label>
+                  <input type="number" name="oom_score_adjust" value={@config[:sandbox_resources][:oom_score_adjust] || 1000} min="-1000" max="1000"
+                    class="input input-bordered input-sm w-full font-mono" />
+                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("OOM killer preference (-1000 to 1000)")}</span></label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="pt-2">
+            <button type="submit" class="btn btn-accent">
+              <.icon name="hero-shield-check" class="size-4" /> {gettext("Update Sandbox Settings")}
+            </button>
+          </div>
+        </.form>
+      </div>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
   # project_tabs/1 — Pill-shaped tabs with smooth transitions
   # ---------------------------------------------------------------------------
 
