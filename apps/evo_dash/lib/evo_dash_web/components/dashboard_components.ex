@@ -431,7 +431,13 @@ defmodule EvoDashWeb.DashboardComponents do
                     <span class="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
                   </span>
                 <% end %>
-                {@task.status}
+                <%= if @task.status == :finalizing do %>
+                  <span class="loading loading-spinner loading-xs mr-1.5"></span>
+                <% end %>
+                <%= cond do %>
+                  <% @task.status == :finalizing -> %>Finalizing
+                  <% true -> %>{@task.status}
+                <% end %>
               </span>
               <span class="text-xs text-base-content/30">·</span>
               <span class="text-xs font-mono text-base-content/40">
@@ -466,7 +472,7 @@ defmodule EvoDashWeb.DashboardComponents do
               <% end %>
             </div>
             <div class="flex items-center gap-2 shrink-0">
-              <%= if @task.status == :running do %>
+              <%= if @task.status in [:running, :finalizing] do %>
                 <button
                   class="btn btn-outline btn-error shadow-sm"
                   phx-click="cancel_task"
@@ -577,6 +583,7 @@ defmodule EvoDashWeb.DashboardComponents do
   # ---------------------------------------------------------------------------
 
   defp status_accent_color(:running), do: "bg-success"
+  defp status_accent_color(:finalizing), do: "bg-orange-500"
   defp status_accent_color(:completed), do: "bg-info"
   defp status_accent_color(:failed), do: "bg-error"
   defp status_accent_color(:cancelled), do: "bg-warning"

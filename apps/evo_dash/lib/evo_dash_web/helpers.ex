@@ -63,6 +63,7 @@ defmodule EvoDashWeb.Helpers do
   `:cancelled`, `:pending`).
   """
   def task_status_badge(:running), do: "badge badge-success"
+  def task_status_badge(:finalizing), do: "badge badge-warning bg-orange-500 text-white border-orange-600"
   def task_status_badge(:completed), do: "badge badge-info"
   def task_status_badge(:failed), do: "badge badge-error"
   def task_status_badge(:cancelled), do: "badge badge-warning"

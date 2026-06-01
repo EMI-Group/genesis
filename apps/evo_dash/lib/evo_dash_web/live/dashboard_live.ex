@@ -7,7 +7,7 @@ defmodule EvoDashWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
-      <div class="animate-fade-in-up">
+      <div id="browser-notifications" class="animate-fade-in-up" phx-hook="BrowserNotifications">
         <p class="text-base-content/60 text-sm">{gettext("Manage your evolutionary software development tasks")}</p>
       </div>
 
@@ -414,6 +414,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:new_repo_id, "")
       |> assign(:new_repo_path, "")
       |> assign(:new_repo_name, "")
+      |> assign(:notified_task_ids, MapSet.new())
       |> assign_form_defaults()
       |> assign_running_and_recent_tasks()
 
@@ -452,6 +453,29 @@ defmodule EvoDashWeb.DashboardLive do
       else
         socket
       end
+
+    # Detect newly finished tasks and send browser notifications
+    previously_notified = socket.assigns.notified_task_ids
+
+    {newly_finished, updated_notified} =
+      Enum.reduce(new_tasks, {[], previously_notified}, fn task, {acc, notified} ->
+        if task.status in [:completed, :failed, :cancelled] and not MapSet.member?(notified, task.id) do
+          {[task | acc], MapSet.put(notified, task.id)}
+        else
+          {acc, notified}
+        end
+      end)
+
+    socket =
+      socket
+      |> assign(:notified_task_ids, updated_notified)
+
+    # Push notification events for each newly finished task
+    socket =
+      Enum.reduce(newly_finished, socket, fn task, sock ->
+        {title, body} = task_notification_content(task)
+        push_event(sock, "task_notification", %{title: title, body: body})
+      end)
 
     {:noreply,
      socket
@@ -877,7 +901,7 @@ defmodule EvoDashWeb.DashboardLive do
   defp assign_running_and_recent_tasks(socket) do
     all_tasks = socket.assigns.tasks
 
-    running_tasks = Enum.filter(all_tasks, &(&1.status in [:running, :pending]))
+    running_tasks = Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
 
     recent_tasks =
       all_tasks
@@ -888,6 +912,30 @@ defmodule EvoDashWeb.DashboardLive do
     socket
     |> assign(:running_tasks, running_tasks)
     |> assign(:recent_tasks, recent_tasks)
+  end
+
+  defp task_notification_content(task) do
+    objective = task.opts[:prompt] || task.opts[:objective] || ""
+
+    case task.result do
+      {:ok, %{pr_title: pr_title}} when is_binary(pr_title) and pr_title != "" ->
+        {pr_title, objective}
+
+      {:ok, _} ->
+        case task.type do
+          :genesis -> {"Genesis task completed", objective}
+          :evolve -> {"Evolution task completed", objective}
+        end
+
+      {:error, reason} ->
+        {"Task failed", inspect(reason)}
+
+      {:exit, reason} ->
+        {"Task crashed", inspect(reason)}
+
+      _ ->
+        {"Task finished", objective}
+    end
   end
 
   defp assign_form_defaults(socket) do
