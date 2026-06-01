@@ -398,10 +398,11 @@ defmodule EvoGit.AgentScheduler do
     max_retries = Map.get(scheduler_config, :max_retries, 15)
     llm_model = Map.get(config, :llm, %{}) |> Map.get(:model)
 
-    # Validate llm_model is configured
+    # Warn (but don't crash) if llm_model is not configured
     unless llm_model do
-      raise """
-      LLM model not configured. Please set llm.model in your config file:
+      Logger.warning("""
+      AgentScheduler: LLM model not configured. Agent execution will be unavailable until configured.
+      Please set llm.model in your config file:
 
       ~/.config/evogit/config.toml:
 
@@ -413,8 +414,8 @@ defmodule EvoGit.AgentScheduler do
       - "google:gemini-2.0-flash-exp"
       - "zai_coding_plan:glm-5.1"
 
-      See documentation for the full list of supported models.
-      """
+      You can also configure this via the Settings page in the dashboard.
+      """)
     end
 
     # Allow opts to override (for backward compat with CLI --flags)
@@ -522,6 +523,11 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
+  def handle_call({:run_agent, _spec}, _from, %{llm_model: nil} = state) do
+    Logger.warning("AgentScheduler: Rejecting agent spawn — LLM model not configured")
+    {:reply, {:error, :llm_not_configured}, state}
+  end
+
   def handle_call({:run_agent, spec}, from, state) do
     # Extract repo_path from the spec's phylo_node
     repo_path = spec.phylo_node.repo
