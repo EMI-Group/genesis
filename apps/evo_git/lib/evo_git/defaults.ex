@@ -48,6 +48,9 @@ defmodule EvoGit.Defaults do
   @doc "Returns the truncated output size in bytes (default: 8_192)."
   def tool_output_truncate_size, do: Config.resolve([:truncation, :tool_output_truncate_size])
 
+  @doc "Returns the default tool output size in bytes before truncation for high-output tools (default: 16_384)."
+  def tool_output_default_max_bytes, do: Config.resolve([:truncation, :tool_output_default_max_bytes])
+
   @doc "Returns the max CONTEXT.md file size in bytes before truncation (default: 65_536)."
   def context_max_bytes, do: Config.resolve([:truncation, :context_max_bytes])
 end
