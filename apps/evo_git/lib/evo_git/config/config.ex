@@ -52,6 +52,10 @@ defmodule EvoGit.Config do
       tool_output_truncate_size = 8_192  # 8 KB — size of truncated output
       context_max_bytes = 65_536         # 64 KB — max CONTEXT.md file size
 
+      [task_history]
+      max_tasks = 100        # max number of recent tasks to retain
+      max_age_days = 14      # max age in days for retained tasks
+
   ## Credentials File Format (credentials.toml)
 
       # API keys as environment variable names — they are set as env vars on load
@@ -305,6 +309,10 @@ defmodule EvoGit.Config do
         tool_output_default_max_bytes: 16_384,
         tool_output_truncate_size: 8_192,
         context_max_bytes: 65_536
+      },
+      task_history: %{
+        max_tasks: 100,
+        max_age_days: 14
       }
     }
   end
