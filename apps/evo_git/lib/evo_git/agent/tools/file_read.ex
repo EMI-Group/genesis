@@ -39,6 +39,13 @@ defmodule EvoGit.Agent.Tools.FileRead do
             "type" => "boolean",
             "description" => "Whether to include line numbers in the output (default: true)",
             "default" => true
+          },
+          "max_bytes" => %{
+            "type" => "integer",
+            "description" =>
+              "Maximum output size in bytes before truncation. " <>
+                "Default: 16384 (16KB). Increase up to 131072 (128KB) if you need more output.",
+            "default" => 16_384
           }
         },
         "required" => ["file_path"]

@@ -303,6 +303,7 @@ defmodule EvoGit.Config do
       },
       truncation: %{
         tool_output_max_bytes: 131_072,
+        tool_output_default_max_bytes: 16_384,
         tool_output_truncate_size: 8_192,
         context_max_bytes: 65_536
       }

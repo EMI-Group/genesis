@@ -49,10 +49,9 @@ defmodule EvoGit.Agent.Tools.Curl do
           "max_bytes" => %{
             "type" => "integer",
             "description" =>
-              "Maximum response size in bytes before truncation. " <>
-                "Responses larger than this will be truncated with a notice. " <>
-                "Default: 1048576 (1MB). Increase for large responses.",
-            "default" => 1_048_576
+              "Maximum output size in bytes before truncation. " <>
+                "Default: 16384 (16KB). Increase up to 131072 (128KB) if you need more output.",
+            "default" => 16_384
           },
           "timeout" => %{
             "type" => "integer",
@@ -74,19 +73,12 @@ defmodule EvoGit.Agent.Tools.Curl do
     with {:ok, url} <- Shared.fetch_string_arg(args, "url"),
          {:ok, method} <- Shared.fetch_optional_string_arg(args, "method", "GET"),
          headers <- Map.get(args, "headers", %{}),
-         body <- Map.get(args, "body"),
-         {:ok, max_bytes} <- validate_max_bytes(Map.get(args, "max_bytes", 1_048_576)) do
-      do_curl(url, String.upcase(method), headers, body, max_bytes)
+         body <- Map.get(args, "body") do
+      do_curl(url, String.upcase(method), headers, body)
     end
   end
 
-  defp validate_max_bytes(value) when is_integer(value) and value >= 0,
-    do: {:ok, value}
-
-  defp validate_max_bytes(value),
-    do: {:error, "Argument 'max_bytes' must be a non-negative integer, got: #{inspect(value)}"}
-
-  defp do_curl(url, method, headers, body, max_bytes) do
+  defp do_curl(url, method, headers, body) do
     # Build curl command
     args = ["-s", "-S", "-X", method]
 
@@ -108,12 +100,7 @@ defmodule EvoGit.Agent.Tools.Curl do
 
     case result do
       {output, 0} ->
-        # Truncate output if too large
-        if byte_size(output) > max_bytes do
-          binary_part(output, 0, max_bytes) <> "\n\n[Response truncated at #{max_bytes} bytes]"
-        else
-          output
-        end
+        output
 
       {output, exit_code} ->
         "Error: curl exited with code #{exit_code}\n#{output}"
