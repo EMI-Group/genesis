@@ -438,9 +438,8 @@ defmodule EvoGit.AgentScheduler do
     {:ok,
      %State{
        initialized: false,
-       repo_root: nil,
-       repos: %{},
-       base_sha: nil,
+       foreign_repos: %{},
+       initialized_repos: %{},
        max_concurrency: max_concurrency,
        agent_max_retries: agent_max_retries,
        max_depth: max_depth,
@@ -472,30 +471,30 @@ defmodule EvoGit.AgentScheduler do
       |> Enum.map(fn repo -> {repo.id, repo} end)
       |> Map.new()
 
-    # Merge with existing repos
-    repos = Map.merge(state.repos, repos_map)
+    # Merge with existing foreign repos
+    foreign_repos = Map.merge(state.foreign_repos, repos_map)
 
     Logger.info(
       "AgentScheduler: Registered #{map_size(repos_map)} foreign repo(s): #{inspect(Map.keys(repos_map))}"
     )
 
-    {:reply, :ok, %{state | repos: repos}}
+    {:reply, :ok, %{state | foreign_repos: foreign_repos}}
   end
 
   @impl true
   def handle_call(:get_foreign_repos, _from, state) do
-    repos = Map.values(state.repos)
+    repos = Map.values(state.foreign_repos)
     {:reply, repos, state}
   end
 
   @impl true
   def handle_call({:register_foreign_repo, repo}, _from, state) do
-    if Map.has_key?(state.repos, repo.id) do
+    if Map.has_key?(state.foreign_repos, repo.id) do
       {:reply, {:error, {:already_exists, repo.id}}, state}
     else
-      repos = Map.put(state.repos, repo.id, repo)
+      foreign_repos = Map.put(state.foreign_repos, repo.id, repo)
       Logger.info("AgentScheduler: Registered foreign repo #{repo.id} at #{repo.root}")
-      {:reply, :ok, %{state | repos: repos}}
+      {:reply, :ok, %{state | foreign_repos: foreign_repos}}
     end
   end
 
@@ -505,32 +504,24 @@ defmodule EvoGit.AgentScheduler do
       repo_id == :primary ->
         {:reply, {:error, :cannot_unregister_primary}, state}
 
-      not Map.has_key?(state.repos, repo_id) ->
+      not Map.has_key?(state.foreign_repos, repo_id) ->
         {:reply, {:error, {:not_found, repo_id}}, state}
 
       true ->
-        repos = Map.delete(state.repos, repo_id)
+        foreign_repos = Map.delete(state.foreign_repos, repo_id)
         Logger.info("AgentScheduler: Unregistered foreign repo #{repo_id}")
-        {:reply, :ok, %{state | repos: repos}}
+        {:reply, :ok, %{state | foreign_repos: foreign_repos}}
     end
   end
 
   @impl true
   def handle_call({:repo_root_for, repo_id}, _from, state) do
-    case Map.get(state.repos, repo_id) do
+    case Map.get(state.foreign_repos, repo_id) do
       %ForeignRepo{root: root} ->
         {:reply, root, state}
 
       nil ->
-        # Fallback for :primary when repos map not yet populated.
-        # NOTE: In multi-task scenarios, state.repo_root reflects the
-        # first task's repo. Agents should use Process.get(:evogit_repo_root)
-        # or the per-agent AgentState.repo_root for correct resolution.
-        if repo_id == :primary and state.repo_root do
-          {:reply, state.repo_root, state}
-        else
-          {:reply, {:error, {:unknown_repo, repo_id}}, state}
-        end
+        {:reply, {:error, {:unknown_repo, repo_id}}, state}
     end
   end
 

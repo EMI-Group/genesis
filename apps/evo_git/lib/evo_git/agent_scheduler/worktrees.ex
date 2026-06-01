@@ -33,53 +33,47 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   """
   @spec ensure_initialized(State.t(), String.t() | nil) :: State.t()
 
-  def ensure_initialized(state, repo_path \\ nil)
+  def ensure_initialized(%State{initialized: true} = state), do: state
+
+  def ensure_initialized(%State{initialized: true} = state, new_repo_path)
+      when is_binary(new_repo_path) do
+    new_root = Path.expand(new_repo_path)
+
+    if Map.has_key?(state.initialized_repos, new_root) do
+      state
+    else
+      ensure_initialized_new_repo(state, new_root, new_repo_path)
+    end
+  end
 
   def ensure_initialized(%State{initialized: true} = state, nil), do: state
 
-  def ensure_initialized(%State{initialized: true, repo_root: repo_root} = state, new_repo_path)
-      when repo_root == new_repo_path do
-    state
-  end
-
-  def ensure_initialized(%State{initialized: true} = state, new_repo_path) do
-    # If agents are still running from a previous task, do NOT tear down
-    # their worktrees. Just ensure the new repo's worker directory exists.
+  defp ensure_initialized_new_repo(%State{initialized: true} = state, new_root, new_repo_path) do
+    # If agents are still running, don't tear down worktrees — just register
+    # the new repo path in initialized_repos and create the worker directory.
     # Per-agent repo_root resolution (via Dispatch.resolve_agent_repo_root/2)
-    # derives the correct root from spec data, so we don't need to overwrite
-    # the global state.repo_root or repos[:primary].
+    # derives the correct root from spec data, so we don't need a global
+    # state.repo_root.
     if state.running_count > 0 do
-      new_root = Path.expand(new_repo_path)
+      initialized_keys = Map.keys(state.initialized_repos)
 
-      # If same repo, nothing to do
-      if new_root == state.repo_root do
-        state
-      else
-        Logger.warning(
-          "AgentScheduler: Concurrent task targets #{new_root} while " <>
-            "#{state.running_count} agent(s) still running in #{state.repo_root} — " <>
-            "preserving existing primary, creating worker directory for new repo"
-        )
-
-        worker_base = Path.join(new_root, ".evogit/workers")
-        File.mkdir_p!(worker_base)
-
-        # Register the new repo under a unique key so it can be looked up.
-        # Keep the existing :primary intact — it belongs to running agents.
-        repo_key = :"primary_#{:erlang.phash2(new_root)}"
-        new_repo = ForeignRepo.new(repo_key, new_root)
-        repos = Map.put_new(state.repos, repo_key, new_repo)
-
-        # Do NOT overwrite state.repo_root, repos[:primary], or base_sha
-        %State{state | repos: repos}
-      end
-    else
-      Logger.info(
-        "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing..."
+      Logger.warning(
+        "AgentScheduler: Concurrent task targets #{new_root} while " <>
+          "#{state.running_count} agent(s) still running (initialized repos: #{inspect(initialized_keys)}) — " <>
+          "creating worker directory for new repo"
       )
 
-      state = teardown_worktrees(state)
-      do_initialize(state, new_repo_path)
+      worker_base = Path.join(new_root, ".evogit/workers")
+      File.mkdir_p!(worker_base)
+
+      %State{state | initialized_repos: Map.put(state.initialized_repos, new_root, true)}
+    else
+      Logger.info(
+        "AgentScheduler: Repo path changed (initialized repos: #{inspect(Map.keys(state.initialized_repos))}), reinitializing for #{new_repo_path}..."
+      )
+
+      state = teardown_worktrees(state, new_root)
+      do_initialize(state, new_root)
     end
   end
 
@@ -105,18 +99,10 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
     File.mkdir_p!(worker_base)
 
-    {:ok, current_sha} = Git.rev_parse(repo_root)
-
-    # Register primary repo
-    primary_repo = ForeignRepo.new(:primary, repo_root)
-    repos = Map.put(state.repos, :primary, primary_repo)
-
     %State{
       state
       | initialized: true,
-        repo_root: repo_root,
-        repos: repos,
-        base_sha: current_sha
+        initialized_repos: Map.put(state.initialized_repos, repo_root, true)
     }
   end
 
@@ -126,15 +112,16 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   Removes the worker base directory, prunes worktrees, and resets
   the initialized flag.
   """
-  @spec teardown_worktrees(State.t()) :: State.t()
+  @spec teardown_worktrees(State.t(), String.t()) :: State.t()
 
-  def teardown_worktrees(%State{repo_root: repo_root} = state) when is_binary(repo_root) do
+  def teardown_worktrees(%State{} = state, repo_root) when is_binary(repo_root) do
     worker_base = Path.join(repo_root, ".evogit/workers")
     File.rm_rf!(worker_base)
     Git.prune_worktrees(repo_root)
     %State{state | initialized: false}
   end
 
+  @spec teardown_worktrees(State.t()) :: State.t()
   def teardown_worktrees(%State{} = state), do: %State{state | initialized: false}
 
   # --- Worktree Assignment and Preparation ---
