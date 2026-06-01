@@ -53,4 +53,7 @@ defmodule EvoGit.Defaults do
 
   @doc "Returns the max CONTEXT.md file size in bytes before truncation (default: 65_536)."
   def context_max_bytes, do: Config.resolve([:truncation, :context_max_bytes])
+
+  @doc "Returns the sandbox resource limits map."
+  def sandbox_resources, do: Config.resolve([:sandbox, :resources])
 end

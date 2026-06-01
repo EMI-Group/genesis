@@ -35,6 +35,13 @@ defmodule EvoGit.Config do
       [sandbox]
       mode = "auto"  # "auto" | "enabled" | "disabled"
 
+      [sandbox.resources]
+      cpu_weight = 30          # CPU weight (1-10000)
+      memory_max = "16G"       # Memory limit (e.g., "16G", "8G", "512M")
+      tasks_max = 8196         # Max tasks/processes
+      limit_nofile = 65536     # Max open files
+      oom_score_adjust = 1000  # OOM score (-1000 to 1000)
+
       [evolution]
       pool_size = 50
       max_generations = 20
@@ -290,7 +297,14 @@ defmodule EvoGit.Config do
       llm: %{},
       user: %{},
       sandbox: %{
-        mode: :auto
+        mode: :auto,
+        resources: %{
+          cpu_weight: 30,
+          memory_max: "16G",
+          tasks_max: 8196,
+          limit_nofile: 65536,
+          oom_score_adjust: 1000
+        }
       },
       evolution: %{
         pool_size: 50,

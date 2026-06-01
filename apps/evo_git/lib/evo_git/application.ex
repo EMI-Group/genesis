@@ -10,7 +10,8 @@ defmodule EvoGit.Application do
     children = [
       {Phoenix.PubSub, name: EvoGit.PubSub},
       {Task.Supervisor, name: EvoGit.TaskSupervisor},
-      {EvoGit.AgentScheduler, []}
+      {EvoGit.AgentScheduler, []},
+      {EvoGit.SandboxSlice, []}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
