@@ -602,6 +602,7 @@ defmodule EvoGit.AgentScheduler do
     else
       Logger.info("AgentScheduler: Pausing scheduler — no new slots or agents will be granted")
       state = struct(state, paused: true)
+      EvoGit.AgentScheduler.PubSub.broadcast_config_updated()
       {:reply, :ok, state}
     end
   end
@@ -614,6 +615,7 @@ defmodule EvoGit.AgentScheduler do
       {state, status_updates} = Slots.grant_pending_on_resume(state)
       apply_status_updates(status_updates)
       state = Dispatch.dispatch_queued_agents(state)
+      EvoGit.AgentScheduler.PubSub.broadcast_config_updated()
       {:reply, :ok, state}
     else
       {:reply, :ok, state}
@@ -729,6 +731,8 @@ defmodule EvoGit.AgentScheduler do
         "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
     )
 
+    EvoGit.AgentScheduler.PubSub.broadcast_config_updated()
+
     {:reply, :ok, state}
   end
 
@@ -800,6 +804,7 @@ defmodule EvoGit.AgentScheduler do
 
   defp put_agent_state(agent_id, agent_state) do
     :ets.insert(@agent_table, {agent_id, agent_state})
+    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 
   # --- ETS Helpers (Scheduler Metadata Table) ---
@@ -813,6 +818,7 @@ defmodule EvoGit.AgentScheduler do
 
   defp put_sched_meta(agent_id, meta) do
     :ets.insert(@sched_table, {agent_id, meta})
+    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 
   # Applies a list of {agent_id, status} updates to the ETS SchedMeta table.
