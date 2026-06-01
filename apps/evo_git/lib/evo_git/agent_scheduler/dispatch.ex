@@ -56,12 +56,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       end
 
     # Agent state table: live spatial/temporal state for the agent process
-    # Resolve repo root from scheduler state for display/grouping in the dashboard
-    agent_repo_root =
-      case Map.get(state.repos, spec.repo_id) do
-        %ForeignRepo{root: root} -> root
-        nil -> state.repo_root
-      end
+    # Resolve repo root from the spec's own data (avoids reading shared mutable state)
+    agent_repo_root = resolve_agent_repo_root(spec, state)
 
     put_agent_state(id, %AgentState{
       context_node: spec.context_node,
