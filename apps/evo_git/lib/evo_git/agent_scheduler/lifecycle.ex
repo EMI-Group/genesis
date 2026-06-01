@@ -145,10 +145,12 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
   defp put_sched_meta(agent_id, meta) do
     :ets.insert(@sched_table, {agent_id, meta})
+    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 
   defp delete_sched_meta(agent_id) do
     :ets.delete(@sched_table, agent_id)
+    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 
   defp get_agent_state(agent_id) do
@@ -160,9 +162,11 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
   defp put_agent_state(agent_id, agent_state) do
     :ets.insert(@agent_table, {agent_id, agent_state})
+    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 
   defp delete_agent_state(agent_id) do
     :ets.delete(@agent_table, agent_id)
+    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 end

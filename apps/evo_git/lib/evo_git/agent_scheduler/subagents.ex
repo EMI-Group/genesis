@@ -306,6 +306,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
   defp put_sched_meta(agent_id, meta) do
     :ets.insert(@sched_table, {agent_id, meta})
+    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 
   defp get_agent_state(agent_id) do
