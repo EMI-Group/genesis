@@ -235,9 +235,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   For primary repo agents, derives from phylo_node.repo (which is either
   the repo root for top-level agents or a worktree path for subagents).
-  For foreign repo agents, falls back to the state.repos map.
+  For foreign repo agents, looks up the foreign_repos map.
   """
-  @spec resolve_agent_repo_root(AgentSpec.t(), State.t()) :: String.t()
+  @spec resolve_agent_repo_root(AgentSpec.t(), State.t()) :: String.t() | nil
   def resolve_agent_repo_root(spec, state) do
     if spec.repo_id == :primary do
       # spec.phylo_node.repo is either:
@@ -249,10 +249,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         [_] -> spec.phylo_node.repo
       end
     else
-      # Foreign repo — resolve from the repos map
-      case Map.get(state.repos, spec.repo_id) do
+      # Foreign repo — resolve from the foreign_repos map
+      case Map.get(state.foreign_repos, spec.repo_id) do
         %ForeignRepo{root: root} -> root
-        nil -> state.repo_root
+        nil -> nil
       end
     end
   end

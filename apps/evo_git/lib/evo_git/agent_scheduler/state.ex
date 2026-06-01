@@ -9,9 +9,8 @@ defmodule EvoGit.AgentScheduler.State do
 
   ### Initialization
   - `initialized` — whether the scheduler has completed initialization
-  - `repo_root` — absolute path to the primary repository root
-  - `repos` — registered foreign repos keyed by atom id
-  - `base_sha` — the Git SHA at which all agent worktrees are branched
+  - `foreign_repos` — registered foreign repos keyed by atom id (does NOT include `:primary`)
+  - `initialized_repos` — map of absolute repo paths that have been initialized (`%{String.t() => true}`)
 
   ### Configuration
   - `max_concurrency` — maximum concurrent LLM calls (LLM slot pool size)
@@ -47,9 +46,8 @@ defmodule EvoGit.AgentScheduler.State do
   @enforce_keys []
   defstruct [
     initialized: false,
-    repo_root: nil,
-    repos: %{},
-    base_sha: nil,
+    foreign_repos: %{},
+    initialized_repos: %{},
     max_concurrency: 3,
     agent_max_retries: 3,
     max_depth: 8,
@@ -72,9 +70,8 @@ defmodule EvoGit.AgentScheduler.State do
 
   @type t :: %__MODULE__{
           initialized: boolean(),
-          repo_root: String.t() | nil,
-          repos: %{atom() => ForeignRepo.t()},
-          base_sha: String.t() | nil,
+          foreign_repos: %{atom() => ForeignRepo.t()},
+          initialized_repos: %{String.t() => true},
           max_concurrency: pos_integer(),
           agent_max_retries: non_neg_integer(),
           max_depth: pos_integer(),
