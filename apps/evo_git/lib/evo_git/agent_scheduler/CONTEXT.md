@@ -27,15 +27,25 @@ Two independent slot pools with FIFO queuing:
 
 All slot functions return `{result, state, status_updates}` where `status_updates` is a list of `{agent_id, :blocked | :running}` tuples applied to ETS SchedMeta for dashboard visibility.
 
+### Multi-Task Repo Root Resolution
+
+The scheduler supports multiple concurrent tasks targeting different repos. Repo root resolution follows this priority:
+
+1. **Per-agent ETS** (`AgentState.repo_root`) — set at registration via `Dispatch.resolve_agent_repo_root/2`, derived from spec data. Used by `Lifecycle` for worktree cleanup.
+2. **Process dictionary** (`Process.get(:evogit_repo_root)`) — set at dispatch time in `try_dispatch/2`. Preferred by `current_repo_root/0` for runtime lookups.
+3. **Global state** (`state.repo_root` / `state.repos`) — convenience for single-task scenarios; reflects the first task's repo. NOT overwritten when agents are running (see `ensure_initialized` guard).
+
+`resolve_agent_repo_root/2` in Dispatch is self-contained for primary repos (strips worktree suffix from `spec.phylo_node.repo`). For foreign repos, it looks up `state.repos` by `spec.repo_id`.
+
 ### Worktree Lifecycle (Worktrees module)
 
 Worktrees are **persistent per-agent** (created on dispatch, reused on retry, deleted on recycle):
 
-1. `ensure_initialized/2` — Creates `.evogit/workers/`, prunes stale worktrees and orphaned branches
+1. `ensure_initialized/2` — Creates `.evogit/workers/`, prunes stale worktrees and orphaned branches. When agents are already running and a different repo comes in, registers the new repo additively WITHOUT overwriting the existing `state.repo_root`/`repos[:primary]`.
 2. `assign_and_prepare_worktree/2` — Cleans worktree, checks out agent branch, binds repo path
 3. `run_init_script/2` — Runs optional init script from `evogit.toml` (primary repo only)
 4. `sync_current_commit/2` — Reads HEAD SHA and updates both ETS tables if changed
-5. `delete/2` — Removes worktree directory, prunes, deletes branch
+5. `delete/2` — Removes worktree directory, prunes, deletes branch (takes explicit `repo_root` param)
 6. `teardown_worktrees/1` — Removes entire worker base directory
 
 ### Agent Dispatching (Dispatch module)
@@ -66,8 +76,8 @@ Handles subagent validation, spawning, and result collection:
 
 Handles agent completion and crash recovery:
 
-1. `recycle_agent/2` — Deletes worktree and both ETS entries on normal completion
-2. `handle_agent_crash/3` — Retry logic (keep worktree, re-dispatch) or permanent failure (cleanup, notify parent/reply error)
+1. `recycle_agent/2` — Deletes worktree and both ETS entries on normal completion. Resolves `repo_root` from the agent's own `AgentState` ETS entry (not global state) so worktree cleanup targets the correct repo in multi-task scenarios.
+2. `handle_agent_crash/3` — Retry logic (keep worktree, re-dispatch) or permanent failure (cleanup, notify parent/reply error). Both paths resolve `repo_root` from per-agent ETS state.
 
 ## Constraints
 - Data structs are plain data with no behaviour or callbacks.
