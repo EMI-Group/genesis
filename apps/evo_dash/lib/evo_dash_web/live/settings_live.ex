@@ -185,13 +185,10 @@ defmodule EvoDashWeb.SettingsLive do
          |> assign(:scheduler_config, load_scheduler_config())
          |> put_flash(:info, gettext("Scheduler settings updated successfully."))}
 
-      {:error, :agents_running} ->
+      {:error, message} ->
         {:noreply,
          socket
-         |> put_flash(
-           :error,
-           gettext("Cannot update concurrency while agents are running. Other settings applied.")
-         )}
+         |> put_flash(:error, gettext("Failed to update settings: %{message}", message: message))}
     end
   end
 

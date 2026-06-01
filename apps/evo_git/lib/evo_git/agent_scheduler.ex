@@ -141,14 +141,14 @@ defmodule EvoGit.AgentScheduler do
   `:agent_max_retries`, `:max_depth`, `:max_retries`, `:llm_model`.
   Only provided keys are updated; others remain unchanged.
 
-  If `:max_concurrency` changes and the worktree pool is already initialized,
-  the pool is torn down and will be lazily re-created on the next `run_agent/2`
-  call. This is only safe when no agents are running — returns
-  `{:error, :agents_running}` if active agents exist.
+  Concurrency changes take effect on the next scheduling action — currently
+  running agents are unaffected. If concurrency is increased, pending agents
+  waiting for slots will be granted immediately.
 
-  Returns `:ok` on success.
+  Returns `:ok` on success, or `{:error, message}` if validation fails
+  (e.g., setting `llm_model` to `nil`).
   """
-  @spec update_config(keyword()) :: :ok | {:error, :agents_running}
+  @spec update_config(keyword()) :: :ok | {:error, String.t()}
   def update_config(opts) when is_list(opts) do
     GenServer.call(__MODULE__, {:update_config, opts})
   end
@@ -541,12 +541,6 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:update_config, opts}, _from, state) do
-    has_active_agents = state.ref_to_agent != %{} or not :queue.is_empty(state.queue)
-
-    concurrency_changed =
-      Keyword.has_key?(opts, :max_concurrency) and
-        Keyword.get(opts, :max_concurrency) != state.max_concurrency
-
     # Validate llm_model if being updated
     if Keyword.has_key?(opts, :llm_model) do
       new_model = Keyword.get(opts, :llm_model)
@@ -554,10 +548,10 @@ defmodule EvoGit.AgentScheduler do
       unless new_model do
         {:reply, {:error, "llm_model cannot be nil"}, state}
       else
-        do_update_config(opts, state, concurrency_changed, has_active_agents)
+        do_update_config(opts, state)
       end
     else
-      do_update_config(opts, state, concurrency_changed, has_active_agents)
+      do_update_config(opts, state)
     end
   end
 
@@ -682,35 +676,52 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Private Helpers ---
 
-  defp do_update_config(opts, state, concurrency_changed, has_active_agents) do
-    if concurrency_changed and has_active_agents do
-      {:reply, {:error, :agents_running}, state}
-    else
-      state =
+  defp do_update_config(opts, %State{} = state) do
+    # Capture old values for slot adjustment
+    old_max_concurrency = state.max_concurrency
+    old_max_tool_concurrency = state.max_tool_concurrency
+
+    # Apply all field updates
+    state =
+      state
+      |> maybe_update(:max_concurrency, opts)
+      |> maybe_update(:agent_max_retries, opts)
+      |> maybe_update(:max_depth, opts)
+      |> maybe_update(:llm_model, opts)
+      |> maybe_update(:max_retries, opts)
+      |> maybe_update(:max_tool_concurrency, opts)
+
+    # Adjust LLM slot counter if max_concurrency changed
+    state =
+      if state.max_concurrency != old_max_concurrency do
+        delta = state.max_concurrency - old_max_concurrency
+        new_available = max(state.llm_slots_available + delta, 0)
+        struct(state, llm_slots_available: new_available)
+      else
         state
-        |> maybe_update(:max_concurrency, opts)
-        |> maybe_update(:agent_max_retries, opts)
-        |> maybe_update(:max_depth, opts)
-        |> maybe_update(:llm_model, opts)
-        |> maybe_update(:max_retries, opts)
-        |> maybe_update(:max_tool_concurrency, opts)
+      end
 
-      # If concurrency changed, tear down the pool so it's lazily re-created
-      state =
-        if concurrency_changed and state.initialized do
-          Worktrees.teardown_worktrees(state)
-        else
-          state
-        end
+    # Adjust tool slot counter if max_tool_concurrency changed
+    state =
+      if state.max_tool_concurrency != old_max_tool_concurrency do
+        delta = state.max_tool_concurrency - old_max_tool_concurrency
+        new_available = max(state.tool_slots_available + delta, 0)
+        struct(state, tool_slots_available: new_available)
+      else
+        state
+      end
 
-      Logger.info(
-        "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
-          "max_tool_concurrency: #{state.max_tool_concurrency}, " <>
-          "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
-      )
+    # Grant any newly-available slots to waiting agents
+    {state, status_updates} = Slots.grant_pending_on_resume(state)
+    apply_status_updates(status_updates)
 
-      {:reply, :ok, state}
-    end
+    Logger.info(
+      "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
+        "max_tool_concurrency: #{state.max_tool_concurrency}, " <>
+        "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
+    )
+
+    {:reply, :ok, state}
   end
 
   # --- Subagent-Level Validation and Spawning ---
