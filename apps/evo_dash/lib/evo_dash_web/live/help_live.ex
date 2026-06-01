@@ -191,6 +191,12 @@ compression_threshold_tokens = 100_000
 # Your GitHub username (used for commit co-authoring)
 github_username = "your-username"
 
+[task_history]
+# Maximum number of finished tasks to keep
+max_tasks = 100
+# Maximum age in days for finished tasks (whichever limit is smaller is applied)
+max_age_days = 14
+
 [sandbox]
 # Sandbox mode: "auto" | "enabled" | "disabled"
 mode = "auto"

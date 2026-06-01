@@ -2,7 +2,7 @@ defmodule EvoDash.TaskRegistry do
   @moduledoc """
   Registry for tracking running EvoGit tasks.
   Tasks are identified by unique IDs and tracked in-memory via ETS.
-  Supports persistence of the 10 most recent finished tasks and
+  Supports configurable persistence of finished tasks and
   recently opened projects to DETS (platform data directory via EvoGit.Platform).
   """
   use GenServer
@@ -13,7 +13,6 @@ defmodule EvoDash.TaskRegistry do
   @recent_projects_table :evo_dash_recent_projects
   @dets_tasks :evo_dash_tasks_dets
   @dets_projects :evo_dash_projects_dets
-  @max_persisted_tasks 10
   @max_recent_projects 10
 
   defmodule TaskInfo do
@@ -135,6 +134,9 @@ defmodule EvoDash.TaskRegistry do
     # Load persisted data from DETS into ETS
     load_tasks_from_dets(data_dir)
     load_recent_projects_from_dets(data_dir)
+
+    # Cleanup expired tasks on startup
+    cleanup_expired_tasks()
 
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
@@ -428,8 +430,46 @@ defmodule EvoDash.TaskRegistry do
   end
   defp set_crash_details(task), do: task
 
+  defp task_history_config do
+    defaults = %{max_tasks: 100, max_age_days: 14}
+    config = EvoGit.Config.resolve()[:task_history] || %{}
+    Map.merge(defaults, config)
+  end
+
+  defp cleanup_expired_tasks do
+    config = task_history_config()
+    max_age_days = config.max_age_days
+    max_tasks = config.max_tasks
+    cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
+
+    # Delete tasks older than cutoff (only finished tasks)
+    all_tasks = :ets.tab2list(@table_name) |> Enum.map(&elem(&1, 1))
+
+    for task <- all_tasks,
+        task.finished_at != nil,
+        DateTime.compare(task.finished_at, cutoff) == :lt do
+      :ets.delete(@table_name, task.id)
+    end
+
+    # Enforce max_tasks limit (keep newest finished tasks)
+    remaining = :ets.tab2list(@table_name) |> Enum.map(&elem(&1, 1))
+    finished = remaining
+      |> Enum.filter(&(&1.finished_at != nil))
+      |> Enum.sort_by(& &1.finished_at, {:desc, DateTime})
+
+    if length(finished) > max_tasks do
+      to_delete = Enum.drop(finished, max_tasks)
+      for task <- to_delete, do: :ets.delete(@table_name, task.id)
+    end
+
+    :ok
+  end
+
   defp persist_tasks_to_dets do
     try do
+      # Run cleanup before persisting so only retained tasks get persisted
+      cleanup_expired_tasks()
+
       all_tasks =
         :ets.tab2list(@table_name)
         |> Enum.map(fn {_id, task} -> task end)
@@ -440,7 +480,7 @@ defmodule EvoDash.TaskRegistry do
         all_tasks
         |> Enum.reject(&(&1.status in [:pending, :running]))
         |> Enum.sort_by(& &1.started_at, {:desc, DateTime})
-        |> Enum.take(@max_persisted_tasks)
+        |> Enum.take(task_history_config().max_tasks)
 
       tasks_to_save = running_tasks ++ finished_tasks
 
