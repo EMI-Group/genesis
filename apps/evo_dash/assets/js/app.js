@@ -154,11 +154,26 @@ const DirectoryPicker = {
   },
 };
 
+// BrowserNotifications hook: shows browser notifications when tasks complete
+const BrowserNotifications = {
+  mounted() {
+    this._permission = Notification.permission;
+    if (this._permission === "default") {
+      Notification.requestPermission().then(perm => { this._permission = perm; });
+    }
+    this.handleEvent("task_notification", ({title, body}) => {
+      if (this._permission === "granted") {
+        new Notification(title, {body: body, icon: "/favicon.ico"});
+      }
+    });
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, BrowserNotifications},
 })
 
 // Show progress bar on live navigation and form submits

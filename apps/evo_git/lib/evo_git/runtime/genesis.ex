@@ -49,6 +49,7 @@ defmodule EvoGit.Runtime.Genesis do
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
+        notify_finalizing(opts)
         merge_and_report(repo_path, agent_output, objective)
 
       error ->
@@ -71,6 +72,7 @@ defmodule EvoGit.Runtime.Genesis do
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
+        notify_finalizing(opts)
         merge_and_report(repo_path, agent_output, objective)
 
       error ->
@@ -99,7 +101,7 @@ defmodule EvoGit.Runtime.Genesis do
       Logger.info("Genesis: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}")
 
       # Try to create a PR if gh is available
-      pr_url = PullRequest.try_create(repo_path, branch_name, objective, result)
+      {pr_url, pr_title} = PullRequest.try_create(repo_path, branch_name, objective, result)
 
       {:ok,
        %{
@@ -107,7 +109,8 @@ defmodule EvoGit.Runtime.Genesis do
          result: result,
          tag: tag,
          branch_name: branch_name,
-         pr_url: pr_url
+         pr_url: pr_url,
+         pr_title: pr_title
        }}
     else
       Logger.info("Genesis: No changes detected (base and final commit are the same)")
@@ -119,8 +122,15 @@ defmodule EvoGit.Runtime.Genesis do
          tag: tag,
          branch_name: nil,
          pr_url: nil,
+         pr_title: nil,
          no_changes: true
        }}
+    end
+  end
+
+  defp notify_finalizing(opts) do
+    if task_id = Keyword.get(opts, :task_id) do
+      EvoDash.TaskRegistry.update_task_status(task_id, :finalizing)
     end
   end
 

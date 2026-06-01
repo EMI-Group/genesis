@@ -35,7 +35,7 @@ defmodule EvoDash.TaskRegistry do
     @type t :: %__MODULE__{
             id: String.t() | nil,
             type: atom() | nil,
-            status: :pending | :running | :completed | :failed | :cancelled,
+            status: :pending | :running | :finalizing | :completed | :failed | :cancelled,
             opts: keyword() | nil,
             ref: Task.t() | nil,
             started_at: DateTime.t() | nil,
@@ -291,7 +291,8 @@ defmodule EvoDash.TaskRegistry do
   def handle_cast({:update_status, task_id, status, result}, state) do
     case :ets.lookup(@table_name, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
-        updated = %{task | status: status, result: result, finished_at: DateTime.utc_now()}
+        finished_at = if status in [:completed, :failed, :cancelled], do: DateTime.utc_now(), else: task.finished_at
+        updated = %{task | status: status, result: result, finished_at: finished_at}
         :ets.insert(@table_name, {task_id, updated})
 
         if status in [:completed, :failed, :cancelled] do
@@ -534,6 +535,7 @@ defmodule EvoDash.TaskRegistry do
     runtime_opts = [
       repo_path: repo_path,
       mode: String.to_atom(mode),
+      task_id: task_id,
       event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
     ]
 

@@ -27,7 +27,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     :generation, :max_generations, :pool_size, :selection_size,
     :crossover_rate, :mutation_rate, :convergence_threshold,
     :novelty_neighbors, :stagnation_limit, :event_sink, :user_seeds,
-    :concepts,
+    :concepts, :opts,
     :supervisor,
     best_novelty: 0.0, stagnation_count: 0, started_at: nil
   ]
@@ -115,7 +115,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       stagnation_limit: Keyword.get(opts, :stagnation_limit, Map.get(evo_config, :stagnation_limit, @default_stagnation_limit)),
       event_sink: Keyword.get(opts, :event_sink),
       user_seeds: load_user_seeds_from_opts(opts),
-      concepts: Keyword.get(opts, :concepts, [])
+      concepts: Keyword.get(opts, :concepts, []),
+      opts: opts
     }
   end
 
@@ -577,6 +578,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
     case AgentScheduler.run_agent(spec) do
       {:ok, %Result{} = agent_output} ->
+        notify_finalizing(state)
         merge_and_report(state, agent_output)
 
       {:error, reason} = err ->
@@ -601,14 +603,15 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       {:ok, _} = Git.create_branch(state.repo_path, branch_name, final_sha)
       Logger.info("Evolution Engine: Created branch '#{branch_name}'")
 
-      pr_url = PullRequest.try_create(state.repo_path, branch_name, state.objective, result)
+      {pr_url, pr_title} = PullRequest.try_create(state.repo_path, branch_name, state.objective, result)
 
       {:ok, %{
         commit_sha: final_sha,
         result: result,
         tag: tag,
         branch_name: branch_name,
-        pr_url: pr_url
+        pr_url: pr_url,
+        pr_title: pr_title
       }}
     else
       Logger.info("Evolution Engine: No changes detected from agent")
@@ -618,8 +621,15 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         tag: tag,
         branch_name: nil,
         pr_url: nil,
+        pr_title: nil,
         no_changes: true
       }}
+    end
+  end
+
+  defp notify_finalizing(state) do
+    if task_id = state.opts[:task_id] do
+      EvoDash.TaskRegistry.update_task_status(task_id, :finalizing)
     end
   end
 
