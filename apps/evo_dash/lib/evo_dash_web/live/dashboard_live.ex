@@ -414,7 +414,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:new_repo_id, "")
       |> assign(:new_repo_path, "")
       |> assign(:new_repo_name, "")
-      |> assign(:notified_task_ids, MapSet.new())
+      |> assign(:notified_task_ids, build_initial_notified_task_ids(tasks))
       |> assign_form_defaults()
       |> assign_running_and_recent_tasks()
 
@@ -910,6 +910,13 @@ defmodule EvoDashWeb.DashboardLive do
     socket
     |> assign(:running_tasks, running_tasks)
     |> assign(:recent_tasks, recent_tasks)
+  end
+
+  defp build_initial_notified_task_ids(tasks) do
+    tasks
+    |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+    |> Enum.map(& &1.id)
+    |> MapSet.new()
   end
 
   defp task_notification_content(task) do
