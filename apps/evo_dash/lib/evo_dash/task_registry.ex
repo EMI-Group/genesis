@@ -173,6 +173,7 @@ defmodule EvoDash.TaskRegistry do
 
     :ets.insert(@table_name, {task_id, task})
     persist_tasks_to_dets()
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:reply, {:ok, task}, state}
   end
 
@@ -215,6 +216,7 @@ defmodule EvoDash.TaskRegistry do
           {:error, :not_found}
       end
 
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:reply, result, state}
   end
 
@@ -253,6 +255,7 @@ defmodule EvoDash.TaskRegistry do
     end)
 
     persist_tasks_to_dets()
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:reply, :ok, state}
   end
 
@@ -270,6 +273,7 @@ defmodule EvoDash.TaskRegistry do
     trim_recent_projects()
     save_recent_projects_to_dets()
 
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
 
@@ -287,6 +291,7 @@ defmodule EvoDash.TaskRegistry do
   def handle_call({:remove_recent_project, path}, _from, state) do
     :ets.delete(@recent_projects_table, path)
     save_recent_projects_to_dets()
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
 
@@ -306,6 +311,7 @@ defmodule EvoDash.TaskRegistry do
         :ok
     end
 
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
   end
 
@@ -327,6 +333,7 @@ defmodule EvoDash.TaskRegistry do
   def handle_cast({:delete_task, task_id}, state) do
     :ets.delete(@table_name, task_id)
     persist_tasks_to_dets()
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
   end
 
