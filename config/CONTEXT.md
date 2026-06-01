@@ -1,22 +1,56 @@
 # config/
 
 ## Intent
-Environment-based Elixir configuration for the EvoGit umbrella project. Follows standard Phoenix `Config` patterns with compile-time overrides per environment and runtime secret management.
+Environment-based Elixir configuration for the EvoGit umbrella project. Follows standard Phoenix `Config` patterns with compile-time overrides per environment and runtime secret management. This directory handles **infrastructure-level** application config only — LLM, scheduler, and agent configuration is managed by `EvoGit.Config` via TOML files.
 
 ## Config Files
 
 | File | Purpose | Phase |
 |------|---------|-------|
-| `config.exs` | Base config — endpoint, asset builders (esbuild/tailwind), logger, JSON lib | Compile |
-| `dev.exs` | Dev overrides — port 4100, code reloader, asset watchers, debug errors | Compile |
-| `test.exs` | Test overrides — port 4002, server disabled, runtime checks | Compile |
+| `config.exs` | Base config — endpoint, asset builders (esbuild/tailwind), logger, JSON lib, `req_llm` HTTP timeouts, sandbox mode | Compile |
+| `dev.exs` | Dev overrides — port 4100, code reloader, asset watchers, debug errors, desktop mode off | Compile |
+| `test.exs` | Test overrides — port 4002, server disabled, warning-level logger | Compile |
 | `prod.exs` | Production overrides — static cache manifest, info-level logger | Compile |
-| `runtime.exs` | Secrets & dynamic config — `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`, etc. | Runtime |
+| `runtime.exs` | Secrets & dynamic config — `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`, desktop mode env vars | Runtime |
+
+## LLM-Related Configuration
+
+### In this directory (Elixir Application Config)
+- **`req_llm`** timeouts in `config.exs` (lines 61–68):
+  - `receive_timeout`: 600_000 ms (10 min) — default HTTP response timeout
+  - `metadata_timeout`: 600_000 ms — streaming metadata collection timeout
+  - `thinking_timeout`: 1_000_000 ms (~17 min) — extended timeout for reasoning models
+- **`evo_git` sandbox** in `config.exs` (line 58): `sandbox: :auto` (can be overridden by TOML)
+- **No model, provider, or API key config** is set here — those come from TOML (see below)
+
+### In TOML files (via `EvoGit.Config` at `apps/evo_git/lib/evo_git/config/config.ex`)
+The **3-level configuration system** (resolved at runtime, not via Elixir `Config`):
+1. **Application defaults** — Hardcoded in `EvoGit.Config.defaults/0`: scheduler settings, empty `llm`/`user` maps, sandbox `:auto`, evolution parameters, truncation limits. **No default model or username is provided.**
+2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant, cross-platform):
+   - `[llm]` → `model = "provider:model"` (e.g. `"anthropic:claude-sonnet-4-20250514"`), `compression_threshold_tokens`
+   - `[scheduler]` → `max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_agent_depth`, `max_retries`
+   - `[user]` → `github_username`
+   - `[sandbox]` → `mode` ("auto"|"enabled"|"disabled")
+   - `[evolution]` → evolutionary algorithm parameters
+   - `[truncation]` → tool output and context size limits
+3. **Runtime overrides** — CLI flags and dashboard settings, stored in `AgentScheduler` GenServer state
+
+### Credentials (API keys)
+- Stored in `~/.config/evogit/credentials.toml` (separate from config for security)
+- Format: `PROVIDER_API_KEY = "key-value"` (e.g. `ANTHROPIC_API_KEY = "sk-ant-..."`)
+- On load, `EvoGit.Config.credentials/0` reads the file and sets each key-value as an environment variable via `System.put_env/2`
+- Supported providers: Google, Anthropic, OpenAI, ZAI, DeepSeek, Groq, Tavily
+- The provider is determined from the `[llm] model` format `"provider:model"`
+
+### Per-project config
+- `EvoGit.ProjectConfig` reads `evogit.toml` from the repo root (not from `~/.config/evogit/`)
+- Supports `worktree.script` and `foreign_repos` sections
 
 ## Key Configuration Categories
 
-- **`evo_git`** — Concurrency, retry, agent depth, and LLM model defaults. Defined in `EvoGit.Defaults` and passed via opts, not Application config.
-- **`evo_dash`** — Phoenix endpoint (Bandit adapter, LiveView signing salt, PubSub), asset builders pointing at `apps/evo_dash/assets`.
+- **`evo_dash`** — Phoenix endpoint (Bandit adapter, LiveView signing salt, PubSub), asset builders pointing at `apps/evo_dash/assets`
+- **`req_llm`** — HTTP timeouts for the LLM HTTP client library
+- **`evo_git`** — Infrastructure-level settings only (sandbox mode); all runtime defaults managed by `EvoGit.Config`
 
 ## Constraints
 - **Load order**: `config.exs` imports `{env}.exs` at the bottom — env files override base.
@@ -24,3 +58,5 @@ Environment-based Elixir configuration for the EvoGit umbrella project. Follows 
 - **No business logic**: Directory contains only Elixir config files.
 - **`dev.local.exs`**: Optional, git-ignored, for developer-specific overrides.
 - **Umbrella layout**: Asset paths reference `apps/evo_dash/assets`.
+- **LLM config split**: Elixir config handles HTTP timeouts/infrastructure; TOML handles model selection, concurrency, API keys. These are separate systems that don't overlap.
+- **Backward compat**: `EvoGit.Defaults` module delegates all calls to `EvoGit.Config.resolve/1`
