@@ -30,9 +30,18 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   def recycle_agent(state, agent_id) do
     {:ok, meta} = get_sched_meta(agent_id)
 
+    # Resolve repo_root from the agent's own ETS state (correct even when
+    # multiple tasks target different repos concurrently). Fall back to the
+    # global state.repo_root for agents registered before this fix.
+    agent_repo_root =
+      case get_agent_state(agent_id) do
+        {:ok, %{repo_root: root}} when is_binary(root) -> root
+        _ -> state.repo_root
+      end
+
     # Delete the agent's persistent worktree
     if meta.worktree do
-      Worktrees.delete(meta.worktree, state.repo_root)
+      Worktrees.delete(meta.worktree, agent_repo_root)
     end
 
     delete_agent_state(agent_id)
@@ -84,8 +93,14 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
             )
 
             # Clean up and permanently fail the agent
+            agent_repo_root =
+              case get_agent_state(agent_id) do
+                {:ok, %{repo_root: root}} when is_binary(root) -> root
+                _ -> state.repo_root
+              end
+
             if meta.worktree do
-              Worktrees.delete(meta.worktree, state.repo_root)
+              Worktrees.delete(meta.worktree, agent_repo_root)
             end
 
             delete_agent_state(agent_id)
@@ -113,8 +128,14 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       Logger.error("AgentScheduler: #{msg}")
 
       # Delete the agent's persistent worktree on permanent failure
+      agent_repo_root =
+        case get_agent_state(agent_id) do
+          {:ok, %{repo_root: root}} when is_binary(root) -> root
+          _ -> state.repo_root
+        end
+
       if meta.worktree do
-        Worktrees.delete(meta.worktree, state.repo_root)
+        Worktrees.delete(meta.worktree, agent_repo_root)
       end
 
       delete_agent_state(agent_id)

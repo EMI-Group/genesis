@@ -44,30 +44,35 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
   def ensure_initialized(%State{initialized: true} = state, new_repo_path) do
     # If agents are still running from a previous task, do NOT tear down
-    # their worktrees. Instead, update repos map additively and ensure the
-    # worker directory exists for the new repo.
+    # their worktrees. Just ensure the new repo's worker directory exists.
+    # Per-agent repo_root resolution (via Dispatch.resolve_agent_repo_root/2)
+    # derives the correct root from spec data, so we don't need to overwrite
+    # the global state.repo_root or repos[:primary].
     if state.running_count > 0 do
-      Logger.warning(
-        "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path} " <>
-          "but #{state.running_count} agent(s) still running — skipping teardown, updating repos map"
-      )
-
       new_root = Path.expand(new_repo_path)
-      worker_base = Path.join(new_root, ".evogit/workers")
-      File.mkdir_p!(worker_base)
 
-      # Add the new repo to the repos map (keeping existing entries)
-      new_primary = ForeignRepo.new(:primary, new_root)
-      repos = Map.put(state.repos, :primary, new_primary)
-
-      {:ok, current_sha} = Git.rev_parse(new_root)
-
-      %State{
+      # If same repo, nothing to do
+      if new_root == state.repo_root do
         state
-        | repo_root: new_root,
-          repos: repos,
-          base_sha: current_sha
-      }
+      else
+        Logger.warning(
+          "AgentScheduler: Concurrent task targets #{new_root} while " <>
+            "#{state.running_count} agent(s) still running in #{state.repo_root} — " <>
+            "preserving existing primary, creating worker directory for new repo"
+        )
+
+        worker_base = Path.join(new_root, ".evogit/workers")
+        File.mkdir_p!(worker_base)
+
+        # Register the new repo under a unique key so it can be looked up.
+        # Keep the existing :primary intact — it belongs to running agents.
+        repo_key = :"primary_#{:erlang.phash2(new_root)}"
+        new_repo = ForeignRepo.new(repo_key, new_root)
+        repos = Map.put_new(state.repos, repo_key, new_repo)
+
+        # Do NOT overwrite state.repo_root, repos[:primary], or base_sha
+        %State{state | repos: repos}
+      end
     else
       Logger.info(
         "AgentScheduler: Repo path changed from #{state.repo_root} to #{new_repo_path}, reinitializing..."
