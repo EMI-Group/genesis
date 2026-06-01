@@ -4,51 +4,59 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
   alias EvoGit.Agent.OutputSanitizer
 
   describe "ensure_utf8/1" do
-    test "valid UTF-8 string passes through unchanged" do
+    test "valid UTF-8 string passes through unchanged with nil truncation_info" do
       input = "Hello, world! 日本語テスト 🎉"
-      assert OutputSanitizer.ensure_utf8(input) == input
+      assert OutputSanitizer.ensure_utf8(input) == {input, nil}
     end
 
-    test "empty string passes through" do
-      assert OutputSanitizer.ensure_utf8("") == ""
+    test "empty string passes through with nil truncation_info" do
+      assert OutputSanitizer.ensure_utf8("") == {"", nil}
     end
 
-    test "non-binary nil passes through unchanged" do
-      assert OutputSanitizer.ensure_utf8(nil) == nil
+    test "non-binary nil passes through unchanged with nil truncation_info" do
+      assert OutputSanitizer.ensure_utf8(nil) == {nil, nil}
     end
 
-    test "non-binary integer passes through unchanged" do
-      assert OutputSanitizer.ensure_utf8(123) == 123
+    test "non-binary integer passes through unchanged with nil truncation_info" do
+      assert OutputSanitizer.ensure_utf8(123) == {123, nil}
     end
 
-    test "non-binary list passes through unchanged" do
-      assert OutputSanitizer.ensure_utf8([1, 2, 3]) == [1, 2, 3]
+    test "non-binary list passes through unchanged with nil truncation_info" do
+      assert OutputSanitizer.ensure_utf8([1, 2, 3]) == {[1, 2, 3], nil}
     end
 
-    test "invalid UTF-8 binary gets repaired or truncated with warning" do
+    test "invalid UTF-8 binary gets repaired or truncated with warning and truncation_info" do
       # Construct invalid UTF-8: valid prefix + invalid byte sequence
       invalid_binary = "valid prefix" <> <<0xFF, 0xFE>>
-      result = OutputSanitizer.ensure_utf8(invalid_binary)
+      {result, truncation_info} = OutputSanitizer.ensure_utf8(invalid_binary)
 
       # The result should contain the valid prefix and a warning
       assert is_binary(result)
       assert result =~ "valid prefix"
       assert result =~ "[WARNING: Output truncated due to invalid UTF-8 binary data]"
+
+      # truncation_info should be populated
+      assert truncation_info.reason == :invalid_utf8
+      assert truncation_info.original_size == byte_size(invalid_binary)
+      assert is_integer(truncation_info.truncated_size)
     end
 
-    test "incomplete UTF-8 sequence gets truncated with warning" do
+    test "incomplete UTF-8 sequence gets truncated with warning and truncation_info" do
       # Start of a 3-byte sequence without continuation bytes
       incomplete = "hello" <> <<0xE2, 0x82>>
-      result = OutputSanitizer.ensure_utf8(incomplete)
+      {result, truncation_info} = OutputSanitizer.ensure_utf8(incomplete)
 
       assert is_binary(result)
       assert result =~ "hello"
       assert result =~ "[WARNING: Output truncated due to invalid UTF-8 binary data]"
+
+      assert truncation_info.reason == :invalid_utf8
+      assert truncation_info.original_size == byte_size(incomplete)
     end
 
-    test "valid multi-byte UTF-8 characters pass through" do
+    test "valid multi-byte UTF-8 characters pass through with nil truncation_info" do
       input = "日本語 中文 한국어 Ελληνικά العربية"
-      assert OutputSanitizer.ensure_utf8(input) == input
+      assert OutputSanitizer.ensure_utf8(input) == {input, nil}
     end
   end
 
@@ -230,52 +238,57 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
   end
 
   describe "truncate/3" do
-    test "output under threshold passes through unchanged" do
+    test "output under threshold passes through unchanged with nil truncation_info" do
       small_output = "Hello, this is a small output"
-      result = OutputSanitizer.truncate(small_output, "read_file", %{"path" => "test.txt"})
+      {result, truncation_info} = OutputSanitizer.truncate(small_output, "read_file", %{"path" => "test.txt"})
       assert result == small_output
+      assert truncation_info == nil
     end
 
-    test "non-binary passes through unchanged" do
-      assert OutputSanitizer.truncate(nil, "read_file", %{}) == nil
-      assert OutputSanitizer.truncate(42, "some_tool", %{}) == 42
+    test "non-binary passes through with nil truncation_info" do
+      assert OutputSanitizer.truncate(nil, "read_file", %{}) == {nil, nil}
+      assert OutputSanitizer.truncate(42, "some_tool", %{}) == {42, nil}
     end
 
-    test "empty string passes through" do
-      assert OutputSanitizer.truncate("", "tool", %{}) == ""
+    test "empty string passes through with nil truncation_info" do
+      assert OutputSanitizer.truncate("", "tool", %{}) == {"", nil}
     end
 
-    test "small multiline output passes through unchanged" do
+    test "small multiline output passes through unchanged with nil truncation_info" do
       output = Enum.join(Enum.map(1..100, &"Line #{&1}"), "\n")
-      result = OutputSanitizer.truncate(output, "read_file", %{})
+      {result, truncation_info} = OutputSanitizer.truncate(output, "read_file", %{})
       assert result == output
+      assert truncation_info == nil
     end
   end
 
   describe "sanitize_and_truncate/3" do
-    test "small clean string passes through all pipeline steps unchanged" do
+    test "small clean string passes through all pipeline steps unchanged with nil truncation_info" do
       input = "Hello, world!"
-      result = OutputSanitizer.sanitize_and_truncate(input, "echo", %{})
+      {result, truncation_info} = OutputSanitizer.sanitize_and_truncate(input, "echo", %{})
       assert result == input
+      assert truncation_info == nil
     end
 
-    test "non-binary value passes through" do
-      assert OutputSanitizer.sanitize_and_truncate(nil, "tool", %{}) == nil
-      assert OutputSanitizer.sanitize_and_truncate(123, "tool", %{}) == 123
+    test "non-binary value passes through with nil truncation_info" do
+      assert OutputSanitizer.sanitize_and_truncate(nil, "tool", %{}) == {nil, nil}
+      assert OutputSanitizer.sanitize_and_truncate(123, "tool", %{}) == {123, nil}
     end
 
     test "string with ANSI codes gets cleaned" do
       input = "\e[32mSuccess\e[0m: File written"
-      result = OutputSanitizer.sanitize_and_truncate(input, "write_file", %{})
+      {result, truncation_info} = OutputSanitizer.sanitize_and_truncate(input, "write_file", %{})
       assert result == "Success: File written"
+      assert truncation_info == nil
     end
 
     test "string with progress bars gets cleaned" do
       input = "Build started\n[=====>  ] 50%\nBuild complete"
-      result = OutputSanitizer.sanitize_and_truncate(input, "build", %{})
+      {result, truncation_info} = OutputSanitizer.sanitize_and_truncate(input, "build", %{})
       assert result =~ "Build started"
       assert result =~ "Build complete"
       refute result =~ "[=====>"
+      assert truncation_info == nil
     end
 
     test "string with ANSI codes, carriage returns, and progress bars gets fully cleaned" do
@@ -284,7 +297,7 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
           "[========>     ] 50%\n" <>
           "\e[32mDownload complete\e[0m"
 
-      result = OutputSanitizer.sanitize_and_truncate(input, "curl", %{"url" => "http://example.com"})
+      {result, truncation_info} = OutputSanitizer.sanitize_and_truncate(input, "curl", %{"url" => "http://example.com"})
 
       # Should have ANSI codes removed
       refute result =~ "\e["
@@ -294,18 +307,22 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
       refute result =~ "[========>"
       # Should keep meaningful output
       assert result =~ "Download complete"
+      assert truncation_info == nil
     end
 
-    test "invalid UTF-8 with ANSI codes gets repaired and cleaned" do
+    test "invalid UTF-8 with ANSI codes gets repaired and cleaned with truncation_info" do
       # Invalid UTF-8 prefix with ANSI color codes
       invalid = "valid \e[32mcolored\e[0m" <> <<0xFF>>
-      result = OutputSanitizer.sanitize_and_truncate(invalid, "tool", %{})
+      {result, truncation_info} = OutputSanitizer.sanitize_and_truncate(invalid, "tool", %{})
 
       assert is_binary(result)
       # Should have ANSI codes removed
       refute result =~ "\e["
       # Should contain the valid text
       assert result =~ "valid colored"
+      # Should report invalid_utf8 truncation
+      assert truncation_info.reason == :invalid_utf8
+      assert truncation_info.original_size == byte_size(invalid)
     end
 
     test "full pipeline on realistic tool output" do
@@ -319,7 +336,7 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
           "|\n" <>
           "Coverage: 95%"
 
-      result = OutputSanitizer.sanitize_and_truncate(input, "mix_test", %{})
+      {result, truncation_info} = OutputSanitizer.sanitize_and_truncate(input, "mix_test", %{})
 
       # No ANSI escape codes
       refute result =~ "\e["
@@ -333,6 +350,8 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
       assert result =~ "..."
       assert result =~ "All tests passed!"
       assert result =~ "Coverage: 95%"
+      # No truncation occurred
+      assert truncation_info == nil
     end
   end
 end

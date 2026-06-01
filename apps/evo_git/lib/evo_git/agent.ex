@@ -618,7 +618,8 @@ defmodule EvoGit.Agent do
                     "Error: #{inspect(reason)}"
 
                   {:ok, result} ->
-                    OutputSanitizer.sanitize_and_truncate(result, call.name, call.arguments)
+                    {sanitized, truncation_info} = OutputSanitizer.sanitize_and_truncate(result, call.name, call.arguments)
+                    append_truncation_feedback(sanitized, truncation_info, call.name)
 
                   {:exit, reason} ->
                     "Error: Tool execution crashed: #{inspect(reason)}"
@@ -641,6 +642,71 @@ defmodule EvoGit.Agent do
           String.contains?(reason_str, "quota") or
           String.contains?(reason_str, "429") or
           String.contains?(reason_str, "resource_exhausted")
+      end
+
+      defp append_truncation_feedback(output, nil, _tool_name), do: output
+
+      defp append_truncation_feedback(output, truncation_info, tool_name) do
+        suggestion = tool_truncation_suggestion(tool_name)
+
+        feedback =
+          """
+          ---
+          ⚠️ **Output Truncated** (#{format_truncation_reason(truncation_info)})
+          Original size: #{format_byte_size(truncation_info.original_size)} → Truncated to: #{format_byte_size(truncation_info.truncated_size)}
+
+          **Suggestion:** #{suggestion}
+          """
+          |> String.trim()
+
+        output <> "\n\n" <> feedback
+      end
+
+      defp tool_truncation_suggestion(tool_name) when tool_name in ["run_bash", "run_powershell"] do
+        "Consider using `head`, `tail`, `grep`, or piping output to a file. You can also pass `max_bytes` to increase the output limit."
+      end
+
+      defp tool_truncation_suggestion("read_file") do
+        "Consider using `offset` and `limit` parameters to read only the needed portion. You can also pass `max_bytes` to increase the output limit."
+      end
+
+      defp tool_truncation_suggestion("rg") do
+        "Consider narrowing the search pattern or specifying a more targeted path. You can also pass `max_bytes` to increase the output limit."
+      end
+
+      defp tool_truncation_suggestion("curl") do
+        "The HTTP response was large. You can pass `max_bytes` to increase the output limit if you need more of the response."
+      end
+
+      defp tool_truncation_suggestion("run_git") do
+        "Consider using flags like `--stat`, `--oneline`, or `-n <count>` to reduce output. You can also pass `max_bytes` to increase the output limit."
+      end
+
+      defp tool_truncation_suggestion("search_history") do
+        "Consider reducing `max_count` or narrowing the search pattern. You can also pass `max_bytes` to increase the output limit."
+      end
+
+      defp tool_truncation_suggestion("search_web") do
+        "Consider reducing `max_results`. You can also pass `max_bytes` to increase the output limit."
+      end
+
+      defp tool_truncation_suggestion("search_context") do
+        "Consider narrowing the pattern or specifying a more targeted path. You can also pass `max_bytes` to increase the output limit."
+      end
+
+      defp tool_truncation_suggestion(_tool_name) do
+        "Consider using more specific arguments to reduce output. You can also pass `max_bytes` to increase the output limit."
+      end
+
+      defp format_truncation_reason(%{reason: :size_exceeded}), do: "output exceeded size limit"
+      defp format_truncation_reason(%{reason: :invalid_utf8}), do: "invalid UTF-8 data was repaired/truncated"
+
+      defp format_byte_size(bytes) do
+        cond do
+          bytes >= 1024 * 1024 -> "#{Float.round(bytes / (1024 * 1024), 1)} MB"
+          bytes >= 1024 -> "#{Float.round(bytes / 1024, 1)} KB"
+          true -> "#{bytes} bytes"
+        end
       end
 
       # Formats git status --porcelain output for display
