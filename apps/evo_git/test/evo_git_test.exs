@@ -5,10 +5,17 @@ defmodule EvoGitTest do
     test "generates correct systemd-run args" do
       cwd = "/my/project"
       args = EvoGit.sandbox_args(cwd, "bash", ["-c", "ls"])
-      assert Enum.take(args, 3) == ["--user", "--wait", "--pipe"]
+      assert Enum.take(args, 3) == ["--user", "--slice=evogit", "--wait"]
       assert "-p" in args
       assert "PrivatePIDs=yes" in args
       assert "ProtectProc=invisible" in args
+      assert "--slice=evogit" in args
+      # Per-process resource limits are removed — now applied at slice level
+      refute "CPUWeight=30" in args
+      refute "MemoryMax=16G" in args
+      refute "TasksMax=8196" in args
+      refute "LimitNOFILE=65536" in args
+      refute "OOMScoreAdjust=1000" in args
       assert List.last(args) == "ls"
     end
 
