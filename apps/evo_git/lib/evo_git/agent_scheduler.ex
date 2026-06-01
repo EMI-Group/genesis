@@ -124,8 +124,17 @@ defmodule EvoGit.AgentScheduler do
   Returns nil if not in a scheduled agent.
   """
   def current_repo_root do
-    repo_id = Process.get(:evogit_repo_id, :primary)
-    GenServer.call(__MODULE__, {:repo_root_for, repo_id})
+    # Prefer the process dictionary value (set at dispatch time) — this is
+    # always correct for the current agent and avoids a GenServer call that
+    # could return a stale value when multiple tasks target different repos.
+    case Process.get(:evogit_repo_root) do
+      nil ->
+        repo_id = Process.get(:evogit_repo_id, :primary)
+        GenServer.call(__MODULE__, {:repo_root_for, repo_id})
+
+      repo_root ->
+        repo_root
+    end
   end
 
   @doc """
@@ -513,7 +522,10 @@ defmodule EvoGit.AgentScheduler do
         {:reply, root, state}
 
       nil ->
-        # Fallback: if repo_id is :primary and repos not yet populated, use repo_root
+        # Fallback for :primary when repos map not yet populated.
+        # NOTE: In multi-task scenarios, state.repo_root reflects the
+        # first task's repo. Agents should use Process.get(:evogit_repo_root)
+        # or the per-agent AgentState.repo_root for correct resolution.
         if repo_id == :primary and state.repo_root do
           {:reply, state.repo_root, state}
         else
