@@ -65,7 +65,9 @@ defmodule EvoGit.AgentScheduler.State do
     max_tool_concurrency: 2,
     next_task_id: 1,
     task_local_counters: %{},
-    paused: false
+    paused: false,
+    sandbox_mode: nil,
+    sandbox_resources: nil
   ]
 
   @type t :: %__MODULE__{
@@ -89,6 +91,8 @@ defmodule EvoGit.AgentScheduler.State do
           max_tool_concurrency: pos_integer(),
           next_task_id: pos_integer(),
           task_local_counters: %{optional(pos_integer()) => pos_integer()},
-          paused: boolean()
+          paused: boolean(),
+          sandbox_mode: :auto | :enabled | :disabled | nil,
+          sandbox_resources: map() | nil
         }
 end
