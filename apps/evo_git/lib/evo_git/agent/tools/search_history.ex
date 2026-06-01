@@ -42,6 +42,13 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
             "type" => "integer",
             "description" => "Maximum number of commits to search through. Default: #{@default_max_count}",
             "default" => @default_max_count
+          },
+          "max_bytes" => %{
+            "type" => "integer",
+            "description" =>
+              "Maximum output size in bytes before truncation. " <>
+                "Default: 16384 (16KB). Increase up to 131072 (128KB) if you need more output.",
+            "default" => 16_384
           }
         },
         "required" => ["pattern"]

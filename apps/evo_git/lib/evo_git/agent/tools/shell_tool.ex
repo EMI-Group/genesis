@@ -59,6 +59,13 @@ defmodule EvoGit.Agent.Tools.ShellTool do
             "description" =>
               "Timeout in milliseconds for this tool execution. Default: #{@default_timeout}",
             "default" => @default_timeout
+          },
+          "max_bytes" => %{
+            "type" => "integer",
+            "description" =>
+              "Maximum output size in bytes before truncation. " <>
+                "Default: 16384 (16KB). Increase up to 131072 (128KB) if you need more output.",
+            "default" => 16_384
           }
         },
         "required" => ["command"]

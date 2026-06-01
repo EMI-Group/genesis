@@ -35,6 +35,13 @@ defmodule EvoGit.Agent.Tools.Git do
             "type" => "array",
             "items" => %{"type" => "string"},
             "description" => "List of arguments to pass to git, e.g. ['status'], ['diff', 'HEAD']"
+          },
+          "max_bytes" => %{
+            "type" => "integer",
+            "description" =>
+              "Maximum output size in bytes before truncation. " <>
+                "Default: 16384 (16KB). Increase up to 131072 (128KB) if you need more output.",
+            "default" => 16_384
           }
         },
         "required" => ["args"]
