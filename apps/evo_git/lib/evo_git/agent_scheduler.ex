@@ -43,11 +43,13 @@ defmodule EvoGit.AgentScheduler do
 
   use GenServer
   require Logger
-  alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.Dispatch
+  alias EvoGit.AgentScheduler.Lifecycle
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Slots
   alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ForeignRepo
@@ -525,7 +527,7 @@ defmodule EvoGit.AgentScheduler do
     repo_path = spec.phylo_node.repo
     state = Worktrees.ensure_initialized(state, repo_path)
     task_id = state.next_task_id
-    {agent_id, state} = register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
+    {agent_id, state} = Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
     state = %{state | next_task_id: task_id + 1}
     Logger.info("AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id})")
 
@@ -534,7 +536,7 @@ defmodule EvoGit.AgentScheduler do
       state = %{state | queue: :queue.in(agent_id, state.queue)}
       {:noreply, state}
     else
-      state = try_dispatch(state, agent_id)
+      state = Dispatch.try_dispatch(state, agent_id)
       {:noreply, state}
     end
   end
@@ -605,7 +607,7 @@ defmodule EvoGit.AgentScheduler do
       state = struct(state, paused: false)
       {state, status_updates} = Slots.grant_pending_on_resume(state)
       apply_status_updates(status_updates)
-      state = dispatch_queued_agents(state)
+      state = Dispatch.dispatch_queued_agents(state)
       {:reply, :ok, state}
     else
       {:reply, :ok, state}
@@ -622,7 +624,7 @@ defmodule EvoGit.AgentScheduler do
     state = Worktrees.ensure_initialized(state)
     {:ok, parent} = get_sched_meta(parent_id)
 
-    spawn_validated_subagents(parent_id, parent, specs, from, state)
+    Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
   end
 
   # --- LLM and Tool Slot Management (delegated to Slots module) ---
@@ -724,166 +726,6 @@ defmodule EvoGit.AgentScheduler do
     {:reply, :ok, state}
   end
 
-  # --- Subagent-Level Validation and Spawning ---
-
-  # Validates and spawns subagents. Each spec is validated independently;
-  # failed specs get an error result, valid specs are spawned.
-  defp spawn_validated_subagents(parent_id, parent, specs, from, state) do
-    # Get parent agent state for validation context
-    {:ok, parent_agent_state} = get_agent_state(parent_id)
-
-    # Pre-Delegation Cleanliness
-    parent = auto_commit_fallback(parent_id, parent)
-
-    # Mark parent as :waiting
-    Logger.info("AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents")
-
-    parent = %{parent | status: :waiting}
-    put_sched_meta(parent_id, parent)
-
-    # Validate each spec and partition into valid/invalid
-    {valid_specs_with_idx, invalid_results} =
-      specs
-      |> Enum.with_index()
-      |> Enum.reduce({[], %{}}, fn {spec, idx}, {valid, invalid} ->
-        case validate_single_subagent(parent_id, parent, spec, parent_agent_state, state) do
-          :ok ->
-            {[{spec, idx} | valid], invalid}
-
-          {:error, reason} ->
-            Logger.warning(
-              "AgentScheduler: Subagent #{idx} failed validation: #{inspect(reason)}"
-            )
-
-            {valid, Map.put(invalid, idx, {:error, reason})}
-        end
-      end)
-
-    # Reverse to maintain original order
-    valid_specs_with_idx = Enum.reverse(valid_specs_with_idx)
-
-    # Register and spawn valid subagents
-    {idx_to_sub_id, state} =
-      Enum.map_reduce(valid_specs_with_idx, state, fn {spec, idx}, acc ->
-        {sub_id, acc} =
-          register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1, parent.task_id)
-
-        {{idx, sub_id}, acc}
-      end)
-
-    sub_ids = Enum.map(idx_to_sub_id, fn {_idx, sub_id} -> sub_id end)
-
-    # Build the sub_id -> index mapping
-    sub_agent_indices = Map.new(idx_to_sub_id, fn {idx, sub_id} -> {sub_id, idx} end)
-
-    # Track pending subagents, pre-failed results, and index mapping on the parent
-    put_sched_meta(parent_id, %{
-      parent
-      | sub_agent_from: from,
-        total_sub_specs: length(specs),
-        pending_sub_agents: MapSet.new(sub_ids),
-        sub_agent_results: invalid_results,
-        sub_agent_indices: sub_agent_indices
-    })
-
-    # Dispatch all valid subagents
-    state = Enum.reduce(sub_ids, state, &try_dispatch(&2, &1))
-
-    # If no valid subagents, immediately reply with all errors
-    if sub_ids == [] do
-      results = build_ordered_results(invalid_results, length(specs))
-      GenServer.reply(from, results)
-      put_sched_meta(parent_id, %{parent | status: :running})
-      {:noreply, state}
-    else
-      {:noreply, state}
-    end
-  end
-
-  # Validates a single subagent spec. All checks are per-subagent.
-  defp validate_single_subagent(parent_id, parent, spec, parent_agent_state, state) do
-    subagent_depth = parent.depth + 1
-
-    with :ok <- validate_subagent_depth(parent_id, subagent_depth, state),
-         :ok <- validate_subagent_not_ignored(spec),
-         :ok <- validate_spatial_contract_for_spec(parent_id, parent_agent_state, spec) do
-      :ok
-    end
-  end
-
-  # Checks if the subagent's depth exceeds the maximum allowed depth
-  defp validate_subagent_depth(_parent_id, subagent_depth, state) do
-    if subagent_depth > state.max_depth do
-      Logger.warning(
-        "AgentScheduler: Subagent depth #{subagent_depth} exceeds max #{state.max_depth}"
-      )
-
-      {:error, :max_depth_exceeded}
-    else
-      :ok
-    end
-  end
-
-  # Checks if the subagent's path is ignored by git
-  defp validate_subagent_not_ignored(spec) do
-    if EvoGit.Core.ContextNode.is_ignored?(spec.context_node) do
-      {:error, :path_ignored}
-    else
-      :ok
-    end
-  end
-
-  # Builds the final results list in the same order as input specs
-  defp build_ordered_results(sub_results, spec_count) do
-    0..(spec_count - 1)
-    |> Enum.map(fn idx ->
-      Map.get(sub_results, idx, {:error, :unknown_error})
-    end)
-  end
-
-  # --- Spatial Contract Validation (Per-Subagent) ---
-
-  defp validate_spatial_contract_for_spec(
-         _parent_id,
-         %{context_node: parent_context, repo_id: parent_repo_id},
-         spec
-       ) do
-    # Cross-repo delegation: foreign repos are independent trees, skip spatial check
-    if spec.repo_id != parent_repo_id do
-      :ok
-    else
-      parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
-      child_type = spec.agent_module.agent_type()
-      child_path = EvoGit.Agent.Tools.Shared.normalize_relpath(spec.context_node.path)
-      validate_spawn_spatiality(:read_write, parent_path, child_type, child_path)
-    end
-  end
-
-  defp validate_spawn_spatiality(
-         :read_write,
-         parent_path,
-         :read_write,
-         child_path
-       ) do
-    if EvoGit.Agent.Tools.Shared.is_child_or_same_node?(parent_path, child_path) do
-      :ok
-    else
-      {:error,
-       {:spatial_contract_violation,
-        """
-        Subagent that requires editing permissions can only be spawned on the same node or child nodes of your assigned node.
-        You attempted to spawn a read-write subagent at '#{child_path}' from your assigned node '#{parent_path}'.
-
-        This violates the contract - you do NOT have write permission on sibling or parent nodes.
-        If you need to make changes to '#{child_path}', do the following:
-        1. Complete your work within your assigned node '#{parent_path}'
-        2. Return and report to the user about your progress and the changes needed on '#{child_path}'
-        """}}
-    end
-  end
-
-  defp validate_spawn_spatiality(_parent_type, _parent_path, _child_type, _child_path), do: :ok
-
   # Retry LLM waiting queue after backoff expiry (delegated to Slots module)
   @impl true
   def handle_info(:retry_llm_waiting, state) do
@@ -903,13 +745,13 @@ defmodule EvoGit.AgentScheduler do
         {:ok, meta} = get_sched_meta(agent_id)
 
         # Completion Cleanliness
-        meta = auto_commit_fallback(agent_id, meta)
+        meta = Dispatch.auto_commit_fallback(agent_id, meta)
 
         put_sched_meta(agent_id, %{meta | result_sent: true})
 
         if meta.parent_id do
-          store_sub_result(meta.parent_id, agent_id, result)
-          state = maybe_resume_parent(state, meta.parent_id)
+          Subagents.store_sub_result(meta.parent_id, agent_id, result)
+          state = Subagents.maybe_resume_parent(state, meta.parent_id)
           {:noreply, state}
         else
           GenServer.reply(meta.from, result)
@@ -930,11 +772,11 @@ defmodule EvoGit.AgentScheduler do
         {:ok, meta} = get_sched_meta(agent_id)
 
         if reason == :normal or meta.result_sent do
-          state = recycle_agent(state, agent_id)
-          state = process_queue(state)
+          state = Lifecycle.recycle_agent(state, agent_id)
+          state = Dispatch.process_queue(state)
           {:noreply, state}
         else
-          handle_agent_crash(state, agent_id, reason)
+          Lifecycle.handle_agent_crash(state, agent_id, reason)
         end
     end
   end
@@ -954,10 +796,6 @@ defmodule EvoGit.AgentScheduler do
     :ets.insert(@agent_table, {agent_id, agent_state})
   end
 
-  defp delete_agent_state(agent_id) do
-    :ets.delete(@agent_table, agent_id)
-  end
-
   # --- ETS Helpers (Scheduler Metadata Table) ---
 
   defp get_sched_meta(agent_id) do
@@ -969,10 +807,6 @@ defmodule EvoGit.AgentScheduler do
 
   defp put_sched_meta(agent_id, meta) do
     :ets.insert(@sched_table, {agent_id, meta})
-  end
-
-  defp delete_sched_meta(agent_id) do
-    :ets.delete(@sched_table, agent_id)
   end
 
   # Applies a list of {agent_id, status} updates to the ETS SchedMeta table.
@@ -1038,412 +872,6 @@ defmodule EvoGit.AgentScheduler do
 
       _ ->
         :ok
-    end
-  end
-
-  # --- Agent Registry ---
-
-  defp register_agent(state, spec, from, parent_id, depth, task_id) do
-    id = state.next_agent_id
-
-    # Compute per-task local agent ID (display/branch naming only)
-    task_local_id = Map.get(state.task_local_counters, task_id, 1)
-    state = %{state | task_local_counters: Map.put(state.task_local_counters, task_id, task_local_id + 1)}
-
-    # Resolve event_sink: explicit in opts, inherited from parent, or nil
-    event_sink =
-      case spec.opts do
-        opts when is_list(opts) -> Keyword.get(opts, :event_sink)
-        opts when is_map(opts) -> Map.get(opts, :event_sink)
-        _ -> nil
-      end
-
-    event_sink =
-      if is_nil(event_sink) and parent_id do
-        case get_agent_state(parent_id) do
-          {:ok, %{event_sink: sink}} -> sink
-          _ -> nil
-        end
-      else
-        event_sink
-      end
-
-    # Agent state table: live spatial/temporal state for the agent process
-    # Resolve repo root from scheduler state for display/grouping in the dashboard
-    agent_repo_root =
-      case Map.get(state.repos, spec.repo_id) do
-        %ForeignRepo{root: root} -> root
-        nil -> state.repo_root
-      end
-
-    put_agent_state(id, %AgentState{
-      context_node: spec.context_node,
-      phylo_node: nil,
-      event_sink: event_sink,
-      llm_model: state.llm_model,
-      max_retries: state.max_retries,
-      max_depth: state.max_depth,
-      parent_id: parent_id,
-      objective: spec.objective,
-      repo_id: spec.repo_id,
-      repo_root: agent_repo_root,
-      task_local_id: task_local_id
-    })
-
-    # Scheduler metadata table: scheduling bookkeeping
-    put_sched_meta(id, %SchedMeta{
-      id: id,
-      depth: depth,
-      status: :pending,
-      from: from,
-      parent_id: parent_id,
-      task_id: task_id,
-      spec: spec
-    })
-
-    state = %{state | next_agent_id: id + 1}
-    {id, state}
-  end
-
-  # --- Dispatch ---
-
-  defp try_dispatch(state, agent_id) do
-    {:ok, meta} = get_sched_meta(agent_id)
-    {:ok, agent_state} = get_agent_state(agent_id)
-    retries = meta.retries
-    spec = meta.spec
-    task_id = meta.task_id
-    task_local_id = agent_state.task_local_id
-
-    # Create a persistent worktree for this agent: worker_T<task_id>_A<task_local_id>
-    # Determine repo root from the agent's spec data, with repos map as fallback
-    agent_repo_root = resolve_agent_repo_root(spec, state)
-
-    worktree_path = Path.join([agent_repo_root, ".evogit/workers", "worker_T#{task_id}_A#{task_local_id}"])
-
-    # Create the worktree if it doesn't exist (e.g., on first dispatch)
-    newly_created =
-      unless File.exists?(worktree_path) do
-        commit_sha = spec.phylo_node.current_commit
-        branch_name = "evogit-agent-T#{task_id}-A#{task_local_id}"
-
-        case Git.add_worktree(agent_repo_root, worktree_path, commit_sha, branch_name) do
-          {:ok, _} ->
-            Logger.info(
-              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_id}-A#{task_local_id}) on branch #{branch_name}"
-            )
-
-          {:error, _, msg} ->
-            Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
-            raise "Failed to create worktree for agent #{agent_id}"
-        end
-
-        true
-      else
-        false
-      end
-
-    Worktrees.assign_and_prepare_worktree(agent_id, worktree_path)
-
-    # Run worktree init script on first creation only, and only for the primary repo
-    # (foreign repos are independent and should not inherit the primary repo's init script)
-    if newly_created and spec.repo_id == :primary do
-      Worktrees.run_init_script(agent_repo_root, worktree_path)
-    end
-
-    task =
-      Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
-        Process.put(:evogit_agent_id, agent_id)
-        Process.put(:evogit_agent_depth, meta.depth)
-
-        Process.put(:evogit_repo_root, agent_repo_root)
-        Process.put(:evogit_repo_id, spec.repo_id)
-        Process.put(:repo_path, worktree_path)
-
-        if retries > 0 do
-          Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
-          Process.sleep(30_000 * retries)
-        else
-          Logger.info(
-            "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
-          )
-        end
-
-        spec.agent_module.run(spec.objective)
-      end)
-
-    # Update scheduler metadata with worktree assignment and running status
-    put_sched_meta(agent_id, %{
-      meta
-      | status: :running,
-        worktree: worktree_path,
-        task_ref: task.ref
-    })
-
-    %{
-      state
-      | running_count: state.running_count + 1,
-        ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
-    }
-  end
-
-  # Resolves the repo root for an agent from its spec data.
-  # For primary repo agents, derives from phylo_node.repo (which is either
-  # the repo root for top-level agents or a worktree path for subagents).
-  # For foreign repo agents, falls back to the state.repos map.
-  defp resolve_agent_repo_root(spec, state) do
-    if spec.repo_id == :primary do
-      # spec.phylo_node.repo is either:
-      # - A repo root (e.g., "/home/bill/Source/evoclass") for top-level agents
-      # - A worktree path (e.g., ".../.evogit/workers/worker_T1_A1") for subagents
-      # Derive the repo root by stripping the worktree suffix if present.
-      case String.split(spec.phylo_node.repo, "/.evogit/workers/", parts: 2) do
-        [root, _rest] -> root
-        [_] -> spec.phylo_node.repo
-      end
-    else
-      # Foreign repo — resolve from the repos map
-      case Map.get(state.repos, spec.repo_id) do
-        %ForeignRepo{root: root} -> root
-        nil -> state.repo_root
-      end
-    end
-  end
-
-  # --- Auto-Commit Fallback ---
-
-  defp auto_commit_fallback(agent_id, %{status: :running, worktree: wt} = meta)
-       when not is_nil(wt) do
-    case Git.status(wt) do
-      {:ok, ""} ->
-        Worktrees.sync_current_commit(agent_id, meta)
-
-      {:ok, _changes} ->
-        Logger.info("AgentScheduler: Auto-committing pending changes for agent #{agent_id}")
-
-        {:ok, prev_sha} = Git.rev_parse(wt)
-
-        Git.run(["add", "--all"], wt)
-        objective = meta.spec.objective || "task"
-        Git.commit(wt, "Agent: #{objective} (auto-commit)")
-
-        # Log diff stats for the auto-commit
-        case Git.rev_parse(wt) do
-          {:ok, ^prev_sha} ->
-            Logger.debug(
-              "AgentScheduler: Auto-commit for agent #{agent_id} resulted in no new commit"
-            )
-
-          {:ok, new_sha} ->
-            case Git.diff_stat(wt, prev_sha, new_sha) do
-              {:ok, stats} when stats != "" ->
-                Logger.info("AgentScheduler: Auto-commit stats for agent #{agent_id}:\n#{stats}")
-
-              _ ->
-                :ok
-            end
-        end
-
-        Worktrees.sync_current_commit(agent_id, meta)
-
-      _ ->
-        meta
-    end
-  end
-
-  defp auto_commit_fallback(_agent_id, meta), do: meta
-
-  # --- Queue Processing ---
-
-  # Drains the agent queue after a resume, dispatching each queued agent.
-  defp dispatch_queued_agents(%{queue: queue} = state) do
-    case :queue.out(queue) do
-      {{:value, agent_id}, rest_queue} ->
-        state = %{state | queue: rest_queue}
-        state = try_dispatch(state, agent_id)
-        dispatch_queued_agents(state)
-
-      {:empty, _} ->
-        state
-    end
-  end
-
-  defp process_queue(%{queue: queue} = state) do
-    case :queue.out(queue) do
-      {{:value, agent_id}, new_queue} ->
-        state = %{state | queue: new_queue}
-
-        case get_sched_meta(agent_id) do
-          {:ok, %{status: :ready} = meta} ->
-            # Ready parent agent - resume with its persistent worktree
-            state = dispatch_ready_parent(state, agent_id, meta)
-            process_queue(state)
-
-          {:ok, _meta} ->
-            # Regular agent - dispatch with its persistent worktree
-            state = try_dispatch(state, agent_id)
-            process_queue(state)
-
-          :error ->
-            # Agent was already recycled; skip stale queue entry
-            Logger.debug("AgentScheduler: Skipping stale queue entry for agent #{agent_id}")
-            process_queue(state)
-        end
-
-      {:empty, _} ->
-        state
-    end
-  end
-
-  # Resumes a waiting parent agent. The parent keeps its persistent worktree
-  # while waiting, so no worktree assignment is needed.
-  defp dispatch_ready_parent(state, agent_id, %{worktree: wt} = meta) do
-    results = build_ordered_results(meta.sub_agent_results, meta.total_sub_specs)
-
-    GenServer.reply(meta.sub_agent_from, results)
-
-    put_sched_meta(agent_id, %{
-      meta
-      | status: :running,
-        sub_agent_from: nil,
-        pending_sub_agents: MapSet.new(),
-        sub_agent_results: %{},
-        sub_agent_indices: %{},
-        total_sub_specs: 0
-    })
-
-    {:ok, agent_state} = get_agent_state(agent_id)
-    commit_sha = agent_state.phylo_node.current_commit
-
-    Logger.info(
-      "AgentScheduler: Waiting agent #{agent_id} resumed with persistent worktree #{wt} at commit #{commit_sha}"
-    )
-
-    state
-  end
-
-  # --- SubAgent Result Tracking ---
-
-  defp store_sub_result(parent_id, sub_id, result) do
-    {:ok, parent} = get_sched_meta(parent_id)
-    idx = Map.get(parent.sub_agent_indices, sub_id)
-    results = Map.put(parent.sub_agent_results, idx, result)
-    put_sched_meta(parent_id, %{parent | sub_agent_results: results})
-  end
-
-  defp maybe_resume_parent(state, parent_id) do
-    {:ok, parent} = get_sched_meta(parent_id)
-
-    all_done? = map_size(parent.sub_agent_results) == parent.total_sub_specs
-
-    if all_done? do
-      Logger.info("AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed")
-
-      # Parent always has its persistent worktree - resume immediately
-      parent = %{parent | status: :ready}
-      put_sched_meta(parent_id, parent)
-      dispatch_ready_parent(state, parent_id, parent)
-    else
-      state
-    end
-  end
-
-  # --- Agent Lifecycle ---
-
-  defp recycle_agent(state, agent_id) do
-    {:ok, meta} = get_sched_meta(agent_id)
-
-    # Delete the agent's persistent worktree
-    if meta.worktree do
-      Worktrees.delete(meta.worktree, state.repo_root)
-    end
-
-    delete_agent_state(agent_id)
-    delete_sched_meta(agent_id)
-    %{state | running_count: state.running_count - 1}
-  end
-
-  defp handle_agent_crash(state, agent_id, reason) do
-    {:ok, meta} = get_sched_meta(agent_id)
-
-    Logger.error(
-      "AgentScheduler: Agent #{agent_id} crashed: #{inspect(reason)}. " <>
-        "Retry #{meta.retries}/#{state.agent_max_retries}"
-    )
-
-    if meta.retries < state.agent_max_retries do
-      # On retry, keep the persistent worktree - just update retry count and status
-      # The worktree will be reused on next dispatch (assign_and_prepare_worktree will clean/checkout)
-      put_sched_meta(agent_id, %{
-        meta
-        | retries: meta.retries + 1,
-          status: :pending,
-          task_ref: nil
-      })
-
-      # Reset agent state phylo_node (will be re-set on dispatch)
-      {:ok, agent_state} = get_agent_state(agent_id)
-      put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
-
-      # Wrap dispatch in try/rescue to prevent GenServer crash on worktree creation failure
-      state =
-        try do
-          try_dispatch(state, agent_id)
-        rescue
-          e ->
-            Logger.error(
-              "AgentScheduler: Failed to retry dispatch for agent #{agent_id}: #{inspect(e)}. " <>
-                "Treating as permanent failure."
-            )
-
-            # Clean up and permanently fail the agent
-            if meta.worktree do
-              Worktrees.delete(meta.worktree, state.repo_root)
-            end
-
-            delete_agent_state(agent_id)
-            delete_sched_meta(agent_id)
-            updated_state = %{state | running_count: state.running_count - 1}
-
-            updated_state =
-              if meta.parent_id do
-                store_sub_result(meta.parent_id, agent_id, {:error, :worktree_creation_failed})
-                maybe_resume_parent(updated_state, meta.parent_id)
-              else
-                GenServer.reply(meta.from, {:error, :worktree_creation_failed})
-                updated_state
-              end
-
-            updated_state
-        end
-
-      state = process_queue(state)
-      {:noreply, state}
-    else
-      msg =
-        "Agent #{agent_id} failed after #{state.agent_max_retries} retries. Last: #{inspect(reason)}"
-
-      Logger.error("AgentScheduler: #{msg}")
-
-      # Delete the agent's persistent worktree on permanent failure
-      if meta.worktree do
-        Worktrees.delete(meta.worktree, state.repo_root)
-      end
-
-      delete_agent_state(agent_id)
-      delete_sched_meta(agent_id)
-      state = %{state | running_count: state.running_count - 1}
-
-      if meta.parent_id do
-        store_sub_result(meta.parent_id, agent_id, {:error, :agent_max_retries_exceeded})
-        state = maybe_resume_parent(state, meta.parent_id)
-        state = process_queue(state)
-        {:noreply, state}
-      else
-        GenServer.reply(meta.from, {:error, :agent_max_retries_exceeded})
-        state = process_queue(state)
-        {:noreply, state}
-      end
     end
   end
 
