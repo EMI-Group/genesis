@@ -80,8 +80,7 @@ defmodule EvoGit.Config do
   @spec resolve() :: map()
   def resolve do
     defaults()
-    |> deep_merge(user_config())
-    |> atomize_keys()
+    |> deep_merge(atomize_keys(user_config()))
     |> atomize_enum_values()
   end
 

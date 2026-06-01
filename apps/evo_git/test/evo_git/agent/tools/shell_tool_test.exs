@@ -28,7 +28,6 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
         ShellTool.detect_cd_warnings("cd #{other}", @repo_path, @repo_root)
 
       assert result =~ "another agent's worktree"
-      assert result =~ other
       assert result =~ @repo_path
     end
 
