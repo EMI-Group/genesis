@@ -78,6 +78,7 @@ defmodule EvoDashWeb.DashboardLive do
             mode_info={@task_mode_info}
             node_path={@task_node_path}
             seeds={@task_seeds}
+            starting_commit={@task_starting_commit}
           />
         </div>
 
@@ -773,6 +774,15 @@ defmodule EvoDashWeb.DashboardLive do
           opts
         end
 
+      starting_commit = params["starting_commit"]
+
+      opts =
+        if task_type == :evolve and is_binary(starting_commit) and String.trim(starting_commit) != "" do
+          Keyword.put(opts, :starting_commit, String.trim(starting_commit))
+        else
+          opts
+        end
+
       seeds_content = params["seeds"]
 
       opts =
@@ -794,7 +804,8 @@ defmodule EvoDashWeb.DashboardLive do
            |> assign_running_and_recent_tasks()
            |> assign(:task_prompt, "")
            |> assign(:task_node_path, "")
-           |> assign(:task_seeds, "")}
+           |> assign(:task_seeds, "")
+           |> assign(:task_starting_commit, "")}
 
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, gettext("Failed to start task: %{reason}", reason: inspect(reason)))}
@@ -950,6 +961,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:task_mode_info, "")
     |> assign(:task_node_path, "")
     |> assign(:task_seeds, "")
+    |> assign(:task_starting_commit, "")
   end
 
   defp current_tasks(socket) do
