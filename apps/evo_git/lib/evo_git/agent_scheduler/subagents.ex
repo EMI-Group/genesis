@@ -184,9 +184,26 @@ defmodule EvoGit.AgentScheduler.Subagents do
         %{context_node: parent_context, repo_id: parent_repo_id},
         spec
       ) do
-    # Cross-repo delegation: foreign repos are independent trees, skip spatial check
     if spec.repo_id != parent_repo_id do
-      :ok
+      # Cross-repo delegation: foreign repos are independent trees, skip spatial check
+      # but enforce read-only access — only read-only agents are allowed in foreign repos
+      child_type = spec.agent_module.agent_type()
+
+      if child_type == :read_write do
+        {:error,
+         {:foreign_repo_read_only,
+          """
+          Read-write agents cannot be spawned in foreign repositories.
+          Use read-only agent types instead:
+          - subagent_codebase_investigator — for investigating and analyzing code
+          - subagent_task_scheduler — for planning and scheduling tasks
+
+          Foreign repos are read-only to prevent unintended modifications.
+          If you need to apply changes based on foreign repo findings, do so in your primary repository.
+          """}}
+      else
+        :ok
+      end
     else
       parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
       child_type = spec.agent_module.agent_type()

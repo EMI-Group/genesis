@@ -247,6 +247,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "Error: Cannot spawn subagent in an ignored folder. The current working directory is ignored by git."
   end
 
+  def format_subagent_result({:error, {:foreign_repo_read_only, msg}}) do
+    "Error: #{msg}"
+  end
+
   def format_subagent_result({:error, :path_not_exist}) do
     """
     Error: The assigned node path does not exist in the repository.
