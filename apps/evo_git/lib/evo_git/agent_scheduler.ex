@@ -386,6 +386,22 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
+  @doc """
+  Cancels all agents belonging to a task identified by the caller PID.
+
+  When the EvoDash Task process (which called `run_agent/2`) is killed,
+  its PID is used to find the matching top-level agent. All agents sharing
+  the same scheduler `task_id` (including subagents) are then cancelled:
+  their Task processes are killed, worktrees deleted, ETS entries removed,
+  and any blocked callers are replied to with `{:error, :cancelled}`.
+
+  Returns `:ok` if agents were found and cancelled, or `{:error, :not_found}`.
+  """
+  @spec cancel_task_agents(pid()) :: :ok | {:error, :not_found}
+  def cancel_task_agents(caller_pid) when is_pid(caller_pid) do
+    GenServer.call(__MODULE__, {:cancel_task_agents, caller_pid})
+  end
+
   # --- Server Callbacks ---
 
   @impl true
@@ -552,6 +568,71 @@ defmodule EvoGit.AgentScheduler do
     else
       state = Dispatch.try_dispatch(state, agent_id)
       {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:cancel_task_agents, caller_pid}, _from, state) do
+    # 1. Scan :evogit_sched_meta ETS to find top-level agent whose meta.from contains caller_pid
+    #    The meta.from is a GenServer.from() tuple: {ref, pid} where pid is the calling process
+    top_level_agent =
+      :ets.tab2list(@sched_table)
+      |> Enum.find(fn {_id, %SchedMeta{depth: 0, from: {_, pid}}} ->
+        pid == caller_pid
+      end)
+
+    case top_level_agent do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      {_id, %SchedMeta{task_id: task_id}} ->
+        Logger.info("AgentScheduler: Cancelling all agents for task #{task_id} (caller PID #{inspect(caller_pid)})")
+
+        # 2. Find ALL agents with this task_id
+        agent_ids =
+          :ets.tab2list(@sched_table)
+          |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
+          |> Enum.map(fn {id, _meta} -> id end)
+
+        cancel_set = MapSet.new(agent_ids)
+
+        # 3. Remove refs from ref_to_agent BEFORE killing Tasks (so DOWN handler is a no-op)
+        ref_to_agent =
+          state.ref_to_agent
+          |> Enum.reject(fn {_ref, aid} -> MapSet.member?(cancel_set, aid) end)
+          |> Map.new()
+
+        state = %{state | ref_to_agent: ref_to_agent}
+
+        # 4. Remove from dispatch queue
+        queue =
+          :queue.filter(state.queue, fn aid ->
+            not MapSet.member?(cancel_set, aid)
+          end)
+
+        state = %{state | queue: queue}
+
+        # 5. Purge from slot waiting queues (replies {:error, :cancelled} to blocked callers)
+        {state, _status_updates} = Slots.purge_agents_from_queues(state, cancel_set)
+
+        # 6. Cancel agents in reverse depth order (leaf subagents first, then parents)
+        #    Sort by depth descending so deepest agents are cancelled first
+        sorted_agents =
+          :ets.tab2list(@sched_table)
+          |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
+          |> Enum.sort_by(fn {_id, %SchedMeta{depth: d}} -> d end, :desc)
+          |> Enum.map(fn {id, _meta} -> id end)
+
+        state = Enum.reduce(sorted_agents, state, fn agent_id, acc_state ->
+          Lifecycle.cancel_agent(acc_state, agent_id)
+        end)
+
+        # 7. Process queue to dispatch any newly-eligible agents
+        state = Dispatch.process_queue(state)
+
+        Logger.info("AgentScheduler: Cancelled #{length(agent_ids)} agent(s) for task #{task_id}")
+
+        {:reply, :ok, state}
     end
   end
 
