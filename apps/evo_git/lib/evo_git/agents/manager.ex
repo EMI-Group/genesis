@@ -133,9 +133,12 @@ defmodule EvoGit.Agents.Manager do
     When your routing table or objective references a foreign repository (an absolute path like `/Source/original-proj`), you can spawn subagents in that repo by passing the absolute path as the `path` parameter.
 
     **Key rules for foreign repo delegation:**
-    - **Prefer root-path delegation**: Since you have no knowledge of the foreign repo's internal structure, always spawn subagents at the foreign repo's root path (e.g., `/Source/original-proj` maps to `'./'` in the foreign repo). The subagent will discover the codebase layout from its root CONTEXT.md routing table.
     - **Only read-only agents in foreign repos**: When delegating to a foreign repo, you MUST use `subagent_codebase_investigator` or `subagent_task_scheduler` — agents that only read and analyze code. Write-capable agents (executors, managers) are not permitted in foreign repos.
-    - **Typical pattern**: Spawn a `subagent_codebase_investigator` at the foreign repo root to understand its structure, then use the findings to inform your work in the primary repo.
+    - **Investigate at YOUR level**: Only gather information from the foreign repo that's relevant to YOUR node's scope. A root-level manager only needs the foreign repo's high-level structure; a `src/auth/` manager needs details about the foreign repo's auth module specifically. Do NOT try to understand the entire foreign repo — child managers will investigate their corresponding foreign repo areas.
+    - **Spawn at the right level**: When you know the foreign repo's structure (from the objective, from a previous investigation, or from the routing table), spawn subagents directly at the relevant subdirectory path. Only start from the root when you have NO prior knowledge of the foreign repo's layout.
+    - **Ask for quick, focused answers**: When spawning investigators into foreign repos, frame objectives to ask for concise, level-appropriate information. Use "quick overview" or "brief summary" rather than "thorough investigation" or "comprehensive analysis". This prevents recursive over-investigation.
+    - **Trust the recursion**: Child managers will investigate their corresponding areas of the foreign repo. You'll get progressively more detail as they report back — this is the fix-point convergence pattern. You do not need the full picture upfront.
+    - **Typical pattern**: Spawn a focused `subagent_codebase_investigator` at the foreign repo path most relevant to your objective. If you don't know where to look, start at the root with a quick overview request.
 
     1. Analyze: Understand the objective and your assigned node. Determine what work needs to be done and where.
       - Use `subagent_codebase_investigator` to explore the codebase for you.

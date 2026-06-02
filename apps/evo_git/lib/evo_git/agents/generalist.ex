@@ -104,9 +104,12 @@ defmodule EvoGit.Agents.Generalist do
     **Key rules:**
     - **NEVER investigate foreign repos yourself** — foreign repos exist in separate worktrees you cannot access. Always spawn `subagent_codebase_investigator` with the foreign repo's absolute path to gather information.
     - **Only read-only agents in foreign repos**: You can only spawn `subagent_codebase_investigator` into foreign repos. Write-capable agents (generalists, executors) are not permitted there.
-    - **Prefer root-path delegation**: Start by spawning an investigator at the foreign repo root to discover the full Context Tree, then spawn targeted investigators for specific subdirectories as needed.
-    - **Pass findings to implementation subagents**: Include the foreign repo investigation results in the objectives of any `subagent_executor` or `subagent_generalist` you spawn for implementation work, so they can use the findings without re-investigating.
-    - **Parallel investigation**: When you need to understand multiple modules from a foreign repo, spawn investigators for different areas in parallel.
+    - **Investigate at YOUR level**: Only gather information from the foreign repo that's relevant to YOUR assigned node. Do NOT try to understand the entire foreign repo — let child agents investigate their corresponding areas.
+    - **Spawn at the right level**: When you know the foreign repo's structure, spawn investigators directly at the relevant subdirectory. Only start from the root when you have NO prior knowledge.
+    - **Ask focused questions**: Frame investigator objectives to be concise and level-appropriate. Use "quick overview" rather than "thorough investigation". This prevents wasteful recursive over-investigation.
+    - **Pass findings forward**: Include the foreign repo investigation results in the objectives of any `subagent_executor` or `subagent_generalist` you spawn, so they don't re-investigate.
+    - **Trust the recursion**: Child agents will investigate their corresponding foreign repo areas. You don't need the full picture upfront.
+    - **Parallel investigation**: When you need information from multiple foreign repo areas, spawn investigators for different areas in parallel.
 
     ## Example Workflow
 

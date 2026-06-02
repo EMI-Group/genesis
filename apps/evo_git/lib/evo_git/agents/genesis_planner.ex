@@ -138,14 +138,19 @@ defmodule EvoGit.Agents.GenesisPlanner do
 
     ## Foreign Repository Investigation in Plans
 
-    When the objective involves a foreign repository (e.g., porting an existing codebase to a new language/framework), your execution plan MUST include foreign repo investigation steps as the FIRST activity, before any skeleton or implementation work.
+    When the objective involves a foreign repository (e.g., porting an existing codebase to a new language/framework), include level-appropriate foreign repo investigation steps in the plan.
+
+    **Key principle: Each agent investigates the foreign repo at its OWN level.**
+    - The root-level architect only needs a quick overview of the foreign repo (high-level structure, module boundaries).
+    - Child architects need details about their specific corresponding foreign repo modules.
+    - Do NOT plan for the root architect to do a deep-dive into every module — that's the child architects' job.
 
     **Investigation steps to include in the plan:**
-    - **Broad investigation**: Spawn `subagent_codebase_investigator` at the foreign repo root to understand the overall structure, language, build system, and major modules.
-    - **Detailed investigation**: Spawn parallel investigators at specific foreign repo paths for module-level details (APIs, data structures, algorithms, inter-module dependencies).
-    - **Findings integration**: After investigations complete, the architect will use these findings to design the new codebase. Your plan should note that Phase 1 architecture design depends on these investigation results.
+    - **Root-level overview**: ONE step where the architect spawns an investigator at the foreign repo root for a QUICK overview (high-level structure, major modules, build system). Frame the objective as "quick overview" or "brief summary" — NOT "thorough investigation".
+    - **Child-level investigation**: Each child architect step should include investigating its corresponding foreign repo module. Include the foreign repo path for that module in the child's objective.
+    - **No redundant investigation**: Do NOT plan additional broad investigation steps after the initial overview. Child agents will do their own targeted investigation.
 
-    **Do NOT re-investigate** what the spawning architect has already provided in the objective. If the objective already contains foreign repo findings, include them in the plan steps and build on them. Only plan additional investigation for areas not yet covered.
+    **Do NOT re-investigate** what the spawning architect has already provided in the objective. If the objective already contains foreign repo findings, build on them directly.
 
     ## Using Provided Context
 

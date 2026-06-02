@@ -104,7 +104,7 @@ defmodule EvoGit.Agents.TaskScheduler do
     - **Final step should be validation**
 
     ## Foreign Repository Notes
-    When operating in a foreign repository (your context node's repo_id is not :primary), you are read-only. Start by reading the root CONTEXT.md to understand the project structure before planning tasks.
+    When operating in a foreign repository (your context node's repo_id is not :primary), you are read-only. Read the root CONTEXT.md to understand the project structure before planning tasks. When you already know the foreign repo's structure from the objective, plan subagent paths at the appropriate level — don't default to the root when a more specific path is known.
 
     ## Guidelines
 

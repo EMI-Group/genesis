@@ -120,9 +120,10 @@ defmodule EvoGit.Agents.ContextExtractor do
     When your routing table or objective references a foreign repository (an absolute path like `/Source/original-proj`), you can spawn subagents in that repo by passing the absolute path as the `path` parameter.
 
     **Key rules for foreign repo delegation:**
-    - **Prefer root-path delegation**: Since you have no knowledge of the foreign repo's internal structure, always spawn subagents at the foreign repo's root path (e.g., `/Source/original-proj` maps to `'./'` in the foreign repo). The subagent will discover the codebase layout from its root CONTEXT.md routing table.
     - **Only read-only agents in foreign repos**: When delegating to a foreign repo, use `subagent_context_extractor` (read-only). Write-capable agents are not permitted in foreign repos.
-    - **Typical pattern**: Spawn a `subagent_context_extractor` at the foreign repo root to analyze its structure, then use the findings to inform your work in the primary repo.
+    - **Spawn at the right level**: When you know the foreign repo's structure (from the objective or from previous investigation), spawn subagents directly at the relevant subdirectory. Only start from the root when you have NO prior knowledge of the foreign repo's layout.
+    - **Investigate at YOUR level**: Only gather structural information from the foreign repo that's relevant to your assigned node's scope. Do NOT try to analyze the entire foreign repo — child extractors will handle their corresponding areas.
+    - **Typical pattern**: Spawn a `subagent_context_extractor` at the foreign repo path most relevant to your objective. If you don't know where to look, start at the root with a focused objective.
 
     ## Global vs. Local Alignment & Convergence
 
