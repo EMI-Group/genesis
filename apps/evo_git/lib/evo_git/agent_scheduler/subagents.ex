@@ -256,7 +256,20 @@ defmodule EvoGit.AgentScheduler.Subagents do
     {:ok, parent} = get_sched_meta(parent_id)
     idx = Map.get(parent.sub_agent_indices, sub_id)
     results = Map.put(parent.sub_agent_results, idx, result)
-    put_sched_meta(parent_id, %{parent | sub_agent_results: results})
+
+    # Track foreign repo commit SHAs — when a foreign-repo subagent completes,
+    # record its commit so subsequent subagents can start from it instead of HEAD.
+    foreign_repo_commits =
+      case result do
+        {:ok, %EvoGit.Agent.Result{commit_sha: sha, repo_id: repo_id}}
+        when is_binary(sha) and not is_nil(repo_id) and repo_id != :primary ->
+          Map.put(parent.foreign_repo_commits, repo_id, sha)
+
+        _ ->
+          parent.foreign_repo_commits
+      end
+
+    put_sched_meta(parent_id, %{parent | sub_agent_results: results, foreign_repo_commits: foreign_repo_commits})
   end
 
   @doc """
