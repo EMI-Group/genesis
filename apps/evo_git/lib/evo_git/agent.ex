@@ -103,9 +103,10 @@ defmodule EvoGit.Agent do
           # Build context tree and merge into first user prompt
           # Use :repo_path (set by scheduler to worktree path)
           context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
+          foreign_repo_info = build_foreign_repo_info()
 
           objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
-          combined_prompt = "Current Context Tree:\n#{context_tree}\n\n#{objective_prompt}"
+          combined_prompt = "Current Context Tree:\n#{context_tree}\n\n#{foreign_repo_info}\n\n#{objective_prompt}"
 
           context = ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)])
 
@@ -717,6 +718,31 @@ defmodule EvoGit.Agent do
         case EvoGit.Core.ContextNode.build_context(state.node_path, state.repo_path) do
           {:ok, context} -> context
           {:error, _} -> "Current Path: '#{state.node_path}'."
+        end
+      end
+
+      defp build_foreign_repo_info do
+        try do
+          repos = EvoGit.AgentScheduler.get_foreign_repos()
+          non_primary = Enum.reject(repos, &EvoGit.Core.ForeignRepo.primary?(&1.id))
+
+          if non_primary == [] do
+            ""
+          else
+            repo_lines =
+              Enum.map(non_primary, fn repo ->
+                name_str = if repo.name, do: ", name: #{repo.name}", else: ""
+                "- `#{repo.root}` (id: `:#{repo.id}`#{name_str})"
+              end)
+
+            "\n## Available Foreign Repositories\n\n" <>
+              "The following foreign repositories are registered for cross-repo delegation:\n\n" <>
+              Enum.join(repo_lines, "\n") <> "\n"
+          end
+        rescue
+          _ -> ""
+        catch
+          _, _ -> ""
         end
       end
 
