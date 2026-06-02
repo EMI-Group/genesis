@@ -222,9 +222,18 @@ defmodule EvoGit do
   end
 
   defp sandbox_resource_args do
-    case EvoGit.Config.resolve([:sandbox, :resources, :limit_nofile]) do
-      nil -> []
-      v -> ["-p", "LimitNOFILE=#{v}"]
-    end
+    nofile_args =
+      case EvoGit.Config.resolve([:sandbox, :resources, :limit_nofile]) do
+        nil -> []
+        v -> ["-p", "LimitNOFILE=#{v}"]
+      end
+
+    oom_args =
+      case EvoGit.Config.resolve([:sandbox, :resources, :oom_score_adjust]) do
+        nil -> []
+        v -> ["-p", "OOMScoreAdjust=#{v}"]
+      end
+
+    nofile_args ++ oom_args
   end
 end

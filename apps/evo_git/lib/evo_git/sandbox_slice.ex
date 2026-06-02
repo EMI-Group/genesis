@@ -34,7 +34,7 @@ defmodule EvoGit.SandboxSlice do
 
   @doc """
   Updates resource limits on the running slice.
-  Accepts a map with keys: cpu_weight, memory_max, tasks_max, oom_score_adjust.
+  Accepts a map with keys: cpu_weight, memory_max, tasks_max.
   """
   @spec update_resources(map()) :: :ok | {:error, term()}
   def update_resources(resources) when is_map(resources) do
@@ -226,12 +226,6 @@ defmodule EvoGit.SandboxSlice do
       case Map.get(resources, :tasks_max) do
         nil -> props
         v -> props ++ ["-p", "TasksMax=#{v}"]
-      end
-
-    props =
-      case Map.get(resources, :oom_score_adjust) do
-        nil -> props
-        v -> props ++ ["-p", "OOMScoreAdjust=#{v}"]
       end
 
     props

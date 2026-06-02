@@ -15,7 +15,7 @@ defmodule EvoGitTest do
       refute "MemoryMax=16G" in args
       refute "TasksMax=8196" in args
       assert "LimitNOFILE=65536" in args
-      refute "OOMScoreAdjust=1000" in args
+      assert "OOMScoreAdjust=1000" in args
       assert List.last(args) == "ls"
     end
 
