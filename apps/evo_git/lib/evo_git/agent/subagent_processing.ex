@@ -212,7 +212,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
             "Agent: Absolute path '#{raw_path}' not in any known repo, treating as primary"
           )
 
-          {:primary, parent_state.phylo_node.repo, ContextNode.normalize_relpath(raw_path)}
+          # Convert absolute to relative by stripping leading /
+          rel = String.trim_leading(raw_path, "/")
+          {:primary, parent_state.phylo_node.repo, ContextNode.normalize_relpath(rel)}
       end
     else
       # Relative path — same repo as parent
