@@ -279,6 +279,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   Processes the agent queue, dispatching ready agents and resuming parent agents.
   """
   @spec process_queue(State.t()) :: State.t()
+  def process_queue(%{paused: true} = state), do: state
+
   def process_queue(%{queue: queue} = state) do
     case :queue.out(queue) do
       {{:value, agent_id}, new_queue} ->

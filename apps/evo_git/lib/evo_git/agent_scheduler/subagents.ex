@@ -277,7 +277,12 @@ defmodule EvoGit.AgentScheduler.Subagents do
       # Parent always has its persistent worktree - resume immediately
       parent = %{parent | status: :ready}
       put_sched_meta(parent_id, parent)
-      dispatch_ready_parent(state, parent_id, parent)
+
+      if state.paused do
+        %{state | queue: :queue.in(parent_id, state.queue)}
+      else
+        dispatch_ready_parent(state, parent_id, parent)
+      end
     else
       state
     end
