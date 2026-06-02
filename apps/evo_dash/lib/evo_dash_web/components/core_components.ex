@@ -56,15 +56,15 @@ defmodule EvoDashWeb.CoreComponents do
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       phx-hook="AutoClearFlash"
       role="alert"
-      class={"fixed right-4 z-50 w-80 sm:w-96 animate-fade-in-up top-4"}
+      class={"fixed right-4 z-[60] w-80 sm:w-96 animate-fade-in-up top-20"}
       {@rest}
     >
       <div class={[
-        "relative w-full overflow-hidden rounded-lg shadow-lg ring-1 p-4",
-        @kind == :info && "bg-info/10 text-info ring-info/20",
-        @kind == :success && "bg-success/10 text-success ring-success/20",
-        @kind == :error && "bg-error/10 text-error ring-error/20",
-        @kind == :warning && "bg-warning/10 text-warning ring-warning/20"
+        "relative w-full overflow-hidden rounded-lg shadow-xl ring-1 p-4 backdrop-blur-sm",
+        @kind == :info && "bg-info/15 text-info ring-info/30",
+        @kind == :success && "bg-success/15 text-success ring-success/30",
+        @kind == :error && "bg-error/15 text-error ring-error/30",
+        @kind == :warning && "bg-warning/15 text-warning ring-warning/30"
       ]}>
         <div class="flex items-start gap-3">
           <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0 text-info" />
@@ -79,8 +79,8 @@ defmodule EvoDashWeb.CoreComponents do
             <.icon name="hero-x-mark" class="size-5" />
           </button>
         </div>
-        <div class="absolute bottom-0 left-0 h-1 w-full opacity-20 bg-current">
-          <div class="h-full animate-countdown bg-current" />
+        <div class="absolute bottom-0 left-0 h-0.5 w-full bg-current/10">
+          <div class="h-full animate-countdown bg-current/60" />
         </div>
       </div>
     </div>

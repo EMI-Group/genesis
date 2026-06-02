@@ -248,6 +248,7 @@ input, textarea, select, button, a {
 
 .animate-countdown {
   animation: countdown 4s linear forwards;
+  transition: none;
 }
 
 /* Utility classes */
