@@ -215,7 +215,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       Subagents.store_sub_result(parent_id, sub_id, result)
 
-      {:ok, updated} = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       assert updated.foreign_repo_commits == %{original: "def456"}
       assert updated.sub_agent_results == %{0 => result}
     end
@@ -232,7 +232,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       Subagents.store_sub_result(parent_id, 10, result1)
       Subagents.store_sub_result(parent_id, 11, result2)
 
-      {:ok, updated} = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       assert updated.foreign_repo_commits == %{original: "sha1", reference: "sha2"}
     end
 
@@ -247,7 +247,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       Subagents.store_sub_result(parent_id, sub_id, result)
 
-      {:ok, updated} = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       assert updated.foreign_repo_commits == %{}
     end
 
@@ -264,7 +264,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       Subagents.store_sub_result(parent_id, sub_id, {:error, :some_error})
 
-      {:ok, updated} = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       # Existing commits preserved, no new entry added
       assert updated.foreign_repo_commits == %{original: "existing_sha"}
     end
@@ -281,7 +281,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       Subagents.store_sub_result(parent_id, 10, result1)
       Subagents.store_sub_result(parent_id, 11, result2)
 
-      {:ok, updated} = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       # Second result overwrites first for same repo
       assert updated.foreign_repo_commits == %{original: "sha_v2"}
     end
