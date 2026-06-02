@@ -21,12 +21,6 @@ defmodule EvoGit.Core.ForeignRepoTest do
     end
   end
 
-  describe "primary_id/0" do
-    test "returns :primary" do
-      assert ForeignRepo.primary_id() == :primary
-    end
-  end
-
   describe "primary?/1" do
     test "returns true for :primary" do
       assert ForeignRepo.primary?(:primary)

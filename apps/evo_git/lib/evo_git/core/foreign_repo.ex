@@ -1,4 +1,6 @@
 defmodule EvoGit.Core.ForeignRepo do
+  alias EvoGit.Core.ContextNode
+
   @moduledoc """
   Represents a reference to a Git repository in the multi-repo system.
 
@@ -52,12 +54,6 @@ defmodule EvoGit.Core.ForeignRepo do
       name: Keyword.get(opts, :name, Atom.to_string(id))
     }
   end
-
-  @doc """
-  Returns the primary repo identifier.
-  """
-  @spec primary_id() :: :primary
-  def primary_id, do: :primary
 
   @doc """
   Checks if the given repo id is the primary repo.
@@ -129,15 +125,5 @@ defmodule EvoGit.Core.ForeignRepo do
 
   def absolute_path?(_other), do: false
 
-  # Normalizes a relative path to "./foo/bar" format
-  defp normalize_relative(path) do
-    path
-    |> String.trim_leading("/")
-    |> String.trim_trailing("/")
-    |> then(fn
-      "" -> "./"
-      "." -> "./"
-      p -> if String.starts_with?(p, "./"), do: p, else: "./" <> p
-    end)
-  end
+  defp normalize_relative(path), do: ContextNode.normalize_relpath(path)
 end
