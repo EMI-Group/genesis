@@ -722,10 +722,14 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:spawn_sub_agents, parent_id, specs}, from, state) do
-    state = Worktrees.ensure_initialized(state)
-    {:ok, parent} = get_sched_meta(parent_id)
+    if state.paused do
+      {:reply, {:error, :scheduler_paused}, state}
+    else
+      state = Worktrees.ensure_initialized(state)
+      {:ok, parent} = get_sched_meta(parent_id)
 
-    Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
+      Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
+    end
   end
 
   # --- LLM and Tool Slot Management (delegated to Slots module) ---
