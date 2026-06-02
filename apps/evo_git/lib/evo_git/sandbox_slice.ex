@@ -152,20 +152,35 @@ defmodule EvoGit.SandboxSlice do
   end
 
   defp do_create_slice(resources) do
-    property_args = resource_properties(resources)
-
+    # Step 1: Create the slice by running a transient scope inside it.
+    # The -p flags are intentionally omitted here because they would apply
+    # to the transient scope, not the slice. Slice-level properties are set
+    # separately via `systemctl set-property` in step 2.
     args = [
       "--user",
       "--slice=#{@slice_name}",
       "--scope",
       "--collect",
-      "-q"
-    ] ++ property_args ++ ["true"]
+      "-q",
+      "true"
+    ]
 
     case System.cmd("systemd-run", args, stderr_to_stdout: true) do
       {_output, 0} ->
-        Logger.info("SandboxSlice: Created slice '#{@slice_name}' with resource limits")
-        :ok
+        # Step 2: Set resource properties on the slice itself.
+        case do_update_slice_properties(resources) do
+          :ok ->
+            Logger.info("SandboxSlice: Created slice '#{@slice_name}' with resource limits")
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "SandboxSlice: Slice '#{@slice_name}' created but failed to set properties: #{inspect(reason)}"
+            )
+
+            {:error, reason}
+        end
+
       {output, _code} ->
         {:error, String.trim(output)}
     end
