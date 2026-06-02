@@ -10,11 +10,11 @@ defmodule EvoGitTest do
       assert "PrivatePIDs=yes" in args
       assert "ProtectProc=invisible" in args
       assert "--slice=evogit" in args
-      # Per-process resource limits are removed — now applied at slice level
+      # Per-process resource limits are applied per-command; slice-level limits are separate
       refute "CPUWeight=30" in args
       refute "MemoryMax=16G" in args
       refute "TasksMax=8196" in args
-      refute "LimitNOFILE=65536" in args
+      assert "LimitNOFILE=65536" in args
       refute "OOMScoreAdjust=1000" in args
       assert List.last(args) == "ls"
     end
