@@ -640,6 +640,8 @@ defmodule EvoDashWeb.DashboardLive do
             ForeignRepo.new(repo_id, path)
           end
 
+        Application.ensure_all_started(:evo_git)
+
         try do
           case EvoGit.AgentScheduler.register_foreign_repo(repo) do
             :ok ->
@@ -675,6 +677,8 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_event("remove_foreign_repo", %{"repo_id" => repo_id_str}, socket) do
     repo_id = String.to_atom(repo_id_str)
+
+    Application.ensure_all_started(:evo_git)
 
     try do
       case EvoGit.AgentScheduler.unregister_foreign_repo(repo_id) do

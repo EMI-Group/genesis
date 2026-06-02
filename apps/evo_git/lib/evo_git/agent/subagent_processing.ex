@@ -207,12 +207,15 @@ defmodule EvoGit.Agent.SubagentProcessing do
           {repo_id, repo.root, rel_path}
 
         {:error, :not_in_any_repo} ->
-          # Not in any known repo — treat as primary, let it fail naturally
+          # Not in any known repo — convert to relative path within primary as fallback
+          known = Enum.map(foreign_repos, & &1.root) |> Enum.join(", ")
           Logger.warning(
-            "Agent: Absolute path '#{raw_path}' not in any known repo, treating as primary"
+            "Agent: Absolute path '#{raw_path}' not in any known repo (known: [#{known}]), converting to relative"
           )
 
-          {:primary, parent_state.phylo_node.repo, ContextNode.normalize_relpath(raw_path)}
+          relative = raw_path |> String.trim_leading("/") |> then(fn p -> if String.starts_with?(p, "./"), do: p, else: "./" <> p end)
+
+          {:primary, parent_state.phylo_node.repo, relative}
       end
     else
       # Relative path — same repo as parent
