@@ -438,12 +438,11 @@ defmodule EvoDashWeb.DashboardLive do
     socket =
       if socket.assigns.show_project_settings and socket.assigns.active_project do
         {project_config, worktree_script} = load_project_config(socket.assigns.active_project)
-        foreign_repos = load_foreign_repos()
 
         socket
         |> assign(:project_config, project_config)
         |> assign(:worktree_script, worktree_script)
-        |> assign(:foreign_repos, foreign_repos)
+        |> refresh_foreign_repos()
       else
         socket
       end
@@ -591,12 +590,11 @@ defmodule EvoDashWeb.DashboardLive do
     socket =
       if show do
         {project_config, worktree_script} = load_project_config(socket.assigns.active_project)
-        foreign_repos = load_foreign_repos()
 
         socket
         |> assign(:project_config, project_config)
         |> assign(:worktree_script, worktree_script)
-        |> assign(:foreign_repos, foreign_repos)
+        |> refresh_foreign_repos()
       else
         socket
       end
@@ -640,14 +638,12 @@ defmodule EvoDashWeb.DashboardLive do
             ForeignRepo.new(repo_id, path)
           end
 
-        try do
+        safe_scheduler_call(socket, fn ->
           case EvoGit.AgentScheduler.register_foreign_repo(repo) do
             :ok ->
-              foreign_repos = load_foreign_repos()
-
               {:noreply,
                socket
-               |> assign(:foreign_repos, foreign_repos)
+               |> refresh_foreign_repos()
                |> assign(:show_add_foreign_repo_form, false)
                |> assign(:new_repo_id, "")
                |> assign(:new_repo_path, "")
@@ -659,16 +655,7 @@ defmodule EvoDashWeb.DashboardLive do
                socket
                |> put_flash(:error, gettext("Repo '%{id}' is already registered.", id: id))}
           end
-        rescue
-          e ->
-            {:noreply,
-             socket
-             |> put_flash(:error, gettext("Failed to register repo: %{reason}", reason: Exception.message(e)))}
-        catch
-          _, _ ->
-            {:noreply,
-             put_flash(socket, :error, gettext("Failed to register repo: scheduler not available."))}
-        end
+        end)
     end
   end
 
@@ -676,14 +663,12 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event("remove_foreign_repo", %{"repo_id" => repo_id_str}, socket) do
     repo_id = String.to_atom(repo_id_str)
 
-    try do
+    safe_scheduler_call(socket, fn ->
       case EvoGit.AgentScheduler.unregister_foreign_repo(repo_id) do
         :ok ->
-          foreign_repos = load_foreign_repos()
-
           {:noreply,
            socket
-           |> assign(:foreign_repos, foreign_repos)
+           |> refresh_foreign_repos()
            |> put_flash(:info, gettext("Foreign repo '%{repo_id}' removed successfully.", repo_id: repo_id_str))}
 
         {:error, :cannot_unregister_primary} ->
@@ -692,15 +677,7 @@ defmodule EvoDashWeb.DashboardLive do
         {:error, {:not_found, id}} ->
           {:noreply, put_flash(socket, :error, gettext("Repo '%{id}' not found.", id: id))}
       end
-    rescue
-      e ->
-        {:noreply,
-         socket
-         |> put_flash(:error, gettext("Failed to remove repo: %{reason}", reason: Exception.message(e)))}
-    catch
-      _, _ ->
-        {:noreply, put_flash(socket, :error, gettext("Failed to remove repo: scheduler not available."))}
-    end
+    end)
   end
 
   @impl true
@@ -1042,6 +1019,20 @@ defmodule EvoDashWeb.DashboardLive do
     catch
       _, _ -> {nil, nil}
     end
+  end
+
+  defp safe_scheduler_call(socket, fun) do
+    fun.()
+  rescue
+    e ->
+      {:noreply, put_flash(socket, :error, gettext("Failed: %{reason}", reason: Exception.message(e)))}
+  catch
+    _, _ ->
+      {:noreply, put_flash(socket, :error, gettext("Scheduler not available."))}
+  end
+
+  defp refresh_foreign_repos(socket) do
+    assign(socket, :foreign_repos, load_foreign_repos())
   end
 
   defp load_foreign_repos do
