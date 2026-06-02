@@ -478,6 +478,21 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
+  def handle_info({:task_status, _task_id, _status}, socket) do
+    new_tasks =
+      if socket.assigns.active_project do
+        TaskRegistry.list_tasks_by_path(socket.assigns.active_project)
+      else
+        TaskRegistry.list_tasks()
+      end
+
+    {:noreply,
+     socket
+     |> assign(:tasks, new_tasks)
+     |> assign_running_and_recent_tasks()}
+  end
+
+  @impl true
   def handle_info({:recent_projects_updated}, socket) do
     recent_projects = TaskRegistry.list_recent_projects()
     {:noreply, assign(socket, :recent_projects, recent_projects)}
