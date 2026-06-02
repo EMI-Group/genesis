@@ -54,37 +54,39 @@ defmodule EvoDashWeb.DashboardComponents do
       <!-- Body -->
       <div class="p-6 md:p-8 pt-4 md:pt-6 space-y-4">
         <%= if String.starts_with?(@mode, "evolve") do %>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text font-semibold text-base-content">{gettext("Starting Node")}</span>
-            </label>
-            <input
-              type="text"
-              name="node_path"
-              value={@node_path}
-              phx-debounce="300"
-              class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
-              placeholder={gettext("e.g., ./src/components")}
-            />
-            <label class="label">
-              <span class="label-text-alt text-base-content/50">{gettext("Subdirectory to start evolution from (optional)")}</span>
-            </label>
-          </div>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text font-semibold text-base-content">{gettext("Starting Commit")}</span>
-            </label>
-            <input
-              type="text"
-              name="starting_commit"
-              value={@starting_commit}
-              phx-debounce="300"
-              class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
-              placeholder={gettext("e.g., abc1234 or HEAD")}
-            />
-            <label class="label">
-              <span class="label-text-alt text-base-content/50">{gettext("Commit SHA or ref to start from (defaults to HEAD)")}</span>
-            </label>
+          <div class="flex flex-col md:flex-row gap-4">
+            <div class="form-control flex-1">
+              <label class="label">
+                <span class="label-text font-semibold text-base-content">{gettext("Starting Node")}</span>
+              </label>
+              <input
+                type="text"
+                name="node_path"
+                value={@node_path}
+                phx-debounce="300"
+                class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+                placeholder={gettext("e.g., ./src/components")}
+              />
+              <label class="label">
+                <span class="label-text-alt text-base-content/50">{gettext("Subdirectory to start evolution from (optional)")}</span>
+              </label>
+            </div>
+            <div class="form-control flex-1">
+              <label class="label">
+                <span class="label-text font-semibold text-base-content">{gettext("Starting Commit")}</span>
+              </label>
+              <input
+                type="text"
+                name="starting_commit"
+                value={@starting_commit}
+                phx-debounce="300"
+                class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+                placeholder={gettext("e.g., abc1234 or HEAD")}
+              />
+              <label class="label">
+                <span class="label-text-alt text-base-content/50">{gettext("Commit SHA or ref to start from (defaults to HEAD)")}</span>
+              </label>
+            </div>
           </div>
         <% end %>
         <%= if @mode == "evolve_complex" do %>
