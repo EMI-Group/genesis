@@ -86,6 +86,9 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
 
     This works recursively at every level: a root-level investigator fans out to subdirectory investigators, which can in turn fan out further if their subtrees are large and complex.
 
+    ## Foreign Repository Notes
+    When operating in a foreign repository (your context node's repo_id is not :primary), you are read-only. Start by reading the root CONTEXT.md to discover the codebase layout, then navigate to relevant areas using the routing table.
+
     ## Example
 
     ### Example 1: Investigate the "API of the database access layer" of an application, and you are in the root `./` directory:

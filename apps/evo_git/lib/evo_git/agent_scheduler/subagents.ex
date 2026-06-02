@@ -170,9 +170,10 @@ defmodule EvoGit.AgentScheduler.Subagents do
   @doc """
   Validates that a subagent spec obeys spatial contract rules.
 
-  Cross-repo delegation always passes. Same-repo delegation checks that
-  the child node is a descendant of (or same as) the parent node when
-  the child is a read-write agent.
+  Cross-repo delegation enforces read-only access — only `:read` agent types
+  are allowed in foreign repos. Same-repo delegation checks that the child
+  node is a descendant of (or same as) the parent node when the child is a
+  read-write agent.
   """
   @spec validate_spatial_contract_for_spec(
           pos_integer(),
@@ -184,14 +185,31 @@ defmodule EvoGit.AgentScheduler.Subagents do
         %{context_node: parent_context, repo_id: parent_repo_id},
         spec
       ) do
-    # Cross-repo delegation: foreign repos are independent trees, skip spatial check
-    if spec.repo_id != parent_repo_id do
-      :ok
-    else
-      parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
-      child_type = spec.agent_module.agent_type()
-      child_path = EvoGit.Agent.Tools.Shared.normalize_relpath(spec.context_node.path)
-      validate_spawn_spatiality(:read_write, parent_path, child_type, child_path)
+    cond do
+      # Cross-repo delegation: enforce read-only access for foreign repos
+      spec.repo_id != parent_repo_id ->
+        if spec.agent_module.agent_type() == :read_write do
+          {:error,
+           {:foreign_repo_read_only,
+            """
+            Read-write agents cannot be spawned in foreign repositories.
+            Use read-only agent types instead:
+            - subagent_codebase_investigator — for investigating and analyzing code
+            - subagent_task_scheduler — for planning and scheduling tasks
+
+            Foreign repos are read-only to prevent unintended modifications.
+            If you need to apply changes based on foreign repo findings, do so in your primary repository.
+            """}}
+        else
+          :ok
+        end
+
+      # Same-repo delegation: enforce spatial hierarchy for read-write agents
+      true ->
+        parent_path = EvoGit.Agent.Tools.Shared.normalize_relpath(parent_context.path)
+        child_type = spec.agent_module.agent_type()
+        child_path = EvoGit.Agent.Tools.Shared.normalize_relpath(spec.context_node.path)
+        validate_spawn_spatiality(:read_write, parent_path, child_type, child_path)
     end
   end
 

@@ -40,6 +40,9 @@ defmodule EvoGit.Agents.Executor do
     ❌ **Redundant investigation**: The objective says "Fix `token_expired?/1` in `src/auth/session.ex:42` — add a guard clause for nil arguments" and you spawn an investigator to "find the token_expired? function." The caller already told you where it is — just fix it.
 
     ❌ **Scope creep**: The objective is "add a nil guard to `token_expired?/1`" and you decide to also refactor the entire authentication module. Only do what was asked.
+
+    ## Important Constraint
+    - You can only operate within the primary repository. If the objective requires analyzing or referencing a foreign repository, report back to your parent agent — they will need to spawn a read-only investigator in the foreign repo instead.
     """
   end
 end
