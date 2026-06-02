@@ -22,6 +22,7 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 | `EvoGit.Agents.CodebaseArchitect` | `codebase_architect.ex` | Greenfield architecture design; creates project skeletons | `:read_write` | → self (recursive), Generalist | ✅ Full |
 | `EvoGit.Agents.ContextExtractor` | `context_extractor.ex` | Extracts semantic context from existing codebases into CONTEXT.md | `:read` | → self (recursive) | CONTEXT.md only |
 | `EvoGit.Agents.Evaluator` | `evaluator.ex` | Verifies code changes satisfy objectives via git diff review | `:read` | → CodebaseInvestigator | CONTEXT.md only |
+| `EvoGit.Agents.GenesisPlanner` | `genesis_planner.ex` | Specialized planner for genesis stage; transforms architectural designs into concrete execution plans | `:read` | → CodebaseInvestigator | CONTEXT.md only |
 | `EvoGit.Agents.Warnings` | `warnings.ex` | Budget warning thresholds and messages (not an agent; utility module) | N/A | N/A | N/A |
 
 ## Constraints
