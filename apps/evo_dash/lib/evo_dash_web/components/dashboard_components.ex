@@ -10,6 +10,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :mode_info, :string, default: ""
   attr :node_path, :string, default: ""
   attr :seeds, :string, default: ""
+  attr :starting_commit, :string, default: ""
 
   def task_form(assigns) do
     ~H"""
@@ -67,6 +68,22 @@ defmodule EvoDashWeb.DashboardComponents do
             />
             <label class="label">
               <span class="label-text-alt text-base-content/50">{gettext("Subdirectory to start evolution from (optional)")}</span>
+            </label>
+          </div>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text font-semibold text-base-content">{gettext("Starting Commit")}</span>
+            </label>
+            <input
+              type="text"
+              name="starting_commit"
+              value={@starting_commit}
+              phx-debounce="300"
+              class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+              placeholder={gettext("e.g., abc1234 or HEAD")}
+            />
+            <label class="label">
+              <span class="label-text-alt text-base-content/50">{gettext("Commit SHA or ref to start from (defaults to HEAD)")}</span>
             </label>
           </div>
         <% end %>

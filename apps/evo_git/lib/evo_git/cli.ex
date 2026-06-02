@@ -25,7 +25,8 @@ defmodule EvoGit.CLI do
           crossover_rate: :float,
           mutation_rate: :float,
           seeds: [:string, :keep],
-          concepts: [:string, :keep]
+          concepts: [:string, :keep],
+          starting_commit: :string
         ],
         aliases: [
           h: :help,
@@ -130,6 +131,7 @@ defmodule EvoGit.CLI do
         runtime_opts = if seeds, do: Keyword.put(runtime_opts, :seeds, seeds), else: runtime_opts
         concepts = parse_concepts(opts)
         runtime_opts = if concepts, do: Keyword.put(runtime_opts, :concepts, concepts), else: runtime_opts
+        runtime_opts = maybe_put(runtime_opts, :starting_commit, opts[:starting_commit])
 
         Evolution.run(objective, runtime_opts)
       else

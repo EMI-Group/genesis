@@ -12,8 +12,9 @@ defmodule EvoGit.Runtime.Evolution do
   def run(objective, opts \\ []) do
     mode = Keyword.get(opts, :mode, :simple)
     node_path = Keyword.get(opts, :node_path, "./")
+    starting_commit = Keyword.get(opts, :starting_commit)
 
-    Logger.info("Evolution: Starting for objective: #{objective} (mode: #{mode}, node: #{node_path})")
+    Logger.info("Evolution: Starting for objective: #{objective} (mode: #{mode}, node: #{node_path}, commit: #{starting_commit || "HEAD"})")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
     foreign_repos = Keyword.get(opts, :foreign_repos, [])
@@ -22,7 +23,7 @@ defmodule EvoGit.Runtime.Evolution do
     end
 
     with :ok <- Runtime.ensure_repo(repo_path),
-         {:ok, current_sha} <- PhyloGraphNode.current_head(repo_path),
+         {:ok, current_sha} <- resolve_starting_commit(repo_path, starting_commit),
          :ok <- validate_node_path(node_path, repo_path) do
       case mode do
         :simple -> run_simple_mode(objective, repo_path, current_sha, node_path, opts)
@@ -150,6 +151,19 @@ defmodule EvoGit.Runtime.Evolution do
         true ->
           :ok
       end
+    end
+  end
+
+  defp resolve_starting_commit(repo_path, nil) do
+    PhyloGraphNode.current_head(repo_path)
+  end
+
+  defp resolve_starting_commit(repo_path, ref) do
+    case Git.rev_parse(repo_path, ref) do
+      {:ok, sha} -> {:ok, sha}
+      error ->
+        Logger.error("Evolution: Invalid starting commit '#{ref}': #{inspect(error)}")
+        error
     end
   end
 end
