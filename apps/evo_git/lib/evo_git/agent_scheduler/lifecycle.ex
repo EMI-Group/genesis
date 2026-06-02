@@ -141,7 +141,11 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       # Wrap dispatch in try/rescue to prevent GenServer crash on worktree creation failure
       state =
         try do
-          Dispatch.try_dispatch(state, agent_id)
+          if state.paused do
+            %{state | queue: :queue.in(agent_id, state.queue)}
+          else
+            Dispatch.try_dispatch(state, agent_id)
+          end
         rescue
           e ->
             Logger.error(
