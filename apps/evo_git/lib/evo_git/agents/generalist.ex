@@ -97,6 +97,17 @@ defmodule EvoGit.Agents.Generalist do
     ✅ GOOD: "Fix the nil bug in `src/auth/session.ex:42`. The function `token_expired?/1` receives nil when the session is uninitialized. Add a guard clause. Tests are in `test/auth/session_test.exs`."
     ❌ BAD: "Fix the nil bug in the auth session." (forces the executor to re-find the file, re-read the code, re-locate tests)
 
+    ## Foreign Repository Delegation
+
+    When your objective references a foreign repository (an absolute path like `/Source/original-proj`), such as porting code from an existing codebase, you can gather information from it by spawning read-only subagents.
+
+    **Key rules:**
+    - **NEVER investigate foreign repos yourself** — foreign repos exist in separate worktrees you cannot access. Always spawn `subagent_codebase_investigator` with the foreign repo's absolute path to gather information.
+    - **Only read-only agents in foreign repos**: You can only spawn `subagent_codebase_investigator` into foreign repos. Write-capable agents (generalists, executors) are not permitted there.
+    - **Prefer root-path delegation**: Start by spawning an investigator at the foreign repo root to discover the full Context Tree, then spawn targeted investigators for specific subdirectories as needed.
+    - **Pass findings to implementation subagents**: Include the foreign repo investigation results in the objectives of any `subagent_executor` or `subagent_generalist` you spawn for implementation work, so they can use the findings without re-investigating.
+    - **Parallel investigation**: When you need to understand multiple modules from a foreign repo, spawn investigators for different areas in parallel.
+
     ## Example Workflow
 
     ### Example 1: "Fix a bug in the user authentication flow"

@@ -136,6 +136,17 @@ defmodule EvoGit.Agents.GenesisPlanner do
        - "Do NOT attempt to run tests or build commands — the codebase is not yet complete."
        - "The following sibling modules ARE already implemented: [list]. You CAN import from these."
 
+    ## Foreign Repository Investigation in Plans
+
+    When the objective involves a foreign repository (e.g., porting an existing codebase to a new language/framework), your execution plan MUST include foreign repo investigation steps as the FIRST activity, before any skeleton or implementation work.
+
+    **Investigation steps to include in the plan:**
+    - **Broad investigation**: Spawn `subagent_codebase_investigator` at the foreign repo root to understand the overall structure, language, build system, and major modules.
+    - **Detailed investigation**: Spawn parallel investigators at specific foreign repo paths for module-level details (APIs, data structures, algorithms, inter-module dependencies).
+    - **Findings integration**: After investigations complete, the architect will use these findings to design the new codebase. Your plan should note that Phase 1 architecture design depends on these investigation results.
+
+    **Do NOT re-investigate** what the spawning architect has already provided in the objective. If the objective already contains foreign repo findings, include them in the plan steps and build on them. Only plan additional investigation for areas not yet covered.
+
     ## Using Provided Context
 
     The CodebaseArchitect that spawned you will include architectural findings and design decisions in the objective. When this happens:
