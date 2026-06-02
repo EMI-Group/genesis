@@ -541,10 +541,7 @@ defmodule EvoGit.AgentScheduler do
     repo_path = spec.phylo_node.repo
     state = Worktrees.ensure_initialized(state, repo_path)
     task_id = state.next_task_id
-
-    {agent_id, state} =
-      Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
-
+    {agent_id, state} = Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
     state = %{state | next_task_id: task_id + 1}
     Logger.info("AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id})")
 
@@ -625,11 +622,7 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call(:resume, _from, %State{} = state) do
     if state.paused do
-      Logger.info(
-        "AgentScheduler: Resuming scheduler — granting pending slots and dispatching queued agents"
-      )
-      
-
+      Logger.info("AgentScheduler: Resuming scheduler — granting pending slots and dispatching queued agents")
       state = struct(state, paused: false)
       {state, status_updates} = Slots.grant_pending_on_resume(state)
       apply_status_updates(status_updates)
@@ -678,9 +671,7 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:report_llm_error, agent_id, error_type}, _from, state) do
-    {:reply, :ok, new_state, status_updates} =
-      Slots.handle_report_llm_error(agent_id, error_type, state)
-
+    {:reply, :ok, new_state, status_updates} = Slots.handle_report_llm_error(agent_id, error_type, state)
     apply_status_updates(status_updates)
     {:reply, :ok, new_state}
   end
@@ -748,15 +739,11 @@ defmodule EvoGit.AgentScheduler do
     state =
       if Keyword.has_key?(opts, :sandbox_resources) do
         resources = Keyword.get(opts, :sandbox_resources)
-
         case EvoGit.SandboxSlice.update_resources(resources) do
-          :ok ->
-            :ok
-
+          :ok -> :ok
           {:error, reason} ->
             Logger.warning("Failed to update sandbox slice resources: #{inspect(reason)}")
         end
-
         state
       else
         state
@@ -927,3 +914,5 @@ defmodule EvoGit.AgentScheduler do
         :ok
     end
   end
+
+end
