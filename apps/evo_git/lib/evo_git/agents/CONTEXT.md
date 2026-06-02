@@ -16,6 +16,7 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 | `EvoGit.Agents.Generalist` | `generalist.ex` | Versatile full-stack agent; delegates investigation and execution | `:read_write` | → CodebaseInvestigator, Executor, self (recursive) | ✅ Full |
 | `EvoGit.Agents.Manager` | `manager.ex` | Planning, delegation, validation orchestrator — does NOT implement features directly | `:read_write` | → Manager (self/recursive), Executor, TaskScheduler, CodebaseInvestigator | ✅ Full |
 | `EvoGit.Agents.TaskScheduler` | `task_scheduler.ex` | Lightweight task scheduling agent; transforms rough ideas into execution sequences | `:read` | → CodebaseInvestigator | CONTEXT.md only |
+| `EvoGit.Agents.GenesisPlanner` | `genesis_planner.ex` | Specialized planning agent for genesis stage; transforms architectural designs into genesis-aware execution plans | `:read` | → CodebaseInvestigator | CONTEXT.md only |
 | `EvoGit.Agents.Executor` | `executor.ex` | Implements precise, targeted code changes from a specific objective | `:read_write` | → CodebaseInvestigator, self (recursive) | ✅ Full |
 | `EvoGit.Agents.CodebaseInvestigator` | `codebase_investigator.ex` | Read-only deep codebase analysis; updates CONTEXT.md | `:read` | → self (recursive) | CONTEXT.md only |
 | `EvoGit.Agents.CodebaseArchitect` | `codebase_architect.ex` | Greenfield architecture design; creates project skeletons | `:read_write` | → self (recursive), Generalist | ✅ Full |
