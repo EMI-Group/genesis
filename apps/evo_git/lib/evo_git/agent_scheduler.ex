@@ -206,6 +206,18 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Cleans up orphan EvoGit worktrees and branches for the given repo.
+
+  Only runs when no agents are currently running. Returns `{:ok, counts}` with
+  the number of cleaned worktrees and branches, or `{:error, :agents_running}`
+  if agents are active, or `{:error, reason}` on other failures.
+  """
+  @spec cleanup_orphan_worktrees(String.t()) :: {:ok, map()} | {:error, term()}
+  def cleanup_orphan_worktrees(repo_root) do
+    GenServer.call(__MODULE__, {:cleanup_orphan_worktrees, repo_root})
+  end
+
+  @doc """
   Returns the value of a specific scheduler config key.
 
   ## Example
@@ -644,6 +656,18 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call(:paused?, _from, state) do
     {:reply, state.paused, state}
+  end
+
+  @impl true
+  def handle_call({:cleanup_orphan_worktrees, repo_root}, _from, state) do
+    repo_root = Path.expand(repo_root)
+
+    if state.running_count > 0 do
+      {:reply, {:error, :agents_running}, state}
+    else
+      result = Worktrees.cleanup_orphan_worktrees(repo_root)
+      {:reply, result, state}
+    end
   end
 
   @impl true

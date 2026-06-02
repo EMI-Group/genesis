@@ -271,18 +271,89 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @spec clean_orphaned_branches(String.t()) :: :ok
 
   def clean_orphaned_branches(repo_root) do
+    _count = do_clean_orphaned_branches(repo_root)
+    :ok
+  end
+
+  @doc """
+  Cleans up all orphan EvoGit worktrees and branches for the given repo.
+
+  Scans for:
+  - Worker directories matching `worker_T*_A*` in `.evogit/workers/` that
+    are NOT tracked as active worktrees
+  - Git branches matching `evogit-agent-*` pattern
+
+  Returns `{:ok, %{worktrees: non_neg_integer(), branches: non_neg_integer()}}`
+  with counts of removed items.
+  """
+  @spec cleanup_orphan_worktrees(String.t()) ::
+          {:ok, %{worktrees: non_neg_integer(), branches: non_neg_integer()}}
+  def cleanup_orphan_worktrees(repo_root) do
+    worker_base = Path.join(repo_root, ".evogit/workers")
+
+    worktree_count =
+      if File.dir?(worker_base) do
+        clean_orphan_worker_dirs(worker_base, repo_root)
+      else
+        0
+      end
+
+    Git.prune_worktrees(repo_root)
+
+    branch_count = do_clean_orphaned_branches(repo_root)
+
+    {:ok, %{worktrees: worktree_count, branches: branch_count}}
+  end
+
+  defp clean_orphan_worker_dirs(worker_base, _repo_root) do
+    worker_base
+    |> File.ls!()
+    |> Enum.filter(&String.starts_with?(&1, "worker_T"))
+    |> Enum.reduce(0, fn dir_name, acc ->
+      dir_path = Path.join(worker_base, dir_name)
+
+      if File.dir?(dir_path) do
+        # Check if it looks like a valid git worktree
+        git_link = Path.join(dir_path, ".git")
+
+        if File.exists?(git_link) do
+          Logger.info("AgentScheduler: Removing orphan worktree #{dir_path}")
+        end
+
+        case File.rm_rf(dir_path) do
+          {:ok, _} ->
+            acc + 1
+
+          {:error, reason, failed_path} ->
+            Logger.warning(
+              "AgentScheduler: Failed to remove orphan worktree #{dir_path}: #{inspect(reason)} at #{failed_path}"
+            )
+
+            acc
+        end
+      else
+        acc
+      end
+    end)
+  end
+
+  defp do_clean_orphaned_branches(repo_root) do
     case System.cmd("git", ["branch", "--list", "evogit-agent-*"], cd: repo_root) do
       {output, 0} when is_binary(output) and byte_size(output) > 0 ->
-        output
-        |> String.split("\n", trim: true)
-        |> Enum.map(&String.trim/1)
-        |> Enum.each(fn branch ->
+        branches =
+          output
+          |> String.split("\n", trim: true)
+          |> Enum.map(&String.trim/1)
+
+        Enum.each(branches, fn branch ->
           Logger.info("AgentScheduler: Cleaning up orphaned branch #{branch}")
           Git.delete_branch(repo_root, branch)
         end)
 
+        length(branches)
+
       _ ->
-        :ok
+        0
     end
   end
 
