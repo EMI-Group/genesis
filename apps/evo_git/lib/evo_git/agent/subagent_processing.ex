@@ -171,14 +171,28 @@ defmodule EvoGit.Agent.SubagentProcessing do
           ContextNode.load(path, target_repo_root, target_repo_id)
         end
 
-      # Use specified commit_id, or default to current commit (only meaningful for primary repo)
-      base_commit = commit_id || parent_state.phylo_node.current_commit
+      # For foreign repo subagents, we need the foreign repo's HEAD commit (the primary
+      # repo's commit SHA doesn't exist in the foreign repo's git database).
+      sub_phylo_node =
+        if target_repo_id == :primary do
+          # Same-repo subagent: inherit parent's commit chain
+          base_commit = commit_id || parent_state.phylo_node.current_commit
 
-      sub_phylo_node = %PhyloGraphNode{
-        repo: parent_state.phylo_node.repo,
-        base_commit: base_commit,
-        current_commit: base_commit
-      }
+          %PhyloGraphNode{
+            repo: parent_state.phylo_node.repo,
+            base_commit: base_commit,
+            current_commit: base_commit
+          }
+        else
+          # Foreign repo subagent: use the foreign repo's HEAD as the base commit
+          {:ok, foreign_head} = Git.rev_parse(target_repo_root)
+
+          %PhyloGraphNode{
+            repo: target_repo_root,
+            base_commit: foreign_head,
+            current_commit: foreign_head
+          }
+        end
 
       AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective, repo_id: target_repo_id)
     end)
