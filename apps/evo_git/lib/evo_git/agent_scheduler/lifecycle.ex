@@ -28,15 +28,14 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   """
   @spec recycle_agent(State.t(), pos_integer()) :: State.t()
   def recycle_agent(state, agent_id) do
-    {:ok, meta} = get_sched_meta(agent_id)
-
-    # Resolve repo_root from the agent's own ETS state (correct even when
-    # multiple tasks target different repos concurrently). No global fallback
-    # — if the per-agent state is missing, skip worktree deletion.
-    {:ok, %{repo_root: agent_repo_root}} = get_agent_state(agent_id)
-    # Delete the agent's persistent worktree
-    if meta.worktree && agent_repo_root do
-      Worktrees.delete(meta.worktree, agent_repo_root)
+    with {:ok, meta} <- get_sched_meta(agent_id),
+         {:ok, %{repo_root: agent_repo_root}} <- get_agent_state(agent_id) do
+      if meta.worktree && agent_repo_root do
+        Worktrees.delete(meta.worktree, agent_repo_root)
+      end
+    else
+      _ ->
+        Logger.warning("AgentScheduler: Missing ETS state for agent #{agent_id} during recycle, skipping worktree deletion")
     end
 
     delete_agent_state(agent_id)
@@ -55,8 +54,21 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   """
   @spec handle_agent_crash(State.t(), pos_integer(), term()) :: {:noreply, State.t()}
   def handle_agent_crash(state, agent_id, reason) do
-    {:ok, meta} = get_sched_meta(agent_id)
+    case get_sched_meta(agent_id) do
+      {:ok, meta} ->
+        handle_agent_crash_with_meta(state, agent_id, reason, meta)
 
+      :error ->
+        Logger.warning("AgentScheduler: Missing sched meta for crashed agent #{agent_id}, cleaning up")
+        delete_agent_state(agent_id)
+        delete_sched_meta(agent_id)
+        state = %{state | running_count: max(0, state.running_count - 1)}
+        state = Dispatch.process_queue(state)
+        {:noreply, state}
+    end
+  end
+
+  defp handle_agent_crash_with_meta(state, agent_id, reason, meta) do
     Logger.error(
       "AgentScheduler: Agent #{agent_id} crashed: #{inspect(reason)}. " <>
         "Retry #{meta.retries}/#{state.agent_max_retries}"

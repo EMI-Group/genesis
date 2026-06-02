@@ -820,14 +820,22 @@ defmodule EvoGit.AgentScheduler do
 
       {agent_id, ref_to_agent} ->
         state = %{state | ref_to_agent: ref_to_agent}
-        {:ok, meta} = get_sched_meta(agent_id)
 
-        if reason == :normal or meta.result_sent do
-          state = Lifecycle.recycle_agent(state, agent_id)
-          state = Dispatch.process_queue(state)
-          {:noreply, state}
-        else
-          Lifecycle.handle_agent_crash(state, agent_id, reason)
+        case get_sched_meta(agent_id) do
+          {:ok, meta} ->
+            if reason == :normal or meta.result_sent do
+              state = Lifecycle.recycle_agent(state, agent_id)
+              state = Dispatch.process_queue(state)
+              {:noreply, state}
+            else
+              Lifecycle.handle_agent_crash(state, agent_id, reason)
+            end
+
+          :error ->
+            Logger.warning("AgentScheduler: Missing sched meta for agent #{agent_id} on DOWN, cleaning up")
+            Lifecycle.recycle_agent(state, agent_id)
+            state = Dispatch.process_queue(state)
+            {:noreply, state}
         end
     end
   end
@@ -927,3 +935,4 @@ defmodule EvoGit.AgentScheduler do
         :ok
     end
   end
+end
