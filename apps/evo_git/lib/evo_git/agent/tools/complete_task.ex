@@ -110,7 +110,10 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   @doc """
   Performs the actual completion: records branch name, adds metadata note.
 
-  Returns a `%EvoGit.Agent.Result{}` struct with :result, :commit_sha, and :branch.
+  Returns a `%EvoGit.Agent.Result{}` struct with :result, :commit_sha, :branch, and :repo_id.
+
+  The `repo_id` field is automatically populated from the process dictionary
+  key `:evogit_repo_id` (set at dispatch time).
 
   ## Options
     - `:base_commit` - The commit SHA the agent started on (required for metadata)
@@ -148,7 +151,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     %Result{
       result: result,
       commit_sha: commit_sha,
-      branch: branch_name
+      branch: branch_name,
+      repo_id: Process.get(:evogit_repo_id)
     }
   end
 
