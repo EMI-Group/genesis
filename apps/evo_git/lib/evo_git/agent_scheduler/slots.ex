@@ -181,6 +181,52 @@ defmodule EvoGit.AgentScheduler.Slots do
     {state, llm_unblocked ++ tool_unblocked}
   end
 
+  @doc """
+  Purges agents from both LLM and tool waiting queues.
+
+  Replies `{:error, :cancelled}` to each purged agent's blocked GenServer.from
+  so their waiting calls unblock cleanly. Returns the updated state with
+  rebuilt queues excluding the purged agent IDs.
+
+  Returns `{state, status_updates}`.
+  """
+  @spec purge_agents_from_queues(State.t(), MapSet.t(pos_integer())) :: {State.t(), [{pos_integer(), atom()}]}
+  def purge_agents_from_queues(%State{} = state, agent_ids) do
+    {llm_kept, llm_removed} = partition_llm_waiting(state.llm_waiting, agent_ids)
+    {tool_kept, tool_removed} = partition_tool_waiting(state.tool_waiting, agent_ids)
+
+    # Reply {:error, :cancelled} to all purged agents so their blocked calls unblock
+    Enum.each(llm_removed, fn {_agent_id, from, _backoff} -> GenServer.reply(from, {:error, :cancelled}) end)
+    Enum.each(tool_removed, fn {_agent_id, from} -> GenServer.reply(from, {:error, :cancelled}) end)
+
+    state = %State{state | llm_waiting: llm_kept, tool_waiting: tool_kept}
+    {state, []}
+  end
+
+  # Partitions the LLM waiting queue into kept and removed entries based on agent_ids.
+  # Handles both 2-tuple {agent_id, from} and 3-tuple {agent_id, from, backoff_until} entries.
+  defp partition_llm_waiting(waiting, agent_ids) do
+    {kept, removed} =
+      waiting
+      |> :queue.to_list()
+      |> Enum.split_with(fn
+        {agent_id, _from} -> not MapSet.member?(agent_ids, agent_id)
+        {agent_id, _from, _backoff} -> not MapSet.member?(agent_ids, agent_id)
+      end)
+
+    {:queue.from_list(kept), removed}
+  end
+
+  # Partitions the tool waiting queue into kept and removed entries based on agent_ids.
+  defp partition_tool_waiting(waiting, agent_ids) do
+    {kept, removed} =
+      waiting
+      |> :queue.to_list()
+      |> Enum.split_with(fn {agent_id, _from} -> not MapSet.member?(agent_ids, agent_id) end)
+
+    {:queue.from_list(kept), removed}
+  end
+
   # --- Private Helpers: LLM Slots ---
 
   # Grants pending LLM slots that are no longer in backoff.
