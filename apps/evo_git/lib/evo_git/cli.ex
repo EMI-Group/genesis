@@ -219,6 +219,9 @@ defmodule EvoGit.CLI do
     end
   end
 
+  @doc false
+  def do_parse_foreign_repos(opts), do: parse_foreign_repos(opts)
+
   defp print_help do
     IO.puts("""
     EvoGit CLI - Evolutionary Software Development
