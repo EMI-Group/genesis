@@ -10,8 +10,8 @@ defmodule EvoDashWeb.SettingsLive do
           <.icon name="hero-cog-6-tooth" class="size-6" />
         </div>
         <div>
-          <h1 class="text-xl font-bold">{gettext("Scheduler Settings")}</h1>
-          <p class="text-sm text-base-content/60">{gettext("Runtime configuration for agent execution")}</p>
+          <h1 class="text-xl font-bold">{gettext("Settings")}</h1>
+          <p class="text-sm text-base-content/60">{gettext("Runtime configuration for agent execution and sandbox isolation")}</p>
         </div>
       </div>
 
@@ -95,6 +95,11 @@ defmodule EvoDashWeb.SettingsLive do
         <EvoDashWeb.DashboardComponents.scheduler_settings config={@scheduler_config} />
       </div>
 
+      <!-- Sandbox Settings -->
+      <div class="mt-6 animate-fade-in-up animation-delay-250">
+        <EvoDashWeb.DashboardComponents.sandbox_settings config={@scheduler_config} />
+      </div>
+
       <!-- Current Config Summary -->
       <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-300">
         <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
@@ -111,7 +116,9 @@ defmodule EvoDashWeb.SettingsLive do
               {gettext("Agent Max Retries"), :agent_max_retries, @scheduler_config[:agent_max_retries]},
               {gettext("Max Depth"), :max_agent_depth, @scheduler_config[:max_agent_depth]},
               {gettext("LLM Retries"), :max_retries, @scheduler_config[:max_retries]},
-              {gettext("LLM Model"), :llm_model, @scheduler_config[:llm_model]}
+              {gettext("LLM Model"), :llm_model, @scheduler_config[:llm_model]},
+              {gettext("Sandbox Mode"), :sandbox_mode, @scheduler_config[:sandbox_mode]},
+              {gettext("Sandbox Memory"), :sandbox_memory, @scheduler_config[:sandbox_resources][:memory_max]}
             ] do %>
               <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
                 <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{label}</p>
@@ -170,6 +177,11 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_event("sandbox_config_change", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("toggle_pause", _params, socket) do
     if socket.assigns.scheduler_paused do
       EvoGit.AgentScheduler.resume()
@@ -222,6 +234,39 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
+  @impl true
+  def handle_event("update_sandbox_config", params, socket) do
+    sandbox_mode =
+      case params["sandbox_mode"] do
+        "enabled" -> :enabled
+        "disabled" -> :disabled
+        _ -> :auto
+      end
+
+    resources =
+      %{}
+      |> maybe_add_int_to_map(:cpu_weight, params["cpu_weight"])
+      |> maybe_add_string_to_map(:memory_max, params["memory_max"])
+      |> maybe_add_int_to_map(:tasks_max, params["tasks_max"])
+      |> maybe_add_int_to_map(:limit_nofile, params["limit_nofile"])
+      |> maybe_add_int_to_map(:oom_score_adjust, params["oom_score_adjust"])
+
+    config_updates = Keyword.put([sandbox_mode: sandbox_mode], :sandbox_resources, resources)
+
+    case EvoGit.AgentScheduler.update_config(config_updates) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(:scheduler_config, load_scheduler_config())
+         |> put_flash(:info, gettext("Sandbox settings updated successfully."))}
+
+      {:error, message} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Failed to update sandbox settings: %{message}", message: message))}
+    end
+  end
+
   # Helpers
 
   defp load_scheduler_config do
@@ -258,4 +303,19 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   defp maybe_add_string(list, _key, _value), do: list
+
+  defp maybe_add_int_to_map(map, key, value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} -> Map.put(map, key, int)
+      _ -> map
+    end
+  end
+
+  defp maybe_add_int_to_map(map, _key, _value), do: map
+
+  defp maybe_add_string_to_map(map, key, value) when is_binary(value) and value != "" do
+    Map.put(map, key, value)
+  end
+
+  defp maybe_add_string_to_map(map, _key, _value), do: map
 end

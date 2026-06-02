@@ -2,7 +2,11 @@ defmodule EvoGit do
   @moduledoc """
   Core EvoGit module providing sandboxed command execution.
 
-  The sandbox uses `systemd-run` on Linux to isolate agent-executed commands.
+  The sandbox uses `systemd-run` on Linux to isolate agent-executed commands
+  inside a shared `evogit.slice` systemd user slice. Resource limits (CPU,
+  memory, tasks) are applied to the slice as a whole, so they govern the
+  aggregate of all sandboxed processes rather than each process individually.
+
   On other platforms (macOS, Windows) or when `systemd-run` is unavailable,
   commands run directly without sandboxing.
 
@@ -14,6 +18,18 @@ defmodule EvoGit do
       disables on all other platforms.
     * `:enabled` — Force-enable sandbox (will fail on non-Linux platforms).
     * `:disabled` — Disable sandbox entirely, run commands directly.
+
+  Resource limits are configured via `[sandbox.resources]` in TOML config:
+
+      [sandbox]
+      mode = "auto"
+
+      [sandbox.resources]
+      cpu_weight = 30
+      memory_max = "16G"
+      tasks_max = 8196
+      limit_nofile = 65536
+      oom_score_adjust = 1000
 
   ## Example Configuration
 
@@ -116,6 +132,7 @@ defmodule EvoGit do
 
     [
       "--user",
+      "--slice=evogit",
       "--wait",
       "--pipe",
       "--collect",
@@ -147,19 +164,6 @@ defmodule EvoGit do
       "SystemCallErrorNumber=EPERM",
       "-p",
       "SystemCallFilter=~ @clock @module @mount @raw-io @reboot @swap",
-      # --- RESOURCE LIMITS (The Anti-Fork Bomb) ---
-      # Prevent CPU starvation on the host
-      "-p",
-      "CPUWeight=30",
-      # Prevent Out-Of-Memory host crashes
-      "-p",
-      "MemoryMax=16G",
-      # Prevent accidental fork bombs by LLM
-      "-p",
-      "TasksMax=8196",
-      # Fix "Too many open files" in npm/cargo
-      "-p",
-      "LimitNOFILE=65536",
       # --- PROCESS ISOLATION ---
       # Cannot use sudo or setuid binaries
       "-p",
@@ -169,9 +173,7 @@ defmodule EvoGit do
       "PrivatePIDs=yes",
       # Hides other user processes in /proc
       "-p",
-      "ProtectProc=invisible",
-      "-p",
-      "OOMScoreAdjust=1000"
+      "ProtectProc=invisible"
     ] ++
       read_write_args ++
       inaccessible_args ++ [executable | args]
@@ -201,6 +203,8 @@ defmodule EvoGit do
   """
   def sandbox_run(cwd, executable, args \\ [], repo_root \\ nil) do
     if sandbox_enabled?() do
+      # Ensure the shared slice exists (idempotent — first call creates, subsequent are no-ops)
+      EvoGit.SandboxSlice.ensure_slice()
       sandbox_args(cwd, executable, args, repo_root)
       |> then(&System.cmd("systemd-run", &1, stderr_to_stdout: true))
     else
