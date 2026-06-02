@@ -240,6 +240,16 @@ input, textarea, select, button, a {
   }
 }
 
+/* Flash toast countdown bar */
+@keyframes countdown {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+.animate-countdown {
+  animation: countdown 4s linear forwards;
+}
+
 /* Utility classes */
 .animate-fade-in-up {
   animation: fade-in-up 0.4s ease-out both;
@@ -295,7 +305,8 @@ input, textarea, select, button, a {
   .animate-pulse-glow,
   .animate-slide-down,
   .animate-bounce-in,
-  .animate-float {
+  .animate-float,
+  .animate-countdown {
     animation: none;
     opacity: 1;
     transform: none;
