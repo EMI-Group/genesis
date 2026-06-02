@@ -245,6 +245,27 @@ defmodule EvoDashWeb.DashboardLive do
               <% end %>
             </div>
           </div>
+
+          <!-- Worktree Maintenance Section -->
+          <div class="mb-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-slide-down animation-delay-200">
+            <div class="bg-gradient-to-br from-warning/10 via-warning/5 to-transparent p-4 sm:p-6">
+              <h2 class="text-lg font-semibold flex items-center gap-2">
+                <.icon name="hero-trash" class="size-5 text-warning" /> {gettext("Worktree Maintenance")}
+              </h2>
+            </div>
+            <div class="p-4 sm:p-6 pt-2">
+              <p class="text-sm text-base-content/60 mb-4">
+                {gettext("Remove orphaned worktrees and branches left over from previous runs. This can only be done when no agents are running.")}
+              </p>
+              <button
+                class="btn btn-sm btn-outline btn-warning gap-2"
+                phx-click="cleanup_worktrees"
+                phx-disable-with={gettext("Cleaning...")}
+              >
+                <.icon name="hero-trash" class="size-4" /> {gettext("Cleanup Orphan Worktrees")}
+              </button>
+            </div>
+          </div>
         <% end %>
 
       <% else %>
@@ -700,6 +721,36 @@ defmodule EvoDashWeb.DashboardLive do
     catch
       _, _ ->
         {:noreply, put_flash(socket, :error, gettext("Failed to remove repo: scheduler not available."))}
+    end
+  end
+
+  @impl true
+  def handle_event("cleanup_worktrees", _params, socket) do
+    project_path = socket.assigns.active_project
+
+    if is_nil(project_path) do
+      {:noreply, put_flash(socket, :error, gettext("No project selected."))}
+    else
+      try do
+        case EvoGit.AgentScheduler.cleanup_orphan_worktrees(project_path) do
+          {:ok, %{worktrees: wt_count, branches: br_count}} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, gettext("Cleanup complete: removed %{worktrees} worktree(s) and %{branches} branch(es).", worktrees: wt_count, branches: br_count))}
+
+          {:error, :agents_running} ->
+            {:noreply, put_flash(socket, :error, gettext("Cannot clean up while agents are running. Please wait for all tasks to finish."))}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, gettext("Cleanup failed: %{reason}", reason: inspect(reason)))}
+        end
+      rescue
+        e ->
+          {:noreply, put_flash(socket, :error, gettext("Cleanup failed: %{reason}", reason: Exception.message(e)))}
+      catch
+        _, _ ->
+          {:noreply, put_flash(socket, :error, gettext("Cleanup failed: scheduler not available."))}
+      end
     end
   end
 
