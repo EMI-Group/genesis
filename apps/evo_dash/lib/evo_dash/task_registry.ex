@@ -594,6 +594,11 @@ defmodule EvoDash.TaskRegistry do
     seed_content = Keyword.get(opts, :seed_content)
     runtime_opts = if seed_content, do: Keyword.put(runtime_opts, :seed_content, seed_content), else: runtime_opts
 
+    # Include foreign repos registered in the scheduler so the runtime
+    # can re-register them (protects against scheduler restarts)
+    foreign_repos = EvoGit.AgentScheduler.get_foreign_repos()
+    runtime_opts = if foreign_repos != [], do: Keyword.put(runtime_opts, :foreign_repos, foreign_repos), else: runtime_opts
+
     {nil, runtime_opts}
   end
 
