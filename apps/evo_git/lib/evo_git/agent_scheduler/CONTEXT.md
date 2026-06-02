@@ -69,7 +69,7 @@ Handles subagent validation, spawning, and result collection:
 2. `validate_single_subagent/5` — Per-spec validation chain (depth, ignored, spatial)
 3. `validate_subagent_depth/3`, `validate_subagent_not_ignored/1` — Individual validation checks
 4. `validate_spatial_contract_for_spec/3`, `validate_spawn_spatiality/4` — Spatial contract enforcement
-5. `store_sub_result/3` — Stores subagent result at correct index in parent's results map
+5. `store_sub_result/3` — Stores subagent result at correct index in parent's results map. Also tracks foreign repo commit SHAs in `SchedMeta.foreign_repo_commits` — when a foreign-repo subagent completes successfully, its `commit_sha` is recorded under the `repo_id` key so subsequent subagents targeting the same foreign repo start from that commit instead of HEAD.
 6. `maybe_resume_parent/2` — Checks if all subagents done, resumes parent if so
 7. `dispatch_ready_parent/3` — Replies to parent's GenServer.call with ordered results
 8. `build_ordered_results/2` — Builds final results list in original spec order

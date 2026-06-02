@@ -54,7 +54,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # Invalid calls get immediate error results fed back to the LLM so it can correct them.
     {valid_calls, invalid_results} = split_valid_subagent_calls(indexed_calls)
 
-    subagent_specs = build_subagent_specs(valid_calls, state)
+    foreign_repo_commits = AgentScheduler.get_foreign_repo_commits(state.agent_id)
+    subagent_specs = build_subagent_specs(valid_calls, state, foreign_repo_commits)
     results = AgentScheduler.spawn_sub_agents(subagent_specs)
 
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -62,28 +63,34 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
     # Separate same-repo and cross-repo results
     # Cross-repo subagents commit to their own repo, no merge needed into parent
-    {same_repo_shas, cross_repo_count} =
-      Enum.reduce(Enum.zip(subagent_specs, results), {[], 0}, fn {spec, result}, {shas, count} ->
+    {same_repo_shas, cross_repo_details} =
+      Enum.reduce(Enum.zip(subagent_specs, results), {[], []}, fn {spec, result}, {shas, details} ->
         case result do
           {:ok, %Result{commit_sha: sha}} when is_binary(sha) ->
             if spec.repo_id == :primary do
-              {[sha | shas], count}
+              {[sha | shas], details}
             else
-              {shas, count + 1}
+              {shas, [{spec.repo_id, sha} | details]}
             end
 
           _ ->
-            {shas, count}
+            {shas, details}
         end
       end)
 
     successful_shas = Enum.reverse(same_repo_shas)
+    cross_repo_details = Enum.reverse(cross_repo_details)
 
     repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
     cross_repo_note =
-      if cross_repo_count > 0 do
-        "\nSystem Note: #{cross_repo_count} read-only cross-repo subagent(s) completed in foreign repositories."
+      if cross_repo_details != [] do
+        details_str =
+          cross_repo_details
+          |> Enum.map(fn {repo_id, sha} -> "  - #{repo_id}: #{sha}" end)
+          |> Enum.join("\n")
+
+        "\nSystem Note: #{length(cross_repo_details)} cross-repo subagent(s) completed in foreign repositories:\n#{details_str}"
       else
         ""
       end
@@ -91,7 +98,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # Skip merge if no same-repo subagents returned successful commits
     merge_message =
       if successful_shas == [] do
-        if cross_repo_count > 0 do
+        if cross_repo_details != [] do
           cross_repo_note
         else
           nil
@@ -134,9 +141,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
   """
   @spec build_subagent_specs(
           indexed_calls :: [{map(), non_neg_integer()}],
-          state :: LoopState.t()
+          state :: LoopState.t(),
+          foreign_repo_commits :: %{atom() => String.t()}
         ) :: [AgentSpec.t()]
-  def build_subagent_specs(indexed_calls, state) do
+  def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{}) do
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
 
     # Get all registered repos for path resolution
@@ -184,13 +192,22 @@ defmodule EvoGit.Agent.SubagentProcessing do
             current_commit: base_commit
           }
         else
-          # Foreign repo subagent: use the foreign repo's HEAD as the base commit
-          {:ok, foreign_head} = Git.rev_parse(target_repo_root)
+          # Foreign repo subagent: use tracked commit from previous subagent completions,
+          # falling back to the foreign repo's HEAD if no tracked commit exists.
+          tracked_commit = Map.get(foreign_repo_commits, target_repo_id)
+
+          {base, current} =
+            if tracked_commit do
+              {tracked_commit, tracked_commit}
+            else
+              {:ok, foreign_head} = Git.rev_parse(target_repo_root)
+              {foreign_head, foreign_head}
+            end
 
           %PhyloGraphNode{
             repo: target_repo_root,
-            base_commit: foreign_head,
-            current_commit: foreign_head
+            base_commit: base,
+            current_commit: current
           }
         end
 

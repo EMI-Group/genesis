@@ -29,6 +29,7 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   - `pending_sub_agents` — `MapSet` of subagent IDs still running
   - `sub_agent_results` — `%{index => result}` accumulated subagent results by original spec index
   - `sub_agent_indices` — `%{agent_id => index}` mapping from subagent ID to original spec index
+  - `foreign_repo_commits` — `%{repo_id => commit_sha}` latest known commit per foreign repo for this agent's subtree
   """
 
   alias EvoGit.AgentSpec
@@ -50,7 +51,8 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
     total_sub_specs: 0,
     pending_sub_agents: MapSet.new(),
     sub_agent_results: %{},
-    sub_agent_indices: %{}
+    sub_agent_indices: %{},
+    foreign_repo_commits: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -69,6 +71,7 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
           total_sub_specs: non_neg_integer(),
           pending_sub_agents: MapSet.t(pos_integer()),
           sub_agent_results: %{optional(non_neg_integer()) => term()},
-          sub_agent_indices: %{optional(pos_integer()) => non_neg_integer()}
+          sub_agent_indices: %{optional(pos_integer()) => non_neg_integer()},
+          foreign_repo_commits: %{atom() => String.t()}
         }
 end

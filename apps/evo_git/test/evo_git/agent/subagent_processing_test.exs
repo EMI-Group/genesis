@@ -178,4 +178,17 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert result == inspect(:atom)
     end
   end
+
+  describe "format_subagent_result/1 with repo_id" do
+    test "ok result with repo_id formats the same as without repo_id" do
+      agent_result = %Result{result: "Foreign investigation done", commit_sha: "abc123", repo_id: :original}
+
+      result = SubagentProcessing.format_subagent_result({:ok, agent_result})
+
+      assert result =~ "Foreign investigation done"
+      assert result =~ "abc123"
+      assert result =~ "# Result"
+      assert result =~ "# Final Commit"
+    end
+  end
 end

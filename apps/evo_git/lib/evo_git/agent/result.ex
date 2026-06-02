@@ -5,18 +5,20 @@ defmodule EvoGit.Agent.Result do
   When an agent finishes its work (via the `complete_task` tool), it produces
   a `%Result{}` struct capturing the outcome — including the human-readable
   result string, the commit SHA of any changes made, and optional metadata
-  such as tag, branch, and base commit.
+  such as tag, branch, base commit, and `repo_id` (atom identifying which
+  repo this result belongs to, `nil` for backward compat).
   """
 
   @enforce_keys [:result, :commit_sha]
-  defstruct [:result, :commit_sha, tag: nil, branch: nil, base_commit: nil]
+  defstruct [:result, :commit_sha, tag: nil, branch: nil, base_commit: nil, repo_id: nil]
 
   @type t :: %__MODULE__{
           result: String.t(),
           commit_sha: String.t(),
           tag: String.t() | nil,
           branch: String.t() | nil,
-          base_commit: String.t() | nil
+          base_commit: String.t() | nil,
+          repo_id: atom() | nil
         }
 
   @doc """
@@ -26,7 +28,7 @@ defmodule EvoGit.Agent.Result do
 
     * `result`      — human-readable summary of what the agent accomplished
     * `commit_sha`  — SHA of the commit produced by the agent
-    * `opts`        — optional keyword list (`:tag`, `:branch`, `:base_commit`)
+    * `opts`        — optional keyword list (`:tag`, `:branch`, `:base_commit`, `:repo_id`)
 
   ## Examples
 
@@ -40,7 +42,8 @@ defmodule EvoGit.Agent.Result do
       commit_sha: commit_sha,
       tag: Keyword.get(opts, :tag),
       branch: Keyword.get(opts, :branch),
-      base_commit: Keyword.get(opts, :base_commit)
+      base_commit: Keyword.get(opts, :base_commit),
+      repo_id: Keyword.get(opts, :repo_id)
     }
   end
 end
