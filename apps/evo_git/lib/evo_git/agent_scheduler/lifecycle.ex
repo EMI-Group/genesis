@@ -33,17 +33,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     # Resolve repo_root from the agent's own ETS state (correct even when
     # multiple tasks target different repos concurrently). No global fallback
     # — if the per-agent state is missing, skip worktree deletion.
-    agent_repo_root =
-      case get_agent_state(agent_id) do
-        {:ok, %{repo_root: root}} when is_binary(root) -> root
-        _ ->
-          Logger.warning(
-            "AgentScheduler: Cannot determine repo_root for agent #{agent_id} — skipping worktree deletion"
-          )
-
-          nil
-      end
-
+    {:ok, %{repo_root: agent_repo_root}} = get_agent_state(agent_id)
     # Delete the agent's persistent worktree
     if meta.worktree && agent_repo_root do
       Worktrees.delete(meta.worktree, agent_repo_root)
@@ -114,7 +104,12 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
             updated_state =
               if meta.parent_id do
-                Subagents.store_sub_result(meta.parent_id, agent_id, {:error, :worktree_creation_failed})
+                Subagents.store_sub_result(
+                  meta.parent_id,
+                  agent_id,
+                  {:error, :worktree_creation_failed}
+                )
+
                 Subagents.maybe_resume_parent(updated_state, meta.parent_id)
               else
                 GenServer.reply(meta.from, {:error, :worktree_creation_failed})
@@ -148,7 +143,12 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       state = %{state | running_count: state.running_count - 1}
 
       if meta.parent_id do
-        Subagents.store_sub_result(meta.parent_id, agent_id, {:error, :agent_max_retries_exceeded})
+        Subagents.store_sub_result(
+          meta.parent_id,
+          agent_id,
+          {:error, :agent_max_retries_exceeded}
+        )
+
         state = Subagents.maybe_resume_parent(state, meta.parent_id)
         state = Dispatch.process_queue(state)
         {:noreply, state}
