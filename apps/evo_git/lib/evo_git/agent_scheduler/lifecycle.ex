@@ -44,6 +44,68 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     %{state | running_count: state.running_count - 1}
   end
 
+  @doc """
+  Cancels an agent by killing its Task process, replying to blocked callers,
+  cleaning up worktree, and removing ETS entries.
+
+  Unlike `recycle_agent/2` (which assumes normal completion), this function:
+  - Kills the agent's Task process if still alive (via the stored task_ref)
+  - Replies to the top-level `from` caller with `{:error, :cancelled}`
+  - Replies to the `sub_agent_from` caller (waiting parent) with `{:error, :cancelled}`
+  - Then performs the same cleanup as recycle_agent (delete worktree, ETS entries, decrement count)
+
+  **Important**: The caller MUST remove the agent's ref from `state.ref_to_agent`
+  BEFORE calling this function, otherwise the `:DOWN` handler will attempt to
+  handle the killed process.
+  """
+  @spec cancel_agent(State.t(), pos_integer()) :: State.t()
+  def cancel_agent(state, agent_id) do
+    case get_sched_meta(agent_id) do
+      {:ok, meta} ->
+        # Kill the agent's Task process if it has one and is alive
+        if meta.task_ref do
+          # The task_ref is actually a Task struct with .pid and .ref fields
+          case meta.task_ref do
+            %Task{pid: pid} when is_pid(pid) ->
+              if Process.alive?(pid) do
+                Task.shutdown(meta.task_ref, :brutal_kill)
+              end
+
+            _ ->
+              :ok
+          end
+        end
+
+        # Reply to the top-level caller (EvoDash Task process) if not yet replied
+        if meta.from do
+          GenServer.reply(meta.from, {:error, :cancelled})
+        end
+
+        # Reply to the sub_agent_from caller (parent waiting for spawn_sub_agents)
+        if meta.sub_agent_from do
+          GenServer.reply(meta.sub_agent_from, {:error, :cancelled})
+        end
+
+        # Delete worktree
+        {:ok, %{repo_root: agent_repo_root}} = get_agent_state(agent_id)
+
+        if meta.worktree && agent_repo_root do
+          Worktrees.delete(meta.worktree, agent_repo_root)
+        end
+
+        # Remove ETS entries
+        delete_agent_state(agent_id)
+        delete_sched_meta(agent_id)
+
+        # Decrement running count
+        %{state | running_count: max(state.running_count - 1, 0)}
+
+      :error ->
+        # Agent already cleaned up, nothing to do
+        state
+    end
+  end
+
   # --- Crash Handling ---
 
   @doc """

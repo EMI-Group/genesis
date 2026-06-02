@@ -202,6 +202,17 @@ defmodule EvoDash.TaskRegistry do
       case :ets.lookup(@table_name, task_id) do
         [{^task_id, %TaskInfo{status: :running, ref: %Task{pid: pid} = task_ref} = task}] ->
           if Process.alive?(pid) do
+            # Notify the AgentScheduler to cancel all agents for this task
+            # before killing the wrapper process. The scheduler uses the caller PID
+            # to find the matching top-level agent and cascade cleanup to subagents.
+            try do
+              EvoGit.AgentScheduler.cancel_task_agents(pid)
+            rescue
+              _ -> :ok
+            catch
+              _, _ -> :ok
+            end
+
             Task.shutdown(task_ref, :brutal_kill)
             updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
             :ets.insert(@table_name, {task_id, updated})
