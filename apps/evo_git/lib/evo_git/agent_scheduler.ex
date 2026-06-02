@@ -927,3 +927,4 @@ defmodule EvoGit.AgentScheduler do
         :ok
     end
   end
+end
