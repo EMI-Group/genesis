@@ -152,14 +152,18 @@ defmodule EvoGit.Agent.SubagentProcessing do
       {target_repo_id, target_repo_root, resolved_rel_path} =
         resolve_subagent_path(raw_path, parent_state, foreign_repos)
 
+      # Foreign repo subagents always start at root node for full context
+      rel_path = if target_repo_id == :primary, do: resolved_rel_path, else: "./"
+
       # If the LLM passed a file path, use its parent directory instead
+      # (only applies to primary repo — foreign repos always use root)
       path =
-        if File.regular?(Path.join(target_repo_root, resolved_rel_path)) do
+        if target_repo_id == :primary and File.regular?(Path.join(target_repo_root, resolved_rel_path)) do
           resolved_rel_path
           |> Path.dirname()
           |> ContextNode.normalize_relpath()
         else
-          resolved_rel_path
+          rel_path
         end
 
       # Load context node with the target repo_id
@@ -189,6 +193,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   Absolute paths are resolved against foreign repos first, then the primary repo.
   Relative paths stay within the parent agent's repo.
+
+  Note: For foreign repo targets (repo_id != :primary), the returned
+  `relative_path` may be a deep path. The caller (`build_subagent_specs/2`)
+  overrides foreign repo paths to `"./"` so subagents always start at the
+  foreign repo's root node for full context.
   """
   @spec resolve_subagent_path(
           raw_path :: String.t() | nil,
