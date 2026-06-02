@@ -50,11 +50,14 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "falls back to primary for unknown absolute path", %{parent_state: parent_state, foreign_repos: foreign_repos} do
-      # Unknown absolute paths attempt normalization, which raises for truly unknown paths.
-      # This is existing behavior — the caller handles this upstream.
-      assert_raise RuntimeError, ~r/normalize_relpath expects a relative path/, fn ->
+      # Unknown absolute paths are gracefully handled by stripping the leading "/"
+      # and normalizing as a relative path under the primary repo.
+      {repo_id, repo_root, rel_path} =
         SubagentProcessing.resolve_subagent_path("/unknown/path", parent_state, foreign_repos)
-      end
+
+      assert repo_id == :primary
+      assert repo_root == "/home/user/projects/my_app"
+      assert rel_path == "./unknown/path"
     end
 
     test "resolves deep absolute path to second foreign repo", %{parent_state: parent_state, foreign_repos: foreign_repos} do
