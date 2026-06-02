@@ -212,7 +212,9 @@ defmodule EvoDashWeb.Layouts do
     ~H"""
     <div id={@id} aria-live="polite">
       <.flash kind={:info} flash={@flash} />
+      <.flash kind={:success} flash={@flash} />
       <.flash kind={:error} flash={@flash} />
+      <.flash kind={:warning} flash={@flash} />
 
       <.flash
         id="client-error"

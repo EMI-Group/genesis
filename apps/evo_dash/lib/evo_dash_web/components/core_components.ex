@@ -41,7 +41,7 @@ defmodule EvoDashWeb.CoreComponents do
   attr :id, :string, doc: "the optional id of flash container"
   attr :flash, :map, default: %{}, doc: "the map of flash messages to display"
   attr :title, :string, default: nil
-  attr :kind, :atom, values: [:info, :error, :warning], doc: "used for styling and flash lookup"
+  attr :kind, :atom, values: [:info, :success, :error, :warning], doc: "used for styling and flash lookup"
   attr :rest, :global, doc: "the arbitrary HTML attributes to add to the flash container"
 
   slot :inner_block, doc: "the optional inner block that renders the flash message"
@@ -54,27 +54,34 @@ defmodule EvoDashWeb.CoreComponents do
       :if={msg = render_slot(@inner_block) || Phoenix.Flash.get(@flash, @kind)}
       id={@id}
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
+      phx-hook="AutoClearFlash"
       role="alert"
-      class="toast toast-top toast-end z-50"
+      class={"fixed right-4 z-50 w-80 sm:w-96 animate-fade-in-up top-4"}
       {@rest}
     >
       <div class={[
-        "alert w-full max-w-80 sm:w-96 sm:max-w-96 text-wrap",
-        @kind == :info && "alert-info",
-        @kind == :error && "alert-error",
-        @kind == :warning && "alert-warning"
+        "relative w-full overflow-hidden rounded-lg shadow-lg ring-1 p-4",
+        @kind == :info && "bg-info/10 text-info ring-info/20",
+        @kind == :success && "bg-success/10 text-success ring-success/20",
+        @kind == :error && "bg-error/10 text-error ring-error/20",
+        @kind == :warning && "bg-warning/10 text-warning ring-warning/20"
       ]}>
-        <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0" />
-        <.icon :if={@kind == :error} name="hero-exclamation-circle" class="size-5 shrink-0" />
-        <.icon :if={@kind == :warning} name="hero-exclamation-triangle" class="size-5 shrink-0" />
-        <div>
-          <p :if={@title} class="font-semibold">{@title}</p>
-          <p>{msg}</p>
+        <div class="flex items-start gap-3">
+          <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0 text-info" />
+          <.icon :if={@kind == :success} name="hero-check-circle" class="size-5 shrink-0 text-success" />
+          <.icon :if={@kind == :error} name="hero-x-circle" class="size-5 shrink-0 text-error" />
+          <.icon :if={@kind == :warning} name="hero-exclamation-triangle" class="size-5 shrink-0 text-warning" />
+          <div class="flex-1">
+            <p :if={@title} class="text-sm font-semibold">{@title}</p>
+            <p class="text-sm">{msg}</p>
+          </div>
+          <button type="button" class="opacity-60 hover:opacity-100 mix-blend-multiply shrink-0" aria-label="close">
+            <.icon name="hero-x-mark" class="size-5" />
+          </button>
         </div>
-        <div class="flex-1" />
-        <button type="button" class="group self-start cursor-pointer" aria-label="close">
-          <.icon name="hero-x-mark" class="size-5 opacity-40 group-hover:opacity-70" />
-        </button>
+        <div class="absolute bottom-0 left-0 h-1 w-full opacity-20 bg-current">
+          <div class="h-full animate-countdown bg-current" />
+        </div>
       </div>
     </div>
     """

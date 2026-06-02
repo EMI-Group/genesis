@@ -169,11 +169,28 @@ const BrowserNotifications = {
   }
 };
 
+// AutoClearFlash hook: auto-dismisses flash messages after 4 seconds
+const AutoClearFlash = {
+  mounted() {
+    const ignoredIDs = ["client-error", "server-error"];
+    if (ignoredIDs.includes(this.el.id)) return;
+
+    setTimeout(() => {
+      const closeBtn = this.el.querySelector("button[aria-label='close']")
+      if (closeBtn) {
+        closeBtn.click()
+      } else {
+        this.el.click()
+      }
+    }, 4000);
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, BrowserNotifications},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, BrowserNotifications, AutoClearFlash},
 })
 
 // Show progress bar on live navigation and form submits
