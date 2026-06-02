@@ -146,8 +146,8 @@ defmodule EvoDashWeb.DashboardLive do
               </h2>
             </div>
             <div class="p-4 sm:p-6 pt-2">
-              <%= if @foreign_repos == [] do %>
-                <div class="text-center py-8 text-base-content/40">
+              <%= if @foreign_repos == [] and not @show_add_foreign_repo_form do %>
+                <div class="text-center py-6 text-base-content/40">
                   <.icon name="hero-folder-minus" class="size-12 mx-auto mb-2 opacity-30" />
                   <p class="text-sm">{gettext("No repositories registered")}</p>
                 </div>
@@ -177,19 +177,9 @@ defmodule EvoDashWeb.DashboardLive do
                   <% end %>
                 </div>
               <% end %>
-            </div>
-          </div>
 
-          <!-- Add Foreign Repo -->
-          <div class="mb-6">
-            <%= if @show_add_foreign_repo_form do %>
-              <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-scale-in">
-                <div class="bg-gradient-to-br from-success/10 via-success/5 to-transparent p-4 sm:p-6">
-                  <h2 class="text-lg font-semibold flex items-center gap-2">
-                    <.icon name="hero-plus-circle" class="size-5 text-success" /> {gettext("Add Foreign Repository")}
-                  </h2>
-                </div>
-                <div class="p-4 sm:p-6 pt-2">
+              <%= if @show_add_foreign_repo_form do %>
+                <div class="mt-4 pt-4 border-t border-base-200">
                   <.form for={%{}} phx-submit="add_foreign_repo" class="space-y-4">
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                       <div>
@@ -245,12 +235,15 @@ defmodule EvoDashWeb.DashboardLive do
                     </div>
                   </.form>
                 </div>
-              </div>
-            <% else %>
-              <button class="btn btn-ghost gap-2" phx-click="toggle_add_foreign_repo_form">
-                <.icon name="hero-plus-circle" class="size-4" /> {gettext("Add Foreign Repo")}
-              </button>
-            <% end %>
+              <% else %>
+                <button
+                  class="btn btn-sm btn-ghost btn-outline w-full border-dashed mt-4"
+                  phx-click="toggle_add_foreign_repo_form"
+                >
+                  <.icon name="hero-plus" class="size-4" /> {gettext("Add Foreign Repo")}
+                </button>
+              <% end %>
+            </div>
           </div>
         <% end %>
 
