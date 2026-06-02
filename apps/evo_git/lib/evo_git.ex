@@ -175,6 +175,7 @@ defmodule EvoGit do
       "-p",
       "ProtectProc=invisible"
     ] ++
+      sandbox_resource_args() ++
       read_write_args ++
       inaccessible_args ++ [executable | args]
   end
@@ -217,6 +218,13 @@ defmodule EvoGit do
       :enabled -> true
       :disabled -> false
       :auto -> Platform.systemd_available?()
+    end
+  end
+
+  defp sandbox_resource_args do
+    case EvoGit.Config.resolve([:sandbox, :resources, :limit_nofile]) do
+      nil -> []
+      v -> ["-p", "LimitNOFILE=#{v}"]
     end
   end
 end
