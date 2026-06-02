@@ -83,7 +83,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
     cross_repo_note =
       if cross_repo_count > 0 do
-        "\nSystem Note: #{cross_repo_count} cross-repo subagent(s) completed. Their changes are in foreign repo worktrees (not merged here)."
+        "\nSystem Note: #{cross_repo_count} read-only cross-repo subagent(s) completed in foreign repositories."
       else
         ""
       end
@@ -189,6 +189,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   Absolute paths are resolved against foreign repos first, then the primary repo.
   Relative paths stay within the parent agent's repo.
+
+  For foreign repos, agents are encouraged to use the repository root path
+  so subagents can discover the codebase layout via CONTEXT.md routing tables.
   """
   @spec resolve_subagent_path(
           raw_path :: String.t() | nil,
