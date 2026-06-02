@@ -161,7 +161,7 @@ defmodule EvoGit.Runtime.Evolution do
   defp resolve_starting_commit(repo_path, ref) do
     case Git.rev_parse(repo_path, ref) do
       {:ok, sha} -> {:ok, sha}
-      {:error, _} = error ->
+      error ->
         Logger.error("Evolution: Invalid starting commit '#{ref}': #{inspect(error)}")
         error
     end
