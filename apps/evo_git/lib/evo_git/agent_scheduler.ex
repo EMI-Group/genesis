@@ -275,6 +275,19 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Returns the foreign repo commits map for the given agent's SchedMeta.
+  Used by agents to track the latest known commit per foreign repo from
+  previous subagent completions.
+  """
+  @spec get_foreign_repo_commits(pos_integer()) :: %{atom() => String.t()}
+  def get_foreign_repo_commits(agent_id) do
+    case :ets.lookup(@sched_table, agent_id) do
+      [{^agent_id, %{foreign_repo_commits: frc}}] when is_map(frc) -> frc
+      _ -> %{}
+    end
+  end
+
+  @doc """
   Registers a single foreign repo at runtime.
   Can be used to add repos dynamically (e.g., from the dashboard).
   Returns `:ok` on success, `{:error, {:already_exists, id}}` if a repo with the same id already exists (except :primary).
