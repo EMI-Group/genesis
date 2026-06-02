@@ -84,7 +84,7 @@ defmodule EvoGit.Core.ForeignRepo do
   @spec normalize_path(t(), String.t()) :: {:ok, String.t()} | {:error, :not_in_repo}
   def normalize_path(%__MODULE__{root: root}, abs_path) when is_binary(abs_path) do
     # Ensure both paths are expanded for comparison
-    abs_path = Path.expand(abs_path)
+    abs_path = expand_path(abs_path)
 
     if String.starts_with?(abs_path, root <> "/") or abs_path == root do
       relative = Path.relative_to(abs_path, root)
@@ -105,7 +105,7 @@ defmodule EvoGit.Core.ForeignRepo do
   """
   @spec resolve_path([t()], String.t()) :: {:ok, atom(), String.t()} | {:error, :not_in_any_repo}
   def resolve_path(repos, abs_path) when is_list(repos) and is_binary(abs_path) do
-    abs_path = Path.expand(abs_path)
+    abs_path = expand_path(abs_path)
 
     # Check foreign repos first, then primary
     sorted = Enum.sort_by(repos, fn repo -> if primary?(repo.id), do: 1, else: 0 end)
@@ -128,6 +128,14 @@ defmodule EvoGit.Core.ForeignRepo do
   end
 
   def absolute_path?(_other), do: false
+
+  # Resolves symlinks if possible, falls back to Path.expand
+  defp expand_path(path) do
+    case File.real_path(path) do
+      {:ok, real} -> real
+      {:error, _} -> Path.expand(path)
+    end
+  end
 
   # Normalizes a relative path to "./foo/bar" format
   defp normalize_relative(path) do
