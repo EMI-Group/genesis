@@ -177,19 +177,12 @@ defmodule EvoDashWeb.DashboardLive do
                   <% end %>
                 </div>
               <% end %>
-            </div>
-          </div>
 
-          <!-- Add Foreign Repo -->
-          <div class="mb-6">
-            <%= if @show_add_foreign_repo_form do %>
-              <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-scale-in">
-                <div class="bg-gradient-to-br from-success/10 via-success/5 to-transparent p-4 sm:p-6">
-                  <h2 class="text-lg font-semibold flex items-center gap-2">
-                    <.icon name="hero-plus-circle" class="size-5 text-success" /> {gettext("Add Foreign Repository")}
-                  </h2>
-                </div>
-                <div class="p-4 sm:p-6 pt-2">
+              <%= if @show_add_foreign_repo_form do %>
+                <div class="border-t border-base-200 mt-4 pt-4 animate-scale-in">
+                  <h3 class="text-sm font-semibold flex items-center gap-2 mb-3">
+                    <.icon name="hero-plus-circle" class="size-4 text-success" /> {gettext("Add Foreign Repository")}
+                  </h3>
                   <.form for={%{}} phx-submit="add_foreign_repo" class="space-y-4">
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                       <div>
@@ -232,12 +225,12 @@ defmodule EvoDashWeb.DashboardLive do
                       </div>
                     </div>
                     <div class="flex gap-2">
-                      <button type="submit" class="btn btn-primary gap-2">
+                      <button type="submit" class="btn btn-primary btn-sm gap-2">
                         <.icon name="hero-plus" class="size-4" /> {gettext("Add Repository")}
                       </button>
                       <button
                         type="button"
-                        class="btn btn-ghost"
+                        class="btn btn-ghost btn-sm"
                         phx-click="toggle_add_foreign_repo_form"
                       >
                         {gettext("Cancel")}
@@ -245,12 +238,12 @@ defmodule EvoDashWeb.DashboardLive do
                     </div>
                   </.form>
                 </div>
-              </div>
-            <% else %>
-              <button class="btn btn-ghost gap-2" phx-click="toggle_add_foreign_repo_form">
-                <.icon name="hero-plus-circle" class="size-4" /> {gettext("Add Foreign Repo")}
-              </button>
-            <% end %>
+              <% else %>
+                <button class="btn btn-sm btn-outline btn-secondary gap-2 w-full mt-4" phx-click="toggle_add_foreign_repo_form">
+                  <.icon name="hero-plus-circle" class="size-4" /> {gettext("Add Foreign Repo")}
+                </button>
+              <% end %>
+            </div>
           </div>
         <% end %>
 

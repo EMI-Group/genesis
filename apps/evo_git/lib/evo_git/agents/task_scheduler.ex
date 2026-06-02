@@ -103,6 +103,9 @@ defmodule EvoGit.Agents.TaskScheduler do
     - **Don't over-plan** — keep it rough and actionable. Managers at each level will refine as needed.
     - **Final step should be validation**
 
+    ## Foreign Repository Notes
+    When operating in a foreign repository (your context node's repo_id is not :primary), you are read-only. Start by reading the root CONTEXT.md to understand the project structure before planning tasks.
+
     ## Guidelines
 
     - Keep it lightweight — you're producing a rough execution sequence, not a detailed implementation plan

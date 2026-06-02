@@ -805,7 +805,12 @@ defmodule EvoGit.Agent do
                     "The path to a DIRECTORY where the subagent should operate. " <>
                       "Use a RELATIVE path from the repository root for the current project (e.g., './src/auth', './lib/utils'). " <>
                       "Use an ABSOLUTE path to delegate to a FOREIGN REPOSITORY configured in evogit.toml " <>
-                      "(e.g., '/Source/original-proj/src'). MUST be a directory node, NOT a file path."
+                      "(e.g., '/Source/original-proj'). MUST be a directory node, NOT a file path.\n\n" <>
+                      "IMPORTANT: When delegating to a foreign repo, prefer using the repository ROOT path " <>
+                      "(e.g., '/Source/original-proj' rather than '/Source/original-proj/src'). " <>
+                      "Since you have no prior knowledge of the foreign repo's structure, starting at the root " <>
+                      "allows the subagent to discover the codebase layout via its CONTEXT.md routing table. " <>
+                      "Spawning at a non-root path is allowed but discouraged unless you have specific knowledge of that path."
                 },
                 "objective" => %{
                   "type" => "string",

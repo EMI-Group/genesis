@@ -128,6 +128,15 @@ defmodule EvoGit.Agents.Manager do
 
     Instead, when you've already investigated, skip the TaskScheduler and delegate directly to an Executor with full context included in the objective.
 
+    ## Foreign Repository Delegation
+
+    When your routing table or objective references a foreign repository (an absolute path like `/Source/original-proj`), you can spawn subagents in that repo by passing the absolute path as the `path` parameter.
+
+    **Key rules for foreign repo delegation:**
+    - **Prefer root-path delegation**: Since you have no knowledge of the foreign repo's internal structure, always spawn subagents at the foreign repo's root path (e.g., `/Source/original-proj` maps to `'./'` in the foreign repo). The subagent will discover the codebase layout from its root CONTEXT.md routing table.
+    - **Only read-only agents in foreign repos**: When delegating to a foreign repo, you MUST use `subagent_codebase_investigator` or `subagent_task_scheduler` — agents that only read and analyze code. Write-capable agents (executors, managers) are not permitted in foreign repos.
+    - **Typical pattern**: Spawn a `subagent_codebase_investigator` at the foreign repo root to understand its structure, then use the findings to inform your work in the primary repo.
+
     1. Analyze: Understand the objective and your assigned node. Determine what work needs to be done and where.
       - Use `subagent_codebase_investigator` to explore the codebase for you.
       - For regression investigations or historical comparisons, use `subagent_codebase_investigator` with a `commit_id` to explore the codebase at a past commit.
