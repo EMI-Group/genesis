@@ -19,6 +19,11 @@ defmodule EvoGit.Core.ForeignRepoTest do
       repo = ForeignRepo.new(:my_repo, "/tmp/my")
       assert repo.name == "my_repo"
     end
+
+    test "expands relative paths via Path.expand" do
+      repo = ForeignRepo.new(:test, "/tmp/evo_git_test")
+      assert repo.root == Path.expand("/tmp/evo_git_test")
+    end
   end
 
   describe "primary_id/0" do
@@ -49,6 +54,14 @@ defmodule EvoGit.Core.ForeignRepoTest do
       refute ForeignRepo.absolute_path?("src/main.ex")
       refute ForeignRepo.absolute_path?("lib/app.ex")
     end
+
+    test "returns false for nil" do
+      refute ForeignRepo.absolute_path?(nil)
+    end
+
+    test "returns false for empty string" do
+      refute ForeignRepo.absolute_path?("")
+    end
   end
 
   describe "normalize_path/2" do
@@ -77,6 +90,23 @@ defmodule EvoGit.Core.ForeignRepoTest do
       repo = ForeignRepo.new(:test, "/Source/proj")
       assert {:error, :not_in_repo} =
                ForeignRepo.normalize_path(repo, "/Source/project-other/file.ex")
+    end
+
+    test "handles path with trailing slash" do
+      repo = ForeignRepo.new(:test, "/Source/proj")
+      # normalize_relative trims trailing slashes
+      assert {:ok, "./src"} = ForeignRepo.normalize_path(repo, "/Source/proj/src/")
+    end
+
+    test "handles path with parent directory segments" do
+      repo = ForeignRepo.new(:test, "/Source/proj")
+      # Path.expand resolves .. segments, so the result is the resolved path
+      assert {:ok, "./lib/app.ex"} = ForeignRepo.normalize_path(repo, "/Source/proj/src/../lib/app.ex")
+    end
+
+    test "handles empty string path" do
+      repo = ForeignRepo.new(:test, "/Source/proj")
+      assert {:error, :not_in_repo} = ForeignRepo.normalize_path(repo, "")
     end
   end
 
@@ -124,6 +154,38 @@ defmodule EvoGit.Core.ForeignRepoTest do
 
     test "returns error for empty repo list" do
       assert {:error, :not_in_any_repo} = ForeignRepo.resolve_path([], "/Source/any/file.ex")
+    end
+
+    test "disambiguates overlapping repo paths" do
+      repos = [
+        ForeignRepo.new(:short, "/Source/proj"),
+        ForeignRepo.new(:long, "/Source/proj-extended")
+      ]
+      # Path under the longer repo should NOT match the shorter one
+      assert {:ok, :long, "./lib/app.ex"} = ForeignRepo.resolve_path(repos, "/Source/proj-extended/lib/app.ex")
+    end
+
+    test "resolves repo root to ./" do
+      repos = [ForeignRepo.new(:primary, "/Source/proj")]
+      assert {:ok, :primary, "./"} = ForeignRepo.resolve_path(repos, "/Source/proj")
+    end
+
+    test "resolves deeply nested path" do
+      repos = [ForeignRepo.new(:primary, "/Source/proj")]
+      assert {:ok, :primary, "./a/b/c/d/e/f/g/h.ex"} =
+               ForeignRepo.resolve_path(repos, "/Source/proj/a/b/c/d/e/f/g/h.ex")
+    end
+
+    test "resolves paths in all registered repos" do
+      repos = [
+        ForeignRepo.new(:primary, "/Source/proj-a"),
+        ForeignRepo.new(:secondary, "/Source/proj-b"),
+        ForeignRepo.new(:tertiary, "/Source/proj-c")
+      ]
+
+      assert {:ok, :primary, "./README.md"} = ForeignRepo.resolve_path(repos, "/Source/proj-a/README.md")
+      assert {:ok, :secondary, "./README.md"} = ForeignRepo.resolve_path(repos, "/Source/proj-b/README.md")
+      assert {:ok, :tertiary, "./README.md"} = ForeignRepo.resolve_path(repos, "/Source/proj-c/README.md")
     end
   end
 end
