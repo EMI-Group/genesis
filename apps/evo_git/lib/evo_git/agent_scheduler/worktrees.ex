@@ -239,7 +239,16 @@ defmodule EvoGit.AgentScheduler.Worktrees do
       |> Path.basename()
       |> String.replace_prefix("worker_", "evogit-agent-")
 
-    File.rm_rf!(path)
+    case File.rm_rf(path) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason, failed_path} ->
+        Logger.warning(
+          "AgentScheduler: Failed to remove worktree #{path}: #{inspect(reason)} at #{failed_path}"
+        )
+    end
+
     Git.prune_worktrees(repo_root)
     Git.delete_branch(repo_root, branch_name)
   end
