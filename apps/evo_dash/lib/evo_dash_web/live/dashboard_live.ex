@@ -267,7 +267,7 @@ defmodule EvoDashWeb.DashboardLive do
           </div>
           <div class="space-y-3">
             <%= for task <- Enum.sort_by(@running_tasks, & &1.started_at, {:asc, DateTime}) do %>
-              <div class="animate-pulse-glow rounded-2xl">
+              <div class={["rounded-2xl", if(task.status == :finalizing, do: "animate-pulse-glow-warning", else: "animate-pulse-glow")]}>
                 <EvoDashWeb.DashboardComponents.task_card
                   task={task}
                   show_details={MapSet.member?(@expanded_task_ids, task.id)}
