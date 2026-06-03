@@ -29,7 +29,7 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 ### LiveView Routes
 | Route | LiveView | Purpose |
 |-------|----------|---------|
-| `GET /` | `DashboardLive` | Project-based task dashboard with auto-mode detection |
+| `GET /` | `DashboardLive` | Unified dashboard — project selector, task form, project settings, task history. URL-based project state via `?project=<path>` query param. |
 | `GET /agents` | `AgentsLive` | Agent tree inspector with real-time hierarchy |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration |
 | `GET /help` | `HelpLive` | Configuration file management and TOML editor |
