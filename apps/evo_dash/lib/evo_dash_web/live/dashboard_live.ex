@@ -841,13 +841,6 @@ defmodule EvoDashWeb.DashboardLive do
     end
   end
 
-  defp build_initial_notified_task_ids(tasks) do
-    tasks
-    |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
-    |> Enum.map(& &1.id)
-    |> MapSet.new()
-  end
-
   defp task_notification_content(task) do
     objective = task.opts[:prompt] || task.opts[:objective] || ""
 
