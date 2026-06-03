@@ -28,7 +28,8 @@ defmodule EvoDash.TaskRegistry do
       :finished_at,
       status: :pending,
       logs: [],
-      result: nil
+      result: nil,
+      review_status: nil
     ]
 
     @type t :: %__MODULE__{
@@ -40,7 +41,8 @@ defmodule EvoDash.TaskRegistry do
             started_at: DateTime.t() | nil,
             finished_at: DateTime.t() | nil,
             logs: [String.t()],
-            result: term()
+            result: term(),
+            review_status: nil | :pending_review | :merged | :rejected | :continued
           }
   end
 
@@ -89,6 +91,10 @@ defmodule EvoDash.TaskRegistry do
 
   def clear_finished_tasks do
     GenServer.call(__MODULE__, :clear_finished_tasks)
+  end
+
+  def update_review_status(task_id, review_status) when review_status in [:pending_review, :merged, :rejected, :continued] do
+    GenServer.cast(__MODULE__, {:update_review_status, task_id, review_status})
   end
 
   ## Recent Projects Client API
@@ -314,6 +320,12 @@ defmodule EvoDash.TaskRegistry do
       [{^task_id, %TaskInfo{} = task}] ->
         finished_at = if status in [:completed, :failed, :cancelled], do: DateTime.utc_now(), else: task.finished_at
         updated = %{task | status: status, result: result, finished_at: finished_at}
+        updated = case {status, result} do
+          {:completed, {:ok, %{branch_name: branch_name}}} when not is_nil(branch_name) ->
+            %{updated | review_status: :pending_review}
+          _ ->
+            updated
+        end
         :ets.insert(@table_name, {task_id, updated})
 
         if status in [:completed, :failed, :cancelled] do
@@ -347,6 +359,23 @@ defmodule EvoDash.TaskRegistry do
     :ets.delete(@table_name, task_id)
     persist_tasks_to_dets()
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:update_review_status, task_id, review_status}, state) do
+    case :ets.lookup(@table_name, task_id) do
+      [{^task_id, %TaskInfo{} = task}] ->
+        updated = %{task | review_status: review_status}
+        :ets.insert(@table_name, {task_id, updated})
+        persist_tasks_to_dets()
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+        :ok
+
+      _ ->
+        :ok
+    end
+
     {:noreply, state}
   end
 

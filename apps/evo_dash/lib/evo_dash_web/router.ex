@@ -24,6 +24,7 @@ defmodule EvoDashWeb.Router do
     live("/agents", AgentsLive, :index)
     live("/settings", SettingsLive, :index)
     live("/help", HelpLive, :index)
+    live("/review/:task_id", ReviewLive, :index)
     live_dashboard("/dashboard")
   end
 
