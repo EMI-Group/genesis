@@ -152,20 +152,25 @@ defmodule EvoGit.SandboxSlice do
   end
 
   defp do_create_slice(resources) do
-    property_args = resource_properties(resources)
-
     args = [
       "--user",
       "--slice=#{@slice_name}",
       "--scope",
       "--collect",
       "-q"
-    ] ++ property_args ++ ["true"]
+    ] ++ ["true"]
 
     case System.cmd("systemd-run", args, stderr_to_stdout: true) do
       {_output, 0} ->
-        Logger.info("SandboxSlice: Created slice '#{@slice_name}' with resource limits")
-        :ok
+        # Now set the resource properties on the slice itself
+        case do_update_slice_properties(resources) do
+          :ok ->
+            Logger.info("SandboxSlice: Created slice '#{@slice_name}' with resource limits")
+            :ok
+          {:error, reason} ->
+            Logger.warning("SandboxSlice: Slice created but failed to set properties: #{inspect(reason)}")
+            {:error, reason}
+        end
       {output, _code} ->
         {:error, String.trim(output)}
     end
@@ -209,6 +214,12 @@ defmodule EvoGit.SandboxSlice do
 
   defp resource_properties(resources) do
     props = []
+
+    props =
+      case Map.get(resources, :cpu_quota) do
+        nil -> props
+        v -> props ++ ["-p", "CPUQuota=#{v}"]
+      end
 
     props =
       case Map.get(resources, :cpu_weight) do

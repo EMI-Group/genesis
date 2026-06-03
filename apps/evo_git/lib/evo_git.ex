@@ -222,18 +222,48 @@ defmodule EvoGit do
   end
 
   defp sandbox_resource_args do
+    # Try runtime overrides first, fall back to TOML config
+    process_resources = get_process_resources()
+
+    cpu_quota_args =
+      case Map.get(process_resources, :cpu_quota) do
+        nil -> []
+        v -> ["-p", "CPUQuota=#{v}"]
+      end
+
+    memory_args =
+      case Map.get(process_resources, :memory_max) do
+        nil -> []
+        v -> ["-p", "MemoryMax=#{v}"]
+      end
+
     nofile_args =
-      case EvoGit.Config.resolve([:sandbox, :resources, :limit_nofile]) do
+      case Map.get(process_resources, :limit_nofile) do
         nil -> []
         v -> ["-p", "LimitNOFILE=#{v}"]
       end
 
     oom_args =
-      case EvoGit.Config.resolve([:sandbox, :resources, :oom_score_adjust]) do
+      case Map.get(process_resources, :oom_score_adjust) do
         nil -> []
         v -> ["-p", "OOMScoreAdjust=#{v}"]
       end
 
-    nofile_args ++ oom_args
+    cpu_quota_args ++ memory_args ++ nofile_args ++ oom_args
+  end
+
+  defp get_process_resources do
+    # Try runtime state first (from dashboard overrides)
+    try do
+      case EvoGit.AgentScheduler.get_config()[:sandbox_process_resources] do
+        nil -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
+        resources when map_size(resources) == 0 -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
+        resources -> resources
+      end
+    rescue
+      _ -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
+    catch
+      _, _ -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
+    end
   end
 end
