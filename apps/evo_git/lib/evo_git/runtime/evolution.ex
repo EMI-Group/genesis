@@ -6,7 +6,6 @@ defmodule EvoGit.Runtime.Evolution do
   alias EvoGit.AgentSpec
   alias EvoGit.Adapters.Git
   alias EvoGit.Runtime
-  alias EvoGit.Runtime.PullRequest
   require Logger
 
   def run(objective, opts \\ []) do
@@ -79,7 +78,7 @@ defmodule EvoGit.Runtime.Evolution do
     end
   end
 
-  defp merge_and_report(repo_path, agent_output, objective) do
+  defp merge_and_report(repo_path, agent_output, _objective) do
     final_sha = agent_output.commit_sha
     result = agent_output.result
     tag = agent_output.tag
@@ -97,7 +96,7 @@ defmodule EvoGit.Runtime.Evolution do
       Logger.info("Evolution: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}")
 
       # Try to create a PR if gh is available
-      {pr_url, pr_title} = PullRequest.try_create(repo_path, branch_name, objective, result)
+      {pr_url, pr_title} = {nil, nil}
 
       {:ok, %{
         commit_sha: final_sha,
@@ -105,7 +104,8 @@ defmodule EvoGit.Runtime.Evolution do
         tag: tag,
         branch_name: branch_name,
         pr_url: pr_url,
-        pr_title: pr_title
+        pr_title: pr_title,
+        base_sha: base_sha
       }}
     else
       Logger.info("Evolution: No changes detected (base and final commit are the same)")
@@ -116,7 +116,8 @@ defmodule EvoGit.Runtime.Evolution do
         branch_name: nil,
         pr_url: nil,
         pr_title: nil,
-        no_changes: true
+        no_changes: true,
+        base_sha: base_sha
       }}
     end
   end

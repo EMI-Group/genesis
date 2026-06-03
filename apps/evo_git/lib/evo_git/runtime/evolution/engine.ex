@@ -18,7 +18,6 @@ defmodule EvoGit.Runtime.Evolution.Engine do
   alias EvoGit.Core.{ContextNode, PhyloGraphNode}
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
-  alias EvoGit.Runtime.PullRequest
 
   @type state :: %__MODULE__{}
 
@@ -603,7 +602,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       {:ok, _} = Git.create_branch(state.repo_path, branch_name, final_sha)
       Logger.info("Evolution Engine: Created branch '#{branch_name}'")
 
-      {pr_url, pr_title} = PullRequest.try_create(state.repo_path, branch_name, state.objective, result)
+      {pr_url, pr_title} = {nil, nil}
 
       {:ok, %{
         commit_sha: final_sha,
@@ -611,7 +610,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         tag: tag,
         branch_name: branch_name,
         pr_url: pr_url,
-        pr_title: pr_title
+        pr_title: pr_title,
+        base_sha: base_sha
       }}
     else
       Logger.info("Evolution Engine: No changes detected from agent")
@@ -622,7 +622,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         branch_name: nil,
         pr_url: nil,
         pr_title: nil,
-        no_changes: true
+        no_changes: true,
+        base_sha: base_sha
       }}
     end
   end
