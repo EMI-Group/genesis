@@ -19,15 +19,20 @@ defmodule EvoGit do
     * `:enabled` — Force-enable sandbox (will fail on non-Linux platforms).
     * `:disabled` — Disable sandbox entirely, run commands directly.
 
-  Resource limits are configured via `[sandbox.resources]` in TOML config:
+  Resource limits are configured via `[sandbox.resources]` and `[sandbox.process]` in TOML config:
 
       [sandbox]
       mode = "auto"
 
       [sandbox.resources]
+      cpu_quota = "1000%"
       cpu_weight = 30
       memory_max = "16G"
       tasks_max = 8196
+
+      [sandbox.process]
+      cpu_quota = "800%"
+      memory_max = "12G"
       limit_nofile = 65536
       oom_score_adjust = 1000
 
