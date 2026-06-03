@@ -22,7 +22,6 @@ defmodule EvoGit.Agent.LoopState do
   - `llm_time_ms` — cumulative milliseconds spent in LLM calls
   - `total_tokens` — cumulative token count across all LLM calls
   - `last_warned_time_percent` — last time-percent at which a timeout warning was emitted
-  - `last_warned_turns_percent` — last turn-percent at which a turn-limit warning was emitted
   """
 
   @enforce_keys [:agent_id, :agent_module, :depth, :node_path, :context]
@@ -39,7 +38,6 @@ defmodule EvoGit.Agent.LoopState do
     llm_time_ms: 0,
     total_tokens: 0,
     last_warned_time_percent: 0,
-    last_warned_turns_percent: 0,
     skill_schemas: []
   ]
 
@@ -56,7 +54,6 @@ defmodule EvoGit.Agent.LoopState do
           llm_time_ms: non_neg_integer(),
           total_tokens: non_neg_integer(),
           last_warned_time_percent: non_neg_integer(),
-          last_warned_turns_percent: non_neg_integer(),
           skill_schemas: [ReqLLM.Tool.t()]
         }
 end

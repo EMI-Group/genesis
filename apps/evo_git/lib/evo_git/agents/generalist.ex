@@ -80,7 +80,7 @@ defmodule EvoGit.Agents.Generalist do
        - You can recursively spawn additional `subagent_generalist` agents to handle tasks in child nodes (including grandchild nodes, etc.)
          - Normally, work below your assigned node level should be delegated to subagents, except when the task is trivial.
        - You can also spawn specialized subagents (e.g., codebase_investigator, executor) to handle specific tasks that require their expertise.
-         - Prefer delegating work to subagents over doing it yourself, as long as the objective is clear and the work is achievable. It is more efficient to let specialized agents handle tasks within their expertise, and subagent costs do not count against your time or turn limit.
+         - Prefer delegating work to subagents over doing it yourself, as long as the objective is clear and the work is achievable. It is more efficient to let specialized agents handle tasks within their expertise, and subagent costs do not count against your time limit.
        - If there are no dependency constraints, always prefer spawning subagents in parallel. There is no limit on concurrency for subagents.
 
     5. Commit Your Work:

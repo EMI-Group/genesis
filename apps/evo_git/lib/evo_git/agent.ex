@@ -44,7 +44,6 @@ defmodule EvoGit.Agent do
       require Logger
       use Retry
 
-      @max_turns 128
       # 30 minutes
       @timeout_ms 30 * 60 * 1000
       # 3 minutes
@@ -203,9 +202,7 @@ defmodule EvoGit.Agent do
       # Checks and sends warnings when approaching time/turn limits.
       # Threshold configs and messages live in EvoGit.Agents.Warnings.
       defp check_limit_warnings(state) do
-        state
-        |> maybe_warn_limit(:time, EvoGit.Agents.Warnings.time_thresholds(@timeout_ms))
-        |> maybe_warn_limit(:turns, EvoGit.Agents.Warnings.turn_thresholds(@max_turns))
+        maybe_warn_limit(state, :time, EvoGit.Agents.Warnings.time_thresholds(@timeout_ms))
       end
 
       defp maybe_warn_limit(state, :time, thresholds) do
@@ -221,32 +218,6 @@ defmodule EvoGit.Agent do
           warning_msg = msg_fn.(percentage_used, state)
           new_context = ReqLLM.Context.append(state.context, user(warning_msg))
           %{state | context: new_context, last_warned_time_percent: new_last_warned}
-        else
-          state
-        end
-      end
-
-      defp maybe_warn_limit(state, :turns, thresholds) do
-        percentage_used = div(state.turn * 100, @max_turns)
-        last_warned = state.last_warned_turns_percent
-        threshold_values = Enum.map(thresholds, fn {t, _} -> t end)
-
-        {should_warn, new_last_warned} =
-          check_thresholds(percentage_used, last_warned, threshold_values)
-
-        if should_warn do
-          {_, msg_fn} = Enum.find(thresholds, fn {t, _} -> t == new_last_warned end)
-          warning_msg = msg_fn.(percentage_used, state)
-
-          stream_event(state.agent_id, "BUDGET_WARNING", %{
-            type: :turns,
-            percentage: percentage_used,
-            turns_used: state.turn,
-            max_turns: @max_turns
-          })
-
-          new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-          %{state | context: new_context, last_warned_turns_percent: new_last_warned}
         else
           state
         end
@@ -297,9 +268,6 @@ defmodule EvoGit.Agent do
             else
               do_turn(state)
             end
-
-          state.turn >= @max_turns ->
-            trigger_recovery(state, "max turns (#{@max_turns}) exceeded")
 
           true ->
             do_turn(state)
