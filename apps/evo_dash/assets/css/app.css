@@ -190,6 +190,16 @@ input, textarea, select, button, a {
   }
 }
 
+/* Pulse glow for finalizing task indicators (warning orange) */
+@keyframes pulse-glow-warning {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(75% 0.18 65 / 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 8px oklch(75% 0.18 65 / 0);
+  }
+}
+
 /* Slide down for collapsible sections */
 @keyframes slide-down {
   0% {
@@ -264,6 +274,10 @@ input, textarea, select, button, a {
   animation: pulse-glow 4s ease-in-out infinite;
 }
 
+.animate-pulse-glow-warning {
+  animation: pulse-glow-warning 4s ease-in-out infinite;
+}
+
 .animate-slide-down {
   animation: slide-down 0.3s ease-out both;
 }
@@ -304,6 +318,7 @@ input, textarea, select, button, a {
   .animate-fade-in-up,
   .animate-scale-in,
   .animate-pulse-glow,
+  .animate-pulse-glow-warning,
   .animate-slide-down,
   .animate-bounce-in,
   .animate-float,
