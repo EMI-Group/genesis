@@ -29,7 +29,9 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | Route | LiveView | Purpose |
 |-------|----------|---------|
 | `GET /` | `DashboardLive` | Project-based task dashboard with auto-mode detection, task form, project settings |
+| `GET /tasks` | `TasksLive` | Full task history with filtering and search |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with chat history viewer |
+| `GET /review/:task_id` | `ReviewLive` | PR-style review page: diff viewer, file stats, merge/reject/continue actions |
 | `GET /settings` | `SettingsLive` | Two-tab settings: Runtime Settings (scheduler/sandbox) + Configuration File (GUI editor for config.toml) |
 | `GET /help` | `HelpLive` | Guidance page: config status, example config, CLI usage examples, FAQ, credentials reference |
 | `/dashboard` | Phoenix.LiveDashboard | Built-in metrics/telemetry dashboard |
