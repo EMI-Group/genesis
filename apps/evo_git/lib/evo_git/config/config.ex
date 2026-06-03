@@ -19,6 +19,7 @@ defmodule EvoGit.Config do
       agent_max_retries = 3
       max_agent_depth = 8
       max_retries = 15
+      max_turns = 128
 
       [llm]
       # REQUIRED: LLM model identifier (format: "provider:model")
@@ -299,7 +300,8 @@ defmodule EvoGit.Config do
         max_tool_concurrency: 2,
         agent_max_retries: 3,
         max_agent_depth: 8,
-        max_retries: 15
+        max_retries: 15,
+        max_turns: 128
       },
       llm: %{},
       user: %{},

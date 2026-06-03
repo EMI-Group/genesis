@@ -44,11 +44,7 @@ defmodule EvoGit.Agent do
       require Logger
       use Retry
 
-      @max_turns 128
-      # 30 minutes
-      @timeout_ms 30 * 60 * 1000
-      # 3 minutes
-      @grace_period_ms 180 * 1000
+      @default_max_turns 128
       # 10 seconds default timeout for tools that don't specify their own
       # Normally these are simple tools that should respond quickly.
       # The max timeout for any tool is capped at 30 minutes to prevent runaway executions.
@@ -122,13 +118,15 @@ defmodule EvoGit.Agent do
             []
           end
 
+          max_turns = agent_state.max_turns || @default_max_turns
+
           state = %LoopState{
             agent_id: agent_id,
             agent_module: __MODULE__,
             depth: EvoGit.AgentScheduler.current_depth(),
             node_path: node_path,
             context: context,
-            deadline: System.monotonic_time(:millisecond) + @timeout_ms,
+            max_turns: max_turns,
             skill_schemas: skill_schemas
           }
 
@@ -204,30 +202,11 @@ defmodule EvoGit.Agent do
       # Threshold configs and messages live in EvoGit.Agents.Warnings.
       defp check_limit_warnings(state) do
         state
-        |> maybe_warn_limit(:time, EvoGit.Agents.Warnings.time_thresholds(@timeout_ms))
-        |> maybe_warn_limit(:turns, EvoGit.Agents.Warnings.turn_thresholds(@max_turns))
-      end
-
-      defp maybe_warn_limit(state, :time, thresholds) do
-        percentage_used = div(state.llm_time_ms * 100, @timeout_ms)
-        last_warned = state.last_warned_time_percent
-        threshold_values = Enum.map(thresholds, fn {t, _} -> t end)
-
-        {should_warn, new_last_warned} =
-          check_thresholds(percentage_used, last_warned, threshold_values)
-
-        if should_warn do
-          {_, msg_fn} = Enum.find(thresholds, fn {t, _} -> t == new_last_warned end)
-          warning_msg = msg_fn.(percentage_used, state)
-          new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-          %{state | context: new_context, last_warned_time_percent: new_last_warned}
-        else
-          state
-        end
+        |> maybe_warn_limit(:turns, EvoGit.Agents.Warnings.turn_thresholds(state.max_turns))
       end
 
       defp maybe_warn_limit(state, :turns, thresholds) do
-        percentage_used = div(state.turn * 100, @max_turns)
+        percentage_used = div(state.turn * 100, state.max_turns)
         last_warned = state.last_warned_turns_percent
         threshold_values = Enum.map(thresholds, fn {t, _} -> t end)
 
@@ -242,7 +221,7 @@ defmodule EvoGit.Agent do
             type: :turns,
             percentage: percentage_used,
             turns_used: state.turn,
-            max_turns: @max_turns
+            max_turns: state.max_turns
           })
 
           new_context = ReqLLM.Context.append(state.context, user(warning_msg))
@@ -281,25 +260,8 @@ defmodule EvoGit.Agent do
         sync_context_to_ets(state.agent_id, state.context)
 
         cond do
-          state.llm_time_ms >= @timeout_ms and not state.in_grace_period ->
-            trigger_recovery(state, "15-minute LLM time limit exceeded")
-
-          state.in_grace_period ->
-            now = System.monotonic_time(:millisecond)
-            time_left = state.deadline - now
-
-            if time_left <= 0 do
-              stream_event(state.agent_id, "ERROR", %{
-                error: "Grace period timed out. Agent killed."
-              })
-
-              {:error, :timeout}
-            else
-              do_turn(state)
-            end
-
-          state.turn >= @max_turns ->
-            trigger_recovery(state, "max turns (#{@max_turns}) exceeded")
+          state.turn >= state.max_turns ->
+            trigger_recovery(state, "max turns (#{state.max_turns}) exceeded")
 
           true ->
             do_turn(state)
@@ -319,9 +281,7 @@ defmodule EvoGit.Agent do
 
         new_context = ReqLLM.Context.append(state.context, user(warning_msg))
 
-        new_deadline = System.monotonic_time(:millisecond) + @grace_period_ms
-
-        state = %{state | context: new_context, in_grace_period: true, deadline: new_deadline}
+        state = %{state | context: new_context, in_grace_period: true}
         loop(state)
       end
 
@@ -366,9 +326,6 @@ defmodule EvoGit.Agent do
                 raise "LLM request failed after #{max_retries} retries: #{inspect(reason)}"
             end
           end)
-
-        llm_end = System.monotonic_time(:millisecond)
-        state = %{state | llm_time_ms: state.llm_time_ms + llm_duration}
 
         # Track current context length (replace, don't accumulate)
         usage = ReqLLM.Response.usage(response)
