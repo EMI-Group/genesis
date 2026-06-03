@@ -507,7 +507,8 @@ defmodule EvoDashWeb.DashboardComponents do
     <div class={[
       "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative hover-lift",
       @task.status == :completed && "bg-info/5",
-      @task.status == :running && "bg-success/5"
+      @task.status == :running && "bg-success/5",
+      @task.status == :finalizing && "bg-orange-500/5"
     ]}>
       <!-- Three-dot kebab menu -->
       <details class="dropdown dropdown-end absolute top-3 right-3 z-[1]">
