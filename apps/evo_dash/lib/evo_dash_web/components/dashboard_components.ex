@@ -252,47 +252,87 @@ defmodule EvoDashWeb.DashboardComponents do
               </select>
               <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Controls sandbox activation")}</span></label>
             </div>
+
             <div class={if @config[:sandbox_mode] == :disabled, do: "opacity-50 pointer-events-none select-none", else: ""}>
-              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-                <div class="form-control">
-                  <label class="label">
-                    <span class="label-text text-sm font-medium">{gettext("CPU Weight")}</span>
-                  </label>
-                  <input type="number" name="cpu_weight" value={@config[:sandbox_resources][:cpu_weight] || 30} min="1" max="10000"
-                    class="input input-bordered input-sm w-full font-mono" />
-                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("CPU allocation weight (1-10000)")}</span></label>
+              <!-- Shared Slice Resources -->
+              <div class="mb-4">
+                <h3 class="text-sm font-semibold text-base-content/70 mb-1">{gettext("Shared Slice Resources")}</h3>
+                <p class="text-xs text-base-content/50 mb-3">{gettext("Aggregate limits for the entire evogit.slice (all sandboxed processes combined)")}</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text text-sm font-medium">{gettext("CPU Quota")}</span>
+                    </label>
+                    <input type="text" name="cpu_quota" value={@config[:sandbox_resources][:cpu_quota] || "1000%"}
+                      class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 1000% (10 cores)" />
+                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Total CPU quota (e.g. 1000% = 10 cores)")}</span></label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text text-sm font-medium">{gettext("CPU Weight")}</span>
+                    </label>
+                    <input type="number" name="cpu_weight" value={@config[:sandbox_resources][:cpu_weight] || 30} min="1" max="10000"
+                      class="input input-bordered input-sm w-full font-mono" />
+                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("CPU allocation weight (1-10000)")}</span></label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text text-sm font-medium">{gettext("Memory Max")}</span>
+                    </label>
+                    <input type="text" name="memory_max" value={@config[:sandbox_resources][:memory_max] || "16G"}
+                      class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 16G, 8G, 512M" />
+                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Total memory for all processes")}</span></label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text text-sm font-medium">{gettext("Tasks Max")}</span>
+                    </label>
+                    <input type="number" name="tasks_max" value={@config[:sandbox_resources][:tasks_max] || 8196} min="1"
+                      class="input input-bordered input-sm w-full font-mono" />
+                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max concurrent tasks/processes")}</span></label>
+                  </div>
                 </div>
-                <div class="form-control">
-                  <label class="label">
-                    <span class="label-text text-sm font-medium">{gettext("Memory Max")}</span>
-                  </label>
-                  <input type="text" name="memory_max" value={@config[:sandbox_resources][:memory_max] || "16G"}
-                    class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 16G, 8G, 512M" />
-                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Memory limit for all sandboxed processes")}</span></label>
-                </div>
-                <div class="form-control">
-                  <label class="label">
-                    <span class="label-text text-sm font-medium">{gettext("Tasks Max")}</span>
-                  </label>
-                  <input type="number" name="tasks_max" value={@config[:sandbox_resources][:tasks_max] || 8196} min="1"
-                    class="input input-bordered input-sm w-full font-mono" />
-                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max concurrent tasks/processes")}</span></label>
-                </div>
-                <div class="form-control">
-                  <label class="label">
-                    <span class="label-text text-sm font-medium">{gettext("Open Files Limit")}</span>
-                  </label>
-                  <input type="number" name="limit_nofile" value={@config[:sandbox_resources][:limit_nofile] || 65536} min="1"
-                    class="input input-bordered input-sm w-full font-mono" />
-                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max open file descriptors")}</span></label>
-                </div>
-                <div class="form-control">
-                  <label class="label">
-                    <span class="label-text text-sm font-medium">{gettext("OOM Score Adjust")}</span>
-                  </label>
-                  <input type="number" name="oom_score_adjust" value={@config[:sandbox_resources][:oom_score_adjust] || 1000} min="-1000" max="1000"
-                    class="input input-bordered input-sm w-full font-mono" />
-                  <label class="label"><span class="label-text-alt text-base-content/50">{gettext("OOM killer preference (-1000 to 1000)")}</span></label>
+              </div>
+
+              <div class="divider my-2"></div>
+
+              <!-- Per-Process Limits -->
+              <div>
+                <h3 class="text-sm font-semibold text-base-content/70 mb-1">{gettext("Per-Process Limits")}</h3>
+                <p class="text-xs text-base-content/50 mb-3">{gettext("Individual caps applied to each tool call (systemd-run invocation)")}</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text text-sm font-medium">{gettext("CPU Quota")}</span>
+                    </label>
+                    <input type="text" name="process_cpu_quota" value={@config[:sandbox_process_resources][:cpu_quota] || "800%"}
+                      class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 800% (8 cores)" />
+                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Per-process CPU quota (e.g. 800% = 8 cores)")}</span></label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text text-sm font-medium">{gettext("Memory Max")}</span>
+                    </label>
+                    <input type="text" name="process_memory_max" value={@config[:sandbox_process_resources][:memory_max] || "12G"}
+                      class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 12G, 8G" />
+                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Memory limit per tool call")}</span></label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text text-sm font-medium">{gettext("Open Files Limit")}</span>
+                    </label>
+                    <input type="number" name="process_limit_nofile" value={@config[:sandbox_process_resources][:limit_nofile] || 65536} min="1"
+                      class="input input-bordered input-sm w-full font-mono" />
+                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max open file descriptors")}</span></label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text text-sm font-medium">{gettext("OOM Score Adjust")}</span>
+                    </label>
+                    <input type="number" name="process_oom_score_adjust" value={@config[:sandbox_process_resources][:oom_score_adjust] || 1000} min="-1000" max="1000"
+                      class="input input-bordered input-sm w-full font-mono" />
+                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("OOM killer preference (-1000 to 1000)")}</span></label>
+                  </div>
                 </div>
               </div>
             </div>

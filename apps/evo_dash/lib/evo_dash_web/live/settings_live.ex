@@ -118,7 +118,10 @@ defmodule EvoDashWeb.SettingsLive do
               {gettext("LLM Retries"), :max_retries, @scheduler_config[:max_retries]},
               {gettext("LLM Model"), :llm_model, @scheduler_config[:llm_model]},
               {gettext("Sandbox Mode"), :sandbox_mode, @scheduler_config[:sandbox_mode]},
-              {gettext("Sandbox Memory"), :sandbox_memory, @scheduler_config[:sandbox_resources][:memory_max]}
+              {gettext("Slice CPU Quota"), :slice_cpu_quota, @scheduler_config[:sandbox_resources][:cpu_quota]},
+              {gettext("Slice Memory"), :slice_memory, @scheduler_config[:sandbox_resources][:memory_max]},
+              {gettext("Process CPU Quota"), :process_cpu_quota, @scheduler_config[:sandbox_process_resources][:cpu_quota]},
+              {gettext("Process Memory"), :process_memory, @scheduler_config[:sandbox_process_resources][:memory_max]}
             ] do %>
               <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
                 <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{label}</p>
@@ -243,15 +246,23 @@ defmodule EvoDashWeb.SettingsLive do
         _ -> :auto
       end
 
+    # Slice-level resources
     resources =
       %{}
+      |> maybe_add_string_to_map(:cpu_quota, params["cpu_quota"])
       |> maybe_add_int_to_map(:cpu_weight, params["cpu_weight"])
       |> maybe_add_string_to_map(:memory_max, params["memory_max"])
       |> maybe_add_int_to_map(:tasks_max, params["tasks_max"])
-      |> maybe_add_int_to_map(:limit_nofile, params["limit_nofile"])
-      |> maybe_add_int_to_map(:oom_score_adjust, params["oom_score_adjust"])
 
-    config_updates = Keyword.put([sandbox_mode: sandbox_mode], :sandbox_resources, resources)
+    # Per-process resources
+    process_resources =
+      %{}
+      |> maybe_add_string_to_map(:cpu_quota, params["process_cpu_quota"])
+      |> maybe_add_string_to_map(:memory_max, params["process_memory_max"])
+      |> maybe_add_int_to_map(:limit_nofile, params["process_limit_nofile"])
+      |> maybe_add_int_to_map(:oom_score_adjust, params["process_oom_score_adjust"])
+
+    config_updates = [sandbox_mode: sandbox_mode, sandbox_resources: resources, sandbox_process_resources: process_resources]
 
     case EvoGit.AgentScheduler.update_config(config_updates) do
       :ok ->
