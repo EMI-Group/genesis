@@ -438,6 +438,7 @@ defmodule EvoGit.AgentScheduler do
     llm_model = Map.get(config, :llm, %{}) |> Map.get(:model)
     sandbox_mode = Map.get(sandbox_config, :mode)
     sandbox_resources = Map.get(sandbox_config, :resources)
+    sandbox_process_resources = Map.get(sandbox_config, :process)
 
     # Warn (but don't crash) if llm_model is not configured
     unless llm_model do
@@ -489,7 +490,8 @@ defmodule EvoGit.AgentScheduler do
        max_tool_concurrency: max_tool_concurrency,
        next_task_id: 1,
        sandbox_mode: sandbox_mode,
-       sandbox_resources: sandbox_resources
+       sandbox_resources: sandbox_resources,
+       sandbox_process_resources: sandbox_process_resources
      }}
   end
 
@@ -676,7 +678,8 @@ defmodule EvoGit.AgentScheduler do
       llm_model: state.llm_model,
       paused: state.paused,
       sandbox_mode: state.sandbox_mode,
-      sandbox_resources: state.sandbox_resources
+      sandbox_resources: state.sandbox_resources,
+      sandbox_process_resources: state.sandbox_process_resources
     }
 
     {:reply, config, state}
@@ -695,6 +698,7 @@ defmodule EvoGit.AgentScheduler do
         :paused -> state.paused
         :sandbox_mode -> state.sandbox_mode
         :sandbox_resources -> state.sandbox_resources
+        :sandbox_process_resources -> state.sandbox_process_resources
         _ -> nil
       end
 
@@ -812,6 +816,7 @@ defmodule EvoGit.AgentScheduler do
       |> maybe_update(:max_tool_concurrency, opts)
       |> maybe_update(:sandbox_mode, opts)
       |> maybe_update(:sandbox_resources, opts)
+      |> maybe_update(:sandbox_process_resources, opts)
 
     # Adjust LLM slot counter if max_concurrency changed
     state =

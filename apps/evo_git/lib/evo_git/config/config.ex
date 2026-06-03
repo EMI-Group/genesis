@@ -36,11 +36,18 @@ defmodule EvoGit.Config do
       mode = "auto"  # "auto" | "enabled" | "disabled"
 
       [sandbox.resources]
-      cpu_weight = 30          # CPU weight (1-10000)
-      memory_max = "16G"       # Memory limit (e.g., "16G", "8G", "512M")
-      tasks_max = 8196         # Max tasks/processes
-      limit_nofile = 65536     # Max open files
-      oom_score_adjust = 1000  # OOM score (-1000 to 1000)
+      # Slice-level limits (aggregate across all sandboxed processes)
+      cpu_quota = "1000%"      # CPU quota (e.g., "1000%" = 10 cores)
+      cpu_weight = 30          # CPU allocation weight (1-10000)
+      memory_max = "16G"       # Total memory limit (e.g., "16G", "8G")
+      tasks_max = 8196         # Max tasks/processes across the slice
+
+      [sandbox.process]
+      # Per-process limits (applied to each tool call)
+      cpu_quota = "800%"       # CPU quota per process (e.g., "800%" = 8 cores)
+      memory_max = "12G"       # Memory limit per process
+      limit_nofile = 65536     # Max open file descriptors
+      oom_score_adjust = 1000  # OOM killer preference (-1000 to 1000)
 
       [evolution]
       pool_size = 50
@@ -299,9 +306,14 @@ defmodule EvoGit.Config do
       sandbox: %{
         mode: :auto,
         resources: %{
+          cpu_quota: "1000%",
           cpu_weight: 30,
           memory_max: "16G",
-          tasks_max: 8196,
+          tasks_max: 8196
+        },
+        process: %{
+          cpu_quota: "800%",
+          memory_max: "12G",
           limit_nofile: 65536,
           oom_score_adjust: 1000
         }

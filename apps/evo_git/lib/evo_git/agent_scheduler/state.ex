@@ -67,7 +67,8 @@ defmodule EvoGit.AgentScheduler.State do
     task_local_counters: %{},
     paused: false,
     sandbox_mode: nil,
-    sandbox_resources: nil
+    sandbox_resources: nil,
+    sandbox_process_resources: nil
   ]
 
   @type t :: %__MODULE__{
@@ -93,6 +94,7 @@ defmodule EvoGit.AgentScheduler.State do
           task_local_counters: %{optional(pos_integer()) => pos_integer()},
           paused: boolean(),
           sandbox_mode: :auto | :enabled | :disabled | nil,
-          sandbox_resources: map() | nil
+          sandbox_resources: map() | nil,
+          sandbox_process_resources: map() | nil
         }
 end

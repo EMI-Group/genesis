@@ -200,6 +200,20 @@ max_age_days = 14
 [sandbox]
 # Sandbox mode: "auto" | "enabled" | "disabled"
 mode = "auto"
+
+[sandbox.resources]
+# Slice-level limits (aggregate across all processes)
+cpu_quota = "1000%"
+cpu_weight = 30
+memory_max = "16G"
+tasks_max = 8196
+
+[sandbox.process]
+# Per-process limits (each tool call)
+cpu_quota = "800%"
+memory_max = "12G"
+limit_nofile = 65536
+oom_score_adjust = 1000
 """
 
   @credentials_reference """
