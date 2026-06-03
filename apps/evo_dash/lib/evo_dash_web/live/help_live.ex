@@ -1,6 +1,130 @@
 defmodule EvoDashWeb.HelpLive do
   use EvoDashWeb, :live_view
 
+  @config_reference """
+  # EvoGit Configuration Reference
+  # Save this as: ~/.config/evogit/config.toml
+
+  [scheduler]
+  # Maximum concurrent LLM calls
+  max_concurrency = 3
+  # Maximum concurrent tool executions
+  max_tool_concurrency = 2
+  # Crash-retries per agent
+  agent_max_retries = 3
+  # Maximum subagent recursion depth
+  max_agent_depth = 8
+  # LLM API call retries
+  max_retries = 15
+
+  [llm]
+  # REQUIRED: LLM model identifier (format: "provider:model")
+  # Examples:
+  #   "anthropic:claude-sonnet-4-20250514"
+  #   "google:gemini-2.0-flash-exp"
+  #   "zai_coding_plan:glm-5.1"
+  model = "your-model-here"
+  # Token count threshold for context compression
+  compression_threshold_tokens = 100_000
+
+  [user]
+  # Your GitHub username (used for commit co-authoring)
+  github_username = "your-username"
+
+  [task_history]
+  # Maximum number of finished tasks to keep
+  max_tasks = 100
+  # Maximum age in days for finished tasks (whichever limit is smaller is applied)
+  max_age_days = 14
+
+  [sandbox]
+  # Sandbox mode: "auto" | "enabled" | "disabled"
+  mode = "auto"
+
+  [sandbox.resources]
+  # Slice-level limits (aggregate across all processes)
+  cpu_quota = "1000%"
+  cpu_weight = 30
+  memory_max = "16G"
+  tasks_max = 8196
+
+  [sandbox.process]
+  # Per-process limits (each tool call)
+  cpu_quota = "800%"
+  memory_max = "12G"
+  limit_nofile = 65536
+  oom_score_adjust = 1000
+  """
+
+  @credentials_reference """
+  # EvoGit Credentials Reference
+  # Save this as: ~/.config/evogit/credentials.toml
+  # 
+  # API keys are stored separately from config.toml for security.
+  # Only ONE key is required — choose the provider matching your LLM model.
+  # Keys are set as environment variables on load.
+
+  # Google Gemini (e.g., "google:gemini-2.0-flash-exp")
+  GOOGLE_API_KEY = "AIza..."
+
+  # ZAI (e.g., "zai_coding_plan:glm-5.1")
+  ZAI_API_KEY = "sk-..."
+
+  # DeepSeek (e.g., "deepseek:deepseek-chat")
+  DEEPSEEK_API_KEY = "sk-..."
+
+  # Groq (e.g., "groq:llama-3.1-8b-instant")
+  GROQ_API_KEY = "gsk_..."
+
+  # Anthropic (e.g., "anthropic:claude-sonnet-4-20250514")
+  ANTHROPIC_API_KEY = "sk-ant-..."
+
+  # OpenAI (e.g., "openai:gpt-4o")
+  OPENAI_API_KEY = "sk-..."
+
+  # Tavily (optional — for web search tool)
+  TAVILY_API_KEY = "tvly-..."
+  """
+
+  @usage_reference """
+  # Genesis — Create a new codebase from a prompt
+  mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Build a REST API for task management"
+
+  # Genesis — Analyze an existing codebase
+  mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Analyze and document this project" -p /path/to/project
+
+  # Evolution — Modify an existing codebase
+  mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Add authentication with JWT tokens"
+
+  # With concurrency control
+  mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Build a web scraper" -c 5
+
+  # With foreign repositories
+  mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Fix the login bug" -R original:/path/to/repo
+
+  # Common flags:
+  #   -c, --concurrency     Max parallel LLM calls (default: 3)
+  #   --tool-concurrency    Max parallel tool executions (default: 2)
+  #   -p, --path            Target project path
+  #   -R name:/path         Foreign repository (repeatable)
+  #   -C, --concepts        Concept expansion seeds (repeatable, complex mode)
+  """
+
+  @faq_content [
+    {gettext("How do I set my API key?"),
+     gettext("Create a credentials.toml file at ~/.config/evogit/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...).")},
+    {gettext("How do I change the LLM model?"),
+     gettext("Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard.")},
+    {gettext("What is sandbox mode?"),
+     gettext("Sandbox mode controls how EvoGit runs LLM-generated code. \"auto\" enables sandboxing when systemd-run is available. \"enabled\" forces sandboxing on (requires systemd). \"disabled\" turns it off entirely — use with caution. Resource limits for the sandbox can be configured in config.toml under [sandbox.resources] and [sandbox.process].")},
+    {gettext("How does the context tree work?"),
+     gettext("EvoGit models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories.")},
+    {gettext("What happens if my config is missing?"),
+     gettext("EvoGit uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page.")},
+    {gettext("How do I configure sandbox resources?"),
+     gettext("Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). You can also adjust some settings from the Settings page in the dashboard. Available options include cpu_quota, memory_max, tasks_max, and more.")}
+  ]
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -10,78 +134,53 @@ defmodule EvoDashWeb.HelpLive do
           <.icon name="hero-question-mark-circle" class="size-6" />
         </div>
         <div>
-          <h1 class="text-xl font-bold">{gettext("Help & Configuration")}</h1>
-          <p class="text-sm text-base-content/60">{gettext("Manage your EvoGit configuration files")}</p>
+          <h1 class="text-xl font-bold">{gettext("Help")}</h1>
+          <p class="text-sm text-base-content/60">{gettext("Guides, references, and frequently asked questions")}</p>
         </div>
       </div>
 
       <!-- Config Status -->
-      <div class="mt-4">
-        <%= if @config_status.ok? do %>
-          <div class="bg-success/10 border border-success/20 rounded-xl p-4 flex items-center gap-3">
-            <.icon name="hero-check-circle" class="size-5 text-success shrink-0" />
-            <div>
-              <p class="font-semibold text-success">{gettext("All configured")}</p>
-              <p class="text-xs text-success/70">{gettext("All critical configuration values are set")}</p>
-            </div>
-          </div>
-        <% else %>
-          <div class="bg-warning/10 border border-warning/20 rounded-xl p-4">
-            <h3 class="font-semibold text-warning flex items-center gap-2 mb-2">
-              <.icon name="hero-exclamation-triangle" class="size-5" /> {gettext("Missing Configuration")}
-            </h3>
-            <ul class="space-y-1">
-              <%= for warning <- @config_status.warnings do %>
-                <li class="text-sm text-warning/80 flex items-start gap-2">
-                  <.icon name="hero-chevron-right" class="size-4 mt-0.5 shrink-0" />
-                  <span>{warning}</span>
-                </li>
-              <% end %>
-            </ul>
-          </div>
-        <% end %>
+      <div class="mt-4 animate-fade-in-up animation-delay-100">
+        <.config_status_badge status={@config_status} />
       </div>
 
-      <!-- Config File Locations -->
-      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-100">
-        <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <.icon name="hero-folder" class="size-5 text-primary" /> {gettext("Configuration Files")}
-          </h2>
-        </div>
-        <div class="p-4 sm:p-6 pt-2 space-y-3">
-          <%= for {label, path, exists} <- [
-            {gettext("Config Directory"), @config_dir, File.dir?(@config_dir)},
-            {gettext("Config File"), @config_path, File.exists?(@config_path)},
-            {gettext("Credentials File"), @credentials_path, File.exists?(@credentials_path)}
-          ] do %>
-            <div class="flex flex-wrap items-center gap-3 bg-base-200/40 rounded-lg p-3 border border-base-200">
-              <%= if exists do %>
-                <.icon name="hero-check-circle" class="size-5 text-success shrink-0" />
-              <% else %>
-                <.icon name="hero-x-circle" class="size-5 text-error shrink-0" />
-              <% end %>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{label}</p>
-                <p class="text-sm font-mono truncate">{path}</p>
-              </div>
-              <span class={["badge", exists && "badge-success", not exists && "badge-ghost"]}>
-                <%= if exists, do: gettext("Exists"), else: gettext("Missing") %>
-              </span>
-            </div>
-          <% end %>
-        </div>
+      <!-- Example Configuration -->
+      <div class="mt-6 animate-fade-in-up animation-delay-200">
+        <.collapsible_card id="config-reference" title={gettext("Example Configuration")} icon="hero-book-open" color={:info}>
+          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
+        </.collapsible_card>
+      </div>
+
+      <!-- Example Usage -->
+      <div class="mt-6 animate-fade-in-up animation-delay-300">
+        <.collapsible_card id="usage-reference" title={gettext("Example Usage")} icon="hero-command-line" color={:success}>
+          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
+        </.collapsible_card>
+      </div>
+
+      <!-- FAQ -->
+      <div class="mt-6 animate-fade-in-up animation-delay-400">
+        <.collapsible_card id="faq" title={gettext("Frequently Asked Questions")} icon="hero-question-mark-circle" color={:accent}>
+          <div class="space-y-3">
+            <%= for {{question, answer}, idx} <- Enum.with_index(@faq_content) do %>
+              <details class={"group rounded-lg border border-base-200 overflow-hidden"}>
+                <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none bg-base-200/30 hover:bg-base-200/50 transition-colors list-none">
+                  <.icon name="hero-chevron-down" class="size-4 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+                  <span class="font-semibold text-sm">{question}</span>
+                </summary>
+                <div class="px-4 py-3 text-sm text-base-content/70 leading-relaxed border-t border-base-200">
+                  <p id={"faq-answer-#{idx}"}>{answer}</p>
+                </div>
+              </details>
+            <% end %>
+          </div>
+        </.collapsible_card>
       </div>
 
       <!-- Credentials Reference -->
-      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-200">
-        <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-4 sm:p-6">
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <.icon name="hero-key" class="size-5 text-accent" /> {gettext("Credentials Reference")}
-          </h2>
-        </div>
-        <div class="p-4 sm:p-6 pt-2">
-          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto"><%= @credentials_reference %></pre>
+      <div class="mt-6 animate-fade-in-up animation-delay-500">
+        <.collapsible_card id="credentials-reference" title={gettext("Credentials Reference")} icon="hero-key" color={:accent}>
+          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
           <div class="mt-3 space-y-1">
             <p class="text-xs text-base-content/50 flex items-center gap-1.5">
               <.icon name="hero-arrows-right-left" class="size-3.5 shrink-0" />
@@ -92,265 +191,25 @@ defmodule EvoDashWeb.HelpLive do
               {gettext("For security, credentials cannot be edited from this page. Edit the file directly on your system.")}
             </p>
           </div>
-        </div>
-      </div>
-
-      <!-- User Config Editor -->
-      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-4 sm:p-6">
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <h2 class="text-lg font-semibold flex items-center gap-2">
-              <.icon name="hero-document-text" class="size-5 text-primary" /> {gettext("User Configuration")}
-            </h2>
-            <div class="flex gap-2">
-              <%= if @editing do %>
-                <button class="btn btn-ghost" phx-click="cancel_edit">
-                  <.icon name="hero-x-mark" class="size-4" /> {gettext("Cancel")}
-                </button>
-                <button class="btn btn-primary" phx-click="save_config">
-                  <.icon name="hero-check" class="size-4" /> {gettext("Save")}
-                </button>
-              <% else %>
-                <button class="btn btn-primary" phx-click="edit_config">
-                  <.icon name="hero-pencil" class="size-4" /> {gettext("Edit Config")}
-                </button>
-              <% end %>
-            </div>
-          </div>
-        </div>
-        <div class="p-4 sm:p-6 pt-2">
-          <%= if @editing do %>
-            <div class="form-control">
-              <textarea
-                name="config_text"
-                class="textarea textarea-bordered w-full font-mono text-sm min-h-[300px] bg-base-200/30 focus:outline-none focus:ring-2 focus:ring-primary/30"
-                phx-change="config_text_change"
-                phx-debounce="300"
-              ><%= @config_edit %></textarea>
-              <label class="label">
-                <span class="label-text-alt text-base-content/50">{gettext("Editing:")} <%= @config_path %></span>
-              </label>
-            </div>
-          <% else %>
-            <div class="bg-base-200/30 rounded-lg p-4 border border-base-200">
-              <%= if @config_toml_content != "" do %>
-                <pre class="text-sm font-mono whitespace-pre-wrap break-words max-h-[400px] overflow-y-auto"><%= @config_toml_content %></pre>
-              <% else %>
-                <div class="text-center py-8 text-base-content/40">
-                  <.icon name="hero-document-plus" class="size-10 mx-auto mb-2 opacity-50" />
-                  <p class="text-sm">{gettext(~s|No config file found. Click "Edit Config" to create one.|)}</p>
-                </div>
-              <% end %>
-            </div>
-          <% end %>
-        </div>
-      </div>
-
-      <!-- Quick Reference -->
-      <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <div class="bg-gradient-to-br from-info/10 via-info/5 to-transparent p-4 sm:p-6">
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <.icon name="hero-book-open" class="size-5 text-info" /> {gettext("Configuration Reference")}
-          </h2>
-        </div>
-        <div class="p-4 sm:p-6 pt-2">
-          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto"><%= @config_reference %></pre>
-        </div>
+        </.collapsible_card>
       </div>
     </EvoDashWeb.Layouts.app>
     """
   end
 
-  @config_reference """
-# EvoGit Configuration Reference
-# Save this as: ~/.config/evogit/config.toml
-
-[scheduler]
-# Maximum concurrent LLM calls
-max_concurrency = 3
-# Maximum concurrent tool executions
-max_tool_concurrency = 2
-# Crash-retries per agent
-agent_max_retries = 3
-# Maximum subagent recursion depth
-max_agent_depth = 8
-# LLM API call retries
-max_retries = 15
-
-[llm]
-# REQUIRED: LLM model identifier (format: "provider:model")
-# Examples:
-#   "anthropic:claude-sonnet-4-20250514"
-#   "google:gemini-2.0-flash-exp"
-#   "zai_coding_plan:glm-5.1"
-model = "your-model-here"
-# Token count threshold for context compression
-compression_threshold_tokens = 100_000
-
-[user]
-# Your GitHub username (used for commit co-authoring)
-github_username = "your-username"
-
-[task_history]
-# Maximum number of finished tasks to keep
-max_tasks = 100
-# Maximum age in days for finished tasks (whichever limit is smaller is applied)
-max_age_days = 14
-
-[sandbox]
-# Sandbox mode: "auto" | "enabled" | "disabled"
-mode = "auto"
-
-[sandbox.resources]
-# Slice-level limits (aggregate across all processes)
-cpu_quota = "1000%"
-cpu_weight = 30
-memory_max = "16G"
-tasks_max = 8196
-
-[sandbox.process]
-# Per-process limits (each tool call)
-cpu_quota = "800%"
-memory_max = "12G"
-limit_nofile = 65536
-oom_score_adjust = 1000
-"""
-
-  @credentials_reference """
-# EvoGit Credentials Reference
-# Save this as: ~/.config/evogit/credentials.toml
-# 
-# API keys are stored separately from config.toml for security.
-# Only ONE key is required — choose the provider matching your LLM model.
-# Keys are set as environment variables on load.
-
-# Google Gemini (e.g., "google:gemini-2.0-flash-exp")
-GOOGLE_API_KEY = "AIza..."
-
-# ZAI (e.g., "zai_coding_plan:glm-5.1")
-ZAI_API_KEY = "sk-..."
-
-# DeepSeek (e.g., "deepseek:deepseek-chat")
-DEEPSEEK_API_KEY = "sk-..."
-
-# Groq (e.g., "groq:llama-3.1-8b-instant")
-GROQ_API_KEY = "gsk_..."
-
-# Anthropic (e.g., "anthropic:claude-sonnet-4-20250514")
-ANTHROPIC_API_KEY = "sk-ant-..."
-
-# OpenAI (e.g., "openai:gpt-4o")
-OPENAI_API_KEY = "sk-..."
-
-# Tavily (optional — for web search tool)
-TAVILY_API_KEY = "tvly-..."
-"""
-
   @impl true
   def mount(_params, _session, socket) do
     config_status = safe_config_status()
-    config_dir = EvoGit.Config.config_dir()
-    config_path = EvoGit.Config.config_path()
-    credentials_path = EvoGit.Config.credentials_path()
-    
-    config_toml_content = 
-      if File.exists?(config_path) do
-        case File.read(config_path) do
-          {:ok, content} -> content
-          {:error, _} -> ""
-        end
-      else
-        ""
-      end
 
     socket =
       socket
       |> assign(:config_status, config_status)
-      |> assign(:config_dir, config_dir)
-      |> assign(:config_path, config_path)
-      |> assign(:credentials_path, credentials_path)
-      |> assign(:config_toml_content, config_toml_content)
-      |> assign(:config_edit, config_toml_content)
-      |> assign(:editing, false)
       |> assign(:config_reference, @config_reference)
       |> assign(:credentials_reference, @credentials_reference)
+      |> assign(:usage_reference, @usage_reference)
+      |> assign(:faq_content, @faq_content)
 
     {:ok, socket}
-  end
-
-  @impl true
-  def handle_event("edit_config", _params, socket) do
-    # Re-read the file to get latest content
-    config_path = socket.assigns.config_path
-    content = 
-      if File.exists?(config_path) do
-        case File.read(config_path) do
-          {:ok, content} -> content
-          {:error, _} -> ""
-        end
-      else
-        ""
-      end
-
-    {:noreply,
-     socket
-     |> assign(:config_edit, content)
-     |> assign(:editing, true)}
-  end
-
-  @impl true
-  def handle_event("cancel_edit", _params, socket) do
-    {:noreply, assign(socket, :editing, false)}
-  end
-
-  @impl true
-  def handle_event("config_text_change", %{"config_text" => text}, socket) do
-    {:noreply, assign(socket, :config_edit, text)}
-  end
-
-  @impl true
-  def handle_event("config_text_change", _params, socket) do
-    {:noreply, socket}
-  end
-
-  @impl true
-  def handle_event("save_config", _params, socket) do
-    edited_text = socket.assigns.config_edit
-
-    case TomlElixir.decode(edited_text) do
-      {:ok, parsed} ->
-        case EvoGit.Config.save_user_config(parsed) do
-          :ok ->
-            # Reload config
-            config_path = socket.assigns.config_path
-            config_toml_content = 
-              if File.exists?(config_path) do
-                case File.read(config_path) do
-                  {:ok, content} -> content
-                  {:error, _} -> ""
-                end
-              else
-                ""
-              end
-
-            {:noreply,
-             socket
-             |> assign(:editing, false)
-             |> assign(:config_toml_content, config_toml_content)
-             |> assign(:config_status, safe_config_status())
-             |> put_flash(:info, gettext("Configuration saved successfully."))}
-
-          {:error, reason} ->
-            {:noreply,
-             socket
-             |> put_flash(:error, gettext("Failed to save configuration: %{reason}", reason: inspect(reason)))}
-        end
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, gettext("Invalid TOML syntax: %{reason}", reason: inspect(reason)))}
-    end
   end
 
   defp safe_config_status do
