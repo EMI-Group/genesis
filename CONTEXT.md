@@ -51,7 +51,7 @@ Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots
 EvoGit has two OTP applications under an umbrella:
 
 - **`:evo_git`** (Core Runtime): AgentScheduler GenServer managing worktree pools, LLM/tool slot management with global backoff, agent implementations (Manager, Executor, Investigator, etc.), Git adapter, and two-phase execution (Genesis → Evolution). Uses a 3-level configuration system: built-in defaults → user TOML config → session-level runtime overrides.
-- **`:evo_dash`** (Web Dashboard): Phoenix LiveView interface with project-based task management, agent tree inspector, runtime settings panel, and in-browser config editor. Uses Bandit adapter, Tailwind CSS 4 + DaisyUI, DETS-based persistence.
+- **`:evo_dash`** (Web Dashboard): Phoenix LiveView interface with project-based task management, agent tree inspector, PR-style review page (merge/reject/continue actions), runtime settings panel, and in-browser config editor. Uses Bandit adapter, Tailwind CSS 4 + DaisyUI, DETS-based persistence.
 
 Key design: spatial context tree for routing, phylogenetic graph for temporal evolution, stateless agents in isolated worktrees, multi-repo support via absolute path resolution, slot-based concurrency with LLM rate-limit backoff, and a dynamic skills system.
 
