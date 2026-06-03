@@ -625,6 +625,23 @@ defmodule EvoDashWeb.DashboardComponents do
               <% end %>
             </div>
             <div class="flex items-center gap-2 shrink-0">
+              <%= if @task.status == :completed and reviewable?(@task) do %>
+                <.link
+                  navigate={~p"/review/#{@task.id}"}
+                  class={[
+                    "btn btn-sm shadow-sm",
+                    review_button_style(Map.get(@task, :review_status))
+                  ]}
+                >
+                  <.icon name="hero-eye" class="size-4" />
+                  <%= case Map.get(@task, :review_status) do %>
+                    <% :merged -> %> {gettext("Merged")}
+                    <% :rejected -> %> {gettext("Rejected")}
+                    <% :continued -> %> {gettext("Continued")}
+                    <% _ -> %> {gettext("Review")}
+                  <% end %>
+                </.link>
+              <% end %>
               <%= if @task.status in [:running, :finalizing] do %>
                 <button
                   class="btn btn-outline btn-error shadow-sm"
@@ -1068,4 +1085,12 @@ defmodule EvoDashWeb.DashboardComponents do
     </div>
     """
   end
+
+  defp reviewable?(%{status: :completed, result: {:ok, %{branch_name: branch_name}}}) when not is_nil(branch_name), do: true
+  defp reviewable?(_), do: false
+
+  defp review_button_style(:merged), do: "btn-success btn-outline"
+  defp review_button_style(:rejected), do: "btn-error btn-outline"
+  defp review_button_style(:continued), do: "btn-info btn-outline"
+  defp review_button_style(_), do: "btn-warning"
 end

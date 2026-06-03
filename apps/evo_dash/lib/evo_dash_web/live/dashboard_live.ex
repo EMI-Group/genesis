@@ -428,6 +428,49 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
+  def handle_params(params, _uri, socket) do
+    socket =
+      case {params["starting_commit"], params["path"]} do
+        {commit, path} when is_binary(commit) and byte_size(commit) > 0 ->
+          # Coming from Review "Continue" — pre-fill starting_commit and open the project
+          socket = if path && byte_size(path) > 0 do
+            # Open the project if not already open
+            expanded_path = Path.expand(path)
+            projects = socket.assigns.projects
+
+            if Map.has_key?(projects, expanded_path) do
+              assign(socket, :active_project, expanded_path)
+            else
+              name = Path.basename(expanded_path)
+              projects = Map.put(projects, expanded_path, %{path: expanded_path, name: name})
+              TaskRegistry.add_recent_project(expanded_path, name)
+
+              tasks = TaskRegistry.list_tasks_by_path(expanded_path)
+
+              socket
+              |> assign(:projects, projects)
+              |> assign(:active_project, expanded_path)
+              |> assign(:tasks, tasks)
+              |> assign(:task_mode, detect_mode(expanded_path))
+              |> assign(:task_mode_info, mode_info_message(detect_mode(expanded_path)))
+              |> assign_running_and_recent_tasks()
+            end
+          else
+            socket
+          end
+
+          socket
+          |> assign(:task_starting_commit, String.trim(commit))
+          |> put_flash(:info, gettext("Starting commit set from continued review: %{commit}", commit: String.slice(commit, 0, 7)))
+
+        _ ->
+          socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:tasks_updated}, socket) do
     new_tasks =
       if socket.assigns.active_project do
