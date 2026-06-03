@@ -429,6 +429,105 @@ defmodule EvoDashWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Renders a horizontal tab bar with pill-shaped tabs.
+
+  ## Attributes
+
+    * `:tabs` - list of maps with `:id` and `:label` keys
+    * `:active` - the id of the active tab
+    * `:phx_click` - optional event name for tab clicks (default: `"select_tab"`)
+
+  ## Examples
+
+      <.tabs tabs={[%{id: "tab1", label: "First"}, %{id: "tab2", label: "Second"}]} active="tab1" />
+  """
+  attr :tabs, :list, required: true
+  attr :active, :string, required: true
+  attr :phx_click, :string, default: "select_tab"
+
+  def tabs(assigns) do
+    ~H"""
+    <div class="flex items-center gap-2 overflow-x-auto pb-1">
+      <%= for tab <- @tabs do %>
+        <button
+          phx-click={@phx_click}
+          phx-value-id={tab.id}
+          class={[
+            "px-4 py-2 rounded-full text-sm font-medium cursor-pointer transition-all whitespace-nowrap",
+            @active == tab.id && "btn-primary shadow-md",
+            @active != tab.id && "btn-ghost hover:bg-base-300 text-base-content/70 hover:text-base-content"
+          ]}
+        >
+          {tab.label}
+        </button>
+      <% end %>
+    </div>
+    """
+  end
+
+  @doc """
+  Renders a collapsible card section using native `<details>` / `<summary>`.
+
+  ## Attributes
+
+    * `:id` - required HTML id for the details element
+    * `:title` - the card heading text
+    * `:icon` - optional heroicon name shown before the title
+    * `:color` - theme color (`:primary`, `:secondary`, `:accent`, `:info`, `:success`,
+      `:warning`, `:error`), default `:primary`
+    * `:open` - whether the card is expanded, default `true`
+
+  ## Slots
+
+    * `:inner_block` - the collapsible body content
+
+  ## Examples
+
+      <.collapsible_card id="settings" title="Settings" icon="hero-cog" color={:info}>
+        <p>Content here</p>
+      </.collapsible_card>
+  """
+  attr :id, :string, required: true
+  attr :title, :string, required: true
+  attr :icon, :string, default: nil
+  attr :color, :atom,
+    values: [:primary, :secondary, :accent, :info, :success, :warning, :error],
+    default: :primary
+  attr :open, :boolean, default: true
+
+  slot :inner_block, required: true
+
+  def collapsible_card(assigns) do
+    gradient_colors = %{
+      primary: "from-primary/10 via-primary/5 to-transparent",
+      secondary: "from-secondary/10 via-secondary/5 to-transparent",
+      accent: "from-accent/10 via-accent/5 to-transparent",
+      info: "from-info/10 via-info/5 to-transparent",
+      success: "from-success/10 via-success/5 to-transparent",
+      warning: "from-warning/10 via-warning/5 to-transparent",
+      error: "from-error/10 via-error/5 to-transparent"
+    }
+
+    assigns =
+      assign(assigns,
+        gradient: Map.get(gradient_colors, assigns.color, gradient_colors[:primary])
+      )
+
+    ~H"""
+    <details id={@id} open={@open} class="card bg-base-100 shadow-lg border border-base-200 overflow-hidden group">
+      <summary class="bg-gradient-to-br {assigns.gradient} px-6 py-4 cursor-pointer select-none flex items-center gap-3 list-none">
+        <.icon :if={@icon} name={@icon} class="size-5 shrink-0" />
+        <span class="font-semibold flex-1">{@title}</span>
+        <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+      </summary>
+      <div class="p-4 sm:p-6 pt-2">
+        {render_slot(@inner_block)}
+      </div>
+    </details>
+    """
+  end
+
   ## JS Commands
 
   def show(js \\ %JS{}, selector) do
