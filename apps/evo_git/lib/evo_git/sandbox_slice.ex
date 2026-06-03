@@ -218,25 +218,25 @@ defmodule EvoGit.SandboxSlice do
     props =
       case Map.get(resources, :cpu_quota) do
         nil -> props
-        v -> props ++ ["-p", "CPUQuota=#{v}"]
+        v -> props ++ ["CPUQuota=#{v}"]
       end
 
     props =
       case Map.get(resources, :cpu_weight) do
         nil -> props
-        v -> props ++ ["-p", "CPUWeight=#{v}"]
+        v -> props ++ ["CPUWeight=#{v}"]
       end
 
     props =
       case Map.get(resources, :memory_max) do
         nil -> props
-        v -> props ++ ["-p", "MemoryMax=#{v}"]
+        v -> props ++ ["MemoryMax=#{v}"]
       end
 
     props =
       case Map.get(resources, :tasks_max) do
         nil -> props
-        v -> props ++ ["-p", "TasksMax=#{v}"]
+        v -> props ++ ["TasksMax=#{v}"]
       end
 
     props
