@@ -37,6 +37,13 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     task_local_id = Map.get(state.task_local_counters, task_id, 1)
     state = %{state | task_local_counters: Map.put(state.task_local_counters, task_id, task_local_id + 1)}
 
+    # Extract timeout_ms from state, with optional per-task override from spec.opts
+    timeout_ms = state.timeout_ms
+    timeout_ms = case spec.opts do
+      opts when is_list(opts) -> Keyword.get(opts, :timeout_ms, timeout_ms)
+      _ -> timeout_ms
+    end
+
     # Resolve event_sink: explicit in opts, inherited from parent, or nil
     event_sink =
       case spec.opts do
@@ -66,6 +73,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       llm_model: state.llm_model,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
+      timeout_ms: timeout_ms,
       parent_id: parent_id,
       objective: spec.objective,
       repo_id: spec.repo_id,

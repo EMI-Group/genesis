@@ -22,6 +22,7 @@ defmodule EvoGit.Agent.LoopState do
   - `llm_time_ms` — cumulative milliseconds spent in LLM calls
   - `total_tokens` — cumulative token count across all LLM calls
   - `last_warned_time_percent` — last time-percent at which a timeout warning was emitted
+  - `timeout_ms` — configured agent session timeout in milliseconds
   """
 
   @enforce_keys [:agent_id, :agent_module, :depth, :node_path, :context]
@@ -33,6 +34,7 @@ defmodule EvoGit.Agent.LoopState do
     :context,
     repo_path: nil,
     turn: 0,
+    timeout_ms: 1_800_000,
     in_grace_period: false,
     deadline: 0,
     llm_time_ms: 0,
@@ -48,6 +50,7 @@ defmodule EvoGit.Agent.LoopState do
           node_path: String.t(),
           repo_path: String.t() | nil,
           turn: non_neg_integer(),
+          timeout_ms: pos_integer(),
           context: ReqLLM.Context.t(),
           in_grace_period: boolean(),
           deadline: integer(),

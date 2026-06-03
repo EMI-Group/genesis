@@ -87,6 +87,8 @@ defmodule EvoGit.Agent do
 
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
 
+        timeout_ms = agent_state.timeout_ms
+
         # Validate that the assigned node path exists
         node_path = agent_state.context_node.path
         repo_path = Process.get(:repo_path)
@@ -127,8 +129,9 @@ defmodule EvoGit.Agent do
             depth: EvoGit.AgentScheduler.current_depth(),
             node_path: node_path,
             context: context,
-            deadline: System.monotonic_time(:millisecond) + @timeout_ms,
-            skill_schemas: skill_schemas
+            deadline: System.monotonic_time(:millisecond) + timeout_ms,
+            skill_schemas: skill_schemas,
+            timeout_ms: timeout_ms
           }
 
           # Sync initial context to ETS for dashboard
@@ -202,11 +205,11 @@ defmodule EvoGit.Agent do
       # Checks and sends warnings when approaching time/turn limits.
       # Threshold configs and messages live in EvoGit.Agents.Warnings.
       defp check_limit_warnings(state) do
-        maybe_warn_limit(state, :time, EvoGit.Agents.Warnings.time_thresholds(@timeout_ms))
+        maybe_warn_limit(state, :time, EvoGit.Agents.Warnings.time_thresholds(state.timeout_ms))
       end
 
       defp maybe_warn_limit(state, :time, thresholds) do
-        percentage_used = div(state.llm_time_ms * 100, @timeout_ms)
+        percentage_used = div(state.llm_time_ms * 100, state.timeout_ms)
         last_warned = state.last_warned_time_percent
         threshold_values = Enum.map(thresholds, fn {t, _} -> t end)
 
@@ -252,8 +255,8 @@ defmodule EvoGit.Agent do
         sync_context_to_ets(state.agent_id, state.context)
 
         cond do
-          state.llm_time_ms >= @timeout_ms and not state.in_grace_period ->
-            trigger_recovery(state, "15-minute LLM time limit exceeded")
+          state.llm_time_ms >= state.timeout_ms and not state.in_grace_period ->
+            trigger_recovery(state, "#{div(state.timeout_ms, 60_000)}-minute LLM time limit exceeded")
 
           state.in_grace_period ->
             now = System.monotonic_time(:millisecond)

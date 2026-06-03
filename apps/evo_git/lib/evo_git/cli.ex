@@ -26,7 +26,8 @@ defmodule EvoGit.CLI do
           mutation_rate: :float,
           seeds: [:string, :keep],
           concepts: [:string, :keep],
-          starting_commit: :string
+          starting_commit: :string,
+          timeout_ms: :integer
         ],
         aliases: [
           h: :help,
@@ -60,6 +61,7 @@ defmodule EvoGit.CLI do
       |> maybe_put(:max_tool_concurrency, opts[:tool_concurrency])
       |> maybe_put(:max_retries, opts[:retries])
       |> maybe_put(:llm_model, opts[:model])
+      |> maybe_put(:timeout_ms, opts[:timeout_ms])
 
     if scheduler_opts != [] do
       Logger.info("Applying session-level config overrides: #{inspect(scheduler_opts)}")
