@@ -31,6 +31,20 @@ defmodule EvoGit.Runtime.PullRequest do
         pr_title = build_title(head_branch, objective, agent_result)
         pr_body = format_body(github_username, agent_result)
 
+        # Ensure the base branch exists on the remote (e.g. for freshly created repos
+        # where main was only initialized locally and never pushed).
+        case Git.push_branch(repo_path, base_branch) do
+          {:ok, _} ->
+            Logger.info("Pushed base branch '#{base_branch}' to remote")
+
+          {:error, _code, output} ->
+            # Base branch may already exist on remote — log but don't abort
+            Logger.debug("Could not push base branch '#{base_branch}': #{output}")
+
+          {:conflict, output} ->
+            Logger.debug("Conflict pushing base branch '#{base_branch}': #{output}")
+        end
+
         case Git.push_branch(repo_path, head_branch) do
           {:ok, _} ->
             Logger.info("Pushed branch '#{head_branch}' to remote")
