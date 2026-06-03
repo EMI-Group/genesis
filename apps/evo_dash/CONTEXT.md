@@ -30,16 +30,16 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 |-------|----------|---------|
 | `GET /` | `DashboardLive` | Project-based task dashboard with auto-mode detection, task form, project settings |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with chat history viewer |
-| `GET /settings` | `SettingsLive` | Runtime scheduler configuration panel |
-| `GET /help` | `HelpLive` | User config file manager and credentials reference |
+| `GET /settings` | `SettingsLive` | Two-tab settings: Runtime Settings (scheduler/sandbox) + Configuration File (GUI editor for config.toml) |
+| `GET /help` | `HelpLive` | Guidance page: config status, example config, CLI usage examples, FAQ, credentials reference |
 | `/dashboard` | Phoenix.LiveDashboard | Built-in metrics/telemetry dashboard |
 
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 
 - `DashboardLive` — Main dashboard: project tabs, task form, task cards with logs, inline project settings (evogit.toml, foreign repos)
 - `AgentsLive` — Agent tree visualization reading directly from ETS tables (`evogit_agent_state`, `evogit_sched_meta`)
-- `SettingsLive` — Runtime scheduler settings (concurrency, retries, depth, model)
-- `HelpLive` — Configuration management (config status, TOML editor, credentials reference)
+- `SettingsLive` — Two-tab layout: Runtime Settings tab (scheduler pause/resume, scheduler/sandbox config forms, current runtime values) and Configuration File tab (GUI editor for config.toml with collapsible sections for LLM, User, Scheduler, Sandbox, Evolution, Truncation, Task History)
+- `HelpLive` — Guidance and reference page: config status check, example TOML configuration, CLI usage examples, FAQ section, credentials reference
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 
