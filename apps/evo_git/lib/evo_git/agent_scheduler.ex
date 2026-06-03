@@ -149,7 +149,7 @@ defmodule EvoGit.AgentScheduler do
 
   This is the highest-priority configuration layer. Accepts a keyword list
   with any of: `:max_concurrency`, `:max_tool_concurrency`,
-  `:agent_max_retries`, `:max_depth`, `:max_retries`, `:llm_model`.
+  `:agent_max_retries`, `:max_depth`, `:max_retries`, `:timeout_ms`, `:llm_model`.
   Only provided keys are updated; others remain unchanged.
 
   Concurrency changes take effect on the next scheduling action — currently
@@ -435,6 +435,7 @@ defmodule EvoGit.AgentScheduler do
     agent_max_retries = Map.get(scheduler_config, :agent_max_retries, 3)
     max_depth = Map.get(scheduler_config, :max_agent_depth, 8)
     max_retries = Map.get(scheduler_config, :max_retries, 15)
+    timeout_ms = Map.get(scheduler_config, :timeout_ms, 1_800_000)
     llm_model = Map.get(config, :llm, %{}) |> Map.get(:model)
     sandbox_mode = Map.get(sandbox_config, :mode)
     sandbox_resources = Map.get(sandbox_config, :resources)
@@ -467,6 +468,7 @@ defmodule EvoGit.AgentScheduler do
     max_depth = Keyword.get(opts, :max_depth, max_depth)
     max_retries = Keyword.get(opts, :max_retries, max_retries)
     llm_model = Keyword.get(opts, :llm_model, llm_model)
+    timeout_ms = Keyword.get(opts, :timeout_ms, timeout_ms)
 
     {:ok,
      %State{
@@ -478,6 +480,7 @@ defmodule EvoGit.AgentScheduler do
        max_depth: max_depth,
        llm_model: llm_model,
        max_retries: max_retries,
+       timeout_ms: timeout_ms,
        next_agent_id: 1,
        running_count: 0,
        ref_to_agent: %{},
@@ -675,6 +678,7 @@ defmodule EvoGit.AgentScheduler do
       agent_max_retries: state.agent_max_retries,
       max_agent_depth: state.max_depth,
       max_retries: state.max_retries,
+      timeout_ms: state.timeout_ms,
       llm_model: state.llm_model,
       paused: state.paused,
       sandbox_mode: state.sandbox_mode,
@@ -694,6 +698,7 @@ defmodule EvoGit.AgentScheduler do
         :agent_max_retries -> state.agent_max_retries
         :max_agent_depth -> state.max_depth
         :max_retries -> state.max_retries
+        :timeout_ms -> state.timeout_ms
         :llm_model -> state.llm_model
         :paused -> state.paused
         :sandbox_mode -> state.sandbox_mode
@@ -813,6 +818,7 @@ defmodule EvoGit.AgentScheduler do
       |> maybe_update(:max_depth, opts)
       |> maybe_update(:llm_model, opts)
       |> maybe_update(:max_retries, opts)
+      |> maybe_update(:timeout_ms, opts)
       |> maybe_update(:max_tool_concurrency, opts)
       |> maybe_update(:sandbox_mode, opts)
       |> maybe_update(:sandbox_resources, opts)
