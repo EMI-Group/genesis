@@ -33,6 +33,11 @@ defmodule EvoDashWeb.AgentsLive do
       |> assign(:id_to_display, id_to_display)
       |> assign(:repo_trees, build_repo_trees(agents))
       |> assign(:config_status, config_status)
+      |> assign(:previous_agent_ids, MapSet.new(agents, & &1.id))
+      |> assign(:previous_statuses, Map.new(agents, fn a -> {a.id, a.status} end))
+      |> assign(:agent_notifications, [])
+      |> assign(:new_agent_ids, MapSet.new())
+      |> assign(:changed_status_ids, MapSet.new())
 
     {:ok, socket}
   end
@@ -40,15 +45,52 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_info({:agents_updated}, socket) do
     agents = load_agents()
+    current_ids = MapSet.new(agents, & &1.id)
+    current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
 
+    # Detect new agents
+    new_agent_ids = MapSet.difference(current_ids, socket.assigns.previous_agent_ids)
+
+    # Detect status changes (agents that exist in both but have different status)
+    changed_status_ids =
+      current_ids
+      |> MapSet.intersection(socket.assigns.previous_agent_ids)
+      |> MapSet.filter(fn id ->
+        current_statuses[id] != socket.assigns.previous_statuses[id]
+      end)
+
+    # Build notifications for new agents and status changes
     id_to_display =
       Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
+
+    new_notifications =
+      build_notifications(new_agent_ids, changed_status_ids, current_statuses, id_to_display)
+
+    # Merge with existing notifications, keep last 5, add timestamps
+    all_notifications =
+      (new_notifications ++ socket.assigns.agent_notifications)
+      |> Enum.take(5)
+
+    # Schedule cleanup of notifications after 5 seconds
+    if new_notifications != [] do
+      Process.send_after(self(), :clear_notifications, 5000)
+    end
 
     {:noreply,
      socket
      |> assign(:agents, agents)
      |> assign(:id_to_display, id_to_display)
-     |> assign(:repo_trees, build_repo_trees(agents))}
+     |> assign(:repo_trees, build_repo_trees(agents))
+     |> assign(:previous_agent_ids, current_ids)
+     |> assign(:previous_statuses, current_statuses)
+     |> assign(:new_agent_ids, new_agent_ids)
+     |> assign(:changed_status_ids, changed_status_ids)
+     |> assign(:agent_notifications, all_notifications)}
+  end
+
+  @impl true
+  def handle_info(:clear_notifications, socket) do
+    {:noreply, assign(socket, :agent_notifications, [])}
   end
 
   @impl true
@@ -95,6 +137,35 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_event("close_objective_modal", _params, socket) do
     {:noreply, assign(socket, :selected_objective, nil)}
+  end
+
+  defp build_notifications(new_agent_ids, changed_status_ids, current_statuses, id_to_display) do
+    now = System.system_time(:millisecond)
+
+    spawn_notifications =
+      new_agent_ids
+      |> Enum.map(fn id ->
+        %{
+          id: id,
+          display_id: id_to_display[id] || id,
+          type: :spawned,
+          timestamp: now
+        }
+      end)
+
+    status_notifications =
+      changed_status_ids
+      |> Enum.filter(fn id -> current_statuses[id] == :running end)
+      |> Enum.map(fn id ->
+        %{
+          id: id,
+          display_id: id_to_display[id] || id,
+          type: :started,
+          timestamp: now
+        }
+      end)
+
+    spawn_notifications ++ status_notifications
   end
 
   defp build_repo_trees(agents) do
