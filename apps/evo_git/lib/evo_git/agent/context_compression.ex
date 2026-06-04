@@ -25,7 +25,6 @@ defmodule EvoGit.Agent.ContextCompression do
   Called from the agent loop after each turn to check if compression is needed:
 
       state = EvoGit.Agent.ContextCompression.compress_if_needed(state,
-        timeout_ms: @timeout_ms,
         default_tool_timeout: @default_tool_timeout,
         agent_id: state.agent_id
       )

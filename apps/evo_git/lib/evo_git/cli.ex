@@ -15,6 +15,7 @@ defmodule EvoGit.CLI do
           concurrency: :integer,
           tool_concurrency: :integer,
           retries: :integer,
+          max_turns: :integer,
           path: :string,
           model: :string,
           mode: :string,
@@ -33,6 +34,7 @@ defmodule EvoGit.CLI do
           f: :file,
           c: :concurrency,
           r: :retries,
+          t: :max_turns,
           p: :path,
           m: :model,
           d: :mode,
@@ -59,6 +61,7 @@ defmodule EvoGit.CLI do
       |> maybe_put(:max_concurrency, opts[:concurrency])
       |> maybe_put(:max_tool_concurrency, opts[:tool_concurrency])
       |> maybe_put(:max_retries, opts[:retries])
+      |> maybe_put(:max_turns, opts[:max_turns])
       |> maybe_put(:llm_model, opts[:model])
 
     if scheduler_opts != [] do
@@ -247,6 +250,7 @@ defmodule EvoGit.CLI do
       -c, --concurrency <n>       Set number of concurrent workers.
           --tool-concurrency <n>  Set number of concurrent tool executions.
       -r, --retries <n>           Set max retries for failed agents.
+      -t, --max-turns <n>         Set max turns per agent (default: 128).
       -p, --path <path>           Path to the git repository (default: current directory).
       -m, --model <model>         Override the default LLM model.
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).

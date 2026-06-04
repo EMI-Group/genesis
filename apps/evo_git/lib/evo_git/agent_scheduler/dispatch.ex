@@ -66,6 +66,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       llm_model: state.llm_model,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
+      max_turns: state.max_turns,
       parent_id: parent_id,
       objective: spec.objective,
       repo_id: spec.repo_id,
