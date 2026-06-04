@@ -26,7 +26,7 @@ defmodule EvoDashWeb.TasksLive do
       </div>
 
       <!-- Filter Bar -->
-      <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 p-4 sm:p-5 mb-6 animate-fade-in-up animation-delay-100">
+      <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-4 sm:p-5 mb-6 animate-fade-in-up animation-delay-100">
         <div class="flex flex-col sm:flex-row gap-3">
           <!-- Status Filter -->
           <div class="form-control">

@@ -22,7 +22,7 @@ defmodule EvoDashWeb.SettingsLive do
       <%= if @active_tab == "runtime" do %>
         <div class="mt-4">
           <!-- Scheduler Pause/Resume Control -->
-          <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-100">
+          <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden animate-fade-in-up animation-delay-100">
             <div class="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
               <div class="flex items-center gap-3">
                 <div class={[
@@ -107,13 +107,14 @@ defmodule EvoDashWeb.SettingsLive do
           </div>
 
           <!-- Current Config Summary -->
-          <div class="mt-6 bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up animation-delay-300">
-            <div class="bg-gradient-to-br from-base-200/50 via-base-200/20 to-transparent p-4 sm:p-6">
-              <h2 class="text-lg font-semibold flex items-center gap-2">
-                <.icon name="hero-information-circle" class="size-5 text-info" /> {gettext("Current Runtime Values")}
-              </h2>
+          <div class="mt-6 bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden animate-fade-in-up animation-delay-300">
+            <div class="p-4 sm:p-5 flex items-center gap-2">
+              <div class="bg-info/15 text-info p-2 rounded-lg">
+                <.icon name="hero-information-circle" class="size-4" />
+              </div>
+              <h2 class="text-base font-semibold">{gettext("Current Runtime Values")}</h2>
             </div>
-            <div class="p-4 sm:p-6 pt-2">
+            <div class="px-4 sm:px-5 pb-4 sm:pb-5">
               <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                 <% sandbox_backend = @scheduler_config[:sandbox_backend] %>
                 <% base_values = [
@@ -165,7 +166,7 @@ defmodule EvoDashWeb.SettingsLive do
       <%= if @active_tab == "config" do %>
         <div class="mt-4">
           <!-- Config File Status -->
-          <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden animate-fade-in-up p-4 sm:p-6">
+          <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden animate-fade-in-up p-4 sm:p-6">
             <div class="flex flex-col sm:flex-row sm:items-center gap-3">
               <div class="flex items-center gap-2 text-sm text-base-content/70">
                 <.icon name="hero-document-text" class="size-5" />

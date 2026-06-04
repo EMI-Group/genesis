@@ -17,7 +17,7 @@ defmodule EvoDashWeb.ReviewComponents do
   def review_header(assigns) do
     ~H"""
     <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
-      <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6 md:p-8">
+      <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-4 sm:p-5">
         <div class="flex items-start gap-4">
           <div class="bg-primary/15 text-primary p-3 rounded-xl shrink-0">
             <.icon name="hero-code-bracket-square" class="size-6" />
