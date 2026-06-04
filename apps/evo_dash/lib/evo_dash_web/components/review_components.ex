@@ -261,7 +261,7 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def diff_viewer(assigns) do
     ~H"""
-    <div class="diff-main-content" id="diff-viewer">
+    <div class="diff-main-content" id="diff-viewer" phx-hook="ScrollToFile">
       <%= for file <- @files do %>
         <div class="diff-file-section" id={"file-section-#{file_path_to_id(file.path)}"}>
           <button

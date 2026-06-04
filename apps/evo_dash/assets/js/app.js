@@ -203,11 +203,40 @@ const AutoClearFlash = {
   }
 };
 
+// ScrollToFile hook: scrolls the diff viewer to the selected file section
+const ScrollToFile = {
+  mounted() {
+    this.handleEvent("scroll_to_file", ({target_id}) => {
+      // Use a small delay to ensure the DOM has been patched
+      setTimeout(() => {
+        const target = document.getElementById(target_id);
+        if (target) {
+          // Find the closest scrollable parent (the diff viewer)
+          const container = target.closest('.diff-main-content');
+          if (container) {
+            // Calculate scroll position relative to the container
+            const containerRect = container.getBoundingClientRect();
+            const targetRect = target.getBoundingClientRect();
+            const scrollOffset = targetRect.top - containerRect.top + container.scrollTop;
+            container.scrollTo({
+              top: scrollOffset - 8,  // small padding above the file header
+              behavior: "smooth"
+            });
+          } else {
+            // Fallback: scroll into view
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }
+      }, 50);
+    });
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, BrowserNotifications, AutoClearFlash},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, BrowserNotifications, AutoClearFlash, ScrollToFile},
 })
 
 // Show progress bar on live navigation and form submits

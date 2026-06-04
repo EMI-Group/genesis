@@ -153,10 +153,12 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("select_file", %{"path" => path}, socket) do
+    target_id = "file-section-#{file_path_to_id(path)}"
     {:noreply,
      socket
      |> assign(:selected_file, path)
-     |> assign(:review_tab, :files_changed)}
+     |> assign(:review_tab, :files_changed)
+     |> push_event("scroll_to_file", %{target_id: target_id})}
   end
 
   @impl true
@@ -333,4 +335,10 @@ defmodule EvoDashWeb.ReviewLive do
   defp truncate_string(nil, _len), do: ""
   defp truncate_string(str, len) when byte_size(str) <= len, do: str
   defp truncate_string(str, len), do: String.slice(str, 0, len) <> "..."
+
+  defp file_path_to_id(path) do
+    path
+    |> String.replace(~r{[^a-zA-Z0-9_-]}, "-")
+    |> String.trim("-")
+  end
 end
