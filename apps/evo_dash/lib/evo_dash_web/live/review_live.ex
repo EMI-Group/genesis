@@ -258,7 +258,7 @@ defmodule EvoDashWeb.ReviewLive do
               {nil, nil, nil, nil, nil}
           end
 
-        objective = task.opts[:prompt] || task.opts[:objective] || ""
+        objective = task.opts[:prompt] || task.opts[:objective]
 
         # Generate title from pr_title, objective, or branch_name
         title = pr_title || objective || branch_name || gettext("Review Changes")

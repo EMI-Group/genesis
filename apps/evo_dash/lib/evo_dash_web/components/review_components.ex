@@ -136,7 +136,7 @@ defmodule EvoDashWeb.ReviewComponents do
               @selected_file == file.path && "bg-primary/5 border-l-2 border-l-primary"
             ]}
           >
-            <.icon name={file_status_icon(file.status)} class={["size-4 shrink-0", file_status_color(file.status)]} />
+            <.icon name={file_status_icon(file.status)} class={"size-4 shrink-0 #{file_status_color(file.status)}"} />
             <span class="text-sm font-mono truncate flex-1">{file.path}</span>
             <span class="text-xs text-success font-mono">+{file.additions}</span>
             <span class="text-xs text-error font-mono">-{file.deletions}</span>
@@ -173,9 +173,9 @@ defmodule EvoDashWeb.ReviewComponents do
             >
               <.icon
                 name="hero-chevron-right"
-                class={["size-4 transition-transform", Map.get(@expanded_files, file.path, true) && "rotate-90"]}
+                class={"size-4 transition-transform #{if Map.get(@expanded_files, file.path, true), do: "rotate-90", else: ""}"}
               />
-              <.icon name={file_status_icon(file.status)} class={["size-4", file_status_color(file.status)]} />
+              <.icon name={file_status_icon(file.status)} class={"size-4 #{file_status_color(file.status)}"} />
               <span class="text-sm font-mono">{file.path}</span>
               <span class="text-xs text-success font-mono ml-auto">+{file.additions}</span>
               <span class="text-xs text-error font-mono">-{file.deletions}</span>
