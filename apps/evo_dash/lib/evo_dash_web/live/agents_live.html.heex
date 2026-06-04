@@ -108,7 +108,7 @@
           <%= if @selected_agent_id do %>
             <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
             <%= if agent do %>
-              <div id={"agent-detail-#{agent.id}"} class="animate-detail-enter">
+              <div id={"agent-detail-#{agent.id}"}>
               <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3">
                   <h3 class="card-title">
@@ -288,7 +288,7 @@
                     <div class="bg-base-200 rounded-lg max-h-96 overflow-y-auto">
                       <div class="divide-y divide-base-300">
                         <%= for {entry, index} <- Enum.with_index(agent.history) do %>
-                          <div class="p-3 hover:bg-base-300/50 animate-history-appear" style={"animation-delay: #{min(index * 50, 500)}ms"}>
+                          <div class="p-3 hover:bg-base-300/50">
                             <div class="flex flex-wrap items-center gap-2 mb-1">
                               <.icon
                                 name={history_entry_icon(entry.type)}
