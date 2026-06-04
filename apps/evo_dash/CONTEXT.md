@@ -47,7 +47,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 - `CoreComponents` — Phoenix 1.8 base components
 - `DashboardComponents` — Task form, scheduler settings, project tabs, task cards (with "Review" button for completed tasks with branches)
-- `ReviewComponents` — Review page components: diff stats bar, file list, diff viewer (Lumis syntax highlighting), action buttons (merge/reject/continue/create PR)
+- `ReviewComponents` — Review page components: commit list (GitHub-style with SHA badges, messages, author, relative time), diff stats bar, file list, diff viewer (Lumis syntax highlighting), action buttons (merge/reject/continue/create PR)
 - `AgentsComponents` — Recursive path tree with connector lines and status coloring
 - `Layouts` — App layout with navbar, theme toggle, flash group
 
