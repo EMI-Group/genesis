@@ -67,7 +67,8 @@ defmodule EvoDash.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:phoenix_pubsub, "~> 2.2"},
       {:bandit, "~> 1.5"},
-      {:desktop, "~> 1.5"}
+      {:desktop, "~> 1.5"},
+      {:lumis, "~> 0.5"}
     ]
   end
 
