@@ -80,7 +80,7 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  defp merge_and_report(repo_path, %Result{} = agent_output, objective) do
+  defp merge_and_report(repo_path, %Result{} = agent_output, _objective) do
     final_sha = agent_output.commit_sha
     result = agent_output.result
     tag = agent_output.tag

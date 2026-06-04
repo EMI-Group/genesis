@@ -129,7 +129,6 @@ defmodule EvoGit.Review do
       ".r" -> "r"
       ".zig" -> "zig"
       ".dart" -> "dart"
-      ".ex" -> "elixir"
       ".lock" -> "json"
       ".xml" -> "xml"
       ".heex" -> "html"
