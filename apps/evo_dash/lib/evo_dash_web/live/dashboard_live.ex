@@ -692,6 +692,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:active_project, %{path: path, name: name})
     |> assign(:active_project_path, path)
     |> assign(:tasks, tasks)
+    |> assign(:notified_task_ids, build_notified_task_ids(tasks, socket.assigns.notified_task_ids))
     |> assign(:task_mode, mode)
     |> assign(:task_mode_info, mode_info)
     |> assign(:show_open_project_form, false)
@@ -714,6 +715,14 @@ defmodule EvoDashWeb.DashboardLive do
     else
       put_flash(socket, :info, mode_info)
     end
+  end
+
+  defp build_notified_task_ids(tasks, existing_notified) do
+    tasks
+    |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+    |> Enum.map(& &1.id)
+    |> MapSet.new()
+    |> MapSet.union(existing_notified)
   end
 
   defp assign_running_and_recent_tasks(socket) do
