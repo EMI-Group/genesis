@@ -18,7 +18,6 @@ defmodule EvoDashWeb.AgentsComponents do
       end
 
     ~H"""
-    <% total_nodes = length(@nodes) %>
     <%= for {node, index} <- Enum.with_index(@nodes) do %>
       <div class={["relative", @depth > 0 && "ml-3 sm:ml-6"]}>
         <!-- Tree connector lines for nested items -->
