@@ -5,14 +5,36 @@ defmodule EvoGit.ProjectConfig do
   Currently supports:
 
   - `worktree.script` — A script path (relative to repo root) that runs immediately
-    after worktree creation and before agent execution. The script receives two
+    after worktree creation and before agent execution. The script receives three
     environment variables:
 
     - `SOURCE_REPO_PATH` — The path to the main repository checkout
+    - `SOURCE_WORKTREE_PATH` — The parent agent's worktree path (or `SOURCE_REPO_PATH` for top-level agents)
     - `TARGET_WORKTREE_PATH` — The path to the newly created worktree
+
+    Supports OS-specific variants:
+    ```toml
+    [worktree]
+    script.linux = "scripts/setup_linux.sh"
+    script.macos = "scripts/setup_macos.sh"
+    script.windows = "scripts/setup_windows.ps1"
+    # OR fallback:
+    script = "scripts/setup.sh"
+    ```
+
+    Resolution order: `script.<current_os>` → `script` (fallback). If neither exists, returns nil.
 
   - `foreign_repos` — A map of foreign repository references. Each entry is a
     TOML table with `path` (required) and `name` (optional) keys.
+
+  - `commands` — User-defined command shortcuts for the dashboard. Each entry
+    is a name-command pair:
+    ```toml
+    [commands]
+    dev = "npm run dev"
+    test = "mix test"
+    build = "mix compile"
+    ```
   """
 
   require Logger
@@ -46,13 +68,30 @@ defmodule EvoGit.ProjectConfig do
 
   @doc """
   Returns the worktree init script path from the project config, or nil if not configured.
-  The path is relative to the repo root.
+
+  When `os` is provided, resolves OS-specific variants first:
+  `script.<os>` → `script` (fallback) → nil.
+
+  When called without `os`, uses `Platform.os/0` for automatic OS detection.
   """
   @spec worktree_script(String.t()) :: String.t() | nil
   def worktree_script(repo_root) do
+    worktree_script(repo_root, EvoGit.Platform.os())
+  end
+
+  @spec worktree_script(String.t(), atom()) :: String.t() | nil
+  def worktree_script(repo_root, os) do
+    os_key = Atom.to_string(os)
+
     case read(repo_root) do
-      %{"worktree" => %{"script" => script}} when is_binary(script) -> script
-      _ -> nil
+      %{"worktree" => %{"script" => script}} when is_map(script) ->
+        Map.get(script, os_key)
+
+      %{"worktree" => %{"script" => script}} when is_binary(script) ->
+        script
+
+      _ ->
+        nil
     end
   end
 
@@ -83,6 +122,30 @@ defmodule EvoGit.ProjectConfig do
     e ->
       Logger.warning("Failed to parse foreign_repos from evogit.toml: #{inspect(e)}")
       []
+  end
+
+  @doc """
+  Reads user-defined command shortcuts from the `[commands]` section of evogit.toml.
+
+  Returns a map of `%{name => command_string}`, or an empty map if no commands
+  section exists or no config file is present.
+
+  ## Example
+
+      iex> ProjectConfig.commands("/path/to/repo")
+      %{"dev" => "npm run dev", "test" => "mix test"}
+  """
+  @spec commands(String.t()) :: %{String.t() => String.t()}
+  def commands(repo_root) do
+    case read(repo_root) do
+      %{"commands" => cmds} when is_map(cmds) ->
+        cmds
+        |> Enum.filter(fn {_k, v} -> is_binary(v) end)
+        |> Map.new()
+
+      _ ->
+        %{}
+    end
   end
 
   defp parse_toml(contents, path) do
