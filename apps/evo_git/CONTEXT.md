@@ -12,13 +12,14 @@ The `:evo_git` OTP application implements an evolutionary software development r
 ## Top-Level Modules
 | Module | Description |
 |---|---|
-| `EvoGit` | Sandboxing utilities (`sandbox_args/4`, `sandbox_run/4`), safe shell command execution via shared `evogit.slice` systemd user slice |
-| `EvoGit.Application` | OTP application callback (starts `AgentScheduler`, `SandboxSlice`) |
+| `EvoGit` | Sandboxed command execution via `EvoGit.Sandbox` (`sandbox_run/4`, `sandbox_args/4` delegates to platform backend) |
+| `EvoGit.Application` | OTP application callback (starts `AgentScheduler`, conditionally `SandboxSlice` on Linux) |
 | `EvoGit.CLI` | Command-line interface entry point |
 | `EvoGit.Agent` | Behaviour module for agents; injects agent loop, tool dispatch, subagent management |
 | `EvoGit.AgentSpec` | Structured specification for spawning agents |
 | `EvoGit.AgentScheduler` | GenServer managing agent lifecycles, worktree pool, ETS state, slot management |
-| `EvoGit.SandboxSlice` | GenServer managing the `evogit.slice` systemd user slice lifecycle and resource limits |
+| `EvoGit.Sandbox` | Multi-platform sandbox dispatch (selects Linux/macOS/None backend based on platform) |
+| `EvoGit.SandboxSlice` | GenServer managing the `evogit.slice` systemd user slice (Linux only) |
 | `EvoGit.Task` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
 | `EvoGit.Runtime` | Top-level coordinator: Genesis and Evolution phases |
 | `EvoGit.ProjectConfig` | Reads and parses `evogit.toml` from repo root |
