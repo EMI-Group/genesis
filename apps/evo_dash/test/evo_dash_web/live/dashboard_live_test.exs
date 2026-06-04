@@ -22,6 +22,14 @@ defmodule EvoDashWeb.DashboardLiveTest do
   end
 
   describe "dashboard without active project" do
+    setup do
+      # Clear all recent projects so auto-load doesn't activate a stale project
+      for project <- EvoDash.TaskRegistry.list_recent_projects() do
+        EvoDash.TaskRegistry.remove_recent_project(project.path)
+      end
+      :ok
+    end
+
     test "renders the dashboard with task form and project selector", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
@@ -163,6 +171,13 @@ defmodule EvoDashWeb.DashboardLiveTest do
   end
 
   describe "opening invalid directory" do
+    setup do
+      for project <- EvoDash.TaskRegistry.list_recent_projects() do
+        EvoDash.TaskRegistry.remove_recent_project(project.path)
+      end
+      :ok
+    end
+
     test "shows error for non-existent directory", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 

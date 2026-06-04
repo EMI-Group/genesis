@@ -709,6 +709,20 @@ button, a, input, textarea, select, summary,
   border-radius: 3px;
 }
 
+/* Fix DaisyUI tooltip z-index — appears below card backgrounds by default */
+.tooltip::before,
+.tooltip::after,
+.tooltip-top::before,
+.tooltip-top::after,
+.tooltip-bottom::before,
+.tooltip-bottom::after,
+.tooltip-left::before,
+.tooltip-left::after,
+.tooltip-right::before,
+.tooltip-right::after {
+  z-index: 50 !important;
+}
+
 /* Respect reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in-up,
