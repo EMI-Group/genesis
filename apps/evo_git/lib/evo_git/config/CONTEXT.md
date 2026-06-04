@@ -36,8 +36,37 @@ Delegates all calls to `EvoGit.Config.resolve/1`. Functions: `max_concurrency`, 
 | Function | Description |
 |----------|-------------|
 | `read/1` | Parses `evogit.toml` from repo root |
-| `worktree_script/1` | Returns worktree init script path, or nil |
+| `worktree_script/1` | Returns worktree init script for current OS (backward-compat wrapper) |
+| `worktree_script/2` | Returns worktree init script for given OS, with variant resolution |
+| `commands/1` | Returns map of user-defined dev command shortcuts from `[commands]` section |
 | `foreign_repos/1` | Returns list of `ForeignRepo` structs |
+
+### evogit.toml Structure
+```toml
+[worktree]
+# Single fallback script (any OS):
+script = "..." 
+# OR OS-specific variants (TOML dotted keys):
+script.linux = "..."
+script.macos = "..."
+script.windows = "..."
+# Resolution: script.<current_os> → script (fallback) → nil
+
+[commands]
+dev = "npm run dev"      # User-defined shortcuts, displayed in dashboard
+test = "mix test"        # Manually triggered, NOT auto-executed
+
+[foreign_repos.original]
+path = "/Source/original-proj"
+name = "Legacy Project"
+```
+
+### Worktree Init Script Environment Variables
+| Variable | Description |
+|----------|-------------|
+| `SOURCE_REPO_PATH` | The main repository checkout path |
+| `TARGET_WORKTREE_PATH` | The newly created worktree path |
+| `SOURCE_WORKTREE_PATH` | Parent agent's worktree path (or `SOURCE_REPO_PATH` for top-level agents) |
 
 ### Configuration Levels (priority: low → high)
 1. **Application defaults** — Hardcoded in `defaults/0` (no model, no username)
