@@ -683,9 +683,9 @@ defmodule EvoDashWeb.DashboardComponents do
         <!-- Left accent bar -->
         <div class={["w-1 shrink-0", task_accent_color(@task)]}></div>
 
-        <div class="flex-1 p-4 md:p-5 min-w-0">
+        <div class="flex-1 p-3 md:p-4 min-w-0">
           <!-- Compact header — single row: type · mode | status · short ID -->
-          <div class="flex items-center justify-between gap-3 mb-2 pr-7">
+          <div class="flex items-center justify-between gap-3 mb-1 pr-7">
             <div class="flex items-center gap-1 text-xs text-base-content/60 min-w-0">
               <span class="capitalize font-medium text-base-content/80">{@task.type}</span>
               <span class="text-base-content/30">·</span>
@@ -724,17 +724,17 @@ defmodule EvoDashWeb.DashboardComponents do
           <!-- Objective with line-clamp-1 + HTML tooltip -->
           <% objective_text = @task.opts[:prompt] || @task.opts[:objective] || "" %>
           <%= if objective_text != "" do %>
-            <p class="text-sm text-base-content/80 leading-relaxed line-clamp-1" title={objective_text}>
+            <p class="text-sm text-base-content/80 leading-snug line-clamp-1" title={objective_text}>
               {objective_text}
             </p>
           <% else %>
-            <p class="text-sm text-base-content/80 leading-relaxed line-clamp-1" title={task_description(@task)}>
+            <p class="text-sm text-base-content/80 leading-snug line-clamp-1" title={task_description(@task)}>
               {task_description(@task)}
             </p>
           <% end %>
 
           <!-- Compact footer — single row: relative timestamps | actions -->
-          <div class="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-base-200/50">
+          <div class="flex items-center justify-between gap-3 mt-1 pt-1 border-t border-base-200/50">
             <div class="flex items-center gap-1 text-xs text-base-content/50 min-w-0">
               <span class="flex items-center gap-1 shrink-0">
                 {gettext("Started")} {relative_time(@task.started_at)}
