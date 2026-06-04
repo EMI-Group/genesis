@@ -146,7 +146,9 @@ defmodule EvoDashWeb.ReviewComponents do
         </summary>
         <div class="px-4 md:px-6 pb-4 md:pb-6">
           <div class="bg-success/5 border border-success/10 rounded-xl p-4 max-h-[300px] overflow-y-auto">
-            <pre class="text-sm whitespace-pre-wrap break-words">{@summary}</pre>
+            <div class="md-content text-sm">
+              {raw(EvoDash.MarkdownRender.render(@summary))}
+            </div>
           </div>
         </div>
       </details>

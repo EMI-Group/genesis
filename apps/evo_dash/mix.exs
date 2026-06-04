@@ -68,7 +68,8 @@ defmodule EvoDash.MixProject do
       {:phoenix_pubsub, "~> 2.2"},
       {:bandit, "~> 1.5"},
       {:desktop, "~> 1.5"},
-      {:lumis, "~> 0.5"}
+      {:lumis, "~> 0.5"},
+      {:mdex, "~> 0.1"}
     ]
   end
 
