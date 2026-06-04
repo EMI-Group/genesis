@@ -464,7 +464,7 @@ button, a, input, textarea, select, summary,
 
 /* Diff line layout */
 .diff-line {
-  @apply flex text-xs font-mono leading-6;
+  @apply flex text-xs font-mono leading-4;
 }
 
 .diff-line-gutter {
@@ -477,6 +477,7 @@ button, a, input, textarea, select, summary,
 
 .diff-line-content {
   @apply whitespace-pre flex-1;
+  line-height: 1rem !important;
 }
 
 /* Line type backgrounds — subtle, GitHub-like */
@@ -524,13 +525,16 @@ button, a, input, textarea, select, summary,
 
 /* Syntax highlight overrides — prevent Lumis backgrounds from interfering */
 .diff-line-content pre.lumis,
-.diff-line-content code {
+.diff-line-content pre.lumis *,
+.diff-line-content code,
+.diff-line-content code *,
+.diff-line-content span {
   background: transparent !important;
   margin: 0 !important;
   padding: 0 !important;
   border: none !important;
   font-size: inherit !important;
-  line-height: inherit !important;
+  line-height: 1rem !important;
 }
 
 /* Lumis light-dark() support — ensure color-scheme is propagated */
