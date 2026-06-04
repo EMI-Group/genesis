@@ -10,9 +10,16 @@ defmodule EvoGit.Application do
     children = [
       {Phoenix.PubSub, name: EvoGit.PubSub},
       {Task.Supervisor, name: EvoGit.TaskSupervisor},
-      {EvoGit.AgentScheduler, []},
-      {EvoGit.SandboxSlice, []}
+      {EvoGit.AgentScheduler, []}
     ]
+
+    # SandboxSlice is only needed on Linux (systemd-run backend)
+    children =
+      if EvoGit.Platform.linux?() do
+        children ++ [{EvoGit.SandboxSlice, []}]
+      else
+        children
+      end
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
