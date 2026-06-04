@@ -56,4 +56,7 @@ defmodule EvoGit.Defaults do
 
   @doc "Returns the sandbox resource limits map."
   def sandbox_resources, do: Config.resolve([:sandbox, :resources])
+
+  @doc "Returns the sandbox backend type (:systemd_run, :sandbox_exec, or :none)."
+  def sandbox_backend, do: EvoGit.Platform.sandbox_backend()
 end

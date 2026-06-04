@@ -175,4 +175,30 @@ defmodule EvoGit.Platform do
   def systemd_available? do
     linux?() and System.find_executable("systemd-run") != nil
   end
+
+  @doc """
+  Returns true if `sandbox-exec` is available on this platform.
+
+  Only returns true on macOS where sandbox-exec is found in PATH.
+  """
+  @spec sandbox_exec_available?() :: boolean()
+  def sandbox_exec_available? do
+    macos?() and System.find_executable("sandbox-exec") != nil
+  end
+
+  @doc """
+  Returns the sandbox backend available on this platform.
+
+  - `:systemd_run` — Linux with systemd
+  - `:sandbox_exec` — macOS with sandbox-exec
+  - `:none` — Windows or unsupported platform
+  """
+  @spec sandbox_backend() :: :systemd_run | :sandbox_exec | :none
+  def sandbox_backend do
+    cond do
+      systemd_available?() -> :systemd_run
+      sandbox_exec_available?() -> :sandbox_exec
+      true -> :none
+    end
+  end
 end

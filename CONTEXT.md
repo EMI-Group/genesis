@@ -53,7 +53,7 @@ EvoGit has two OTP applications under an umbrella:
 - **`:evo_git`** (Core Runtime): AgentScheduler GenServer managing worktree pools, LLM/tool slot management with global backoff, agent implementations (Manager, Executor, Investigator, etc.), Git adapter, and two-phase execution (Genesis → Evolution). Uses a 3-level configuration system: built-in defaults → user TOML config → session-level runtime overrides.
 - **`:evo_dash`** (Web Dashboard): Phoenix LiveView interface with project-based task management, agent tree inspector, runtime settings panel, and in-browser config editor. Uses Bandit adapter, Tailwind CSS 4 + DaisyUI, DETS-based persistence.
 
-Key design: spatial context tree for routing, phylogenetic graph for temporal evolution, stateless agents in isolated worktrees, multi-repo support via absolute path resolution, slot-based concurrency with LLM rate-limit backoff, and a dynamic skills system.
+Key design: spatial context tree for routing, phylogenetic graph for temporal evolution, stateless agents in isolated worktrees, multi-repo support via absolute path resolution, slot-based concurrency with LLM rate-limit backoff, multi-platform sandboxing (systemd-run on Linux, sandbox-exec on macOS), and a dynamic skills system.
 
 ## Constraints
 
@@ -63,7 +63,7 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 - No source code at root — all code under `./apps/`
 - Every directory must have a CONTEXT.md as its spatial contract
 - Agents commit before delegating subagents (auto-commit fallback enforced)
-- LLM-generated code runs under `systemd-run` sandboxing
+- LLM-generated code runs under platform-appropriate sandboxing (systemd-run on Linux, sandbox-exec on macOS, direct on Windows)
 - No hardcoded model or username — users configure via `~/.config/evogit/config.toml`
 - User config follows XDG conventions
 

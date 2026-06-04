@@ -61,27 +61,32 @@ defmodule EvoGit.SandboxSlice do
 
   @impl true
   def init(_opts) do
-    # Load initial resource config from TOML config
-    resources = load_config_resources()
-    state = %{
-      slice_active: false,
-      resources: resources
-    }
+    # SandboxSlice is Linux/systemd-specific — no-op on other platforms
+    if not EvoGit.Platform.linux?() do
+      {:ok, %{slice_active: false, resources: %{}}}
+    else
+      # Load initial resource config from TOML config
+      resources = load_config_resources()
+      state = %{
+        slice_active: false,
+        resources: resources
+      }
 
-    # If sandbox is enabled, create the slice eagerly (fail fast)
-    state =
-      if sandbox_enabled?() do
-        case do_create_slice(resources) do
-          :ok -> %{state | slice_active: true}
-          {:error, reason} ->
-            Logger.warning("SandboxSlice: Failed to create slice on init: #{inspect(reason)}")
-            state
+      # If sandbox is enabled, create the slice eagerly (fail fast)
+      state =
+        if sandbox_enabled?() do
+          case do_create_slice(resources) do
+            :ok -> %{state | slice_active: true}
+            {:error, reason} ->
+              Logger.warning("SandboxSlice: Failed to create slice on init: #{inspect(reason)}")
+              state
+          end
+        else
+          state
         end
-      else
-        state
-      end
 
-    {:ok, state}
+      {:ok, state}
+    end
   end
 
   @impl true

@@ -562,112 +562,165 @@ defmodule EvoDashWeb.DashboardComponents do
           </div>
         </div>
       </div>
-      <div class="p-6 md:p-8 pt-4 md:pt-6">
-        <.form for={%{}} phx-submit="update_sandbox_config" phx-change="sandbox_config_change" class="space-y-4">
-          <div class="space-y-4">
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text text-sm font-medium">{gettext("Sandbox Mode")}</span>
-              </label>
-              <select name="sandbox_mode" class="select select-bordered select-sm w-full font-mono">
-                <option value="auto" selected={(@config[:sandbox_mode] || :auto) == :auto}>{gettext("Auto (default)")}</option>
-                <option value="enabled" selected={@config[:sandbox_mode] == :enabled}>{gettext("Enabled")}</option>
-                <option value="disabled" selected={@config[:sandbox_mode] == :disabled}>{gettext("Disabled")}</option>
-              </select>
-              <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Controls sandbox activation")}</span></label>
+
+      <!-- Backend Status Banner -->
+      <div class="px-6 md:px-8 pt-2">
+        <%= case @config[:sandbox_backend] do %>
+          <% :systemd_run -> %>
+            <div class="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
+              <span class="badge badge-success badge-sm">systemd-run</span>
+              <span class="text-sm text-success/80">{gettext("Full sandboxing: filesystem isolation, resource limits, syscall filtering")}</span>
             </div>
-
-            <div class={if @config[:sandbox_mode] == :disabled, do: "opacity-50 pointer-events-none select-none", else: ""}>
-              <!-- Shared Slice Resources -->
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-base-content/70 mb-1">{gettext("Shared Slice Resources")}</h3>
-                <p class="text-xs text-base-content/50 mb-3">{gettext("Aggregate limits for the entire evogit.slice (all sandboxed processes combined)")}</p>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-                  <div class="form-control">
-                    <label class="label">
-                      <span class="label-text text-sm font-medium">{gettext("CPU Quota")}</span>
-                    </label>
-                    <input type="text" name="cpu_quota" value={@config[:sandbox_resources][:cpu_quota] || "1000%"}
-                      class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 1000% (10 cores)" />
-                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Total CPU quota (e.g. 1000% = 10 cores)")}</span></label>
-                  </div>
-                  <div class="form-control">
-                    <label class="label">
-                      <span class="label-text text-sm font-medium">{gettext("CPU Weight")}</span>
-                    </label>
-                    <input type="number" name="cpu_weight" value={@config[:sandbox_resources][:cpu_weight] || 30} min="1" max="10000"
-                      class="input input-bordered input-sm w-full font-mono" />
-                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("CPU allocation weight (1-10000)")}</span></label>
-                  </div>
-                  <div class="form-control">
-                    <label class="label">
-                      <span class="label-text text-sm font-medium">{gettext("Memory Max")}</span>
-                    </label>
-                    <input type="text" name="memory_max" value={@config[:sandbox_resources][:memory_max] || "16G"}
-                      class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 16G, 8G, 512M" />
-                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Total memory for all processes")}</span></label>
-                  </div>
-                  <div class="form-control">
-                    <label class="label">
-                      <span class="label-text text-sm font-medium">{gettext("Tasks Max")}</span>
-                    </label>
-                    <input type="number" name="tasks_max" value={@config[:sandbox_resources][:tasks_max] || 8196} min="1"
-                      class="input input-bordered input-sm w-full font-mono" />
-                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max concurrent tasks/processes")}</span></label>
-                  </div>
-                </div>
-              </div>
-
-              <div class="divider my-2"></div>
-
-              <!-- Per-Process Limits -->
-              <div>
-                <h3 class="text-sm font-semibold text-base-content/70 mb-1">{gettext("Per-Process Limits")}</h3>
-                <p class="text-xs text-base-content/50 mb-3">{gettext("Individual caps applied to each tool call (systemd-run invocation)")}</p>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-                  <div class="form-control">
-                    <label class="label">
-                      <span class="label-text text-sm font-medium">{gettext("CPU Quota")}</span>
-                    </label>
-                    <input type="text" name="process_cpu_quota" value={@config[:sandbox_process_resources][:cpu_quota] || "800%"}
-                      class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 800% (8 cores)" />
-                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Per-process CPU quota (e.g. 800% = 8 cores)")}</span></label>
-                  </div>
-                  <div class="form-control">
-                    <label class="label">
-                      <span class="label-text text-sm font-medium">{gettext("Memory Max")}</span>
-                    </label>
-                    <input type="text" name="process_memory_max" value={@config[:sandbox_process_resources][:memory_max] || "12G"}
-                      class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 12G, 8G" />
-                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Memory limit per tool call")}</span></label>
-                  </div>
-                  <div class="form-control">
-                    <label class="label">
-                      <span class="label-text text-sm font-medium">{gettext("Open Files Limit")}</span>
-                    </label>
-                    <input type="number" name="process_limit_nofile" value={@config[:sandbox_process_resources][:limit_nofile] || 65536} min="1"
-                      class="input input-bordered input-sm w-full font-mono" />
-                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max open file descriptors")}</span></label>
-                  </div>
-                  <div class="form-control">
-                    <label class="label">
-                      <span class="label-text text-sm font-medium">{gettext("OOM Score Adjust")}</span>
-                    </label>
-                    <input type="number" name="process_oom_score_adjust" value={@config[:sandbox_process_resources][:oom_score_adjust] || 1000} min="-1000" max="1000"
-                      class="input input-bordered input-sm w-full font-mono" />
-                    <label class="label"><span class="label-text-alt text-base-content/50">{gettext("OOM killer preference (-1000 to 1000)")}</span></label>
-                  </div>
-                </div>
-              </div>
+          <% :sandbox_exec -> %>
+            <div class="flex items-center gap-2 p-3 rounded-lg bg-warning/10 border border-warning/20">
+              <span class="badge badge-warning badge-sm">sandbox-exec</span>
+              <span class="text-sm text-warning/80">{gettext("Filesystem isolation only. Resource limits not available on macOS.")}</span>
             </div>
-          </div>
-          <div class="pt-2">
-            <button type="submit" class="btn btn-accent">
-              <.icon name="hero-shield-check" class="size-4" /> {gettext("Update Sandbox Settings")}
-            </button>
-          </div>
-        </.form>
+          <% _ -> %>
+            <div class="flex items-center gap-2 p-3 rounded-lg bg-error/10 border border-error/20">
+              <span class="badge badge-error badge-sm">{gettext("Not Available")}</span>
+              <span class="text-sm text-error/80">{gettext("No sandbox support on this platform. Commands run directly.")}</span>
+            </div>
+        <% end %>
       </div>
+
+      <%= if @config[:sandbox_backend] != :none do %>
+        <div class="p-6 md:p-8 pt-4 md:pt-6">
+          <.form for={%{}} phx-submit="update_sandbox_config" phx-change="sandbox_config_change" class="space-y-4">
+            <div class="space-y-4">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text text-sm font-medium">{gettext("Sandbox Mode")}</span>
+                </label>
+                <select name="sandbox_mode" class="select select-bordered select-sm w-full font-mono">
+                  <option value="auto" selected={(@config[:sandbox_mode] || :auto) == :auto}>{gettext("Auto (default)")}</option>
+                  <option value="enabled" selected={@config[:sandbox_mode] == :enabled}>{gettext("Enabled")}</option>
+                  <option value="disabled" selected={@config[:sandbox_mode] == :disabled}>{gettext("Disabled")}</option>
+                </select>
+                <label class="label"><span class="label-text-alt text-base-content/50">
+                  <%= cond do %>
+                    <% @config[:sandbox_backend] == :systemd_run -> %>
+                      {gettext("Auto enables systemd-run on Linux when available")}
+                    <% @config[:sandbox_backend] == :sandbox_exec -> %>
+                      {gettext("Auto enables sandbox-exec on macOS when available")}
+                    <% true -> %>
+                      {gettext("Controls sandbox activation")}
+                  <% end %>
+                </span></label>
+              </div>
+
+              <%= if @config[:sandbox_backend] == :systemd_run do %>
+                <div class={if @config[:sandbox_mode] == :disabled, do: "opacity-50 pointer-events-none select-none", else: ""}>
+                  <!-- Shared Slice Resources -->
+                  <div class="mb-4">
+                    <h3 class="text-sm font-semibold text-base-content/70 mb-1">{gettext("Shared Slice Resources")}</h3>
+                    <p class="text-xs text-base-content/50 mb-3">{gettext("Aggregate limits for the entire evogit.slice (all sandboxed processes combined)")}</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                      <div class="form-control">
+                        <label class="label">
+                          <span class="label-text text-sm font-medium">{gettext("CPU Quota")}</span>
+                        </label>
+                        <input type="text" name="cpu_quota" value={@config[:sandbox_resources][:cpu_quota] || "1000%"}
+                          class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 1000% (10 cores)" />
+                        <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Total CPU quota (e.g. 1000% = 10 cores)")}</span></label>
+                      </div>
+                      <div class="form-control">
+                        <label class="label">
+                          <span class="label-text text-sm font-medium">{gettext("CPU Weight")}</span>
+                        </label>
+                        <input type="number" name="cpu_weight" value={@config[:sandbox_resources][:cpu_weight] || 30} min="1" max="10000"
+                          class="input input-bordered input-sm w-full font-mono" />
+                        <label class="label"><span class="label-text-alt text-base-content/50">{gettext("CPU allocation weight (1-10000)")}</span></label>
+                      </div>
+                      <div class="form-control">
+                        <label class="label">
+                          <span class="label-text text-sm font-medium">{gettext("Memory Max")}</span>
+                        </label>
+                        <input type="text" name="memory_max" value={@config[:sandbox_resources][:memory_max] || "16G"}
+                          class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 16G, 8G, 512M" />
+                        <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Total memory for all processes")}</span></label>
+                      </div>
+                      <div class="form-control">
+                        <label class="label">
+                          <span class="label-text text-sm font-medium">{gettext("Tasks Max")}</span>
+                        </label>
+                        <input type="number" name="tasks_max" value={@config[:sandbox_resources][:tasks_max] || 8196} min="1"
+                          class="input input-bordered input-sm w-full font-mono" />
+                        <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max concurrent tasks/processes")}</span></label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="divider my-2"></div>
+
+                  <!-- Per-Process Limits -->
+                  <div>
+                    <h3 class="text-sm font-semibold text-base-content/70 mb-1">{gettext("Per-Process Limits")}</h3>
+                    <p class="text-xs text-base-content/50 mb-3">{gettext("Individual caps applied to each tool call (systemd-run invocation)")}</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                      <div class="form-control">
+                        <label class="label">
+                          <span class="label-text text-sm font-medium">{gettext("CPU Quota")}</span>
+                        </label>
+                        <input type="text" name="process_cpu_quota" value={@config[:sandbox_process_resources][:cpu_quota] || "800%"}
+                          class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 800% (8 cores)" />
+                        <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Per-process CPU quota (e.g. 800% = 8 cores)")}</span></label>
+                      </div>
+                      <div class="form-control">
+                        <label class="label">
+                          <span class="label-text text-sm font-medium">{gettext("Memory Max")}</span>
+                        </label>
+                        <input type="text" name="process_memory_max" value={@config[:sandbox_process_resources][:memory_max] || "12G"}
+                          class="input input-bordered input-sm w-full font-mono" placeholder="e.g. 12G, 8G" />
+                        <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Memory limit per tool call")}</span></label>
+                      </div>
+                      <div class="form-control">
+                        <label class="label">
+                          <span class="label-text text-sm font-medium">{gettext("Open Files Limit")}</span>
+                        </label>
+                        <input type="number" name="process_limit_nofile" value={@config[:sandbox_process_resources][:limit_nofile] || 65536} min="1"
+                          class="input input-bordered input-sm w-full font-mono" />
+                        <label class="label"><span class="label-text-alt text-base-content/50">{gettext("Max open file descriptors")}</span></label>
+                      </div>
+                      <div class="form-control">
+                        <label class="label">
+                          <span class="label-text text-sm font-medium">{gettext("OOM Score Adjust")}</span>
+                        </label>
+                        <input type="number" name="process_oom_score_adjust" value={@config[:sandbox_process_resources][:oom_score_adjust] || 1000} min="-1000" max="1000"
+                          class="input input-bordered input-sm w-full font-mono" />
+                        <label class="label"><span class="label-text-alt text-base-content/50">{gettext("OOM killer preference (-1000 to 1000)")}</span></label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              <% else %>
+                <%!-- macOS or other non-none, non-systemd backend: show note about resource limits --%>
+                <div class={if @config[:sandbox_mode] == :disabled, do: "opacity-50 pointer-events-none select-none", else: ""}>
+                  <div class="bg-info/10 border border-info/20 rounded-lg p-3">
+                    <p class="text-sm text-info/80">
+                      <.icon name="hero-information-circle" class="size-4 inline-block mr-1" />
+                      {gettext("Resource limits are only available on Linux with systemd-run. Only filesystem isolation is active on this platform.")}
+                    </p>
+                  </div>
+                </div>
+              <% end %>
+            </div>
+            <div class="pt-2">
+              <button type="submit" class="btn btn-accent">
+                <.icon name="hero-shield-check" class="size-4" /> {gettext("Update Sandbox Settings")}
+              </button>
+            </div>
+          </.form>
+        </div>
+      <% else %>
+        <%!-- Windows / no backend --%>
+        <div class="p-6 md:p-8 pt-4 md:pt-6">
+          <div class="bg-base-200/50 rounded-lg p-4 text-center">
+            <.icon name="hero-shield-exclamation" class="size-8 text-base-content/30 mb-2" />
+            <p class="text-sm text-base-content/60">{gettext("Sandbox is not available on this platform. All commands run directly without isolation.")}</p>
+          </div>
+        </div>
+      <% end %>
     </div>
     """
   end
