@@ -72,7 +72,7 @@
           <%= if @selected_agent_id do %>
             <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
             <%= if agent do %>
-              <div id={"agent-detail-#{agent.id}"}>
+              <div id={"agent-detail-#{agent.id}"} class="agent-detail-content">
               <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3">
                   <h3 class="card-title">
@@ -242,14 +242,15 @@
                     </div>
                   </div>
                 <% end %>
+              </div>
 
                 <!-- Chat History -->
-                <div class="mt-6">
+                <div class="agent-detail-history mt-6">
                   <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">
                     <%= gettext("Chat History / Session Memory") %>
                   </h4>
                   <%= if agent.history && agent.history != [] do %>
-                    <div class="bg-base-200 rounded-lg max-h-96 overflow-y-auto">
+                    <div class="bg-base-200 rounded-lg overflow-y-auto agent-history-scroll">
                       <div class="divide-y divide-base-300">
                         <%= for {entry, index} <- Enum.with_index(agent.history) do %>
                           <div class="p-3 hover:bg-base-300/50">
@@ -405,7 +406,6 @@
                     </div>
                   <% end %>
                 </div>
-              </div>
               </div>
             <% else %>
               <p class="text-base-content/50"><%= gettext("Agent not found") %></p>

@@ -510,6 +510,41 @@ button, a, input, textarea, select, summary,
     scrollbar-width: thin;
     scrollbar-color: oklch(0.7 0 0 / 0.3) transparent;
   }
+
+  /* Agent detail flex layout — chat history fills remaining space */
+  .agent-detail-content {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: hidden;
+  }
+
+  .agent-detail-content > .space-y-4 {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
+  .agent-detail-history {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 1rem;
+  }
+
+  .agent-detail-history > h4 {
+    flex: 0 0 auto;
+  }
+
+  .agent-detail-history > .agent-history-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .agent-detail-history > .text-center {
+    flex: 0 0 auto;
+  }
 }
 
 /* === Diff Viewer (GitHub PR Style) === */
