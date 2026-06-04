@@ -130,15 +130,11 @@ html { scroll-behavior: smooth; }
   -webkit-backdrop-filter: blur(12px);
 }
 
-/* Smooth transitions for theme changes */
-* {
-  transition-property: background-color, border-color, color;
-  transition-duration: 150ms;
+/* Smooth transitions for interactive elements only */
+button, a, input, textarea, select, summary,
+.badge, .btn, .glass-card {
+  transition-property: background-color, border-color, color, box-shadow;
   transition-timing-function: ease;
-}
-
-/* Override transition for elements that need different timing */
-input, textarea, select, button, a {
   transition-duration: 200ms;
 }
 
@@ -183,20 +179,20 @@ input, textarea, select, button, a {
 /* Pulse glow for running task indicators */
 @keyframes pulse-glow {
   0%, 100% {
-    box-shadow: 0 0 0 0 oklch(67% 0.15 160 / 0.3);
+    box-shadow: 0 0 0 0 oklch(67% 0.15 160 / 0.15);
   }
   50% {
-    box-shadow: 0 0 0 8px oklch(67% 0.15 160 / 0);
+    box-shadow: 0 0 0 4px oklch(67% 0.15 160 / 0);
   }
 }
 
 /* Pulse glow for finalizing task indicators (warning orange) */
 @keyframes pulse-glow-warning {
   0%, 100% {
-    box-shadow: 0 0 0 0 oklch(75% 0.18 65 / 0.3);
+    box-shadow: 0 0 0 0 oklch(75% 0.18 65 / 0.15);
   }
   50% {
-    box-shadow: 0 0 0 8px oklch(75% 0.18 65 / 0);
+    box-shadow: 0 0 0 4px oklch(75% 0.18 65 / 0);
   }
 }
 
@@ -271,11 +267,11 @@ input, textarea, select, button, a {
 }
 
 .animate-pulse-glow {
-  animation: pulse-glow 4s ease-in-out infinite;
+  animation: pulse-glow 6s ease-in-out infinite;
 }
 
 .animate-pulse-glow-warning {
-  animation: pulse-glow-warning 4s ease-in-out infinite;
+  animation: pulse-glow-warning 6s ease-in-out infinite;
 }
 
 .animate-slide-down {
@@ -409,13 +405,13 @@ input, textarea, select, button, a {
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    oklch(67% 0.15 160 / 0.06) 25%,
-    oklch(67% 0.15 160 / 0.12) 50%,
-    oklch(67% 0.15 160 / 0.06) 75%,
+    oklch(67% 0.15 160 / 0.03) 25%,
+    oklch(67% 0.15 160 / 0.06) 50%,
+    oklch(67% 0.15 160 / 0.03) 75%,
     transparent 100%
   );
   background-size: 200% 100%;
-  animation: agent-running-shimmer 3s ease-in-out infinite;
+  animation: agent-running-shimmer 6s ease-in-out infinite;
 }
 
 /* Hover micro-interactions */

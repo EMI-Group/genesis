@@ -20,18 +20,10 @@ defmodule EvoDashWeb.AgentsComponents do
     ~H"""
     <% total_nodes = length(@nodes) %>
     <%= for {node, index} <- Enum.with_index(@nodes) do %>
-      <% is_last = index == total_nodes - 1 %>
       <div class={["relative", @depth > 0 && "ml-3 sm:ml-6"]}>
         <!-- Tree connector lines for nested items -->
         <%= if @depth > 0 do %>
-          <!-- Vertical line -->
-          <div class={[
-            "absolute -left-1.5 sm:-left-3 border-l-2 border-base-content/10 z-0",
-            is_last && "top-0 h-6",
-            !is_last && "top-0 bottom-0"
-          ]}>
-          </div>
-          <!-- Horizontal line -->
+          <!-- Horizontal connector from parent trunk -->
           <div class="absolute -left-1.5 sm:-left-3 top-6 w-3 border-t-2 border-base-content/10 z-0"></div>
         <% end %>
 
@@ -105,9 +97,11 @@ defmodule EvoDashWeb.AgentsComponents do
           <% end %>
         </div>
         
-    <!-- Children container with proper spacing -->
+    <!-- Children container with trunk connector -->
         <%= if length(node.children) > 0 do %>
-          <div class="mt-1 space-y-1 relative">
+          <div class="space-y-1 relative">
+            <!-- Vertical trunk line connecting parent to all children -->
+            <div class="absolute left-[0.375rem] sm:left-[0.75rem] -top-2 bottom-6 border-l-2 border-base-content/10 z-0"></div>
             <EvoDashWeb.AgentsComponents.path_tree
               nodes={node.children}
               depth={@depth + 1}
