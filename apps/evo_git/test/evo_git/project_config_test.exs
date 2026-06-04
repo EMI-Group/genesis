@@ -169,4 +169,118 @@ defmodule EvoGit.ProjectConfigTest do
       assert log =~ "Failed to parse foreign_repos"
     end
   end
+
+  describe "worktree_script/2 (OS variants)" do
+    test "returns OS-specific script when matching variant exists", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      script.linux = "scripts/setup_linux.sh"
+      script.macos = "scripts/setup_macos.sh"
+      """
+
+      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == "scripts/setup_linux.sh"
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == "scripts/setup_macos.sh"
+    end
+
+    test "returns nil when OS-specific variant does not exist", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      script.linux = "scripts/setup_linux.sh"
+      """
+
+      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == nil
+      assert ProjectConfig.worktree_script(tmp_dir, :windows) == nil
+    end
+
+    test "returns fallback string script when no OS-specific variants", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      script = "scripts/setup.sh"
+      """
+
+      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+
+      # String script is returned regardless of OS queried
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == "scripts/setup.sh"
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == "scripts/setup.sh"
+      assert ProjectConfig.worktree_script(tmp_dir, :windows) == "scripts/setup.sh"
+    end
+
+    test "returns nil when no config file exists", %{tmp_dir: tmp_dir} do
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == nil
+    end
+
+    test "returns nil when worktree section exists but no script", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      timeout = 30
+      """
+
+      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == nil
+    end
+
+    test "OS-specific map does not fall back to string (TOML parses as map or string, not both)" do
+      # This test documents the behavior: when script is a map (OS variants),
+      # a non-matching OS returns nil — it does NOT fall back to a separate
+      # string script because TOML doesn't allow both forms simultaneously.
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "evo_git_project_config_" <> to_string(System.unique_integer()))
+
+      File.mkdir_p!(tmp_dir)
+
+      toml_content = """
+      [worktree]
+      script.linux = "scripts/setup_linux.sh"
+      """
+
+      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+
+      # No macos variant in the map → nil
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == nil
+
+      File.rm_rf!(tmp_dir)
+    end
+  end
+
+  describe "commands/1" do
+    test "parses commands correctly", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [commands]
+      dev = "npm run dev"
+      test = "mix test"
+      build = "mix compile"
+      """
+
+      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+
+      commands = ProjectConfig.commands(tmp_dir)
+
+      assert commands == %{
+               "dev" => "npm run dev",
+               "test" => "mix test",
+               "build" => "mix compile"
+             }
+    end
+
+    test "returns empty map when no commands section", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      script = "scripts/setup.sh"
+      """
+
+      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+
+      assert ProjectConfig.commands(tmp_dir) == %{}
+    end
+
+    test "returns empty map when no config file exists", %{tmp_dir: tmp_dir} do
+      assert ProjectConfig.commands(tmp_dir) == %{}
+    end
+  end
 end
