@@ -28,7 +28,8 @@ defmodule EvoDash.TaskRegistry do
       :finished_at,
       status: :pending,
       logs: [],
-      result: nil
+      result: nil,
+      review_status: nil
     ]
 
     @type t :: %__MODULE__{
@@ -40,7 +41,8 @@ defmodule EvoDash.TaskRegistry do
             started_at: DateTime.t() | nil,
             finished_at: DateTime.t() | nil,
             logs: [String.t()],
-            result: term()
+            result: term(),
+            review_status: atom() | nil
           }
   end
 
@@ -73,6 +75,10 @@ defmodule EvoDash.TaskRegistry do
 
   def update_task_log(task_id, log_entry) do
     GenServer.cast(__MODULE__, {:append_log, task_id, log_entry})
+  end
+
+  def set_review_status(task_id, status) do
+    GenServer.cast(__MODULE__, {:set_review_status, task_id, status})
   end
 
   def list_tasks_by_path(path) do
@@ -347,6 +353,22 @@ defmodule EvoDash.TaskRegistry do
     :ets.delete(@table_name, task_id)
     persist_tasks_to_dets()
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:set_review_status, task_id, status}, state) do
+    case :ets.lookup(@table_name, task_id) do
+      [{^task_id, %TaskInfo{} = task}] ->
+        updated = %{task | review_status: status}
+        :ets.insert(@table_name, {task_id, updated})
+        persist_tasks_to_dets()
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+
+      _ ->
+        :ok
+    end
+
     {:noreply, state}
   end
 
