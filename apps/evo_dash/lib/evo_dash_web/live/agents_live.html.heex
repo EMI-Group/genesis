@@ -70,8 +70,8 @@
 
     <!-- Right Column: Agent Details Panel — full vertical space -->
     <div class="agents-detail-col">
-      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl h-full">
-        <div class="card-body p-6 overflow-y-auto">
+      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
+        <div class="card-body p-6">
           <%= if @selected_agent_id do %>
             <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
             <%= if agent do %>
