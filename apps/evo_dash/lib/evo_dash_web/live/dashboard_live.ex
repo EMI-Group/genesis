@@ -69,18 +69,18 @@ defmodule EvoDashWeb.DashboardLive do
           </div>
         <% end %>
 
-        <!-- Recently Finished Tasks Section -->
-        <%= if @recent_tasks != [] do %>
+        <!-- Pending Review Tasks Section -->
+        <%= if @pending_tasks != [] do %>
           <div class="mt-6 animate-fade-in-up animation-delay-100">
             <div class="flex items-center gap-2 mb-4">
-              <div class="bg-info/15 text-info p-2 rounded-lg">
-                <.icon name="hero-clock" class="size-5" />
+              <div class="bg-warning/15 text-warning p-2 rounded-lg">
+                <.icon name="hero-exclamation-circle" class="size-5" />
               </div>
-              <h2 class="text-lg font-semibold text-base-content/80">{gettext("Recently Finished")}</h2>
-              <span class="badge badge-ghost">{length(@recent_tasks)}</span>
+              <h2 class="text-lg font-semibold text-base-content/80">{gettext("Pending Review")}</h2>
+              <span class="badge badge-ghost">{length(@pending_tasks)}</span>
             </div>
             <div class="space-y-3">
-              <%= for task <- @recent_tasks do %>
+              <%= for task <- @pending_tasks do %>
                 <EvoDashWeb.DashboardComponents.task_card
                   task={task}
                   show_details={MapSet.member?(@expanded_task_ids, task.id)}
@@ -91,7 +91,7 @@ defmodule EvoDashWeb.DashboardLive do
         <% end %>
 
         <!-- Empty State -->
-        <%= if @running_tasks == [] and @recent_tasks == [] do %>
+        <%= if @running_tasks == [] and @pending_tasks == [] do %>
           <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
             <div class="animate-float">
               <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
@@ -108,7 +108,7 @@ defmodule EvoDashWeb.DashboardLive do
         <% end %>
 
         <!-- View All Tasks Link -->
-        <%= if @running_tasks != [] or @recent_tasks != [] do %>
+        <%= if @running_tasks != [] or @pending_tasks != [] do %>
           <div class="mt-4 text-center animate-fade-in-up animation-delay-200">
             <.link navigate={~p"/tasks"} class="btn btn-ghost gap-2 hover-lift">
               <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext("View Full Task History")}
@@ -209,7 +209,7 @@ defmodule EvoDashWeb.DashboardLive do
           |> Enum.map(& &1.id)
           |> MapSet.new())
       |> assign_form_defaults()
-      |> assign_running_and_recent_tasks()
+      |> assign_running_and_pending_tasks()
       |> assign(:config_status, config_status)
 
     {:ok, socket}
@@ -234,22 +234,39 @@ defmodule EvoDashWeb.DashboardLive do
           |> assign(:active_project_path, nil)
           |> assign(:tasks, tasks)
           |> assign(:notified_task_ids, build_notified_task_ids(tasks, socket.assigns.notified_task_ids))
-          |> assign_running_and_recent_tasks()
+          |> assign_running_and_pending_tasks()
         end
       else
-        # No project in URL — load all tasks
-        tasks =
-          if socket.assigns.active_project do
-            # We had a project but navigated away and back without it
-            socket.assigns.tasks
+        # No project in URL — try auto-loading most recent project, or load all tasks
+        socket =
+          if is_nil(socket.assigns.active_project) do
+            case List.first(socket.assigns.recent_projects) do
+              %{path: recent_path} when is_binary(recent_path) ->
+                if File.dir?(recent_path) do
+                  activate_project(socket, recent_path)
+                else
+                  all_tasks = TaskRegistry.list_tasks()
+
+                  socket
+                  |> assign(:tasks, all_tasks)
+                  |> assign(:notified_task_ids, build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids))
+                  |> assign_running_and_pending_tasks()
+                end
+
+              _ ->
+                all_tasks = TaskRegistry.list_tasks()
+
+                socket
+                |> assign(:tasks, all_tasks)
+                |> assign(:notified_task_ids, build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids))
+                |> assign_running_and_pending_tasks()
+            end
           else
-            TaskRegistry.list_tasks()
+            # We had a project but navigated away and back without it
+            socket
           end
 
         socket
-        |> assign(:tasks, tasks)
-        |> assign(:notified_task_ids, build_notified_task_ids(tasks, socket.assigns.notified_task_ids))
-        |> assign_running_and_recent_tasks()
       end
 
     {:noreply, socket}
@@ -316,7 +333,7 @@ defmodule EvoDashWeb.DashboardLive do
           "genesis_new" -> {:genesis, "new"}
           "genesis_existing" -> {:genesis, "existing"}
           "evolve_simple" -> {:evolve, "simple"}
-          "evolve_complex" -> {:evolve, "complex"}
+          _ -> {:evolve, "simple"}
         end
 
       node_path = params["node_path"]
@@ -369,7 +386,7 @@ defmodule EvoDashWeb.DashboardLive do
              )
            )
            |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
-           |> assign_running_and_recent_tasks()
+           |> assign_running_and_pending_tasks()
            |> assign_form_defaults()}
 
         {:error, reason} ->
@@ -395,7 +412,7 @@ defmodule EvoDashWeb.DashboardLive do
          socket
          |> assign(:tasks, current_tasks(socket))
          |> assign(:expanded_task_ids, expanded)
-         |> assign_running_and_recent_tasks()}
+         |> assign_running_and_pending_tasks()}
 
       {:error, reason} ->
         {:noreply,
@@ -452,7 +469,7 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:tasks, current_tasks(socket))
      |> assign(:expanded_task_ids, MapSet.new())
-     |> assign_running_and_recent_tasks()}
+     |> assign_running_and_pending_tasks()}
   end
 
   @impl true
@@ -464,7 +481,7 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:tasks, current_tasks(socket))
      |> assign(:expanded_task_ids, expanded)
-     |> assign_running_and_recent_tasks()}
+     |> assign_running_and_pending_tasks()}
   end
 
   # --- Project Settings Events ---
@@ -668,7 +685,7 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:notified_task_ids, updated_notified)
      |> assign(:tasks, new_tasks)
-     |> assign_running_and_recent_tasks()}
+     |> assign_running_and_pending_tasks()}
   end
 
   @impl true
@@ -676,7 +693,7 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:tasks, current_tasks(socket))
-     |> assign_running_and_recent_tasks()}
+     |> assign_running_and_pending_tasks()}
   end
 
   @impl true
@@ -709,7 +726,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:worktree_script, worktree_script)
     |> assign(:foreign_repos, foreign_repos)
     |> assign(:show_add_foreign_repo_form, false)
-    |> assign_running_and_recent_tasks()
+    |> assign_running_and_pending_tasks()
     |> maybe_put_flash_mode_info(mode_info)
   end
 
@@ -733,22 +750,27 @@ defmodule EvoDashWeb.DashboardLive do
     |> MapSet.union(existing_notified)
   end
 
-  defp assign_running_and_recent_tasks(socket) do
+  defp assign_running_and_pending_tasks(socket) do
     all_tasks = socket.assigns.tasks
 
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
 
-    recent_tasks =
+    pending_tasks =
       all_tasks
-      |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+      |> Enum.filter(fn task ->
+        task.status == :completed and is_nil(Map.get(task, :review_status)) and
+          show_review_button?(task)
+      end)
       |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
-      |> Enum.take(5)
 
     socket
     |> assign(:running_tasks, running_tasks)
-    |> assign(:recent_tasks, recent_tasks)
+    |> assign(:pending_tasks, pending_tasks)
   end
+
+  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}}) when is_binary(branch) and branch != "", do: true
+  defp show_review_button?(_), do: false
 
   defp assign_form_defaults(socket) do
     socket

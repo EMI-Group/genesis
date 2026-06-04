@@ -168,7 +168,6 @@ defmodule EvoDashWeb.DashboardComponents do
               </optgroup>
               <optgroup label={gettext("Evolve (Mutate Code)")}>
                 <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Simple (Top-down)")}</option>
-                <option value="evolve_complex" selected={@mode == "evolve_complex"}>{gettext("Complex (Bottom-up)")}</option>
               </optgroup>
             </select>
             <.tip text={mode_description(@mode)} />
