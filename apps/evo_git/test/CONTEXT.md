@@ -25,7 +25,7 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 - **`coder_2_test.exs`** — `EvoGit.Agent.CoderTest2`: additional edge-case tests for `build_dynamic_context/1` (root node path, nil inputs, `ArgumentError` recovery).
 
 ### `evo_git/`
-- **`project_config_test.exs`** — `EvoGit.ProjectConfigTest`: tests `ProjectConfig` — `read/1`, `worktree_script/1`. Validates reading/parsing `evogit.toml`, handling missing files, empty content, and invalid TOML with warning logs.
+- **`project_config_test.exs`** — `EvoGit.ProjectConfigTest`: tests `ProjectConfig` — `read/1`, `worktree_script/1`, `worktree_script/2` (OS variants), `commands/1`. Validates reading/parsing `evogit.toml`, handling missing files, empty content, invalid TOML, OS-specific script resolution, and command shortcuts.
 
 ## Constraints
 - Tests use `@moduletag :tmp_dir` which provides a temporary directory via ExUnit's built-in fixture mechanism.

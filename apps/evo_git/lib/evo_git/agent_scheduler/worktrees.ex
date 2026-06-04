@@ -164,12 +164,20 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
   The script is read from `evogit.toml` under the `[worktree]` section.
   Shell detection is done via shebang line, defaulting to the platform shell.
-  Environment variables `SOURCE_REPO_PATH` and `TARGET_WORKTREE_PATH` are set.
-  """
-  @spec run_init_script(String.t(), String.t()) :: :ok
+  Environment variables `SOURCE_REPO_PATH`, `SOURCE_WORKTREE_PATH`, and
+  `TARGET_WORKTREE_PATH` are set.
 
-  def run_init_script(repo_root, worktree_path) do
-    case ProjectConfig.worktree_script(repo_root) do
+  ## Options
+
+    - `:source_worktree_path` — the parent agent's worktree path. Defaults to
+      `repo_root` (same as `SOURCE_REPO_PATH`) for top-level agents.
+  """
+  @spec run_init_script(String.t(), String.t(), keyword()) :: :ok
+
+  def run_init_script(repo_root, worktree_path, opts \\ []) do
+    source_worktree_path = Keyword.get(opts, :source_worktree_path, repo_root)
+
+    case ProjectConfig.worktree_script(repo_root, Platform.os()) do
       nil ->
         :ok
 
@@ -187,6 +195,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
           if Platform.windows?() do
             """
             $env:SOURCE_REPO_PATH = "#{repo_root}"
+            $env:SOURCE_WORKTREE_PATH = "#{source_worktree_path}"
             $env:TARGET_WORKTREE_PATH = "#{worktree_path}"
             Set-Location "#{repo_root}"
             #{script_content}
@@ -194,6 +203,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
           else
             """
             export SOURCE_REPO_PATH="#{repo_root}"
+            export SOURCE_WORKTREE_PATH="#{source_worktree_path}"
             export TARGET_WORKTREE_PATH="#{worktree_path}"
             cd "#{repo_root}"
             #{script_content}
