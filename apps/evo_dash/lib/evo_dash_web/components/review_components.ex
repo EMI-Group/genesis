@@ -1,6 +1,6 @@
 defmodule EvoDashWeb.ReviewComponents do
   @moduledoc """
-  Components for the code review page — diff viewer, file list, action buttons.
+  Components for the code review page — GitHub PR-style tab layout with split diff viewer.
   """
   use EvoDashWeb, :html
 
@@ -45,6 +45,39 @@ defmodule EvoDashWeb.ReviewComponents do
             </div>
           </div>
         </div>
+      </div>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # review_tabs/1 — Tab bar for switching between Conversation and Files Changed
+  # ---------------------------------------------------------------------------
+
+  attr :active_tab, :atom, required: true
+  attr :files_count, :integer, default: 0
+
+  def review_tabs(assigns) do
+    ~H"""
+    <div class="bg-base-100 border border-base-200 rounded-2xl overflow-hidden">
+      <div class="review-tab-bar">
+        <button
+          phx-click="switch_tab"
+          phx-value-tab="conversation"
+          class={["review-tab", @active_tab == :conversation && "tab-active"]}
+        >
+          <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
+          {gettext("Conversation")}
+        </button>
+        <button
+          phx-click="switch_tab"
+          phx-value-tab="files_changed"
+          class={["review-tab", @active_tab == :files_changed && "tab-active"]}
+        >
+          <.icon name="hero-code-bracket" class="size-4 mr-2" />
+          {gettext("Files Changed")}
+          <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
+        </button>
       </div>
     </div>
     """
@@ -106,106 +139,6 @@ defmodule EvoDashWeb.ReviewComponents do
           </span>
         </div>
       </div>
-    </div>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # file_list/1 — Clickable list of changed files with stats
-  # ---------------------------------------------------------------------------
-
-  attr :files, :list, required: true
-  attr :selected_file, :string, default: nil
-
-  def file_list(assigns) do
-    ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
-      <div class="p-4 border-b border-base-200">
-        <h3 class="font-semibold text-sm flex items-center gap-2">
-          <.icon name="hero-folder-open" class="size-4 text-base-content/60" />
-          {gettext("Changed Files")}
-        </h3>
-      </div>
-      <div class="divide-y divide-base-200 max-h-[400px] overflow-y-auto">
-        <%= for file <- @files do %>
-          <button
-            phx-click="select_file"
-            phx-value-path={file.path}
-            class={[
-              "w-full text-left px-4 py-3 hover:bg-base-200/50 transition-colors flex items-center gap-3",
-              @selected_file == file.path && "bg-primary/5 border-l-2 border-l-primary"
-            ]}
-          >
-            <.icon name={file_status_icon(file.status)} class={"size-4 shrink-0 #{file_status_color(file.status)}"} />
-            <span class="text-sm font-mono truncate flex-1">{file.path}</span>
-            <span class="text-xs text-success font-mono">+{file.additions}</span>
-            <span class="text-xs text-error font-mono">-{file.deletions}</span>
-          </button>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # diff_viewer/1 — Full diff display with Lumis syntax highlighting
-  # ---------------------------------------------------------------------------
-
-  attr :files, :list, required: true
-  attr :expanded_files, :map, default: %{}
-
-  def diff_viewer(assigns) do
-    ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
-      <div class="p-4 border-b border-base-200">
-        <h3 class="font-semibold text-sm flex items-center gap-2">
-          <.icon name="hero-code-bracket" class="size-4 text-base-content/60" />
-          {gettext("Changes")}
-        </h3>
-      </div>
-      <div class="divide-y divide-base-200">
-        <%= for file <- @files do %>
-          <div>
-            <button
-              phx-click="toggle_file_expansion"
-              phx-value-path={file.path}
-              class="w-full text-left px-4 py-3 hover:bg-base-200/50 transition-colors flex items-center gap-3"
-            >
-              <.icon
-                name="hero-chevron-right"
-                class={"size-4 transition-transform #{if Map.get(@expanded_files, file.path, true), do: "rotate-90", else: ""}"}
-              />
-              <.icon name={file_status_icon(file.status)} class={"size-4 #{file_status_color(file.status)}"} />
-              <span class="text-sm font-mono">{file.path}</span>
-              <span class="text-xs text-success font-mono ml-auto">+{file.additions}</span>
-              <span class="text-xs text-error font-mono">-{file.deletions}</span>
-            </button>
-            <%= if Map.get(@expanded_files, file.path, true) do %>
-              <div class="border-t border-base-200 bg-base-300/30 overflow-x-auto">
-                {render_diff_content(file)}
-              </div>
-            <% end %>
-          </div>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
-  defp render_diff_content(file) do
-    assigns = %{file: file}
-
-    ~H"""
-    <div class="text-xs font-mono leading-relaxed">
-      <%= for line <- parse_diff_lines(@file) do %>
-        <div class={["flex", line_bg(line.type)]}>
-          <span class="w-10 shrink-0 text-right pr-3 text-base-content/30 select-none">{line.line_number}</span>
-          <span class="w-5 shrink-0 text-base-content/30 select-none text-center">{line.prefix}</span>
-          <span class={["whitespace-pre", line_text_color(line.type)]}>
-            {highlight_line_content(line.content, @file.language)}
-          </span>
-        </div>
-      <% end %>
     </div>
     """
   end
@@ -286,47 +219,133 @@ defmodule EvoDashWeb.ReviewComponents do
   end
 
   # ---------------------------------------------------------------------------
+  # file_tree_sidebar/1 — Sidebar file list for the split-pane layout
+  # ---------------------------------------------------------------------------
+
+  attr :files, :list, required: true
+  attr :selected_file, :string, default: nil
+
+  def file_tree_sidebar(assigns) do
+    ~H"""
+    <div class="diff-file-sidebar">
+      <div class="p-3 border-b border-base-200 bg-base-200/30 sticky top-0 z-10">
+        <h3 class="font-semibold text-xs text-base-content/60 uppercase tracking-wider">
+          {gettext("Changed Files")}
+        </h3>
+      </div>
+      <%= for file <- @files do %>
+        <button
+          phx-click="select_file"
+          phx-value-path={file.path}
+          class={["file-item", @selected_file == file.path && "file-selected"]}
+        >
+          <.icon name={file_status_icon(file.status)} class={"size-3.5 shrink-0 #{file_status_color(file.status)}"} />
+          <span class="font-mono truncate flex-1 text-xs" title={file.path}>
+            {Path.basename(file.path)}
+          </span>
+          <span class="text-[10px] text-success font-mono leading-none">+{file.additions}</span>
+          <span class="text-[10px] text-error font-mono leading-none">-{file.deletions}</span>
+        </button>
+      <% end %>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # diff_viewer/1 — GitHub-style diff viewer with proper syntax highlighting
+  # ---------------------------------------------------------------------------
+
+  attr :files, :list, required: true
+  attr :expanded_files, :map, default: %{}
+  attr :selected_file, :string, default: nil
+
+  def diff_viewer(assigns) do
+    ~H"""
+    <div class="diff-main-content" id="diff-viewer">
+      <%= for file <- @files do %>
+        <div class="diff-file-section" id={"file-section-#{file_path_to_id(file.path)}"}>
+          <button
+            phx-click="toggle_file_expansion"
+            phx-value-path={file.path}
+            class="diff-file-header w-full text-left"
+          >
+            <.icon
+              name="hero-chevron-right"
+              class={"size-3.5 transition-transform shrink-0 #{if Map.get(@expanded_files, file.path, true), do: "rotate-90", else: ""}"}
+            />
+            <.icon name={file_status_icon(file.status)} class={"size-3.5 #{file_status_color(file.status)}"} />
+            <span class="truncate flex-1">{file.path}</span>
+            <span class="text-[10px] text-success font-mono">+{file.additions}</span>
+            <span class="text-[10px] text-error font-mono">-{file.deletions}</span>
+          </button>
+          <%= if Map.get(@expanded_files, file.path, true) do %>
+            <div class="overflow-x-auto">
+              {render_diff_content(file)}
+            </div>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # split_diff_layout/1 — Full split layout with sidebar + diff
+  # ---------------------------------------------------------------------------
+
+  attr :files, :list, required: true
+  attr :expanded_files, :map, default: %{}
+  attr :selected_file, :string, default: nil
+
+  def split_diff_layout(assigns) do
+    ~H"""
+    <div class="bg-base-100 border border-base-200 rounded-2xl overflow-hidden">
+      <div class="diff-split-layout">
+        <.file_tree_sidebar files={@files} selected_file={@selected_file} />
+        <.diff_viewer
+          files={@files}
+          expanded_files={@expanded_files}
+          selected_file={@selected_file}
+        />
+      </div>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  defp review_status_badge(:open), do: "badge-warning"
-  defp review_status_badge(:merged), do: "badge-success"
-  defp review_status_badge(:rejected), do: "badge-error"
-  defp review_status_badge(:no_changes), do: "badge-ghost"
-  defp review_status_badge(_), do: "badge-ghost"
+  defp render_diff_content(file) do
+    assigns = %{file: file}
 
-  defp review_status_icon(:open), do: "hero-clock"
-  defp review_status_icon(:merged), do: "hero-check-circle"
-  defp review_status_icon(:rejected), do: "hero-x-circle"
-  defp review_status_icon(:no_changes), do: "hero-information-circle"
-  defp review_status_icon(_), do: "hero-question-mark-circle"
+    ~H"""
+    <div class="text-xs font-mono">
+      <%= for line <- parse_diff_lines(@file) do %>
+        <div class={["diff-line", diff_line_class(line.type)]}>
+          <span class="diff-line-gutter">{line.line_number}</span>
+          <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
+          <span class="diff-line-content">
+            {if line.type in [:addition, :context], do: highlight_line_content(line.content, @file.language), else: line.content}
+          </span>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
 
-  defp review_status_label(:open), do: gettext("Open")
-  defp review_status_label(:merged), do: gettext("Merged")
-  defp review_status_label(:rejected), do: gettext("Rejected")
-  defp review_status_label(:no_changes), do: gettext("No Changes")
-  defp review_status_label(_), do: gettext("Unknown")
+  # Map line types to CSS classes
+  defp diff_line_class(:addition), do: "diff-line-addition"
+  defp diff_line_class(:deletion), do: "diff-line-deletion"
+  defp diff_line_class(:hunk), do: "diff-line-hunk"
+  defp diff_line_class(:context), do: "diff-line-context"
+  defp diff_line_class(:header), do: "diff-line-meta"
+  defp diff_line_class(:meta), do: "diff-line-meta"
+  defp diff_line_class(_), do: ""
 
-  defp file_status_icon("added"), do: "hero-plus-circle"
-  defp file_status_icon("deleted"), do: "hero-minus-circle"
-  defp file_status_icon("modified"), do: "hero-pencil-square"
-  defp file_status_icon(_), do: "hero-document"
-
-  defp file_status_color("added"), do: "text-success"
-  defp file_status_color("deleted"), do: "text-error"
-  defp file_status_color("modified"), do: "text-info"
-  defp file_status_color(_), do: "text-base-content/50"
-
-  defp line_bg(:addition), do: "bg-success/10"
-  defp line_bg(:deletion), do: "bg-error/10"
-  defp line_bg(:hunk), do: "bg-info/5 text-info"
-  defp line_bg(:context), do: ""
-  defp line_bg(_), do: "bg-base-200/30"
-
-  defp line_text_color(:addition), do: "text-success"
-  defp line_text_color(:deletion), do: "text-error"
-  defp line_text_color(:hunk), do: "text-info"
-  defp line_text_color(_), do: "text-base-content/80"
+  defp diff_prefix_color(:addition), do: "text-success/70"
+  defp diff_prefix_color(:deletion), do: "text-error/70"
+  defp diff_prefix_color(_), do: ""
 
   # Parse diff lines into structured data
   defp parse_diff_lines(file) do
@@ -358,11 +377,19 @@ defmodule EvoDashWeb.ReviewComponents do
     end)
   end
 
-  # Use Lumis for syntax highlighting of individual lines
+  # Syntax highlighting using Lumis multi-themes for light/dark support.
+  # Strips the <pre>/<code> wrappers since we render lines individually.
   defp highlight_line_content(content, language) do
     if content && String.length(content) > 0 do
       try do
-        Lumis.highlight!(content, formatter: {:html_inline, language: language, theme: "onedark"})
+        Lumis.highlight!(content,
+          formatter: {:html_multi_themes,
+            language: language,
+            themes: [light: "github_light", dark: "github_dark"],
+            default_theme: "light-dark()"
+          }
+        )
+        |> strip_lumis_wrappers()
         |> raw()
       rescue
         _ -> content
@@ -371,4 +398,47 @@ defmodule EvoDashWeb.ReviewComponents do
       ""
     end
   end
+
+  # Strip <pre class="lumis" ...><code ...>...</code></pre> wrappers,
+  # keeping only the inner <span> elements with syntax colors.
+  defp strip_lumis_wrappers(html) do
+    html
+    |> String.replace(~r/^<pre[^>]*><code[^>]*>/, "")
+    |> String.replace(~r/<\/code><\/pre>$/, "")
+  end
+
+  # Convert a file path to a valid HTML id (replace / and . with -)
+  defp file_path_to_id(path) do
+    path
+    |> String.replace(~r{[^a-zA-Z0-9_-]}, "-")
+    |> String.trim("-")
+  end
+
+  defp review_status_badge(:open), do: "badge-warning"
+  defp review_status_badge(:merged), do: "badge-success"
+  defp review_status_badge(:rejected), do: "badge-error"
+  defp review_status_badge(:no_changes), do: "badge-ghost"
+  defp review_status_badge(_), do: "badge-ghost"
+
+  defp review_status_icon(:open), do: "hero-clock"
+  defp review_status_icon(:merged), do: "hero-check-circle"
+  defp review_status_icon(:rejected), do: "hero-x-circle"
+  defp review_status_icon(:no_changes), do: "hero-information-circle"
+  defp review_status_icon(_), do: "hero-question-mark-circle"
+
+  defp review_status_label(:open), do: gettext("Open")
+  defp review_status_label(:merged), do: gettext("Merged")
+  defp review_status_label(:rejected), do: gettext("Rejected")
+  defp review_status_label(:no_changes), do: gettext("No Changes")
+  defp review_status_label(_), do: gettext("Unknown")
+
+  defp file_status_icon("added"), do: "hero-plus-circle"
+  defp file_status_icon("deleted"), do: "hero-minus-circle"
+  defp file_status_icon("modified"), do: "hero-pencil-square"
+  defp file_status_icon(_), do: "hero-document"
+
+  defp file_status_color("added"), do: "text-success"
+  defp file_status_color("deleted"), do: "text-error"
+  defp file_status_color("modified"), do: "text-info"
+  defp file_status_color(_), do: "text-base-content/50"
 end
