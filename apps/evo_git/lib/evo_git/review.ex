@@ -2,7 +2,7 @@ defmodule EvoGit.Review do
   @moduledoc """
   Review context module for managing code review operations.
   
-  Provides functions for loading diff data, merging/rejecting branches,
+  Provides functions for loading diff data, listing commits, merging/rejecting branches,
   and creating GitHub PRs manually from the review page.
   """
   
@@ -13,6 +13,38 @@ defmodule EvoGit.Review do
     defstruct [:path, :status, :additions, :deletions, :diff, :language]
   end
   
+  defmodule CommitInfo do
+    @moduledoc "Structured info about a commit"
+    defstruct [:sha, :short_sha, :message, :author_name, :author_email, :date]
+  end
+  
+  @doc """
+  Lists commits between base and branch tip, returning a list of CommitInfo structs.
+  Returns {:ok, commits} or {:error, reason}.
+  """
+  def list_commits(repo_path, branch_name) do
+    with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
+         {:ok, base_sha} <- Git.rev_parse(repo_path, "HEAD") do
+      separator = "|||COMMIT_SEP|||"
+      format = "%H%n%h%n%s%n%an%n%ae%n%aI%n#{separator}"
+      case Git.log(repo_path, ["--format=#{format}", "#{base_sha}..#{commit_sha}"]) do
+        {:ok, output} ->
+          commits =
+            output
+            |> String.trim()
+            |> String.split(separator)
+            |> Enum.map(&parse_commit_entry/1)
+            |> Enum.reject(&is_nil/1)
+          {:ok, commits}
+        
+        {:error, _, _} ->
+          {:ok, []}
+      end
+    else
+      _ -> {:ok, []}
+    end
+  end
+
   @doc """
   Loads all review data for a given branch in a repository.
   Returns a map with :commit_sha, :base_sha, :diff_stat, :diff, :files, :changed_files_count, :total_additions, :total_deletions.
@@ -140,6 +172,23 @@ defmodule EvoGit.Review do
   
   # --- Private helpers ---
   
+  defp parse_commit_entry(""), do: nil
+  defp parse_commit_entry(entry) do
+    case String.split(String.trim(entry), "\n", parts: 6) do
+      [sha, short_sha, message, author_name, author_email, date] ->
+        %CommitInfo{
+          sha: sha,
+          short_sha: short_sha,
+          message: message,
+          author_name: author_name,
+          author_email: author_email,
+          date: date
+        }
+      _ ->
+        nil
+    end
+  end
+
   defp parse_diff_into_files(diff) when is_binary(diff) do
     diff
     |> String.split(~r/^diff --git /m, trim: true)
