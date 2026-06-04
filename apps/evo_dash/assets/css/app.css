@@ -464,7 +464,8 @@ button, a, input, textarea, select, summary,
 
 /* Diff line layout */
 .diff-line {
-  @apply flex text-xs font-mono leading-4;
+  @apply flex items-center text-xs font-mono leading-[20px];
+  min-height: 20px;
 }
 
 .diff-line-gutter {
@@ -477,7 +478,7 @@ button, a, input, textarea, select, summary,
 
 .diff-line-content {
   @apply whitespace-pre flex-1;
-  line-height: 1rem !important;
+  line-height: 20px !important;
 }
 
 /* Line type backgrounds — subtle, GitHub-like */
@@ -523,18 +524,20 @@ button, a, input, textarea, select, summary,
   @apply text-base-content/30;
 }
 
-/* Syntax highlight overrides — prevent Lumis backgrounds from interfering */
-.diff-line-content pre.lumis,
-.diff-line-content pre.lumis *,
+/* Syntax highlight overrides — prevent Lumis from adding extra space */
+.diff-line-content pre,
+.diff-line-content pre *,
 .diff-line-content code,
 .diff-line-content code *,
 .diff-line-content span {
+  display: inline !important;
   background: transparent !important;
   margin: 0 !important;
   padding: 0 !important;
   border: none !important;
   font-size: inherit !important;
-  line-height: 1rem !important;
+  line-height: inherit !important;
+  vertical-align: baseline !important;
 }
 
 /* Lumis light-dark() support — ensure color-scheme is propagated */
