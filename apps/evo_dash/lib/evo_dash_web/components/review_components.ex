@@ -57,11 +57,12 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:active_tab, :atom, required: true)
   attr(:files_count, :integer, default: 0)
   attr(:commits_count, :integer, default: 0)
+  attr(:fullscreen, :boolean, default: false)
 
   def review_tabs(assigns) do
     ~H"""
-    <div class="bg-base-100 border border-base-200 rounded-2xl overflow-hidden">
-      <div class="review-tab-bar">
+    <%= if @fullscreen do %>
+      <div class="review-tab-bar-sticky">
         <button
           phx-click="switch_tab"
           phx-value-tab="conversation"
@@ -89,7 +90,38 @@ defmodule EvoDashWeb.ReviewComponents do
           <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
         </button>
       </div>
-    </div>
+    <% else %>
+      <div class="bg-base-100 border border-base-200 rounded-2xl overflow-hidden">
+        <div class="review-tab-bar">
+          <button
+            phx-click="switch_tab"
+            phx-value-tab="conversation"
+            class={["review-tab", @active_tab == :conversation && "tab-active"]}
+          >
+            <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
+            {gettext("Conversation")}
+          </button>
+          <button
+            phx-click="switch_tab"
+            phx-value-tab="commits"
+            class={["review-tab", @active_tab == :commits && "tab-active"]}
+          >
+            <.icon name="hero-clock" class="size-4 mr-2" />
+            {gettext("Commits")}
+            <span class="badge badge-sm badge-ghost ml-2">{@commits_count}</span>
+          </button>
+          <button
+            phx-click="switch_tab"
+            phx-value-tab="files_changed"
+            class={["review-tab", @active_tab == :files_changed && "tab-active"]}
+          >
+            <.icon name="hero-code-bracket" class="size-4 mr-2" />
+            {gettext("Files Changed")}
+            <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
+          </button>
+        </div>
+      </div>
+    <% end %>
     """
   end
 
@@ -345,11 +377,12 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:files, :list, required: true)
   attr(:expanded_files, :map, default: %{})
   attr(:selected_file, :string, default: nil)
+  attr(:fullscreen, :boolean, default: false)
 
   def split_diff_layout(assigns) do
     ~H"""
-    <div class="bg-base-100 border border-base-200 rounded-2xl overflow-hidden">
-      <div class="diff-split-layout">
+    <%= if @fullscreen do %>
+      <div class="diff-fullscreen-layout">
         <.file_tree_sidebar files={@files} selected_file={@selected_file} />
         <.diff_viewer
           files={@files}
@@ -357,7 +390,18 @@ defmodule EvoDashWeb.ReviewComponents do
           selected_file={@selected_file}
         />
       </div>
-    </div>
+    <% else %>
+      <div class="bg-base-100 border border-base-200 rounded-2xl overflow-hidden">
+        <div class="diff-split-layout">
+          <.file_tree_sidebar files={@files} selected_file={@selected_file} />
+          <.diff_viewer
+            files={@files}
+            expanded_files={@expanded_files}
+            selected_file={@selected_file}
+          />
+        </div>
+      </div>
+    <% end %>
     """
   end
 

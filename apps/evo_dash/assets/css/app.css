@@ -432,7 +432,50 @@ button, a, input, textarea, select, summary,
 
 /* === Diff Viewer (GitHub PR Style) === */
 
-/* Split layout: file tree sidebar + diff content */
+/* Full-screen wrapper — breaks out of <main> padding for Files Changed tab */
+.review-fullscreen-wrapper {
+  margin-left: -1rem;
+  margin-right: -1rem;
+  margin-bottom: -3rem;
+  margin-top: -1rem;
+}
+@media (min-width: 640px) {
+  .review-fullscreen-wrapper {
+    margin-left: -1.5rem;
+    margin-right: -1.5rem;
+  }
+}
+@media (min-width: 1024px) {
+  .review-fullscreen-wrapper {
+    margin-left: -2rem;
+    margin-right: -2rem;
+  }
+}
+
+/* Flex column container — fills viewport height minus navbar */
+.review-fullscreen-content {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 56px);
+}
+
+/* Sticky tab bar — flat bar that sticks to viewport top under the navbar */
+.review-tab-bar-sticky {
+  @apply sticky top-0 z-30 bg-base-100 border-b border-base-200 px-4 sm:px-6 lg:px-8;
+}
+
+/* Full-screen diff layout — flex-1 fills remaining space below sticky tab bar */
+.diff-fullscreen-layout {
+  @apply flex flex-1 min-h-0;
+}
+
+/* Ensure the diff main content scrolls in fullscreen mode */
+.diff-fullscreen-layout .diff-main-content {
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+/* Split layout: file tree sidebar + diff content (non-fullscreen) */
 .diff-split-layout {
   @apply flex gap-0 h-[calc(100vh-280px)] min-h-[400px];
 }
