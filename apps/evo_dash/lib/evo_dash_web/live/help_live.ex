@@ -116,13 +116,13 @@ defmodule EvoDashWeb.HelpLive do
     {gettext("How do I change the LLM model?"),
      gettext("Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard.")},
     {gettext("What is sandbox mode?"),
-     gettext("Sandbox mode controls how EvoGit runs LLM-generated code. \"auto\" enables sandboxing when systemd-run is available. \"enabled\" forces sandboxing on (requires systemd). \"disabled\" turns it off entirely — use with caution. Resource limits for the sandbox can be configured in config.toml under [sandbox.resources] and [sandbox.process].")},
+     gettext("Sandbox mode controls how EvoGit isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process].")},
     {gettext("How does the context tree work?"),
      gettext("EvoGit models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories.")},
     {gettext("What happens if my config is missing?"),
      gettext("EvoGit uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page.")},
     {gettext("How do I configure sandbox resources?"),
-     gettext("Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). You can also adjust some settings from the Settings page in the dashboard. Available options include cpu_quota, memory_max, tasks_max, and more.")}
+     gettext("Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard.")}
   ]
 
   @impl true
