@@ -32,66 +32,92 @@ defmodule EvoDashWeb.ReviewLive do
               <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
             </div>
           <% else %>
-            <!-- Review Header -->
-            <EvoDashWeb.ReviewComponents.review_header
-              title={@title}
-              task_type={@task_type}
-              branch_name={@branch_name}
-              commit_sha={@commit_sha}
-              status={@review_status}
-            />
-
-            <!-- Tab Bar -->
-            <EvoDashWeb.ReviewComponents.review_tabs
-              active_tab={@review_tab}
-              files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
-              commits_count={length(@commits)}
-            />
-
-            <!-- Conversation Tab -->
-            <%= if @review_tab == :conversation do %>
+            <%= if @review_tab == :files_changed do %>
+              <!-- Files Changed: fullscreen layout -->
               <div class="space-y-4">
-                <!-- Agent Summary -->
-                <%= if @agent_summary do %>
-                  <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
-                <% end %>
-
-                <!-- Diff Stats -->
-                <%= if @review_data do %>
-                  <EvoDashWeb.ReviewComponents.diff_stats_bar
-                    files_count={@review_data.changed_files_count}
-                    additions={@review_data.total_additions}
-                    deletions={@review_data.total_deletions}
-                  />
-                <% end %>
-
-                <!-- Commits List -->
-                <%= if @commits != [] do %>
-                  <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-                <% end %>
-
-                <!-- Action Buttons -->
-                <EvoDashWeb.ReviewComponents.action_buttons
-                  branch_exists={@branch_exists}
-                  has_pr={@has_pr}
-                  pr_url={@pr_url}
-                  loading={@action_loading}
+                <!-- Review Header (scrolls away normally) -->
+                <EvoDashWeb.ReviewComponents.review_header
+                  title={@title}
+                  task_type={@task_type}
+                  branch_name={@branch_name}
+                  commit_sha={@commit_sha}
+                  status={@review_status}
                 />
               </div>
-            <% end %>
 
-            <!-- Commits Tab -->
-            <%= if @review_tab == :commits and @commits != [] do %>
-              <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-            <% end %>
-
-            <!-- Files Changed Tab -->
-            <%= if @review_tab == :files_changed and @review_data do %>
-              <EvoDashWeb.ReviewComponents.split_diff_layout
-                files={@review_data.files}
-                expanded_files={@expanded_files}
-                selected_file={@selected_file}
+              <!-- Fullscreen wrapper — breaks out of parent padding -->
+              <div class="review-fullscreen-wrapper">
+                <!-- Sticky tab bar -->
+                <EvoDashWeb.ReviewComponents.review_tabs
+                  active_tab={@review_tab}
+                  files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
+                  commits_count={length(@commits)}
+                  fullscreen={true}
+                />
+                <!-- Diff flows with page, sidebar sticks -->
+                <%= if @review_data do %>
+                  <EvoDashWeb.ReviewComponents.split_diff_layout
+                    files={@review_data.files}
+                    expanded_files={@expanded_files}
+                    selected_file={@selected_file}
+                    fullscreen={true}
+                  />
+                <% end %>
+              </div>
+            <% else %>
+              <!-- Conversation / Commits: standard card-based layout -->
+              <!-- Review Header -->
+              <EvoDashWeb.ReviewComponents.review_header
+                title={@title}
+                task_type={@task_type}
+                branch_name={@branch_name}
+                commit_sha={@commit_sha}
+                status={@review_status}
               />
+
+              <!-- Tab Bar -->
+              <EvoDashWeb.ReviewComponents.review_tabs
+                active_tab={@review_tab}
+                files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
+                commits_count={length(@commits)}
+              />
+
+              <!-- Conversation Tab -->
+              <%= if @review_tab == :conversation do %>
+                <div class="space-y-4">
+                  <!-- Agent Summary -->
+                  <%= if @agent_summary do %>
+                    <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
+                  <% end %>
+
+                  <!-- Diff Stats -->
+                  <%= if @review_data do %>
+                    <EvoDashWeb.ReviewComponents.diff_stats_bar
+                      files_count={@review_data.changed_files_count}
+                      additions={@review_data.total_additions}
+                      deletions={@review_data.total_deletions}
+                    />
+                  <% end %>
+
+                  <!-- Commits List -->
+                  <%= if @commits != [] do %>
+                    <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
+                  <% end %>
+
+                  <!-- Action Buttons -->
+                  <EvoDashWeb.ReviewComponents.action_buttons
+                    branch_exists={@branch_exists}
+                    has_pr={@has_pr}
+                    pr_url={@pr_url}
+                    loading={@action_loading}
+                  />
+                </div>
+              <% end %>
+
+              <!-- Commits Tab -->
+              <%= if @review_tab == :commits and @commits != [] do %>
+                <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
+              <% end %>
             <% end %>
 
             <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
