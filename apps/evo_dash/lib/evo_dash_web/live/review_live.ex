@@ -353,10 +353,8 @@ defmodule EvoDashWeb.ReviewLive do
 
         commits =
           if branch_exists && repo_path do
-            case Review.list_commits(repo_path, branch_name) do
-              {:ok, list} -> list
-              _ -> []
-            end
+            {:ok, commits} = Review.list_commits(repo_path, branch_name)
+            commits
           else
             []
           end

@@ -900,8 +900,6 @@ defmodule EvoDashWeb.DashboardLive do
     end
   end
 
-  defp load_project_config(nil), do: {nil, nil, %{}}
-
   defp load_project_config(project_root) do
     try do
       config = EvoGit.ProjectConfig.read(project_root)
