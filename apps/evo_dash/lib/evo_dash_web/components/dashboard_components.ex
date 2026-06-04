@@ -663,9 +663,7 @@ defmodule EvoDashWeb.DashboardComponents do
     ~H"""
     <div class={[
       "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative hover-lift",
-      @task.status == :completed && "bg-info/5",
-      @task.status == :running && "bg-success/5",
-      @task.status == :finalizing && "bg-orange-500/5"
+      task_card_tint(@task)
     ]}>
       <!-- Three-dot kebab menu -->
       <details class="dropdown dropdown-end absolute top-3 right-3 z-[1]">
@@ -683,7 +681,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
       <div class="flex">
         <!-- Left accent bar -->
-        <div class={["w-1 shrink-0", status_accent_color(@task.status)]}></div>
+        <div class={["w-1 shrink-0", task_accent_color(@task)]}></div>
 
         <div class="flex-1 p-4 md:p-5 min-w-0">
           <!-- Compact header — single row: type · mode | status · short ID -->
@@ -709,6 +707,13 @@ defmodule EvoDashWeb.DashboardComponents do
                   <% true -> %>{@task.status}
                 <% end %>
               </span>
+              <%= if Map.get(@task, :review_status) do %>
+                <span class="text-base-content/30">·</span>
+                <span class={["badge badge-sm", review_status_badge(@task.review_status)]}>
+                  <.icon name={review_status_icon(@task.review_status)} class="size-3 mr-1" />
+                  {review_status_label(@task.review_status)}
+                </span>
+              <% end %>
               <span class="text-xs text-base-content/30">·</span>
               <span class="text-xs font-mono text-base-content/40">
                 {String.slice(@task.id, 0, 8)}
@@ -866,6 +871,34 @@ defmodule EvoDashWeb.DashboardComponents do
   defp status_accent_color(:failed), do: "bg-error"
   defp status_accent_color(:cancelled), do: "bg-warning"
   defp status_accent_color(_), do: "bg-base-300"
+
+  defp task_accent_color(%{status: :completed, review_status: :merged}), do: "bg-success"
+  defp task_accent_color(%{status: :completed, review_status: :rejected}), do: "bg-error"
+  defp task_accent_color(%{status: :completed, review_status: :continued}), do: "bg-info"
+  defp task_accent_color(%{status: status}), do: status_accent_color(status)
+
+  defp task_card_tint(%{status: :running}), do: "bg-success/5"
+  defp task_card_tint(%{status: :completed, review_status: :merged}), do: "bg-success/5"
+  defp task_card_tint(%{status: :completed, review_status: :rejected}), do: "bg-error/5"
+  defp task_card_tint(%{status: :completed, review_status: :continued}), do: "bg-info/5"
+  defp task_card_tint(%{status: :completed}), do: "bg-info/5"
+  defp task_card_tint(%{status: :finalizing}), do: "bg-orange-500/5"
+  defp task_card_tint(_), do: ""
+
+  defp review_status_badge(:merged), do: "badge-success"
+  defp review_status_badge(:rejected), do: "badge-error"
+  defp review_status_badge(:continued), do: "badge-info"
+  defp review_status_badge(_), do: "badge-ghost"
+
+  defp review_status_icon(:merged), do: "hero-check-circle"
+  defp review_status_icon(:rejected), do: "hero-x-circle"
+  defp review_status_icon(:continued), do: "hero-arrow-path"
+  defp review_status_icon(_), do: "hero-question-mark-circle"
+
+  defp review_status_label(:merged), do: "Merged"
+  defp review_status_label(:rejected), do: "Rejected"
+  defp review_status_label(:continued), do: "Continued"
+  defp review_status_label(_), do: "Unknown"
 
   # ---------------------------------------------------------------------------
   # Public helpers — render_options/1
