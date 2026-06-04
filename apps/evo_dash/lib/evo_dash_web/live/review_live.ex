@@ -41,37 +41,45 @@ defmodule EvoDashWeb.ReviewLive do
               status={@review_status}
             />
 
-            <!-- Agent Summary -->
-            <%= if @agent_summary do %>
-              <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
-            <% end %>
-
-            <!-- Action Buttons -->
-            <EvoDashWeb.ReviewComponents.action_buttons
-              branch_exists={@branch_exists}
-              has_pr={@has_pr}
-              pr_url={@pr_url}
-              loading={@action_loading}
+            <!-- Tab Bar -->
+            <EvoDashWeb.ReviewComponents.review_tabs
+              active_tab={@review_tab}
+              files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
             />
 
-            <%= if @review_data do %>
-              <!-- Diff Stats Bar -->
-              <EvoDashWeb.ReviewComponents.diff_stats_bar
-                files_count={@review_data.changed_files_count}
-                additions={@review_data.total_additions}
-                deletions={@review_data.total_deletions}
-              />
+            <!-- Conversation Tab -->
+            <%= if @review_tab == :conversation do %>
+              <div class="space-y-4">
+                <!-- Agent Summary -->
+                <%= if @agent_summary do %>
+                  <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
+                <% end %>
 
-              <!-- File List -->
-              <EvoDashWeb.ReviewComponents.file_list
-                files={@review_data.files}
-                selected_file={@selected_file}
-              />
+                <!-- Diff Stats -->
+                <%= if @review_data do %>
+                  <EvoDashWeb.ReviewComponents.diff_stats_bar
+                    files_count={@review_data.changed_files_count}
+                    additions={@review_data.total_additions}
+                    deletions={@review_data.total_deletions}
+                  />
+                <% end %>
 
-              <!-- Diff Viewer -->
-              <EvoDashWeb.ReviewComponents.diff_viewer
+                <!-- Action Buttons -->
+                <EvoDashWeb.ReviewComponents.action_buttons
+                  branch_exists={@branch_exists}
+                  has_pr={@has_pr}
+                  pr_url={@pr_url}
+                  loading={@action_loading}
+                />
+              </div>
+            <% end %>
+
+            <!-- Files Changed Tab -->
+            <%= if @review_tab == :files_changed and @review_data do %>
+              <EvoDashWeb.ReviewComponents.split_diff_layout
                 files={@review_data.files}
                 expanded_files={@expanded_files}
+                selected_file={@selected_file}
               />
             <% end %>
 
@@ -112,6 +120,7 @@ defmodule EvoDashWeb.ReviewLive do
       |> assign(:action_loading, false)
       |> assign(:selected_file, nil)
       |> assign(:expanded_files, %{})
+      |> assign(:review_tab, :conversation)
       |> assign(:review_data, nil)
       |> assign(:title, "")
       |> assign(:task_type, :unknown)
@@ -130,8 +139,24 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
+  def handle_event("switch_tab", %{"tab" => "conversation"}, socket) do
+    {:noreply, assign(socket, :review_tab, :conversation)}
+  end
+
+  def handle_event("switch_tab", %{"tab" => "files_changed"}, socket) do
+    {:noreply, assign(socket, :review_tab, :files_changed)}
+  end
+
+  def handle_event("switch_tab", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("select_file", %{"path" => path}, socket) do
-    {:noreply, assign(socket, :selected_file, path)}
+    {:noreply,
+     socket
+     |> assign(:selected_file, path)
+     |> assign(:review_tab, :files_changed)}
   end
 
   @impl true
@@ -187,8 +212,6 @@ defmodule EvoDashWeb.ReviewLive do
     commit_sha = socket.assigns.commit_sha
     branch_name = socket.assigns.branch_name
 
-    # Navigate to dashboard with starting_commit set from the branch's commit SHA
-    # and the branch name as the base
     {:noreply,
      socket
      |> put_flash(:info, gettext("Continuing from branch %{branch} at %{sha}", branch: branch_name, sha: String.slice(commit_sha || "", 0..7)))
@@ -248,7 +271,6 @@ defmodule EvoDashWeb.ReviewLive do
         result = task.result
         repo_path = task.opts[:path]
 
-        # Extract result fields
         {commit_sha, branch_name, agent_summary, pr_url, pr_title} =
           case result do
             {:ok, %{commit_sha: sha, branch_name: branch, result: summary, pr_url: url, pr_title: title}} ->
@@ -260,19 +282,15 @@ defmodule EvoDashWeb.ReviewLive do
 
         objective = task.opts[:prompt] || task.opts[:objective]
 
-        # Generate title from pr_title, objective, or branch_name
         title = pr_title || objective || branch_name || gettext("Review Changes")
 
-        # Determine review status
         review_status = cond do
           branch_name == nil -> :no_changes
           true -> :open
         end
 
-        # Check if branch still exists
         branch_exists = branch_name && repo_path && Review.branch_exists?(repo_path, branch_name)
 
-        # Load diff data if branch exists
         review_data =
           if branch_exists && repo_path do
             case Review.load_review_data(repo_path, branch_name) do
@@ -283,7 +301,6 @@ defmodule EvoDashWeb.ReviewLive do
             nil
           end
 
-        # Initialize expanded_files — all expanded by default
         expanded_files =
           if review_data do
             review_data.files
