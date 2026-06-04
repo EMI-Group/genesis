@@ -127,6 +127,13 @@ defmodule EvoDashWeb.Helpers do
       iex> relative_time(DateTime.add!(DateTime.utc_now(), -86400, :second))
       "1d ago"
   """
+  def relative_time(datetime) when is_binary(datetime) do
+    case DateTime.from_iso8601(datetime) do
+      {:ok, dt, _offset} -> relative_time(dt)
+      {:error, _} -> datetime
+    end
+  end
+
   def relative_time(datetime) do
     diff = DateTime.diff(DateTime.utc_now(), datetime)
 
