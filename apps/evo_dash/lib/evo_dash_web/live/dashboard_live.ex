@@ -203,7 +203,11 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:new_repo_path, "")
       |> assign(:new_repo_name, "")
       |> assign(:tasks, [])
-      |> assign(:notified_task_ids, MapSet.new())
+      |> assign(:notified_task_ids,
+          TaskRegistry.list_tasks()
+          |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+          |> Enum.map(& &1.id)
+          |> MapSet.new())
       |> assign_form_defaults()
       |> assign_running_and_recent_tasks()
       |> assign(:config_status, config_status)
@@ -223,10 +227,13 @@ defmodule EvoDashWeb.DashboardLive do
           activate_project(socket, expanded)
         else
           # Project path in URL is invalid, clear it
+          tasks = TaskRegistry.list_tasks()
+
           socket
           |> assign(:active_project, nil)
           |> assign(:active_project_path, nil)
-          |> assign(:tasks, TaskRegistry.list_tasks())
+          |> assign(:tasks, tasks)
+          |> assign(:notified_task_ids, build_notified_task_ids(tasks, socket.assigns.notified_task_ids))
           |> assign_running_and_recent_tasks()
         end
       else
@@ -241,6 +248,7 @@ defmodule EvoDashWeb.DashboardLive do
 
         socket
         |> assign(:tasks, tasks)
+        |> assign(:notified_task_ids, build_notified_task_ids(tasks, socket.assigns.notified_task_ids))
         |> assign_running_and_recent_tasks()
       end
 
