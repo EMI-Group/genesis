@@ -140,7 +140,20 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # Run worktree init script on first creation only, and only for the primary repo
     # (foreign repos are independent and should not inherit the primary repo's init script)
     if newly_created and spec.repo_id == :primary do
-      Worktrees.run_init_script(agent_repo_root, worktree_path)
+      # Resolve parent worktree path for SOURCE_WORKTREE_PATH env var
+      parent_worktree =
+        if meta.parent_id do
+          case get_sched_meta(meta.parent_id) do
+            {:ok, parent_meta} -> parent_meta.worktree
+            :error -> nil
+          end
+        else
+          nil
+        end
+
+      Worktrees.run_init_script(agent_repo_root, worktree_path,
+        source_worktree_path: parent_worktree || agent_repo_root
+      )
     end
 
     task =
