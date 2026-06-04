@@ -39,8 +39,6 @@ defmodule EvoGit do
       oom_score_adjust = 1000
   """
 
-  alias EvoGit.Platform
-
   @doc """
   Generates sandbox arguments for the Linux/systemd-run backend.
 
