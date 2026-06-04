@@ -1,8 +1,131 @@
 defmodule EvoDashWeb.DashboardComponents do
   use EvoDashWeb, :html
+  alias EvoGit.Core.ForeignRepo
 
   # ---------------------------------------------------------------------------
-  # task_form/1 — Modern card with gradient hero, better spacing
+  # project_selector/1 — Project selection bar
+  # ---------------------------------------------------------------------------
+
+  attr :active_project, :map, default: nil
+  attr :recent_projects, :list, default: []
+  attr :is_desktop, :boolean, default: false
+  attr :show_open_form, :boolean, default: false
+  attr :path_suggestions, :list, default: []
+
+  def project_selector(assigns) do
+    ~H"""
+    <div class="bg-base-200/50 rounded-xl p-4 border border-base-200">
+      <div class="flex items-center gap-3 flex-wrap">
+        <!-- Project icon + info -->
+        <div class="flex items-center gap-2">
+          <div class="bg-primary/15 text-primary p-2 rounded-lg">
+            <.icon name="hero-folder-open" class="size-5" />
+          </div>
+          <div>
+            <%= if @active_project do %>
+              <p class="font-semibold text-sm">{@active_project.name}</p>
+              <p class="text-xs text-base-content/50 font-mono truncate max-w-[300px]">{@active_project.path}</p>
+            <% else %>
+              <p class="font-semibold text-sm text-base-content/50">{gettext("No project selected")}</p>
+              <p class="text-xs text-base-content/40">{gettext("Open a project to get started")}</p>
+            <% end %>
+          </div>
+        </div>
+
+        <!-- Spacer -->
+        <div class="flex-1"></div>
+
+        <!-- Recent projects dropdown (if any) -->
+        <%= if @recent_projects != [] do %>
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-sm btn-ghost gap-1">
+              <.icon name="hero-clock" class="size-4" />
+              {gettext("Recent")}
+              <.icon name="hero-chevron-down" class="size-3" />
+            </div>
+            <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-72 p-2 shadow-lg border border-base-200 mt-2">
+              <%= for project <- Enum.take(@recent_projects, 8) do %>
+                <li>
+                  <button phx-click="select_project" phx-value-path={project.path} class="flex items-center gap-2">
+                    <.icon name="hero-folder" class="size-4 text-base-content/50" />
+                    <div class="flex-1 min-w-0 text-left">
+                      <p class="text-sm font-medium truncate">{project.name}</p>
+                      <p class="text-xs text-base-content/40 font-mono truncate">{project.path}</p>
+                    </div>
+                    <%= if @active_project && @active_project.path == project.path do %>
+                      <.icon name="hero-check" class="size-4 text-success" />
+                    <% end %>
+                  </button>
+                </li>
+              <% end %>
+            </ul>
+          </div>
+        <% end %>
+
+        <!-- Open / Change project button -->
+        <button class="btn btn-sm btn-primary gap-1" phx-click="toggle_open_project_form">
+          <.icon name="hero-folder-open" class="size-4" />
+          <%= if @active_project do %>
+            {gettext("Change")}
+          <% else %>
+            {gettext("Open Project")}
+          <% end %>
+        </button>
+      </div>
+
+      <!-- Inline Open Project Form (expandable) -->
+      <%= if @show_open_form do %>
+        <div class="mt-3 pt-3 border-t border-base-300/50 animate-slide-down">
+          <.form for={%{}} phx-submit="open_project" class="flex flex-col sm:flex-row gap-2">
+            <div class="picker-container relative flex-1">
+              <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                <.icon name="hero-folder" class="size-4" />
+              </div>
+              <input
+                type="text"
+                name="path"
+                class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
+                placeholder={gettext("/path/to/your/repo")}
+                autofocus
+                phx-hook="PathAutocomplete"
+                phx-change="path_input"
+                phx-debounce="150"
+                id="project-path-input"
+                list="path-suggestions"
+              />
+              <button
+                type="button"
+                id="project-path-picker-button"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                phx-click="pick_directory"
+                phx-hook="DirectoryPicker"
+                data-is-desktop={to_string(@is_desktop)}
+                data-picker-id="project"
+                title={gettext("Browse for directory")}
+              >
+                <.icon name="hero-folder-open" class="size-4" />
+              </button>
+              <datalist id="path-suggestions">
+                <%= for suggestion <- @path_suggestions do %>
+                  <option value={suggestion}></option>
+                <% end %>
+              </datalist>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm gap-1">
+              <.icon name="hero-check" class="size-4" /> {gettext("Open")}
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_open_project_form">
+              {gettext("Cancel")}
+            </button>
+          </.form>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # task_form/1 — Modern card with gradient hero, tooltips, and better UX
   # ---------------------------------------------------------------------------
 
   attr :prompt, :string, default: ""
@@ -11,6 +134,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :node_path, :string, default: ""
   attr :seeds, :string, default: ""
   attr :starting_commit, :string, default: ""
+  attr :disabled, :boolean, default: false
 
   def task_form(assigns) do
     ~H"""
@@ -47,17 +171,24 @@ defmodule EvoDashWeb.DashboardComponents do
                 <option value="evolve_complex" selected={@mode == "evolve_complex"}>{gettext("Complex (Bottom-up)")}</option>
               </optgroup>
             </select>
+            <.tip text={mode_description(@mode)} />
           </div>
         </div>
       </div>
 
       <!-- Body -->
-      <div class="p-6 md:p-8 pt-4 md:pt-6 space-y-4">
+      <div class={["p-6 md:p-8 pt-4 md:pt-6 space-y-4", @disabled && "opacity-50 pointer-events-none select-none"]}>
+        <!-- Mode info banner -->
+        <div class="bg-info/10 border border-info/20 rounded-lg p-3 text-sm text-info flex items-start gap-2">
+          <.icon name="hero-information-circle" class="size-4 shrink-0 mt-0.5" />
+          <span>{mode_description(@mode)}</span>
+        </div>
+
         <%= if String.starts_with?(@mode, "evolve") do %>
           <div class="flex flex-col md:flex-row gap-4">
             <div class="form-control flex-1">
               <label class="label">
-                <span class="label-text font-semibold text-base-content">{gettext("Starting Node")}</span>
+                <span class="label-text font-semibold text-base-content">{gettext("Starting Node")} <.tip text={gettext("The subdirectory within the project to start evolution from. Use './' for root.")} /></span>
               </label>
               <input
                 type="text"
@@ -73,7 +204,7 @@ defmodule EvoDashWeb.DashboardComponents do
             </div>
             <div class="form-control flex-1">
               <label class="label">
-                <span class="label-text font-semibold text-base-content">{gettext("Starting Commit")}</span>
+                <span class="label-text font-semibold text-base-content">{gettext("Starting Commit")} <.tip text={gettext("A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD.")} /></span>
               </label>
               <input
                 type="text"
@@ -92,7 +223,10 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if @mode == "evolve_complex" do %>
           <div class="form-control">
             <label class="label">
-              <span class="label-text font-semibold text-base-content">{gettext("Seed Code")} <span class="badge badge-ghost">{gettext("optional")}</span></span>
+              <span class="label-text font-semibold text-base-content">
+                {gettext("Seed Code")} <span class="badge badge-ghost">{gettext("optional")}</span>
+                <.tip text={gettext("Provide seed code content for evolutionary selection. Multiple seeds improve diversity.")} />
+              </span>
             </label>
             <textarea
               name="seeds"
@@ -107,13 +241,25 @@ defmodule EvoDashWeb.DashboardComponents do
         <% end %>
         <div class="form-control">
           <label class="label">
-            <span class="label-text font-semibold text-base-content">{gettext("Prompt / Objective")}</span>
+            <span class="label-text font-semibold text-base-content">
+              <%= if String.starts_with?(@mode, "evolve") do %>
+                {gettext("Objective")}
+              <% else %>
+                {gettext("Prompt")}
+              <% end %>
+            </span>
           </label>
           <textarea
             name="prompt"
             phx-debounce="300"
             class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
-            placeholder={gettext("Describe the software you want to create or the change you want to make...")}
+            placeholder={
+              if String.starts_with?(@mode, "evolve") do
+                gettext("Describe what you want to change or improve...")
+              else
+                gettext("Describe the codebase you want to create...")
+              end
+            }
           ><%= @prompt %></textarea>
         </div>
       </div>
@@ -127,11 +273,169 @@ defmodule EvoDashWeb.DashboardComponents do
         <button
           type="submit"
           class="btn btn-primary px-8 h-12 text-base shadow-md hover:shadow-lg transition-all w-full sm:w-auto"
+          disabled={@disabled}
         >
           <.icon name="hero-rocket-launch" class="size-5" /> {gettext("Execute Task")}
         </button>
       </div>
     </.form>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # project_settings_panel/1 — Integrated project settings
+  # ---------------------------------------------------------------------------
+
+  attr :active_project, :string, required: true
+  attr :show, :boolean, default: false
+  attr :project_config, :map, default: nil
+  attr :worktree_script, :string, default: nil
+  attr :foreign_repos, :list, default: []
+  attr :show_add_foreign_repo, :boolean, default: false
+  attr :new_repo_id, :string, default: ""
+  attr :new_repo_path, :string, default: ""
+  attr :new_repo_name, :string, default: ""
+  attr :is_desktop, :boolean, default: false
+
+  def project_settings_panel(assigns) do
+    ~H"""
+    <details class="group" open={@show}>
+      <summary class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-4 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-3 list-none">
+        <.icon name="hero-cog-6-tooth" class="size-5 text-base-content/60" />
+        <span class="font-semibold">{gettext("Project Settings")}</span>
+        <div class="flex-1"></div>
+        <!-- Config status indicator -->
+        <%= if @project_config do %>
+          <span class="badge badge-success badge-sm gap-1">
+            <.icon name="hero-check-circle" class="size-3" /> {gettext("evogit.toml")}
+          </span>
+        <% else %>
+          <span class="badge badge-ghost badge-sm gap-1">
+            <.icon name="hero-document-text" class="size-3" /> {gettext("Defaults")}
+          </span>
+        <% end %>
+        <.icon name="hero-chevron-down" class="size-4 text-base-content/40 group-open:rotate-180 transition-transform" />
+      </summary>
+
+      <div class="bg-base-100 rounded-b-2xl border border-t-0 border-base-200 p-4 sm:p-6 space-y-4">
+        <!-- Config Info -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
+            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Project Root")}</p>
+            <p class="text-sm font-mono mt-1 truncate">{@active_project}</p>
+          </div>
+          <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
+            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Configuration")}</p>
+            <p class="text-sm mt-1">
+              <%= if @project_config do %>
+                <span class="text-success flex items-center gap-1">
+                  <.icon name="hero-check-circle" class="size-4" /> {gettext("evogit.toml found — using project settings")}
+                </span>
+              <% else %>
+                <span class="text-base-content/50 flex items-center gap-1">
+                  <.icon name="hero-information-circle" class="size-4" /> {gettext("No evogit.toml — using global defaults")}
+                </span>
+              <% end %>
+            </p>
+          </div>
+        </div>
+
+        <%= if @worktree_script do %>
+          <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
+            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Worktree Init Script")}</p>
+            <p class="text-sm font-mono mt-1">{@worktree_script}</p>
+          </div>
+        <% end %>
+
+        <!-- Foreign Repos -->
+        <div class="border-t border-base-200 pt-4">
+          <h3 class="text-sm font-semibold flex items-center gap-2 mb-3">
+            <.icon name="hero-server-stack" class="size-4 text-secondary" /> {gettext("Foreign Repositories")}
+            <.tip text={gettext("Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects.")} />
+          </h3>
+
+          <%= if @foreign_repos == [] do %>
+            <p class="text-sm text-base-content/40 py-2">{gettext("No foreign repositories registered")}</p>
+          <% else %>
+            <div class="space-y-2">
+              <%= for repo <- @foreign_repos do %>
+                <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2.5 border border-base-200">
+                  <span class={"badge #{if ForeignRepo.primary?(repo.id), do: "badge-primary", else: "badge-ghost"} badge-sm font-mono"}>
+                    {repo.id}
+                  </span>
+                  <span class="text-sm font-mono flex-1 truncate">{repo.root}</span>
+                  <%= if repo.name && repo.name != Atom.to_string(repo.id) do %>
+                    <span class="text-xs text-base-content/50">{repo.name}</span>
+                  <% end %>
+                  <%= unless ForeignRepo.primary?(repo.id) do %>
+                    <button class="btn btn-ghost btn-xs text-error" phx-click="remove_foreign_repo" phx-value-repo_id={repo.id}>
+                      <.icon name="hero-trash" class="size-3" />
+                    </button>
+                  <% end %>
+                </div>
+              <% end %>
+            </div>
+          <% end %>
+
+          <!-- Add Foreign Repo -->
+          <%= if @show_add_foreign_repo do %>
+            <div class="mt-3 border border-base-200 rounded-lg p-3 bg-base-200/20 animate-slide-down">
+              <.form for={%{}} phx-submit="add_foreign_repo" class="space-y-3">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label class="label py-1">
+                      <span class="label-text text-xs font-medium">{gettext("Repo ID")} <.tip text={gettext("A unique identifier for this repository (e.g., 'original', 'upstream')")} /></span>
+                    </label>
+                    <input type="text" name="repo_id" value={@new_repo_id} placeholder="e.g., original"
+                      class="input input-bordered input-sm w-full font-mono" required />
+                  </div>
+                  <div>
+                    <label class="label py-1">
+                      <span class="label-text text-xs font-medium">{gettext("Path")} <.tip text={gettext("Absolute path to the repository root on this machine")} /></span>
+                    </label>
+                    <div class="picker-container relative">
+                      <input type="text" name="path" value={@new_repo_path} placeholder="/absolute/path/to/repo"
+                        class="input input-bordered input-sm w-full font-mono pr-8" required
+                        id="foreign-repo-path-input" />
+                      <button type="button"
+                        id="foreign-repo-path-picker-button"
+                        class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                        phx-click="pick_directory"
+                        phx-hook="DirectoryPicker"
+                        data-is-desktop={to_string(@is_desktop)}
+                        data-picker-id="foreign-repo"
+                        title={gettext("Browse for directory")}
+                      >
+                        <.icon name="hero-folder-open" class="size-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="label py-1">
+                      <span class="label-text text-xs font-medium">{gettext("Name (optional)")}</span>
+                    </label>
+                    <input type="text" name="name" value={@new_repo_name} placeholder={gettext("Human-readable name")}
+                      class="input input-bordered input-sm w-full" />
+                  </div>
+                </div>
+                <div class="flex gap-2">
+                  <button type="submit" class="btn btn-primary btn-sm gap-1">
+                    <.icon name="hero-plus" class="size-3" /> {gettext("Add")}
+                  </button>
+                  <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_add_foreign_repo_form">
+                    {gettext("Cancel")}
+                  </button>
+                </div>
+              </.form>
+            </div>
+          <% else %>
+            <button class="btn btn-sm btn-outline btn-secondary gap-1 mt-3" phx-click="toggle_add_foreign_repo_form">
+              <.icon name="hero-plus-circle" class="size-4" /> {gettext("Add Foreign Repo")}
+            </button>
+          <% end %>
+        </div>
+      </div>
+    </details>
     """
   end
 
@@ -343,193 +647,6 @@ defmodule EvoDashWeb.DashboardComponents do
             </button>
           </div>
         </.form>
-      </div>
-    </div>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # project_tabs/1 — Pill-shaped tabs with smooth transitions
-  # ---------------------------------------------------------------------------
-
-  attr :projects, :map, required: true
-  attr :active_project, :string, default: nil
-
-  def project_tabs(assigns) do
-    ~H"""
-    <div class="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
-      <%= for {_path, project} <- @projects do %>
-        <div class="flex items-center">
-          <button
-            phx-click="switch_project"
-            phx-value-path={project.path}
-            class={[
-              "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium cursor-pointer transition-all whitespace-nowrap hover-lift",
-              @active_project == project.path && "bg-primary text-primary-content shadow-md",
-              @active_project != project.path &&
-                "bg-base-200/70 hover:bg-base-300 text-base-content/70 hover:text-base-content"
-            ]}
-          >
-            <.icon name="hero-folder" class="size-4" />
-            {project.name}
-          </button>
-          <button
-            phx-click="close_project"
-            phx-value-path={project.path}
-            class={[
-              "-ml-1 flex items-center justify-center w-6 h-6 rounded-full transition-all",
-              @active_project == project.path &&
-                "text-primary-content/70 hover:text-primary-content hover:bg-primary-content/20",
-              @active_project != project.path &&
-                "text-base-content/30 hover:text-error hover:bg-error/10"
-            ]}
-            title={gettext("Close project")}
-          >
-            <.icon name="hero-x-mark" class="size-3" />
-          </button>
-        </div>
-      <% end %>
-      <!-- Add project button -->
-      <button
-        class="flex items-center justify-center w-8 h-8 rounded-full bg-base-200/50 hover:bg-base-300 text-base-content/50 hover:text-primary transition-all"
-        phx-click="show_open_project"
-        title={gettext("Open Project")}
-      >
-        <.icon name="hero-plus" class="size-4" />
-      </button>
-    </div>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # open_project_form/1 — Gradient hero, autocomplete, recent projects
-  # ---------------------------------------------------------------------------
-
-  attr :path, :string, default: ""
-  attr :recent_projects, :list, default: []
-  attr :path_suggestions, :list, default: []
-
-  def open_project_form(assigns) do
-    ~H"""
-    <div class="max-w-5xl mx-auto">
-      <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-        <!-- Hero section -->
-        <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-6 sm:p-8 text-center">
-          <div class="bg-primary/15 text-primary p-4 rounded-2xl w-fit mx-auto mb-4">
-            <.icon name="hero-folder-open" class="size-10" />
-          </div>
-          <h2 class="text-2xl font-bold">{gettext("Open a Project")}</h2>
-          <p class="text-base-content/60 mt-2">{gettext("Enter the path to a Git repository to get started")}</p>
-        </div>
-
-        <!-- Two-column content -->
-        <div class="p-4 sm:p-6 pt-2 lg:grid lg:grid-cols-5 lg:gap-8">
-          <!-- Left: Form + Recent Projects (3/5) -->
-          <div class="lg:col-span-3">
-            <.form for={%{}} phx-submit="open_project" class="space-y-4">
-              <div class="form-control relative">
-                <div class="relative">
-                  <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-base-content/40">
-                    <.icon name="hero-folder" class="size-5" />
-                  </div>
-                  <input
-                    type="text"
-                    name="path"
-                    value={@path}
-                    class="input input-bordered w-full pl-11 pr-12 h-12 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm bg-base-200/50"
-                    placeholder={gettext("/path/to/your/repo")}
-                    autofocus
-                    phx-hook="PathAutocomplete"
-                    phx-change="path_input"
-                    phx-debounce="150"
-                    id="initial-project-path-input"
-                    list="path-suggestions"
-                  />
-                  <button
-                    type="button"
-                    id="project-path-picker-button"
-                    class="absolute right-10 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors z-10"
-                    phx-click="pick_directory"
-                    phx-hook="DirectoryPicker"
-                    title={gettext("Browse for directory")}
-                  >
-                    <.icon name="hero-folder-open" class="size-5" />
-                  </button>
-                  <datalist id="path-suggestions">
-                    <%= for suggestion <- @path_suggestions do %>
-                      <option value={suggestion}></option>
-                    <% end %>
-                  </datalist>
-                </div>
-              </div>
-              <button type="submit" class="btn btn-primary w-full h-12 text-base">
-                <.icon name="hero-folder-open" class="size-5" /> {gettext("Open Project")}
-              </button>
-            </.form>
-
-            <!-- Recent Projects -->
-            <%= if @recent_projects != [] do %>
-              <div class="mt-6">
-                <h3 class="text-sm font-semibold text-base-content/50 uppercase tracking-wider mb-3">
-                  {gettext("Recent Projects")}
-                </h3>
-                <div class="space-y-1">
-                  <%= for project <- Enum.take(@recent_projects, 5) do %>
-                    <button
-                      class="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-base-200/70 transition-colors text-left group"
-                      phx-click="open_project"
-                      phx-value-path={project.path}
-                    >
-                      <div class="bg-base-200 p-2 rounded-lg group-hover:bg-base-300 transition-colors">
-                        <.icon name="hero-folder" class="size-4 text-base-content/60" />
-                      </div>
-                      <div class="flex-1 min-w-0">
-                        <p class="font-medium text-sm truncate">{project.name}</p>
-                        <p class="text-xs text-base-content/40 font-mono truncate">{project.path}</p>
-                      </div>
-                      <.icon
-                        name="hero-chevron-right"
-                        class="size-4 text-base-content/30 group-hover:text-base-content/60 transition-colors"
-                      />
-                    </button>
-                  <% end %>
-                </div>
-              </div>
-            <% end %>
-          </div>
-
-          <!-- Right: Getting Started Panel (2/5, hidden on mobile) -->
-          <div class="hidden lg:block lg:col-span-2">
-            <div class="bg-base-200/40 rounded-xl p-5 border border-base-200 h-full">
-              <h3 class="font-semibold text-base flex items-center gap-2 mb-4">
-                <.icon name="hero-sparkles" class="size-5 text-primary" /> {gettext("Welcome to EvoGit")}
-              </h3>
-              <ul class="space-y-3 text-sm text-base-content/70">
-                <li class="flex items-start gap-2">
-                  <.icon name="hero-cube" class="size-4 text-primary mt-0.5 shrink-0" />
-                  <span><strong class="text-base-content"><%= gettext("Genesis") %></strong> — <%= gettext("Create entire codebases from natural language prompts") %></span>
-                </li>
-                <li class="flex items-start gap-2">
-                  <.icon name="hero-arrow-path" class="size-4 text-secondary mt-0.5 shrink-0" />
-                  <span><strong class="text-base-content"><%= gettext("Evolve") %></strong> — <%= gettext("Modify and improve existing codebases with AI agents") %></span>
-                </li>
-                <li class="flex items-start gap-2">
-                  <.icon name="hero-folder-open" class="size-4 text-accent mt-0.5 shrink-0" />
-                  <span><strong class="text-base-content"><%= gettext("Context Tree") %></strong> — <%= gettext("Hierarchical code understanding for precise changes") %></span>
-                </li>
-                <li class="flex items-start gap-2">
-                  <.icon name="hero-code-bracket" class="size-4 text-info mt-0.5 shrink-0" />
-                  <span><strong class="text-base-content"><%= gettext("Git-Native") %></strong> — <%= gettext("Every change is a clean, reviewable commit") %></span>
-                </li>
-              </ul>
-              <div class="mt-5 pt-4 border-t border-base-300/50">
-                <p class="text-xs text-base-content/50">
-                  {gettext("Open a Git repository above to begin. EvoGit auto-detects the project state and suggests the right task mode.")}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
     """

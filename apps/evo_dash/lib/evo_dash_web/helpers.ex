@@ -385,4 +385,69 @@ defmodule EvoDashWeb.Helpers do
     </div>
     """
   end
+
+  # ---------------------------------------------------------------------------
+  # Tooltip / Tip Component
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Renders an inline info icon with a tooltip on hover.
+  Uses DaisyUI tooltip component.
+
+  ## Attributes
+
+    * `:text` (required) — the tooltip content
+    * `:icon` (optional) — icon name, default "hero-information-circle"
+    * `:class` (optional) — additional CSS classes
+    * `:position` (optional) — tooltip position, one of :top, :bottom, :left, :right (default :top)
+  """
+  attr :text, :string, required: true
+  attr :icon, :string, default: "hero-information-circle"
+  attr :class, :string, default: ""
+  attr :position, :atom, default: :top
+
+  def tip(assigns) do
+    position_class = case assigns.position do
+      :bottom -> "tooltip-bottom"
+      :left -> "tooltip-left"
+      :right -> "tooltip-right"
+      _ -> "tooltip-top"
+    end
+
+    assigns = assign(assigns, :position_class, position_class)
+
+    ~H"""
+    <span class={["tooltip", @position_class, "cursor-help"]} data-tip={@text}>
+      <.icon name={@icon} class={"size-4 text-base-content/40 hover:text-base-content/70 transition-colors inline-block align-middle #{@class}"} />
+    </span>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # Mode Description Helpers
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns a short human-readable description of the given task mode.
+  """
+  def mode_description("genesis_new"),
+    do: gettext("Creates a brand new codebase from scratch in an empty directory using your prompt.")
+
+  def mode_description("genesis_existing"),
+    do: gettext("Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it.")
+
+  def mode_description("evolve_simple"),
+    do: gettext("Uses a single top-down agent to modify the codebase based on your objective.")
+
+  def mode_description("evolve_complex"),
+    do: gettext("Uses multiple bottom-up agents with evolutionary selection to optimize changes.")
+
+  def mode_description(_), do: ""
+
+  @doc """
+  Returns the group label for a mode (genesis or evolve).
+  """
+  def mode_group("genesis_" <> _), do: gettext("Genesis")
+  def mode_group("evolve_" <> _), do: gettext("Evolve")
+  def mode_group(_), do: ""
 end

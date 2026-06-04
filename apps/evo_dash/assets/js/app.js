@@ -114,16 +114,22 @@ const DirectoryPicker = {
         ? "true"
         : "false";
 
-    // Listen for picker_result events pushed from the server
-    this.handleEvent("picker_result", ({path}) => {
+    // Generate unique picker ID so multiple instances don't collide
+    this.pickerId = this.el.dataset.pickerId ||
+      ("picker-" + Math.random().toString(36).substr(2, 9));
+    this.el.dataset.pickerId = this.pickerId;
+
+    // Listen for targeted picker_result events pushed from the server
+    this.handleEvent("picker_result:" + this.pickerId, ({path}) => {
       if (path) {
-        // Find the nearest text input (sibling or parent-sibling) and set its value
-        const container = this.el.closest(".form-control, .relative");
+        const container = this.el.closest(".picker-container") ||
+          this.el.closest(".form-control") ||
+          this.el.closest(".relative") ||
+          this.el.parentElement;
         if (container) {
           const input = container.querySelector('input[type="text"]');
           if (input) {
             input.value = path;
-            // Trigger input event so LiveView picks up the change
             input.dispatchEvent(new Event("input", {bubbles: true}));
           }
         }
@@ -133,7 +139,7 @@ const DirectoryPicker = {
     this.el.addEventListener("click", async () => {
       // In desktop mode, go straight to server-side picker
       if (this.el.dataset.isDesktop === "true") {
-        this.pushEvent("pick_directory", {});
+        this.pushEvent("pick_directory", {picker_id: this.pickerId});
         return;
       }
 
@@ -141,7 +147,18 @@ const DirectoryPicker = {
       if (typeof window.showDirectoryPicker === "function") {
         try {
           const handle = await window.showDirectoryPicker();
-          this.pushEvent("directory_picked", {path: handle.name});
+          // For browser picker, fill the input directly (no server round-trip needed)
+          const container = this.el.closest(".picker-container") ||
+            this.el.closest(".form-control") ||
+            this.el.closest(".relative") ||
+            this.el.parentElement;
+          if (container) {
+            const input = container.querySelector('input[type="text"]');
+            if (input) {
+              input.value = handle.name;
+              input.dispatchEvent(new Event("input", {bubbles: true}));
+            }
+          }
           return;
         } catch (_err) {
           // User cancelled or API failed — fall through to server-side fallback
@@ -149,7 +166,7 @@ const DirectoryPicker = {
       }
 
       // Fallback: ask the server to open a native OS dialog
-      this.pushEvent("pick_directory", {});
+      this.pushEvent("pick_directory", {picker_id: this.pickerId});
     });
   },
 };
