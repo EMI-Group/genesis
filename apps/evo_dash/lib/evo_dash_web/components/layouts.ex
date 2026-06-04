@@ -38,163 +38,165 @@ defmodule EvoDashWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <!-- Sticky Navigation Bar -->
-    <header class="sticky top-0 z-50 bg-base-100/80 backdrop-blur-md border-b border-base-200/50">
-      <nav class="navbar px-6 sm:px-8 lg:px-12 xl:px-16">
-        <!-- Left: Logo -->
-        <div class="flex-1">
-          <.link navigate={~p"/"} class="flex items-center gap-2.5 hover:opacity-80 transition-opacity group">
-            <img src={~p"/images/logo.svg"} class="h-8 w-auto block dark:hidden" alt="EvoGit" />
-            <img src={~p"/images/logo-alt.svg"} class="h-8 w-auto hidden dark:block" alt="EvoGit" />
-            <span class="text-xl font-extrabold tracking-tight">
-              Evo<span class="text-primary">Git</span>
-            </span>
-          </.link>
-        </div>
+    <div class="drawer drawer-end">
+      <input id="mobile-nav-drawer" type="checkbox" class="drawer-toggle" />
 
-        <!-- Right: Desktop Nav Links + Theme Toggle -->
-        <div class="flex-none hidden lg:flex items-center gap-1">
-          <ul class="flex items-center gap-1 px-2">
-            <li>
-              <.link
-                navigate={~p"/"}
-                class={["btn btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
-                aria-current={@current_page == :dashboard && "page"}
-              >
-                <.icon name="hero-squares-2x2" class="size-4" /> {gettext("Dashboard")}
+      <div class="drawer-content">
+        <!-- Sticky Navigation Bar -->
+        <header class="sticky top-0 z-50 bg-base-100/80 backdrop-blur-md border-b border-base-200/50">
+          <nav class="navbar px-6 sm:px-8 lg:px-12 xl:px-16">
+            <!-- Left: Logo -->
+            <div class="flex-1">
+              <.link navigate={~p"/"} class="flex items-center gap-2.5 hover:opacity-80 transition-opacity group">
+                <img src={~p"/images/logo.svg"} class="h-8 w-auto block dark:hidden" alt="EvoGit" />
+                <img src={~p"/images/logo-alt.svg"} class="h-8 w-auto hidden dark:block" alt="EvoGit" />
+                <span class="text-xl font-extrabold tracking-tight">
+                  Evo<span class="text-primary">Git</span>
+                </span>
               </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/tasks"}
-                class={["btn btn-ghost gap-2", @current_page == :tasks && "btn-active"]}
-                aria-current={@current_page == :tasks && "page"}
-              >
-                <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext("Tasks")}
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/agents"}
-                class={["btn btn-ghost gap-2", @current_page == :agents && "btn-active"]}
-                aria-current={@current_page == :agents && "page"}
-              >
-                <.icon name="hero-server" class="size-4" /> {gettext("Agents")}
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/settings"}
-                class={["btn btn-ghost gap-2", @current_page == :settings && "btn-active"]}
-                aria-current={@current_page == :settings && "page"}
-              >
-                <.icon name="hero-cog-6-tooth" class="size-4" /> {gettext("Settings")}
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/help"}
-                class={["btn btn-ghost gap-2", @current_page == :help && "btn-active"]}
-                aria-current={@current_page == :help && "page"}
-              >
-                <.icon name="hero-question-mark-circle" class="size-4" /> {gettext("Help")}
-              </.link>
-            </li>
-          </ul>
-          <div class="divider divider-horizontal mx-1 h-6"></div>
-          <.theme_toggle />
-        </div>
-
-        <!-- Mobile: Hamburger Menu -->
-        <details class="dropdown dropdown-end lg:hidden flex-none">
-          <summary class="btn btn-ghost">
-            <.icon name="hero-bars-3" class="size-5" />
-          </summary>
-          <ul class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-52 border border-base-200">
-            <li>
-              <.link
-                navigate={~p"/"}
-                class={@current_page == :dashboard && "active"}
-                aria-current={@current_page == :dashboard && "page"}
-              >
-                <.icon name="hero-squares-2x2" class="size-4" /> {gettext("Dashboard")}
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/tasks"}
-                class={@current_page == :tasks && "active"}
-                aria-current={@current_page == :tasks && "page"}
-              >
-                <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext("Tasks")}
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/agents"}
-                class={@current_page == :agents && "active"}
-                aria-current={@current_page == :agents && "page"}
-              >
-                <.icon name="hero-server" class="size-4" /> {gettext("Agents")}
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/settings"}
-                class={@current_page == :settings && "active"}
-                aria-current={@current_page == :settings && "page"}
-              >
-                <.icon name="hero-cog-6-tooth" class="size-4" /> {gettext("Settings")}
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/help"}
-                class={@current_page == :help && "active"}
-                aria-current={@current_page == :help && "page"}
-              >
-                <.icon name="hero-question-mark-circle" class="size-4" /> {gettext("Help")}
-              </.link>
-            </li>
-            <li class="mt-2 flex justify-center">
-              <.theme_toggle />
-            </li>
-          </ul>
-        </details>
-      </nav>
-    </header>
-
-    <!-- Main Content Area -->
-    <main class="px-4 pt-8 pb-12 sm:px-6 lg:px-8">
-      <div class="mx-auto space-y-4">
-        {render_slot(@inner_block)}
-      </div>
-    </main>
-
-    <!-- Config Warning Banner -->
-    <%= if @config_status && not @config_status.ok? do %>
-      <div class="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-40">
-        <div class="bg-warning/95 text-warning-content rounded-xl shadow-2xl p-4 border border-warning/50">
-          <div class="flex items-start gap-3">
-            <.icon name="hero-exclamation-triangle" class="size-5 shrink-0 mt-0.5" />
-            <div class="flex-1 min-w-0">
-              <p class="font-semibold text-sm">{gettext("Missing Configuration")}</p>
-              <ul class="mt-1 space-y-0.5">
-                <%= for warning <- @config_status.warnings do %>
-                  <li class="text-xs opacity-90">{warning}</li>
-                <% end %>
-              </ul>
-              <.link navigate={~p"/settings"} class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">{gettext("Configure now →")}</.link>
             </div>
-            <button class="btn btn-sm btn-ghost text-warning-content" onclick="this.closest('.fixed').remove()">
-              <.icon name="hero-x-mark" class="size-4" />
-            </button>
+
+            <!-- Right: Desktop Nav Links + Theme Toggle -->
+            <div class="flex-none hidden lg:flex items-center gap-1">
+              <ul class="flex items-center gap-1 px-2">
+                <li>
+                  <.link
+                    navigate={~p"/"}
+                    class={["btn btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
+                    aria-current={@current_page == :dashboard && "page"}
+                  >
+                    <.icon name="hero-squares-2x2" class="size-4" /> {gettext("Dashboard")}
+                  </.link>
+                </li>
+                <li>
+                  <.link
+                    navigate={~p"/agents"}
+                    class={["btn btn-ghost gap-2", @current_page == :agents && "btn-active"]}
+                    aria-current={@current_page == :agents && "page"}
+                  >
+                    <.icon name="hero-server" class="size-4" /> {gettext("Agents")}
+                  </.link>
+                </li>
+                <li>
+                  <.link
+                    navigate={~p"/tasks"}
+                    class={["btn btn-ghost gap-2", @current_page == :tasks && "btn-active"]}
+                    aria-current={@current_page == :tasks && "page"}
+                  >
+                    <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext("Tasks")}
+                  </.link>
+                </li>
+                <li>
+                  <.link
+                    navigate={~p"/settings"}
+                    class={["btn btn-ghost gap-2", @current_page == :settings && "btn-active"]}
+                    aria-current={@current_page == :settings && "page"}
+                  >
+                    <.icon name="hero-cog-6-tooth" class="size-4" /> {gettext("Settings")}
+                  </.link>
+                </li>
+                <li>
+                  <.link
+                    navigate={~p"/help"}
+                    class={["btn btn-ghost gap-2", @current_page == :help && "btn-active"]}
+                    aria-current={@current_page == :help && "page"}
+                  >
+                    <.icon name="hero-question-mark-circle" class="size-4" /> {gettext("Help")}
+                  </.link>
+                </li>
+              </ul>
+              <div class="divider divider-horizontal mx-1 h-6"></div>
+              <.theme_toggle />
+            </div>
+
+            <!-- Mobile: Hamburger button that opens drawer -->
+            <label for="mobile-nav-drawer" class="btn btn-ghost lg:hidden flex-none">
+              <.icon name="hero-bars-3" class="size-5" />
+            </label>
+          </nav>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="px-4 pt-8 pb-12 sm:px-6 lg:px-8">
+          <div class="mx-auto space-y-4">
+            {render_slot(@inner_block)}
+          </div>
+        </main>
+
+        <!-- Config Warning Banner -->
+        <%= if @config_status && not @config_status.ok? do %>
+          <div class="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-40">
+            <div class="bg-warning/95 text-warning-content rounded-xl shadow-2xl p-4 border border-warning/50">
+              <div class="flex items-start gap-3">
+                <.icon name="hero-exclamation-triangle" class="size-5 shrink-0 mt-0.5" />
+                <div class="flex-1 min-w-0">
+                  <p class="font-semibold text-sm">{gettext("Missing Configuration")}</p>
+                  <ul class="mt-1 space-y-0.5">
+                    <%= for warning <- @config_status.warnings do %>
+                      <li class="text-xs opacity-90">{warning}</li>
+                    <% end %>
+                  </ul>
+                  <.link navigate={~p"/settings"} class="text-xs underline mt-1 inline-block opacity-80 hover:opacity-100">{gettext("Configure now →")}</.link>
+                </div>
+                <button class="btn btn-sm btn-ghost text-warning-content" onclick="this.closest('.fixed').remove()">
+                  <.icon name="hero-x-mark" class="size-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        <% end %>
+
+        <.flash_group flash={@flash} />
+      </div>
+
+      <!-- Drawer Sidebar (mobile only) -->
+      <div class="drawer-side lg:hidden">
+        <label for="mobile-nav-drawer" aria-label="close sidebar" class="drawer-overlay bg-black/40 backdrop-blur-sm"></label>
+        <div class="min-h-full w-72 bg-base-100/95 backdrop-blur-xl shadow-2xl border-l border-base-200/50 p-4 pt-6">
+          <!-- Nav header with close button -->
+          <div class="flex items-center justify-between mb-6 px-2">
+            <span class="text-lg font-bold">Menu</span>
+            <label for="mobile-nav-drawer" class="btn btn-ghost btn-sm btn-circle">
+              <.icon name="hero-x-mark" class="size-5" />
+            </label>
+          </div>
+
+          <ul class="menu menu-md gap-1">
+            <li>
+              <.link navigate={~p"/"} class={@current_page == :dashboard && "active"}>
+                <.icon name="hero-squares-2x2" class="size-5" /> {gettext("Dashboard")}
+              </.link>
+            </li>
+            <li>
+              <.link navigate={~p"/agents"} class={@current_page == :agents && "active"}>
+                <.icon name="hero-server" class="size-5" /> {gettext("Agents")}
+              </.link>
+            </li>
+            <li>
+              <.link navigate={~p"/tasks"} class={@current_page == :tasks && "active"}>
+                <.icon name="hero-clipboard-document-list" class="size-5" /> {gettext("Tasks")}
+              </.link>
+            </li>
+            <li>
+              <.link navigate={~p"/settings"} class={@current_page == :settings && "active"}>
+                <.icon name="hero-cog-6-tooth" class="size-5" /> {gettext("Settings")}
+              </.link>
+            </li>
+            <li>
+              <.link navigate={~p"/help"} class={@current_page == :help && "active"}>
+                <.icon name="hero-question-mark-circle" class="size-5" /> {gettext("Help")}
+              </.link>
+            </li>
+          </ul>
+
+          <div class="divider my-4"></div>
+
+          <div class="flex justify-center">
+            <.theme_toggle />
           </div>
         </div>
       </div>
-    <% end %>
-
-    <.flash_group flash={@flash} />
+    </div>
     """
   end
 
