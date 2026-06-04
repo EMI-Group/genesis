@@ -6,7 +6,6 @@ defmodule EvoGit.Runtime.Evolution do
   alias EvoGit.AgentSpec
   alias EvoGit.Adapters.Git
   alias EvoGit.Runtime
-  alias EvoGit.Runtime.PullRequest
   require Logger
 
   def run(objective, opts \\ []) do
@@ -79,7 +78,7 @@ defmodule EvoGit.Runtime.Evolution do
     end
   end
 
-  defp merge_and_report(repo_path, agent_output, objective) do
+  defp merge_and_report(repo_path, agent_output, _objective) do
     final_sha = agent_output.commit_sha
     result = agent_output.result
     tag = agent_output.tag
@@ -96,8 +95,8 @@ defmodule EvoGit.Runtime.Evolution do
       {:ok, _} = Git.create_branch(repo_path, branch_name, final_sha)
       Logger.info("Evolution: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}")
 
-      # Try to create a PR if gh is available
-      {pr_url, pr_title} = PullRequest.try_create(repo_path, branch_name, objective, result)
+      # PR creation is now manual via the Review page — no automatic PR
+      {pr_url, pr_title} = {nil, nil}
 
       {:ok, %{
         commit_sha: final_sha,

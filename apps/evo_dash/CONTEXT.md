@@ -29,6 +29,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | Route | LiveView | Purpose |
 |-------|----------|---------|
 | `GET /` | `DashboardLive` | Project-based task dashboard with auto-mode detection, task form, project settings |
+| `GET /review/:task_id` | `ReviewLive` | Code review page — diff viewer with Lumis syntax highlighting, merge/reject/continue actions, optional GitHub PR creation |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with chat history viewer |
 | `GET /settings` | `SettingsLive` | Two-tab settings: Runtime Settings (scheduler/sandbox) + Configuration File (GUI editor for config.toml) |
 | `GET /help` | `HelpLive` | Guidance page: config status, example config, CLI usage examples, FAQ, credentials reference |
@@ -36,7 +37,8 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 
-- `DashboardLive` — Main dashboard: project tabs, task form, task cards with logs, inline project settings (evogit.toml, foreign repos)
+- `DashboardLive` — Main dashboard: project tabs, task form, task cards with logs, inline project settings (evogit.toml, foreign repos). Completed tasks with branches show a "Review" button linking to the review page.
+- `ReviewLive` — Code review page (similar to GitHub PR view): shows PR title, agent summary, files changed with diff stats, full syntax-highlighted diff (Lumis), and action buttons (Merge, Reject, Continue, Create GitHub PR).
 - `AgentsLive` — Agent tree visualization reading directly from ETS tables (`evogit_agent_state`, `evogit_sched_meta`)
 - `SettingsLive` — Two-tab layout: Runtime Settings tab (scheduler pause/resume, scheduler/sandbox config forms, current runtime values) and Configuration File tab (GUI editor for config.toml with collapsible sections for LLM, User, Scheduler, Sandbox, Evolution, Truncation, Task History)
 - `HelpLive` — Guidance and reference page: config status check, example TOML configuration, CLI usage examples, FAQ section, credentials reference
@@ -44,7 +46,8 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 ### UI Components (`./lib/evo_dash_web/components/`)
 
 - `CoreComponents` — Phoenix 1.8 base components
-- `DashboardComponents` — Task form, scheduler settings, project tabs, task cards
+- `DashboardComponents` — Task form, scheduler settings, project tabs, task cards (with "Review" button for completed tasks with branches)
+- `ReviewComponents` — Review page components: diff stats bar, file list, diff viewer (Lumis syntax highlighting), action buttons (merge/reject/continue/create PR)
 - `AgentsComponents` — Recursive path tree with connector lines and status coloring
 - `Layouts` — App layout with navbar, theme toggle, flash group
 

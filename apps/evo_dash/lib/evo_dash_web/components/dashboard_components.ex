@@ -742,6 +742,14 @@ defmodule EvoDashWeb.DashboardComponents do
               <% end %>
             </div>
             <div class="flex items-center gap-2 shrink-0">
+              <%= if show_review_button?(@task) do %>
+                <.link
+                  navigate={~p"/review/#{@task.id}"}
+                  class="btn btn-primary shadow-sm"
+                >
+                  <.icon name="hero-eye" class="size-4" /> {gettext("Review")}
+                </.link>
+              <% end %>
               <%= if @task.status in [:running, :finalizing] do %>
                 <button
                   class="btn btn-outline btn-error shadow-sm"
@@ -1185,4 +1193,7 @@ defmodule EvoDashWeb.DashboardComponents do
     </div>
     """
   end
+
+  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}}) when is_binary(branch) and branch != "", do: true
+  defp show_review_button?(_), do: false
 end
