@@ -290,6 +290,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr :show, :boolean, default: false
   attr :project_config, :map, default: nil
   attr :worktree_script, :string, default: nil
+  attr :commands, :map, default: %{}
   attr :foreign_repos, :list, default: []
   attr :show_add_foreign_repo, :boolean, default: false
   attr :new_repo_id, :string, default: ""
@@ -344,6 +345,26 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
             <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Worktree Init Script")}</p>
             <p class="text-sm font-mono mt-1">{@worktree_script}</p>
+          </div>
+        <% end %>
+
+        <%= if @commands != %{} do %>
+          <div class="border-t border-base-200 pt-4">
+            <h3 class="text-sm font-semibold flex items-center gap-2 mb-3">
+              <.icon name="hero-terminal" class="size-4 text-secondary" /> {gettext("Dev Commands")}
+              <.tip text={gettext("Quick shortcuts for common development commands. Click Run to execute.")} />
+            </h3>
+            <div class="space-y-2">
+              <%= for {name, cmd} <- Enum.sort(@commands) do %>
+                <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2.5 border border-base-200">
+                  <span class="badge badge-accent badge-sm font-mono">{name}</span>
+                  <span class="text-sm font-mono flex-1 truncate">{cmd}</span>
+                  <button class="btn btn-ghost btn-xs btn-primary" phx-click="run_command" phx-value-command={name}>
+                    <.icon name="hero-play" class="size-3" /> {gettext("Run")}
+                  </button>
+                </div>
+              <% end %>
+            </div>
           </div>
         <% end %>
 

@@ -37,6 +37,7 @@ defmodule EvoDashWeb.DashboardLive do
             show={@show_project_settings}
             project_config={@project_config}
             worktree_script={@worktree_script}
+            commands={@commands}
             foreign_repos={@foreign_repos}
             show_add_foreign_repo={@show_add_foreign_repo_form}
             new_repo_id={@new_repo_id}
@@ -197,6 +198,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:show_project_settings, false)
       |> assign(:project_config, nil)
       |> assign(:worktree_script, nil)
+    |> assign(:commands, %{})
       |> assign(:foreign_repos, [])
       |> assign(:show_add_foreign_repo_form, false)
       |> assign(:new_repo_id, "")
@@ -623,6 +625,56 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply, push_event(socket, "picker_result:#{picker_id}", %{path: path})}
   end
 
+  @impl true
+  def handle_event("run_command", %{"command" => command}, socket) do
+    commands = socket.assigns.commands
+    project_root = socket.assigns.active_project_path
+
+    case Map.get(commands, command) do
+      nil ->
+        {:noreply, put_flash(socket, :error, gettext("Command not found: %{command}", command: command))}
+
+      cmd_string ->
+        try do
+          {output, exit_code} =
+            case :os.type() do
+              {:win32, _} ->
+                System.cmd("powershell", ["-Command", cmd_string],
+                  cd: project_root,
+                  stderr_to_stdout: true,
+                  timeout: 30_000
+                )
+
+              _ ->
+                System.cmd("bash", ["-c", cmd_string],
+                  cd: project_root,
+                  stderr_to_stdout: true,
+                  timeout: 30_000
+                )
+            end
+
+          if exit_code == 0 do
+            flash_type = :info
+            msg = gettext("Command '%{command}' completed:\n%{output}", command: command, output: truncate_output(output))
+            {:noreply, put_flash(socket, flash_type, msg)}
+          else
+            msg = gettext("Command '%{command}' failed (exit %{code}):\n%{output}", command: command, code: exit_code, output: truncate_output(output))
+            {:noreply, put_flash(socket, :error, msg)}
+          end
+        rescue
+          e ->
+            msg = gettext("Error running '%{command}': %{error}", command: command, error: Exception.message(e))
+            {:noreply, put_flash(socket, :error, msg)}
+        end
+    end
+  end
+
+  defp truncate_output(output) when byte_size(output) > 2000 do
+    String.slice(output, 0, 2000) <> "..."
+  end
+
+  defp truncate_output(output), do: String.trim(output)
+
   # --- PubSub Handlers ---
 
   @impl true
@@ -632,7 +684,7 @@ defmodule EvoDashWeb.DashboardLive do
     # Refresh project settings if shown
     socket =
       if socket.assigns.show_project_settings and socket.assigns.active_project_path do
-        {project_config, worktree_script} =
+        {project_config, worktree_script, commands} =
           load_project_config(socket.assigns.active_project_path)
 
         foreign_repos = load_foreign_repos()
@@ -640,6 +692,7 @@ defmodule EvoDashWeb.DashboardLive do
         socket
         |> assign(:project_config, project_config)
         |> assign(:worktree_script, worktree_script)
+        |> assign(:commands, commands)
         |> assign(:foreign_repos, foreign_repos)
       else
         socket
@@ -693,7 +746,7 @@ defmodule EvoDashWeb.DashboardLive do
     tasks = TaskRegistry.list_tasks_by_path(path)
 
     # Load project settings eagerly
-    {project_config, worktree_script} = load_project_config(path)
+    {project_config, worktree_script, commands} = load_project_config(path)
     foreign_repos = load_foreign_repos()
 
     socket
@@ -707,6 +760,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:show_project_settings, true)
     |> assign(:project_config, project_config)
     |> assign(:worktree_script, worktree_script)
+    |> assign(:commands, commands)
     |> assign(:foreign_repos, foreign_repos)
     |> assign(:show_add_foreign_repo_form, false)
     |> assign_running_and_recent_tasks()
@@ -824,7 +878,7 @@ defmodule EvoDashWeb.DashboardLive do
     end
   end
 
-  defp load_project_config(nil), do: {nil, nil}
+  defp load_project_config(nil), do: {nil, nil, %{}}
 
   defp load_project_config(project_root) do
     try do
@@ -836,11 +890,13 @@ defmodule EvoDashWeb.DashboardLive do
           _ -> nil
         end
 
-      {config, worktree_script}
+      commands = EvoGit.ProjectConfig.commands(project_root)
+
+      {config, worktree_script, commands}
     rescue
-      _ -> {nil, nil}
+      _ -> {nil, nil, %{}}
     catch
-      _, _ -> {nil, nil}
+      _, _ -> {nil, nil, %{}}
     end
   end
 
