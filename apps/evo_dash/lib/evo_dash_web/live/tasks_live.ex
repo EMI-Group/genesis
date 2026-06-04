@@ -60,6 +60,21 @@ defmodule EvoDashWeb.TasksLive do
             </select>
           </div>
 
+          <!-- Review Status Filter -->
+          <div class="form-control">
+            <select
+              name="review_filter"
+              class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+              phx-change="filter_review"
+            >
+              <option value="all" selected={@review_status_filter == "all"}>{gettext("All Reviews")}</option>
+              <option value="pending" selected={@review_status_filter == "pending"}>{gettext("Pending Review")}</option>
+              <option value="merged" selected={@review_status_filter == "merged"}>{gettext("Merged")}</option>
+              <option value="rejected" selected={@review_status_filter == "rejected"}>{gettext("Rejected")}</option>
+              <option value="continued" selected={@review_status_filter == "continued"}>{gettext("Continued")}</option>
+            </select>
+          </div>
+
           <!-- Search -->
           <div class="form-control flex-1">
             <input
@@ -93,7 +108,7 @@ defmodule EvoDashWeb.TasksLive do
         </div>
 
         <!-- Active filters indicator -->
-        <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" do %>
+        <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
           <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
             <span class="text-xs text-base-content/50">{gettext("Active filters:")}</span>
             <%= if @status_filter != "all" do %>
@@ -112,6 +127,18 @@ defmodule EvoDashWeb.TasksLive do
               <span class="badge badge-accent gap-1">
                 "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20, do: "..."}"
                 <button phx-click="clear_filter" phx-value-filter="search" class="hover:opacity-70">×</button>
+              </span>
+            <% end %>
+            <%= if @review_status_filter != "all" do %>
+              <span class="badge badge-accent gap-1">
+                <%= case @review_status_filter do %>
+                  <% "pending" -> %>Pending Review
+                  <% "merged" -> %>Merged
+                  <% "rejected" -> %>Rejected
+                  <% "continued" -> %>Continued
+                  <% _ -> %>{@review_status_filter}
+                <% end %>
+                <button phx-click="clear_filter" phx-value-filter="review" class="hover:opacity-70">×</button>
               </span>
             <% end %>
           </div>
@@ -134,7 +161,7 @@ defmodule EvoDashWeb.TasksLive do
             </div>
             <p class="text-lg font-medium">{gettext("No tasks found")}</p>
             <p class="text-sm mt-1">
-              <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" do %>
+              <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
                 {gettext("Try adjusting your filters or search query.")}
               <% else %>
                 {gettext("Tasks will appear here once you start them from the dashboard.")}
@@ -223,6 +250,7 @@ defmodule EvoDashWeb.TasksLive do
       |> assign(:status_filter, "all")
       |> assign(:project_filter, "all")
       |> assign(:search_query, "")
+      |> assign(:review_status_filter, "all")
       |> assign(:expanded_task_ids, MapSet.new())
       |> assign(:selected_result, nil)
       |> assign(:selected_options, nil)
@@ -257,6 +285,14 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
+  def handle_event("filter_review", %{"review_filter" => filter}, socket) do
+    {:noreply,
+     socket
+     |> assign(:review_status_filter, filter)
+     |> assign_filtered_tasks()}
+  end
+
+  @impl true
   def handle_event("search_tasks", %{"search_query" => query}, socket) do
     {:noreply,
      socket
@@ -271,6 +307,7 @@ defmodule EvoDashWeb.TasksLive do
      |> assign(:status_filter, "all")
      |> assign(:project_filter, "all")
      |> assign(:search_query, "")
+     |> assign(:review_status_filter, "all")
      |> assign_filtered_tasks()}
   end
 
@@ -295,6 +332,14 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, "")
+     |> assign_filtered_tasks()}
+  end
+
+  @impl true
+  def handle_event("clear_filter", %{"filter" => "review"}, socket) do
+    {:noreply,
+     socket
+     |> assign(:review_status_filter, "all")
      |> assign_filtered_tasks()}
   end
 
@@ -385,6 +430,7 @@ defmodule EvoDashWeb.TasksLive do
       socket.assigns.tasks
       |> filter_by_status(socket.assigns.status_filter)
       |> filter_by_project(socket.assigns.project_filter)
+      |> filter_by_review_status(socket.assigns.review_status_filter)
       |> filter_by_search(socket.assigns.search_query)
       |> Enum.sort_by(& &1.started_at, {:desc, DateTime})
 
@@ -405,6 +451,19 @@ defmodule EvoDashWeb.TasksLive do
     end)
   end
   defp filter_by_project(tasks, _), do: tasks
+
+  defp filter_by_review_status(tasks, "all"), do: tasks
+  defp filter_by_review_status(tasks, "pending") do
+    Enum.filter(tasks, fn task ->
+      task.status == :completed and is_nil(task.review_status) and
+        match?({:ok, %{branch_name: _}}, task.result)
+    end)
+  end
+  defp filter_by_review_status(tasks, status) when is_binary(status) do
+    status_atom = String.to_existing_atom(status)
+    Enum.filter(tasks, &(&1.review_status == status_atom))
+  end
+  defp filter_by_review_status(tasks, _), do: tasks
 
   defp filter_by_search(tasks, ""), do: tasks
   defp filter_by_search(tasks, query) when is_binary(query) do
