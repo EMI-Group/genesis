@@ -46,6 +46,33 @@ defmodule EvoGitTest do
     end
   end
 
+  describe "EvoGit.Sandbox" do
+    test "backend/0 returns a valid module" do
+      assert EvoGit.Sandbox.backend() in [
+               EvoGit.Sandbox.Linux,
+               EvoGit.Sandbox.MacOS,
+               EvoGit.Sandbox.None
+             ]
+    end
+
+    test "capabilities/0 returns expected structure" do
+      caps = EvoGit.Sandbox.capabilities()
+      assert Map.has_key?(caps, :filesystem_isolation)
+      assert Map.has_key?(caps, :resource_limits)
+      assert Map.has_key?(caps, :backend)
+      assert caps.backend in [:systemd_run, :sandbox_exec, :none]
+    end
+
+    test "enabled?/0 returns a boolean" do
+      assert is_boolean(EvoGit.Sandbox.enabled?())
+    end
+
+    test "ensure_initialized/0 returns :ok or error tuple" do
+      result = EvoGit.Sandbox.ensure_initialized()
+      assert result == :ok or match?({:error, _}, result)
+    end
+  end
+
   describe "EvoGit.Platform" do
     test "os/0 returns a known platform" do
       assert EvoGit.Platform.os() in [:linux, :macos, :windows, :unknown]
@@ -73,6 +100,14 @@ defmodule EvoGitTest do
       assert is_boolean(EvoGit.Platform.macos?())
       assert is_boolean(EvoGit.Platform.windows?())
       assert is_boolean(EvoGit.Platform.systemd_available?())
+    end
+
+    test "sandbox_backend/0 returns a valid backend atom" do
+      assert EvoGit.Platform.sandbox_backend() in [:systemd_run, :sandbox_exec, :none]
+    end
+
+    test "sandbox_exec_available?/0 returns a boolean" do
+      assert is_boolean(EvoGit.Platform.sandbox_exec_available?())
     end
   end
 end
