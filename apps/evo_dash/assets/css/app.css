@@ -430,6 +430,88 @@ button, a, input, textarea, select, summary,
   box-shadow: 0 0 0 3px oklch(55% 0.2 265 / 0.15), 0 4px 15px -3px oklch(55% 0.2 265 / 0.1);
 }
 
+
+/* === Agents Page Fixed Layout === */
+
+/* Mobile-first: normal flow (single column, page scrolls) */
+.agents-page-layout {
+  @apply flex flex-col gap-6;
+}
+
+.agents-left-col {
+  @apply flex flex-col gap-6;
+}
+
+.agents-tree-panel {
+  /* normal card on mobile */
+}
+
+.agents-legend-panel {
+  /* normal card on mobile */
+}
+
+.agents-detail-col {
+  /* normal flow on mobile */
+}
+
+/* Desktop (xl+): fixed viewport layout with no page scroll */
+@media (min-width: 1280px) {
+  .agents-page-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    height: calc(100vh - 12rem); /* navbar + padding + subtitle + margins */
+    overflow: hidden;
+  }
+
+  .agents-left-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    min-height: 0; /* allow flex children to shrink */
+    overflow: hidden;
+  }
+
+  .agents-tree-panel {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .agents-tree-panel .card-body {
+    overflow-y: auto;
+    flex: 1 1 0;
+    min-height: 0;
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.7 0 0 / 0.3) transparent;
+  }
+
+  .agents-legend-panel {
+    flex: 0 0 auto; /* don't shrink — always visible at bottom */
+  }
+
+  .agents-detail-col {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .agents-detail-col > .card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .agents-detail-col > .card > .card-body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.7 0 0 / 0.3) transparent;
+  }
+}
+
 /* === Diff Viewer (GitHub PR Style) === */
 
 /* Full-screen wrapper — breaks out of <main> padding for Files Changed tab */

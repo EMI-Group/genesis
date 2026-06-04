@@ -3,10 +3,12 @@
     <p class="text-base-content/60 text-sm"><%= gettext("Visualize running agents and their relationships") %></p>
   </div>
 
-  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4 animate-fade-in-up animation-delay-100">
-    <!-- Agent Tree View -->
-    <div class="xl:col-span-2">
-      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
+  <!-- Fixed viewport layout: no page-level scroll on xl+, panels scroll independently -->
+  <div class="agents-page-layout mt-4 animate-fade-in-up animation-delay-100">
+    <!-- Left Column: Tree + Legend -->
+    <div class="agents-left-col">
+      <!-- Agent Tree View -->
+      <div class="agents-tree-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
         <div class="card-body p-6">
           <h3 class="card-title mb-4">
             <.icon name="hero-squares-2x2" class="size-5" /> <%= gettext("Agent Tree") %>
@@ -44,8 +46,8 @@
         </div>
       </div>
 
-<!-- Legend -->
-      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl mt-6">
+      <!-- Legend — pinned to bottom of left column -->
+      <div class="agents-legend-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
         <div class="card-body p-4">
           <h4 class="font-semibold text-sm mb-3"><%= gettext("Status Legend") %></h4>
           <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
@@ -66,10 +68,10 @@
       </div>
     </div>
 
-<!-- Agent Details Panel -->
-    <div class="xl:col-span-1">
-      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl sticky top-16">
-        <div class="card-body p-6">
+    <!-- Right Column: Agent Details Panel — full vertical space -->
+    <div class="agents-detail-col">
+      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl h-full">
+        <div class="card-body p-6 overflow-y-auto">
           <%= if @selected_agent_id do %>
             <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
             <%= if agent do %>
@@ -407,7 +409,7 @@
                   <% end %>
                 </div>
               </div>
-              </div> <!-- closes animate-detail-enter -->
+              </div>
             <% else %>
               <p class="text-base-content/50"><%= gettext("Agent not found") %></p>
             <% end %>
