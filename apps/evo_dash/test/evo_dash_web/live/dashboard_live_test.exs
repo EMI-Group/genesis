@@ -34,7 +34,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, _view, html} = live(conn, ~p"/")
 
       # Task form is always visible
-      assert html =~ "Configure Task"
+      assert html =~ "Execute Task"
       # Project selector shows "No project selected"
       assert html =~ "No project selected"
       # Open Project button exists
@@ -56,7 +56,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, _view, html} = live(conn, ~p"/")
 
       # The form should be present but in disabled state
-      assert html =~ "Configure Task"
+      assert html =~ "Execute Task"
       # The execute button should be disabled
       assert html =~ "disabled"
     end
@@ -78,7 +78,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
         |> render_submit(%{path: tmp_dir})
 
       # Project should be active — task form enabled
-      assert html =~ "Configure Task"
+      assert html =~ "Execute Task"
       # Project settings should show config info
       assert html =~ "Foreign Repositories"
     end
@@ -164,7 +164,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       # Project should be active
       assert html =~ Path.basename(tmp_dir)
       # Task form should be present
-      assert html =~ "Configure Task"
+      assert html =~ "Execute Task"
       # Project settings should be shown
       assert html =~ "Project Settings"
     end

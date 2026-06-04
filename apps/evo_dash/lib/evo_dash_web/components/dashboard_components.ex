@@ -6,15 +6,15 @@ defmodule EvoDashWeb.DashboardComponents do
   # project_selector/1 — Project selection bar
   # ---------------------------------------------------------------------------
 
-  attr :active_project, :map, default: nil
-  attr :recent_projects, :list, default: []
-  attr :is_desktop, :boolean, default: false
-  attr :show_open_form, :boolean, default: false
-  attr :path_suggestions, :list, default: []
+  attr(:active_project, :map, default: nil)
+  attr(:recent_projects, :list, default: [])
+  attr(:is_desktop, :boolean, default: false)
+  attr(:show_open_form, :boolean, default: false)
+  attr(:path_suggestions, :list, default: [])
 
   def project_selector(assigns) do
     ~H"""
-    <div class="bg-base-200/50 rounded-xl p-4 border border-base-200">
+    <div class="bg-base-100 rounded-xl p-4 border border-primary/20 shadow-sm">
       <div class="flex items-center gap-3 flex-wrap">
         <!-- Project icon + info -->
         <div class="flex items-center gap-2">
@@ -23,8 +23,8 @@ defmodule EvoDashWeb.DashboardComponents do
           </div>
           <div>
             <%= if @active_project do %>
-              <p class="font-semibold text-sm">{@active_project.name}</p>
-              <p class="text-xs text-base-content/50 font-mono truncate max-w-[300px]">{@active_project.path}</p>
+              <p class="text-base font-bold">{@active_project.name}</p>
+              <p class="text-sm text-base-content/50 font-mono truncate max-w-[300px]">{@active_project.path}</p>
             <% else %>
               <p class="font-semibold text-sm text-base-content/50">{gettext("No project selected")}</p>
               <p class="text-xs text-base-content/40">{gettext("Open a project to get started")}</p>
@@ -128,59 +128,40 @@ defmodule EvoDashWeb.DashboardComponents do
   # task_form/1 — Modern card with gradient hero, tooltips, and better UX
   # ---------------------------------------------------------------------------
 
-  attr :prompt, :string, default: ""
-  attr :mode, :string, default: "genesis_new"
-  attr :mode_info, :string, default: ""
-  attr :node_path, :string, default: ""
-  attr :seeds, :string, default: ""
-  attr :starting_commit, :string, default: ""
-  attr :disabled, :boolean, default: false
+  attr(:prompt, :string, default: "")
+  attr(:mode, :string, default: "genesis_new")
+  attr(:mode_info, :string, default: "")
+  attr(:node_path, :string, default: "")
+  attr(:seeds, :string, default: "")
+  attr(:starting_commit, :string, default: "")
+  attr(:disabled, :boolean, default: false)
 
   def task_form(assigns) do
     ~H"""
     <.form
       for={%{}}
       phx-submit="task_submit"
-      class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden"
+      class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden"
     >
-      <!-- Hero Header with inline mode select -->
-      <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent px-6 py-4 md:px-8 md:py-5">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
-          <div class="flex items-center gap-3">
-            <div class="bg-primary/15 text-primary p-2.5 rounded-xl">
-              <.icon name="hero-sparkles" class="size-5" />
-            </div>
-            <div>
-              <h2 class="text-lg font-bold">{gettext("Configure Task")}</h2>
-              <p class="text-xs text-base-content/60">{gettext("Bootstrap, analyze, or evolve your codebase")}</p>
-            </div>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Task Mode")}</span>
-            <select
-              name="mode"
-              phx-change="task_change"
-              class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-medium bg-base-200/30"
-            >
-              <optgroup label={gettext("Genesis (Bootstrap & Analyze)")}>
-                <option value="genesis_new" selected={@mode == "genesis_new"}>{gettext("New Codebase")}</option>
-                <option value="genesis_existing" selected={@mode == "genesis_existing"}>{gettext("Existing Codebase")}</option>
-              </optgroup>
-              <optgroup label={gettext("Evolve (Mutate Code)")}>
-                <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Simple (Top-down)")}</option>
-              </optgroup>
-            </select>
-            <.tip text={mode_description(@mode)} />
-          </div>
-        </div>
-      </div>
-
       <!-- Body -->
-      <div class={["p-6 md:p-8 pt-4 md:pt-6 space-y-4", @disabled && "opacity-50 pointer-events-none select-none"]}>
-        <!-- Mode info banner -->
-        <div class="bg-info/10 border border-info/20 rounded-lg p-3 text-sm text-info flex items-start gap-2">
-          <.icon name="hero-information-circle" class="size-4 shrink-0 mt-0.5" />
-          <span>{mode_description(@mode)}</span>
+      <div class={["p-4 sm:p-5 space-y-4", @disabled && "opacity-50 pointer-events-none select-none"]}>
+        <!-- Compact mode select row -->
+        <div class="flex items-center gap-3">
+          <label class="text-sm font-medium text-base-content/70 whitespace-nowrap">{gettext("Task Mode")}</label>
+          <select
+            name="mode"
+            phx-change="task_change"
+            class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-medium bg-base-200/30"
+          >
+            <optgroup label={gettext("Genesis (Bootstrap & Analyze)")}>
+              <option value="genesis_new" selected={@mode == "genesis_new"}>{gettext("New Codebase")}</option>
+              <option value="genesis_existing" selected={@mode == "genesis_existing"}>{gettext("Existing Codebase")}</option>
+            </optgroup>
+            <optgroup label={gettext("Evolve (Mutate Code)")}>
+              <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Simple (Top-down)")}</option>
+            </optgroup>
+          </select>
+          <.tip text={mode_description(@mode)} />
         </div>
 
         <%= if String.starts_with?(@mode, "evolve") do %>
@@ -261,21 +242,17 @@ defmodule EvoDashWeb.DashboardComponents do
             }
           ><%= @prompt %></textarea>
         </div>
-      </div>
 
-      <!-- Footer action bar -->
-      <div class="bg-base-200/50 px-6 py-4 md:px-8 border-t border-base-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <span class="text-sm text-base-content/60 flex items-center gap-2">
-          <.icon name="hero-light-bulb" class="size-5 text-warning" />
-          {gettext("Ready to execute. Mode was auto-detected based on project state.")}
-        </span>
-        <button
-          type="submit"
-          class="btn btn-primary px-8 h-12 text-base shadow-md hover:shadow-lg transition-all w-full sm:w-auto"
-          disabled={@disabled}
-        >
-          <.icon name="hero-rocket-launch" class="size-5" /> {gettext("Execute Task")}
-        </button>
+        <!-- Inline execute button -->
+        <div class="flex justify-end">
+          <button
+            type="submit"
+            class="btn btn-primary w-full sm:w-auto"
+            disabled={@disabled}
+          >
+            <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Execute Task")}
+          </button>
+        </div>
       </div>
     </.form>
     """
@@ -285,17 +262,17 @@ defmodule EvoDashWeb.DashboardComponents do
   # project_settings_panel/1 — Integrated project settings
   # ---------------------------------------------------------------------------
 
-  attr :active_project, :string, required: true
-  attr :show, :boolean, default: false
-  attr :project_config, :map, default: nil
-  attr :worktree_script, :string, default: nil
-  attr :commands, :map, default: %{}
-  attr :foreign_repos, :list, default: []
-  attr :show_add_foreign_repo, :boolean, default: false
-  attr :new_repo_id, :string, default: ""
-  attr :new_repo_path, :string, default: ""
-  attr :new_repo_name, :string, default: ""
-  attr :is_desktop, :boolean, default: false
+  attr(:active_project, :string, required: true)
+  attr(:show, :boolean, default: false)
+  attr(:project_config, :map, default: nil)
+  attr(:worktree_script, :string, default: nil)
+  attr(:commands, :map, default: %{})
+  attr(:foreign_repos, :list, default: [])
+  attr(:show_add_foreign_repo, :boolean, default: false)
+  attr(:new_repo_id, :string, default: "")
+  attr(:new_repo_path, :string, default: "")
+  attr(:new_repo_name, :string, default: "")
+  attr(:is_desktop, :boolean, default: false)
 
   def project_settings_panel(assigns) do
     ~H"""
@@ -349,13 +326,13 @@ defmodule EvoDashWeb.DashboardComponents do
 
         <%= if @commands != %{} do %>
           <div class="border-t border-base-200 pt-4">
-            <h3 class="text-sm font-semibold flex items-center gap-2 mb-3">
+            <h3 class="text-base font-semibold flex items-center gap-2 mb-3">
               <.icon name="hero-terminal" class="size-4 text-secondary" /> {gettext("Dev Commands")}
               <.tip text={gettext("Quick shortcuts for common development commands. Click Run to execute.")} />
             </h3>
             <div class="space-y-2">
               <%= for {name, cmd} <- Enum.sort(@commands) do %>
-                <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2.5 border border-base-200">
+                <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2.5 border border-base-200 border-l-2 border-l-accent/40">
                   <span class="badge badge-accent badge-sm font-mono">{name}</span>
                   <span class="text-sm font-mono flex-1 truncate">{cmd}</span>
                   <button class="btn btn-ghost btn-xs btn-primary" phx-click="run_command" phx-value-command={name}>
@@ -369,7 +346,7 @@ defmodule EvoDashWeb.DashboardComponents do
 
         <!-- Foreign Repos -->
         <div class="border-t border-base-200 pt-4">
-          <h3 class="text-sm font-semibold flex items-center gap-2 mb-3">
+          <h3 class="text-base font-semibold flex items-center gap-2 mb-3">
             <.icon name="hero-server-stack" class="size-4 text-secondary" /> {gettext("Foreign Repositories")}
             <.tip text={gettext("Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects.")} />
           </h3>
@@ -379,7 +356,7 @@ defmodule EvoDashWeb.DashboardComponents do
           <% else %>
             <div class="space-y-2">
               <%= for repo <- @foreign_repos do %>
-                <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2.5 border border-base-200">
+                <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2.5 border border-base-200 border-l-2 border-l-secondary/40">
                   <span class={"badge #{if ForeignRepo.primary?(repo.id), do: "badge-primary", else: "badge-ghost"} badge-sm font-mono"}>
                     {repo.id}
                   </span>
@@ -463,23 +440,18 @@ defmodule EvoDashWeb.DashboardComponents do
   # scheduler_settings/1 — Runtime scheduler configuration panel
   # ---------------------------------------------------------------------------
 
-  attr :config, :map, required: true
+  attr(:config, :map, required: true)
 
   def scheduler_settings(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-      <div class="bg-gradient-to-br from-secondary/10 via-secondary/5 to-transparent p-6 md:p-8">
-        <div class="flex items-center gap-3">
-          <div class="bg-secondary/15 text-secondary p-3 rounded-xl">
-            <.icon name="hero-cog-6-tooth" class="size-6" />
+    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
+      <div class="p-4 sm:p-5 pt-4">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="bg-secondary/15 text-secondary p-2 rounded-lg">
+            <.icon name="hero-cog-6-tooth" class="size-4" />
           </div>
-          <div>
-            <h2 class="text-xl font-bold">{gettext("Scheduler Settings")}</h2>
-            <p class="text-sm text-base-content/60">{gettext("Runtime configuration for agent execution")}</p>
-          </div>
+          <h2 class="text-base font-semibold">{gettext("Scheduler Settings")}</h2>
         </div>
-      </div>
-      <div class="p-6 md:p-8 pt-4 md:pt-6">
         <.form for={%{}} phx-submit="update_scheduler_config" phx-change="scheduler_config_change" class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
             <div class="form-control">
@@ -546,25 +518,20 @@ defmodule EvoDashWeb.DashboardComponents do
   # sandbox_settings/1 — Sandbox configuration panel
   # ---------------------------------------------------------------------------
 
-  attr :config, :map, required: true
+  attr(:config, :map, required: true)
 
   def sandbox_settings(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-lg border border-base-200 overflow-hidden">
-      <div class="bg-gradient-to-br from-accent/10 via-accent/5 to-transparent p-6 md:p-8">
-        <div class="flex items-center gap-3">
-          <div class="bg-accent/15 text-accent p-3 rounded-xl">
-            <.icon name="hero-shield-check" class="size-6" />
+    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
+      <div class="p-4 sm:p-5 pt-4">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="bg-accent/15 text-accent p-2 rounded-lg">
+            <.icon name="hero-shield-check" class="size-4" />
           </div>
-          <div>
-            <h2 class="text-xl font-bold">{gettext("Sandbox Settings")}</h2>
-            <p class="text-sm text-base-content/60">{gettext("Resource isolation for agent-executed commands")}</p>
-          </div>
+          <h2 class="text-base font-semibold">{gettext("Sandbox Settings")}</h2>
         </div>
-      </div>
 
-      <!-- Backend Status Banner -->
-      <div class="px-6 md:px-8 pt-2">
+        <!-- Backend Status Banner -->
         <%= case @config[:sandbox_backend] do %>
           <% :systemd_run -> %>
             <div class="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
@@ -582,11 +549,9 @@ defmodule EvoDashWeb.DashboardComponents do
               <span class="text-sm text-error/80">{gettext("No sandbox support on this platform. Commands run directly.")}</span>
             </div>
         <% end %>
-      </div>
 
-      <%= if @config[:sandbox_backend] != :none do %>
-        <div class="p-6 md:p-8 pt-4 md:pt-6">
-          <.form for={%{}} phx-submit="update_sandbox_config" phx-change="sandbox_config_change" class="space-y-4">
+        <%= if @config[:sandbox_backend] != :none do %>
+          <.form for={%{}} phx-submit="update_sandbox_config" phx-change="sandbox_config_change" class="space-y-4 mt-4">
             <div class="space-y-4">
               <div class="form-control">
                 <label class="label">
@@ -711,16 +676,14 @@ defmodule EvoDashWeb.DashboardComponents do
               </button>
             </div>
           </.form>
-        </div>
       <% else %>
         <%!-- Windows / no backend --%>
-        <div class="p-6 md:p-8 pt-4 md:pt-6">
-          <div class="bg-base-200/50 rounded-lg p-4 text-center">
-            <.icon name="hero-shield-exclamation" class="size-8 text-base-content/30 mb-2" />
-            <p class="text-sm text-base-content/60">{gettext("Sandbox is not available on this platform. All commands run directly without isolation.")}</p>
-          </div>
+        <div class="mt-4 bg-base-200/50 rounded-lg p-4 text-center">
+          <.icon name="hero-shield-exclamation" class="size-8 text-base-content/30 mb-2" />
+          <p class="text-sm text-base-content/60">{gettext("Sandbox is not available on this platform. All commands run directly without isolation.")}</p>
         </div>
       <% end %>
+      </div>
     </div>
     """
   end
@@ -729,8 +692,8 @@ defmodule EvoDashWeb.DashboardComponents do
   # task_card/1 — Compact card with accent bar, relative timestamps
   # ---------------------------------------------------------------------------
 
-  attr :task, :map, required: true
-  attr :show_details, :boolean, default: false
+  attr(:task, :map, required: true)
+  attr(:show_details, :boolean, default: false)
 
   def task_card(assigns) do
     ~H"""
@@ -1232,7 +1195,8 @@ defmodule EvoDashWeb.DashboardComponents do
     """
   end
 
-  def render_result_full(%{result: result, commit_sha: commit_sha} = data) when is_binary(result) do
+  def render_result_full(%{result: result, commit_sha: commit_sha} = data)
+      when is_binary(result) do
     assigns = %{
       result: result,
       commit_sha: commit_sha,
@@ -1300,6 +1264,8 @@ defmodule EvoDashWeb.DashboardComponents do
     """
   end
 
-  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}}) when is_binary(branch) and branch != "", do: true
+  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
+       when is_binary(branch) and branch != "", do: true
+
   defp show_review_button?(_), do: false
 end
