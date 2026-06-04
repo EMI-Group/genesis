@@ -38,7 +38,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 
 - `DashboardLive` — Main dashboard: project tabs, task form, task cards with logs, inline project settings (evogit.toml, foreign repos). Completed tasks with branches show a "Review" button linking to the review page.
-- `ReviewLive` — Code review page (similar to GitHub PR view): shows PR title, agent summary, files changed with diff stats, full syntax-highlighted diff (Lumis), and action buttons (Merge, Reject, Continue, Create GitHub PR).
+- `ReviewLive` — Code review page (similar to GitHub PR view): shows PR title, agent summary, commit list (GitHub-style), files changed with diff stats, full syntax-highlighted diff (Lumis), and action buttons (Merge, Reject, Continue, Create GitHub PR). Three tabs: Conversation, Commits, Files Changed.
 - `AgentsLive` — Agent tree visualization reading directly from ETS tables (`evogit_agent_state`, `evogit_sched_meta`)
 - `SettingsLive` — Two-tab layout: Runtime Settings tab (scheduler pause/resume, scheduler/sandbox config forms, current runtime values) and Configuration File tab (GUI editor for config.toml with collapsible sections for LLM, User, Scheduler, Sandbox, Evolution, Truncation, Task History)
 - `HelpLive` — Guidance and reference page: config status check, example TOML configuration, CLI usage examples, FAQ section, credentials reference
@@ -47,7 +47,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 - `CoreComponents` — Phoenix 1.8 base components
 - `DashboardComponents` — Task form, scheduler settings, project tabs, task cards (with "Review" button for completed tasks with branches)
-- `ReviewComponents` — Review page components: diff stats bar, file list, diff viewer (Lumis syntax highlighting), action buttons (merge/reject/continue/create PR)
+- `ReviewComponents` — Review page components: commit list (GitHub-style with SHA badges, messages, author, relative time), diff stats bar, file list, diff viewer (Lumis syntax highlighting), action buttons (merge/reject/continue/create PR)
 - `AgentsComponents` — Recursive path tree with connector lines and status coloring
 - `Layouts` — App layout with navbar, theme toggle, flash group
 

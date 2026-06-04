@@ -56,6 +56,7 @@ defmodule EvoDashWeb.ReviewComponents do
 
   attr :active_tab, :atom, required: true
   attr :files_count, :integer, default: 0
+  attr :commits_count, :integer, default: 0
 
   def review_tabs(assigns) do
     ~H"""
@@ -68,6 +69,15 @@ defmodule EvoDashWeb.ReviewComponents do
         >
           <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
           {gettext("Conversation")}
+        </button>
+        <button
+          phx-click="switch_tab"
+          phx-value-tab="commits"
+          class={["review-tab", @active_tab == :commits && "tab-active"]}
+        >
+          <.icon name="hero-clock" class="size-4 mr-2" />
+          {gettext("Commits")}
+          <span class="badge badge-sm badge-ghost ml-2">{@commits_count}</span>
         </button>
         <button
           phx-click="switch_tab"
@@ -138,6 +148,45 @@ defmodule EvoDashWeb.ReviewComponents do
             <.icon name="hero-minus" class="size-3" /> {@deletions}
           </span>
         </div>
+      </div>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # commits_list/1 — GitHub-style commit list
+  # ---------------------------------------------------------------------------
+
+  attr :commits, :list, required: true
+
+  def commits_list(assigns) do
+    ~H"""
+    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
+      <div class="p-4 md:p-5 border-b border-base-200/50">
+        <div class="flex items-center gap-2">
+          <.icon name="hero-clock" class="size-5 text-base-content/60" />
+          <span class="font-semibold text-sm">
+            {ngettext("%{count} commit", "%{count} commits", length(@commits), count: length(@commits))}
+          </span>
+        </div>
+      </div>
+      <div>
+        <%= for {commit, i} <- Enum.with_index(@commits) do %>
+          <div class={["flex items-center gap-3 px-4 md:px-5 py-3 hover:bg-base-200/30 transition-colors", i < length(@commits) - 1 && "border-b border-base-200/50"]}>
+            <span class="badge badge-sm badge-ghost font-mono text-xs shrink-0">
+              {commit.short_sha}
+            </span>
+            <span class="text-sm flex-1 truncate" title={commit.message}>
+              {commit.message}
+            </span>
+            <span class="text-xs text-base-content/50 shrink-0 hidden sm:inline">
+              {commit.author_name}
+            </span>
+            <span class="text-xs text-base-content/50 shrink-0">
+              {relative_time(commit.date)}
+            </span>
+          </div>
+        <% end %>
       </div>
     </div>
     """

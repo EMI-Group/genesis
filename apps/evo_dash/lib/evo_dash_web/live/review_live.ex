@@ -45,6 +45,7 @@ defmodule EvoDashWeb.ReviewLive do
             <EvoDashWeb.ReviewComponents.review_tabs
               active_tab={@review_tab}
               files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
+              commits_count={length(@commits)}
             />
 
             <!-- Conversation Tab -->
@@ -64,6 +65,11 @@ defmodule EvoDashWeb.ReviewLive do
                   />
                 <% end %>
 
+                <!-- Commits List -->
+                <%= if @commits != [] do %>
+                  <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
+                <% end %>
+
                 <!-- Action Buttons -->
                 <EvoDashWeb.ReviewComponents.action_buttons
                   branch_exists={@branch_exists}
@@ -72,6 +78,11 @@ defmodule EvoDashWeb.ReviewLive do
                   loading={@action_loading}
                 />
               </div>
+            <% end %>
+
+            <!-- Commits Tab -->
+            <%= if @review_tab == :commits and @commits != [] do %>
+              <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
             <% end %>
 
             <!-- Files Changed Tab -->
@@ -145,6 +156,10 @@ defmodule EvoDashWeb.ReviewLive do
 
   def handle_event("switch_tab", %{"tab" => "files_changed"}, socket) do
     {:noreply, assign(socket, :review_tab, :files_changed)}
+  end
+
+  def handle_event("switch_tab", %{"tab" => "commits"}, socket) do
+    {:noreply, assign(socket, :review_tab, :commits)}
   end
 
   def handle_event("switch_tab", _params, socket) do
@@ -314,6 +329,16 @@ defmodule EvoDashWeb.ReviewLive do
             nil
           end
 
+        commits =
+          if branch_exists && repo_path do
+            case Review.list_commits(repo_path, branch_name) do
+              {:ok, list} -> list
+              _ -> []
+            end
+          else
+            []
+          end
+
         expanded_files =
           if review_data do
             review_data.files
@@ -340,6 +365,7 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:selected_file, nil)
         |> assign(:repo_path, repo_path)
         |> assign(:objective, objective)
+        |> assign(:commits, commits)
     end
   end
 
