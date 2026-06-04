@@ -168,10 +168,12 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("merge", _params, socket) do
-    %{repo_path: repo_path, branch_name: branch_name} = socket.assigns
+    %{repo_path: repo_path, branch_name: branch_name, task_id: task_id} = socket.assigns
 
     case Review.merge_branch(repo_path, branch_name) do
       {:ok, _sha} ->
+        TaskRegistry.set_review_status(task_id, :merged)
+
         {:noreply,
          socket
          |> put_flash(:success, gettext("Changes merged successfully! Branch %{branch} has been deleted.", branch: branch_name))
@@ -191,10 +193,12 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("reject", _params, socket) do
-    %{repo_path: repo_path, branch_name: branch_name} = socket.assigns
+    %{repo_path: repo_path, branch_name: branch_name, task_id: task_id} = socket.assigns
 
     case Review.reject_branch(repo_path, branch_name) do
       :ok ->
+        TaskRegistry.set_review_status(task_id, :rejected)
+
         {:noreply,
          socket
          |> put_flash(:info, gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_name))
@@ -211,6 +215,9 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event("continue", _params, socket) do
     commit_sha = socket.assigns.commit_sha
     branch_name = socket.assigns.branch_name
+    task_id = socket.assigns.task_id
+
+    TaskRegistry.set_review_status(task_id, :continued)
 
     {:noreply,
      socket
@@ -284,12 +291,14 @@ defmodule EvoDashWeb.ReviewLive do
 
         title = pr_title || objective || branch_name || gettext("Review Changes")
 
+        branch_exists = branch_name && repo_path && Review.branch_exists?(repo_path, branch_name)
+
         review_status = cond do
           branch_name == nil -> :no_changes
+          task.review_status != nil -> task.review_status
+          not branch_exists -> :open
           true -> :open
         end
-
-        branch_exists = branch_name && repo_path && Review.branch_exists?(repo_path, branch_name)
 
         review_data =
           if branch_exists && repo_path do
