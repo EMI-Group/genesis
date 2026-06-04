@@ -683,7 +683,9 @@ defmodule EvoGit.AgentScheduler do
       paused: state.paused,
       sandbox_mode: state.sandbox_mode,
       sandbox_resources: state.sandbox_resources,
-      sandbox_process_resources: state.sandbox_process_resources
+      sandbox_process_resources: state.sandbox_process_resources,
+      sandbox_backend: EvoGit.Platform.sandbox_backend(),
+      sandbox_capabilities: EvoGit.Sandbox.capabilities()
     }
 
     {:reply, config, state}
@@ -704,6 +706,8 @@ defmodule EvoGit.AgentScheduler do
         :sandbox_mode -> state.sandbox_mode
         :sandbox_resources -> state.sandbox_resources
         :sandbox_process_resources -> state.sandbox_process_resources
+        :sandbox_backend -> EvoGit.Platform.sandbox_backend()
+        :sandbox_capabilities -> EvoGit.Sandbox.capabilities()
         _ -> nil
       end
 
@@ -844,9 +848,9 @@ defmodule EvoGit.AgentScheduler do
         state
       end
 
-    # Propagate sandbox resource changes to the live slice
+    # Propagate sandbox resource changes to the live slice (Linux only)
     state =
-      if Keyword.has_key?(opts, :sandbox_resources) do
+      if Keyword.has_key?(opts, :sandbox_resources) and EvoGit.Platform.linux?() do
         resources = Keyword.get(opts, :sandbox_resources)
         case EvoGit.SandboxSlice.update_resources(resources) do
           :ok -> :ok
