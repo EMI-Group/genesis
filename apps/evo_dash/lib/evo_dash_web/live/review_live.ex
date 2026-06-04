@@ -295,9 +295,11 @@ defmodule EvoDashWeb.ReviewLive do
 
         branch_exists = branch_name && repo_path && Review.branch_exists?(repo_path, branch_name)
 
+        rs = Map.get(task, :review_status)
+
         review_status = cond do
           branch_name == nil -> :no_changes
-          task.review_status != nil -> task.review_status
+          rs != nil -> rs
           not branch_exists -> :open
           true -> :open
         end

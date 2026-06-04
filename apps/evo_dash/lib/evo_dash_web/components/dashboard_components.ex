@@ -709,9 +709,9 @@ defmodule EvoDashWeb.DashboardComponents do
               </span>
               <%= if Map.get(@task, :review_status) do %>
                 <span class="text-base-content/30">·</span>
-                <span class={["badge badge-sm", review_status_badge(@task.review_status)]}>
-                  <.icon name={review_status_icon(@task.review_status)} class="size-3 mr-1" />
-                  {review_status_label(@task.review_status)}
+                <span class={["badge badge-sm", review_status_badge(Map.get(@task, :review_status))]}>
+                  <.icon name={review_status_icon(Map.get(@task, :review_status))} class="size-3 mr-1" />
+                  {review_status_label(Map.get(@task, :review_status))}
                 </span>
               <% end %>
               <span class="text-xs text-base-content/30">·</span>

@@ -455,13 +455,13 @@ defmodule EvoDashWeb.TasksLive do
   defp filter_by_review_status(tasks, "all"), do: tasks
   defp filter_by_review_status(tasks, "pending") do
     Enum.filter(tasks, fn task ->
-      task.status == :completed and is_nil(task.review_status) and
+      task.status == :completed and is_nil(Map.get(task, :review_status)) and
         match?({:ok, %{branch_name: _}}, task.result)
     end)
   end
   defp filter_by_review_status(tasks, status) when is_binary(status) do
     status_atom = String.to_existing_atom(status)
-    Enum.filter(tasks, &(&1.review_status == status_atom))
+    Enum.filter(tasks, &(Map.get(&1, :review_status) == status_atom))
   end
   defp filter_by_review_status(tasks, _), do: tasks
 

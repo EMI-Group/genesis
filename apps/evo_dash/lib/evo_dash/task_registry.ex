@@ -430,6 +430,8 @@ defmodule EvoDash.TaskRegistry do
       :dets.foldl(
         fn
           {_key, %TaskInfo{} = task}, acc ->
+            # Backfill any missing struct fields (e.g. review_status added after initial persist)
+            task = Map.merge(%TaskInfo{}, task)
             # Reset non-persistable fields
             task = %{task | ref: nil, status: maybe_reset_status(task.status)}
             task = set_crash_details(task)
