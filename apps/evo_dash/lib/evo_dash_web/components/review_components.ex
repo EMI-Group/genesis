@@ -8,11 +8,11 @@ defmodule EvoDashWeb.ReviewComponents do
   # review_header/1 — Page header with PR title, badges, and metadata
   # ---------------------------------------------------------------------------
 
-  attr :title, :string, required: true
-  attr :task_type, :atom, required: true
-  attr :branch_name, :string, default: nil
-  attr :commit_sha, :string, default: nil
-  attr :status, :atom, default: :open
+  attr(:title, :string, required: true)
+  attr(:task_type, :atom, required: true)
+  attr(:branch_name, :string, default: nil)
+  attr(:commit_sha, :string, default: nil)
+  attr(:status, :atom, default: :open)
 
   def review_header(assigns) do
     ~H"""
@@ -54,9 +54,9 @@ defmodule EvoDashWeb.ReviewComponents do
   # review_tabs/1 — Tab bar for switching between Conversation and Files Changed
   # ---------------------------------------------------------------------------
 
-  attr :active_tab, :atom, required: true
-  attr :files_count, :integer, default: 0
-  attr :commits_count, :integer, default: 0
+  attr(:active_tab, :atom, required: true)
+  attr(:files_count, :integer, default: 0)
+  attr(:commits_count, :integer, default: 0)
 
   def review_tabs(assigns) do
     ~H"""
@@ -97,8 +97,8 @@ defmodule EvoDashWeb.ReviewComponents do
   # agent_summary/1 — Collapsible panel showing agent result
   # ---------------------------------------------------------------------------
 
-  attr :summary, :string, required: true
-  attr :open, :boolean, default: true
+  attr(:summary, :string, required: true)
+  attr(:open, :boolean, default: true)
 
   def agent_summary(assigns) do
     ~H"""
@@ -126,9 +126,9 @@ defmodule EvoDashWeb.ReviewComponents do
   # diff_stats_bar/1 — Files changed count, insertions, deletions
   # ---------------------------------------------------------------------------
 
-  attr :files_count, :integer, required: true
-  attr :additions, :integer, required: true
-  attr :deletions, :integer, required: true
+  attr(:files_count, :integer, required: true)
+  attr(:additions, :integer, required: true)
+  attr(:deletions, :integer, required: true)
 
   def diff_stats_bar(assigns) do
     ~H"""
@@ -157,7 +157,7 @@ defmodule EvoDashWeb.ReviewComponents do
   # commits_list/1 — GitHub-style commit list
   # ---------------------------------------------------------------------------
 
-  attr :commits, :list, required: true
+  attr(:commits, :list, required: true)
 
   def commits_list(assigns) do
     ~H"""
@@ -196,10 +196,10 @@ defmodule EvoDashWeb.ReviewComponents do
   # action_buttons/1 — Merge, Reject, Continue, and optional Create PR
   # ---------------------------------------------------------------------------
 
-  attr :branch_exists, :boolean, default: true
-  attr :has_pr, :boolean, default: false
-  attr :pr_url, :string, default: nil
-  attr :loading, :boolean, default: false
+  attr(:branch_exists, :boolean, default: true)
+  attr(:has_pr, :boolean, default: false)
+  attr(:pr_url, :string, default: nil)
+  attr(:loading, :boolean, default: false)
 
   def action_buttons(assigns) do
     ~H"""
@@ -271,8 +271,8 @@ defmodule EvoDashWeb.ReviewComponents do
   # file_tree_sidebar/1 — Sidebar file list for the split-pane layout
   # ---------------------------------------------------------------------------
 
-  attr :files, :list, required: true
-  attr :selected_file, :string, default: nil
+  attr(:files, :list, required: true)
+  attr(:selected_file, :string, default: nil)
 
   def file_tree_sidebar(assigns) do
     ~H"""
@@ -304,9 +304,9 @@ defmodule EvoDashWeb.ReviewComponents do
   # diff_viewer/1 — GitHub-style diff viewer with proper syntax highlighting
   # ---------------------------------------------------------------------------
 
-  attr :files, :list, required: true
-  attr :expanded_files, :map, default: %{}
-  attr :selected_file, :string, default: nil
+  attr(:files, :list, required: true)
+  attr(:expanded_files, :map, default: %{})
+  attr(:selected_file, :string, default: nil)
 
   def diff_viewer(assigns) do
     ~H"""
@@ -342,9 +342,9 @@ defmodule EvoDashWeb.ReviewComponents do
   # split_diff_layout/1 — Full split layout with sidebar + diff
   # ---------------------------------------------------------------------------
 
-  attr :files, :list, required: true
-  attr :expanded_files, :map, default: %{}
-  attr :selected_file, :string, default: nil
+  attr(:files, :list, required: true)
+  attr(:expanded_files, :map, default: %{})
+  attr(:selected_file, :string, default: nil)
 
   def split_diff_layout(assigns) do
     ~H"""
@@ -374,9 +374,7 @@ defmodule EvoDashWeb.ReviewComponents do
         <div class={["diff-line", diff_line_class(line.type)]}>
           <span class="diff-line-gutter">{line.line_number}</span>
           <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
-          <span class="diff-line-content">
-            {if line.type in [:addition, :deletion, :context], do: highlight_line_content(line.content, @file.language), else: line.content}
-          </span>
+          <span class="diff-line-content" phx-no-format>{if line.type in [:addition, :deletion, :context], do: highlight_line_content(line.content, @file.language), else: line.content}</span>
         </div>
       <% end %>
     </div>
@@ -405,20 +403,27 @@ defmodule EvoDashWeb.ReviewComponents do
       cond do
         String.starts_with?(line, "+++") ->
           %{line_number: idx, prefix: " ", content: line, type: :header}
+
         String.starts_with?(line, "---") ->
           %{line_number: idx, prefix: " ", content: line, type: :header}
+
         String.starts_with?(line, "@@") ->
           %{line_number: idx, prefix: " ", content: line, type: :hunk}
+
         String.starts_with?(line, "+") ->
           content = String.slice(line, 1..-1//1) || ""
           %{line_number: idx, prefix: "+", content: content, type: :addition}
+
         String.starts_with?(line, "-") ->
           content = String.slice(line, 1..-1//1) || ""
           %{line_number: idx, prefix: "-", content: content, type: :deletion}
+
         String.starts_with?(line, "diff ") ->
           %{line_number: idx, prefix: " ", content: line, type: :meta}
+
         String.starts_with?(line, "index ") ->
           %{line_number: idx, prefix: " ", content: line, type: :meta}
+
         true ->
           content = if String.length(line) > 0, do: String.slice(line, 1..-1//1), else: ""
           %{line_number: idx, prefix: " ", content: content, type: :context}
@@ -432,11 +437,11 @@ defmodule EvoDashWeb.ReviewComponents do
     if content && String.length(content) > 0 do
       try do
         Lumis.highlight!(content,
-          formatter: {:html_multi_themes,
-            language: language,
-            themes: [light: "github_light", dark: "github_dark"],
-            default_theme: "light-dark()"
-          }
+          formatter:
+            {:html_multi_themes,
+             language: language,
+             themes: [light: "github_light", dark: "github_dark"],
+             default_theme: "light-dark()"}
         )
         |> strip_lumis_wrappers()
         |> raw()
