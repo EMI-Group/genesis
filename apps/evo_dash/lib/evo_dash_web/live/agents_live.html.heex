@@ -3,41 +3,6 @@
     <p class="text-base-content/60 text-sm"><%= gettext("Visualize running agents and their relationships") %></p>
   </div>
 
-  <!-- Agent Event Notifications -->
-  <%= if @agent_notifications != [] do %>
-    <div class="fixed top-4 right-4 z-50 space-y-2 pointer-events-none" style="max-width: 360px;">
-      <%= for notification <- @agent_notifications do %>
-        <div class={[
-          "pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border backdrop-blur-sm",
-          "bg-base-100/95 border-base-200",
-          "animate-toast-enter"
-        ]}>
-          <div class={[
-            "w-2 h-2 rounded-full shrink-0",
-            notification.type == :spawned && "bg-primary",
-            notification.type == :started && "bg-success animate-pulse"
-          ]}>
-          </div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium">
-              <%= case notification.type do %>
-                <% :spawned -> %>
-                  <.icon name="hero-sparkles" class="size-4 text-primary mr-1" />
-                  Agent #<%= notification.display_id %> spawned
-                <% :started -> %>
-                  <.icon name="hero-play" class="size-4 text-success mr-1" />
-                  Agent #<%= notification.display_id %> is running
-              <% end %>
-            </p>
-          </div>
-          <div class="absolute bottom-0 left-0 right-0 h-0.5 rounded-b-xl overflow-hidden">
-            <div class="h-full bg-primary/20 animate-countdown"></div>
-          </div>
-        </div>
-      <% end %>
-    </div>
-  <% end %>
-
   <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4 animate-fade-in-up animation-delay-100">
     <!-- Agent Tree View -->
     <div class="xl:col-span-2">
