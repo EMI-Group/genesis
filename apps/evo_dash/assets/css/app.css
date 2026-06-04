@@ -430,6 +430,146 @@ button, a, input, textarea, select, summary,
   box-shadow: 0 0 0 3px oklch(55% 0.2 265 / 0.15), 0 4px 15px -3px oklch(55% 0.2 265 / 0.1);
 }
 
+/* === Diff Viewer (GitHub PR Style) === */
+
+/* Split layout: file tree sidebar + diff content */
+.diff-split-layout {
+  @apply flex gap-0 h-[calc(100vh-280px)] min-h-[400px];
+}
+
+.diff-file-sidebar {
+  @apply w-64 shrink-0 overflow-y-auto border-r border-base-200 bg-base-100;
+}
+
+.diff-file-sidebar .file-item {
+  @apply px-3 py-2 text-left w-full hover:bg-base-200/50 transition-colors flex items-center gap-2 text-sm border-b border-base-200/50;
+}
+
+.diff-file-sidebar .file-item.file-selected {
+  @apply bg-primary/10 border-l-2 border-l-primary;
+}
+
+.diff-main-content {
+  @apply flex-1 overflow-y-auto overflow-x-auto bg-base-100;
+}
+
+/* Diff file section with sticky header */
+.diff-file-section {
+  @apply border-b border-base-200;
+}
+
+.diff-file-header {
+  @apply sticky top-0 z-10 px-4 py-2 bg-base-200/80 backdrop-blur-sm flex items-center gap-3 text-sm font-mono border-b border-base-200;
+}
+
+/* Diff line layout */
+.diff-line {
+  @apply flex text-xs font-mono leading-6;
+}
+
+.diff-line-gutter {
+  @apply w-12 shrink-0 text-right pr-3 select-none text-base-content/25;
+}
+
+.diff-line-prefix {
+  @apply w-5 shrink-0 select-none text-center text-base-content/25;
+}
+
+.diff-line-content {
+  @apply whitespace-pre flex-1;
+}
+
+/* Line type backgrounds — subtle, GitHub-like */
+.diff-line-addition {
+  background-color: oklch(62% 0.15 160 / 0.08);
+}
+.diff-line-addition .diff-line-gutter,
+.diff-line-addition .diff-line-prefix {
+  background-color: oklch(62% 0.15 160 / 0.12);
+}
+
+.diff-line-deletion {
+  background-color: oklch(58% 0.22 25 / 0.08);
+}
+.diff-line-deletion .diff-line-gutter,
+.diff-line-deletion .diff-line-prefix {
+  background-color: oklch(58% 0.22 25 / 0.12);
+}
+
+.diff-line-deletion .diff-line-content {
+  @apply text-error/80;
+}
+.diff-line-addition .diff-line-prefix {
+  @apply text-success;
+}
+.diff-line-deletion .diff-line-prefix {
+  @apply text-error;
+}
+
+.diff-line-hunk {
+  background-color: oklch(60% 0.18 255 / 0.06);
+}
+
+.diff-line-hunk .diff-line-content {
+  @apply text-info/70 text-xs;
+}
+
+.diff-line-context {
+  /* no special background */
+}
+
+.diff-line-meta {
+  @apply text-base-content/30;
+}
+
+/* Syntax highlight overrides — prevent Lumis backgrounds from interfering */
+.diff-line-content pre.lumis,
+.diff-line-content code {
+  background: transparent !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+/* Lumis light-dark() support — ensure color-scheme is propagated */
+.diff-line-content {
+  color-scheme: light dark;
+}
+
+/* Tab bar styling */
+.review-tab-bar {
+  @apply flex border-b border-base-200 bg-base-100 px-4;
+}
+
+.review-tab {
+  @apply px-4 py-3 text-sm font-medium text-base-content/60 hover:text-base-content transition-colors border-b-2 border-transparent -mb-px;
+}
+
+.review-tab.tab-active {
+  @apply text-primary border-primary;
+}
+
+/* File tree scrollbar */
+.diff-file-sidebar {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.7 0 0 / 0.2) transparent;
+}
+
+.diff-file-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.diff-file-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.diff-file-sidebar::-webkit-scrollbar-thumb {
+  background-color: oklch(0.7 0 0 / 0.2);
+  border-radius: 3px;
+}
+
 /* Respect reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in-up,
