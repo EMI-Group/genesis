@@ -326,7 +326,7 @@ defmodule EvoDashWeb.ReviewComponents do
           <span class="diff-line-gutter">{line.line_number}</span>
           <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
           <span class="diff-line-content">
-            {if line.type in [:addition, :context], do: highlight_line_content(line.content, @file.language), else: line.content}
+            {if line.type in [:addition, :deletion, :context], do: highlight_line_content(line.content, @file.language), else: line.content}
           </span>
         </div>
       <% end %>
