@@ -182,7 +182,7 @@ defmodule EvoGit.Review do
           message: message,
           author_name: author_name,
           author_email: author_email,
-          date: date
+          date: parse_iso_date(date)
         }
       _ ->
         nil
@@ -247,6 +247,15 @@ defmodule EvoGit.Review do
     end
   end
   
+  defp parse_iso_date(str) when is_binary(str) do
+    case DateTime.from_iso8601(str) do
+      {:ok, dt, _offset} -> dt
+      {:error, _} -> str
+    end
+  end
+
+  defp parse_iso_date(other), do: other
+
   defp count_changes(files) do
     Enum.reduce(files, {0, 0}, fn file, {add, del} ->
       {add + file.additions, del + file.deletions}
