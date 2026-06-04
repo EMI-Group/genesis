@@ -3,6 +3,41 @@
     <p class="text-base-content/60 text-sm"><%= gettext("Visualize running agents and their relationships") %></p>
   </div>
 
+  <!-- Agent Event Notifications -->
+  <%= if @agent_notifications != [] do %>
+    <div class="fixed top-4 right-4 z-50 space-y-2 pointer-events-none" style="max-width: 360px;">
+      <%= for notification <- @agent_notifications do %>
+        <div class={[
+          "pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border backdrop-blur-sm",
+          "bg-base-100/95 border-base-200",
+          "animate-toast-enter"
+        ]}>
+          <div class={[
+            "w-2 h-2 rounded-full shrink-0",
+            notification.type == :spawned && "bg-primary",
+            notification.type == :started && "bg-success animate-pulse"
+          ]}>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium">
+              <%= case notification.type do %>
+                <% :spawned -> %>
+                  <.icon name="hero-sparkles" class="size-4 text-primary mr-1" />
+                  Agent #<%= notification.display_id %> spawned
+                <% :started -> %>
+                  <.icon name="hero-play" class="size-4 text-success mr-1" />
+                  Agent #<%= notification.display_id %> is running
+              <% end %>
+            </p>
+          </div>
+          <div class="absolute bottom-0 left-0 right-0 h-0.5 rounded-b-xl overflow-hidden">
+            <div class="h-full bg-primary/20 animate-countdown"></div>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+
   <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4 animate-fade-in-up animation-delay-100">
     <!-- Agent Tree View -->
     <div class="xl:col-span-2">
@@ -14,7 +49,7 @@
 
           <%= if @agents == [] do %>
             <div class="text-center py-16 text-base-content/50">
-              <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40" />
+              <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
               <p class="text-lg"><%= gettext("No agents currently registered") %></p>
               <p class="text-sm mt-2"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
             </div>
@@ -33,6 +68,8 @@
                       nodes={tree_nodes}
                       depth={0}
                       selected_id={@selected_agent_id}
+                      new_agent_ids={@new_agent_ids}
+                      changed_status_ids={@changed_status_ids}
                     />
                   </div>
                 </div>
@@ -71,6 +108,7 @@
           <%= if @selected_agent_id do %>
             <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
             <%= if agent do %>
+              <div id={"agent-detail-#{agent.id}"} class="animate-detail-enter">
               <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3">
                   <h3 class="card-title">
@@ -250,7 +288,7 @@
                     <div class="bg-base-200 rounded-lg max-h-96 overflow-y-auto">
                       <div class="divide-y divide-base-300">
                         <%= for {entry, index} <- Enum.with_index(agent.history) do %>
-                          <div class="p-3 hover:bg-base-300/50">
+                          <div class="p-3 hover:bg-base-300/50 animate-history-appear" style={"animation-delay: #{min(index * 50, 500)}ms"}>
                             <div class="flex flex-wrap items-center gap-2 mb-1">
                               <.icon
                                 name={history_entry_icon(entry.type)}
@@ -404,12 +442,13 @@
                   <% end %>
                 </div>
               </div>
+              </div> <!-- closes animate-detail-enter -->
             <% else %>
               <p class="text-base-content/50"><%= gettext("Agent not found") %></p>
             <% end %>
           <% else %>
             <div class="text-center py-16 text-base-content/50">
-              <.icon name="hero-finger-pointing" class="size-20 mx-auto mb-4 opacity-40" />
+              <.icon name="hero-finger-pointing" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
               <p class="text-lg"><%= gettext("Select an agent to view details") %></p>
             </div>
           <% end %>

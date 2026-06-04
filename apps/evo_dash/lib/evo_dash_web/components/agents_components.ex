@@ -6,6 +6,8 @@ defmodule EvoDashWeb.AgentsComponents do
   attr(:depth, :integer, default: 0)
   attr(:selected_id, :any, default: nil)
   attr(:max_width, :integer, default: nil)
+  attr(:new_agent_ids, :any, default: MapSet.new())
+  attr(:changed_status_ids, :any, default: MapSet.new())
 
   def path_tree(assigns) do
     assigns =
@@ -49,11 +51,16 @@ defmodule EvoDashWeb.AgentsComponents do
             <div class="flex flex-wrap gap-2 flex-1 mt-1 sm:mt-0">
               <%= for agent <- node.agents do %>
                 <div
+                  id={"agent-card-#{agent.id}"}
                   class={[
                     "flex flex-col gap-1 p-2.5 rounded-xl border shadow-sm transition-all cursor-pointer hover:bg-base-200/80 min-w-[120px] sm:min-w-[140px]",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
-                    @selected_id == agent.id && "ring-2 ring-primary ring-offset-1"
+                    @selected_id == agent.id && "ring-2 ring-primary ring-offset-1",
+                    agent.status == :running && "agent-card-running",
+                    agent.status == :running && "animate-pulse-glow",
+                    MapSet.member?(@new_agent_ids, agent.id) && "animate-agent-spawn",
+                    MapSet.member?(@changed_status_ids, agent.id) && "animate-status-bounce"
                   ]}
                   phx-click="select_agent"
                   phx-value-id={agent.id}
@@ -106,6 +113,8 @@ defmodule EvoDashWeb.AgentsComponents do
               depth={@depth + 1}
               selected_id={@selected_id}
               max_width={@max_width}
+              new_agent_ids={@new_agent_ids}
+              changed_status_ids={@changed_status_ids}
             />
           </div>
         <% end %>

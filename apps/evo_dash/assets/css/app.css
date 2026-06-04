@@ -296,6 +296,127 @@ input, textarea, select, button, a {
 .animation-delay-300 { animation-delay: 300ms; }
 .animation-delay-400 { animation-delay: 400ms; }
 .animation-delay-500 { animation-delay: 500ms; }
+.animation-delay-600 { animation-delay: 600ms; }
+.animation-delay-700 { animation-delay: 700ms; }
+.animation-delay-800 { animation-delay: 800ms; }
+.animation-delay-900 { animation-delay: 900ms; }
+.animation-delay-1000 { animation-delay: 1000ms; }
+
+/* Agent spawn: scale-in + brief glow */
+@keyframes agent-spawn {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.03);
+    box-shadow: 0 0 20px oklch(70% 0.2 265 / 0.3);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 oklch(70% 0.2 265 / 0);
+  }
+}
+
+.animate-agent-spawn {
+  animation: agent-spawn 0.5s ease-out both;
+}
+
+/* Status change icon bounce */
+@keyframes status-bounce {
+  0%, 100% { transform: scale(1); }
+  30% { transform: scale(1.25); }
+  60% { transform: scale(0.95); }
+}
+
+.animate-status-bounce {
+  animation: status-bounce 0.4s ease-out;
+}
+
+/* Detail panel entrance */
+@keyframes detail-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-detail-enter {
+  animation: detail-enter 0.35s ease-out both;
+}
+
+/* Toast notification slide in from top */
+@keyframes toast-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-100%) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Toast notification slide out to top */
+@keyframes toast-exit {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-100%) scale(0.95);
+  }
+}
+
+.animate-toast-enter {
+  animation: toast-enter 0.35s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+}
+
+.animate-toast-exit {
+  animation: toast-exit 0.25s ease-in both;
+}
+
+/* History entry fade in */
+@keyframes history-appear {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-history-appear {
+  animation: history-appear 0.3s ease-out both;
+}
+
+/* Agent card running shimmer */
+@keyframes agent-running-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.agent-card-running {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    oklch(67% 0.15 160 / 0.06) 25%,
+    oklch(67% 0.15 160 / 0.12) 50%,
+    oklch(67% 0.15 160 / 0.06) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: agent-running-shimmer 3s ease-in-out infinite;
+}
 
 /* Hover micro-interactions */
 .hover-lift {
@@ -322,7 +443,14 @@ input, textarea, select, button, a {
   .animate-slide-down,
   .animate-bounce-in,
   .animate-float,
-  .animate-countdown {
+  .animate-countdown,
+  .animate-agent-spawn,
+  .animate-status-bounce,
+  .animate-detail-enter,
+  .animate-toast-enter,
+  .animate-toast-exit,
+  .animate-history-appear,
+  .agent-card-running {
     animation: none;
     opacity: 1;
     transform: none;
@@ -332,7 +460,12 @@ input, textarea, select, button, a {
   .animation-delay-200,
   .animation-delay-300,
   .animation-delay-400,
-  .animation-delay-500 {
+  .animation-delay-500,
+  .animation-delay-600,
+  .animation-delay-700,
+  .animation-delay-800,
+  .animation-delay-900,
+  .animation-delay-1000 {
     animation-delay: 0ms;
   }
 
