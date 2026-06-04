@@ -22,6 +22,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `EvoGit.Task` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
 | `EvoGit.Runtime` | Top-level coordinator: Genesis and Evolution phases |
 | `EvoGit.ProjectConfig` | Reads and parses `evogit.toml` from repo root |
+| `EvoGit.Review` | Code review operations: load diff data, merge/reject branches, manual GitHub PR creation |
 | `EvoGit.Config` | Unified 3-level configuration resolver (defaults → user TOML → runtime overrides) |
 | `EvoGit.Defaults` | Backward-compatibility shim delegating to `EvoGit.Config` |
 | `EvoGit.Platform` | Cross-platform OS detection, config/data directory resolution |
