@@ -460,7 +460,7 @@ button, a, input, textarea, select, summary,
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1.5rem;
-    height: calc(100vh - 11rem); /* navbar ~4rem + main padding 5rem + subtitle + gap */
+    height: calc(100vh - 10rem); /* navbar ~4rem + main padding 5rem + space-y gap */
     overflow: hidden;
   }
 
