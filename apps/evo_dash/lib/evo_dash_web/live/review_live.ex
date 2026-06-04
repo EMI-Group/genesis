@@ -47,24 +47,22 @@ defmodule EvoDashWeb.ReviewLive do
 
               <!-- Fullscreen wrapper — breaks out of parent padding -->
               <div class="review-fullscreen-wrapper">
-                <div class="review-fullscreen-content">
-                  <!-- Sticky tab bar -->
-                  <EvoDashWeb.ReviewComponents.review_tabs
-                    active_tab={@review_tab}
-                    files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
-                    commits_count={length(@commits)}
+                <!-- Sticky tab bar -->
+                <EvoDashWeb.ReviewComponents.review_tabs
+                  active_tab={@review_tab}
+                  files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
+                  commits_count={length(@commits)}
+                  fullscreen={true}
+                />
+                <!-- Diff flows with page, sidebar sticks -->
+                <%= if @review_data do %>
+                  <EvoDashWeb.ReviewComponents.split_diff_layout
+                    files={@review_data.files}
+                    expanded_files={@expanded_files}
+                    selected_file={@selected_file}
                     fullscreen={true}
                   />
-                  <!-- Diff fills remaining space -->
-                  <%= if @review_data do %>
-                    <EvoDashWeb.ReviewComponents.split_diff_layout
-                      files={@review_data.files}
-                      expanded_files={@expanded_files}
-                      selected_file={@selected_file}
-                      fullscreen={true}
-                    />
-                  <% end %>
-                </div>
+                <% end %>
               </div>
             <% else %>
               <!-- Conversation / Commits: standard card-based layout -->

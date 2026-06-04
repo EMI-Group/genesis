@@ -207,23 +207,30 @@ const AutoClearFlash = {
 const ScrollToFile = {
   mounted() {
     this.handleEvent("scroll_to_file", ({target_id}) => {
-      // Use a small delay to ensure the DOM has been patched
       setTimeout(() => {
         const target = document.getElementById(target_id);
-        if (target) {
-          // Find the closest scrollable parent (the diff viewer)
+        if (!target) return;
+
+        const fullscreenLayout = target.closest('.diff-fullscreen-layout');
+        if (fullscreenLayout) {
+          // Fullscreen mode — scroll the page to the target
+          const rect = target.getBoundingClientRect();
+          window.scrollTo({
+            top: window.scrollY + rect.top - 116, // 108px sticky offset + 8px padding
+            behavior: "smooth"
+          });
+        } else {
+          // Normal mode — scroll within the diff container
           const container = target.closest('.diff-main-content');
           if (container) {
-            // Calculate scroll position relative to the container
             const containerRect = container.getBoundingClientRect();
             const targetRect = target.getBoundingClientRect();
             const scrollOffset = targetRect.top - containerRect.top + container.scrollTop;
             container.scrollTo({
-              top: scrollOffset - 8,  // small padding above the file header
+              top: scrollOffset - 8,
               behavior: "smooth"
             });
           } else {
-            // Fallback: scroll into view
             target.scrollIntoView({ behavior: "smooth", block: "start" });
           }
         }

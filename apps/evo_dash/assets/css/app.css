@@ -452,27 +452,34 @@ button, a, input, textarea, select, summary,
   }
 }
 
-/* Flex column container — fills viewport height minus navbar */
-.review-fullscreen-content {
-  display: flex;
-  flex-direction: column;
-  min-height: calc(100dvh - 56px);
-}
-
-/* Sticky tab bar — flat bar that sticks to viewport top under the navbar */
+/* Sticky tab bar — sticks below the navbar (navbar is sticky top-0 z-50, ~64px tall) */
 .review-tab-bar-sticky {
-  @apply sticky top-0 z-30 bg-base-100 border-b border-base-200 px-4 sm:px-6 lg:px-8;
+  @apply sticky z-30 bg-base-100 border-b border-base-200 px-4 sm:px-6 lg:px-8;
+  top: 64px;
 }
 
-/* Full-screen diff layout — flex-1 fills remaining space below sticky tab bar */
+/* Full-screen diff layout — flex row, diff content flows with page */
 .diff-fullscreen-layout {
-  @apply flex flex-1 min-h-0;
+  @apply flex;
 }
 
-/* Ensure the diff main content scrolls in fullscreen mode */
-.diff-fullscreen-layout .diff-main-content {
+/* Sticky sidebar in fullscreen mode — sticks below navbar + tab bar */
+.diff-fullscreen-layout .diff-file-sidebar {
+  position: sticky;
+  top: 108px;
+  height: calc(100dvh - 108px);
   overflow-y: auto;
-  overflow-x: auto;
+}
+
+/* Diff content flows with page in fullscreen — no inner scroll */
+.diff-fullscreen-layout .diff-main-content {
+  overflow: visible;
+}
+
+/* File headers stick below tab bar in fullscreen */
+.diff-fullscreen-layout .diff-file-header {
+  top: 108px;
+  z-index: 20;
 }
 
 /* Split layout: file tree sidebar + diff content (non-fullscreen) */
