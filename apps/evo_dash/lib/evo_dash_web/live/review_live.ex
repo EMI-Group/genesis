@@ -96,12 +96,8 @@ defmodule EvoDashWeb.ReviewLive do
                       files_count={@review_data.changed_files_count}
                       additions={@review_data.total_additions}
                       deletions={@review_data.total_deletions}
+                      commits_count={length(@commits)}
                     />
-                  <% end %>
-
-                  <!-- Commits List -->
-                  <%= if @commits != [] do %>
-                    <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
                   <% end %>
 
                   <!-- Action Buttons -->

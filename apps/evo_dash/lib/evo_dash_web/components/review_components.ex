@@ -145,7 +145,7 @@ defmodule EvoDashWeb.ReviewComponents do
           <.icon name="hero-chevron-down" class="size-4 text-base-content/40" />
         </summary>
         <div class="px-4 md:px-6 pb-4 md:pb-6">
-          <div class="bg-success/5 border border-success/10 rounded-xl p-4 max-h-[300px] overflow-y-auto">
+          <div class="bg-success/5 border border-success/10 rounded-xl p-4">
             <div class="md-content text-sm">
               {raw(EvoDash.MarkdownRender.render(@summary))}
             </div>
@@ -157,29 +157,37 @@ defmodule EvoDashWeb.ReviewComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # diff_stats_bar/1 — Files changed count, insertions, deletions
+  # diff_stats_bar/1 — Files changed, insertions, deletions, and commits count
   # ---------------------------------------------------------------------------
 
   attr(:files_count, :integer, required: true)
   attr(:additions, :integer, required: true)
   attr(:deletions, :integer, required: true)
+  attr(:commits_count, :integer, default: 0)
 
   def diff_stats_bar(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-4 md:p-6">
-      <div class="flex items-center gap-3 flex-wrap">
+    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 px-4 py-3 md:px-6 md:py-3">
+      <div class="flex items-center gap-3 flex-wrap text-sm">
         <div class="flex items-center gap-2">
-          <.icon name="hero-document-text" class="size-5 text-base-content/60" />
-          <span class="font-semibold text-sm">
+          <.icon name="hero-document-text" class="size-4 text-base-content/50" />
+          <span class="font-medium">
             {gettext("%{count} files changed", count: @files_count)}
           </span>
         </div>
-        <div class="flex items-center gap-3 text-sm">
+        <div class="flex items-center gap-2">
           <span class="text-success font-medium flex items-center gap-1">
             <.icon name="hero-plus" class="size-3" /> {@additions}
           </span>
           <span class="text-error font-medium flex items-center gap-1">
             <.icon name="hero-minus" class="size-3" /> {@deletions}
+          </span>
+        </div>
+        <span class="text-base-content/30">·</span>
+        <div class="flex items-center gap-2">
+          <.icon name="hero-clock" class="size-4 text-base-content/50" />
+          <span class="font-medium">
+            {ngettext("%{count} commit", "%{count} commits", @commits_count, count: @commits_count)}
           </span>
         </div>
       </div>
