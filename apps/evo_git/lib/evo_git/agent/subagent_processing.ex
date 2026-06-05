@@ -325,7 +325,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
           result :: term(),
           state :: LoopState.t()
         ) :: {non_neg_integer(), String.t(), String.t(), String.t()}
-  def process_subagent_result(call, index, result, state) do
+  def process_subagent_result(call, index, result, _state) do
 
     output = format_subagent_result(result)
 
