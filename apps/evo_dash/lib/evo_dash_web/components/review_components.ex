@@ -419,12 +419,19 @@ defmodule EvoDashWeb.ReviewComponents do
 
     ~H"""
     <div class="text-xs font-mono">
-      <%= for line <- parse_diff_lines(@file) do %>
-        <div class={["diff-line", diff_line_class(line.type)]}>
-          <span class="diff-line-gutter">{line.line_number}</span>
-          <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
-          <span class="diff-line-content" phx-no-format>{if line.type in [:addition, :deletion, :context], do: highlight_line_content(line.content, @file.language), else: line.content}</span>
+      <%= if is_nil(@file.diff) do %>
+        <div class="flex items-center justify-center py-8 gap-2 text-base-content/50">
+          <span class="loading loading-spinner loading-sm"></span>
+          <span><%= gettext("Loading diff...") %></span>
         </div>
+      <% else %>
+        <%= for line <- parse_diff_lines(@file) do %>
+          <div class={["diff-line", diff_line_class(line.type)]}>
+            <span class="diff-line-gutter">{line.line_number}</span>
+            <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
+            <span class="diff-line-content" phx-no-format>{if line.type in [:addition, :deletion, :context], do: highlight_line_content(line.content, @file.language), else: line.content}</span>
+          </div>
+        <% end %>
       <% end %>
     </div>
     """
