@@ -38,18 +38,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert [:sandbox, :process, :limit_nofile] in paths
       assert [:sandbox, :process, :oom_score_adjust] in paths
 
-      # Evolution
-      assert [:evolution, :pool_size] in paths
-      assert [:evolution, :max_generations] in paths
-      assert [:evolution, :selection_size] in paths
-      assert [:evolution, :crossover_rate] in paths
-      assert [:evolution, :mutation_rate] in paths
-      assert [:evolution, :convergence_threshold] in paths
-      assert [:evolution, :novelty_neighbors] in paths
-      assert [:evolution, :stagnation_limit] in paths
-      assert [:evolution, :initial_seed_count] in paths
-      assert [:evolution, :llm_seed_count] in paths
-
       # Truncation
       assert [:truncation, :tool_output_max_bytes] in paths
       assert [:truncation, :tool_output_default_max_bytes] in paths
@@ -75,8 +63,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 34 schemas" do
-      assert length(Schema.all_schemas()) == 34
+    test "has exactly 24 schemas" do
+      assert length(Schema.all_schemas()) == 24
     end
   end
 
@@ -111,18 +99,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.sandbox.process.limit_nofile == 65536
       assert defaults.sandbox.process.oom_score_adjust == 1000
 
-      # Evolution
-      assert defaults.evolution.pool_size == 50
-      assert defaults.evolution.max_generations == 20
-      assert defaults.evolution.selection_size == 10
-      assert defaults.evolution.crossover_rate == 0.7
-      assert defaults.evolution.mutation_rate == 0.3
-      assert defaults.evolution.convergence_threshold == 0.01
-      assert defaults.evolution.novelty_neighbors == 5
-      assert defaults.evolution.stagnation_limit == 5
-      assert defaults.evolution.initial_seed_count == 15
-      assert defaults.evolution.llm_seed_count == 25
-
       # Truncation
       assert defaults.truncation.tool_output_max_bytes == 131_072
       assert defaults.truncation.tool_output_default_max_bytes == 16_384
@@ -154,7 +130,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(grouped, :llm)
       assert Map.has_key?(grouped, :user)
       assert Map.has_key?(grouped, :sandbox)
-      assert Map.has_key?(grouped, :evolution)
       assert Map.has_key?(grouped, :truncation)
       assert Map.has_key?(grouped, :task_history)
     end
@@ -165,7 +140,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:llm]) == 2
       assert length(grouped[:user]) == 1
       assert length(grouped[:sandbox]) == 9
-      assert length(grouped[:evolution]) == 10
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
     end
@@ -217,21 +191,13 @@ defmodule EvoGit.Config.SchemaTest do
       assert {:ok, _} = Schema.validate(config)
     end
 
-    test "catches float out of range (max)" do
-      config = put_in(Schema.defaults(), [:evolution, :crossover_rate], 1.5)
+    test "catches pos_integer with out of range max" do
+      config = put_in(Schema.defaults(), [:sandbox, :resources, :cpu_weight], 20_000)
       assert {:error, errors} = Schema.validate(config)
       assert length(errors) > 0
       error = List.first(errors)
-      assert error.key_path == [:evolution, :crossover_rate]
-      assert error.rule == {:max, 1.0}
-    end
-
-    test "catches float out of range (min)" do
-      config = put_in(Schema.defaults(), [:evolution, :crossover_rate], -0.5)
-      assert {:error, errors} = Schema.validate(config)
-      assert length(errors) > 0
-      error = List.first(errors)
-      assert error.rule == {:min, 0.0}
+      assert error.key_path == [:sandbox, :resources, :cpu_weight]
+      assert error.rule == {:max, 10_000}
     end
 
     test "catches invalid enum value" do
@@ -257,15 +223,10 @@ defmodule EvoGit.Config.SchemaTest do
       config =
         Schema.defaults()
         |> put_in([:scheduler, :max_concurrency], -1)
-        |> put_in([:evolution, :crossover_rate], 2.0)
+        |> put_in([:sandbox, :resources, :cpu_weight], 20_000)
 
       assert {:error, errors} = Schema.validate(config)
       assert length(errors) >= 2
-    end
-
-    test "accepts integer for float type" do
-      config = put_in(Schema.defaults(), [:evolution, :crossover_rate], 1)
-      assert {:ok, _} = Schema.validate(config)
     end
 
     test "nil values are skipped" do
