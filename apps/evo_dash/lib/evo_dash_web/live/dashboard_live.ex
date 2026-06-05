@@ -367,15 +367,19 @@ defmodule EvoDashWeb.DashboardLive do
     socket =
       socket
       |> maybe_restore_assign(:task_prompt, params["task_prompt"])
-      |> maybe_restore_assign(:task_mode, params["task_mode"])
-      |> maybe_restore_assign(:task_node_path, params["task_node_path"])
       |> maybe_restore_assign(:task_seeds, params["task_seeds"])
       |> maybe_restore_assign(:task_starting_commit, params["task_starting_commit"])
       |> maybe_restore_show_project_settings(params["show_project_settings"])
 
-    # Restore project if we don't already have one active
+    # Restore project if we don't already have one active.
+    # Only restore project-specific assigns (mode, node_path) when no project is
+    # active — otherwise the auto-detected values from detect_mode/1 should win.
     socket =
       if is_nil(socket.assigns.active_project) do
+        socket = socket
+          |> maybe_restore_assign(:task_mode, params["task_mode"])
+          |> maybe_restore_assign(:task_node_path, params["task_node_path"])
+
         project_path = params["project"]
 
         if is_binary(project_path) and project_path != "" and File.dir?(project_path) do
@@ -896,9 +900,15 @@ defmodule EvoDashWeb.DashboardLive do
   defp show_review_button?(_), do: false
 
   defp assign_form_defaults(socket) do
+    mode = if socket.assigns[:active_project_path] do
+      detect_mode(socket.assigns.active_project_path)
+    else
+      "genesis_new"
+    end
+
     socket
     |> assign(:task_prompt, "")
-    |> assign(:task_mode, "genesis_new")
+    |> assign(:task_mode, mode)
     |> assign(:task_mode_info, "")
     |> assign(:task_node_path, "")
     |> assign(:task_seeds, "")
