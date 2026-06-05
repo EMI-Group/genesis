@@ -7,25 +7,28 @@ defmodule EvoDashWeb.SettingsLive do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status}>
       <%!-- Header --%>
-      <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
-        <div class="bg-secondary/15 text-secondary p-3 rounded-xl">
-          <.icon name="hero-cog-6-tooth" class="size-6" />
+      <div class="flex items-center gap-4 mb-2 animate-fade-in-up bg-gradient-to-r from-base-200/50 to-transparent rounded-2xl p-4 -mx-1">
+        <div class="bg-gradient-to-br from-secondary/20 to-secondary/5 text-secondary p-3.5 rounded-xl shadow-sm">
+          <.icon name="hero-cog-6-tooth" class="size-7" />
         </div>
         <div>
-          <h1 class="text-xl font-bold">{gettext("Settings")}</h1>
+          <h1 class="text-2xl font-bold">{gettext("Settings")}</h1>
           <p class="text-sm text-base-content/60">{gettext("Runtime configuration and file settings")}</p>
         </div>
       </div>
 
       <%!-- Runtime Controls banner --%>
       <div class="mt-4 bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden animate-fade-in-up animation-delay-100">
-        <div class="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
-          <div class="flex items-center gap-3">
+        <div class="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-5">
+          <div class="flex items-center gap-4">
             <div class={[
               "p-3 rounded-xl",
               if(@scheduler_paused, do: "bg-warning/15 text-warning", else: "bg-success/15 text-success")
             ]}>
-              <.icon name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"} class="size-6" />
+              <.icon
+                name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
+                class={["size-6", !@scheduler_paused && "animate-pulse"]}
+              />
             </div>
             <div>
               <h2 class="text-base font-bold">
@@ -43,8 +46,8 @@ defmodule EvoDashWeb.SettingsLive do
           <button
             phx-click="toggle_pause"
             class={[
-              "btn",
-              if(@scheduler_paused, do: "btn-success", else: "btn-warning")
+              "btn btn-sm",
+              if(@scheduler_paused, do: "btn-success btn-soft", else: "btn-warning btn-soft")
             ]}
           >
             <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-4" />
@@ -55,10 +58,11 @@ defmodule EvoDashWeb.SettingsLive do
 
       <%!-- Config Status Warning --%>
       <%= if not @config_status.ok? do %>
-        <div class="mt-4 bg-warning/10 border border-warning/20 rounded-xl p-4 animate-fade-in-up animation-delay-100">
-          <h3 class="font-semibold text-warning flex items-center gap-2 mb-2">
-            <.icon name="hero-exclamation-triangle" class="size-5" /> {gettext("Missing Configuration")}
-          </h3>
+        <div class="mt-4 bg-warning/5 border border-warning/25 rounded-xl p-4 animate-fade-in-up animation-delay-100">
+          <div class="flex items-start gap-2 mb-2">
+            <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
+            <h3 class="font-semibold text-warning">{gettext("Missing Configuration")}</h3>
+          </div>
           <ul class="space-y-1">
             <%= for warning <- @config_status.warnings do %>
               <li class="text-sm text-warning/80 flex items-start gap-2">
@@ -75,7 +79,7 @@ defmodule EvoDashWeb.SettingsLive do
 
       <%!-- No LLM Model Warning --%>
       <%= if is_nil(get_in(@file_config, [:llm, :model])) do %>
-        <div class="mt-4 bg-error/10 border border-error/20 rounded-xl p-4 animate-fade-in-up animation-delay-100">
+        <div class="mt-4 bg-error/5 border border-error/25 rounded-xl p-4 animate-fade-in-up animation-delay-100">
           <div class="flex items-start gap-3">
             <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
             <div>
@@ -83,8 +87,10 @@ defmodule EvoDashWeb.SettingsLive do
               <p class="text-sm text-error/80 mt-1">
                 {gettext("Agents cannot run until you set a model. Go to the LLM category and fill in the Model field.")}
               </p>
-              <p class="text-xs text-base-content/50 mt-2">
-                {gettext("Example model names:")} <code class="bg-base-200 px-1 rounded text-xs">anthropic/claude-sonnet-4-20250514</code>, <code class="bg-base-200 px-1 rounded text-xs">openai/gpt-4.1</code>
+              <p class="text-xs text-base-content/50 mt-2 flex items-center gap-1.5 flex-wrap">
+                {gettext("Example model names:")}
+                <span class="badge badge-sm badge-ghost font-mono text-xs">anthropic/claude-sonnet-4-20250514</span>
+                <span class="badge badge-sm badge-ghost font-mono text-xs">openai/gpt-4.1</span>
               </p>
             </div>
           </div>
@@ -92,7 +98,7 @@ defmodule EvoDashWeb.SettingsLive do
       <% end %>
 
       <%!-- Two-column sidebar + content layout --%>
-      <div class="mt-4 flex bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden animate-fade-in-up animation-delay-200" style="min-height: 60vh;">
+      <div class="mt-4 flex bg-base-100 rounded-2xl shadow-md border border-base-200 overflow-hidden animate-fade-in-up animation-delay-200 min-h-[70vh] transition-shadow duration-300">
         <%!-- Sidebar --%>
         <EvoDashWeb.SettingsComponents.settings_sidebar
           categories={@schemas_by_category}
