@@ -71,7 +71,8 @@ defmodule EvoGit.Sandbox do
   @spec run(String.t(), String.t(), [String.t()], String.t() | nil) ::
           {String.t(), non_neg_integer()}
   def run(cwd, executable, args \\ [], repo_root \\ nil) do
-    backend().run(cwd, executable, args, repo_root)
+    resolved = EvoGit.Executable.resolve(executable)
+    backend().run(cwd, resolved, args, repo_root)
   end
 
   @doc "Ensures the sandbox backend is initialized (e.g., creates systemd slice)."

@@ -275,7 +275,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @spec clean_orphaned_branches(String.t()) :: :ok
 
   def clean_orphaned_branches(repo_root) do
-    case System.cmd("git", ["branch", "--list", "evogit-agent-*"], cd: repo_root) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["branch", "--list", "evogit-agent-*"], cd: repo_root) do
       {output, 0} when is_binary(output) and byte_size(output) > 0 ->
         output
         |> String.split("\n", trim: true)
