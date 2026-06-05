@@ -50,18 +50,6 @@ defmodule EvoGit.Config do
       limit_nofile = 65536     # Max open file descriptors
       oom_score_adjust = 1000  # OOM killer preference (-1000 to 1000)
 
-      [evolution]
-      pool_size = 50
-      max_generations = 20
-      selection_size = 10
-      crossover_rate = 0.7
-      mutation_rate = 0.3
-      convergence_threshold = 0.01
-      novelty_neighbors = 5
-      stagnation_limit = 5
-      initial_seed_count = 15
-      llm_seed_count = 25
-
       [truncation]
       tool_output_max_bytes = 131_072    # 128 KB — threshold to trigger truncation
       tool_output_default_max_bytes = 16_384 # 16 KB — default max for high-output tools
@@ -187,7 +175,7 @@ defmodule EvoGit.Config do
         {:ok, contents} ->
           case TomlElixir.decode(contents) do
             {:ok, config} ->
-              config
+              Map.delete(config, "evolution")
 
             {:error, reason} ->
               Logger.warning("Failed to parse config at #{path}: #{inspect(reason)}")
@@ -226,6 +214,7 @@ defmodule EvoGit.Config do
         dir = config_dir()
 
         with :ok <- File.mkdir_p(dir),
+             config = Map.delete(config, :evolution),
              string_config = stringify_keys(config),
              {:ok, toml} <- TomlElixir.encode(string_config) do
           File.write(path, toml)

@@ -37,7 +37,7 @@ defmodule EvoGit.Config.Schema do
   @type key_path :: [atom()]
 
   @typedoc "Top-level config category"
-  @type category :: :scheduler | :llm | :user | :sandbox | :evolution | :truncation | :task_history
+  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history
 
   @typedoc "Sub-category for sandbox keys; nil for all other categories"
   @type sub_category :: :resources | :process | nil
@@ -263,107 +263,6 @@ defmodule EvoGit.Config.Schema do
       description:
         "OOM killer adjustment score per process (-1000 to 1000). Higher values make processes more likely to be killed when memory is exhausted. Default of 1000 means sandboxed processes are preferentially killed over system processes."
     },
-    # ── Evolution ──────────────────────────────────────────────────────
-    %{
-      key_path: [:evolution, :pool_size],
-      type: :pos_integer,
-      default: 50,
-      validation: [min: 1],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Number of candidate solutions maintained in the evolutionary pool. Larger pools provide more diversity but require more evaluations per generation."
-    },
-    %{
-      key_path: [:evolution, :max_generations],
-      type: :pos_integer,
-      default: 20,
-      validation: [min: 1],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Maximum number of evolutionary generations. The evolution process stops after this many generations even if convergence hasn't been reached."
-    },
-    %{
-      key_path: [:evolution, :selection_size],
-      type: :pos_integer,
-      default: 10,
-      validation: [min: 1],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Number of top candidates selected in each generation for reproduction. These elite candidates are carried forward and used to create the next generation."
-    },
-    %{
-      key_path: [:evolution, :crossover_rate],
-      type: :float,
-      default: 0.7,
-      validation: [min: 0.0, max: 1.0],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Probability of crossover between two parent solutions. At 0.7, 70% of offspring are created by combining features from two parents; the remaining 30% are direct copies of a single parent."
-    },
-    %{
-      key_path: [:evolution, :mutation_rate],
-      type: :float,
-      default: 0.3,
-      validation: [min: 0.0, max: 1.0],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Probability of mutation applied to each offspring. At 0.3, each offspring has a 30% chance of receiving random modifications. Higher values increase exploration at the cost of stability."
-    },
-    %{
-      key_path: [:evolution, :convergence_threshold],
-      type: :float,
-      default: 0.01,
-      validation: [min: 0.0],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Fitness improvement threshold for convergence detection. When the best fitness changes by less than this amount across consecutive generations, the population is considered converged and evolution stops early."
-    },
-    %{
-      key_path: [:evolution, :novelty_neighbors],
-      type: :pos_integer,
-      default: 5,
-      validation: [min: 1],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Number of nearest neighbors considered for novelty score calculation. Used in the novelty search algorithm to maintain population diversity by rewarding solutions that are different from their neighbors."
-    },
-    %{
-      key_path: [:evolution, :stagnation_limit],
-      type: :pos_integer,
-      default: 5,
-      validation: [min: 1],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Number of consecutive generations without improvement before triggering stagnation handling. When fitness hasn't improved for this many generations, the system injects random diversity to escape local optima."
-    },
-    %{
-      key_path: [:evolution, :initial_seed_count],
-      type: :pos_integer,
-      default: 15,
-      validation: [min: 0],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Number of initial seed candidates generated before evolution begins. Set to 0 to skip the seeding phase and use only the current state as the initial population."
-    },
-    %{
-      key_path: [:evolution, :llm_seed_count],
-      type: :pos_integer,
-      default: 25,
-      validation: [min: 1],
-      category: :evolution,
-      sub_category: nil,
-      description:
-        "Number of LLM-generated seed candidates. During the seeding phase, the LLM generates this many candidate variations based on the original codebase to bootstrap the evolutionary pool."
-    },
     # ── Truncation ─────────────────────────────────────────────────────
     %{
       key_path: [:truncation, :tool_output_max_bytes],
@@ -460,7 +359,7 @@ defmodule EvoGit.Config.Schema do
 
       iex> schemas = EvoGit.Config.Schema.schemas_by_category()
       iex> Map.keys(schemas)
-      [:scheduler, :llm, :user, :sandbox, :evolution, :truncation, :task_history]
+      [:scheduler, :llm, :user, :sandbox, :truncation, :task_history]
   """
   @spec schemas_by_category() :: %{category() => [schema_map()]}
   def schemas_by_category do
