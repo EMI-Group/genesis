@@ -183,7 +183,7 @@ const StatePersistence = {
       } catch (e) {}
     }
 
-    // Listen for save requests from the server
+    // Listen for save requests from the server (still needed for task_mode changes, project switches, task starts)
     this.handleEvent("persist_state", (state) => {
       // Also capture current DOM state for HTML-managed toggles
       const detailsEl = this.el.querySelector('details');
@@ -191,6 +191,38 @@ const StatePersistence = {
         state.show_project_settings = detailsEl.open;
       }
       sessionStorage.setItem('dashboard_state', JSON.stringify(state));
+    });
+
+    // Client-side form field watching — debounced persistence to sessionStorage
+    let debounceTimer;
+    const persistFormState = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const project = this.el.dataset.project || '';
+        const taskMode = this.el.dataset.taskMode || '';
+        const state = {
+          project: project,
+          task_mode: taskMode,
+          task_prompt: this.el.querySelector('[name="prompt"]')?.value || '',
+          task_node_path: this.el.querySelector('[name="node_path"]')?.value || '',
+          task_seeds: this.el.querySelector('[name="seeds"]')?.value || '',
+          task_starting_commit: this.el.querySelector('[name="starting_commit"]')?.value || '',
+        };
+        // Also capture project settings toggle state
+        const detailsEl = this.el.querySelector('details');
+        if (detailsEl) {
+          state.show_project_settings = detailsEl.open;
+        }
+        sessionStorage.setItem('dashboard_state', JSON.stringify(state));
+      }, 300);
+    };
+
+    // Watch all form fields for input events
+    this.el.addEventListener('input', (e) => {
+      const name = e.target.getAttribute('name');
+      if (['prompt', 'node_path', 'seeds', 'starting_commit'].includes(name)) {
+        persistFormState();
+      }
     });
   }
 };

@@ -27,7 +27,7 @@ defmodule EvoDashWeb.DashboardLive do
       </EvoDashWeb.Layouts.app>
     <% else %>
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
-      <div id="dashboard-root" phx-hook="StatePersistence">
+      <div id="dashboard-root" phx-hook="StatePersistence" data-project={@active_project_path} data-task-mode={@task_mode}>
         <div id="browser-notifications" phx-hook="BrowserNotifications">
         <!-- Project Selector (always visible) -->
         <EvoDashWeb.DashboardComponents.project_selector
@@ -346,20 +346,6 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:task_mode, mode)
      |> maybe_persist_state()}
-  end
-
-  @impl true
-  def handle_event("task_field_change", params, socket) do
-    # Persist form field changes without updating assigns (avoids cursor jumping)
-    state = %{
-      project: socket.assigns.active_project_path,
-      task_mode: socket.assigns.task_mode,
-      task_prompt: Map.get(params, "prompt", socket.assigns.task_prompt),
-      task_node_path: Map.get(params, "node_path", socket.assigns.task_node_path),
-      task_seeds: Map.get(params, "seeds", socket.assigns.task_seeds),
-      task_starting_commit: Map.get(params, "starting_commit", socket.assigns.task_starting_commit),
-    }
-    {:noreply, push_event(socket, "persist_state", state)}
   end
 
   @impl true

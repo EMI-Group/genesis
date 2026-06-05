@@ -174,8 +174,6 @@ defmodule EvoDashWeb.DashboardComponents do
                 type="text"
                 name="node_path"
                 value={@node_path}
-                phx-change="task_field_change"
-                phx-debounce="300"
                 class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
                 placeholder={gettext("e.g., ./src/components")}
               />
@@ -191,8 +189,6 @@ defmodule EvoDashWeb.DashboardComponents do
                 type="text"
                 name="starting_commit"
                 value={@starting_commit}
-                phx-change="task_field_change"
-                phx-debounce="300"
                 class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
                 placeholder={gettext("e.g., abc1234 or HEAD")}
               />
@@ -212,8 +208,6 @@ defmodule EvoDashWeb.DashboardComponents do
             </label>
             <textarea
               name="seeds"
-              phx-change="task_field_change"
-              phx-debounce="300"
               class="textarea textarea-bordered w-full min-h-[120px] text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
               placeholder={gettext("Paste seed code here. Separate multiple fragments with blank lines...")}
             ><%= @seeds %></textarea>
@@ -234,8 +228,6 @@ defmodule EvoDashWeb.DashboardComponents do
           </label>
           <textarea
             name="prompt"
-            phx-change="task_field_change"
-            phx-debounce="300"
             class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
             placeholder={
               if String.starts_with?(@mode, "evolve") do
