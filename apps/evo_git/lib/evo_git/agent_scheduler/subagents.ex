@@ -159,10 +159,14 @@ defmodule EvoGit.AgentScheduler.Subagents do
   """
   @spec build_ordered_results(%{non_neg_integer() => term()}, non_neg_integer()) :: [term()]
   def build_ordered_results(sub_results, spec_count) do
-    0..(spec_count - 1)
-    |> Enum.map(fn idx ->
-      Map.get(sub_results, idx, {:error, :unknown_error})
-    end)
+    if spec_count == 0 do
+      []
+    else
+      0..(spec_count - 1)//1
+      |> Enum.map(fn idx ->
+        Map.get(sub_results, idx, {:error, :unknown_error})
+      end)
+    end
   end
 
   # --- Spatial Contract Validation ---
