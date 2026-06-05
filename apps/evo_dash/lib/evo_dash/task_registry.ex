@@ -620,8 +620,7 @@ defmodule EvoDash.TaskRegistry do
     runtime_opts = [
       repo_path: repo_path,
       mode: String.to_atom(mode),
-      task_id: task_id,
-      event_sink: {EvoDash.TaskRegistry, :update_task_log, [task_id]}
+      task_id: task_id
     ]
 
     runtime_opts = if node_path, do: Keyword.put(runtime_opts, :node_path, node_path), else: runtime_opts
