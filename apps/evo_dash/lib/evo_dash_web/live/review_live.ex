@@ -77,15 +77,22 @@ defmodule EvoDashWeb.ReviewLive do
                     />
                   </div>
 
-                <% @review_tab == :commits and @commits != [] -> %>
+                <% @review_tab == :commits -> %>
                   <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
 
-                <% @review_tab == :files_changed and @review_data -> %>
-                  <EvoDashWeb.ReviewComponents.split_diff_layout
-                    files={@review_data.files}
-                    expanded_files={@expanded_files}
-                    selected_file={@selected_file}
-                  />
+                <% @review_tab == :files_changed -> %>
+                  <%= if @review_data do %>
+                    <EvoDashWeb.ReviewComponents.split_diff_layout
+                      files={@review_data.files}
+                      expanded_files={@expanded_files}
+                      selected_file={@selected_file}
+                    />
+                  <% else %>
+                    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-8 text-center">
+                      <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
+                      <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
+                    </div>
+                  <% end %>
               <% end %>
             </div>
 
