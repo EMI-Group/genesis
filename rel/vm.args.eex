@@ -20,15 +20,9 @@
 +sbwtdcpu none
 +sbwtdio none
 
-## Change Allocator Strategy to Address-Order Best-Fit (Releases RAM to OS)
-+MBas aobf
-+MHas aobf
-+MPas aobf
-+MDas aobf
-
 ## Shrink Pre-allocated Table Limits (Lowers baseline idle memory floor)
-+P 50000
-+t 100000
++P 40000
++t 80000
 
 ## Disable the Erlang Port Mapper Daemon (Prevents lingering background processes)
 -start_epmd false
