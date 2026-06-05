@@ -9,7 +9,7 @@ defmodule EvoGit.Adapters.Git do
   Runs a git command in the given directory.
   """
   def run(args, cd) do
-    System.cmd("git", args, cd: cd, stderr_to_stdout: true)
+    System.cmd(EvoGit.Executable.resolve("git"), args, cd: cd, stderr_to_stdout: true)
     |> handle_git_command_result(args, cd)
   end
 
@@ -40,7 +40,7 @@ defmodule EvoGit.Adapters.Git do
   def add_worktree(repo_path, worktree_path, base_sha, branch_name \\ nil) do
     if branch_name && branch_exists?(repo_path, branch_name) do
       # Branch already exists (previous session crashed) — force-delete and recreate
-      System.cmd("git", ["branch", "-D", branch_name], cd: repo_path)
+      System.cmd(EvoGit.Executable.resolve("git"), ["branch", "-D", branch_name], cd: repo_path)
     end
 
     args =
@@ -79,7 +79,7 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def merge(path, commit_sha) do
-    case System.cmd("git", ["merge", commit_sha], cd: path, stderr_to_stdout: true) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["merge", commit_sha], cd: path, stderr_to_stdout: true) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
       {output, code} -> {:error, code, String.trim(output)}
@@ -87,7 +87,7 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def merge_no_commit(path, commit_sha) do
-    case System.cmd("git", ["merge", "--no-commit", commit_sha], cd: path, stderr_to_stdout: true) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["merge", "--no-commit", commit_sha], cd: path, stderr_to_stdout: true) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
       {output, code} -> {:error, code, String.trim(output)}
@@ -95,7 +95,7 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def merge_octopus(path, commit_shas) when is_list(commit_shas) do
-    case System.cmd("git", ["merge" | commit_shas], cd: path, stderr_to_stdout: true) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["merge" | commit_shas], cd: path, stderr_to_stdout: true) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
       {output, code} -> {:error, code, String.trim(output)}
@@ -129,7 +129,7 @@ defmodule EvoGit.Adapters.Git do
   def check_ignore(path, files) when is_list(files) do
     # git check-ignore returns 0 if any matches, 1 if none.
     # We want the list of ignored files.
-    case System.cmd("git", ["check-ignore" | files], cd: path, stderr_to_stdout: true) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["check-ignore" | files], cd: path, stderr_to_stdout: true) do
       {output, 0} -> {:ok, String.split(output, "\n", trim: true)}
       {_output, 1} -> {:ok, []}
       {output, code} -> {:error, code, String.trim(output)}
@@ -284,7 +284,7 @@ defmodule EvoGit.Adapters.Git do
   Uses `git show-ref --verify --quiet refs/heads/<branch_name>` and checks the exit code.
   """
   def branch_exists?(repo_path, branch_name) do
-    case System.cmd("git", ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
+    case System.cmd(EvoGit.Executable.resolve("git"), ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
            cd: repo_path
          ) do
       {_output, 0} -> true
@@ -309,7 +309,7 @@ defmodule EvoGit.Adapters.Git do
   """
   def branch_has_unique_commits?(repo_path, branch, base) do
     # Check if branch tip is an ancestor of base (meaning branch has no unique commits)
-    case System.cmd("git", ["merge-base", "--is-ancestor", branch, base],
+    case System.cmd(EvoGit.Executable.resolve("git"), ["merge-base", "--is-ancestor", branch, base],
            cd: repo_path,
            stderr_to_stdout: true
          ) do
@@ -363,7 +363,7 @@ defmodule EvoGit.Adapters.Git do
   Returns `true` if origin remote exists, `false` otherwise.
   """
   def has_origin_remote?(repo_path) do
-    case System.cmd("git", ["remote", "get-url", "origin"],
+    case System.cmd(EvoGit.Executable.resolve("git"), ["remote", "get-url", "origin"],
            cd: repo_path,
            stderr_to_stdout: true
          ) do
@@ -406,7 +406,7 @@ defmodule EvoGit.Adapters.Git do
   """
   def origin_default_branch(repo_path) do
     case System.cmd(
-           "git",
+           EvoGit.Executable.resolve("git"),
            ["symbolic-ref", "refs/remotes/origin/HEAD"],
            cd: repo_path,
            stderr_to_stdout: true
