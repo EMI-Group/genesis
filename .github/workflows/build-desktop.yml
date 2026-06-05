@@ -17,6 +17,8 @@ concurrency:
 env:
   ELIXIR_VERSION: "1.18.4"
   OTP_VERSION: "27.3.4.1"
+  RIPGREP_VERSION: "14.1.1"
+  MINGIT_VERSION: "2.47.1.windows.2"
 
 permissions:
   contents: write
@@ -30,8 +32,10 @@ jobs:
         include:
           - runner: macos-14
             arch: arm64
+            rg_target: aarch64-apple-darwin
           - runner: macos-13
             arch: x86_64
+            rg_target: x86_64-apple-darwin
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -62,6 +66,28 @@ jobs:
         run: |
           mix assets.setup
           mix assets.deploy
+
+      - name: Bundle vendor binaries (git, rg)
+        run: |
+          VENDOR_DIR="apps/evo_git/priv/vendor/macos-${{ matrix.arch }}"
+          mkdir -p "${VENDOR_DIR}"
+
+          # Download and extract ripgrep
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}.tar.gz"
+          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          echo "Downloading ${RG_URL}..."
+          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
+          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}/rg" "${VENDOR_DIR}/rg"
+
+          # Copy system git
+          cp "$(which git)" "${VENDOR_DIR}/git"
+
+          # Ensure executables
+          chmod +x "${VENDOR_DIR}/"*
+
+          echo "Vendor binaries installed to ${VENDOR_DIR}"
+          ls -la "${VENDOR_DIR}/"
 
       - name: Build release
         run: MIX_ENV=prod mix release evogit
@@ -133,6 +159,37 @@ jobs:
         run: |
           mix assets.setup
           mix assets.deploy
+
+      - name: Bundle vendor ripgrep (Windows)
+        shell: bash
+        run: |
+          VENDOR_DIR="apps/evo_git/priv/vendor/windows-x64"
+          mkdir -p "${VENDOR_DIR}"
+
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc.zip"
+          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          echo "Downloading ${RG_URL}..."
+          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+          unzip -o "/tmp/${RG_ARCHIVE}" -d /tmp/rg-extract
+          cp "/tmp/rg-extract/ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc/rg.exe" "${VENDOR_DIR}/rg.exe"
+
+          echo "ripgrep installed:"
+          ls -la "${VENDOR_DIR}/rg.exe"
+
+      - name: Bundle vendor MinGit (Windows)
+        shell: bash
+        run: |
+          VENDOR_DIR="apps/evo_git/priv/vendor/windows-x64"
+          mkdir -p "${VENDOR_DIR}"
+
+          MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION}-64-bit.zip"
+          MINGIT_URL="https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}/${MINGIT_ARCHIVE}"
+          echo "Downloading ${MINGIT_URL}..."
+          curl -fsSL "${MINGIT_URL}" -o "/tmp/${MINGIT_ARCHIVE}"
+          unzip -o "/tmp/${MINGIT_ARCHIVE}" -d "${VENDOR_DIR}/mingit"
+
+          echo "MinGit installed:"
+          ls "${VENDOR_DIR}/mingit/cmd/git.exe"
 
       - name: Build release
         run: MIX_ENV=prod mix release evogit
