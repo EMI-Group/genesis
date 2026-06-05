@@ -76,8 +76,8 @@ defmodule EvoGit.Agent do
 
       The agent reads its spatial/temporal state from ETS every turn via
       `load_worktree_path/1`, ensuring it always has the correct worktree path.
-      Event streaming is routed through the scheduler's `event_sink` field
-      in the ETS agent record.
+      Agent state is synced to ETS every turn for dashboard visibility.
+      The dashboard reads the `context` field from `evogit_agent_state` table.
       """
       def run(objective) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
@@ -233,6 +233,8 @@ defmodule EvoGit.Agent do
         # Re-read worktree from ETS every turn
         state = load_worktree_path(state)
 
+        context_before = state.context
+
         state =
           EvoGit.Agent.ContextCompression.compress_if_needed(state,
             agent_id: state.agent_id,
@@ -242,7 +244,9 @@ defmodule EvoGit.Agent do
         state = check_limit_warnings(state)
 
         # Sync context to ETS after any updates (compression, warnings)
-        sync_context_to_ets(state.agent_id, state.context)
+        if context_before != state.context do
+          sync_context_to_ets(state.agent_id, state.context)
+        end
 
         cond do
           state.turn >= state.max_turns ->
@@ -339,11 +343,10 @@ defmodule EvoGit.Agent do
           )
         end
 
-        thinking = ReqLLM.Response.thinking(response)
-        text = ReqLLM.Response.text(response)
-
         # Use the updated context from response (already has assistant message appended)
-        state = %{state | context: response.context, turn: state.turn + 1}
+        # Compact reasoning_details to avoid N small fragments from streaming
+        compacted_context = compact_reasoning_details(response.context)
+        state = %{state | context: compacted_context, turn: state.turn + 1}
         sync_context_to_ets(state.agent_id, state.context)
 
         case process_tool_calls(tool_calls, state) do
@@ -360,6 +363,53 @@ defmodule EvoGit.Agent do
               {:error, :recovery_failed}
             else
               trigger_recovery(state, "agent stopped calling tools")
+            end
+        end
+      end
+
+      # Compacts fragmented reasoning_details from streaming into a single entry.
+      # When LLMs stream responses, reasoning/thinking content arrives in multiple
+      # small fragments. This function merges them into one entry to keep the
+      # context lean (especially important for ETS storage and dashboard display).
+      defp compact_reasoning_details(context) do
+        messages = context.messages
+
+        # Find the last assistant message
+        last_assistant_idx =
+          messages
+          |> Enum.reverse()
+          |> Enum.find_index(&(&1.role == :assistant))
+
+        case last_assistant_idx do
+          nil ->
+            context
+
+          _ ->
+            original_idx = length(messages) - 1 - last_assistant_idx
+            last_msg = Enum.at(messages, original_idx)
+
+            case last_msg.reasoning_details do
+              details when is_list(details) and length(details) > 1 ->
+                first = List.first(details)
+                merged_text = Enum.map_join(details, "\n", & &1.text)
+
+                compacted = %ReqLLM.Message.ReasoningDetails{
+                  text: merged_text,
+                  signature: first.signature,
+                  encrypted?: first.encrypted?,
+                  provider: first.provider,
+                  format: first.format,
+                  index: 0,
+                  provider_data: first.provider_data
+                }
+
+                updated_msg = %{last_msg | reasoning_details: [compacted]}
+                updated_messages = List.replace_at(messages, original_idx, updated_msg)
+                %{context | messages: updated_messages}
+
+              _ ->
+                # nil, empty list, or single entry — no-op
+                context
             end
         end
       end
