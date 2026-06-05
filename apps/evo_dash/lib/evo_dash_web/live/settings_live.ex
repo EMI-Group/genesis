@@ -27,7 +27,7 @@ defmodule EvoDashWeb.SettingsLive do
             ]}>
               <.icon
                 name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
-                class={["size-6", !@scheduler_paused && "animate-pulse"]}
+                class={"size-6" <> if(!@scheduler_paused, do: " animate-pulse", else: "")}
               />
             </div>
             <div>
