@@ -12,12 +12,14 @@ defmodule EvoGit.ConfigTest do
 
     test "has no default llm model" do
       defaults = Config.defaults()
-      assert defaults.llm == %{}
+      assert Map.has_key?(defaults.llm, :model)
+      assert defaults.llm.model == nil
     end
 
     test "has no default github username" do
       defaults = Config.defaults()
-      assert defaults.user == %{}
+      assert Map.has_key?(defaults.user, :github_username)
+      assert defaults.user.github_username == nil
     end
 
     test "sandbox defaults to :auto" do
@@ -122,6 +124,28 @@ defmodule EvoGit.ConfigTest do
     test "returns path ending with credentials.toml" do
       path = Config.credentials_path()
       assert String.ends_with?(path, "credentials.toml")
+    end
+  end
+
+  describe "save_user_config/1 validation" do
+    test "returns error for invalid config" do
+      invalid = put_in(Config.defaults(), [:scheduler, :max_concurrency], -1)
+      assert {:error, errors} = Config.save_user_config(invalid)
+      assert is_list(errors)
+      assert length(errors) > 0
+    end
+
+    test "rejects string for integer field" do
+      invalid = put_in(Config.defaults(), [:scheduler, :max_concurrency], "not_a_number")
+      assert {:error, _} = Config.save_user_config(invalid)
+    end
+  end
+
+  describe "config_status/0 validation_errors" do
+    test "returns validation_errors key" do
+      status = Config.config_status()
+      assert Map.has_key?(status, :validation_errors)
+      assert is_list(status.validation_errors)
     end
   end
 end

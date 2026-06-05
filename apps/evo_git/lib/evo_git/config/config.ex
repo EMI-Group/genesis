@@ -64,6 +64,7 @@ defmodule EvoGit.Config do
 
       [truncation]
       tool_output_max_bytes = 131_072    # 128 KB — threshold to trigger truncation
+      tool_output_default_max_bytes = 16_384 # 16 KB — default max for high-output tools
       tool_output_truncate_size = 8_192  # 8 KB — size of truncated output
       context_max_bytes = 65_536         # 64 KB — max CONTEXT.md file size
 
@@ -98,9 +99,29 @@ defmodule EvoGit.Config do
   """
   @spec resolve() :: map()
   def resolve do
-    defaults()
-    |> deep_merge(atomize_keys(user_config()))
-    |> atomize_enum_values()
+    config =
+      defaults()
+      |> deep_merge(atomize_keys(user_config()))
+      |> atomize_enum_values()
+
+    case EvoGit.Config.Schema.validate(config) do
+      {:ok, _validated} ->
+        Process.delete(:evo_git_config_validation_errors)
+
+      {:error, errors} ->
+        Process.put(:evo_git_config_validation_errors, errors)
+
+        Enum.each(errors, fn err ->
+          kp = Map.get(err, :key_path, [])
+          msg = Map.get(err, :message, "unknown error")
+          val = Map.get(err, :value, nil)
+          Logger.warning(
+            "Config validation error at #{inspect(kp)}: #{msg} (got: #{inspect(val)})"
+          )
+        end)
+    end
+
+    config
   end
 
   defp atomize_enum_values(config) when is_map(config) do
@@ -187,20 +208,30 @@ defmodule EvoGit.Config do
 
   Creates the config directory if it doesn't exist.
   Atom keys are automatically converted to strings for TOML serialization.
+  Validates the config against the schema before writing.
 
   Returns `:ok` on success, `{:error, reason}` on failure.
+  `reason` can be a list of `EvoGit.Config.Schema.ValidationError` structs
+  on validation failure, or a filesystem error term.
   """
   @spec save_user_config(map()) :: :ok | {:error, term()}
   def save_user_config(config) when is_map(config) do
-    path = config_path()
-    dir = config_dir()
+    # Validate before writing
+    case EvoGit.Config.Schema.validate(config) do
+      {:error, errors} ->
+        {:error, errors}
 
-    with :ok <- File.mkdir_p(dir),
-         string_config = stringify_keys(config),
-         {:ok, toml} <- TomlElixir.encode(string_config) do
-      File.write(path, toml)
-    else
-      {:error, reason} -> {:error, reason}
+      {:ok, _valid} ->
+        path = config_path()
+        dir = config_dir()
+
+        with :ok <- File.mkdir_p(dir),
+             string_config = stringify_keys(config),
+             {:ok, toml} <- TomlElixir.encode(string_config) do
+          File.write(path, toml)
+        else
+          {:error, reason} -> {:error, reason}
+        end
     end
   end
 
@@ -209,8 +240,11 @@ defmodule EvoGit.Config do
       {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_keys(value)}
       {key, value} -> {key, stringify_keys(value)}
     end)
+    |> Enum.reject(fn {_k, v} -> v == nil end)
+    |> Map.new()
   end
 
+  defp stringify_keys(nil), do: nil
   defp stringify_keys(value), do: value
 
   @doc """
@@ -220,8 +254,15 @@ defmodule EvoGit.Config do
   - `:missing` — list of missing critical config keys (as atoms)
   - `:warnings` — list of human-readable warning messages for missing values
   - `:ok?` — boolean, true if all critical config is present
+  - `:validation_errors` — list of `EvoGit.Config.Schema.ValidationError` structs from
+    the last `resolve/0` call, or empty list if none
   """
-  @spec config_status() :: %{missing: [atom()], warnings: [String.t()], ok?: boolean()}
+  @spec config_status() :: %{
+    missing: [atom()],
+    warnings: [String.t()],
+    ok?: boolean(),
+    validation_errors: [EvoGit.Config.Schema.ValidationError.t()]
+  }
   def config_status do
     resolved = resolve()
 
@@ -249,7 +290,12 @@ defmodule EvoGit.Config do
     missing = for {key, _msg, check} <- checks, check.(), do: key
     warnings = for {_key, msg, check} <- checks, check.(), do: msg
 
-    %{missing: missing, warnings: warnings, ok?: missing == []}
+    %{
+      missing: missing,
+      warnings: warnings,
+      ok?: missing == [],
+      validation_errors: Process.get(:evo_git_config_validation_errors, [])
+    }
   end
 
   @doc """
@@ -289,60 +335,13 @@ defmodule EvoGit.Config do
   @doc """
   Returns the built-in application defaults map.
 
-  These are the ONLY hardcoded defaults. No default model or username
-  is provided — users must configure those explicitly.
+  Delegates to `EvoGit.Config.Schema.defaults/0` which defines the
+  canonical defaults derived from the schema definitions. No default
+  model or username is provided — those have nil defaults.
   """
   @spec defaults() :: map()
   def defaults do
-    %{
-      scheduler: %{
-        max_concurrency: 3,
-        max_tool_concurrency: 2,
-        agent_max_retries: 3,
-        max_agent_depth: 8,
-        max_retries: 15,
-        max_turns: 128
-      },
-      llm: %{},
-      user: %{},
-      sandbox: %{
-        mode: :auto,
-        resources: %{
-          cpu_quota: "1000%",
-          cpu_weight: 30,
-          memory_max: "16G",
-          tasks_max: 8196
-        },
-        process: %{
-          cpu_quota: "800%",
-          memory_max: "12G",
-          limit_nofile: 65536,
-          oom_score_adjust: 1000
-        }
-      },
-      evolution: %{
-        pool_size: 50,
-        max_generations: 20,
-        selection_size: 10,
-        crossover_rate: 0.7,
-        mutation_rate: 0.3,
-        convergence_threshold: 0.01,
-        novelty_neighbors: 5,
-        stagnation_limit: 5,
-        initial_seed_count: 15,
-        llm_seed_count: 25
-      },
-      truncation: %{
-        tool_output_max_bytes: 131_072,
-        tool_output_default_max_bytes: 16_384,
-        tool_output_truncate_size: 8_192,
-        context_max_bytes: 65_536
-      },
-      task_history: %{
-        max_tasks: 100,
-        max_age_days: 14
-      }
-    }
+    EvoGit.Config.Schema.defaults()
   end
 
   @doc """
@@ -405,18 +404,27 @@ defmodule EvoGit.Config do
 
   # Recursively converts string keys to atom keys in a map.
   # Only converts top-level and nested map keys; list elements are left as-is.
+  # Uses `String.to_existing_atom/1` to prevent atom-table DoS.
+  # Unknown keys are kept as strings.
   defp atomize_keys(map) when is_map(map) do
     Map.new(map, fn
       {key, value} when is_binary(key) ->
-        atom_key = String.to_atom(key)
+        atom_key = safe_atomize(key)
         {atom_key, atomize_keys(value)}
-
       {key, value} ->
         {key, atomize_keys(value)}
     end)
   end
 
   defp atomize_keys(value), do: value
+
+  defp safe_atomize(string) do
+    try do
+      String.to_existing_atom(string)
+    rescue
+      ArgumentError -> string
+    end
+  end
 
   # Walks a nested map following a list of atom keys.
   defp get_in_path(map, []), do: map
