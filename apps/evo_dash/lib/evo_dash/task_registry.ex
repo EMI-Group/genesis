@@ -407,12 +407,34 @@ defmodule EvoDash.TaskRegistry do
 
       {:error, reason} ->
         Logger.error(
-          "Failed to open DETS file #{file_path}: #{inspect(reason)}. Recreating."
+          "Failed to open DETS file #{file_path}: #{inspect(reason)}. " <>
+            "Attempting repair before recreating."
         )
 
-        _ = File.rm(file_path)
-        {:ok, _} = :dets.open_file(table_name, type: :set, file: to_charlist(file_path))
-        :ok
+        # Try opening with auto-repair — this can often recover data from an unclean shutdown
+        case :dets.open_file(table_name,
+               type: :set,
+               file: to_charlist(file_path),
+               repair: :auto
+             ) do
+          {:ok, _} ->
+            Logger.warning("DETS auto-repair succeeded for #{file_path}")
+            :ok
+
+          {:error, repair_reason} ->
+            Logger.error(
+              "DETS auto-repair failed for #{file_path}: #{inspect(repair_reason)}. " <>
+                "Backing up corrupted file to #{file_path}.bak and recreating. " <>
+                "DATA LOSS HAS OCCURRED — recent projects and/or tasks have been lost."
+            )
+
+            # Backup the corrupted file before deletion so data can potentially be recovered
+            _ = File.cp(file_path, file_path <> ".bak")
+
+            _ = File.rm(file_path)
+            {:ok, _} = :dets.open_file(table_name, type: :set, file: to_charlist(file_path))
+            :ok
+        end
     end
   end
 
@@ -556,12 +578,18 @@ defmodule EvoDash.TaskRegistry do
       )
     rescue
       error ->
+        file_path = recent_projects_dets_path(data_dir)
+
         Logger.error(
           "Failed to load recent projects from DETS: #{inspect(error)}. " <>
-            "Resetting corrupted projects store."
+            "Backing up corrupted projects store to #{file_path}.bak before resetting. " <>
+            "DATA LOSS HAS OCCURRED — recent projects have been lost."
         )
 
-        reset_dets_table(@dets_projects, recent_projects_dets_path(data_dir))
+        # Backup before resetting so data can potentially be recovered
+        _ = File.cp(file_path, file_path <> ".bak")
+
+        reset_dets_table(@dets_projects, file_path)
         :ok
     end
   end
@@ -582,6 +610,17 @@ defmodule EvoDash.TaskRegistry do
       end
 
       :dets.sync(@dets_projects)
+
+      # If a .bak file was left from previous corruption recovery,
+      # clean it up now that we have successfully persisted fresh data.
+      dets_file = :dets.info(@dets_projects)[:file]
+      if is_list(dets_file) do
+        bak_file = List.to_string(dets_file) <> ".bak"
+        if File.exists?(bak_file) do
+          File.rm(bak_file)
+          Logger.info("Removed stale backup file #{bak_file}")
+        end
+      end
 
       :ok
     rescue
