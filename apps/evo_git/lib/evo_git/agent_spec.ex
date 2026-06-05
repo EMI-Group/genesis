@@ -10,7 +10,7 @@ defmodule EvoGit.AgentSpec do
   - `agent_module` — the module implementing `use EvoGit.Agent`
   - `objective` — a natural language directive string
   - `repo_id` — atom identifying which repo this agent belongs to (`:primary` for the main project, or a foreign repo id). Determines where worktrees are created and which git database is used.
-  - `opts` — keyword list of options (e.g., `event_sink` pid for streaming UI events)
+  - `opts` — keyword list of options
   """
 
   alias EvoGit.Core.ContextNode

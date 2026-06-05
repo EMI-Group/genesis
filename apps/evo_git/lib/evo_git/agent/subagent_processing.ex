@@ -14,7 +14,6 @@ defmodule EvoGit.Agent.SubagentProcessing do
         EvoGit.Agent.SubagentProcessing.process_subagent_calls(
           indexed_subagent_calls,
           state,
-          stream_event_fn: &stream_event/2,
           sync_commit_fn: &sync_current_commit_after_tools/1
         )
   """
@@ -36,7 +35,6 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   ## Options
 
-    * `:stream_event_fn` — callback `fn(agent_id, type, data)` for streaming events (required)
     * `:sync_commit_fn` — callback `fn(state)` for syncing commit after tool execution (required)
   """
   @spec process_subagent_calls(
@@ -47,7 +45,6 @@ defmodule EvoGit.Agent.SubagentProcessing do
   def process_subagent_calls([], _state, _opts), do: {[], nil}
 
   def process_subagent_calls(indexed_calls, state, opts) do
-    stream_event_fn = Keyword.fetch!(opts, :stream_event_fn)
     sync_commit_fn = Keyword.fetch!(opts, :sync_commit_fn)
 
     # Validate calls: separate valid from those missing required 'path' argument.
@@ -137,7 +134,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     indexed_results =
       Enum.zip(valid_calls, results)
       |> Enum.map(fn {{call, index}, result} ->
-        process_subagent_result(call, index, result, state, stream_event_fn)
+        process_subagent_result(call, index, result, state)
       end)
 
     all_results = indexed_results ++ path_error_results ++ Enum.reverse(invalid_results)
@@ -326,11 +323,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
           call :: map(),
           index :: non_neg_integer(),
           result :: term(),
-          state :: LoopState.t(),
-          stream_event_fn :: function()
+          state :: LoopState.t()
         ) :: {non_neg_integer(), String.t(), String.t(), String.t()}
-  def process_subagent_result(call, index, result, state, stream_event_fn) do
-    stream_event_fn.(state.agent_id, "TOOL_CALL_END", %{name: call.name})
+  def process_subagent_result(call, index, result, state) do
 
     output = format_subagent_result(result)
 

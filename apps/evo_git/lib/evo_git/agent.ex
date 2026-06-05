@@ -163,10 +163,6 @@ defmodule EvoGit.Agent do
             if agent_state.phylo_node.current_commit != current_sha do
               updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
               AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
-
-              stream_event(state.agent_id, "COMMIT_UPDATED", %{
-                new_commit: current_sha
-              })
             end
 
           {:error, code, msg} ->
@@ -189,10 +185,6 @@ defmodule EvoGit.Agent do
         if agent_state.phylo_node.current_commit != current_sha do
           updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
           AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
-
-          stream_event(state.agent_id, "COMMIT_UPDATED", %{
-            new_commit: current_sha
-          })
         end
 
         current_sha
@@ -216,13 +208,6 @@ defmodule EvoGit.Agent do
         if should_warn do
           {_, msg_fn} = Enum.find(thresholds, fn {t, _} -> t == new_last_warned end)
           warning_msg = msg_fn.(percentage_used, state)
-
-          stream_event(state.agent_id, "BUDGET_WARNING", %{
-            type: :turns,
-            percentage: percentage_used,
-            turns_used: state.turn,
-            max_turns: state.max_turns
-          })
 
           new_context = ReqLLM.Context.append(state.context, user(warning_msg))
           %{state | context: new_context, last_warned_turns_percent: new_last_warned}
@@ -269,10 +254,6 @@ defmodule EvoGit.Agent do
       end
 
       defp trigger_recovery(state, reason) do
-        stream_event(state.agent_id, "ERROR", %{
-          error: "Limit reached: #{reason}. Attempting one final recovery turn."
-        })
-
         warning_msg = """
         You have exceeded the execution limit (#{reason}).
         You MUST call `#{@complete_tool}` immediately with your best answer explaining the situation.
@@ -361,14 +342,6 @@ defmodule EvoGit.Agent do
         thinking = ReqLLM.Response.thinking(response)
         text = ReqLLM.Response.text(response)
 
-        if thinking && thinking != "" do
-          stream_event(state.agent_id, "THOUGHT_CHUNK", %{text: thinking})
-        end
-
-        if text && text != "" do
-          stream_event(state.agent_id, "THOUGHT_CHUNK", %{text: text})
-        end
-
         # Use the updated context from response (already has assistant message appended)
         state = %{state | context: response.context, turn: state.turn + 1}
         sync_context_to_ets(state.agent_id, state.context)
@@ -404,11 +377,6 @@ defmodule EvoGit.Agent do
       end
 
       defp handle_complete_call(complete_call, state, tool_calls) do
-        stream_event(state.agent_id, "TOOL_CALL_END", %{
-          name: @complete_tool,
-          status: "success"
-        })
-
         # Check if git status validation is enabled (default: true)
         check_git_status =
           Map.get(complete_call.arguments, "check_git_status") != false
@@ -468,9 +436,6 @@ defmodule EvoGit.Agent do
         # 1. Index: Attach index to each call
         indexed_calls = Enum.with_index(tool_calls)
 
-        # 2. Stream start events for all calls
-        stream_start_events(tool_calls, state)
-
         # 3. Split: Partition into subagent and standard calls
         {indexed_subagent_calls, indexed_standard_calls} =
           Enum.split_with(indexed_calls, fn {call, _index} ->
@@ -484,7 +449,6 @@ defmodule EvoGit.Agent do
           EvoGit.Agent.SubagentProcessing.process_subagent_calls(
             indexed_subagent_calls,
             state,
-            stream_event_fn: &stream_event/3,
             sync_commit_fn: &sync_current_commit_after_tools/1
           )
 
@@ -515,15 +479,6 @@ defmodule EvoGit.Agent do
         {:continue, all_results}
       end
 
-      defp stream_start_events(tool_calls, state) do
-        Enum.each(tool_calls, fn call ->
-          stream_event(state.agent_id, "TOOL_CALL_START", %{
-            name: call.name,
-            args: call.arguments
-          })
-        end)
-      end
-
       defp process_standard_calls(indexed_calls, state) do
         repo_root =
           Process.get(:evogit_repo_root) || raise "evogit_repo_root not in process dictionary"
@@ -532,11 +487,6 @@ defmodule EvoGit.Agent do
 
         # Sync current_commit after tool execution for dashboard visibility
         sync_current_commit_after_tools(state)
-
-        # Stream end events for all calls
-        Enum.each(indexed_results, fn {_index, _tool_call_id, name, _output} ->
-          stream_event(state.agent_id, "TOOL_CALL_END", %{name: name})
-        end)
 
         indexed_results
       end
@@ -681,15 +631,6 @@ defmodule EvoGit.Agent do
         EvoGit.AgentScheduler.update_agent_context(agent_id, context)
       end
 
-      defp stream_event(agent_id, type, data) do
-        case EvoGit.AgentScheduler.get_event_sink(agent_id) do
-          pid when is_pid(pid) ->
-            send(pid, {:agent_event, %{agent_id: agent_id, type: type, data: data}})
-
-          _ ->
-            :ok
-        end
-      end
 
       def available_tools do
         EvoGit.Agent.Tools.schemas() ++ subagent_schemas() ++ [CompleteTask.schema()]
