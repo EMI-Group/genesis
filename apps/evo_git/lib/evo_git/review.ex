@@ -24,7 +24,7 @@ defmodule EvoGit.Review do
   """
   def list_commits(repo_path, branch_name) do
     with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
-         {:ok, base_sha} <- Git.rev_parse(repo_path, "HEAD") do
+         {:ok, base_sha} <- resolve_merge_base(repo_path, commit_sha) do
       separator = "|||COMMIT_SEP|||"
       format = "%H%n%h%n%s%n%an%n%ae%n%aI%n#{separator}"
       case Git.log(repo_path, ["--format=#{format}", "#{base_sha}..#{commit_sha}"]) do
@@ -48,11 +48,11 @@ defmodule EvoGit.Review do
   @doc """
   Loads all review data for a given branch in a repository.
   Returns a map with :commit_sha, :base_sha, :diff_stat, :diff, :files, :changed_files_count, :total_additions, :total_deletions.
-  The base is the current HEAD, and we compare HEAD vs the branch tip.
+  The base is the merge-base between HEAD and the branch tip, so only the branch's changes are shown.
   """
   def load_review_data(repo_path, branch_name) do
     with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
-         {:ok, base_sha} <- Git.rev_parse(repo_path, "HEAD") do
+         {:ok, base_sha} <- resolve_merge_base(repo_path, commit_sha) do
       
       {:ok, diff_stat} = Git.diff_stat(repo_path, base_sha, commit_sha)
       {:ok, diff} = Git.diff(repo_path, base_sha, commit_sha)
@@ -86,7 +86,7 @@ defmodule EvoGit.Review do
   """
   def load_review_metadata(repo_path, branch_name) do
     with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
-         {:ok, base_sha} <- Git.rev_parse(repo_path, "HEAD") do
+         {:ok, base_sha} <- resolve_merge_base(repo_path, commit_sha) do
 
       {:ok, diff_stat} = Git.diff_stat(repo_path, base_sha, commit_sha)
 
@@ -215,6 +215,13 @@ defmodule EvoGit.Review do
   
   # --- Private helpers ---
   
+  defp resolve_merge_base(repo_path, commit_sha) do
+    case Git.merge_base(repo_path, "HEAD", commit_sha) do
+      {:ok, base_sha} -> {:ok, base_sha}
+      _ -> Git.rev_parse(repo_path, "HEAD")
+    end
+  end
+
   defp parse_commit_entry(""), do: nil
   defp parse_commit_entry(entry) do
     case String.split(String.trim(entry), "\n", parts: 6) do
