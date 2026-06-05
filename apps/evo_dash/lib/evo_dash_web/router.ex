@@ -25,10 +25,7 @@ defmodule EvoDashWeb.Router do
     live("/settings", SettingsLive, :index)
     live("/help", HelpLive, :index)
     live("/review/:task_id", ReviewLive, :show)
-    live_dashboard "/dashboard",
-      additional_pages: [
-        os_mon: Phoenix.LiveDashboard.OsMonPage
-      ]
+    live_dashboard "/dashboard"
   end
 
   # Other scopes may use custom stacks.
