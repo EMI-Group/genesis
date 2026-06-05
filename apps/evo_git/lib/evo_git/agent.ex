@@ -681,14 +681,8 @@ defmodule EvoGit.Agent do
         EvoGit.AgentScheduler.update_agent_context(agent_id, context)
       end
 
-      defp stream_event(agent_id, type, data) do
-        case EvoGit.AgentScheduler.get_event_sink(agent_id) do
-          pid when is_pid(pid) ->
-            send(pid, {:agent_event, %{agent_id: agent_id, type: type, data: data}})
-
-          _ ->
-            :ok
-        end
+      defp stream_event(_agent_id, _type, _data) do
+        :ok
       end
 
       def available_tools do

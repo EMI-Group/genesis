@@ -25,7 +25,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   @doc """
   Registers a new agent in the ETS tables and returns the agent ID and updated state.
 
-  Assigns agent IDs, computes task-local IDs, resolves event sink inheritance,
+  Assigns agent IDs, computes task-local IDs,
   and writes both the agent state and scheduler metadata ETS tables.
   """
   @spec register_agent(State.t(), AgentSpec.t(), GenServer.from() | nil, pos_integer() | nil, non_neg_integer(), pos_integer()) ::
@@ -37,24 +37,6 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     task_local_id = Map.get(state.task_local_counters, task_id, 1)
     state = %{state | task_local_counters: Map.put(state.task_local_counters, task_id, task_local_id + 1)}
 
-    # Resolve event_sink: explicit in opts, inherited from parent, or nil
-    event_sink =
-      case spec.opts do
-        opts when is_list(opts) -> Keyword.get(opts, :event_sink)
-        opts when is_map(opts) -> Map.get(opts, :event_sink)
-        _ -> nil
-      end
-
-    event_sink =
-      if is_nil(event_sink) and parent_id do
-        case get_agent_state(parent_id) do
-          {:ok, %{event_sink: sink}} -> sink
-          _ -> nil
-        end
-      else
-        event_sink
-      end
-
     # Agent state table: live spatial/temporal state for the agent process
     # Resolve repo root from the spec's own data (avoids reading shared mutable state)
     agent_repo_root = resolve_agent_repo_root(spec, state)
@@ -62,7 +44,6 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     put_agent_state(id, %AgentState{
       context_node: spec.context_node,
       phylo_node: nil,
-      event_sink: event_sink,
       llm_model: state.llm_model,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
