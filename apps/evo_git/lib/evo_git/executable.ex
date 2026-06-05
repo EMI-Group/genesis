@@ -25,8 +25,11 @@ defmodule EvoGit.Executable do
 
   defp bundled_path(name) do
     vendor_dir = Application.app_dir(:evo_git, Path.join("priv/vendor", vendor_platform()))
-    path = Path.join(vendor_dir, name)
-    path
+    case {name, :os.type()} do
+      {"git", {:win32, _}} -> Path.join([vendor_dir, "mingit", "cmd", "git.exe"])
+      {_, {:win32, _}} -> Path.join(vendor_dir, "#{name}.exe")
+      _ -> Path.join(vendor_dir, name)
+    end
   end
 
   defp vendor_platform do
