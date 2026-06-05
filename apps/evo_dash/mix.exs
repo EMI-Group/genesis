@@ -25,7 +25,7 @@ defmodule EvoDash.MixProject do
   def application do
     [
       mod: {EvoDash.Application, []},
-      extra_applications: [:logger, :runtime_tools, :wx]
+      extra_applications: [:logger, :os_mon, :runtime_tools, :wx]
     ]
   end
 
