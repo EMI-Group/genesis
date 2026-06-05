@@ -20,7 +20,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "absolute path matching a foreign repo returns that repo's id, root, and relative path",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      assert {:original, "/home/user/original-proj", "./src/main.py"} =
+      assert {:ok, :original, "/home/user/original-proj", "./src/main.py"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/original-proj/src/main.py",
                  parent_state,
@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "absolute path matching the primary repo returns :primary with relative path",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      assert {:primary, "/home/user/primary-repo", "./lib/app.ex"} =
+      assert {:ok, :primary, "/home/user/primary-repo", "./lib/app.ex"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/primary-repo/lib/app.ex",
                  parent_state,
@@ -38,22 +38,33 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
                )
     end
 
-    test "absolute path not in any repo falls back to primary but raises on normalize",
+    test "absolute path not in any repo returns an error tuple with helpful message",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      # The code falls back to primary repo but passes the absolute path to
-      # normalize_relpath, which raises because it expects relative paths.
-      assert_raise RuntimeError, ~r/absolute/, fn ->
-        SubagentProcessing.resolve_subagent_path(
-          "/tmp/unknown/project",
-          parent_state,
-          foreign_repos
-        )
-      end
+      assert {:error, msg} =
+               SubagentProcessing.resolve_subagent_path(
+                 "/tmp/unknown/project",
+                 parent_state,
+                 foreign_repos
+               )
+
+      assert msg =~ "Absolute path"
+      assert msg =~ "/tmp/unknown/project"
+      assert msg =~ "not within"
+    end
+
+    test "absolute path not in any repo with empty foreign_repos still matches primary repo",
+         %{parent_state: parent_state} do
+      assert {:ok, :primary, "/home/user/primary-repo", "./lib/app.ex"} =
+               SubagentProcessing.resolve_subagent_path(
+                 "/home/user/primary-repo/lib/app.ex",
+                 parent_state,
+                 []
+               )
     end
 
     test "relative path stays in primary repo as :primary",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      assert {:primary, "/home/user/primary-repo", "./src/lib"} =
+      assert {:ok, :primary, "/home/user/primary-repo", "./src/lib"} =
                SubagentProcessing.resolve_subagent_path(
                  "src/lib",
                  parent_state,
@@ -70,7 +81,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "dot-slash relative path stays in primary repo, normalized",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      assert {:primary, "/home/user/primary-repo", "./src/lib"} =
+      assert {:ok, :primary, "/home/user/primary-repo", "./src/lib"} =
                SubagentProcessing.resolve_subagent_path(
                  "./src/lib",
                  parent_state,
@@ -87,7 +98,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       parent_state = %{phylo_node: %{repo: "/home/user/primary-repo"}}
 
-      assert {:reference, "/home/user/reference-proj", "./docs/README.md"} =
+      assert {:ok, :reference, "/home/user/reference-proj", "./docs/README.md"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/reference-proj/docs/README.md",
                  parent_state,
@@ -103,7 +114,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       parent_state = %{phylo_node: %{repo: "/home/user/primary-repo"}}
 
-      assert {:original, "/home/user/original-proj", "./"} =
+      assert {:ok, :original, "/home/user/original-proj", "./"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/original-proj",
                  parent_state,

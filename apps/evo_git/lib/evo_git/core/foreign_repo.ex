@@ -83,7 +83,8 @@ defmodule EvoGit.Core.ForeignRepo do
   """
   @spec normalize_path(t(), String.t()) :: {:ok, String.t()} | {:error, :not_in_repo}
   def normalize_path(%__MODULE__{root: root}, abs_path) when is_binary(abs_path) do
-    # Ensure both paths are expanded for comparison
+    # Normalize both paths for safe comparison (strip trailing slashes)
+    root = String.trim_trailing(root, "/")
     abs_path = Path.expand(abs_path)
 
     if String.starts_with?(abs_path, root <> "/") or abs_path == root do

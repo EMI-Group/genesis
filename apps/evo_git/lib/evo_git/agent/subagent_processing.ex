@@ -55,7 +55,19 @@ defmodule EvoGit.Agent.SubagentProcessing do
     {valid_calls, invalid_results} = split_valid_subagent_calls(indexed_calls)
 
     foreign_repo_commits = AgentScheduler.get_foreign_repo_commits(state.agent_id)
-    subagent_specs = build_subagent_specs(valid_calls, state, foreign_repo_commits)
+    spec_results = build_subagent_specs(valid_calls, state, foreign_repo_commits)
+
+    # Separate valid AgentSpecs from path-resolution errors
+    {subagent_specs, path_errors} =
+      Enum.split_with(spec_results, &is_struct(&1, AgentSpec))
+
+    # Convert path-resolution errors to invalid result format for LLM feedback
+    path_error_results =
+      Enum.map(path_errors, fn {:error, {call, index, error_msg}} ->
+        tool_call_id = Map.get(call, :id) || call.name || "unknown"
+        {index, tool_call_id, call.name, "Error: #{error_msg}"}
+      end)
+
     results = AgentScheduler.spawn_sub_agents(subagent_specs)
 
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -128,7 +140,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
         process_subagent_result(call, index, result, state, stream_event_fn)
       end)
 
-    all_results = indexed_results ++ Enum.reverse(invalid_results)
+    all_results = indexed_results ++ path_error_results ++ Enum.reverse(invalid_results)
 
     {all_results, merge_message}
   end
@@ -138,117 +150,170 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   Resolves paths (absolute for cross-repo, relative for same-repo), loads
   context nodes, and creates specs suitable for the scheduler.
+
+  Returns a list where each element is either an `%AgentSpec{}` (for valid calls)
+  or `{:error, {call, index, error_message}}` (for calls with unresolvable paths).
   """
   @spec build_subagent_specs(
           indexed_calls :: [{map(), non_neg_integer()}],
           state :: LoopState.t(),
           foreign_repo_commits :: %{atom() => String.t()}
-        ) :: [AgentSpec.t()]
+        ) :: [AgentSpec.t() | {:error, {map(), non_neg_integer(), String.t()}}]
   def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{}) do
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
 
     # Get all registered repos for path resolution
     foreign_repos = AgentScheduler.get_foreign_repos()
 
-    Enum.map(indexed_calls, fn {call, _index} ->
+    Enum.map(indexed_calls, fn {call, index} ->
       mod = subagent_module_for(call.name, state)
       raw_path = Map.get(call.arguments, "path")
       objective = Map.get(call.arguments, "objective")
       commit_id = Map.get(call.arguments, "commit_id")
 
       # Determine if this is a cross-repo delegation (absolute path) or same-repo (relative)
-      {target_repo_id, target_repo_root, resolved_rel_path} =
-        resolve_subagent_path(raw_path, parent_state, foreign_repos)
-
-      # If the LLM passed a file path, use its parent directory instead
-      path =
-        if File.regular?(Path.join(target_repo_root, resolved_rel_path)) do
-          resolved_rel_path
-          |> Path.dirname()
-          |> ContextNode.normalize_relpath()
-        else
-          resolved_rel_path
-        end
-
-      # Load context node with the target repo_id
-      sub_context_node =
-        if target_repo_id == :primary do
-          ContextNode.load(path, parent_state.phylo_node.repo)
-        else
-          # For foreign repos, use the foreign repo root as the base
-          ContextNode.load(path, target_repo_root, target_repo_id)
-        end
-
-      # For foreign repo subagents, we need the foreign repo's HEAD commit (the primary
-      # repo's commit SHA doesn't exist in the foreign repo's git database).
-      sub_phylo_node =
-        if target_repo_id == :primary do
-          # Same-repo subagent: inherit parent's commit chain
-          base_commit = commit_id || parent_state.phylo_node.current_commit
-
-          %PhyloGraphNode{
-            repo: parent_state.phylo_node.repo,
-            base_commit: base_commit,
-            current_commit: base_commit
-          }
-        else
-          # Foreign repo subagent: use tracked commit from previous subagent completions,
-          # falling back to the foreign repo's HEAD if no tracked commit exists.
-          tracked_commit = Map.get(foreign_repo_commits, target_repo_id)
-
-          {base, current} =
-            if tracked_commit do
-              {tracked_commit, tracked_commit}
+      case resolve_subagent_path(raw_path, parent_state, foreign_repos) do
+        {:ok, target_repo_id, target_repo_root, resolved_rel_path} ->
+          # If the LLM passed a file path, use its parent directory instead
+          path =
+            if File.regular?(Path.join(target_repo_root, resolved_rel_path)) do
+              resolved_rel_path
+              |> Path.dirname()
+              |> ContextNode.normalize_relpath()
             else
-              {:ok, foreign_head} = Git.rev_parse(target_repo_root)
-              {foreign_head, foreign_head}
+              resolved_rel_path
             end
 
-          %PhyloGraphNode{
-            repo: target_repo_root,
-            base_commit: base,
-            current_commit: current
-          }
-        end
+          # Load context node with the target repo_id
+          sub_context_node =
+            if target_repo_id == :primary do
+              ContextNode.load(path, parent_state.phylo_node.repo)
+            else
+              # For foreign repos, use the foreign repo root as the base
+              ContextNode.load(path, target_repo_root, target_repo_id)
+            end
 
-      AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective, repo_id: target_repo_id)
+          # For foreign repo subagents, we need the foreign repo's HEAD commit (the primary
+          # repo's commit SHA doesn't exist in the foreign repo's git database).
+          sub_phylo_node =
+            if target_repo_id == :primary do
+              # Same-repo subagent: inherit parent's commit chain
+              base_commit = commit_id || parent_state.phylo_node.current_commit
+
+              %PhyloGraphNode{
+                repo: parent_state.phylo_node.repo,
+                base_commit: base_commit,
+                current_commit: base_commit
+              }
+            else
+              # Foreign repo subagent: use tracked commit from previous subagent completions,
+              # falling back to the foreign repo's HEAD if no tracked commit exists.
+              tracked_commit = Map.get(foreign_repo_commits, target_repo_id)
+
+              {base, current} =
+                if tracked_commit do
+                  {tracked_commit, tracked_commit}
+                else
+                  {:ok, foreign_head} = Git.rev_parse(target_repo_root)
+                  {foreign_head, foreign_head}
+                end
+
+              %PhyloGraphNode{
+                repo: target_repo_root,
+                base_commit: base,
+                current_commit: current
+              }
+            end
+
+          AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
+            repo_id: target_repo_id
+          )
+
+        {:error, error_msg} ->
+          {:error, {call, index, error_msg}}
+      end
     end)
   end
 
   @doc """
-  Resolves a raw path to a tuple of `{repo_id, repo_root, relative_path}`.
+  Resolves a raw path to a tuple of `{:ok, repo_id, repo_root, relative_path}` or
+  `{:error, error_message}`.
 
   Absolute paths are resolved against foreign repos first, then the primary repo.
   Relative paths stay within the parent agent's repo.
 
   For foreign repos, agents are encouraged to use the repository root path
   so subagents can discover the codebase layout via CONTEXT.md routing tables.
+
+  Returns `{:error, message}` when an absolute path cannot be resolved to any known
+  repo, providing a clear error message for the LLM to self-correct.
   """
   @spec resolve_subagent_path(
           raw_path :: String.t() | nil,
           parent_state :: map(),
           foreign_repos :: [ForeignRepo.t()]
-        ) :: {atom(), String.t(), String.t()}
+        ) :: {:ok, atom(), String.t(), String.t()} | {:error, String.t()}
   def resolve_subagent_path(raw_path, parent_state, foreign_repos) do
     if ForeignRepo.absolute_path?(raw_path) do
-      # Absolute path — resolve to the correct foreign repo
+      # Absolute path — resolve to the correct foreign repo, falling back to primary
       case ForeignRepo.resolve_path(foreign_repos, raw_path) do
         {:ok, repo_id, rel_path} ->
           repo = Enum.find(foreign_repos, &(&1.id == repo_id))
-          {repo_id, repo.root, rel_path}
+          {:ok, repo_id, repo.root, rel_path}
 
         {:error, :not_in_any_repo} ->
-          # Not in any known repo — treat as primary, let it fail naturally
-          Logger.warning(
-            "Agent: Absolute path '#{raw_path}' not in any known repo, treating as primary"
-          )
+          # Not in any registered foreign repo. Try the primary repo root directly,
+          # since it may not be in the foreign_repos list.
+          primary_root = parent_state.phylo_node.repo
 
-          {:primary, parent_state.phylo_node.repo, ContextNode.normalize_relpath(raw_path)}
+          case foreign_repo_match_root(primary_root, raw_path) do
+            {:ok, rel_path} ->
+              Logger.warning(
+                "Agent: Absolute path '#{raw_path}' resolved in primary repo as '#{rel_path}'"
+              )
+
+              {:ok, :primary, primary_root, rel_path}
+
+            :not_in_repo ->
+              available =
+                foreign_repos
+                |> Enum.map(& &1.root)
+                |> Enum.join(", ")
+
+              msg =
+                "Absolute path '#{raw_path}' is not within the primary repo (#{primary_root})" <>
+                  " or any configured foreign repo" <>
+                  if(available != "", do: " (#{available})", else: "")
+
+              {:error, msg}
+          end
       end
     else
       # Relative path — same repo as parent
       normalized = ContextNode.normalize_relpath(raw_path)
-      {:primary, parent_state.phylo_node.repo, normalized}
+      {:ok, :primary, parent_state.phylo_node.repo, normalized}
+    end
+  end
+
+  # Checks if an absolute path is under a given repo root.
+  # Returns {:ok, relative_path} or :not_in_repo.
+  defp foreign_repo_match_root(root, abs_path) when is_binary(root) and is_binary(abs_path) do
+    root = String.trim_trailing(root, "/")
+    expanded = Path.expand(abs_path)
+
+    if String.starts_with?(expanded, root <> "/") or expanded == root do
+      relative =
+        expanded
+        |> Path.relative_to(root)
+        |> then(fn
+          "" -> "./"
+          "." -> "./"
+          p -> if String.starts_with?(p, "./"), do: p, else: "./" <> p
+        end)
+
+      {:ok, relative}
+    else
+      :not_in_repo
     end
   end
 
