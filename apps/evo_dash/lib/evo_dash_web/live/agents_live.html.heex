@@ -227,21 +227,7 @@
                   </div>
                 </div>
 
-                <%= if map_size(agent.sub_agent_results) > 0 do %>
-                  <div>
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("SubAgent Results") %>
-                    </h4>
-                    <div class="text-xs bg-base-200 p-2 rounded max-h-32 overflow-y-auto">
-                      <%= for {sub_id, result} <- agent.sub_agent_results do %>
-                        <div class="mb-1">
-                          <span class="font-semibold">#{sub_id}:</span>
-                          <span class="ml-1">{inspect(result, limit: 50)}</span>
-                        </div>
-                      <% end %>
-                    </div>
-                  </div>
-                <% end %>
+
               </div>
 
                 <!-- Chat History -->
