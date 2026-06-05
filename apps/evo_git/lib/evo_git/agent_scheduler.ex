@@ -18,7 +18,7 @@ defmodule EvoGit.AgentScheduler do
   Agent data is split across two ETS tables with clear ownership:
 
   - **`:evogit_agent_state`** — Owned by agent processes. Contains the agent's
-    live spatial/temporal state (`context_node`, `phylo_node`) and `event_sink`.
+    live spatial/temporal state (`context_node`, `phylo_node`).
     The scheduler writes initial values on dispatch; agents update `phylo_node`
     after each commit via `update_phylo_node/2`.
 
@@ -227,17 +227,6 @@ defmodule EvoGit.AgentScheduler do
     case :ets.lookup(@agent_table, agent_id) do
       [{^agent_id, %AgentState{} = agent_state}] -> {:ok, agent_state}
       [] -> :error
-    end
-  end
-
-  @doc """
-  Returns the event_sink pid for the given agent, or nil if not set.
-  Agents use this to stream UI events (thoughts, tool calls, etc.).
-  """
-  def get_event_sink(agent_id) do
-    case get_agent_state(agent_id) do
-      {:ok, %{event_sink: sink}} -> sink
-      _ -> nil
     end
   end
 
@@ -997,7 +986,6 @@ defmodule EvoGit.AgentScheduler do
 
   @doc """
   Updates the conversation context for an agent in the agent state table.
-  Also streams the update to the event sink for real-time dashboard updates.
   """
   @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
   def update_agent_context(agent_id, %ReqLLM.Context{} = context) do
@@ -1006,25 +994,10 @@ defmodule EvoGit.AgentScheduler do
         updated_state = %{agent_state | context: context}
         put_agent_state(agent_id, updated_state)
 
-        # Stream context update to event sink for dashboard
-        stream_context_update(agent_id, context)
-
         :ok
 
       :error ->
         :error
-    end
-  end
-
-  # Streams context update to event sink for dashboard visualization
-  defp stream_context_update(agent_id, context) do
-    case get_agent_state(agent_id) do
-      {:ok, %{event_sink: pid}} when is_pid(pid) ->
-        messages = ReqLLM.Context.to_list(context)
-        send(pid, {:agent_context, %{agent_id: agent_id, messages: messages}})
-
-      _ ->
-        :ok
     end
   end
 

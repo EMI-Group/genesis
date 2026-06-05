@@ -26,7 +26,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     :objective, :repo_path, :base_sha, :node_path, :model,
     :generation, :max_generations, :pool_size, :selection_size,
     :crossover_rate, :mutation_rate, :convergence_threshold,
-    :novelty_neighbors, :stagnation_limit, :event_sink, :user_seeds,
+    :novelty_neighbors, :stagnation_limit, :user_seeds,
     :concepts, :opts,
     :supervisor,
     best_novelty: 0.0, stagnation_count: 0, started_at: nil
@@ -71,12 +71,6 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     try do
       state = %{state | supervisor: sup_pid, started_at: DateTime.utc_now()}
 
-      emit_event(state, 0, :initialized, %{
-        pool_size: state.pool_size,
-        max_generations: state.max_generations,
-        model: state.model
-      })
-
       with {:ok, state} <- initialize(state),
            {:ok, state} <- evolution_loop(state),
            {:ok, solution} <- synthesize_solution(state),
@@ -113,7 +107,6 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       convergence_threshold: Keyword.get(opts, :convergence_threshold, Map.get(evo_config, :convergence_threshold, @default_convergence_threshold)),
       novelty_neighbors: Keyword.get(opts, :novelty_neighbors, Map.get(evo_config, :novelty_neighbors, @default_novelty_neighbors)),
       stagnation_limit: Keyword.get(opts, :stagnation_limit, Map.get(evo_config, :stagnation_limit, @default_stagnation_limit)),
-      event_sink: Keyword.get(opts, :event_sink),
       user_seeds: load_user_seeds_from_opts(opts),
       concepts: Keyword.get(opts, :concepts, []),
       opts: opts
@@ -274,12 +267,6 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     best = all_scored |> Enum.map(& &1.novelty_score) |> Enum.max(fn -> 0.0 end)
     state = %{state | best_novelty: best}
 
-    emit_event(state, 0, :pool_stats, %{
-      total: length(all_scored),
-      best_novelty: best,
-      sources: Enum.frequencies_by(all_scored, & &1.source)
-    })
-
     Logger.info("Evolution Engine: Initialized pool with #{length(all_scored)} fragments (best novelty: #{Float.round(best, 4)})")
 
     {:ok, state}
@@ -336,23 +323,6 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         end
 
       state = %{state | best_novelty: pool_best, stagnation_count: stagnation_count}
-
-      emit_event(state, gen, :generation_complete, %{
-        parents_selected: length(parents),
-        children_synthesized: length(children),
-        children_inserted: inserted_count,
-        pool_size: length(pool),
-        best_novelty: pool_best,
-        improvement: Float.round(improvement, 6),
-        stagnation_count: stagnation_count
-      })
-
-      if improvement > state.convergence_threshold do
-        emit_event(state, gen, :novel_fragment, %{
-          best_novelty: pool_best,
-          improvement: improvement
-        })
-      end
 
       Logger.debug("Evolution Engine: Gen #{gen} complete — inserted #{inserted_count}, best novelty: #{Float.round(pool_best, 4)}, stagnation: #{stagnation_count}")
 
@@ -572,8 +542,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         context_node,
         phylo_node,
         EvoGit.Agents.Manager,
-        agent_objective,
-        event_sink: state.event_sink
+        agent_objective
       )
 
     case AgentScheduler.run_agent(spec) do
@@ -671,15 +640,6 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     e ->
       Logger.warning("Evolution Engine: Slot acquisition failed: #{inspect(e)}")
       nil
-  end
-
-  defp emit_event(state, generation, event_type, data) do
-    case state.event_sink do
-      nil -> :ok
-      pid when is_pid(pid) ->
-        send(pid, {:evolution_event, generation, event_type, data})
-      _ -> :ok
-    end
   end
 
   defp call_llm(prompt, model) do

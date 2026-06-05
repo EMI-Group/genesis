@@ -43,9 +43,7 @@ defmodule EvoGit.Runtime.Genesis do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
 
-    case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective,
-           event_sink: Keyword.get(opts, :event_sink, self())
-         )
+    case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective)
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
         notify_finalizing(opts)
@@ -66,9 +64,7 @@ defmodule EvoGit.Runtime.Genesis do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
 
-    case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective,
-           event_sink: Keyword.get(opts, :event_sink, self())
-         )
+    case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective)
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
         notify_finalizing(opts)

@@ -42,9 +42,8 @@ defmodule EvoGit.Task do
         "Modify the files as needed."
 
     agent_module = Keyword.get(opts, :agent_module, Generalist)
-    event_sink = Keyword.get(opts, :event_sink, self())
 
-    spec = AgentSpec.new(context_node, phylo_node, agent_module, prompt, event_sink: event_sink)
+    spec = AgentSpec.new(context_node, phylo_node, agent_module, prompt)
 
     EvoGit.AgentScheduler.run_agent(spec)
   end
@@ -53,7 +52,7 @@ defmodule EvoGit.Task do
   Identifies the most relevant target path for the given objective in the context of the commit.
   Acts as an "Analyst Agent".
   """
-  def diagnose(%PhyloGraphNode{current_commit: commit_sha} = phylo_node, objective, opts \\ []) do
+  def diagnose(%PhyloGraphNode{current_commit: commit_sha} = phylo_node, objective, _opts \\ []) do
     Logger.info("Agent diagnosing objective on #{String.slice(commit_sha, 0, 7)}: #{objective}")
 
     # Use PhyloGraphNode to get the file tree
@@ -66,11 +65,10 @@ defmodule EvoGit.Task do
         "Identify the single most relevant directory or file path to modify.\n" <>
         "Return ONLY the path as a JSON string under key 'path'."
 
-    event_sink = Keyword.get(opts, :event_sink, self())
     context_node = EvoGit.Core.ContextNode.load("./", phylo_node.repo)
 
     result =
-      AgentSpec.new(context_node, phylo_node, Generalist, diag_prompt, event_sink: event_sink)
+      AgentSpec.new(context_node, phylo_node, Generalist, diag_prompt)
       |> EvoGit.AgentScheduler.run_agent()
 
     case result do
@@ -109,7 +107,7 @@ defmodule EvoGit.Task do
   def resolve_conflict(
         %{context_node: context_node, phylo_node: phylo_node} = state,
         incoming_sha,
-        opts \\ []
+        _opts \\ []
       ) do
     worktree_path = phylo_node.repo
     current_sha = phylo_node.current_commit
@@ -138,7 +136,6 @@ defmodule EvoGit.Task do
 
       {:conflict, _} ->
         {:ok, conflicts} = Git.conflict_files(worktree_path)
-        event_sink = Keyword.get(opts, :event_sink, self())
 
         Enum.each(conflicts, fn file ->
           abs_file = Path.join(worktree_path, file)
@@ -161,7 +158,7 @@ defmodule EvoGit.Task do
 
           conflict_phylo = PhyloGraphNode.new(worktree_path, current_sha)
 
-          AgentSpec.new(context_node, conflict_phylo, Generalist, prompt, event_sink: event_sink)
+          AgentSpec.new(context_node, conflict_phylo, Generalist, prompt)
           |> EvoGit.AgentScheduler.run_agent()
         end)
 
