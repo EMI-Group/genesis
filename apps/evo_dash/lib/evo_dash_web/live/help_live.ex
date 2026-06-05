@@ -144,6 +144,26 @@ defmodule EvoDashWeb.HelpLive do
         <.config_status_badge status={@config_status} />
       </div>
 
+      <!-- System Dashboard -->
+      <div class="mt-4 animate-fade-in-up animation-delay-150">
+        <.link navigate={~p"/dashboard"} class="block">
+          <div class="card bg-base-200/50 border border-base-200 hover:border-primary/40 hover:shadow-md transition-all duration-200">
+            <div class="card-body p-4">
+              <div class="flex items-center gap-3">
+                <div class="bg-info/15 text-info p-2.5 rounded-lg">
+                  <.icon name="hero-chart-bar" class="size-5" />
+                </div>
+                <div class="flex-1">
+                  <h3 class="font-semibold text-sm">{gettext("System Dashboard")}</h3>
+                  <p class="text-xs text-base-content/60">{gettext("View system metrics, processes, and application telemetry")}</p>
+                </div>
+                <.icon name="hero-arrow-right" class="size-4 text-base-content/30" />
+              </div>
+            </div>
+          </div>
+        </.link>
+      </div>
+
       <!-- Example Configuration -->
       <div class="mt-6 animate-fade-in-up animation-delay-200">
         <.collapsible_card id="config-reference" title={gettext("Example Configuration")} icon="hero-book-open" color={:info}>

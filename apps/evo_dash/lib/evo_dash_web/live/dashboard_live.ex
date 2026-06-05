@@ -6,6 +6,26 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
+    <%= if @live_action == :system_dashboard do %>
+      <EvoDashWeb.Layouts.app flash={@flash} current_page={:phx_dashboard} config_status={@config_status}>
+        <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
+          <div class="bg-info/15 text-info p-3 rounded-xl">
+            <.icon name="hero-chart-bar" class="size-6" />
+          </div>
+          <div>
+            <h1 class="text-xl font-bold">{gettext("System Dashboard")}</h1>
+            <p class="text-sm text-base-content/60">{gettext("Phoenix LiveDashboard — system metrics, processes, and application telemetry")}</p>
+          </div>
+        </div>
+        <iframe
+          src={~p"/phoenix/dashboard/home"}
+          class="w-full rounded-xl"
+          style={"min-height: calc(100vh - 200px); border: none;"}
+          title="Phoenix LiveDashboard"
+        >
+        </iframe>
+      </EvoDashWeb.Layouts.app>
+    <% else %>
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
       <div id="dashboard-root" phx-hook="StatePersistence">
         <div id="browser-notifications" phx-hook="BrowserNotifications">
@@ -163,6 +183,7 @@ defmodule EvoDashWeb.DashboardLive do
       </div>
       </div>
     </EvoDashWeb.Layouts.app>
+    <% end %>
     """
   end
 

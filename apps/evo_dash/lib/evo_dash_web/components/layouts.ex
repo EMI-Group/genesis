@@ -70,15 +70,6 @@ defmodule EvoDashWeb.Layouts do
                 </li>
                 <li>
                   <.link
-                    navigate={~p"/dashboard"}
-                    class={["btn btn-ghost gap-2", @current_page == :phx_dashboard && "btn-active"]}
-                    aria-current={@current_page == :phx_dashboard && "page"}
-                  >
-                    <.icon name="hero-chart-bar" class="size-4" /> {gettext("Dashboard")}
-                  </.link>
-                </li>
-                <li>
-                  <.link
                     navigate={~p"/agents"}
                     class={["btn btn-ghost gap-2", @current_page == :agents && "btn-active"]}
                     aria-current={@current_page == :agents && "page"}
@@ -174,11 +165,6 @@ defmodule EvoDashWeb.Layouts do
             <li>
               <.link navigate={~p"/"} class={@current_page == :dashboard && "active"}>
                 <.icon name="hero-squares-2x2" class="size-5" /> {gettext("Projects")}
-              </.link>
-            </li>
-            <li>
-              <.link navigate={~p"/dashboard"} class={@current_page == :phx_dashboard && "active"}>
-                <.icon name="hero-chart-bar" class="size-5" /> {gettext("Dashboard")}
               </.link>
             </li>
             <li>
