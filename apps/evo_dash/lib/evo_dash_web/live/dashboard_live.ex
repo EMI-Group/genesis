@@ -7,7 +7,8 @@ defmodule EvoDashWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
-      <div id="browser-notifications" phx-hook="BrowserNotifications">
+      <div id="dashboard-root" phx-hook="StatePersistence">
+        <div id="browser-notifications" phx-hook="BrowserNotifications">
         <!-- Project Selector (always visible) -->
         <EvoDashWeb.DashboardComponents.project_selector
           active_project={@active_project}
@@ -160,6 +161,7 @@ defmodule EvoDashWeb.DashboardLive do
           </div>
         <% end %>
       </div>
+      </div>
     </EvoDashWeb.Layouts.app>
     """
   end
@@ -271,6 +273,8 @@ defmodule EvoDashWeb.DashboardLive do
         socket
       end
 
+    socket = maybe_persist_state(socket)
+
     {:noreply, socket}
   end
 
@@ -319,7 +323,52 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("task_change", %{"mode" => mode}, socket) do
-    {:noreply, assign(socket, :task_mode, mode)}
+    {:noreply,
+     socket
+     |> assign(:task_mode, mode)
+     |> maybe_persist_state()}
+  end
+
+  @impl true
+  def handle_event("task_field_change", params, socket) do
+    # Persist form field changes without updating assigns (avoids cursor jumping)
+    state = %{
+      project: socket.assigns.active_project_path,
+      task_mode: socket.assigns.task_mode,
+      task_prompt: Map.get(params, "prompt", socket.assigns.task_prompt),
+      task_node_path: Map.get(params, "node_path", socket.assigns.task_node_path),
+      task_seeds: Map.get(params, "seeds", socket.assigns.task_seeds),
+      task_starting_commit: Map.get(params, "starting_commit", socket.assigns.task_starting_commit),
+    }
+    {:noreply, push_event(socket, "persist_state", state)}
+  end
+
+  @impl true
+  def handle_event("restore_state", params, socket) do
+    socket =
+      socket
+      |> maybe_restore_assign(:task_prompt, params["task_prompt"])
+      |> maybe_restore_assign(:task_mode, params["task_mode"])
+      |> maybe_restore_assign(:task_node_path, params["task_node_path"])
+      |> maybe_restore_assign(:task_seeds, params["task_seeds"])
+      |> maybe_restore_assign(:task_starting_commit, params["task_starting_commit"])
+      |> maybe_restore_show_project_settings(params["show_project_settings"])
+
+    # Restore project if we don't already have one active
+    socket =
+      if is_nil(socket.assigns.active_project) do
+        project_path = params["project"]
+
+        if is_binary(project_path) and project_path != "" and File.dir?(project_path) do
+          activate_project(socket, project_path)
+        else
+          socket
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -389,7 +438,8 @@ defmodule EvoDashWeb.DashboardLive do
            )
            |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
            |> assign_running_and_pending_tasks()
-           |> assign_form_defaults()}
+           |> assign_form_defaults()
+           |> maybe_persist_state()}
 
         {:error, reason} ->
           {:noreply,
@@ -957,4 +1007,29 @@ defmodule EvoDashWeb.DashboardLive do
         {"Task finished", objective}
     end
   end
+
+  # --- Session Persistence Helpers ---
+
+  defp maybe_persist_state(socket) do
+    state = %{
+      project: socket.assigns.active_project_path,
+      task_mode: socket.assigns.task_mode,
+      task_prompt: socket.assigns.task_prompt,
+      task_node_path: socket.assigns.task_node_path,
+      task_seeds: socket.assigns.task_seeds,
+      task_starting_commit: socket.assigns.task_starting_commit,
+    }
+    push_event(socket, "persist_state", state)
+  end
+
+  defp maybe_restore_assign(socket, _key, nil), do: socket
+  defp maybe_restore_assign(socket, _key, ""), do: socket
+
+  defp maybe_restore_assign(socket, key, value) when is_binary(value) do
+    assign(socket, key, value)
+  end
+
+  defp maybe_restore_show_project_settings(socket, "true"), do: assign(socket, :show_project_settings, true)
+  defp maybe_restore_show_project_settings(socket, "false"), do: assign(socket, :show_project_settings, false)
+  defp maybe_restore_show_project_settings(socket, _), do: socket
 end
