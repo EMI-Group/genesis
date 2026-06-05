@@ -615,6 +615,36 @@ button, a, input, textarea, select, summary,
 .diff-file-sidebar .file-item.file-selected {
   @apply bg-primary/10 border-l-2 border-l-primary;
 }
+/* File tree directory groups */
+.diff-file-sidebar .dir-group {
+  border: none;
+  margin: 0;
+}
+.diff-file-sidebar .dir-group[open] .dir-group-header {
+  @apply bg-base-200/50;
+}
+.diff-file-sidebar .dir-group-header {
+  @apply px-3 py-1.5 cursor-pointer hover:bg-base-200/50 transition-colors flex items-center gap-1.5 text-xs sticky top-0 z-5;
+  list-style: none;
+}
+.diff-file-sidebar .dir-group-header::-webkit-details-marker {
+  display: none;
+}
+.diff-file-sidebar .dir-group-header .dir-icon {
+  @apply text-xs shrink-0;
+}
+.diff-file-sidebar .dir-group-header .dir-name {
+  @apply flex-1 text-base-content/70;
+}
+.diff-file-sidebar .dir-group-header .dir-stats {
+  @apply text-[10px] text-base-content/40 font-mono shrink-0 flex items-center gap-1;
+}
+.diff-file-sidebar .dir-files {
+  /* Files within a directory group are indented */
+}
+.diff-file-sidebar .file-item-indented {
+  @apply pl-7;
+}
 
 .diff-main-content {
   @apply flex-1 overflow-y-auto overflow-x-auto bg-base-100;

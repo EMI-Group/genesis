@@ -210,6 +210,30 @@ const BrowserNotifications = {
   }
 };
 
+// ClipboardCopy hook: copies data-content to clipboard on click
+const ClipboardCopy = {
+  mounted() {
+    this.el.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const content = this.el.dataset.content;
+      if (content && navigator.clipboard) {
+        navigator.clipboard.writeText(content).then(() => {
+          // Visual feedback: briefly show checkmark icon
+          const iconEl = this.el.querySelector("svg");
+          if (iconEl) {
+            const origClass = iconEl.getAttribute("class");
+            iconEl.setAttribute("class", origClass + " text-success");
+            setTimeout(() => {
+              iconEl.setAttribute("class", origClass);
+            }, 2000);
+          }
+        }).catch(() => {});
+      }
+    });
+  }
+};
+
 // AutoClearFlash hook: auto-dismisses flash messages after 4 seconds
 const AutoClearFlash = {
   mounted() {
@@ -267,7 +291,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy},
 })
 
 // Show progress bar on live navigation and form submits
