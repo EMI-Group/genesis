@@ -581,7 +581,7 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:cancel_task_agents, caller_pid}, _from, state) do
     # 1. Scan :evogit_sched_meta ETS to find top-level agent whose meta.from contains caller_pid
-    #    The meta.from is a GenServer.from() tuple: {ref, pid} where pid is the calling process
+    #    The meta.from is a GenServer.from() tuple: {pid, ref} where pid is the calling process
     top_level_agent =
       :ets.tab2list(@sched_table)
       |> Enum.find(fn {_id, %SchedMeta{depth: 0, from: {pid, _}}} ->
