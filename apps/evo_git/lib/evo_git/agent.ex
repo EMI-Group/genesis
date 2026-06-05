@@ -391,7 +391,7 @@ defmodule EvoGit.Agent do
             case last_msg.reasoning_details do
               details when is_list(details) and length(details) > 1 ->
                 first = List.first(details)
-                merged_text = Enum.map_join(details, "\n", & &1.text)
+                merged_text = Enum.map_join(details, "", & &1.text)
 
                 compacted = %ReqLLM.Message.ReasoningDetails{
                   text: merged_text,
