@@ -74,6 +74,49 @@ defmodule EvoGit.Review do
       error -> error
     end
   end
+
+  @doc """
+  Loads review metadata only (file list with counts, no diffs).
+  Same return shape as `load_review_data/2` but the `:diff` field on each file is `nil`
+  and the top-level `:diff` field is `nil`.
+
+  This is much faster than `load_review_data/2` because it skips the full diff.
+  Use this to show the file list immediately, then lazy-load individual file diffs
+  via `load_file_diff/4`.
+  """
+  def load_review_metadata(repo_path, branch_name) do
+    with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
+         {:ok, base_sha} <- Git.rev_parse(repo_path, "HEAD") do
+
+      {:ok, diff_stat} = Git.diff_stat(repo_path, base_sha, commit_sha)
+
+      files = parse_diff_stat_into_files(diff_stat)
+      {total_additions, total_deletions} = count_changes(files)
+
+      {:ok, %{
+        commit_sha: commit_sha,
+        base_sha: base_sha,
+        diff_stat: diff_stat,
+        diff: nil,
+        files: files,
+        changed_files_count: length(files),
+        total_additions: total_additions,
+        total_deletions: total_deletions
+      }}
+    else
+      error -> error
+    end
+  end
+
+  @doc """
+  Loads the diff for a single file between two commits.
+  Delegates to `Git.file_diff/5` with the given base and commit SHAs.
+
+  Returns `{:ok, diff_string}` or `{:error, code, output}`.
+  """
+  def load_file_diff(repo_path, base_sha, commit_sha, file_path) do
+    Git.file_diff(repo_path, file_path, base_sha, commit_sha)
+  end
   
   @doc """
   Merges the branch into the current HEAD and deletes the branch.
@@ -197,6 +240,50 @@ defmodule EvoGit.Review do
   end
   
   defp parse_diff_into_files(_), do: []
+
+  defp parse_diff_stat_into_files(diff_stat) when is_binary(diff_stat) do
+    diff_stat
+    |> String.split("\n")
+    |> Enum.map(&parse_diff_stat_line/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp parse_diff_stat_into_files(_), do: []
+
+  defp parse_diff_stat_line(line) do
+    # Match lines like: " path/to/file.ex | 10 ++++----"
+    # Does NOT match summary lines like: " 2 files changed, 8 insertions(+), 7 deletions(-)"
+    case Regex.run(~r/^\s*(.+?)\s+\|\s+(\d+)\s+([+\-]*?)\s*$/, line) do
+      [_, path, _total_changes, change_symbols] ->
+        additions =
+          change_symbols
+          |> String.graphemes()
+          |> Enum.count(&(&1 == "+"))
+
+        deletions =
+          change_symbols
+          |> String.graphemes()
+          |> Enum.count(&(&1 == "-"))
+
+        status = cond do
+          additions == 0 and deletions > 0 -> "deleted"
+          deletions == 0 -> "added"
+          true -> "modified"
+        end
+
+        %FileInfo{
+          path: String.trim(path),
+          status: status,
+          additions: additions,
+          deletions: deletions,
+          diff: nil,
+          language: language_for_file(String.trim(path))
+        }
+
+      nil ->
+        nil
+    end
+  end
   
   defp parse_file_section(section) do
     lines = String.split(section, "\n")

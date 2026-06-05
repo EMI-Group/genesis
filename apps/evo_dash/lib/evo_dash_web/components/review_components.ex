@@ -57,71 +57,37 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:active_tab, :atom, required: true)
   attr(:files_count, :integer, default: 0)
   attr(:commits_count, :integer, default: 0)
-  attr(:fullscreen, :boolean, default: false)
 
   def review_tabs(assigns) do
     ~H"""
-    <%= if @fullscreen do %>
-      <div class="review-tab-bar-sticky">
-        <button
-          phx-click="switch_tab"
-          phx-value-tab="conversation"
-          class={["review-tab", @active_tab == :conversation && "tab-active"]}
-        >
-          <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
-          {gettext("Conversation")}
-        </button>
-        <button
-          phx-click="switch_tab"
-          phx-value-tab="commits"
-          class={["review-tab", @active_tab == :commits && "tab-active"]}
-        >
-          <.icon name="hero-clock" class="size-4 mr-2" />
-          {gettext("Commits")}
-          <span class="badge badge-sm badge-ghost ml-2">{@commits_count}</span>
-        </button>
-        <button
-          phx-click="switch_tab"
-          phx-value-tab="files_changed"
-          class={["review-tab", @active_tab == :files_changed && "tab-active"]}
-        >
-          <.icon name="hero-code-bracket" class="size-4 mr-2" />
-          {gettext("Files Changed")}
-          <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
-        </button>
-      </div>
-    <% else %>
-      <div class="bg-base-100 border border-base-200 rounded-2xl overflow-hidden">
-        <div class="review-tab-bar">
-          <button
-            phx-click="switch_tab"
-            phx-value-tab="conversation"
-            class={["review-tab", @active_tab == :conversation && "tab-active"]}
-          >
-            <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
-            {gettext("Conversation")}
-          </button>
-          <button
-            phx-click="switch_tab"
-            phx-value-tab="commits"
-            class={["review-tab", @active_tab == :commits && "tab-active"]}
-          >
-            <.icon name="hero-clock" class="size-4 mr-2" />
-            {gettext("Commits")}
-            <span class="badge badge-sm badge-ghost ml-2">{@commits_count}</span>
-          </button>
-          <button
-            phx-click="switch_tab"
-            phx-value-tab="files_changed"
-            class={["review-tab", @active_tab == :files_changed && "tab-active"]}
-          >
-            <.icon name="hero-code-bracket" class="size-4 mr-2" />
-            {gettext("Files Changed")}
-            <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
-          </button>
-        </div>
-      </div>
-    <% end %>
+    <div class="review-tab-bar-sticky">
+      <button
+        phx-click="switch_tab"
+        phx-value-tab="conversation"
+        class={["review-tab", @active_tab == :conversation && "tab-active"]}
+      >
+        <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
+        {gettext("Conversation")}
+      </button>
+      <button
+        phx-click="switch_tab"
+        phx-value-tab="commits"
+        class={["review-tab", @active_tab == :commits && "tab-active"]}
+      >
+        <.icon name="hero-clock" class="size-4 mr-2" />
+        {gettext("Commits")}
+        <span class="badge badge-sm badge-ghost ml-2">{@commits_count}</span>
+      </button>
+      <button
+        phx-click="switch_tab"
+        phx-value-tab="files_changed"
+        class={["review-tab", @active_tab == :files_changed && "tab-active"]}
+      >
+        <.icon name="hero-code-bracket" class="size-4 mr-2" />
+        {gettext("Files Changed")}
+        <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
+      </button>
+    </div>
     """
   end
 
@@ -141,6 +107,16 @@ defmodule EvoDashWeb.ReviewComponents do
             <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
           </div>
           <span class="font-semibold text-base-content/80">{gettext("Agent Summary")}</span>
+          <button
+            id="summary-copy-btn"
+            class="btn btn-ghost btn-xs btn-square"
+            phx-hook="ClipboardCopy"
+            data-content={@summary}
+            title={gettext("Copy agent summary")}
+            onclick="event.preventDefault(); event.stopPropagation();"
+          >
+            <.icon name="hero-clipboard" class="size-4" />
+          </button>
           <div class="flex-1"></div>
           <.icon name="hero-chevron-down" class="size-4 text-base-content/40" />
         </summary>
@@ -324,19 +300,52 @@ defmodule EvoDashWeb.ReviewComponents do
           {gettext("Changed Files")}
         </h3>
       </div>
-      <%= for file <- @files do %>
-        <button
-          phx-click="select_file"
-          phx-value-path={file.path}
-          class={["file-item", @selected_file == file.path && "file-selected"]}
-        >
-          <.icon name={file_status_icon(file.status)} class={"size-3.5 shrink-0 #{file_status_color(file.status)}"} />
-          <span class="font-mono truncate flex-1 text-xs" title={file.path}>
-            {Path.basename(file.path)}
-          </span>
-          <span class="text-[10px] text-success font-mono leading-none">+{file.additions}</span>
-          <span class="text-[10px] text-error font-mono leading-none">-{file.deletions}</span>
-        </button>
+      <%= for {group, files} <- group_files_by_dir(@files) do %>
+        <%= if group == :root do %>
+          <%= for file <- files do %>
+            <button
+              phx-click="select_file"
+              phx-value-path={file.path}
+              class={["file-item", @selected_file == file.path && "file-selected"]}
+            >
+              <.icon name={file_status_icon(file.status)} class={"size-3.5 shrink-0 #{file_status_color(file.status)}"} />
+              <span class="font-mono truncate flex-1 text-xs" title={file.path}>
+                {Path.basename(file.path)}
+              </span>
+              <span class="text-[10px] text-success font-mono leading-none">+{file.additions}</span>
+              <span class="text-[10px] text-error font-mono leading-none">-{file.deletions}</span>
+            </button>
+          <% end %>
+        <% else %>
+          <details open class="dir-group">
+            <summary class="dir-group-header">
+              <span class="dir-icon">📁</span>
+              <span class="dir-name font-mono text-xs truncate" title={group}>{group}/</span>
+              <% {group_additions, group_deletions} = dir_stats(files) %>
+              <span class="dir-stats">
+                {ngettext("%{count} file", "%{count} files", length(files), count: length(files))}
+                <span class="text-success">+{group_additions}</span>
+                <span class="text-error">-{group_deletions}</span>
+              </span>
+            </summary>
+            <div class="dir-files">
+              <%= for file <- files do %>
+                <button
+                  phx-click="select_file"
+                  phx-value-path={file.path}
+                  class={["file-item file-item-indented", @selected_file == file.path && "file-selected"]}
+                >
+                  <.icon name={file_status_icon(file.status)} class={"size-3.5 shrink-0 #{file_status_color(file.status)}"} />
+                  <span class="font-mono truncate flex-1 text-xs" title={file.path}>
+                    {Path.basename(file.path)}
+                  </span>
+                  <span class="text-[10px] text-success font-mono leading-none">+{file.additions}</span>
+                  <span class="text-[10px] text-error font-mono leading-none">-{file.deletions}</span>
+                </button>
+              <% end %>
+            </div>
+          </details>
+        <% end %>
       <% end %>
     </div>
     """
@@ -362,14 +371,14 @@ defmodule EvoDashWeb.ReviewComponents do
           >
             <.icon
               name="hero-chevron-right"
-              class={"size-3.5 transition-transform shrink-0 #{if Map.get(@expanded_files, file.path, true), do: "rotate-90", else: ""}"}
+              class={"size-3.5 transition-transform shrink-0 #{if Map.get(@expanded_files, file.path, false), do: "rotate-90", else: ""}"}
             />
             <.icon name={file_status_icon(file.status)} class={"size-3.5 #{file_status_color(file.status)}"} />
             <span class="truncate flex-1">{file.path}</span>
             <span class="text-[10px] text-success font-mono">+{file.additions}</span>
             <span class="text-[10px] text-error font-mono">-{file.deletions}</span>
           </button>
-          <%= if Map.get(@expanded_files, file.path, true) do %>
+          <%= if Map.get(@expanded_files, file.path, false) do %>
             <div class="overflow-x-auto">
               {render_diff_content(file)}
             </div>
@@ -387,31 +396,17 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:files, :list, required: true)
   attr(:expanded_files, :map, default: %{})
   attr(:selected_file, :string, default: nil)
-  attr(:fullscreen, :boolean, default: false)
 
   def split_diff_layout(assigns) do
     ~H"""
-    <%= if @fullscreen do %>
-      <div class="diff-fullscreen-layout">
-        <.file_tree_sidebar files={@files} selected_file={@selected_file} />
-        <.diff_viewer
-          files={@files}
-          expanded_files={@expanded_files}
-          selected_file={@selected_file}
-        />
-      </div>
-    <% else %>
-      <div class="bg-base-100 border border-base-200 rounded-2xl overflow-hidden">
-        <div class="diff-split-layout">
-          <.file_tree_sidebar files={@files} selected_file={@selected_file} />
-          <.diff_viewer
-            files={@files}
-            expanded_files={@expanded_files}
-            selected_file={@selected_file}
-          />
-        </div>
-      </div>
-    <% end %>
+    <div class="diff-fullscreen-layout">
+      <.file_tree_sidebar files={@files} selected_file={@selected_file} />
+      <.diff_viewer
+        files={@files}
+        expanded_files={@expanded_files}
+        selected_file={@selected_file}
+      />
+    </div>
     """
   end
 
@@ -549,4 +544,27 @@ defmodule EvoDashWeb.ReviewComponents do
   defp file_status_color("deleted"), do: "text-error"
   defp file_status_color("modified"), do: "text-info"
   defp file_status_color(_), do: "text-base-content/50"
+
+  # Group files by their parent directory. Returns a list of {group_key, files} tuples
+  # sorted alphabetically, with :root first for files at the top level.
+  defp group_files_by_dir(files) do
+    files
+    |> Enum.group_by(fn file ->
+      case Path.dirname(file.path) do
+        "." -> :root
+        dir -> dir
+      end
+    end)
+    |> Enum.sort_by(fn
+      {:root, _} -> {0, ""}
+      {dir, _} -> {1, dir}
+    end)
+  end
+
+  # Calculate total additions and deletions for a group of files
+  defp dir_stats(files) do
+    additions = Enum.sum(Enum.map(files, & &1.additions))
+    deletions = Enum.sum(Enum.map(files, & &1.deletions))
+    {additions, deletions}
+  end
 end

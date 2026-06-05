@@ -171,6 +171,30 @@ const DirectoryPicker = {
   },
 };
 
+// StatePersistence hook: saves/restores dashboard state via sessionStorage
+const StatePersistence = {
+  mounted() {
+    // Restore saved state from sessionStorage
+    const saved = sessionStorage.getItem('dashboard_state');
+    if (saved) {
+      try {
+        const state = JSON.parse(saved);
+        this.pushEvent("restore_state", state);
+      } catch (e) {}
+    }
+
+    // Listen for save requests from the server
+    this.handleEvent("persist_state", (state) => {
+      // Also capture current DOM state for HTML-managed toggles
+      const detailsEl = this.el.querySelector('details');
+      if (detailsEl) {
+        state.show_project_settings = detailsEl.open;
+      }
+      sessionStorage.setItem('dashboard_state', JSON.stringify(state));
+    });
+  }
+};
+
 // BrowserNotifications hook: shows browser notifications when tasks complete
 const BrowserNotifications = {
   mounted() {
@@ -181,6 +205,30 @@ const BrowserNotifications = {
     this.handleEvent("task_notification", ({title, body}) => {
       if (this._permission === "granted") {
         new Notification(title, {body: body, icon: "/favicon.ico"});
+      }
+    });
+  }
+};
+
+// ClipboardCopy hook: copies data-content to clipboard on click
+const ClipboardCopy = {
+  mounted() {
+    this.el.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const content = this.el.dataset.content;
+      if (content && navigator.clipboard) {
+        navigator.clipboard.writeText(content).then(() => {
+          // Visual feedback: briefly show checkmark icon
+          const iconEl = this.el.querySelector("svg");
+          if (iconEl) {
+            const origClass = iconEl.getAttribute("class");
+            iconEl.setAttribute("class", origClass + " text-success");
+            setTimeout(() => {
+              iconEl.setAttribute("class", origClass);
+            }, 2000);
+          }
+        }).catch(() => {});
       }
     });
   }
@@ -243,7 +291,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, BrowserNotifications, AutoClearFlash, ScrollToFile},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy},
 })
 
 // Show progress bar on live navigation and form submits

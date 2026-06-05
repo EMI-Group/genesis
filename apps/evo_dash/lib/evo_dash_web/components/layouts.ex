@@ -65,7 +65,16 @@ defmodule EvoDashWeb.Layouts do
                     class={["btn btn-ghost gap-2", @current_page == :dashboard && "btn-active"]}
                     aria-current={@current_page == :dashboard && "page"}
                   >
-                    <.icon name="hero-squares-2x2" class="size-4" /> {gettext("Dashboard")}
+                    <.icon name="hero-squares-2x2" class="size-4" /> {gettext("Projects")}
+                  </.link>
+                </li>
+                <li>
+                  <.link
+                    navigate={~p"/dashboard"}
+                    class={["btn btn-ghost gap-2", @current_page == :phx_dashboard && "btn-active"]}
+                    aria-current={@current_page == :phx_dashboard && "page"}
+                  >
+                    <.icon name="hero-chart-bar" class="size-4" /> {gettext("Dashboard")}
                   </.link>
                 </li>
                 <li>
@@ -164,7 +173,12 @@ defmodule EvoDashWeb.Layouts do
           <ul class="menu menu-md gap-1">
             <li>
               <.link navigate={~p"/"} class={@current_page == :dashboard && "active"}>
-                <.icon name="hero-squares-2x2" class="size-5" /> {gettext("Dashboard")}
+                <.icon name="hero-squares-2x2" class="size-5" /> {gettext("Projects")}
+              </.link>
+            </li>
+            <li>
+              <.link navigate={~p"/dashboard"} class={@current_page == :phx_dashboard && "active"}>
+                <.icon name="hero-chart-bar" class="size-5" /> {gettext("Dashboard")}
               </.link>
             </li>
             <li>
@@ -199,6 +213,17 @@ defmodule EvoDashWeb.Layouts do
     </div>
     """
   end
+
+  @doc """
+  Maps current page atom to its route path.
+  """
+  def current_page(:dashboard), do: "/"
+  def current_page(:phx_dashboard), do: "/dashboard"
+  def current_page(:agents), do: "/agents"
+  def current_page(:tasks), do: "/tasks"
+  def current_page(:settings), do: "/settings"
+  def current_page(:help), do: "/help"
+  def current_page(:review), do: "/review/:task_id"
 
   @doc """
   Shows the flash group with standard titles and content.
