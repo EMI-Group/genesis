@@ -1,0 +1,34 @@
+## Customize flags given to the VM: https://www.erlang.org/doc/man/erl.html
+## -mode/-name/-sname/-setcookie are configured via env vars, do not set them here
+
+## Increase number of concurrent ports/sockets
+##+Q 65536
+
+## Tweak GC to run more often
+##-env ERL_FULLSWEEP_AFTER 10
+
+## Enable deployment without epmd
+## (requires changing both vm.args and remote.vm.args)
+##-start_epmd false -erl_epmd_port 6789
+
+## -----------------------------------------------------------------------------
+## Desktop Optimization Flags
+## -----------------------------------------------------------------------------
+
+## Disable Scheduler Busy-Waiting (Saves battery and background CPU)
++sbwt none
++sbwtdcpu none
++sbwtdio none
+
+## Change Allocator Strategy to Address-Order Best-Fit (Releases RAM to OS)
++MBas aobf
++MHas aobf
++MPas aobf
++MDas aobf
+
+## Shrink Pre-allocated Table Limits (Lowers baseline idle memory floor)
++P 50000
++t 100000
+
+## Disable the Erlang Port Mapper Daemon (Prevents lingering background processes)
+-start_epmd false
