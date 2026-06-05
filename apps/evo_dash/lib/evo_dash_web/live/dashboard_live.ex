@@ -273,8 +273,6 @@ defmodule EvoDashWeb.DashboardLive do
         socket
       end
 
-    socket = maybe_persist_state(socket)
-
     {:noreply, socket}
   end
 
