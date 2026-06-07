@@ -23,7 +23,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 
 ### `Genesis.run/2` — Step by Step
 
-1. **Parse options**: Extracts `repo_path` (default `File.cwd!()`), `foreign_repos`, `event_sink`.
+1. **Parse options**: Extracts `repo_path` (default `File.cwd!()`), `foreign_repos`.
 2. **Register foreign repos**: If `foreign_repos` provided, registers them with `AgentScheduler`.
 3. **Ensure repo**: Calls `Runtime.ensure_repo/1` to `git init` if needed.
 4. **Get HEAD**: `PhyloGraphNode.current_head/1` → current commit SHA.
@@ -31,12 +31,12 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 6. **Dispatch agent**:
    - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
    - **Mode B (New)** → `CodebaseArchitect` agent (read-write, 3-phase: skeleton → implementation → review).
-7. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective, event_sink: ...)` → `AgentScheduler.run_agent/1` (blocks until complete).
+7. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
 8. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `evogit/genesis_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
 
 ### `Evolution.run/2` — Step by Step
 
-1. **Parse options**: Extracts `repo_path`, `mode` (default `:simple`), `node_path` (default `"./"`), `foreign_repos`, `event_sink`.
+1. **Parse options**: Extracts `repo_path`, `mode` (default `:simple`), `node_path` (default `"./"`), `foreign_repos`.
 2. **Register foreign repos**: Same as Genesis.
 3. **Ensure repo + get HEAD**: Same as Genesis.
 4. **Validate node path**: `validate_node_path/2` ensures path is relative, directory exists, and contains `CONTEXT.md` (root `"./"` always passes).

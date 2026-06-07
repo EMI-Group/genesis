@@ -54,4 +54,4 @@ Implements the open-ended evolution engine for Mode B (Complex Evolution). Uses 
 - **Elixir-only AST analysis**: `Fragment.extract_structural_features/1` and `NoveltyMetric.structural_features/1` parse Elixir code via `Code.string_to_quoted/2`. Non-Elixir fragments will produce `%{parse_error: true, ...}`.
 - **Behavioral profiles require LLM**: `NoveltyMetric.behavioral_profile/2` calls the LLM to classify code complexity, paradigm, domain, and abstraction. Failures default to `%{complexity: 0.5, paradigm: :mixed, domain: "unknown", abstraction: 0.5}`.
 - **Configuration via 3-level system**: Evolution parameters come from `EvoGit.Config.resolve(:evolution)` (defaults → TOML → runtime overrides), with CLI opts taking highest priority.
-- **Event emission**: The engine emits `{:evolution_event, generation, event_type, data}` tuples to the `event_sink` pid (if provided) for dashboard integration.
+- **Event emission**: The engine broadcasts task status updates (e.g., `{:task_status, task_id, :finalizing}`) on `EvoGit.PubSub` topic `"tasks"` for dashboard integration via the PubSub system.
