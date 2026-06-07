@@ -63,12 +63,23 @@ defmodule EvoDashWeb.Helpers do
   Returns badge class string for task status (`:running`, `:completed`, `:failed`,
   `:cancelled`, `:pending`).
   """
-  def task_status_badge(:running), do: "badge badge-success"
-  def task_status_badge(:finalizing), do: "badge badge-warning bg-orange-500 text-white border-orange-600"
-  def task_status_badge(:completed), do: "badge badge-info"
-  def task_status_badge(:failed), do: "badge badge-error"
-  def task_status_badge(:cancelled), do: "badge badge-warning"
-  def task_status_badge(_), do: "badge badge-ghost"
+  def task_status_badge(:running),
+    do: "bg-success/10 text-success rounded-full flex items-center justify-center"
+
+  def task_status_badge(:finalizing),
+    do: "bg-orange-500/10 text-orange-500 rounded-full flex items-center justify-center"
+
+  def task_status_badge(:completed),
+    do: "bg-info/10 text-info rounded-full flex items-center justify-center"
+
+  def task_status_badge(:failed),
+    do: "bg-error/10 text-error rounded-full flex items-center justify-center"
+
+  def task_status_badge(:cancelled),
+    do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
+
+  def task_status_badge(_),
+    do: "bg-base-200 text-base-content/70 rounded-full flex items-center justify-center"
 
   @doc """
   Returns heroicon name for task type (`:genesis`, `:evolve`).
@@ -265,7 +276,11 @@ defmodule EvoDashWeb.Helpers do
 
   def task_description(%{type: :evolve, opts: opts}) do
     objective = opts[:objective] || ""
-    gettext("Mode: %{mode} | %{prompt}", mode: opts[:mode], prompt: String.slice(objective, 0, 200))
+
+    gettext("Mode: %{mode} | %{prompt}",
+      mode: opts[:mode],
+      prompt: String.slice(objective, 0, 200)
+    )
   end
 
   def task_description(_), do: ""
@@ -307,7 +322,7 @@ defmodule EvoDashWeb.Helpers do
       config_status_badge(%{ok?: false, missing: [:llm_model, :api_key]})
       #=> warning card listing missing items
   """
-  attr :status, :map, required: true
+  attr(:status, :map, required: true)
 
   def config_status_badge(assigns) do
     ~H"""
@@ -340,7 +355,9 @@ defmodule EvoDashWeb.Helpers do
   defp format_config_item(:llm_model), do: gettext("LLM Model")
   defp format_config_item(:api_key), do: gettext("API Key")
   defp format_config_item(:github_username), do: gettext("GitHub Username")
-  defp format_config_item(item), do: Atom.to_string(item) |> String.replace("_", " ") |> String.capitalize()
+
+  defp format_config_item(item),
+    do: Atom.to_string(item) |> String.replace("_", " ") |> String.capitalize()
 
   # ---------------------------------------------------------------------------
   # Modal Component
@@ -360,13 +377,13 @@ defmodule EvoDashWeb.Helpers do
     * `:inner_block` - the modal body content
     * `:actions` - optional footer action buttons (rendered inside `modal-action`)
   """
-  attr :id, :string, default: nil
-  attr :on_close, :string, required: true
-  attr :max_width, :string, default: "max-w-5xl"
+  attr(:id, :string, default: nil)
+  attr(:on_close, :string, required: true)
+  attr(:max_width, :string, default: "max-w-5xl")
 
-  slot :title
-  slot :inner_block, required: true
-  slot :actions
+  slot(:title)
+  slot(:inner_block, required: true)
+  slot(:actions)
 
   def modal(assigns) do
     ~H"""
@@ -408,18 +425,19 @@ defmodule EvoDashWeb.Helpers do
     * `:class` (optional) — additional CSS classes
     * `:position` (optional) — tooltip position, one of :top, :bottom, :left, :right (default :top)
   """
-  attr :text, :string, required: true
-  attr :icon, :string, default: "hero-information-circle"
-  attr :class, :string, default: ""
-  attr :position, :atom, default: :top
+  attr(:text, :string, required: true)
+  attr(:icon, :string, default: "hero-information-circle")
+  attr(:class, :string, default: "")
+  attr(:position, :atom, default: :top)
 
   def tip(assigns) do
-    position_class = case assigns.position do
-      :bottom -> "tooltip-bottom"
-      :left -> "tooltip-left"
-      :right -> "tooltip-right"
-      _ -> "tooltip-top"
-    end
+    position_class =
+      case assigns.position do
+        :bottom -> "tooltip-bottom"
+        :left -> "tooltip-left"
+        :right -> "tooltip-right"
+        _ -> "tooltip-top"
+      end
 
     assigns = assign(assigns, :position_class, position_class)
 
@@ -438,10 +456,14 @@ defmodule EvoDashWeb.Helpers do
   Returns a short human-readable description of the given task mode.
   """
   def mode_description("genesis_new"),
-    do: gettext("Creates a brand new codebase from scratch in an empty directory using your prompt.")
+    do:
+      gettext(
+        "Creates a brand new codebase from scratch in an empty directory using your prompt."
+      )
 
   def mode_description("genesis_existing"),
-    do: gettext("Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it.")
+    do:
+      gettext("Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it.")
 
   def mode_description("evolve_simple"),
     do: gettext("Uses a single top-down agent to modify the codebase based on your objective.")

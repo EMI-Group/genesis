@@ -153,7 +153,7 @@ defmodule EvoDashWeb.TasksLive do
       </div>
 
       <!-- Task List -->
-      <div class="space-y-3">
+      <div class="space-y-4 lg:space-y-5">
         <%= if @filtered_tasks == [] do %>
           <div class="text-center py-12 sm:py-16 text-base-content/50 animate-fade-in-up">
             <div class="animate-float">
@@ -406,7 +406,12 @@ defmodule EvoDashWeb.TasksLive do
          |> assign_filtered_tasks()}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, gettext("Failed to cancel task: %{reason}", reason: inspect(reason)))}
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -438,34 +443,42 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   defp filter_by_status(tasks, "all"), do: tasks
+
   defp filter_by_status(tasks, status) when is_binary(status) do
     status_atom = String.to_existing_atom(status)
     Enum.filter(tasks, &(&1.status == status_atom))
   end
+
   defp filter_by_status(tasks, _), do: tasks
 
   defp filter_by_project(tasks, "all"), do: tasks
+
   defp filter_by_project(tasks, path) when is_binary(path) do
     Enum.filter(tasks, fn task ->
       task.opts[:path] == path
     end)
   end
+
   defp filter_by_project(tasks, _), do: tasks
 
   defp filter_by_review_status(tasks, "all"), do: tasks
+
   defp filter_by_review_status(tasks, "pending") do
     Enum.filter(tasks, fn task ->
       task.status == :completed and is_nil(Map.get(task, :review_status)) and
         match?({:ok, %{branch_name: _}}, task.result)
     end)
   end
+
   defp filter_by_review_status(tasks, status) when is_binary(status) do
     status_atom = String.to_existing_atom(status)
     Enum.filter(tasks, &(Map.get(&1, :review_status) == status_atom))
   end
+
   defp filter_by_review_status(tasks, _), do: tasks
 
   defp filter_by_search(tasks, ""), do: tasks
+
   defp filter_by_search(tasks, query) when is_binary(query) do
     query_lower = String.downcase(query)
 
@@ -477,6 +490,7 @@ defmodule EvoDashWeb.TasksLive do
         )
     end)
   end
+
   defp filter_by_search(tasks, _), do: tasks
 
   defp animation_delay_class(idx) when idx <= 5, do: "animation-delay-#{div(idx, 1) * 100}"

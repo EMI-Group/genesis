@@ -442,200 +442,195 @@ defmodule EvoDashWeb.DashboardComponents do
   def task_card(assigns) do
     ~H"""
     <div class={[
-      "bg-base-100 rounded-2xl shadow-sm border border-base-200 hover:shadow-md transition-all duration-200 overflow-hidden relative hover-lift",
+      "bg-base-100 rounded-3xl shadow-sm hover:shadow-md transition-all duration-300 border border-base-200/60 overflow-visible relative group",
       task_card_tint(@task)
     ]}>
-      <!-- Three-dot kebab menu -->
-      <details class="dropdown dropdown-end absolute top-3 right-3 z-[1]">
-        <summary class="btn btn-sm btn-ghost btn-circle">
-          <.icon name="hero-ellipsis-vertical" class="size-4" />
-        </summary>
-        <ul class="menu menu-sm dropdown-content mt-1 z-[1] p-2 shadow-lg bg-base-100 rounded-box w-40 border border-base-200">
-          <li>
-            <button class="text-error" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm={gettext("Delete this task?")}>
-              <.icon name="hero-trash" class="size-4" /> {gettext("Delete")}
-            </button>
-          </li>
-        </ul>
-      </details>
+      <!-- Accent Top Border instead of left for a more material/futuristic feel -->
+      <div class={["absolute top-0 left-0 right-0 h-1 rounded-t-3xl opacity-80", task_accent_color(@task)]}></div>
 
-      <div class="flex">
-        <!-- Left accent bar -->
-        <div class={["w-1 shrink-0", task_accent_color(@task)]}></div>
-
-        <div class="flex-1 p-3 md:p-4 min-w-0">
-          <!-- Compact header — single row: type · mode | status · short ID -->
-          <div class="flex items-center justify-between gap-3 mb-1 pr-7">
-            <div class="flex items-center gap-1 text-xs text-base-content/60 min-w-0">
-              <span class="capitalize font-medium text-base-content/80">{@task.type}</span>
-              <span class="text-base-content/30">·</span>
-              <span class="font-mono">{@task.opts[:mode]}</span>
-            </div>
-            <div class="flex items-center gap-1 shrink-0">
-              <span class={task_status_badge(@task.status)}>
-                <%= if @task.status == :running do %>
-                  <span class="relative flex h-2 w-2 mr-1.5">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" style="animation-duration: 2s"></span>
-                    <span class="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
-                  </span>
-                <% end %>
-                <%= if @task.status == :finalizing do %>
-                  <span class="loading loading-spinner loading-xs mr-1.5"></span>
-                <% end %>
-                <%= cond do %>
-                  <% @task.status == :finalizing -> %>Finalizing
-                  <% true -> %>{@task.status}
-                <% end %>
+      <div class="p-5 md:p-6 flex flex-col gap-5">
+        <!-- Top row: Metatags & Status -->
+        <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+          <div class="flex flex-wrap items-center gap-2.5 mt-1">
+            <span class="text-xs font-bold tracking-widest uppercase text-base-content/50">{@task.type}</span>
+            <span class="w-1 h-1 rounded-full bg-base-content/20"></span>
+            <span class="text-xs font-mono font-medium text-base-content/50">{@task.opts[:mode]}</span>
+            <span class="w-1 h-1 rounded-full bg-base-content/20"></span>
+            <span class="text-xs font-mono text-base-content/40">#{String.slice(@task.id, 0, 8)}</span>
+          </div>
+          
+          <div class="flex items-center gap-2 shrink-0">
+            <%= if Map.get(@task, :review_status) do %>
+              <span class={["badge border-0 font-medium px-3 py-3 shadow-sm", review_status_badge(Map.get(@task, :review_status))]}>
+                <.icon name={review_status_icon(Map.get(@task, :review_status))} class="size-4 mr-1.5" />
+                {review_status_label(Map.get(@task, :review_status))}
               </span>
-              <%= if Map.get(@task, :review_status) do %>
-                <span class="text-base-content/30">·</span>
-                <span class={["badge badge-sm", review_status_badge(Map.get(@task, :review_status))]}>
-                  <.icon name={review_status_icon(Map.get(@task, :review_status))} class="size-3 mr-1" />
-                  {review_status_label(Map.get(@task, :review_status))}
+            <% end %>
+            <span class={[task_status_badge(@task.status), "font-medium border-0 px-3 py-3 shadow-sm"]}>
+              <%= if @task.status == :running do %>
+                <span class="relative flex h-2.5 w-2.5 mr-2">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" style="animation-duration: 2s"></span>
+                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-success"></span>
                 </span>
               <% end %>
-              <span class="text-xs text-base-content/30">·</span>
-              <span class="text-xs font-mono text-base-content/40">
-                {String.slice(@task.id, 0, 8)}
-              </span>
-            </div>
+              <%= if @task.status == :finalizing do %>
+                <span class="loading loading-spinner loading-xs mr-2"></span>
+              <% end %>
+              <%= cond do %>
+                <% @task.status == :finalizing -> %>Finalizing
+                <% true -> %>{@task.status}
+              <% end %>
+            </span>
           </div>
+        </div>
 
-          <!-- Objective with line-clamp-1 + HTML tooltip -->
+        <!-- Middle row: Objective text -->
+        <div class="pr-2 -mt-2">
           <% objective_text = @task.opts[:prompt] || @task.opts[:objective] || "" %>
           <%= if objective_text != "" do %>
-            <p class="text-sm text-base-content/80 leading-snug line-clamp-1" title={objective_text}>
+            <p class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2" title={objective_text}>
               {objective_text}
             </p>
           <% else %>
-            <p class="text-sm text-base-content/80 leading-snug line-clamp-1" title={task_description(@task)}>
+            <p class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2" title={task_description(@task)}>
               {task_description(@task)}
             </p>
           <% end %>
+        </div>
 
-          <!-- Compact footer — single row: relative timestamps | actions -->
-          <div class="flex items-center justify-between gap-3 mt-1 pt-1 border-t border-base-200/50">
-            <div class="flex items-center gap-1 text-xs text-base-content/50 min-w-0">
-              <span class="flex items-center gap-1 shrink-0">
-                {gettext("Started")} {relative_time(@task.started_at)}
+        <!-- Bottom row: Time, Actions, Menu -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-base-200/60">
+          <div class="flex items-center gap-4 text-xs font-medium text-base-content/50">
+            <span class="flex items-center gap-1.5">
+              <.icon name="hero-play" class="size-4 opacity-60" />
+              {gettext("Started")} {relative_time(@task.started_at)}
+            </span>
+            <%= if Map.get(@task, :finished_at) do %>
+              <span class="flex items-center gap-1.5">
+                <.icon name="hero-stop" class="size-4 opacity-60" />
+                {gettext("Finished")} {relative_time(@task.finished_at)}
               </span>
-              <%= if Map.get(@task, :finished_at) do %>
-                <span class="text-base-content/30">·</span>
-                <span class="flex items-center gap-1 shrink-0">
-                  {gettext("Finished")} {relative_time(@task.finished_at)}
-                </span>
-              <% end %>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-              <%= if show_review_button?(@task) do %>
-                <.link
-                  navigate={~p"/review/#{@task.id}"}
-                  class="btn btn-primary shadow-sm"
-                >
-                  <.icon name="hero-eye" class="size-4" /> {gettext("Review")}
-                </.link>
-              <% end %>
-              <%= if @task.status in [:running, :finalizing] do %>
-                <button
-                  class="btn btn-outline btn-error shadow-sm"
-                  phx-click="cancel_task"
-                  phx-value-task_id={@task.id}
-                  phx-confirm={gettext("Are you sure you want to cancel this task?")}
-                >
-                  <.icon name="hero-x-mark" class="size-4" /> {gettext("Cancel")}
-                </button>
-              <% end %>
-              <button
-                class="btn btn-ghost bg-base-200/50 hover:bg-base-200"
-                phx-click="toggle_task_details"
-                phx-value-task_id={@task.id}
-              >
-                <%= if @show_details do %>
-                  {gettext("Hide Details")} <.icon name="hero-chevron-up" class="size-4 ml-1" />
-                <% else %>
-                  {gettext("View Details")} <.icon name="hero-chevron-down" class="size-4 ml-1" />
-                <% end %>
-              </button>
-            </div>
+            <% end %>
           </div>
+          
+          <div class="flex items-center gap-2 sm:gap-3">
+            <%= if @task.status in [:running, :finalizing] do %>
+              <button
+                class="btn btn-sm btn-outline btn-error border-error/30 hover:border-error hover:bg-error/10 hover:text-error rounded-full px-4"
+                phx-click="cancel_task"
+                phx-value-task_id={@task.id}
+                phx-confirm={gettext("Are you sure you want to cancel this task?")}
+              >
+                <.icon name="hero-x-mark" class="size-4 mr-1" /> {gettext("Cancel")}
+              </button>
+            <% end %>
+            
+            <%= if show_review_button?(@task) do %>
+              <.link
+                navigate={~p"/review/#{@task.id}"}
+                class="btn btn-sm btn-primary rounded-full px-5 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"
+              >
+                <.icon name="hero-eye" class="size-4 mr-1" /> {gettext("Review")}
+              </.link>
+            <% end %>
+            
+            <button
+              class={["btn btn-sm rounded-full px-4 font-medium transition-all", @show_details && "btn-neutral shadow-sm" || "btn-ghost bg-base-200/50 hover:bg-base-200"]}
+              phx-click="toggle_task_details"
+              phx-value-task_id={@task.id}
+            >
+              <%= if @show_details do %>
+                {gettext("Hide Details")} <.icon name="hero-chevron-up" class="size-4 ml-1.5" />
+              <% else %>
+                {gettext("Details")} <.icon name="hero-chevron-down" class="size-4 ml-1.5" />
+              <% end %>
+            </button>
+            
+            <details class="dropdown dropdown-end dropdown-top sm:dropdown-bottom">
+              <summary class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-base-200">
+                <.icon name="hero-ellipsis-vertical" class="size-4" />
+              </summary>
+              <ul class="menu menu-sm dropdown-content mt-1 z-[1] p-2 shadow-lg bg-base-100 rounded-2xl w-40 border border-base-200">
+                <li>
+                  <button class="text-error hover:bg-error/10 hover:text-error rounded-xl" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm={gettext("Delete this task?")}>
+                    <.icon name="hero-trash" class="size-4 mr-2" /> {gettext("Delete")}
+                  </button>
+                </li>
+              </ul>
+            </details>
+          </div>
+        </div>
 
-          <%= if @show_details do %>
-            <div class="border-t border-base-200 pt-3 mt-3">
-              <div class="space-y-3">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-                  <div class="bg-base-200/20 p-4 rounded-xl border border-base-200/60">
-                    <div class="flex items-center justify-between mb-3">
+        <%= if @show_details do %>
+          <div class="border-t border-base-200 pt-3 mt-1">
+            <div class="space-y-4">
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
+                  <div class="flex items-center justify-between mb-4">
+                    <h4 class="text-sm font-bold flex items-center gap-2">
+                      <.icon name="hero-cog-8-tooth" class="size-4.5 text-primary" /> {gettext("Options")}
+                    </h4>
+                    <button class="btn btn-xs btn-ghost rounded-full" phx-click="view_full_options" phx-value-task_id={@task.id}>
+                      <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext("Full")}
+                    </button>
+                  </div>
+                  {render_options(@task.opts)}
+                </div>
+                <%= if Map.get(@task, :result) do %>
+                  <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
+                    <div class="flex items-center justify-between mb-4">
                       <h4 class="text-sm font-bold flex items-center gap-2">
-                        <.icon name="hero-cog-8-tooth" class="size-4 text-primary" /> {gettext("Options")}
+                        <.icon name="hero-check-badge" class="size-4.5 text-success" /> {gettext("Result")}
                       </h4>
-                      <button
-                        class="btn btn-sm btn-ghost"
-                        phx-click="view_full_options"
-                        phx-value-task_id={@task.id}
-                      >
-                        <.icon name="hero-arrows-pointing-out" class="size-4" />
-                        {gettext("View Full")}
+                      <button class="btn btn-xs btn-ghost rounded-full" phx-click="view_full_result" phx-value-task_id={@task.id}>
+                        <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext("Full")}
                       </button>
                     </div>
-                    {render_options(@task.opts)}
+                    {render_result(@task.result)}
                   </div>
-                  <%= if Map.get(@task, :result) do %>
-                    <div class="bg-base-200/20 p-4 rounded-xl border border-base-200/60">
-                      <div class="flex items-center justify-between mb-3">
-                        <h4 class="text-sm font-bold flex items-center gap-2">
-                          <.icon name="hero-check-badge" class="size-4 text-success" /> {gettext("Result")}
-                        </h4>
-                        <button
-                          class="btn btn-sm btn-ghost"
-                          phx-click="view_full_result"
-                          phx-value-task_id={@task.id}
-                        >
-                          <.icon name="hero-arrows-pointing-out" class="size-4" />
-                          {gettext("View Full")}
-                        </button>
-                      </div>
-                      {render_result(@task.result)}
-                    </div>
-                  <% end %>
-                </div>
-                <%= if @task.logs != [] do %>
-                  <% log_count = length(@task.logs) %>
-                  <details class="bg-base-200/20 p-4 rounded-xl border border-base-200/60">
-                    <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none">
-                      <.icon name="hero-command-line" class="size-4 text-base-content/70" />
-                      {gettext("Logs")} (<%= if log_count > 20, do: gettext("last 20 of %{count}", count: log_count), else: gettext("%{count} entries", count: log_count) %>)
-                    </summary>
-                    <div class="bg-base-300/50 p-3 rounded-lg max-h-64 overflow-y-auto text-xs font-mono space-y-px border border-base-300 shadow-inner mt-3">
-                      <%= for {log, idx} <- Enum.with_index(Enum.reverse(@task.logs)) do %>
-                        <div class={[
-                          "flex items-start gap-2 p-1.5 rounded transition-colors",
-                          rem(idx, 2) == 0 && "bg-base-200/30",
-                          log.level == :error && "text-error bg-error/5",
-                          log.level == :warn && "text-warning bg-warning/5"
-                        ]}>
-                          <span class="text-base-content/40 shrink-0">
-                            [{format_datetime(log.timestamp, :time)}]
-                          </span>
-                          <span class={[
-                            "font-bold shrink-0 w-12",
-                            log.level == :error && "text-error",
-                            log.level == :warn && "text-warning",
-                            log.level == :info && "text-info"
-                          ]}>
-                            {String.upcase(to_string(log.level))}
-                          </span>
-                          <span class="break-words">
-                            {log.message}
-                          </span>
-                        </div>
-                      <% end %>
-                    </div>
-                  </details>
                 <% end %>
               </div>
+              
+              <%= if @task.logs != [] do %>
+                <% log_count = length(@task.logs) %>
+                <details class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors group/logs">
+                  <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
+                    <.icon name="hero-command-line" class="size-4.5 text-base-content/70 group-hover/logs:text-primary transition-colors" />
+                    {gettext("Execution Logs")} 
+                    <span class="text-xs font-medium text-base-content/50 bg-base-300 px-2 py-0.5 rounded-full ml-2">
+                      <%= if log_count > 20, do: gettext("last 20 of %{count}", count: log_count), else: gettext("%{count}", count: log_count) %>
+                    </span>
+                  </summary>
+                  <div class="bg-neutral text-neutral-content p-4 rounded-xl max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
+                    <%= for {log, idx} <- Enum.with_index(Enum.reverse(@task.logs)) do %>
+                      <div class={[
+                        "flex items-start gap-3 p-1.5 rounded transition-colors",
+                        rem(idx, 2) == 0 && "bg-black/10",
+                        log.level == :error && "text-error-content bg-error/20",
+                        log.level == :warn && "text-warning-content bg-warning/20"
+                      ]}>
+                        <span class="opacity-50 shrink-0 select-none">
+                          [{format_datetime(log.timestamp, :time)}]
+                        </span>
+                        <span class={[
+                          "font-bold shrink-0 w-12 select-none",
+                          log.level == :error && "text-error",
+                          log.level == :warn && "text-warning",
+                          log.level == :info && "text-info"
+                        ]}>
+                          {String.upcase(to_string(log.level))}
+                        </span>
+                        <span class="break-words font-medium opacity-90">
+                          {log.message}
+                        </span>
+                      </div>
+                    <% end %>
+                  </div>
+                </details>
+              <% end %>
             </div>
-          <% end %>
-        </div>
+          </div>
+        <% end %>
       </div>
     </div>
     """
@@ -657,18 +652,29 @@ defmodule EvoDashWeb.DashboardComponents do
   defp task_accent_color(%{status: :completed, review_status: :continued}), do: "bg-info"
   defp task_accent_color(%{status: status}), do: status_accent_color(status)
 
-  defp task_card_tint(%{status: :running}), do: "bg-success/5"
-  defp task_card_tint(%{status: :completed, review_status: :merged}), do: "bg-success/5"
-  defp task_card_tint(%{status: :completed, review_status: :rejected}), do: "bg-error/5"
-  defp task_card_tint(%{status: :completed, review_status: :continued}), do: "bg-info/5"
-  defp task_card_tint(%{status: :completed}), do: "bg-info/5"
-  defp task_card_tint(%{status: :finalizing}), do: "bg-orange-500/5"
+  defp task_card_tint(%{status: :running}), do: "bg-success/5 shadow-success/10 border-success/20"
+
+  defp task_card_tint(%{status: :completed, review_status: :merged}),
+    do: "bg-success/5 shadow-success/10 border-success/20"
+
+  defp task_card_tint(%{status: :completed, review_status: :rejected}),
+    do: "bg-error/5 shadow-error/10 border-error/20"
+
+  defp task_card_tint(%{status: :completed, review_status: :continued}),
+    do: "bg-info/5 shadow-info/10 border-info/20"
+
+  defp task_card_tint(%{status: :completed}), do: "bg-info/5 shadow-info/10 border-info/20"
+
+  defp task_card_tint(%{status: :finalizing}),
+    do: "bg-orange-500/5 shadow-orange-500/10 border-orange-500/20"
+
+  defp task_card_tint(%{status: :failed}), do: "bg-error/5 shadow-error/10 border-error/20"
   defp task_card_tint(_), do: ""
 
-  defp review_status_badge(:merged), do: "badge-success"
-  defp review_status_badge(:rejected), do: "badge-error"
-  defp review_status_badge(:continued), do: "badge-info"
-  defp review_status_badge(_), do: "badge-ghost"
+  defp review_status_badge(:merged), do: "bg-success/10 text-success"
+  defp review_status_badge(:rejected), do: "bg-error/10 text-error"
+  defp review_status_badge(:continued), do: "bg-info/10 text-info"
+  defp review_status_badge(_), do: "bg-base-200 text-base-content/70"
 
   defp review_status_icon(:merged), do: "hero-check-circle"
   defp review_status_icon(:rejected), do: "hero-x-circle"
