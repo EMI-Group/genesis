@@ -37,7 +37,7 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 **Task execution:**
 - Extracts options: `path`, `prompt`/`objective`, `mode`, `concurrency`, `retries`, `agent_max_retries`.
 - Calls `EvoGit.AgentScheduler.update_config/1` at runtime before executing.
-- Uses an `event_sink` callback (`{EvoDash.TaskRegistry, :update_task_log, [task_id]}`) to pipe runtime logs back into the registry.
+- Subscribes to `EvoGit.PubSub` topic `"tasks"` to receive task status updates from the runtime engine.
 - On completion, receives `{:task_complete, task_id, result}` and updates status accordingly.
 
 ## Task Storage & Persistence Architecture
