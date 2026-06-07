@@ -39,7 +39,7 @@ defmodule EvoDashWeb.DashboardLive do
         />
 
         <!-- Task Form (always visible, disabled when no project) -->
-        <div class="mt-4 mb-4 animate-fade-in-up animation-delay-100">
+        <div class="mt-6 mb-6 animate-fade-in-up animation-delay-100">
           <EvoDashWeb.DashboardComponents.task_form
             prompt={@task_prompt}
             mode={@task_mode}
@@ -52,7 +52,7 @@ defmodule EvoDashWeb.DashboardLive do
         </div>
 
         <!-- Project Settings (always in DOM, collapsible) -->
-        <div class="mb-4 animate-fade-in-up animation-delay-200">
+        <div class="mb-6 animate-fade-in-up animation-delay-200">
           <EvoDashWeb.DashboardComponents.project_settings_panel
             active_project={@active_project_path}
             show={@show_project_settings}

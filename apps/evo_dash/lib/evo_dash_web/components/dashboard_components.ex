@@ -146,22 +146,30 @@ defmodule EvoDashWeb.DashboardComponents do
       <!-- Body -->
       <div class={["p-4 sm:p-5 space-y-4", @disabled && "opacity-50 pointer-events-none select-none"]}>
         <!-- Compact mode select row -->
-        <div class="flex items-center gap-3">
-          <label class="text-sm font-medium text-base-content/70 whitespace-nowrap">{gettext("Task Mode")}</label>
-          <select
-            name="mode"
-            phx-change="task_change"
-            class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-medium bg-base-200/30"
-          >
-            <optgroup label={gettext("Genesis (Bootstrap & Analyze)")}>
-              <option value="genesis_new" selected={@mode == "genesis_new"}>{gettext("New Codebase")}</option>
-              <option value="genesis_existing" selected={@mode == "genesis_existing"}>{gettext("Existing Codebase")}</option>
-            </optgroup>
-            <optgroup label={gettext("Evolve (Mutate Code)")}>
-              <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Simple (Top-down)")}</option>
-            </optgroup>
-          </select>
-          <.tip text={mode_description(@mode)} />
+        <div class="bg-base-200/50 rounded-xl p-4 border border-base-300">
+          <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+            <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
+              <.icon name="hero-cpu-chip" class="size-5 text-primary" />
+              {gettext("Task Mode")}
+            </label>
+            <select
+              name="mode"
+              phx-change="task_change"
+              class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
+            >
+              <optgroup label={gettext("Genesis (Bootstrap & Analyze)")}>
+                <option value="genesis_new" selected={@mode == "genesis_new"}>{gettext("New Codebase")}</option>
+                <option value="genesis_existing" selected={@mode == "genesis_existing"}>{gettext("Existing Codebase")}</option>
+              </optgroup>
+              <optgroup label={gettext("Evolve (Mutate Code)")}>
+                <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Simple (Top-down)")}</option>
+              </optgroup>
+            </select>
+            <div class="hidden sm:block">
+              <.tip text={mode_description(@mode)} />
+            </div>
+          </div>
+          <p class="text-sm text-base-content/60 mt-2 sm:hidden">{mode_description(@mode)}</p>
         </div>
 
         <%= if String.starts_with?(@mode, "evolve") do %>
@@ -348,23 +356,32 @@ defmodule EvoDashWeb.DashboardComponents do
           </h3>
 
           <%= if @foreign_repos == [] do %>
-            <p class="text-sm text-base-content/40 py-2">{gettext("No foreign repositories registered")}</p>
+            <div class="border-2 border-dashed border-base-300 rounded-xl p-6 text-center text-base-content/50">
+              <.icon name="hero-server-stack" class="size-8 mx-auto mb-2 opacity-30" />
+              <p class="text-sm font-medium">{gettext("No foreign repositories registered")}</p>
+              <p class="text-xs mt-1">{gettext("Add repositories to allow agents to reference external code.")}</p>
+            </div>
           <% else %>
-            <div class="space-y-2">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <%= for repo <- @foreign_repos do %>
-                <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2.5 border border-base-200 border-l-2 border-l-secondary/40">
-                  <span class={"badge #{if ForeignRepo.primary?(repo.id), do: "badge-primary", else: "badge-ghost"} badge-sm font-mono"}>
-                    {repo.id}
-                  </span>
-                  <span class="text-sm font-mono flex-1 truncate">{repo.root}</span>
-                  <%= if repo.name && repo.name != Atom.to_string(repo.id) do %>
-                    <span class="text-xs text-base-content/50">{repo.name}</span>
-                  <% end %>
-                  <%= unless ForeignRepo.primary?(repo.id) do %>
-                    <button class="btn btn-ghost btn-xs text-error" phx-click="remove_foreign_repo" phx-value-repo_id={repo.id}>
-                      <.icon name="hero-trash" class="size-3" />
-                    </button>
-                  <% end %>
+                <div class="bg-base-100 rounded-xl p-3 border border-base-200 shadow-sm relative group flex flex-col gap-1 hover:border-secondary/30 transition-colors">
+                  <div class={"absolute left-0 top-0 bottom-0 w-1 rounded-l-xl #{if ForeignRepo.primary?(repo.id), do: "bg-primary", else: "bg-secondary/60"}"}></div>
+                  <div class="flex items-center justify-between ml-2">
+                    <span class={"badge #{if ForeignRepo.primary?(repo.id), do: "badge-primary", else: "badge-ghost"} badge-sm font-mono"}>
+                      {repo.id}
+                    </span>
+                    <%= unless ForeignRepo.primary?(repo.id) do %>
+                      <button class="btn btn-ghost btn-xs text-error opacity-0 group-hover:opacity-100 transition-opacity" phx-click="remove_foreign_repo" phx-value-repo_id={repo.id}>
+                        <.icon name="hero-trash" class="size-3" />
+                      </button>
+                    <% end %>
+                  </div>
+                  <div class="ml-2 mt-1">
+                    <span class="text-sm font-mono block truncate" title={repo.root}>{repo.root}</span>
+                    <%= if repo.name && repo.name != Atom.to_string(repo.id) do %>
+                      <span class="text-xs text-base-content/50 block mt-1">{repo.name}</span>
+                    <% end %>
+                  </div>
                 </div>
               <% end %>
             </div>
