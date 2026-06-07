@@ -112,30 +112,42 @@ defmodule EvoDashWeb.HelpLive do
 
   @faq_content [
     {gettext("How do I set my API key?"),
-     gettext("Create a credentials.toml file at ~/.config/evogit/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...).")},
+     gettext(
+       "Create a credentials.toml file at ~/.config/evogit/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
+     )},
     {gettext("How do I change the LLM model?"),
-     gettext("Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard.")},
+     gettext(
+       "Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
+     )},
     {gettext("What is sandbox mode?"),
-     gettext("Sandbox mode controls how EvoGit isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process].")},
+     gettext(
+       "Sandbox mode controls how EvoGit isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
+     )},
     {gettext("How does the context tree work?"),
-     gettext("EvoGit models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories.")},
+     gettext(
+       "EvoGit models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
+     )},
     {gettext("What happens if my config is missing?"),
-     gettext("EvoGit uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page.")},
+     gettext(
+       "EvoGit uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
+     )},
     {gettext("How do I configure sandbox resources?"),
-     gettext("Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard.")}
+     gettext(
+       "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
+     )}
   ]
 
   @impl true
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:help} config_status={@config_status}>
-      <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
-        <div class="bg-accent/15 text-accent p-3 rounded-xl">
+      <div class="flex items-center gap-4 mb-4 animate-fade-in-up">
+        <div class="bg-accent/15 text-accent p-3.5 rounded-2xl">
           <.icon name="hero-question-mark-circle" class="size-6" />
         </div>
         <div>
-          <h1 class="text-xl font-bold">{gettext("Help")}</h1>
-          <p class="text-sm text-base-content/60">{gettext("Guides, references, and frequently asked questions")}</p>
+          <h1 class="text-2xl font-bold">{gettext("Help")}</h1>
+          <p class="text-sm text-base-content/60 mt-1">{gettext("Guides, references, and frequently asked questions")}</p>
         </div>
       </div>
 
@@ -147,18 +159,16 @@ defmodule EvoDashWeb.HelpLive do
       <!-- System Dashboard -->
       <div class="mt-4 animate-fade-in-up animation-delay-150">
         <.link navigate={~p"/dashboard"} class="block">
-          <div class="card bg-base-200/50 border border-base-200 hover:border-primary/40 hover:shadow-md transition-all duration-200">
-            <div class="card-body p-4">
-              <div class="flex items-center gap-3">
-                <div class="bg-info/15 text-info p-2.5 rounded-lg">
-                  <.icon name="hero-chart-bar" class="size-5" />
-                </div>
-                <div class="flex-1">
-                  <h3 class="font-semibold text-sm">{gettext("System Dashboard")}</h3>
-                  <p class="text-xs text-base-content/60">{gettext("View system metrics, processes, and application telemetry")}</p>
-                </div>
-                <.icon name="hero-arrow-right" class="size-4 text-base-content/30" />
+          <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 hover:border-primary/40 hover:shadow-md transition-all duration-200 p-5 md:p-6">
+            <div class="flex items-center gap-4">
+              <div class="bg-info/15 text-info p-3.5 rounded-2xl">
+                <.icon name="hero-chart-bar" class="size-5" />
               </div>
+              <div class="flex-1">
+                <h3 class="font-semibold text-base">{gettext("System Dashboard")}</h3>
+                <p class="text-sm text-base-content/60 mt-0.5">{gettext("View system metrics, processes, and application telemetry")}</p>
+              </div>
+              <.icon name="hero-arrow-right" class="size-5 text-base-content/30" />
             </div>
           </div>
         </.link>
@@ -167,28 +177,28 @@ defmodule EvoDashWeb.HelpLive do
       <!-- Example Configuration -->
       <div class="mt-6 animate-fade-in-up animation-delay-200">
         <.collapsible_card id="config-reference" title={gettext("Example Configuration")} icon="hero-book-open" color={:info}>
-          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
+          <pre class="text-sm font-mono bg-base-200/40 rounded-2xl p-5 border border-base-200/60 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
         </.collapsible_card>
       </div>
 
       <!-- Example Usage -->
       <div class="mt-6 animate-fade-in-up animation-delay-300">
         <.collapsible_card id="usage-reference" title={gettext("Example Usage")} icon="hero-command-line" color={:success}>
-          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
+          <pre class="text-sm font-mono bg-base-200/40 rounded-2xl p-5 border border-base-200/60 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
         </.collapsible_card>
       </div>
 
       <!-- FAQ -->
       <div class="mt-6 animate-fade-in-up animation-delay-400">
         <.collapsible_card id="faq" title={gettext("Frequently Asked Questions")} icon="hero-question-mark-circle" color={:accent}>
-          <div class="space-y-3">
+          <div class="space-y-4">
             <%= for {{question, answer}, idx} <- Enum.with_index(@faq_content) do %>
-              <details class={"group rounded-lg border border-base-200 overflow-hidden"}>
-                <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none bg-base-200/30 hover:bg-base-200/50 transition-colors list-none">
-                  <.icon name="hero-chevron-down" class="size-4 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+              <details class={"group rounded-2xl border border-base-200/60 overflow-hidden bg-base-100/50"}>
+                <summary class="flex items-center gap-3 px-5 py-4 cursor-pointer select-none hover:bg-base-200/50 transition-colors list-none">
+                  <.icon name="hero-chevron-down" class="size-4.5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
                   <span class="font-semibold text-sm">{question}</span>
                 </summary>
-                <div class="px-4 py-3 text-sm text-base-content/70 leading-relaxed border-t border-base-200">
+                <div class="px-5 py-4 text-sm text-base-content/70 leading-relaxed border-t border-base-200/60">
                   <p id={"faq-answer-#{idx}"}>{answer}</p>
                 </div>
               </details>
@@ -200,15 +210,15 @@ defmodule EvoDashWeb.HelpLive do
       <!-- Credentials Reference -->
       <div class="mt-6 animate-fade-in-up animation-delay-500">
         <.collapsible_card id="credentials-reference" title={gettext("Credentials Reference")} icon="hero-key" color={:accent}>
-          <pre class="text-sm font-mono bg-base-200/30 rounded-lg p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
-          <div class="mt-3 space-y-1">
-            <p class="text-xs text-base-content/50 flex items-center gap-1.5">
-              <.icon name="hero-arrows-right-left" class="size-3.5 shrink-0" />
-              {gettext("Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).")}
+          <pre class="text-sm font-mono bg-base-200/40 rounded-2xl p-5 border border-base-200/60 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
+          <div class="mt-4 space-y-2">
+            <p class="text-sm text-base-content/60 flex items-start gap-2.5">
+              <.icon name="hero-arrows-right-left" class="size-4.5 shrink-0 mt-0.5" />
+              <span>{gettext("Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).")}</span>
             </p>
-            <p class="text-xs text-base-content/50 flex items-center gap-1.5">
-              <.icon name="hero-shield-check" class="size-3.5 shrink-0" />
-              {gettext("For security, credentials cannot be edited from this page. Edit the file directly on your system.")}
+            <p class="text-sm text-base-content/60 flex items-start gap-2.5">
+              <.icon name="hero-shield-check" class="size-4.5 shrink-0 mt-0.5" />
+              <span>{gettext("For security, credentials cannot be edited from this page. Edit the file directly on your system.")}</span>
             </p>
           </div>
         </.collapsible_card>

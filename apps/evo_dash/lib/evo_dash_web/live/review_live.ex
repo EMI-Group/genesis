@@ -8,11 +8,11 @@ defmodule EvoDashWeb.ReviewLive do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status}>
       <%= if @error do %>
-        <div class="bg-error/10 border border-error/20 rounded-2xl p-8 text-center">
+        <div class="bg-error/10 border border-error/20 rounded-3xl p-8 text-center">
           <.icon name="hero-exclamation-triangle" class="size-12 text-error mx-auto mb-4" />
           <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
           <p class="text-sm text-base-content/60 mb-4">{@error}</p>
-          <.link navigate={~p"/"} class="btn btn-primary gap-2">
+          <.link navigate={~p"/"} class="btn btn-primary rounded-full px-6 gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
           </.link>
         </div>
@@ -20,7 +20,7 @@ defmodule EvoDashWeb.ReviewLive do
         <div class="space-y-4">
           <!-- Back button -->
           <div class="flex items-center gap-3">
-            <.link navigate={~p"/"} class="btn btn-ghost btn-sm gap-1">
+            <.link navigate={~p"/"} class="btn btn-ghost rounded-full btn-sm gap-1 px-4">
               <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
             </.link>
           </div>
@@ -88,7 +88,7 @@ defmodule EvoDashWeb.ReviewLive do
                       selected_file={@selected_file}
                     />
                   <% else %>
-                    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-8 text-center">
+                    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 p-8 text-center">
                       <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
                       <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
                     </div>
@@ -97,7 +97,7 @@ defmodule EvoDashWeb.ReviewLive do
             </div>
 
             <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
-              <div class="bg-warning/10 border border-warning/20 rounded-2xl p-6 text-center">
+              <div class="bg-warning/10 border border-warning/20 rounded-3xl p-6 text-center">
                 <.icon name="hero-exclamation-triangle" class="size-8 text-warning mx-auto mb-3" />
                 <p class="text-sm text-warning">{gettext("Could not load diff data. The branch may have been modified externally.")}</p>
               </div>
@@ -172,6 +172,7 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_event("select_file", %{"path" => path}, socket) do
     target_id = "file-section-#{file_path_to_id(path)}"
+
     socket =
       socket
       |> assign(:selected_file, path)
@@ -212,13 +213,23 @@ defmodule EvoDashWeb.ReviewLive do
 
         {:noreply,
          socket
-         |> put_flash(:success, gettext("Changes merged successfully! Branch %{branch} has been deleted.", branch: branch_name))
+         |> put_flash(
+           :success,
+           gettext("Changes merged successfully! Branch %{branch} has been deleted.",
+             branch: branch_name
+           )
+         )
          |> push_navigate(to: ~p"/")}
 
       {:conflict, details} ->
         {:noreply,
          socket
-         |> put_flash(:error, gettext("Merge conflict! Please resolve manually. %{details}", details: truncate_string(details, 200)))}
+         |> put_flash(
+           :error,
+           gettext("Merge conflict! Please resolve manually. %{details}",
+             details: truncate_string(details, 200)
+           )
+         )}
 
       {:error, reason} ->
         {:noreply,
@@ -237,13 +248,19 @@ defmodule EvoDashWeb.ReviewLive do
 
         {:noreply,
          socket
-         |> put_flash(:info, gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_name))
+         |> put_flash(
+           :info,
+           gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_name)
+         )
          |> push_navigate(to: ~p"/")}
 
       {:error, reason} ->
         {:noreply,
          socket
-         |> put_flash(:error, gettext("Failed to reject changes: %{reason}", reason: inspect(reason)))}
+         |> put_flash(
+           :error,
+           gettext("Failed to reject changes: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -257,13 +274,20 @@ defmodule EvoDashWeb.ReviewLive do
 
     {:noreply,
      socket
-     |> put_flash(:info, gettext("Continuing from branch %{branch} at %{sha}", branch: branch_name, sha: String.slice(commit_sha || "", 0..7)))
+     |> put_flash(
+       :info,
+       gettext("Continuing from branch %{branch} at %{sha}",
+         branch: branch_name,
+         sha: String.slice(commit_sha || "", 0..7)
+       )
+     )
      |> push_navigate(to: ~p"/?starting_commit=#{commit_sha}")}
   end
 
   @impl true
   def handle_event("create_pr", _params, socket) do
-    %{repo_path: repo_path, branch_name: branch_name, objective: objective, agent_summary: result} = socket.assigns
+    %{repo_path: repo_path, branch_name: branch_name, objective: objective, agent_summary: result} =
+      socket.assigns
 
     socket = assign(socket, :action_loading, true)
 
@@ -274,13 +298,21 @@ defmodule EvoDashWeb.ReviewLive do
          |> assign(:action_loading, false)
          |> assign(:has_pr, true)
          |> assign(:pr_url, pr_url)
-         |> put_flash(:success, gettext("Pull request created: %{title}", title: pr_title || pr_url))}
+         |> put_flash(
+           :success,
+           gettext("Pull request created: %{title}", title: pr_title || pr_url)
+         )}
 
       {nil, nil} ->
         {:noreply,
          socket
          |> assign(:action_loading, false)
-         |> put_flash(:error, gettext("Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."))}
+         |> put_flash(
+           :error,
+           gettext(
+             "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
+           )
+         )}
     end
   end
 
@@ -316,7 +348,14 @@ defmodule EvoDashWeb.ReviewLive do
 
         {commit_sha, branch_name, agent_summary, pr_url, pr_title} =
           case result do
-            {:ok, %{commit_sha: sha, branch_name: branch, result: summary, pr_url: url, pr_title: title}} ->
+            {:ok,
+             %{
+               commit_sha: sha,
+               branch_name: branch,
+               result: summary,
+               pr_url: url,
+               pr_title: title
+             }} ->
               {sha, branch, summary, url, title}
 
             _ ->
@@ -331,12 +370,13 @@ defmodule EvoDashWeb.ReviewLive do
 
         rs = Map.get(task, :review_status)
 
-        review_status = cond do
-          branch_name == nil -> :no_changes
-          rs != nil -> rs
-          not branch_exists -> :open
-          true -> :open
-        end
+        review_status =
+          cond do
+            branch_name == nil -> :no_changes
+            rs != nil -> rs
+            not branch_exists -> :open
+            true -> :open
+          end
 
         review_data =
           if branch_exists && repo_path do
@@ -389,9 +429,11 @@ defmodule EvoDashWeb.ReviewLive do
 
       case Review.load_file_diff(repo_path, base_sha, commit_sha, path) do
         {:ok, diff_string} ->
-          updated_files = Enum.map(review_data.files, fn f ->
-            if f.path == path, do: %{f | diff: diff_string}, else: f
-          end)
+          updated_files =
+            Enum.map(review_data.files, fn f ->
+              if f.path == path, do: %{f | diff: diff_string}, else: f
+            end)
+
           updated_review_data = %{review_data | files: updated_files}
           expanded_files = Map.put(socket.assigns.expanded_files, path, true)
 
@@ -401,7 +443,15 @@ defmodule EvoDashWeb.ReviewLive do
            |> assign(:expanded_files, expanded_files)}
 
         {:error, reason} ->
-          {:noreply, put_flash(socket, :error, gettext("Failed to load diff for %{path}: %{reason}", path: path, reason: inspect(reason)))}
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to load diff for %{path}: %{reason}",
+               path: path,
+               reason: inspect(reason)
+             )
+           )}
       end
     else
       {:noreply, socket}

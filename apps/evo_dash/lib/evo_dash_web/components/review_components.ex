@@ -16,29 +16,29 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def review_header(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
-      <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-4 sm:p-5">
+    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 overflow-hidden">
+      <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-5 sm:p-6">
         <div class="flex items-start gap-4">
-          <div class="bg-primary/15 text-primary p-3 rounded-xl shrink-0">
+          <div class="bg-primary/15 text-primary p-3.5 rounded-2xl shrink-0">
             <.icon name="hero-code-bracket-square" class="size-6" />
           </div>
           <div class="flex-1 min-w-0">
             <h1 class="text-xl md:text-2xl font-bold leading-tight truncate">{@title}</h1>
-            <div class="flex flex-wrap items-center gap-2 mt-3">
-              <span class={["badge badge-sm", review_status_badge(@status)]}>
-                <.icon name={review_status_icon(@status)} class="size-3 mr-1" />
+            <div class="flex flex-wrap items-center gap-2 mt-3.5">
+              <span class={["badge badge-sm rounded-full px-2.5 py-3", review_status_badge(@status)]}>
+                <.icon name={review_status_icon(@status)} class="size-3.5 mr-1.5" />
                 {review_status_label(@status)}
               </span>
-              <span class="badge badge-sm badge-ghost capitalize">{@task_type}</span>
+              <span class="badge badge-sm badge-ghost rounded-full px-2.5 py-3 capitalize">{@task_type}</span>
               <%= if @branch_name do %>
-                <span class="badge badge-sm badge-primary font-mono">
-                  <.icon name="hero-code-bracket-square" class="size-3 mr-1" />
+                <span class="badge badge-sm badge-primary rounded-full px-2.5 py-3 font-mono">
+                  <.icon name="hero-code-bracket-square" class="size-3.5 mr-1.5" />
                   {@branch_name}
                 </span>
               <% end %>
               <%= if @commit_sha do %>
-                <span class="badge badge-sm badge-ghost font-mono">
-                  <.icon name="hero-code-bracket" class="size-3 mr-1" />
+                <span class="badge badge-sm badge-ghost rounded-full px-2.5 py-3 font-mono">
+                  <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" />
                   {String.slice(@commit_sha, 0..7)}
                 </span>
               <% end %>
@@ -60,11 +60,11 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def review_tabs(assigns) do
     ~H"""
-    <div class="review-tab-bar-sticky">
+    <div class="review-tab-bar-sticky flex gap-2 overflow-x-auto pb-2 -mb-2 scrollbar-hide">
       <button
         phx-click="switch_tab"
         phx-value-tab="conversation"
-        class={["review-tab", @active_tab == :conversation && "tab-active"]}
+        class={["review-tab rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200", @active_tab == :conversation && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
         {gettext("Conversation")}
@@ -72,20 +72,20 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="commits"
-        class={["review-tab", @active_tab == :commits && "tab-active"]}
+        class={["review-tab rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200", @active_tab == :commits && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-clock" class="size-4 mr-2" />
         {gettext("Commits")}
-        <span class="badge badge-sm badge-ghost ml-2">{@commits_count}</span>
+        <span class="badge badge-sm badge-ghost rounded-full ml-2">{@commits_count}</span>
       </button>
       <button
         phx-click="switch_tab"
         phx-value-tab="files_changed"
-        class={["review-tab", @active_tab == :files_changed && "tab-active"]}
+        class={["review-tab rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200", @active_tab == :files_changed && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-code-bracket" class="size-4 mr-2" />
         {gettext("Files Changed")}
-        <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
+        <span class="badge badge-sm badge-ghost rounded-full ml-2">{@files_count}</span>
       </button>
     </div>
     """
@@ -100,16 +100,16 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def agent_summary(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
+    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 overflow-hidden">
       <details open={@open}>
-        <summary class="p-4 md:p-6 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-3 list-none">
-          <div class="bg-success/15 text-success p-2 rounded-lg">
+        <summary class="p-5 md:p-6 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-4 list-none">
+          <div class="bg-success/15 text-success p-2.5 rounded-xl">
             <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
           </div>
           <span class="font-semibold text-base-content/80">{gettext("Agent Summary")}</span>
           <button
             id="summary-copy-btn"
-            class="btn btn-ghost btn-xs btn-square"
+            class="btn btn-ghost btn-sm rounded-full btn-square"
             phx-hook="ClipboardCopy"
             data-content={@summary}
             title={gettext("Copy agent summary")}
@@ -120,9 +120,9 @@ defmodule EvoDashWeb.ReviewComponents do
           <div class="flex-1"></div>
           <.icon name="hero-chevron-down" class="size-4 text-base-content/40" />
         </summary>
-        <div class="px-4 md:px-6 pb-4 md:pb-6">
-          <div class="bg-success/5 border border-success/10 rounded-xl p-4">
-            <div class="md-content text-sm">
+        <div class="px-5 md:px-6 pb-5 md:pb-6">
+          <div class="bg-success/5 border border-success/10 rounded-2xl p-5">
+            <div class="md-content text-sm leading-relaxed">
               {raw(EvoDash.MarkdownRender.render(@summary))}
             </div>
           </div>
@@ -143,26 +143,26 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def diff_stats_bar(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 px-4 py-3 md:px-6 md:py-3">
-      <div class="flex items-center gap-3 flex-wrap text-sm">
-        <div class="flex items-center gap-2">
-          <.icon name="hero-document-text" class="size-4 text-base-content/50" />
-          <span class="font-medium">
+    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 px-5 py-4 md:px-6 md:py-4">
+      <div class="flex items-center gap-4 flex-wrap text-sm">
+        <div class="flex items-center gap-2.5">
+          <.icon name="hero-document-text" class="size-4.5 text-base-content/50" />
+          <span class="font-medium text-base-content/80">
             {gettext("%{count} files changed", count: @files_count)}
           </span>
         </div>
-        <div class="flex items-center gap-2">
-          <span class="text-success font-medium flex items-center gap-1">
-            <.icon name="hero-plus" class="size-3" /> {@additions}
+        <div class="flex items-center gap-3 bg-base-200/50 rounded-full px-3 py-1">
+          <span class="text-success font-semibold flex items-center gap-1.5">
+            <.icon name="hero-plus" class="size-3.5" /> {@additions}
           </span>
-          <span class="text-error font-medium flex items-center gap-1">
-            <.icon name="hero-minus" class="size-3" /> {@deletions}
+          <span class="text-error font-semibold flex items-center gap-1.5">
+            <.icon name="hero-minus" class="size-3.5" /> {@deletions}
           </span>
         </div>
-        <span class="text-base-content/30">·</span>
-        <div class="flex items-center gap-2">
-          <.icon name="hero-clock" class="size-4 text-base-content/50" />
-          <span class="font-medium">
+        <span class="text-base-content/30 hidden sm:inline">·</span>
+        <div class="flex items-center gap-2.5">
+          <.icon name="hero-clock" class="size-4.5 text-base-content/50" />
+          <span class="font-medium text-base-content/80">
             {ngettext("%{count} commit", "%{count} commits", @commits_count, count: @commits_count)}
           </span>
         </div>
@@ -179,28 +179,28 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def commits_list(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden">
-      <div class="p-4 md:p-5 border-b border-base-200/50">
-        <div class="flex items-center gap-2">
+    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 overflow-hidden">
+      <div class="p-5 md:p-6 border-b border-base-200/50 bg-base-200/20">
+        <div class="flex items-center gap-3">
           <.icon name="hero-clock" class="size-5 text-base-content/60" />
-          <span class="font-semibold text-sm">
+          <span class="font-semibold text-base">
             {ngettext("%{count} commit", "%{count} commits", length(@commits), count: length(@commits))}
           </span>
         </div>
       </div>
-      <div>
-        <%= for {commit, i} <- Enum.with_index(@commits) do %>
-          <div class={["flex items-center gap-3 px-4 md:px-5 py-3 hover:bg-base-200/30 transition-colors", i < length(@commits) - 1 && "border-b border-base-200/50"]}>
-            <span class="badge badge-sm badge-ghost font-mono text-xs shrink-0">
+      <div class="divide-y divide-base-200/50">
+        <%= for {commit, _i} <- Enum.with_index(@commits) do %>
+          <div class="flex items-center gap-4 px-5 md:px-6 py-4 hover:bg-base-200/30 transition-colors">
+            <span class="badge badge-sm badge-ghost rounded-full font-mono text-xs px-2.5 py-3 shrink-0">
               {commit.short_sha}
             </span>
-            <span class="text-sm flex-1 truncate" title={commit.message}>
+            <span class="text-sm font-medium flex-1 truncate" title={commit.message}>
               {commit.message}
             </span>
-            <span class="text-xs text-base-content/50 shrink-0 hidden sm:inline">
+            <span class="text-sm text-base-content/50 shrink-0 hidden sm:inline">
               {commit.author_name}
             </span>
-            <span class="text-xs text-base-content/50 shrink-0">
+            <span class="text-sm text-base-content/50 shrink-0">
               {relative_time(commit.date)}
             </span>
           </div>
@@ -221,60 +221,60 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def action_buttons(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-4 md:p-6">
-      <div class="flex items-center gap-2 mb-4">
+    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 p-5 md:p-6">
+      <div class="flex items-center gap-3 mb-5">
         <.icon name="hero-hand-raised" class="size-5 text-base-content/60" />
-        <h3 class="font-semibold">{gettext("Actions")}</h3>
+        <h3 class="font-semibold text-base">{gettext("Actions")}</h3>
       </div>
       <div class="flex flex-wrap gap-3">
         <%= if @branch_exists do %>
           <button
-            class="btn btn-success gap-2"
+            class="btn btn-success rounded-full px-6 gap-2 shadow-sm"
             phx-click="merge"
             phx-confirm={gettext("Merge these changes into the current branch?")}
             disabled={@loading}
           >
-            <.icon name="hero-check" class="size-4" />
+            <.icon name="hero-check" class="size-4.5" />
             {gettext("Merge Changes")}
           </button>
           <button
-            class="btn btn-outline btn-error gap-2"
+            class="btn btn-outline btn-error rounded-full px-6 gap-2"
             phx-click="reject"
             phx-confirm={gettext("Reject and delete these changes? This cannot be undone.")}
             disabled={@loading}
           >
-            <.icon name="hero-x-mark" class="size-4" />
+            <.icon name="hero-x-mark" class="size-4.5" />
             {gettext("Reject Changes")}
           </button>
           <button
-            class="btn btn-outline btn-info gap-2"
+            class="btn btn-outline btn-info rounded-full px-6 gap-2"
             phx-click="continue"
             disabled={@loading}
           >
-            <.icon name="hero-arrow-path" class="size-4" />
+            <.icon name="hero-arrow-path" class="size-4.5" />
             {gettext("Continue from Here")}
           </button>
-          <div class="divider divider-horizontal mx-1 hidden sm:block"></div>
+          <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50"></div>
         <% end %>
         <%= if @branch_exists and not @has_pr do %>
           <button
-            class="btn btn-outline gap-2"
+            class="btn btn-outline rounded-full px-6 gap-2"
             phx-click="create_pr"
             disabled={@loading}
           >
-            <.icon name="hero-arrow-top-right-on-square" class="size-4" />
+            <.icon name="hero-arrow-top-right-on-square" class="size-4.5" />
             {gettext("Create GitHub PR")}
           </button>
         <% end %>
         <%= if @has_pr and @pr_url do %>
-          <a href={@pr_url} target="_blank" class="btn btn-outline btn-success gap-2">
-            <.icon name="hero-arrow-top-right-on-square" class="size-4" />
+          <a href={@pr_url} target="_blank" class="btn btn-outline btn-success rounded-full px-6 gap-2">
+            <.icon name="hero-arrow-top-right-on-square" class="size-4.5" />
             {gettext("View GitHub PR")}
           </a>
         <% end %>
         <%= if not @branch_exists do %>
-          <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 w-full">
-            <div class="flex items-center gap-2">
+          <div class="bg-warning/10 border border-warning/20 rounded-2xl p-5 w-full">
+            <div class="flex items-center gap-3">
               <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
               <span class="text-sm text-warning font-medium">{gettext("This branch no longer exists. No actions available.")}</span>
             </div>
