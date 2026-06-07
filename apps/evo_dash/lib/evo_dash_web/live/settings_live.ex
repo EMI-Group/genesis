@@ -7,34 +7,36 @@ defmodule EvoDashWeb.SettingsLive do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status}>
       <%!-- Header --%>
-      <div class="flex items-center gap-4 mb-2 animate-fade-in-up bg-gradient-to-r from-base-200/50 to-transparent rounded-2xl p-4 -mx-1">
-        <div class="bg-gradient-to-br from-secondary/20 to-secondary/5 text-secondary p-3.5 rounded-xl shadow-sm">
-          <.icon name="hero-cog-6-tooth" class="size-7" />
+      <div class="flex items-center gap-5 mb-8 animate-fade-in-up mt-2">
+        <div class="relative flex items-center justify-center size-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-primary/10">
+          <.icon name="hero-cog-8-tooth" class="size-8" />
+          <div class="absolute inset-0 rounded-2xl bg-primary/10 blur-xl -z-10"></div>
         </div>
         <div>
-          <h1 class="text-2xl font-bold">{gettext("Settings")}</h1>
-          <p class="text-sm text-base-content/60">{gettext("Runtime configuration and file settings")}</p>
+          <h1 class="text-3xl font-extrabold tracking-tight text-base-content">{gettext("Settings")}</h1>
+          <p class="text-sm text-base-content/60 mt-1 font-medium">{gettext("Runtime configuration and file settings")}</p>
         </div>
       </div>
 
       <%!-- Runtime Controls banner --%>
-      <div class="mt-4 bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden animate-fade-in-up animation-delay-100">
-        <div class="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-5">
-          <div class="flex items-center gap-4">
+      <div class="mb-8 bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group">
+        <div class="absolute inset-0 bg-gradient-to-r from-base-200/30 to-transparent pointer-events-none"></div>
+        <div class="relative p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 transition-all duration-300">
+          <div class="flex items-center gap-5">
             <div class={[
-              "p-3 rounded-xl",
-              if(@scheduler_paused, do: "bg-warning/15 text-warning", else: "bg-success/15 text-success")
+              "p-4 rounded-2xl flex items-center justify-center transition-colors duration-500",
+              if(@scheduler_paused, do: "bg-warning/15 text-warning shadow-[0_0_20px_rgba(251,189,35,0.15)]", else: "bg-success/15 text-success shadow-[0_0_20px_rgba(54,211,153,0.15)]")
             ]}>
               <.icon
                 name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
-                class={"size-6" <> if(!@scheduler_paused, do: " animate-pulse", else: "")}
+                class={"size-8" <> if(!@scheduler_paused, do: " animate-pulse", else: "")}
               />
             </div>
             <div>
-              <h2 class="text-base font-bold">
+              <h2 class="text-xl font-bold tracking-tight mb-1">
                 {if @scheduler_paused, do: gettext("Scheduler Paused"), else: gettext("Scheduler Active")}
               </h2>
-              <p class="text-xs text-base-content/60">
+              <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
                 <%= if @scheduler_paused do %>
                   {gettext("Running agents continue. No new slots or agents will be granted until resumed.")}
                 <% else %>
@@ -44,13 +46,14 @@ defmodule EvoDashWeb.SettingsLive do
             </div>
           </div>
           <button
+            type="button"
             phx-click="toggle_pause"
             class={[
-              "btn btn-sm",
-              if(@scheduler_paused, do: "btn-success btn-soft", else: "btn-warning btn-soft")
+              "btn btn-lg rounded-2xl font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none shrink-0",
+              if(@scheduler_paused, do: "bg-success/20 hover:bg-success/30 text-success-content", else: "bg-warning/20 hover:bg-warning/30 text-warning-content")
             ]}
           >
-            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-4" />
+            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
             {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")}
           </button>
         </div>
@@ -58,47 +61,49 @@ defmodule EvoDashWeb.SettingsLive do
 
       <%!-- Config Status Warning --%>
       <%= if not @config_status.ok? do %>
-        <div class="mt-4 bg-warning/5 border border-warning/25 rounded-xl p-4 animate-fade-in-up animation-delay-100">
-          <div class="flex items-start gap-2 mb-2">
-            <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
-            <h3 class="font-semibold text-warning">{gettext("Missing Configuration")}</h3>
+        <div class="mb-8 bg-warning/5 border border-warning/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex gap-4 items-start shadow-sm">
+          <div class="p-3 bg-warning/20 text-warning rounded-2xl shrink-0 mt-0.5">
+            <.icon name="hero-exclamation-triangle" class="size-6" />
           </div>
-          <ul class="space-y-1">
-            <%= for warning <- @config_status.warnings do %>
-              <li class="text-sm text-warning/80 flex items-start gap-2">
-                <.icon name="hero-chevron-right" class="size-4 mt-0.5 shrink-0" />
-                <span>{warning}</span>
-              </li>
-            <% end %>
-          </ul>
-          <p class="text-xs text-base-content/50 mt-2">
-            {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
-          </p>
+          <div>
+            <h3 class="font-bold text-lg text-warning mb-2">{gettext("Missing Configuration")}</h3>
+            <ul class="space-y-1.5 mb-3">
+              <%= for warning <- @config_status.warnings do %>
+                <li class="text-sm font-medium text-warning/80 flex items-start gap-2">
+                  <.icon name="hero-chevron-right" class="size-4 mt-0.5 shrink-0 opacity-70" />
+                  <span>{warning}</span>
+                </li>
+              <% end %>
+            </ul>
+            <p class="text-sm font-semibold text-base-content/60">
+              {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
+            </p>
+          </div>
         </div>
       <% end %>
 
       <%!-- No LLM Model Warning --%>
       <%= if is_nil(get_in(@file_config, [:llm, :model])) do %>
-        <div class="mt-4 bg-error/5 border border-error/25 rounded-xl p-4 animate-fade-in-up animation-delay-100">
-          <div class="flex items-start gap-3">
-            <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
-            <div>
-              <h3 class="font-semibold text-error">{gettext("No LLM Model Configured")}</h3>
-              <p class="text-sm text-error/80 mt-1">
-                {gettext("Agents cannot run until you set a model. Go to the LLM category and fill in the Model field.")}
-              </p>
-              <p class="text-xs text-base-content/50 mt-2 flex items-center gap-1.5 flex-wrap">
-                {gettext("Example model names:")}
-                <span class="badge badge-sm badge-ghost font-mono text-xs">anthropic/claude-sonnet-4-20250514</span>
-                <span class="badge badge-sm badge-ghost font-mono text-xs">openai/gpt-4.1</span>
-              </p>
+        <div class="mb-8 bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex gap-4 items-start shadow-sm">
+          <div class="p-3 bg-error/20 text-error rounded-2xl shrink-0 mt-0.5">
+            <.icon name="hero-exclamation-triangle" class="size-6" />
+          </div>
+          <div>
+            <h3 class="font-bold text-lg text-error mb-2">{gettext("No LLM Model Configured")}</h3>
+            <p class="text-sm font-medium text-error/80 mb-4 leading-relaxed max-w-3xl">
+              {gettext("Agents cannot run until you set a model. Go to the LLM category and fill in the Model field.")}
+            </p>
+            <div class="flex items-center gap-3 flex-wrap">
+              <span class="text-xs font-bold uppercase tracking-wider text-base-content/50">{gettext("Example model names:")}</span>
+              <span class="badge badge-ghost font-mono text-xs px-3 py-3 rounded-xl bg-base-200 border-base-300">anthropic/claude-3-5-sonnet-20241022</span>
+              <span class="badge badge-ghost font-mono text-xs px-3 py-3 rounded-xl bg-base-200 border-base-300">openai/gpt-4o</span>
             </div>
           </div>
         </div>
       <% end %>
 
       <%!-- Two-column sidebar + content layout --%>
-      <div class="mt-4 flex bg-base-100 rounded-2xl shadow-md border border-base-200 overflow-hidden animate-fade-in-up animation-delay-200 min-h-[70vh] transition-shadow duration-300">
+      <div class="flex bg-base-100 rounded-[2rem] shadow-sm hover:shadow-md border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-200 min-h-[75vh] max-h-[80vh] transition-all duration-500">
         <%!-- Sidebar --%>
         <EvoDashWeb.SettingsComponents.settings_sidebar
           categories={@schemas_by_category}
@@ -110,7 +115,7 @@ defmodule EvoDashWeb.SettingsLive do
         <.form
           for={%{}}
           phx-submit="save_category"
-          class="flex-1 flex flex-col"
+          class="flex-1 flex flex-col min-w-0 relative"
           id={"settings-form-#{@active_category}"}
         >
           <input type="hidden" name="category" value={@active_category} />
@@ -191,7 +196,8 @@ defmodule EvoDashWeb.SettingsLive do
     schemas = Map.get(socket.assigns.schemas_by_category, category, [])
 
     # Build config from params and merge into full file_config
-    config = build_config_from_category_params(params, category, schemas, socket.assigns.file_config)
+    config =
+      build_config_from_category_params(params, category, schemas, socket.assigns.file_config)
 
     case Schema.validate(config) do
       {:ok, _validated} ->
@@ -222,7 +228,10 @@ defmodule EvoDashWeb.SettingsLive do
           {:error, reason} ->
             {:noreply,
              socket
-             |> put_flash(:error, gettext("Failed to save configuration: %{reason}", reason: inspect(reason)))}
+             |> put_flash(
+               :error,
+               gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
+             )}
         end
 
       {:error, errors} ->
@@ -230,7 +239,10 @@ defmodule EvoDashWeb.SettingsLive do
 
         {:noreply,
          socket
-         |> assign(:per_category_errors, Map.put(socket.assigns.per_category_errors, category, category_errors))
+         |> assign(
+           :per_category_errors,
+           Map.put(socket.assigns.per_category_errors, category, category_errors)
+         )
          |> put_flash(:error, gettext("Validation failed. Please fix the errors below."))}
     end
   end
@@ -277,7 +289,12 @@ defmodule EvoDashWeb.SettingsLive do
       {:noreply,
        socket
        |> assign(:scheduler_paused, true)
-       |> put_flash(:info, gettext("Scheduler paused. Running agents continue, but no new slots or agents will be granted."))}
+       |> put_flash(
+         :info,
+         gettext(
+           "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
+         )
+       )}
     end
   end
 
@@ -371,7 +388,10 @@ defmodule EvoDashWeb.SettingsLive do
     updates =
       []
       |> maybe_add_kw(:max_concurrency, get_in(file_config, [:scheduler, :max_concurrency]))
-      |> maybe_add_kw(:max_tool_concurrency, get_in(file_config, [:scheduler, :max_tool_concurrency]))
+      |> maybe_add_kw(
+        :max_tool_concurrency,
+        get_in(file_config, [:scheduler, :max_tool_concurrency])
+      )
       |> maybe_add_kw(:agent_max_retries, get_in(file_config, [:scheduler, :agent_max_retries]))
       |> maybe_add_kw(:max_agent_depth, get_in(file_config, [:scheduler, :max_agent_depth]))
       |> maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))

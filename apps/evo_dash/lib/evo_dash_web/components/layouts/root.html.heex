@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <meta name="theme-color" content="#4f46e5" />
+    <meta name="theme-color" content="#f8fafc" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content={gettext("EvoGit")} />
@@ -36,7 +36,7 @@
           if (meta) {
             const isDark = theme === "dark" ||
               (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-            meta.content = isDark ? "#312e81" : "#4f46e5";
+            meta.content = isDark ? "#020617" : "#f8fafc";
           }
         };
 
@@ -53,7 +53,7 @@
       })();
     </script>
   </head>
-  <body>
+  <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased min-h-screen selection:bg-indigo-500/30">
     {@inner_content}
   </body>
 </html>

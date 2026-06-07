@@ -13,92 +13,110 @@ defmodule EvoDashWeb.SettingsComponents do
   def setting_card(assigns) do
     ~H"""
     <div class={[
-      "bg-base-100 rounded-xl border border-base-200 shadow-sm hover:shadow-md transition-shadow duration-200 p-4",
-      @disabled && "opacity-50 pointer-events-none"
+      "relative bg-base-100 rounded-[1.5rem] border border-base-200 shadow-sm hover:shadow-md transition-all duration-300 p-6 flex flex-col justify-between group h-full",
+      @disabled && "opacity-60 pointer-events-none grayscale-[20%]"
     ]}>
-      <div class="flex items-center justify-between gap-2 mb-1">
-        <span class="badge badge-sm badge-ghost font-mono text-xs">
-          {Enum.join(@schema.key_path, ".")}
-        </span>
-        <button
-          phx-click="reset_key"
-          phx-value-key_path={Enum.join(@schema.key_path, ".")}
-          class="btn btn-ghost btn-xs text-base-content/50 hover:text-primary transition-colors"
-        >
-          {gettext("reset")}
-        </button>
+      <div>
+        <div class="flex items-start justify-between gap-4 mb-4">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-primary/40 group-hover:bg-primary transition-colors duration-300"></div>
+            <span class="font-mono text-xs font-bold tracking-wider text-base-content/80">
+              {Enum.join(@schema.key_path, ".")}
+            </span>
+          </div>
+          <button
+            type="button"
+            phx-click="reset_key"
+            phx-value-key_path={Enum.join(@schema.key_path, ".")}
+            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-circle btn-sm text-base-content/40 hover:text-primary hover:bg-primary/10 transition-all duration-200 -mt-1 -mr-1"
+            title={gettext("Reset to default")}
+          >
+            <.icon name="hero-arrow-path" class="size-4" />
+          </button>
+        </div>
+        
+        <p class="text-sm text-base-content/60 mb-6 leading-relaxed font-medium">{@schema.description}</p>
       </div>
 
-      <p class="text-xs text-base-content/60 mt-1 mb-4">{@schema.description}</p>
+      <div class="mt-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="form-control flex-1 w-full">
+          <%= case @schema.type do %>
+            <% :pos_integer -> %>
+              <input
+                type="number"
+                name={Enum.join(@schema.key_path, ".")}
+                value={input_value(@value)}
+                min={@schema.validation[:min] || 1}
+                max={@schema.validation[:max]}
+                class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+              />
+            <% :non_neg_integer -> %>
+              <input
+                type="number"
+                name={Enum.join(@schema.key_path, ".")}
+                value={input_value(@value)}
+                min={@schema.validation[:min] || 0}
+                max={@schema.validation[:max]}
+                class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+              />
+            <% :integer -> %>
+              <input
+                type="number"
+                name={Enum.join(@schema.key_path, ".")}
+                value={input_value(@value)}
+                min={@schema.validation[:min]}
+                max={@schema.validation[:max]}
+                class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+              />
+            <% :float -> %>
+              <input
+                type="number"
+                step="0.01"
+                name={Enum.join(@schema.key_path, ".")}
+                value={input_value(@value)}
+                min={@schema.validation[:min]}
+                max={@schema.validation[:max]}
+                class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+              />
+            <% :string -> %>
+              <input
+                type="text"
+                name={Enum.join(@schema.key_path, ".")}
+                value={@value || ""}
+                class="input input-bordered w-full font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+              />
+            <% :atom -> %>
+              <div class="relative w-full sm:max-w-[220px]">
+                <select
+                  name={Enum.join(@schema.key_path, ".")}
+                  class="select select-bordered w-full font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 appearance-none pr-10 text-base"
+                >
+                  <%= for opt <- @schema.validation[:in] || [] do %>
+                    <option value={to_string(opt)} selected={to_string(@value) == to_string(opt)}>
+                      {to_string(opt)}
+                    </option>
+                  <% end %>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-base-content/50">
+                  <.icon name="hero-chevron-down" class="size-4" />
+                </div>
+              </div>
+          <% end %>
+        </div>
 
-      <div class="form-control">
-        <%= case @schema.type do %>
-          <% :pos_integer -> %>
-            <input
-              type="number"
-              name={Enum.join(@schema.key_path, ".")}
-              value={input_value(@value)}
-              min={@schema.validation[:min] || 1}
-              max={@schema.validation[:max]}
-              class="input input-bordered input-sm w-full font-mono focus:ring-2 focus:ring-primary/20 transition-shadow"
-            />
-          <% :non_neg_integer -> %>
-            <input
-              type="number"
-              name={Enum.join(@schema.key_path, ".")}
-              value={input_value(@value)}
-              min={@schema.validation[:min] || 0}
-              max={@schema.validation[:max]}
-              class="input input-bordered input-sm w-full font-mono focus:ring-2 focus:ring-primary/20 transition-shadow"
-            />
-          <% :integer -> %>
-            <input
-              type="number"
-              name={Enum.join(@schema.key_path, ".")}
-              value={input_value(@value)}
-              min={@schema.validation[:min]}
-              max={@schema.validation[:max]}
-              class="input input-bordered input-sm w-full font-mono focus:ring-2 focus:ring-primary/20 transition-shadow"
-            />
-          <% :float -> %>
-            <input
-              type="number"
-              step="0.01"
-              name={Enum.join(@schema.key_path, ".")}
-              value={input_value(@value)}
-              min={@schema.validation[:min]}
-              max={@schema.validation[:max]}
-              class="input input-bordered input-sm w-full font-mono focus:ring-2 focus:ring-primary/20 transition-shadow"
-            />
-          <% :string -> %>
-            <input
-              type="text"
-              name={Enum.join(@schema.key_path, ".")}
-              value={@value || ""}
-              class="input input-bordered input-sm w-full font-mono focus:ring-2 focus:ring-primary/20 transition-shadow"
-            />
-          <% :atom -> %>
-            <select
-              name={Enum.join(@schema.key_path, ".")}
-              class="select select-bordered select-sm w-full font-mono focus:ring-2 focus:ring-primary/20 transition-shadow"
-            >
-              <%= for opt <- @schema.validation[:in] || [] do %>
-                <option value={to_string(opt)} selected={to_string(@value) == to_string(opt)}>
-                  {to_string(opt)}
-                </option>
-              <% end %>
-            </select>
-        <% end %>
+        <div class="sm:text-right shrink-0 mt-2 sm:mt-0">
+          <p class="text-[11px] font-semibold text-base-content/40 flex items-center sm:justify-end gap-2">
+            <span class="uppercase tracking-wider opacity-80">{gettext("Default")}</span>
+            <span class="badge badge-sm badge-ghost font-mono opacity-90 px-2 py-2">{default_label(@schema.default)}</span>
+          </p>
+        </div>
       </div>
-
-      <p class="text-xs text-base-content/50 mt-1.5">
-        {gettext("Default:")} {default_label(@schema.default)}
-      </p>
 
       <%= if @error do %>
-        <p class="text-xs text-error mt-2 font-medium">
-          <.icon name="hero-exclamation-circle" class="size-3 inline" /> {@error.message}
-        </p>
+        <div class="mt-4 p-3 bg-error/10 text-error text-sm rounded-xl flex items-start gap-2.5 border border-error/20">
+          <.icon name="hero-exclamation-circle" class="size-5 shrink-0 mt-0.5" />
+          <p class="font-semibold">{@error.message}</p>
+        </div>
       <% end %>
     </div>
     """
@@ -118,122 +136,166 @@ defmodule EvoDashWeb.SettingsComponents do
 
   def category_section(assigns) do
     ~H"""
-    <div class="flex-1 overflow-y-auto p-6" id={"category-#{@category}"}>
-      <div class="flex items-center gap-2.5 mb-1">
-        <.icon name={category_icon(@category)} class="size-5 text-primary" />
-        <h2 class="text-lg font-bold">{category_display_name(@category)}</h2>
+    <div class="flex-1 flex flex-col h-full bg-base-100/50" id={"category-#{@category}"}>
+      <%!-- Sticky Header --%>
+      <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
+        <div class="flex items-center gap-4 mb-2">
+          <div class="p-2.5 bg-gradient-to-br from-primary/20 to-primary/5 text-primary rounded-xl shadow-sm border border-primary/10">
+            <.icon name={category_icon(@category)} class="size-6" />
+          </div>
+          <h2 class="text-2xl font-extrabold tracking-tight text-base-content">{category_display_name(@category)}</h2>
+        </div>
+        <p class="text-sm font-medium text-base-content/60 ml-1.5">{category_description(@category)}</p>
       </div>
-      <p class="text-xs text-base-content/50 mb-6">{category_description(@category)}</p>
 
-      <%= if @category == :sandbox do %>
-        <%!-- Sandbox backend banner --%>
-        <div class="mb-4">
-          <%= case @sandbox_backend do %>
-            <% :systemd_run -> %>
-              <div class="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
-                <span class="badge badge-success badge-sm">systemd-run</span>
-                <span class="text-sm text-success/80">
-                  {gettext("Full sandboxing: filesystem isolation, resource limits, syscall filtering")}
-                </span>
+      <%!-- Scrollable Content --%>
+      <div class="flex-1 overflow-y-auto px-8 py-8 relative">
+        <div class="max-w-5xl mx-auto">
+          <%= if @category == :sandbox do %>
+            <%!-- Sandbox backend banner --%>
+            <div class="mb-8 relative overflow-hidden rounded-3xl border">
+              <div class="absolute inset-0 bg-gradient-to-br opacity-10 pointer-events-none"></div>
+              <%= case @sandbox_backend do %>
+                <% :systemd_run -> %>
+                  <div class="flex items-start gap-4 p-5 bg-success/5 border-success/20">
+                    <div class="p-2 bg-success/20 text-success rounded-xl mt-0.5 shadow-sm">
+                      <.icon name="hero-check-badge" class="size-5" />
+                    </div>
+                    <div>
+                      <h3 class="font-bold text-success mb-1 flex items-center gap-2">
+                        systemd-run
+                        <span class="badge badge-success badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Active</span>
+                      </h3>
+                      <p class="text-sm font-medium text-success/80 leading-relaxed">
+                        {gettext("Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active.")}
+                      </p>
+                    </div>
+                  </div>
+                <% :sandbox_exec -> %>
+                  <div class="flex items-start gap-4 p-5 bg-warning/5 border-warning/20">
+                    <div class="p-2 bg-warning/20 text-warning rounded-xl mt-0.5 shadow-sm">
+                      <.icon name="hero-shield-exclamation" class="size-5" />
+                    </div>
+                    <div>
+                      <h3 class="font-bold text-warning mb-1 flex items-center gap-2">
+                        sandbox-exec
+                        <span class="badge badge-warning badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Active</span>
+                      </h3>
+                      <p class="text-sm font-medium text-warning/80 leading-relaxed">
+                        {gettext("Filesystem isolation is active. Note: Resource limits are not available on macOS.")}
+                      </p>
+                    </div>
+                  </div>
+                <% _ -> %>
+                  <div class="flex items-start gap-4 p-5 bg-error/5 border-error/20">
+                    <div class="p-2 bg-error/20 text-error rounded-xl mt-0.5 shadow-sm">
+                      <.icon name="hero-x-circle" class="size-5" />
+                    </div>
+                    <div>
+                      <h3 class="font-bold text-error mb-1 flex items-center gap-2">
+                        {gettext("Not Available")}
+                        <span class="badge badge-error badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Disabled</span>
+                      </h3>
+                      <p class="text-sm font-medium text-error/80 leading-relaxed">
+                        {gettext("No sandbox support on this platform. Commands will run directly on the host.")}
+                      </p>
+                    </div>
+                  </div>
+              <% end %>
+            </div>
+
+            <%!-- Sandbox mode (sub_category: nil) at top --%>
+            <%= for schema <- Enum.filter(@schemas, &(&1.sub_category == nil and &1.key_path == [:sandbox, :mode])) do %>
+              <div class="mb-10">
+                <.setting_card
+                  schema={schema}
+                  value={get_in(@file_config, schema.key_path)}
+                  error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                  disabled={false}
+                />
               </div>
-            <% :sandbox_exec -> %>
-              <div class="flex items-center gap-2 p-3 rounded-lg bg-warning/10 border border-warning/20">
-                <span class="badge badge-warning badge-sm">sandbox-exec</span>
-                <span class="text-sm text-warning/80">
-                  {gettext("Filesystem isolation only. Resource limits not available on macOS.")}
-                </span>
+            <% end %>
+
+            <%!-- Resources sub-header --%>
+            <% resources_schemas = Enum.filter(@schemas, &(&1.sub_category == :resources)) %>
+            <%= if resources_schemas != [] do %>
+              <div class="flex items-center gap-4 mb-6 mt-10">
+                <div class="h-px bg-base-200 flex-1"></div>
+                <h3 class="text-xs font-black uppercase tracking-widest text-base-content/40">{gettext("Resources")}</h3>
+                <div class="h-px bg-base-200 flex-1"></div>
               </div>
-            <% _ -> %>
-              <div class="flex items-center gap-2 p-3 rounded-lg bg-error/10 border border-error/20">
-                <span class="badge badge-error badge-sm">{gettext("Not Available")}</span>
-                <span class="text-sm text-error/80">
-                  {gettext("No sandbox support on this platform. Commands run directly.")}
-                </span>
+
+              <%= if @sandbox_backend != :systemd_run do %>
+                <div class="bg-info/5 border border-info/20 rounded-2xl p-4 mb-6 flex items-start gap-3">
+                  <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
+                  <p class="text-sm font-medium text-info/90 leading-relaxed">
+                    {gettext("Resource limits are only available on Linux with systemd-run.")}
+                  </p>
+                </div>
+              <% end %>
+
+              <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+                <%= for schema <- resources_schemas do %>
+                  <.setting_card
+                    schema={schema}
+                    value={get_in(@file_config, schema.key_path)}
+                    error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                    disabled={@sandbox_mode == :disabled}
+                  />
+                <% end %>
               </div>
-          <% end %>
-        </div>
+            <% end %>
 
-        <%!-- Sandbox mode (sub_category: nil) at top --%>
-        <%= for schema <- Enum.filter(@schemas, &(&1.sub_category == nil and &1.key_path == [:sandbox, :mode])) do %>
-          <div class="mb-6">
-            <.setting_card
-              schema={schema}
-              value={get_in(@file_config, schema.key_path)}
-              error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-              disabled={false}
-            />
-          </div>
-        <% end %>
+            <%!-- Process Limits sub-header --%>
+            <% process_schemas = Enum.filter(@schemas, &(&1.sub_category == :process)) %>
+            <%= if process_schemas != [] do %>
+              <div class="flex items-center gap-4 mb-6 mt-10">
+                <div class="h-px bg-base-200 flex-1"></div>
+                <h3 class="text-xs font-black uppercase tracking-widest text-base-content/40">{gettext("Process Limits")}</h3>
+                <div class="h-px bg-base-200 flex-1"></div>
+              </div>
 
-        <%!-- Resources sub-header --%>
-        <% resources_schemas = Enum.filter(@schemas, &(&1.sub_category == :resources)) %>
-        <%= if resources_schemas != [] do %>
-          <h3 class="text-sm font-semibold text-base-content/70 mb-3 mt-6">{gettext("Resources")}</h3>
+              <%= if @sandbox_backend != :systemd_run do %>
+                <div class="bg-info/5 border border-info/20 rounded-2xl p-4 mb-6 flex items-start gap-3">
+                  <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
+                  <p class="text-sm font-medium text-info/90 leading-relaxed">
+                    {gettext("Process limits are only available on Linux with systemd-run.")}
+                  </p>
+                </div>
+              <% end %>
 
-          <%= if @sandbox_backend != :systemd_run do %>
-            <div class="bg-info/10 border border-info/20 rounded-lg p-3 mb-4">
-              <p class="text-sm text-info/80">
-                <.icon name="hero-information-circle" class="size-4 inline-block mr-1" />
-                {gettext("Resource limits are only available on Linux with systemd-run.")}
-              </p>
+              <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+                <%= for schema <- process_schemas do %>
+                  <.setting_card
+                    schema={schema}
+                    value={get_in(@file_config, schema.key_path)}
+                    error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                    disabled={@sandbox_mode == :disabled}
+                  />
+                <% end %>
+              </div>
+            <% end %>
+          <% else %>
+            <%!-- Other categories: just list all setting cards --%>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <%= for schema <- @schemas do %>
+                <.setting_card
+                  schema={schema}
+                  value={get_in(@file_config, schema.key_path)}
+                  error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                  disabled={@disabled}
+                />
+              <% end %>
             </div>
           <% end %>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-4">
-            <%= for schema <- resources_schemas do %>
-              <.setting_card
-                schema={schema}
-                value={get_in(@file_config, schema.key_path)}
-                error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                disabled={@sandbox_mode == :disabled}
-              />
-            <% end %>
-          </div>
-        <% end %>
-
-        <%!-- Process Limits sub-header --%>
-        <% process_schemas = Enum.filter(@schemas, &(&1.sub_category == :process)) %>
-        <%= if process_schemas != [] do %>
-          <h3 class="text-sm font-semibold text-base-content/70 mb-3 mt-6">{gettext("Process Limits")}</h3>
-
-          <%= if @sandbox_backend != :systemd_run do %>
-            <div class="bg-info/10 border border-info/20 rounded-lg p-3 mb-4">
-              <p class="text-sm text-info/80">
-                <.icon name="hero-information-circle" class="size-4 inline-block mr-1" />
-                {gettext("Resource limits are only available on Linux with systemd-run.")}
-              </p>
-            </div>
-          <% end %>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-4">
-            <%= for schema <- process_schemas do %>
-              <.setting_card
-                schema={schema}
-                value={get_in(@file_config, schema.key_path)}
-                error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                disabled={@sandbox_mode == :disabled}
-              />
-            <% end %>
-          </div>
-        <% end %>
-      <% else %>
-        <%!-- Other categories: just list all setting cards --%>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <%= for schema <- @schemas do %>
-            <.setting_card
-              schema={schema}
-              value={get_in(@file_config, schema.key_path)}
-              error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-              disabled={@disabled}
-            />
-          <% end %>
         </div>
-      <% end %>
+      </div>
 
-      <div class="mt-6 flex justify-end">
-        <button type="submit" class="btn btn-primary btn-wide gap-2 min-w-[200px]">
-          <.icon name="hero-document-arrow-down" class="size-5" />
-          {gettext("Save %{category}", category: category_display_name(@category))}
+      <%!-- Sticky Footer --%>
+      <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-6 flex justify-end">
+        <button type="submit" class="btn btn-primary rounded-2xl shadow-[0_8px_20px_-6px_rgba(6,81,237,0.4)] hover:shadow-[0_12px_25px_-6px_rgba(6,81,237,0.5)] hover:-translate-y-0.5 transition-all duration-300 min-w-[240px] font-bold tracking-wide text-[15px] h-14">
+          <.icon name="hero-document-check" class="size-5 mr-2" />
+          {gettext("Save %{category} Settings", category: category_display_name(@category))}
         </button>
       </div>
     </div>
@@ -250,11 +312,11 @@ defmodule EvoDashWeb.SettingsComponents do
 
   def settings_sidebar(assigns) do
     ~H"""
-    <div class="w-60 bg-base-200 border-r border-base-300 flex-shrink-0 h-full overflow-y-auto p-3">
-      <div class="mb-2">
-        <div class="relative">
-          <div class="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none">
-            <.icon name="hero-magnifying-glass" class="size-3.5 text-base-content/40" />
+    <div class="w-72 bg-base-100 flex-shrink-0 h-full overflow-y-auto p-4 border-r border-base-200/70 relative">
+      <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md pb-4 pt-2 -mx-4 px-4">
+        <div class="relative group">
+          <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
+            <.icon name="hero-magnifying-glass" class="size-4 text-base-content/40 group-focus-within:text-primary transition-colors" />
           </div>
           <input
             type="text"
@@ -262,43 +324,53 @@ defmodule EvoDashWeb.SettingsComponents do
             value={@search_text}
             placeholder={gettext("Filter settings...")}
             phx-change="search"
-            class="input input-bordered input-sm w-full pl-8 pr-7 transition-all duration-150"
+            class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 focus:border-primary/30 focus:ring-2 focus:ring-primary/20 transition-all duration-300 rounded-2xl font-medium text-sm h-12"
           />
           <%= if @search_text != "" do %>
             <button
               type="button"
               phx-click="search"
               phx-value-value=""
-              class="absolute inset-y-0 right-0 flex items-center pr-2 text-base-content/40 hover:text-base-content transition-colors"
+              class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/40 hover:text-base-content transition-colors"
             >
-              <span class="text-sm leading-none">×</span>
+              <.icon name="hero-x-mark" class="size-4" />
             </button>
           <% end %>
         </div>
       </div>
 
-      <hr class="border-base-300 mb-2" />
-
-      <nav class="space-y-1">
+      <nav class="space-y-2 mt-2 pb-4">
         <%= for {category, schemas} <- sort_categories(@categories) do %>
           <% match_count = category_match_count(category, schemas, @search_text) %>
           <% total = length(schemas) %>
           <button
+            type="button"
             phx-click="select_category"
             phx-value-category={to_string(category)}
             class={[
-              "w-full text-left px-3 py-2 rounded-lg flex items-center gap-2.5 transition-all duration-150 text-sm",
-              category == @active_category && "bg-primary/10 text-primary font-semibold border-l-2 border-primary",
-              category != @active_category && "hover:bg-base-300 text-base-content/70 border-l-2 border-transparent",
+              "w-full text-left px-4 py-3.5 rounded-2xl flex items-center gap-3.5 transition-all duration-300 text-[15px] font-semibold group relative overflow-hidden",
+              category == @active_category && "bg-primary text-primary-content shadow-[0_4px_15px_-3px_rgba(6,81,237,0.3)]",
+              category != @active_category && "hover:bg-base-200/70 text-base-content/70 hover:text-base-content",
               @search_text != "" and match_count == 0 && "opacity-30"
             ]}
           >
-            <.icon name={category_icon(category)} class="size-4 shrink-0" />
-            <span class="flex-1">{category_display_name(category)}</span>
+            <%= if category == @active_category do %>
+              <div class="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <% end %>
+            <.icon name={category_icon(category)} class="size-5 shrink-0 relative z-10" />
+            <span class="flex-1 relative z-10 tracking-wide">{category_display_name(category)}</span>
             <%= if @search_text != "" and match_count != total do %>
-              <span class="text-xs text-primary font-medium tabular-nums badge badge-xs">{match_count}/{total}</span>
+              <span class={[
+                "text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg relative z-10 transition-colors",
+                category == @active_category && "bg-primary-content/20 text-primary-content",
+                category != @active_category && "bg-primary/10 text-primary"
+              ]}>{match_count}/{total}</span>
             <% else %>
-              <span class="text-xs text-base-content/40 tabular-nums">{total}</span>
+              <span class={[
+                "text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg relative z-10 transition-colors",
+                category == @active_category && "bg-primary-content/20 text-primary-content",
+                category != @active_category && "bg-base-300/50 text-base-content/40 group-hover:bg-base-300"
+              ]}>{total}</span>
             <% end %>
           </button>
         <% end %>
