@@ -541,16 +541,23 @@ defmodule EvoDash.TaskRegistry do
 
       tasks_to_save = running_tasks ++ finished_tasks
 
-      # Clear existing DETS data and write new data
-      :dets.delete_all_objects(@dets_tasks)
+      # Atomically replace DETS contents using a temporary ETS table.
+      # This avoids the dangerous delete-all → rewrite pattern that risks
+      # data loss if the app crashes between the delete and the sync.
+      temp_table = :evo_dash_tasks_temp
+      :ets.new(temp_table, [:set, :named_table, :private])
 
-      for task <- tasks_to_save do
-        # Drop non-serializable ref field before persisting
-        persistable = %{task | ref: nil}
-        :dets.insert(@dets_tasks, {task.id, persistable})
+      try do
+        for task <- tasks_to_save do
+          # Drop non-serializable ref field before persisting
+          persistable = %{task | ref: nil}
+          :ets.insert(temp_table, {task.id, persistable})
+        end
+
+        :ets.to_dets(temp_table, @dets_tasks)
+      after
+        :ets.delete(temp_table)
       end
-
-      :dets.sync(@dets_tasks)
 
       :ok
     rescue
@@ -602,14 +609,21 @@ defmodule EvoDash.TaskRegistry do
         |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
         |> Enum.take(@max_recent_projects)
 
-      # Clear existing DETS data and write new data
-      :dets.delete_all_objects(@dets_projects)
+      # Atomically replace DETS contents using a temporary ETS table.
+      # This avoids the dangerous delete-all → rewrite pattern that risks
+      # data loss if the app crashes between the delete and the sync.
+      temp_table = :evo_dash_recent_projects_temp
+      :ets.new(temp_table, [:set, :named_table, :private])
 
-      for project <- projects do
-        :dets.insert(@dets_projects, {project.path, project})
+      try do
+        for project <- projects do
+          :ets.insert(temp_table, {project.path, project})
+        end
+
+        :ets.to_dets(temp_table, @dets_projects)
+      after
+        :ets.delete(temp_table)
       end
-
-      :dets.sync(@dets_projects)
 
       # If a .bak file was left from previous corruption recovery,
       # clean it up now that we have successfully persisted fresh data.
