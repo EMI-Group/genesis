@@ -548,9 +548,8 @@ msgid "Every change is a clean, reviewable commit"
 msgstr ""
 
 #: lib/evo_dash_web/components/layouts/root.html.heex:10
-#: lib/evo_dash_web/components/layouts/root.html.heex:10
 #: lib/evo_dash_web/components/layouts/root.html.heex:12
-#: lib/evo_dash_web/components/layouts/root.html.heex:12
+#: lib/evo_dash_web/components/dashboard_components.ex:358
 #, elixir-autogen, elixir-format
 msgid "Genesis"
 msgstr ""
@@ -679,12 +678,6 @@ msgstr ""
 #: lib/evo_dash_web/live/tasks_live.ex:183
 #, elixir-autogen, elixir-format
 msgid "Full Objective"
-msgstr ""
-
-#: lib/evo_dash_web/components/dashboard_components.ex:358
-#: lib/evo_dash_web/components/dashboard_components.ex:358
-#, elixir-autogen, elixir-format
-msgid "Genesis"
 msgstr ""
 
 #: lib/evo_dash_web/components/dashboard_components.ex:40
