@@ -145,10 +145,10 @@ defmodule Mix.Tasks.Translate do
       if references == [] do
         [{"unknown", msg}]
       else
-        Enum.map(references, fn ref ->
-          # References are like "lib/evo_dash_web/live/dashboard_live.ex:42"
-          file = ref |> String.split(":") |> hd()
-          {file, msg}
+        Enum.map(references, fn
+          # References can be tuples {"lib/file.ex", 42} or strings "lib/file.ex:42"
+          {file, _line} -> {file, msg}
+          ref when is_binary(ref) -> {ref |> String.split(":") |> hd(), msg}
         end)
       end
     end)
