@@ -238,8 +238,8 @@ defmodule EvoDashWeb.Layouts do
     <div class="relative flex p-1 bg-slate-100 dark:bg-slate-800 rounded-full ring-1 ring-slate-200 dark:ring-slate-700 shadow-inner overflow-hidden">
       <!-- Background slider -->
       <div class="absolute inset-y-1 left-1 w-8 rounded-full bg-white dark:bg-slate-700 shadow transition-transform duration-300 ease-out z-0
-        [[data-theme=light]_&]:translate-x-9
-        [[data-theme=dark]_&]:translate-x-[4.5rem]"
+        [[data-theme-mode=light]_&]:translate-x-9
+        [[data-theme-mode=dark]_&]:translate-x-[4.5rem]"
       />
 
       <button

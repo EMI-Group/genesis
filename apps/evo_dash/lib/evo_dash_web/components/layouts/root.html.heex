@@ -27,6 +27,7 @@
         const applyTheme = (theme) => {
           const resolved = theme === "system" ? resolveSystemTheme() : theme;
           document.documentElement.setAttribute("data-theme", resolved);
+          document.documentElement.setAttribute("data-theme-mode", theme);
           updateThemeColor(resolved);
         };
 
