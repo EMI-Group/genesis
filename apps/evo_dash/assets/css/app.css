@@ -549,44 +549,23 @@ button, a, input, textarea, select, summary,
 
 /* === Diff Viewer (GitHub PR Style) === */
 
-/* Full-screen wrapper — breaks out of <main> padding for Files Changed tab */
-.review-fullscreen-wrapper {
-  margin-left: -1rem;
-  margin-right: -1rem;
-  margin-bottom: -3rem;
-  margin-top: -1rem;
-}
-@media (min-width: 640px) {
-  .review-fullscreen-wrapper {
-    margin-left: -1.5rem;
-    margin-right: -1.5rem;
-  }
-}
-@media (min-width: 1024px) {
-  .review-fullscreen-wrapper {
-    margin-left: -2rem;
-    margin-right: -2rem;
-  }
+/* Unified review card — tab bar + content as one visual box */
+.review-card {
+  @apply rounded-3xl shadow-sm border border-base-200/60 overflow-hidden bg-base-100;
 }
 
-/* Sticky tab bar — sticks below the navbar (navbar is sticky top-0 z-50, ~64px tall) */
-.review-tab-bar-sticky {
-  @apply sticky z-30 bg-base-100 border-b border-base-200 px-4 sm:px-6 lg:px-8;
-  top: 64px;
-  margin-left: -1rem;
-  margin-right: -1rem;
+/* Tab bar section — top portion of the card */
+.review-card-tabs {
+  @apply border-b border-base-200/60 bg-base-200/20 px-4 sm:px-6 lg:px-8;
 }
-@media (min-width: 640px) {
-  .review-tab-bar-sticky {
-    margin-left: -1.5rem;
-    margin-right: -1.5rem;
-  }
+
+.review-tab-bar {
+  /* Tab buttons container */
 }
-@media (min-width: 1024px) {
-  .review-tab-bar-sticky {
-    margin-left: -2rem;
-    margin-right: -2rem;
-  }
+
+/* Content section — bottom portion of the card */
+.review-card-content {
+  /* Content area below tabs */
 }
 
 /* Full-screen diff layout — flex row, diff content flows with page */

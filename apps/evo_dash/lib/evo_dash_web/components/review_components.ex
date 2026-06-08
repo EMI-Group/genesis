@@ -60,7 +60,7 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def review_tabs(assigns) do
     ~H"""
-    <div class="review-tab-bar-sticky flex gap-2 overflow-x-auto scrollbar-hide">
+    <div class="review-tab-bar flex gap-2 py-3">
       <button
         phx-click="switch_tab"
         phx-value-tab="conversation"
@@ -179,7 +179,7 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def commits_list(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 overflow-hidden">
+    <div>
       <div class="p-5 md:p-6 border-b border-base-200/50 bg-base-200/20">
         <div class="flex items-center gap-3">
           <.icon name="hero-clock" class="size-5 text-base-content/60" />
