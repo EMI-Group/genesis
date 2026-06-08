@@ -5,6 +5,7 @@ defmodule EvoGit.Runtime.Evolution do
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
   alias EvoGit.Runtime
+  alias EvoGit.Agent.Result
   alias EvoGit.Runtime.Helpers
   require Logger
 
@@ -51,7 +52,7 @@ defmodule EvoGit.Runtime.Evolution do
 
     case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective)
          |> AgentScheduler.run_agent() do
-      {:ok, agent_output} ->
+      {:ok, %Result{} = agent_output} ->
         Helpers.notify_finalizing(opts)
         Helpers.merge_and_report(repo_path, agent_output, "evolve")
 
@@ -65,9 +66,9 @@ defmodule EvoGit.Runtime.Evolution do
     Logger.info("Evolution: Running Mode B (Open-Ended/Bottom-Up)")
 
     case EvoGit.Runtime.Evolution.Engine.run(objective, repo_path, current_sha, node_path, opts) do
-      {:ok, agent_output} ->
+      {:ok, _result_map} = success ->
         Helpers.notify_finalizing(opts)
-        Helpers.merge_and_report(repo_path, agent_output, "evolve")
+        success
 
       error ->
         Logger.error("Evolution Mode B failed: #{inspect(error)}")
