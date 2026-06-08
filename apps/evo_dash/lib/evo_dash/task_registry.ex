@@ -699,10 +699,9 @@ defmodule EvoDash.TaskRegistry do
     starting_commit = Keyword.get(opts, :starting_commit)
     runtime_opts = if starting_commit, do: Keyword.put(runtime_opts, :starting_commit, starting_commit), else: runtime_opts
 
-    # Include foreign repos registered in the scheduler so the runtime
-    # can re-register them (protects against scheduler restarts)
-    foreign_repos = EvoGit.AgentScheduler.get_foreign_repos()
-    runtime_opts = if foreign_repos != [], do: Keyword.put(runtime_opts, :foreign_repos, foreign_repos), else: runtime_opts
+    # Foreign repos are passed through opts from the dashboard (per-task scoping)
+    foreign_repos = Keyword.get(opts, :foreign_repos)
+    runtime_opts = if foreign_repos, do: Keyword.put(runtime_opts, :foreign_repos, foreign_repos), else: runtime_opts
 
     {nil, runtime_opts}
   end

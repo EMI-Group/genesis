@@ -434,6 +434,10 @@ defmodule EvoDashWeb.DashboardLive do
           opts
         end
 
+      # Include foreign repos from project settings for this task
+      foreign_repos = socket.assigns[:foreign_repos] || []
+      opts = if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
+
       case TaskRegistry.start_task(task_type, opts) do
         {:ok, task} ->
           {:noreply,
@@ -577,54 +581,42 @@ defmodule EvoDashWeb.DashboardLive do
       true ->
         repo_id = String.to_atom(repo_id_str)
 
-        repo =
-          if name != "" do
-            ForeignRepo.new(repo_id, path, name: name)
-          else
-            ForeignRepo.new(repo_id, path)
-          end
+        # Check if already exists in the current list
+        current_repos = socket.assigns.foreign_repos
 
-        try do
-          case EvoGit.AgentScheduler.register_foreign_repo(repo) do
-            :ok ->
-              foreign_repos = load_foreign_repos()
+        if Enum.any?(current_repos, &(&1.id == repo_id)) do
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Repo '%{id}' is already registered.", id: repo_id)
+           )}
+        else
+          repo =
+            if name != "" do
+              ForeignRepo.new(repo_id, path, name: name)
+            else
+              ForeignRepo.new(repo_id, path)
+            end
 
-              {:noreply,
-               socket
-               |> assign(:foreign_repos, foreign_repos)
-               |> assign(:show_add_foreign_repo_form, false)
-               |> assign(:new_repo_id, "")
-               |> assign(:new_repo_path, "")
-               |> assign(:new_repo_name, "")
-               |> put_flash(
-                 :info,
-                 gettext("Foreign repo '%{repo_id}' registered successfully.",
-                   repo_id: repo_id_str
-                 )
-               )}
+          updated_repos =
+            Enum.sort_by([repo | current_repos], fn r ->
+              {if(ForeignRepo.primary?(r.id), do: 0, else: 1), r.id}
+            end)
 
-            {:error, {:already_exists, id}} ->
-              {:noreply,
-               put_flash(
-                 socket,
-                 :error,
-                 gettext("Repo '%{id}' is already registered.", id: id)
-               )}
-          end
-        rescue
-          e ->
-            {:noreply,
-             put_flash(
-               socket,
-               :error,
-               gettext("Failed to register repo: %{reason}",
-                 reason: Exception.message(e)
-               )
-             )}
-        catch
-          _, _ ->
-            {:noreply,
-             put_flash(socket, :error, gettext("Failed to register repo: scheduler not available."))}
+          {:noreply,
+           socket
+           |> assign(:foreign_repos, updated_repos)
+           |> assign(:show_add_foreign_repo_form, false)
+           |> assign(:new_repo_id, "")
+           |> assign(:new_repo_path, "")
+           |> assign(:new_repo_name, "")
+           |> put_flash(
+             :info,
+             gettext("Foreign repo '%{repo_id}' registered successfully.",
+               repo_id: repo_id_str
+             )
+           )}
         end
     end
   end
@@ -633,39 +625,24 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event("remove_foreign_repo", %{"repo_id" => repo_id_str}, socket) do
     repo_id = String.to_atom(repo_id_str)
 
-    try do
-      case EvoGit.AgentScheduler.unregister_foreign_repo(repo_id) do
-        :ok ->
-          foreign_repos = load_foreign_repos()
+    if repo_id == :primary do
+      {:noreply, put_flash(socket, :error, gettext("Cannot remove the primary repository."))}
+    else
+      current_repos = socket.assigns.foreign_repos
+      updated_repos = Enum.reject(current_repos, &(&1.id == repo_id))
 
-          {:noreply,
-           socket
-           |> assign(:foreign_repos, foreign_repos)
-           |> put_flash(
-             :info,
-             gettext("Foreign repo '%{repo_id}' removed successfully.", repo_id: repo_id_str)
-           )}
-
-        {:error, :cannot_unregister_primary} ->
-          {:noreply,
-           put_flash(socket, :error, gettext("Cannot remove the primary repository."))}
-
-        {:error, {:not_found, id}} ->
-          {:noreply,
-           put_flash(socket, :error, gettext("Repo '%{id}' not found.", id: id))}
-      end
-    rescue
-      e ->
+      if length(updated_repos) == length(current_repos) do
         {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Failed to remove repo: %{reason}", reason: Exception.message(e))
+         put_flash(socket, :error, gettext("Repo '%{id}' not found.", id: repo_id))}
+      else
+        {:noreply,
+         socket
+         |> assign(:foreign_repos, updated_repos)
+         |> put_flash(
+           :info,
+           gettext("Foreign repo '%{repo_id}' removed successfully.", repo_id: repo_id_str)
          )}
-    catch
-      _, _ ->
-        {:noreply,
-         put_flash(socket, :error, gettext("Failed to remove repo: scheduler not available."))}
+      end
     end
   end
 
@@ -757,19 +734,16 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_info({:tasks_updated}, socket) do
     new_tasks = current_tasks(socket)
 
-    # Refresh project settings if shown
+    # Refresh project settings if shown (foreign repos are in-memory, not re-read)
     socket =
       if socket.assigns.show_project_settings and socket.assigns.active_project_path do
         {project_config, worktree_script, commands} =
           load_project_config(socket.assigns.active_project_path)
 
-        foreign_repos = load_foreign_repos()
-
         socket
         |> assign(:project_config, project_config)
         |> assign(:worktree_script, worktree_script)
         |> assign(:commands, commands)
-        |> assign(:foreign_repos, foreign_repos)
       else
         socket
       end
@@ -823,7 +797,7 @@ defmodule EvoDashWeb.DashboardLive do
 
     # Load project settings eagerly
     {project_config, worktree_script, commands} = load_project_config(path)
-    foreign_repos = load_foreign_repos()
+    foreign_repos = load_foreign_repos(path)
 
     socket
     |> assign(:active_project, %{path: path, name: name})
@@ -985,9 +959,9 @@ defmodule EvoDashWeb.DashboardLive do
     end
   end
 
-  defp load_foreign_repos do
+  defp load_foreign_repos(repo_path) do
     try do
-      repos = EvoGit.AgentScheduler.get_foreign_repos()
+      repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
 
       Enum.sort_by(repos, fn repo ->
         {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}

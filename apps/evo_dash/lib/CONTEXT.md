@@ -71,11 +71,9 @@ Task status updates are broadcast on `EvoGit.PubSub` topic `"tasks"` (e.g., `{:t
 
 When AgentScheduler processes these, it broadcasts `{:scheduler_config_updated}` on `EvoGit.PubSub` topic `"scheduler_config"`.
 
-#### 3. Foreign Repository Management (DashboardLive → EvoGit.AgentScheduler)
+#### 3. Foreign Repository Management (DashboardLive — in-memory per-project)
 
-- `EvoGit.AgentScheduler.register_foreign_repo(%ForeignRepo{})` — register a foreign repo
-- `EvoGit.AgentScheduler.unregister_foreign_repo(atom)` — remove a foreign repo
-- `EvoGit.AgentScheduler.get_foreign_repos()` — list registered foreign repos
+Foreign repos are loaded from `evogit.toml` via `EvoGit.ProjectConfig.foreign_repos/1` when a project is opened. Add/remove operations modify the in-memory list in LiveView socket assigns. When a task is started, foreign repos are passed as `foreign_repos` in opts to `TaskRegistry.start_task/2`.
 
 #### 4. Configuration File Management (HelpLive → EvoGit.Config)
 
