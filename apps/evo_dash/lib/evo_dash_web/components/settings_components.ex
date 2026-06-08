@@ -133,6 +133,9 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:disabled, :boolean, default: false)
   attr(:sandbox_backend, :atom, default: nil)
   attr(:sandbox_mode, :atom, default: nil)
+  attr(:llm_providers, :list, default: [])
+  attr(:selected_provider_id, :atom, default: nil)
+  attr(:selected_provider_models, :list, default: [])
 
   def category_section(assigns) do
     ~H"""
@@ -151,132 +154,88 @@ defmodule EvoDashWeb.SettingsComponents do
       <%!-- Scrollable Content --%>
       <div class="flex-1 overflow-y-auto px-8 py-8 relative">
         <div class="max-w-5xl mx-auto">
-          <%= if @category == :sandbox do %>
-            <%!-- Sandbox backend banner --%>
-            <div class="mb-8 relative overflow-hidden rounded-3xl border">
-              <div class="absolute inset-0 bg-gradient-to-br opacity-10 pointer-events-none"></div>
-              <%= case @sandbox_backend do %>
-                <% :systemd_run -> %>
-                  <div class="flex items-start gap-4 p-5 bg-success/5 border-success/20">
-                    <div class="p-2 bg-success/20 text-success rounded-xl mt-0.5 shadow-sm">
-                      <.icon name="hero-check-badge" class="size-5" />
-                    </div>
-                    <div>
-                      <h3 class="font-bold text-success mb-1 flex items-center gap-2">
-                        systemd-run
-                        <span class="badge badge-success badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Active</span>
-                      </h3>
-                      <p class="text-sm font-medium text-success/80 leading-relaxed">
-                        {gettext("Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active.")}
-                      </p>
-                    </div>
+          <%= if @category == :llm do %>
+            <%!-- LLM Provider Quick Setup --%>
+            <div class="mb-8 bg-gradient-to-br from-primary/5 to-primary/0 rounded-3xl border border-primary/10 p-6">
+              <h3 class="text-lg font-bold text-base-content mb-1">{gettext("Quick Setup")}</h3>
+              <p class="text-sm text-base-content/60 mb-5">{gettext("Select a provider to quickly configure your model and API key.")}</p>
+
+              <%!-- Provider buttons --%>
+              <div class="flex flex-wrap gap-2 mb-5">
+                <%= for provider <- @llm_providers do %>
+                  <button
+                    type="button"
+                    phx-click="select_llm_provider"
+                    phx-value-provider_id={provider.id}
+                    class={[
+                      "btn btn-sm rounded-xl font-semibold transition-all duration-200",
+                      @selected_provider_id == provider.id && "btn-primary shadow-md",
+                      @selected_provider_id != provider.id && "btn-ghost bg-base-200/50 hover:bg-base-200"
+                    ]}
+                  >
+                    {provider.display_name}
+                  </button>
+                <% end %>
+              </div>
+
+              <%!-- Model shortcuts when provider is selected --%>
+              <%= if @selected_provider_id != nil do %>
+                <% current_model = get_in(@file_config, [:llm, :model]) %>
+                <div class="mb-5">
+                  <p class="text-xs font-bold uppercase tracking-wider text-base-content/50 mb-3">{gettext("Quick-select a model:")}</p>
+                  <div class="flex flex-wrap gap-2">
+                    <%= for model <- @selected_provider_models do %>
+                      <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
+                      <% model_string = "#{hd(provider.provider_atoms)}:#{model.id}" %>
+                      <button
+                        type="button"
+                        phx-click="select_llm_model_shortcut"
+                        phx-value-model_string={model_string}
+                        class={[
+                          "btn btn-sm rounded-xl font-medium transition-all duration-200",
+                          current_model == model_string && "btn-primary shadow-md",
+                          current_model != model_string && "btn-outline btn-primary/50 hover:btn-primary"
+                        ]}
+                      >
+                        {model.display_name}
+                      </button>
+                    <% end %>
                   </div>
-                <% :sandbox_exec -> %>
-                  <div class="flex items-start gap-4 p-5 bg-warning/5 border-warning/20">
-                    <div class="p-2 bg-warning/20 text-warning rounded-xl mt-0.5 shadow-sm">
-                      <.icon name="hero-shield-exclamation" class="size-5" />
-                    </div>
-                    <div>
-                      <h3 class="font-bold text-warning mb-1 flex items-center gap-2">
-                        sandbox-exec
-                        <span class="badge badge-warning badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Active</span>
-                      </h3>
-                      <p class="text-sm font-medium text-warning/80 leading-relaxed">
-                        {gettext("Filesystem isolation is active. Note: Resource limits are not available on macOS.")}
-                      </p>
-                    </div>
+                </div>
+
+                <%!-- API Key input --%>
+                <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
+                <form phx-submit="save_api_key" class="flex items-end gap-3">
+                  <input type="hidden" name="env_var" value={provider.env_var} />
+                  <div class="form-control flex-1">
+                    <label class="label">
+                      <span class="label-text font-semibold text-sm">{provider.env_var}</span>
+                      <%= if System.get_env(provider.env_var) do %>
+                        <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
+                      <% end %>
+                    </label>
+                    <input
+                      type="password"
+                      name="api_key"
+                      placeholder={gettext("Enter your API key")}
+                      class="input input-bordered w-full rounded-xl shadow-sm bg-base-50"
+                    />
                   </div>
-                <% _ -> %>
-                  <div class="flex items-start gap-4 p-5 bg-error/5 border-error/20">
-                    <div class="p-2 bg-error/20 text-error rounded-xl mt-0.5 shadow-sm">
-                      <.icon name="hero-x-circle" class="size-5" />
-                    </div>
-                    <div>
-                      <h3 class="font-bold text-error mb-1 flex items-center gap-2">
-                        {gettext("Not Available")}
-                        <span class="badge badge-error badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Disabled</span>
-                      </h3>
-                      <p class="text-sm font-medium text-error/80 leading-relaxed">
-                        {gettext("No sandbox support on this platform. Commands will run directly on the host.")}
-                      </p>
-                    </div>
-                  </div>
+                  <button type="submit" class="btn btn-primary btn-sm rounded-xl">
+                    {gettext("Save Key")}
+                  </button>
+                </form>
               <% end %>
             </div>
 
-            <%!-- Sandbox mode (sub_category: nil) at top --%>
-            <%= for schema <- Enum.filter(@schemas, &(&1.sub_category == nil and &1.key_path == [:sandbox, :mode])) do %>
-              <div class="mb-10">
-                <.setting_card
-                  schema={schema}
-                  value={get_in(@file_config, schema.key_path)}
-                  error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                  disabled={false}
-                />
-              </div>
-            <% end %>
+            <%!-- Help text for other providers --%>
+            <div class="mb-6 bg-base-200/30 rounded-2xl p-4 border border-base-200/50">
+              <p class="text-xs text-base-content/50 leading-relaxed">
+                {raw(gettext("<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."))}
+              </p>
+            </div>
 
-            <%!-- Resources sub-header --%>
-            <% resources_schemas = Enum.filter(@schemas, &(&1.sub_category == :resources)) %>
-            <%= if resources_schemas != [] do %>
-              <div class="flex items-center gap-4 mb-6 mt-10">
-                <div class="h-px bg-base-200 flex-1"></div>
-                <h3 class="text-xs font-black uppercase tracking-widest text-base-content/40">{gettext("Resources")}</h3>
-                <div class="h-px bg-base-200 flex-1"></div>
-              </div>
-
-              <%= if @sandbox_backend != :systemd_run do %>
-                <div class="bg-info/5 border border-info/20 rounded-2xl p-4 mb-6 flex items-start gap-3">
-                  <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
-                  <p class="text-sm font-medium text-info/90 leading-relaxed">
-                    {gettext("Resource limits are only available on Linux with systemd-run.")}
-                  </p>
-                </div>
-              <% end %>
-
-              <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 mb-8">
-                <%= for schema <- resources_schemas do %>
-                  <.setting_card
-                    schema={schema}
-                    value={get_in(@file_config, schema.key_path)}
-                    error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                    disabled={@sandbox_mode == :disabled}
-                  />
-                <% end %>
-              </div>
-            <% end %>
-
-            <%!-- Process Limits sub-header --%>
-            <% process_schemas = Enum.filter(@schemas, &(&1.sub_category == :process)) %>
-            <%= if process_schemas != [] do %>
-              <div class="flex items-center gap-4 mb-6 mt-10">
-                <div class="h-px bg-base-200 flex-1"></div>
-                <h3 class="text-xs font-black uppercase tracking-widest text-base-content/40">{gettext("Process Limits")}</h3>
-                <div class="h-px bg-base-200 flex-1"></div>
-              </div>
-
-              <%= if @sandbox_backend != :systemd_run do %>
-                <div class="bg-info/5 border border-info/20 rounded-2xl p-4 mb-6 flex items-start gap-3">
-                  <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
-                  <p class="text-sm font-medium text-info/90 leading-relaxed">
-                    {gettext("Process limits are only available on Linux with systemd-run.")}
-                  </p>
-                </div>
-              <% end %>
-
-              <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 mb-8">
-                <%= for schema <- process_schemas do %>
-                  <.setting_card
-                    schema={schema}
-                    value={get_in(@file_config, schema.key_path)}
-                    error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                    disabled={@sandbox_mode == :disabled}
-                  />
-                <% end %>
-              </div>
-            <% end %>
-          <% else %>
-            <%!-- Other categories: just list all setting cards --%>
+            <%!-- Render the regular setting cards for LLM --%>
             <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
               <%= for schema <- @schemas do %>
                 <.setting_card
@@ -287,6 +246,144 @@ defmodule EvoDashWeb.SettingsComponents do
                 />
               <% end %>
             </div>
+          <% else %>
+            <%= if @category == :sandbox do %>
+              <%!-- Sandbox backend banner --%>
+              <div class="mb-8 relative overflow-hidden rounded-3xl border">
+                <div class="absolute inset-0 bg-gradient-to-br opacity-10 pointer-events-none"></div>
+                <%= case @sandbox_backend do %>
+                  <% :systemd_run -> %>
+                    <div class="flex items-start gap-4 p-5 bg-success/5 border-success/20">
+                      <div class="p-2 bg-success/20 text-success rounded-xl mt-0.5 shadow-sm">
+                        <.icon name="hero-check-badge" class="size-5" />
+                      </div>
+                      <div>
+                        <h3 class="font-bold text-success mb-1 flex items-center gap-2">
+                          systemd-run
+                          <span class="badge badge-success badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Active</span>
+                        </h3>
+                        <p class="text-sm font-medium text-success/80 leading-relaxed">
+                          {gettext("Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active.")}
+                        </p>
+                      </div>
+                    </div>
+                  <% :sandbox_exec -> %>
+                    <div class="flex items-start gap-4 p-5 bg-warning/5 border-warning/20">
+                      <div class="p-2 bg-warning/20 text-warning rounded-xl mt-0.5 shadow-sm">
+                        <.icon name="hero-shield-exclamation" class="size-5" />
+                      </div>
+                      <div>
+                        <h3 class="font-bold text-warning mb-1 flex items-center gap-2">
+                          sandbox-exec
+                          <span class="badge badge-warning badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Active</span>
+                        </h3>
+                        <p class="text-sm font-medium text-warning/80 leading-relaxed">
+                          {gettext("Filesystem isolation is active. Note: Resource limits are not available on macOS.")}
+                        </p>
+                      </div>
+                    </div>
+                  <% _ -> %>
+                    <div class="flex items-start gap-4 p-5 bg-error/5 border-error/20">
+                      <div class="p-2 bg-error/20 text-error rounded-xl mt-0.5 shadow-sm">
+                        <.icon name="hero-x-circle" class="size-5" />
+                      </div>
+                      <div>
+                        <h3 class="font-bold text-error mb-1 flex items-center gap-2">
+                          {gettext("Not Available")}
+                          <span class="badge badge-error badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Disabled</span>
+                        </h3>
+                        <p class="text-sm font-medium text-error/80 leading-relaxed">
+                          {gettext("No sandbox support on this platform. Commands will run directly on the host.")}
+                        </p>
+                      </div>
+                    </div>
+                <% end %>
+              </div>
+
+              <%!-- Sandbox mode (sub_category: nil) at top --%>
+              <%= for schema <- Enum.filter(@schemas, &(&1.sub_category == nil and &1.key_path == [:sandbox, :mode])) do %>
+                <div class="mb-10">
+                  <.setting_card
+                    schema={schema}
+                    value={get_in(@file_config, schema.key_path)}
+                    error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                    disabled={false}
+                  />
+                </div>
+              <% end %>
+
+              <%!-- Resources sub-header --%>
+              <% resources_schemas = Enum.filter(@schemas, &(&1.sub_category == :resources)) %>
+              <%= if resources_schemas != [] do %>
+                <div class="flex items-center gap-4 mb-6 mt-10">
+                  <div class="h-px bg-base-200 flex-1"></div>
+                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/40">{gettext("Resources")}</h3>
+                  <div class="h-px bg-base-200 flex-1"></div>
+                </div>
+
+                <%= if @sandbox_backend != :systemd_run do %>
+                  <div class="bg-info/5 border border-info/20 rounded-2xl p-4 mb-6 flex items-start gap-3">
+                    <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
+                    <p class="text-sm font-medium text-info/90 leading-relaxed">
+                      {gettext("Resource limits are only available on Linux with systemd-run.")}
+                    </p>
+                  </div>
+                <% end %>
+
+                <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 mb-8">
+                  <%= for schema <- resources_schemas do %>
+                    <.setting_card
+                      schema={schema}
+                      value={get_in(@file_config, schema.key_path)}
+                      error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                      disabled={@sandbox_mode == :disabled}
+                    />
+                  <% end %>
+                </div>
+              <% end %>
+
+              <%!-- Process Limits sub-header --%>
+              <% process_schemas = Enum.filter(@schemas, &(&1.sub_category == :process)) %>
+              <%= if process_schemas != [] do %>
+                <div class="flex items-center gap-4 mb-6 mt-10">
+                  <div class="h-px bg-base-200 flex-1"></div>
+                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/40">{gettext("Process Limits")}</h3>
+                  <div class="h-px bg-base-200 flex-1"></div>
+                </div>
+
+                <%= if @sandbox_backend != :systemd_run do %>
+                  <div class="bg-info/5 border border-info/20 rounded-2xl p-4 mb-6 flex items-start gap-3">
+                    <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
+                    <p class="text-sm font-medium text-info/90 leading-relaxed">
+                      {gettext("Process limits are only available on Linux with systemd-run.")}
+                    </p>
+                  </div>
+                <% end %>
+
+                <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 mb-8">
+                  <%= for schema <- process_schemas do %>
+                    <.setting_card
+                      schema={schema}
+                      value={get_in(@file_config, schema.key_path)}
+                      error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                      disabled={@sandbox_mode == :disabled}
+                    />
+                  <% end %>
+                </div>
+              <% end %>
+            <% else %>
+              <%!-- Other categories: just list all setting cards --%>
+              <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
+                <%= for schema <- @schemas do %>
+                  <.setting_card
+                    schema={schema}
+                    value={get_in(@file_config, schema.key_path)}
+                    error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                    disabled={@disabled}
+                  />
+                <% end %>
+              </div>
+            <% end %>
           <% end %>
         </div>
       </div>
