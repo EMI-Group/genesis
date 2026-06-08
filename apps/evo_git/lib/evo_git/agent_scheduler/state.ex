@@ -9,7 +9,6 @@ defmodule EvoGit.AgentScheduler.State do
 
   ### Initialization
   - `initialized` — whether the scheduler has completed initialization
-  - `foreign_repos` — registered foreign repos keyed by atom id (does NOT include `:primary`)
   - `initialized_repos` — map of absolute repo paths that have been initialized (`%{String.t() => true}`)
 
   ### Configuration
@@ -42,12 +41,9 @@ defmodule EvoGit.AgentScheduler.State do
   - `tool_waiting` — FIFO queue of `{agent_id, from}` pairs blocked on a tool slot
   """
 
-  alias EvoGit.Core.ForeignRepo
-
   @enforce_keys []
   defstruct [
     initialized: false,
-    foreign_repos: %{},
     initialized_repos: %{},
     max_concurrency: 3,
     agent_max_retries: 3,
@@ -75,7 +71,6 @@ defmodule EvoGit.AgentScheduler.State do
 
   @type t :: %__MODULE__{
           initialized: boolean(),
-          foreign_repos: %{atom() => ForeignRepo.t()},
           initialized_repos: %{String.t() => true},
           max_concurrency: pos_integer(),
           agent_max_retries: non_neg_integer(),

@@ -52,7 +52,6 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
-  alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
 
   @agent_table :evogit_agent_state
@@ -120,21 +119,11 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Returns the repo root path for the current agent's repo_id.
+  Returns the repo root path stored in the current agent's process dictionary.
   Returns nil if not in a scheduled agent.
   """
   def current_repo_root do
-    # Prefer the process dictionary value (set at dispatch time) — this is
-    # always correct for the current agent and avoids a GenServer call that
-    # could return a stale value when multiple tasks target different repos.
-    case Process.get(:evogit_repo_root) do
-      nil ->
-        repo_id = Process.get(:evogit_repo_id, :primary)
-        GenServer.call(__MODULE__, {:repo_root_for, repo_id})
-
-      repo_root ->
-        repo_root
-    end
+    Process.get(:evogit_repo_root)
   end
 
   @doc """
@@ -247,23 +236,6 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Registers foreign repos for multi-repo support.
-  Called during runtime initialization before any agents are spawned.
-  """
-  @spec register_foreign_repos([ForeignRepo.t()]) :: :ok
-  def register_foreign_repos(foreign_repos) when is_list(foreign_repos) do
-    GenServer.call(__MODULE__, {:register_foreign_repos, foreign_repos})
-  end
-
-  @doc """
-  Returns the list of all registered ForeignRepo structs (including primary).
-  """
-  @spec get_foreign_repos() :: [ForeignRepo.t()]
-  def get_foreign_repos do
-    GenServer.call(__MODULE__, :get_foreign_repos)
-  end
-
-  @doc """
   Returns the foreign repo commits map for the given agent's SchedMeta.
   Used by agents to track the latest known commit per foreign repo from
   previous subagent completions.
@@ -274,36 +246,6 @@ defmodule EvoGit.AgentScheduler do
       [{^agent_id, %{foreign_repo_commits: frc}}] when is_map(frc) -> frc
       _ -> %{}
     end
-  end
-
-  @doc """
-  Registers a single foreign repo at runtime.
-  Can be used to add repos dynamically (e.g., from the dashboard).
-  Returns `:ok` on success, `{:error, {:already_exists, id}}` if a repo with the same id already exists (except :primary).
-  """
-  @spec register_foreign_repo(ForeignRepo.t()) :: :ok | {:error, {:already_exists, atom()}}
-  def register_foreign_repo(%ForeignRepo{} = repo) do
-    GenServer.call(__MODULE__, {:register_foreign_repo, repo})
-  end
-
-  @doc """
-  Unregisters a foreign repo by its id.
-  Cannot unregister the :primary repo.
-  Returns `:ok` on success, `{:error, :cannot_unregister_primary}` if id is :primary,
-  `{:error, {:not_found, id}}` if the repo id doesn't exist.
-  """
-  @spec unregister_foreign_repo(atom()) :: :ok | {:error, term()}
-  def unregister_foreign_repo(repo_id) when is_atom(repo_id) do
-    GenServer.call(__MODULE__, {:unregister_foreign_repo, repo_id})
-  end
-
-  @doc """
-  Returns the repo root path for the given repo_id.
-  Raises if the repo_id is not registered.
-  """
-  @spec repo_root_for(atom()) :: String.t() | {:error, {:unknown_repo, atom()}}
-  def repo_root_for(repo_id) when is_atom(repo_id) do
-    GenServer.call(__MODULE__, {:repo_root_for, repo_id})
   end
 
   @doc """
@@ -462,7 +404,6 @@ defmodule EvoGit.AgentScheduler do
     {:ok,
      %State{
        initialized: false,
-       foreign_repos: %{},
        initialized_repos: %{},
        max_concurrency: max_concurrency,
        agent_max_retries: agent_max_retries,
@@ -490,67 +431,6 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call(:get_max_depth, _from, state) do
     {:reply, state.max_depth, state}
-  end
-
-  @impl true
-  def handle_call({:register_foreign_repos, foreign_repos}, _from, state) do
-    repos_map =
-      foreign_repos
-      |> Enum.map(fn repo -> {repo.id, repo} end)
-      |> Map.new()
-
-    # Merge with existing foreign repos
-    foreign_repos = Map.merge(state.foreign_repos, repos_map)
-
-    Logger.info(
-      "AgentScheduler: Registered #{map_size(repos_map)} foreign repo(s): #{inspect(Map.keys(repos_map))}"
-    )
-
-    {:reply, :ok, %{state | foreign_repos: foreign_repos}}
-  end
-
-  @impl true
-  def handle_call(:get_foreign_repos, _from, state) do
-    repos = Map.values(state.foreign_repos)
-    {:reply, repos, state}
-  end
-
-  @impl true
-  def handle_call({:register_foreign_repo, repo}, _from, state) do
-    if Map.has_key?(state.foreign_repos, repo.id) do
-      {:reply, {:error, {:already_exists, repo.id}}, state}
-    else
-      foreign_repos = Map.put(state.foreign_repos, repo.id, repo)
-      Logger.info("AgentScheduler: Registered foreign repo #{repo.id} at #{repo.root}")
-      {:reply, :ok, %{state | foreign_repos: foreign_repos}}
-    end
-  end
-
-  @impl true
-  def handle_call({:unregister_foreign_repo, repo_id}, _from, state) do
-    cond do
-      repo_id == :primary ->
-        {:reply, {:error, :cannot_unregister_primary}, state}
-
-      not Map.has_key?(state.foreign_repos, repo_id) ->
-        {:reply, {:error, {:not_found, repo_id}}, state}
-
-      true ->
-        foreign_repos = Map.delete(state.foreign_repos, repo_id)
-        Logger.info("AgentScheduler: Unregistered foreign repo #{repo_id}")
-        {:reply, :ok, %{state | foreign_repos: foreign_repos}}
-    end
-  end
-
-  @impl true
-  def handle_call({:repo_root_for, repo_id}, _from, state) do
-    case Map.get(state.foreign_repos, repo_id) do
-      %ForeignRepo{root: root} ->
-        {:reply, root, state}
-
-      nil ->
-        {:reply, {:error, {:unknown_repo, repo_id}}, state}
-    end
   end
 
   @impl true
