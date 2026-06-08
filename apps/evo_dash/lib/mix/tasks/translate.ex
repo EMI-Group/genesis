@@ -173,8 +173,6 @@ defmodule Mix.Tasks.Translate do
     end
   end
 
-  defp translate_batch(_context, [], _target_lang), do: {:ok, []}
-
   defp translate_batch(context, entries, target_lang) do
     target_lang_name = Map.get(@languages, target_lang, target_lang)
     ids = Enum.map(entries, fn entry -> IO.iodata_to_binary(entry.msgid) end)
