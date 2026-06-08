@@ -99,7 +99,7 @@ defmodule EvoGit.Agent do
           # Build context tree and merge into first user prompt
           # Use :repo_path (set by scheduler to worktree path)
           context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
-          foreign_repos_section = build_foreign_repos_section()
+          foreign_repos_section = build_foreign_repos_section(agent_state.foreign_repos)
           objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
           combined_prompt = "Current Context Tree:\n#{context_tree}\n\n#{foreign_repos_section}\n\n#{objective_prompt}"
 
@@ -127,7 +127,8 @@ defmodule EvoGit.Agent do
             node_path: node_path,
             context: context,
             max_turns: max_turns,
-            skill_schemas: skill_schemas
+            skill_schemas: skill_schemas,
+            foreign_repos: agent_state.foreign_repos
           }
 
           # Sync initial context to ETS for dashboard
@@ -677,9 +678,9 @@ defmodule EvoGit.Agent do
         end
       end
 
-      defp build_foreign_repos_section do
+      defp build_foreign_repos_section(foreign_repos) do
         repos =
-          EvoGit.AgentScheduler.get_foreign_repos()
+          foreign_repos
           |> Enum.reject(&EvoGit.Core.ForeignRepo.primary?(&1.id))
 
         if repos == [] do

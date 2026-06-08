@@ -159,8 +159,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
   def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{}) do
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
 
-    # Get all registered repos for path resolution
-    foreign_repos = AgentScheduler.get_foreign_repos()
+    # Get foreign repos from the agent's inherited state (per-task, not global)
+    foreign_repos = state.foreign_repos
 
     Enum.map(indexed_calls, fn {call, index} ->
       mod = subagent_module_for(call.name, state)
@@ -223,7 +223,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
             end
 
           AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
-            repo_id: target_repo_id
+            repo_id: target_repo_id,
+            foreign_repos: foreign_repos
           )
 
         {:error, error_msg} ->
