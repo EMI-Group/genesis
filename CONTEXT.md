@@ -37,6 +37,9 @@ The full design specification is in `AGENTS.md`.
 ### CLI Interface
 
 ```bash
+# Setup — guided LLM configuration wizard
+mix run -e 'EvoGit.CLI.main(System.argv())' -- setup
+
 # Genesis — create a codebase from a prompt
 mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-c concurrency] [-p path] [-R name:path]
 

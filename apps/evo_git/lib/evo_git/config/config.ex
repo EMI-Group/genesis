@@ -322,6 +322,56 @@ defmodule EvoGit.Config do
   end
 
   @doc """
+  Saves credential key-value pairs to the credentials TOML file.
+
+  Takes a map of `%{"ENV_VAR_NAME" => "api_key_value"}` (string keys).
+  Deep merges the new credentials into any existing ones (new values override),
+  writes the merged map to `credentials.toml`, and sets each new key-value pair
+  as an environment variable via `System.put_env/2`.
+
+  Creates the credentials file if it doesn't exist yet.
+
+  Returns `:ok` on success, `{:error, reason}` on failure.
+  """
+  @spec save_credentials(map()) :: :ok | {:error, term()}
+  def save_credentials(new_creds) when is_map(new_creds) do
+    path = credentials_path()
+    dir = config_dir()
+
+    existing = credentials()
+
+    merged =
+      Map.merge(existing, new_creds, fn _key, _existing_val, new_val -> new_val end)
+
+    with :ok <- File.mkdir_p(dir),
+         # Ensure all keys are strings for TOML serialization
+         string_creds = stringify_credential_keys(merged),
+         {:ok, toml} <- TomlElixir.encode(string_creds),
+         {:ok, contents} <- ensure_trailing_newline(toml),
+         :ok <- File.write(path, contents) do
+      # Set each new key-value pair in the environment
+      Enum.each(new_creds, fn {key, value} ->
+        if is_binary(value), do: System.put_env(key, value)
+      end)
+
+      :ok
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp stringify_credential_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+      {key, value} -> {key, value}
+    end)
+  end
+
+  defp ensure_trailing_newline(content) when is_binary(content) do
+    {:ok, String.trim_trailing(content) <> "\n"}
+  end
+
+  @doc """
   Returns the built-in application defaults map.
 
   Delegates to `EvoGit.Config.Schema.defaults/0` which defines the
