@@ -9,9 +9,11 @@
     <key>CFBundleIdentifier</key>
     <string>com.evogit.dashboard</string>
     <key>CFBundleName</key>
-    <string>EvoGit</string>
+    <!-- Brand name: Genesis (启元/啟元) -->
+    <string>Genesis</string>
     <key>CFBundleDisplayName</key>
-    <string>EvoGit Dashboard</string>
+    <!-- Brand name: Genesis (启元/啟元) -->
+    <string>Genesis Dashboard</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
