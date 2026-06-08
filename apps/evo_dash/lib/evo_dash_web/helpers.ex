@@ -295,10 +295,7 @@ defmodule EvoDashWeb.Helpers do
     do: gettext("No CONTEXT.md found — Existing Codebase mode selected")
 
   def mode_info_message("evolve_simple"),
-    do: gettext("Context tree detected — Simple (Top-down) mode selected")
-
-  def mode_info_message("evolve_complex"),
-    do: gettext("Context tree detected — Complex (Bottom-up) mode selected")
+    do: gettext("Context tree detected — Evolution mode selected")
 
   def mode_info_message(_), do: ""
 
@@ -468,15 +465,5 @@ defmodule EvoDashWeb.Helpers do
   def mode_description("evolve_simple"),
     do: gettext("Uses a single top-down agent to modify the codebase based on your objective.")
 
-  def mode_description("evolve_complex"),
-    do: gettext("Uses multiple bottom-up agents with evolutionary selection to optimize changes.")
-
   def mode_description(_), do: ""
-
-  @doc """
-  Returns the group label for a mode (genesis or evolve).
-  """
-  def mode_group("genesis_" <> _), do: gettext("Genesis")
-  def mode_group("evolve_" <> _), do: gettext("Evolve")
-  def mode_group(_), do: ""
 end

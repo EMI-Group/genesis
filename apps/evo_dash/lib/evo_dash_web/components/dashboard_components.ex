@@ -157,13 +157,9 @@ defmodule EvoDashWeb.DashboardComponents do
               phx-change="task_change"
               class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
             >
-              <optgroup label={gettext("Genesis (Bootstrap & Analyze)")}>
-                <option value="genesis_new" selected={@mode == "genesis_new"}>{gettext("New Codebase")}</option>
-                <option value="genesis_existing" selected={@mode == "genesis_existing"}>{gettext("Existing Codebase")}</option>
-              </optgroup>
-              <optgroup label={gettext("Evolve (Mutate Code)")}>
-                <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Simple (Top-down)")}</option>
-              </optgroup>
+              <option value="genesis_existing" selected={@mode == "genesis_existing"}>{gettext("Initialize Existing Codebase")}</option>
+              <option value="genesis_new" selected={@mode == "genesis_new"}>{gettext("Create New Codebase")}</option>
+              <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Evolution")}</option>
             </select>
             <div class="hidden sm:block">
               <.tip text={mode_description(@mode)} />
@@ -206,24 +202,7 @@ defmodule EvoDashWeb.DashboardComponents do
             </div>
           </div>
         <% end %>
-        <%= if @mode == "evolve_complex" do %>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text font-semibold text-base-content">
-                {gettext("Seed Code")} <span class="badge badge-ghost">{gettext("optional")}</span>
-                <.tip text={gettext("Provide seed code content for evolutionary selection. Multiple seeds improve diversity.")} />
-              </span>
-            </label>
-            <textarea
-              name="seeds"
-              class="textarea textarea-bordered w-full min-h-[120px] text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
-              placeholder={gettext("Paste seed code here. Separate multiple fragments with blank lines...")}
-            ><%= @seeds %></textarea>
-            <label class="label">
-              <span class="label-text-alt text-base-content/50">{gettext("User seeds are preferred over built-in seeds during evolution")}</span>
-            </label>
-          </div>
-        <% end %>
+
         <div class="form-control">
           <label class="label">
             <span class="label-text font-semibold text-base-content">
