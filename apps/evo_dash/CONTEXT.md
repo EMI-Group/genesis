@@ -24,6 +24,10 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 - `EvoDashWeb.Router` — Routes to LiveViews and Phoenix LiveDashboard
 - `EvoDashWeb.Helpers` — Shared UI utilities (status badges, datetime formatting, icons, modals)
 
+### Mix Tasks
+
+- `mix translate` — AI-powered POT file translation using `deepseek-v4-flash`; usage: `mix translate <pot_file> <lang1|all> [lang2] ... [--force] [--prefix <prefix>]`
+
 ### Routes
 
 | Route | LiveView | Purpose |
