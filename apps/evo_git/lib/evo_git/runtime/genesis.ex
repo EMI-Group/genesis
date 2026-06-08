@@ -2,13 +2,12 @@ defmodule EvoGit.Runtime.Genesis do
   @moduledoc "Stage 1: Creation Phase (EvoGit 1.0 Spatial Architecture)"
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
-  alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
   alias EvoGit.Agents.CodebaseArchitect
   alias EvoGit.Agents.ContextExtractor
-  alias EvoGit.Agent.Result
   alias EvoGit.Runtime
+  alias EvoGit.Runtime.Helpers
   require Logger
 
   def run(objective, opts \\ []) do
@@ -16,13 +15,14 @@ defmodule EvoGit.Runtime.Genesis do
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
     foreign_repos = Keyword.get(opts, :foreign_repos, [])
+
     if foreign_repos != [] do
       EvoGit.AgentScheduler.register_foreign_repos(foreign_repos)
     end
 
     with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do
-      if new_codebase?(repo_path) do
+      if Helpers.new_codebase?(repo_path) do
         run_new_codebase(objective, repo_path, head_sha, opts)
       else
         run_existing_codebase(objective, repo_path, head_sha, opts)
@@ -35,9 +35,6 @@ defmodule EvoGit.Runtime.Genesis do
   end
 
   # Mode A: Existing Codebase
-  # * Root Initialization: The system spawns an investigator agent at the repository root on the latest commit.
-  # * Recursive Analysis: The agent spawns subagents for child directories/files to extract existing context and build the semantic tree structure.
-  # * Fixed Point Convergence: The parent agent aggregates the context. If discrepancies exist, it spawns subagents to modify the child nodes.
   defp run_existing_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode A (Existing Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
@@ -46,8 +43,8 @@ defmodule EvoGit.Runtime.Genesis do
     case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective)
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
-        notify_finalizing(opts)
-        merge_and_report(repo_path, agent_output, objective)
+        Helpers.notify_finalizing(opts)
+        Helpers.merge_and_report(repo_path, agent_output, "genesis")
 
       error ->
         Logger.error("Genesis Mode A failed: #{inspect(error)}")
@@ -56,9 +53,6 @@ defmodule EvoGit.Runtime.Genesis do
   end
 
   # Mode B: New Codebase
-  # * Architecture & Skeleton: An agent interprets the user's prompt at the root node and drafts the architectural plan in the root CONTEXT.md. It creates the directory tree, optionally empty code files, and recursively spawns subagents to do this for child directories.
-  # * Implementation: After the entire skeleton is established, the agent orchestrates the implementation of the code by spawning generalist subagents.
-  # * Fixed Point Convergence: Identical to Mode A, utilizing the same Convergence Circuit Breaker to ensure the generated structure and code finalize efficiently.
   defp run_new_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode B (New Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
@@ -67,80 +61,12 @@ defmodule EvoGit.Runtime.Genesis do
     case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective)
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
-        notify_finalizing(opts)
-        merge_and_report(repo_path, agent_output, objective)
+        Helpers.notify_finalizing(opts)
+        Helpers.merge_and_report(repo_path, agent_output, "genesis")
 
       error ->
         Logger.error("Genesis Mode B failed: #{inspect(error)}")
         error
     end
-  end
-
-  defp merge_and_report(repo_path, %Result{} = agent_output, _objective) do
-    final_sha = agent_output.commit_sha
-    result = agent_output.result
-    tag = agent_output.tag
-
-    # Get the base commit (HEAD before any agent work)
-    {:ok, base_sha} = Git.rev_parse(repo_path)
-
-    # Check if the agent made any changes
-    if final_sha && final_sha != base_sha do
-      Logger.info(
-        "Genesis: Agent produced changes (#{String.slice(base_sha, 0, 7)} -> #{String.slice(final_sha, 0, 7)})"
-      )
-
-      # Create a branch for the agent's final commit
-      branch_name = generate_branch_name("genesis")
-      {:ok, _} = Git.create_branch(repo_path, branch_name, final_sha)
-      Logger.info("Genesis: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}")
-
-      # PR creation is now manual via the Review page — no automatic PR
-      {pr_url, pr_title} = {nil, nil}
-
-      {:ok,
-       %{
-         commit_sha: final_sha,
-         result: result,
-         tag: tag,
-         branch_name: branch_name,
-         pr_url: pr_url,
-         pr_title: pr_title
-       }}
-    else
-      Logger.info("Genesis: No changes detected (base and final commit are the same)")
-
-      {:ok,
-       %{
-         commit_sha: final_sha || base_sha,
-         result: result,
-         tag: tag,
-         branch_name: nil,
-         pr_url: nil,
-         pr_title: nil,
-         no_changes: true
-       }}
-    end
-  end
-
-  defp notify_finalizing(opts) do
-    if task_id = Keyword.get(opts, :task_id) do
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
-    end
-  end
-
-  defp generate_branch_name(prefix) do
-    short_id = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
-    "evogit/#{prefix}_#{short_id}"
-  end
-
-  defp new_codebase?(repo_path) do
-    files =
-      case File.ls(repo_path) do
-        {:ok, items} -> items -- [".git", "README.md", ".evogit", ".gitignore"]
-        _ -> []
-      end
-
-    Enum.empty?(files)
   end
 end
