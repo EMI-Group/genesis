@@ -186,7 +186,7 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 
 - Both phases follow the same pattern: ensure repo → create phylo node → load context node → build spec → run agent → handle result.
 - Agent changes go to **isolated branches** (`evogit/genesis_<hex>` / `evogit/evolve_<hex>`), never directly to the working tree. PR creation is optional (requires `gh` CLI).
-- `merge_and_report/3` is duplicated identically in both `genesis.ex` and `evolution.ex` (potential refactor target).
+- `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — both phases delegate to `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"` or `"evolve"`.
 - Complex/Bottom-Up evolution mode delegates to `Engine.run/5` which manages its own temporary supervisor tree for `EntropyPool` and `MapElites` GenServers.
 - No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
 - PR creation is best-effort and never fails the overall phase — all PR errors are logged and return `nil`.
