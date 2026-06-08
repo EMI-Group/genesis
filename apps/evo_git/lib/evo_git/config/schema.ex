@@ -149,7 +149,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai_coding_plan:glm-5.1'. The provider portion determines which API key is used. This setting is required for EvoGit to function."
+        "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai_coding_plan:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function."
     },
     %{
       key_path: [:llm, :compression_threshold_tokens],
@@ -201,7 +201,7 @@ defmodule EvoGit.Config.Schema do
       category: :sandbox,
       sub_category: :resources,
       description:
-        "CPU allocation weight for the sandbox slice relative to other system workloads (1-10000). Higher values give EvoGit processes more CPU time when the system is under contention. Default of 30 provides moderate priority."
+        "CPU allocation weight for the sandbox slice relative to other system workloads (1-10000). Higher values give Genesis processes more CPU time when the system is under contention. Default of 30 provides moderate priority."
     },
     %{
       key_path: [:sandbox, :resources, :memory_max],
@@ -313,7 +313,7 @@ defmodule EvoGit.Config.Schema do
       category: :task_history,
       sub_category: nil,
       description:
-        "Maximum number of recent tasks retained in the dashboard history. Older tasks beyond this limit are automatically purged to manage storage. Each task represents one top-level EvoGit run."
+        "Maximum number of recent tasks retained in the dashboard history. Older tasks beyond this limit are automatically purged to manage storage. Each task represents one top-level Genesis run."
     },
     %{
       key_path: [:task_history, :max_age_days],

@@ -2,7 +2,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
   @moduledoc """
   A specialized planning agent for the genesis (codebase initialization) stage.
 
-  Unlike the generic TaskScheduler, this agent has deep knowledge of EvoGit's
+  Unlike the generic TaskScheduler, this agent has deep knowledge of Genesis's
   recursive agent system, worktree isolation, and the genesis workflow. It transforms
   architectural designs into concrete execution plans that account for:
   - Agents working in isolated worktrees (sibling files/APIs may be missing)
@@ -18,7 +18,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
   def subagent_tool_name, do: "subagent_genesis_planner"
 
   def subagent_tool_description do
-    "[Subagent] A specialized planning agent for the genesis stage that understands EvoGit's recursive agent system. " <>
+    "[Subagent] A specialized planning agent for the genesis stage that understands Genesis's recursive agent system. " <>
       "Call this subagent to transform an architectural design into a concrete, step-by-step execution plan " <>
       "that accounts for worktree isolation, incomplete dependencies, and the genesis workflow. " <>
       "It does NOT make any changes — it only produces an execution plan."
@@ -32,9 +32,9 @@ defmodule EvoGit.Agents.GenesisPlanner do
 
   def system_prompt do
     """
-    You are a Genesis Planner agent for EvoGit — a specialized planning expert for the codebase initialization stage.
+    You are a Genesis Planner agent for Genesis — a specialized planning expert for the codebase initialization stage.
 
-    Your job is to take an architectural design (from a CodebaseArchitect) and transform it into a concrete, step-by-step execution plan that accounts for how EvoGit's agent system actually works during genesis. You understand the recursive agent model, worktree isolation, subagent merging, and the constraints of building a codebase from scratch.
+    Your job is to take an architectural design (from a CodebaseArchitect) and transform it into a concrete, step-by-step execution plan that accounts for how Genesis's agent system actually works during genesis. You understand the recursive agent model, worktree isolation, subagent merging, and the constraints of building a codebase from scratch.
 
     You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives.
 
@@ -43,7 +43,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
     **You are READ-ONLY. You do NOT implement. You do NOT execute. You do NOT modify files.**
     Your ONLY output is a structured execution plan (passed to `complete_task`).
 
-    ## How EvoGit Genesis Works — What You Must Plan For
+    ## How the Genesis Phase Works — What You Must Plan For
 
     ### Agent Isolation & Merging
     - Every agent works in its own isolated worktree. An agent CANNOT see changes made by sibling agents or even its own parent until they are explicitly merged.
