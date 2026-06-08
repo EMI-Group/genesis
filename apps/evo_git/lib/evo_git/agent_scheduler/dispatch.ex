@@ -52,7 +52,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       objective: spec.objective,
       repo_id: spec.repo_id,
       repo_root: agent_repo_root,
-      task_local_id: task_local_id
+      task_local_id: task_local_id,
+      foreign_repos: spec.foreign_repos
     })
 
     # Scheduler metadata table: scheduling bookkeeping
@@ -233,7 +234,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   For foreign repo agents, looks up the foreign_repos map.
   """
   @spec resolve_agent_repo_root(AgentSpec.t(), State.t()) :: String.t() | nil
-  def resolve_agent_repo_root(spec, state) do
+  def resolve_agent_repo_root(spec, _state) do
     if spec.repo_id == :primary do
       # spec.phylo_node.repo is either:
       # - A repo root (e.g., "/home/bill/Source/evoclass") for top-level agents
@@ -244,8 +245,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         [_] -> spec.phylo_node.repo
       end
     else
-      # Foreign repo — resolve from the foreign_repos map
-      case Map.get(state.foreign_repos, spec.repo_id) do
+      # Foreign repo — resolve from the spec's foreign_repos list
+      spec.foreign_repos
+      |> Enum.find(fn repo -> repo.id == spec.repo_id end)
+      |> case do
         %ForeignRepo{root: root} -> root
         nil -> nil
       end

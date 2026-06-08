@@ -68,7 +68,9 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
   end
 
   describe "resolve_agent_repo_root/2 with foreign repo" do
-    test "returns foreign repo root when repo exists in state" do
+    test "returns foreign repo root when repo exists in spec" do
+      original_root = Path.expand("/home/user/original-proj")
+
       spec = %AgentSpec{
         context_node: %ContextNode{path: "./", repo: "/home/user/primary"},
         phylo_node: %PhyloGraphNode{
@@ -78,22 +80,19 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :original
+        repo_id: :original,
+        foreign_repos: [
+          ForeignRepo.new(:original, "/home/user/original-proj"),
+          ForeignRepo.new(:reference, "/home/user/reference-proj")
+        ]
       }
 
-      original_root = Path.expand("/home/user/original-proj")
-
-      state = %State{
-        foreign_repos: %{
-          original: ForeignRepo.new(:original, "/home/user/original-proj"),
-          reference: ForeignRepo.new(:reference, "/home/user/reference-proj")
-        }
-      }
+      state = %State{}
 
       assert Dispatch.resolve_agent_repo_root(spec, state) == original_root
     end
 
-    test "returns nil when foreign repo does not exist in state" do
+    test "returns nil when foreign repo does not exist in spec" do
       spec = %AgentSpec{
         context_node: %ContextNode{path: "./", repo: "/home/user/primary"},
         phylo_node: %PhyloGraphNode{
@@ -103,19 +102,18 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :unknown_repo
+        repo_id: :unknown_repo,
+        foreign_repos: [
+          ForeignRepo.new(:original, "/home/user/original-proj")
+        ]
       }
 
-      state = %State{
-        foreign_repos: %{
-          original: ForeignRepo.new(:original, "/home/user/original-proj")
-        }
-      }
+      state = %State{}
 
       assert Dispatch.resolve_agent_repo_root(spec, state) == nil
     end
 
-    test "returns nil when foreign_repos map is empty" do
+    test "returns nil when foreign_repos list is empty" do
       spec = %AgentSpec{
         context_node: %ContextNode{path: "./", repo: "/home/user/primary"},
         phylo_node: %PhyloGraphNode{
@@ -125,10 +123,11 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :original
+        repo_id: :original,
+        foreign_repos: []
       }
 
-      state = %State{foreign_repos: %{}}
+      state = %State{}
 
       assert Dispatch.resolve_agent_repo_root(spec, state) == nil
     end
@@ -145,15 +144,14 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :reference
+        repo_id: :reference,
+        foreign_repos: [
+          ForeignRepo.new(:original, "/home/user/original-proj"),
+          ForeignRepo.new(:reference, "/home/user/reference-proj")
+        ]
       }
 
-      state = %State{
-        foreign_repos: %{
-          original: ForeignRepo.new(:original, "/home/user/original-proj"),
-          reference: ForeignRepo.new(:reference, "/home/user/reference-proj")
-        }
-      }
+      state = %State{}
 
       assert Dispatch.resolve_agent_repo_root(spec, state) == reference_root
     end

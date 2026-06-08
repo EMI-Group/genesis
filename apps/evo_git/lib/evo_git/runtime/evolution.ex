@@ -20,12 +20,6 @@ defmodule EvoGit.Runtime.Evolution do
 
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
-    foreign_repos = Keyword.get(opts, :foreign_repos, [])
-
-    if foreign_repos != [] do
-      EvoGit.AgentScheduler.register_foreign_repos(foreign_repos)
-    end
-
     with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, current_sha} <- Helpers.resolve_starting_commit(repo_path, starting_commit),
          :ok <- Helpers.validate_node_path(node_path, repo_path) do
@@ -49,8 +43,9 @@ defmodule EvoGit.Runtime.Evolution do
     Logger.info("Evolution: Running Mode A (Top-Down)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load(node_path, repo_path)
+    foreign_repos = Keyword.get(opts, :foreign_repos, [])
 
-    case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective)
+    case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective, foreign_repos: foreign_repos)
          |> AgentScheduler.run_agent() do
       {:ok, %Result{} = agent_output} ->
         Helpers.notify_finalizing(opts)

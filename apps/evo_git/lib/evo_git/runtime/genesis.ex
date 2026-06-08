@@ -14,12 +14,6 @@ defmodule EvoGit.Runtime.Genesis do
     Logger.info("Genesis: Starting with objective: #{objective}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
-    foreign_repos = Keyword.get(opts, :foreign_repos, [])
-
-    if foreign_repos != [] do
-      EvoGit.AgentScheduler.register_foreign_repos(foreign_repos)
-    end
-
     with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do
       if Helpers.new_codebase?(repo_path) do
@@ -39,8 +33,9 @@ defmodule EvoGit.Runtime.Genesis do
     Logger.info("Genesis: Running Mode A (Existing Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
+    foreign_repos = Keyword.get(opts, :foreign_repos, [])
 
-    case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective)
+    case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective, foreign_repos: foreign_repos)
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
         Helpers.notify_finalizing(opts)
@@ -57,8 +52,9 @@ defmodule EvoGit.Runtime.Genesis do
     Logger.info("Genesis: Running Mode B (New Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
+    foreign_repos = Keyword.get(opts, :foreign_repos, [])
 
-    case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective)
+    case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective, foreign_repos: foreign_repos)
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
         Helpers.notify_finalizing(opts)
