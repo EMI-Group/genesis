@@ -22,6 +22,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `EvoGit.SandboxSlice` | GenServer managing the `evogit.slice` systemd user slice (Linux only) |
 | `EvoGit.Task` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
 | `EvoGit.Runtime` | Top-level coordinator: Genesis and Evolution phases |
+| `EvoGit.Runtime.Helpers` | Shared helper functions for runtime phases (merge_and_report, notify_finalizing, generate_branch_name, new_codebase?, validate_node_path, resolve_starting_commit) |
 | `EvoGit.ProjectConfig` | Reads and parses `evogit.toml` from repo root |
 | `EvoGit.Review` | Code review operations: load diff data, merge/reject branches, manual GitHub PR creation |
 | `EvoGit.Config` | Unified 3-level configuration resolver (defaults → user TOML → runtime overrides) |
