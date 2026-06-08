@@ -4,7 +4,40 @@ defmodule EvoDash.TaskRegistryTest do
   alias EvoDash.TaskRegistry
   alias EvoDash.TaskRegistry.TaskInfo
 
-  @table_name :evo_dash_tasks
+  @table_name :test_evo_dash_tasks
+  @recent_projects_table :test_evo_dash_recent_projects
+  @dets_tasks :test_evo_dash_tasks_dets
+  @dets_projects :test_evo_dash_projects_dets
+
+  setup do
+    # Terminate the production registry via its supervisor to prevent
+    # automatic restarts and to clean up its ETS/DETS tables.
+    case Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
+
+    unique = System.unique_integer([:positive])
+    data_dir = Path.join(System.tmp_dir!(), "evogit_test_tasks_#{unique}")
+    File.mkdir_p!(data_dir)
+
+    {:ok, _pid} = start_supervised({TaskRegistry,
+      name: EvoDash.TaskRegistry,
+      table_name: @table_name,
+      recent_projects_table: @recent_projects_table,
+      dets_tasks: @dets_tasks,
+      dets_projects: @dets_projects,
+      data_dir: data_dir
+    })
+
+    on_exit(fn ->
+      File.rm_rf(data_dir)
+      # Restart the production TaskRegistry so other test suites don't break
+      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
+    end)
+
+    :ok
+  end
 
   # Helper: trigger persist_tasks_to_dets (which calls cleanup_expired_tasks)
   # by inserting a dummy task and deleting it via cast, then synchronizing
@@ -35,7 +68,7 @@ defmodule EvoDash.TaskRegistryTest do
   describe "task_history_config/0 defaults" do
     test "returns default max_tasks and max_age_days when no config set" do
       config = EvoGit.Config.resolve()
-      # task_history section may not exist — defaults applied at runtime via Map.merge
+      # task_history section may not exist — defaults applied at runtime via Map.Merge
       task_history = config[:task_history]
 
       if task_history == nil do
