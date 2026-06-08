@@ -29,8 +29,6 @@ defmodule EvoGit.Config.Schema do
       end
   """
 
-  require Logger
-
   # ── Types ───────────────────────────────────────────────────────────
 
   @typedoc "Path to a config key as a list of atoms"
