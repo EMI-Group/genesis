@@ -14,10 +14,11 @@ defmodule EvoGit.AgentSpec do
   """
 
   alias EvoGit.Core.ContextNode
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
 
   @enforce_keys [:context_node, :phylo_node, :agent_module, :objective]
-  defstruct [:context_node, :phylo_node, :agent_module, :objective, repo_id: :primary, opts: []]
+  defstruct [:context_node, :phylo_node, :agent_module, :objective, repo_id: :primary, opts: [], foreign_repos: []]
 
   @type t :: %__MODULE__{
           context_node: ContextNode.t(),
@@ -25,7 +26,8 @@ defmodule EvoGit.AgentSpec do
           agent_module: module(),
           objective: String.t(),
           repo_id: atom(),
-          opts: keyword()
+          opts: keyword(),
+          foreign_repos: [ForeignRepo.t()]
         }
 
   @doc """
@@ -39,7 +41,8 @@ defmodule EvoGit.AgentSpec do
       agent_module: agent_module,
       objective: objective,
       repo_id: Keyword.get(opts, :repo_id, :primary),
-      opts: opts
+      opts: opts,
+      foreign_repos: Keyword.get(opts, :foreign_repos, [])
     }
   end
 end

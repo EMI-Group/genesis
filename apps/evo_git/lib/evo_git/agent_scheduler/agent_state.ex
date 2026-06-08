@@ -20,13 +20,15 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `repo_id` — atom identifying which repo this agent belongs to (`:primary` for main, or a foreign repo id)
   - `repo_root` — absolute filesystem path to the repo root (for display/grouping). Set from scheduler state at registration.
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
+  - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or evogit.toml)
   """
 
   alias EvoGit.Core.ContextNode
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
 
   @enforce_keys [:context_node, :llm_model, :max_retries, :max_depth]
-  defstruct [:context, :context_node, :phylo_node, :llm_model, :max_retries, :max_depth, :max_turns, :parent_id, :objective, :task_local_id, repo_id: :primary, repo_root: nil]
+  defstruct [:context, :context_node, :phylo_node, :llm_model, :max_retries, :max_depth, :max_turns, :parent_id, :objective, :task_local_id, repo_id: :primary, repo_root: nil, foreign_repos: []]
 
   @type t :: %__MODULE__{
           context: ReqLLM.Context.t() | nil,
@@ -40,6 +42,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           objective: String.t() | nil,
           repo_id: atom(),
           repo_root: String.t() | nil,
-          task_local_id: pos_integer() | nil
+          task_local_id: pos_integer() | nil,
+          foreign_repos: [ForeignRepo.t()]
         }
 end
