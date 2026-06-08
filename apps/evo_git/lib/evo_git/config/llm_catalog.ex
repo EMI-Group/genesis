@@ -27,12 +27,8 @@ defmodule EvoGit.Config.LLMCatalog do
       provider_atoms: [:anthropic],
       env_var: "ANTHROPIC_API_KEY",
       models: [
-        %{id: "claude-opus-4-20250514", display_name: "Claude Opus 4"},
-        %{id: "claude-sonnet-4-20250514", display_name: "Claude Sonnet 4"},
-        %{id: "claude-haiku-4-20250514", display_name: "Claude Haiku 4"},
-        %{id: "claude-3.5-sonnet-20241022", display_name: "Claude 3.5 Sonnet"},
-        %{id: "claude-3.5-haiku-20241022", display_name: "Claude 3.5 Haiku"},
-        %{id: "claude-3-opus-20240229", display_name: "Claude 3 Opus"}
+        %{id: "claude-opus-4-7", display_name: "Claude Opus 4.7"},
+        %{id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6"}
       ]
     },
     %{
@@ -41,13 +37,8 @@ defmodule EvoGit.Config.LLMCatalog do
       provider_atoms: [:openai],
       env_var: "OPENAI_API_KEY",
       models: [
-        %{id: "gpt-4.1", display_name: "GPT-4.1"},
-        %{id: "gpt-4.1-mini", display_name: "GPT-4.1 Mini"},
-        %{id: "gpt-4.1-nano", display_name: "GPT-4.1 Nano"},
-        %{id: "gpt-4o", display_name: "GPT-4o"},
-        %{id: "gpt-4o-mini", display_name: "GPT-4o Mini"},
-        %{id: "o3", display_name: "o3"},
-        %{id: "o4-mini", display_name: "o4 Mini"}
+        %{id: "gpt-5.5", display_name: "GPT-5.5"},
+        %{id: "gpt-5.4", display_name: "GPT-5.4"}
       ]
     },
     %{
@@ -56,12 +47,8 @@ defmodule EvoGit.Config.LLMCatalog do
       provider_atoms: [:google],
       env_var: "GOOGLE_API_KEY",
       models: [
-        %{id: "gemini-2.5-pro-preview-06-05", display_name: "Gemini 2.5 Pro"},
-        %{id: "gemini-2.5-flash-preview-05-20", display_name: "Gemini 2.5 Flash"},
-        %{id: "gemini-2.0-flash", display_name: "Gemini 2.0 Flash"},
-        %{id: "gemini-2.0-flash-lite", display_name: "Gemini 2.0 Flash Lite"},
-        %{id: "gemini-1.5-pro", display_name: "Gemini 1.5 Pro"},
-        %{id: "gemini-1.5-flash", display_name: "Gemini 1.5 Flash"}
+        %{id: "gemini-3.1-pro", display_name: "Gemini 3.1 Pro"},
+        %{id: "gemini-3.1-flash", display_name: "Gemini 3.1 Flash"}
       ]
     },
     %{
@@ -70,25 +57,8 @@ defmodule EvoGit.Config.LLMCatalog do
       provider_atoms: [:deepseek],
       env_var: "DEEPSEEK_API_KEY",
       models: [
-        %{id: "deepseek-r1", display_name: "DeepSeek R1"},
-        %{id: "deepseek-chat", display_name: "DeepSeek V3 (Chat)"},
-        %{id: "deepseek-coder", display_name: "DeepSeek Coder"},
-        %{id: "deepseek-reasoner", display_name: "DeepSeek Reasoner"}
-      ]
-    },
-    %{
-      id: :zai_coding_plan,
-      display_name: "ZAI (Coding Plan)",
-      provider_atoms: [:zai, :zai_coding_plan, :zai_coder],
-      env_var: "ZAI_API_KEY",
-      models: [
-        %{id: "glm-4.1v", display_name: "GLM-4.1V"},
-        %{id: "glm-4-plus", display_name: "GLM-4 Plus"},
-        %{id: "glm-4-air", display_name: "GLM-4 Air"},
-        %{id: "glm-4-airx", display_name: "GLM-4 AirX"},
-        %{id: "glm-4-long", display_name: "GLM-4 Long"},
-        %{id: "glm-4-flash", display_name: "GLM-4 Flash"},
-        %{id: "glm-4-flashx", display_name: "GLM-4 FlashX"}
+        %{id: "deepseek-v4-pro", display_name: "DeepSeek V4 Pro"},
+        %{id: "deepseek-v4-flash", display_name: "DeepSeek V4 Flash"}
       ]
     },
     %{
@@ -97,12 +67,18 @@ defmodule EvoGit.Config.LLMCatalog do
       provider_atoms: [:alibaba, :alibaba_cn],
       env_var: "DASHSCOPE_API_KEY",
       models: [
-        %{id: "qwen-max", display_name: "Qwen Max"},
-        %{id: "qwen-plus", display_name: "Qwen Plus"},
-        %{id: "qwen-turbo", display_name: "Qwen Turbo"},
-        %{id: "qwen-coder-plus", display_name: "Qwen Coder Plus"},
-        %{id: "qwen-coder-turbo", display_name: "Qwen Coder Turbo"},
-        %{id: "qwen-long", display_name: "Qwen Long"}
+        %{id: "qwen-3.7-max", display_name: "Qwen 3.7 Max"},
+        %{id: "qwen-3.6-plus", display_name: "Qwen 3.6 Plus"}
+      ]
+    },
+    %{
+      id: :zai_coding_plan,
+      display_name: "Z.ai (Zhipu AI)",
+      provider_atoms: [:zai, :zai_coding_plan, :zai_coder],
+      env_var: "ZAI_API_KEY",
+      models: [
+        %{id: "glm-5", display_name: "GLM-5"},
+        %{id: "glm-5.1", display_name: "GLM-5.1"}
       ]
     }
   ]
