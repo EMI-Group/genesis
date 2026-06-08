@@ -68,7 +68,7 @@ defmodule EvoDashWeb.Layouts do
         </header>
 
         <!-- Main Content Area -->
-        <main class="flex-1 px-4 sm:px-6 lg:px-8 py-8 w-full max-w-7xl mx-auto">
+        <main class="flex-1 px-4 sm:px-6 lg:px-8 py-8 w-full mx-auto max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1920px]">
           {render_slot(@inner_block)}
         </main>
       </div>
