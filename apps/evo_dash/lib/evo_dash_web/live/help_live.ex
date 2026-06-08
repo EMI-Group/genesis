@@ -2,7 +2,7 @@ defmodule EvoDashWeb.HelpLive do
   use EvoDashWeb, :live_view
 
   @config_reference """
-  # EvoGit Configuration Reference
+  # Genesis Configuration Reference
   # Save this as: ~/.config/evogit/config.toml
 
   [scheduler]
@@ -57,7 +57,7 @@ defmodule EvoDashWeb.HelpLive do
   """
 
   @credentials_reference """
-  # EvoGit Credentials Reference
+  # Genesis Credentials Reference
   # Save this as: ~/.config/evogit/credentials.toml
   # 
   # API keys are stored separately from config.toml for security.
@@ -121,15 +121,15 @@ defmodule EvoDashWeb.HelpLive do
      )},
     {gettext("What is sandbox mode?"),
      gettext(
-       "Sandbox mode controls how EvoGit isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
+       "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
      )},
     {gettext("How does the context tree work?"),
      gettext(
-       "EvoGit models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
+       "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
      )},
     {gettext("What happens if my config is missing?"),
      gettext(
-       "EvoGit uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
+       "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
      )},
     {gettext("How do I configure sandbox resources?"),
      gettext(
