@@ -41,59 +41,64 @@ defmodule EvoDashWeb.ReviewLive do
               status={@review_status}
             />
 
-            <!-- Tab Bar (always sticky fullscreen) -->
-            <EvoDashWeb.ReviewComponents.review_tabs
-              active_tab={@review_tab}
-              files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
-              commits_count={length(@commits)}
-            />
+            <!-- Unified review card: tab bar + content -->
+            <div class="review-card">
+              <!-- Tab Bar (sticky header of the card) -->
+              <div class="review-card-tabs">
+                <EvoDashWeb.ReviewComponents.review_tabs
+                  active_tab={@review_tab}
+                  files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
+                  commits_count={length(@commits)}
+                />
+              </div>
 
-            <!-- Fullscreen wrapper for all tab content -->
-            <div class="review-fullscreen-wrapper">
-              <%= cond do %>
-                <% @review_tab == :conversation -> %>
-                  <div class="space-y-4">
-                    <!-- Agent Summary -->
-                    <%= if @agent_summary do %>
-                      <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
-                    <% end %>
+              <!-- Content area -->
+              <div class="review-card-content">
+                <%= cond do %>
+                  <% @review_tab == :conversation -> %>
+                    <div class="space-y-4 p-4 sm:p-6 lg:p-8">
+                      <!-- Agent Summary -->
+                      <%= if @agent_summary do %>
+                        <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
+                      <% end %>
 
-                    <!-- Diff Stats -->
-                    <%= if @review_data do %>
-                      <EvoDashWeb.ReviewComponents.diff_stats_bar
-                        files_count={@review_data.changed_files_count}
-                        additions={@review_data.total_additions}
-                        deletions={@review_data.total_deletions}
-                        commits_count={length(@commits)}
+                      <!-- Diff Stats -->
+                      <%= if @review_data do %>
+                        <EvoDashWeb.ReviewComponents.diff_stats_bar
+                          files_count={@review_data.changed_files_count}
+                          additions={@review_data.total_additions}
+                          deletions={@review_data.total_deletions}
+                          commits_count={length(@commits)}
+                        />
+                      <% end %>
+
+                      <!-- Action Buttons -->
+                      <EvoDashWeb.ReviewComponents.action_buttons
+                        branch_exists={@branch_exists}
+                        has_pr={@has_pr}
+                        pr_url={@pr_url}
+                        loading={@action_loading}
                       />
-                    <% end %>
-
-                    <!-- Action Buttons -->
-                    <EvoDashWeb.ReviewComponents.action_buttons
-                      branch_exists={@branch_exists}
-                      has_pr={@has_pr}
-                      pr_url={@pr_url}
-                      loading={@action_loading}
-                    />
-                  </div>
-
-                <% @review_tab == :commits -> %>
-                  <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-
-                <% @review_tab == :files_changed -> %>
-                  <%= if @review_data do %>
-                    <EvoDashWeb.ReviewComponents.split_diff_layout
-                      files={@review_data.files}
-                      expanded_files={@expanded_files}
-                      selected_file={@selected_file}
-                    />
-                  <% else %>
-                    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 p-8 text-center">
-                      <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
-                      <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
                     </div>
-                  <% end %>
-              <% end %>
+
+                  <% @review_tab == :commits -> %>
+                    <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
+
+                  <% @review_tab == :files_changed -> %>
+                    <%= if @review_data do %>
+                      <EvoDashWeb.ReviewComponents.split_diff_layout
+                        files={@review_data.files}
+                        expanded_files={@expanded_files}
+                        selected_file={@selected_file}
+                      />
+                    <% else %>
+                      <div class="p-8 text-center">
+                        <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
+                        <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
+                      </div>
+                    <% end %>
+                <% end %>
+              </div>
             </div>
 
             <%= if @branch_exists and is_nil(@review_data) and not @loading do %>

@@ -234,7 +234,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 </div>
               <% end %>
 
-              <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+              <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 mb-8">
                 <%= for schema <- resources_schemas do %>
                   <.setting_card
                     schema={schema}
@@ -264,7 +264,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 </div>
               <% end %>
 
-              <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+              <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 mb-8">
                 <%= for schema <- process_schemas do %>
                   <.setting_card
                     schema={schema}
@@ -277,7 +277,7 @@ defmodule EvoDashWeb.SettingsComponents do
             <% end %>
           <% else %>
             <%!-- Other categories: just list all setting cards --%>
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
               <%= for schema <- @schemas do %>
                 <.setting_card
                   schema={schema}
