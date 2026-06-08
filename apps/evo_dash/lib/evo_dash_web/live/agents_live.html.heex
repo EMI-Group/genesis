@@ -45,20 +45,24 @@
 
       <!-- Legend — pinned to bottom of left column -->
       <div class="agents-legend-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
-        <div class="card-body p-4">
-          <h4 class="font-semibold text-sm mb-3"><%= gettext("Status Legend") %></h4>
-          <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            <div class="flex items-center gap-2">
+        <div class="card-body p-3">
+          <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+            <span class="font-semibold text-base-content/70"><%= gettext("Status Legend") %></span>
+            <div class="flex items-center gap-2 tooltip" data-tip="<%= gettext("Agent is queued and waiting to be scheduled for execution.") %>">
               <span class="w-2.5 h-2.5 rounded-full bg-base-content/20"></span>
               <span><%= gettext("Pending") %></span>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 tooltip" data-tip="<%= gettext("Agent is actively executing its assigned task.") %>">
               <span class="w-2.5 h-2.5 rounded-full bg-success"></span>
               <span><%= gettext("Running") %></span>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 tooltip" data-tip="<%= gettext("Agent is waiting for subagents to finish. Nothing to do but wait.") %>">
               <span class="w-2.5 h-2.5 rounded-full bg-warning"></span>
               <span><%= gettext("Waiting") %></span>
+            </div>
+            <div class="flex items-center gap-2 tooltip" data-tip="<%= gettext("Agent is blocked due to insufficient LLM or tool concurrency. Consider increasing concurrency in Settings.") %>">
+              <span class="w-2.5 h-2.5 rounded-full bg-error"></span>
+              <span><%= gettext("Blocked") %></span>
             </div>
           </div>
         </div>
