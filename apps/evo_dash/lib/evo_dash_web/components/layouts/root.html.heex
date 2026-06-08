@@ -21,35 +21,45 @@
     </script>
     <script>
       (() => {
+        const resolveSystemTheme = () =>
+          window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+
+        const applyTheme = (theme) => {
+          const resolved = theme === "system" ? resolveSystemTheme() : theme;
+          document.documentElement.setAttribute("data-theme", resolved);
+          updateThemeColor(resolved);
+        };
+
         const setTheme = (theme) => {
           if (theme === "system") {
             localStorage.removeItem("phx:theme");
-            document.documentElement.removeAttribute("data-theme");
           } else {
             localStorage.setItem("phx:theme", theme);
-            document.documentElement.setAttribute("data-theme", theme);
           }
-          updateThemeColor(theme);
+          applyTheme(theme);
         };
 
-        const updateThemeColor = (theme) => {
+        const updateThemeColor = (resolvedTheme) => {
           const meta = document.querySelector('meta[name="theme-color"]');
           if (meta) {
-            const isDark = theme === "dark" ||
-              (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-            meta.content = isDark ? "#020617" : "#f8fafc";
+            meta.content = resolvedTheme === "dark" ? "#020617" : "#f8fafc";
           }
         };
 
-        if (!document.documentElement.hasAttribute("data-theme")) {
-          setTheme(localStorage.getItem("phx:theme") || "system");
-        }
-        window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
+        // Apply on load
+        applyTheme(localStorage.getItem("phx:theme") || "system");
 
+        // Cross-tab sync
+        window.addEventListener("storage", (e) => {
+          if (e.key === "phx:theme") setTheme(e.newValue || "system");
+        });
+
+        // Theme toggle buttons
         window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
 
+        // System theme change — re-resolve when in system mode
         window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-          if (!localStorage.getItem("phx:theme")) updateThemeColor("system");
+          if (!localStorage.getItem("phx:theme")) applyTheme("system");
         });
       })();
     </script>
