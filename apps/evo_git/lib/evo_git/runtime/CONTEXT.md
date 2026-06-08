@@ -10,6 +10,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 | Module | File | Public API | Description |
 |--------|------|------------|-------------|
 | `EvoGit.Runtime` | `../runtime.ex` | `ensure_repo/1` | Top-level coordinator. `ensure_repo/1` initializes a git repo with `.gitignore` if missing. The CLI (`EvoGit.CLI`) calls `Genesis.run/2` and `Evolution.run/2` directly — there is no combined orchestration entry point. |
+| `EvoGit.Runtime.Helpers` | `helpers.ex` | `merge_and_report/3`, `notify_finalizing/1`, `generate_branch_name/1`, `new_codebase?/1`, `validate_node_path/2`, `resolve_starting_commit/2` | Shared helper functions for both runtime phases — branch creation, change detection, node path validation, commit resolution. |
 | `EvoGit.Runtime.Genesis` | `genesis.ex` | `run/2` | Stage 1 — Creation/Analysis. Auto-detects mode. Returns `{:ok, %{commit_sha, result, tag, branch_name, pr_url}}` or `{:ok, %{..., no_changes: true}}`. |
 | `EvoGit.Runtime.Evolution` | `evolution.ex` | `run/2` | Stage 2 — Evolutionary Loop. Supports `:simple` and `:complex` modes. Same return shape as Genesis. |
 | `EvoGit.Runtime.PullRequest` | `pull_request.ex` | `try_create/4`, `generate_title/2`, `format_body/2` | Shared PR utilities: LLM-powered title generation, body formatting, push + PR creation via `gh` CLI. |
