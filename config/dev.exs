@@ -84,6 +84,6 @@ config :phoenix_live_view,
 config :evo_dash, desktop: false
 
 # Import local configuration if it exists, which is ignored by git
-if File.exists?("config/dev.local.exs") do
+if File.exists?(Path.join(__DIR__, "dev.local.exs")) do
   import_config "dev.local.exs"
 end
