@@ -13,10 +13,10 @@ defmodule EvoDashWeb.SettingsComponents do
   def setting_card(assigns) do
     ~H"""
     <div class={[
-      "relative bg-base-100 rounded-[1.5rem] border border-base-200 shadow-sm hover:shadow-md transition-all duration-300 p-6 flex flex-col justify-between group h-full min-w-[320px] flex-1",
+      "relative bg-base-100 rounded-[1.5rem] border border-base-200 shadow-sm hover:shadow-md transition-all duration-300 p-6 flex flex-col group min-w-[320px] flex-1",
       @disabled && "opacity-60 pointer-events-none grayscale-[20%]"
     ]}>
-      <div>
+      <div class="flex-1">
         <div class="flex items-start justify-between gap-4 mb-4">
           <div class="flex items-center gap-2">
             <div class="w-2 h-2 rounded-full bg-primary/40 group-hover:bg-primary transition-colors duration-300"></div>
@@ -205,7 +205,7 @@ defmodule EvoDashWeb.SettingsComponents do
 
                 <%!-- API Key input --%>
                 <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
-                <form phx-submit="save_api_key" class="flex items-end gap-3 pt-4 pb-2">
+                <form phx-submit="save_api_key" class="flex items-end gap-3 pt-6 pb-4">
                   <input type="hidden" name="env_var" value={provider.env_var} />
                   <div class="form-control flex-1">
                     <label class="label">
@@ -218,7 +218,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       type="password"
                       name="api_key"
                       placeholder={gettext("Enter your API key")}
-                      class="input input-bordered w-full rounded-xl shadow-sm bg-base-50"
+                      class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 mt-2"
                     />
                   </div>
                   <button type="submit" class="btn btn-primary btn-sm rounded-xl">
@@ -236,7 +236,7 @@ defmodule EvoDashWeb.SettingsComponents do
             </div>
 
             <%!-- Render the regular setting cards for LLM --%>
-            <div class="flex flex-wrap gap-6">
+            <div class="flex flex-wrap gap-6 items-stretch">
               <%= for schema <- @schemas do %>
                 <.setting_card
                   schema={schema}
@@ -330,7 +330,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <div class="flex flex-wrap gap-6 mb-8">
+                <div class="flex flex-wrap gap-6 mb-8 items-stretch">
                   <%= for schema <- resources_schemas do %>
                     <.setting_card
                       schema={schema}
@@ -360,7 +360,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <div class="flex flex-wrap gap-6 mb-8">
+                <div class="flex flex-wrap gap-6 mb-8 items-stretch">
                   <%= for schema <- process_schemas do %>
                     <.setting_card
                       schema={schema}
@@ -373,7 +373,7 @@ defmodule EvoDashWeb.SettingsComponents do
               <% end %>
             <% else %>
               <%!-- Other categories: just list all setting cards --%>
-              <div class="flex flex-wrap gap-6">
+              <div class="flex flex-wrap gap-6 items-stretch">
                 <%= for schema <- @schemas do %>
                   <.setting_card
                     schema={schema}
