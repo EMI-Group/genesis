@@ -1,10 +1,10 @@
-# **EvoGit 1.0 Design Specification**
+# **EvoX Genesis 1.0 Design Specification**
 
 ## **1. Introduction**
 
-EvoGit 1.0 is a decentralized, evolutionary software development framework. While the original EvoGit approach focused purely on the **Temporal Dimension** (a phylogenetic graph of code versions), it lacked structural awareness, treating codebases as flat collections of files.
+EvoX Genesis 1.0 is a decentralized, evolutionary software development framework. While the original EvoGit approach focused purely on the **Temporal Dimension** (a phylogenetic graph of code versions), it lacked structural awareness, treating codebases as flat collections of files.
 
-EvoGit 1.0 introduces the **Spatial Dimension**—a hierarchical understanding of the codebase represented as a semantic tree. By intersecting these two dimensions, the system decomposes complex architectural tasks into manageable local evolutions.
+EvoX Genesis 1.0 introduces the **Spatial Dimension**—a hierarchical understanding of the codebase represented as a semantic tree. By intersecting these two dimensions, the system decomposes complex architectural tasks into manageable local evolutions.
 
 Crucially, **Agents are stateless functions**. All persistent memory exists either in the spatial dimension (the context tree) or the temporal dimension (the Git history). Agents can be invoked with any state across these dimensions to perform a transformation, eliminating memory corruption issues and enabling seamless state rollbacks and parallelization.
 
@@ -19,21 +19,21 @@ The codebase is a recursive tree where every node (directory or file) maintains 
 * **The Spatial Contract (Directory):** Every `Directory Node` *must* contain a `CONTEXT.md` file. This file is not treated as a normal code file within the Git repository. It is conceptually bound to the directory as an intrinsic attribute (similar to an `xattr`) acting as the directory's schema and routing table. It defines two things:
   1. **Documentation:** **Intent**, **API Surface**, and **Constraints** — the directory's purpose, what it exposes, and the rules for code within it.
   2. **Routing Table:** A mapping of responsibility areas to child subdirectories, enabling parent agents to determine which subdirectory owns which domain/module/feature. This is represented as a simple markdown list (e.g., `* `src/auth/` → Authentication & authorization logic`). The routing table allows agents to efficiently delegate work to the correct child node without needing to investigate the entire subtree.
-* **The Boundary of Explicit Context (File Level):** While a single code file technically contains its own internal hierarchy of context (module-level docstrings, class/function docstrings, and inline comments), EvoGit 1.0 **does not explicitly model or enforce this sub-file context**. Modern LLMs natively excel at comprehending implicit, file-level context from standard code structures. Therefore, the formal, system-managed Context Hierarchy applies only down to the directory level. Once an agent targets a `File Node`, it relies entirely on the LLM's natural code comprehension to navigate the file's internal logic.
+* **The Boundary of Explicit Context (File Level):** While a single code file technically contains its own internal hierarchy of context (module-level docstrings, class/function docstrings, and inline comments), EvoX Genesis 1.0 **does not explicitly model or enforce this sub-file context**. Modern LLMs natively excel at comprehending implicit, file-level context from standard code structures. Therefore, the formal, system-managed Context Hierarchy applies only down to the directory level. Once an agent targets a `File Node`, it relies entirely on the LLM's natural code comprehension to navigate the file's internal logic.
 * **Contextual Inheritance:** Agents dynamically build their "World View" by inheriting context top-down. For `src/foo/bar.py`, the agent aggregates the explicit, system-managed context from the Root `CONTEXT.md` $\rightarrow$ `src/ CONTEXT.md` $\rightarrow$ `src/foo/ CONTEXT.md`, and then relies on its innate abilities to parse `bar.py`'s internal code comments.
 
 ### **2.2 The Temporal Dimension: "The Phylogenetic Graph"**
 Code evolves through a Directed Acyclic Graph (DAG) of immutable Git commits.
 
 * **Directional Evolution:** ($v_{new} > v_{old}$) A child commit is accepted *if and only if* it is measurably "better" than its parent.
-* **Partial Progress Acceptance:** Unlike traditional CI/CD requiring a "Green Build," EvoGit accepts incremental improvements. A version is accepted if it passes more tests, implements a feature, or improves readability—even if other system parts remain broken.
+* **Partial Progress Acceptance:** Unlike traditional CI/CD requiring a "Green Build," EvoX Genesis accepts incremental improvements. A version is accepted if it passes more tests, implements a feature, or improves readability—even if other system parts remain broken.
 * **Evaluation Ranges:** Neighboring commits are loosely evaluated (diff inspection, basic tests) to allow rapid progress. Major versions or tags are strictly evaluated (full test suites, metrics) to ensure systemic improvement.
 
 ---
 
 ## **3. The Stateless Agent Model**
 
-In EvoGit 1.0, Agents do not maintain long-term memory. They are transient processes utilizing short-term session memory, relying entirely on the Context Tree and Phylogenetic Graph for historical and structural awareness.
+In EvoX Genesis 1.0, Agents do not maintain long-term memory. They are transient processes utilizing short-term session memory, relying entirely on the Context Tree and Phylogenetic Graph for historical and structural awareness.
 
 ### **3.1 Definition & State**
 An agent executes a functional transformation defined as:
@@ -111,7 +111,7 @@ Please note that "simple" doesn't necessarily mean the code change is small or t
 * **Version Control:** **Git CLI**. The libgit2 bindings are explicitly avoided to minimize complexity, dependencies, and to ease debugging.
 
 ### **5.2 The Agent Scheduler & Git Isolation**
-EvoGit manages execution through an internal **Agent Scheduler**, analogous to OS process or thread scheduling. The constrained system resource is a fixed pool of $N$ `git worktree` slots located at `.evogit/worktrees/worker_<i>/`.
+EvoX Genesis manages execution through an internal **Agent Scheduler**, analogous to OS process or thread scheduling. The constrained system resource is a fixed pool of $N$ `git worktree` slots located at `.evogit/worktrees/worker_<i>/`.
 
 1. **Immutability:** The main user checkout is *never* directly modified by an agent.
 2. **Execution Lifecycle:** All agents are initially spawned by the scheduler into a `waiting` state. When a worktree slot becomes available, the scheduler assigns it to a waiting agent, **checks out the exact `current_commit` (not the `base_commit`)** specified in the agent's temporal state, and begins execution. This ensures resuming agents do not overwrite unyielded progress.

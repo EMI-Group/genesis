@@ -24,7 +24,7 @@ evo_git-*.tar
 /tmp/
 /apps/evo_git/tmp
 
-# EvoGit runtime artifacts
+# Genesis runtime artifacts
 .evogit/
 # Ignore local config files
 *.local.exs

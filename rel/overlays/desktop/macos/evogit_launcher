@@ -1,6 +1,6 @@
 #!/bin/bash
-# EvoGit Desktop Launcher for macOS
-# This script starts the EvoGit dashboard in desktop mode.
+# Genesis Desktop Launcher for macOS
+# This script starts the Genesis dashboard in desktop mode.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONTENTS_DIR="$(dirname "$SCRIPT_DIR")"
