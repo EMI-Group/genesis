@@ -60,7 +60,7 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def review_tabs(assigns) do
     ~H"""
-    <div class="review-tab-bar-sticky flex gap-2 overflow-x-auto pb-2 -mb-2 scrollbar-hide">
+    <div class="review-tab-bar-sticky flex gap-2 overflow-x-auto scrollbar-hide">
       <button
         phx-click="switch_tab"
         phx-value-tab="conversation"

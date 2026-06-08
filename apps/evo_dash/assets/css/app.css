@@ -573,6 +573,20 @@ button, a, input, textarea, select, summary,
 .review-tab-bar-sticky {
   @apply sticky z-30 bg-base-100 border-b border-base-200 px-4 sm:px-6 lg:px-8;
   top: 64px;
+  margin-left: -1rem;
+  margin-right: -1rem;
+}
+@media (min-width: 640px) {
+  .review-tab-bar-sticky {
+    margin-left: -1.5rem;
+    margin-right: -1.5rem;
+  }
+}
+@media (min-width: 1024px) {
+  .review-tab-bar-sticky {
+    margin-left: -2rem;
+    margin-right: -2rem;
+  }
 }
 
 /* Full-screen diff layout — flex row, diff content flows with page */
