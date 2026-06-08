@@ -36,7 +36,7 @@ The scheduler supports multiple concurrent tasks targeting different repos. Repo
 
 There is no global `state.repo_root` fallback — repo root resolution is always per-agent. The scheduler tracks which repos have been initialized via the `initialized_repos` map (`%{String.t() => true}`).
 
-`resolve_agent_repo_root/2` in Dispatch is self-contained for primary repos (strips worktree suffix from `spec.phylo_node.repo`). For foreign repos, it looks up `state.foreign_repos` by `spec.repo_id`.
+`resolve_agent_repo_root/2` in Dispatch is self-contained for primary repos (strips worktree suffix from `spec.phylo_node.repo`). For foreign repos, it looks up the repo root from the agent's own `spec.foreign_repos` list by `spec.repo_id` — foreign repos are carried per-agent, not stored in global scheduler state.
 
 ### Worktree Lifecycle (Worktrees module)
 
