@@ -3,7 +3,7 @@ defmodule Mix.Tasks.Translate do
 
   @shortdoc "Translates a POT file to multiple target languages using LLM"
 
-  @requirements ["app.start"]
+  @requirements ["app.config"]
 
   @languages %{
     "zh_CN" => "Chinese (Simplified) 中文 (简体)",
@@ -24,6 +24,8 @@ defmodule Mix.Tasks.Translate do
 
   @impl Mix.Task
   def run(args) do
+    Application.ensure_all_started(:req_llm)
+
     {opts, remaining_args, _} =
       OptionParser.parse(args,
         switches: [force: :boolean, prefix: :string],
