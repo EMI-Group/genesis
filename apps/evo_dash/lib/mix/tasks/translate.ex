@@ -20,7 +20,7 @@ defmodule Mix.Tasks.Translate do
     "it" => "Italian Italiano"
   }
 
-  @model "deepseek-v4-flash"
+  @model "deepseek:deepseek-v4-flash"
 
   @impl Mix.Task
   def run(args) do
