@@ -127,6 +127,9 @@ defmodule EvoDashWeb.SettingsLive do
             errors={Map.get(@per_category_errors, @active_category, [])}
             sandbox_backend={@scheduler_config[:sandbox_backend]}
             sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
+            llm_providers={@llm_providers}
+            selected_provider_id={@selected_provider_id}
+            selected_provider_models={@selected_provider_models}
           />
         </.form>
       </div>
@@ -158,6 +161,9 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:file_config, file_config)
       |> assign(:config_path, config_path)
       |> assign(:config_file_exists, config_file_exists)
+      |> assign(:llm_providers, EvoGit.Config.LLMCatalog.providers())
+      |> assign(:selected_provider_id, nil)
+      |> assign(:selected_provider_models, [])
 
     {:ok, socket}
   end
@@ -271,6 +277,35 @@ defmodule EvoDashWeb.SettingsLive do
         {:noreply,
          socket
          |> put_flash(:error, gettext("Failed to reset key: %{reason}", reason: inspect(reason)))}
+    end
+  end
+
+  @impl true
+  def handle_event("select_llm_provider", %{"provider_id" => id_str}, socket) do
+    provider_id = String.to_existing_atom(id_str)
+    models = EvoGit.Config.LLMCatalog.provider_models(provider_id)
+    {:noreply, socket |> assign(:selected_provider_id, provider_id) |> assign(:selected_provider_models, models)}
+  end
+
+  @impl true
+  def handle_event("select_llm_model_shortcut", %{"model_string" => model_string}, socket) do
+    file_config = put_in(socket.assigns.file_config, [:llm, :model], model_string)
+    {:noreply, assign(socket, :file_config, file_config)}
+  end
+
+  @impl true
+  def handle_event("save_api_key", %{"env_var" => env_var, "api_key" => api_key}, socket) do
+    if String.trim(api_key) == "" do
+      {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
+    else
+      case EvoGit.Config.save_credentials(%{env_var => String.trim(api_key)}) do
+        :ok ->
+          config_status = safe_config_status()
+          {:noreply, socket |> assign(:config_status, config_status) |> put_flash(:info, gettext("API key saved successfully."))}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, gettext("Failed to save API key: %{reason}", reason: inspect(reason)))}
+      end
     end
   end
 
