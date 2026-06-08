@@ -95,8 +95,8 @@ defmodule EvoDashWeb.SettingsLive do
             </p>
             <div class="flex items-center gap-3 flex-wrap">
               <span class="text-xs font-bold uppercase tracking-wider text-base-content/50">{gettext("Example model names:")}</span>
-              <span class="badge badge-ghost font-mono text-xs px-3 py-3 rounded-xl bg-base-200 border-base-300">anthropic/claude-3-5-sonnet-20241022</span>
-              <span class="badge badge-ghost font-mono text-xs px-3 py-3 rounded-xl bg-base-200 border-base-300">openai/gpt-4o</span>
+              <span class="badge badge-ghost font-mono text-xs px-3 py-3 rounded-xl bg-base-200 border-base-300">anthropic:claude-opus-4-7</span>
+              <span class="badge badge-ghost font-mono text-xs px-3 py-3 rounded-xl bg-base-200 border-base-300">openai:gpt-5.5</span>
             </div>
           </div>
         </div>
