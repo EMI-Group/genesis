@@ -108,6 +108,7 @@ EvoDash uses **Gettext** for internationalization. All user-facing strings in Li
 - **Translation files**: `priv/gettext/default.pot` (template, 253 messages), `priv/gettext/en/LC_MESSAGES/default.po` (English source strings)
 - **Dynamic locale**: `root.html.heex` uses `Gettext.get_locale(EvoDashWeb.Gettext)` for the `<html lang>` attribute
 - **Workflow**: `mix gettext.extract` → `mix gettext.merge priv/gettext --locale=<lang>` to add new languages
+- **AI Translation**: `mix translate apps/evo_dash/priv/gettext/default.pot all` — translates POT file to all supported languages using LLM (`deepseek-v4-flash`). Supports `--force/-f` to re-translate existing entries and `--prefix/-p` to filter by source file prefix. See `lib/mix/tasks/translate.ex`.
 - **CLI excluded**: The `:evo_git` CLI interface does NOT use gettext — only the web dashboard is internationalized
 
 ## Constraints
