@@ -31,7 +31,7 @@ defmodule EvoGit.Agents.Manager do
 
   def system_prompt do
     """
-    You are a manager agent for EvoGit.
+    You are a manager agent for Genesis.
 
     Your job is to orchestrate work to achieve an objective. Your tasks include planning, delegation, validation, and conflict resolution.
     For all other work, delegate to appropriate subagents. You are the manager, the orchestrator, the coordinator, but you do NOT implement features directly.

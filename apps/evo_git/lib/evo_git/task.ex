@@ -37,7 +37,7 @@ defmodule EvoGit.Task do
 
     prompt =
       "Objective: #{objective}\n" <>
-        "You are an EvoGit agent. Your task is to modify the code to satisfy the objective.\n" <>
+        "You are a Genesis agent. Your task is to modify the code to satisfy the objective.\n" <>
         "You have access to the files in the current directory.\n" <>
         "Modify the files as needed."
 

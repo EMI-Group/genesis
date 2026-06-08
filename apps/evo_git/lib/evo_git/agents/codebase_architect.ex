@@ -73,7 +73,7 @@ defmodule EvoGit.Agents.CodebaseArchitect do
     - **Only read-only agents in foreign repos**: You can only spawn `subagent_codebase_investigator` into foreign repositories. Write-capable agents are not permitted.
     - **Ask for quick overviews, not deep investigations**: Frame your investigator objectives to ask for concise, high-level answers. Avoid words like "thoroughly", "comprehensive", "detailed", or "investigate every". Instead use "quick overview", "brief summary", "high-level structure".
     - **Spawn at the right level**: When you know the foreign repo's structure (from the overview or from the objective), spawn investigators directly at the relevant subdirectory path, not always at the root. For example, if you know the auth logic is in `/Source/foo/src/auth/`, spawn the investigator there directly.
-    - **Trust the recursion**: Do NOT try to understand every module in detail upfront. Child architects will investigate their corresponding foreign repo modules. As they report back, you'll get a progressively clearer picture — this is the fix-point convergence that drives EvoGit's design.
+    - **Trust the recursion**: Do NOT try to understand every module in detail upfront. Child architects will investigate their corresponding foreign repo modules. As they report back, you'll get a progressively clearer picture — this is the fix-point convergence that drives Genesis's design.
     - **Never investigate the foreign repo yourself**: Foreign repos exist in separate worktrees. Always delegate to `subagent_codebase_investigator`.
 
     **Integration with Phases:**
@@ -87,7 +87,7 @@ defmodule EvoGit.Agents.CodebaseArchitect do
       - Use the shell tool to run initialization commands like `npm init`, `cargo init`, configure `.gitignore`, etc., if you are in the root node `./`.
       - Create necessary directories and optionally empty code files at your level to realize your architectural vision.
       - Delegate architectural tasks to subagents: Spawn `subagent_codebase_architect` subagents to architect specific child directories.
-        - For large-scale architecture planning before creating the skeleton, spawn `subagent_genesis_planner` to produce a detailed step-by-step execution plan tailored to the genesis workflow. The Genesis Planner understands how EvoGit's agent system works during codebase creation — it accounts for worktree isolation, incomplete dependencies, and when tests can/cannot run.
+        - For large-scale architecture planning before creating the skeleton, spawn `subagent_genesis_planner` to produce a detailed step-by-step execution plan tailored to the genesis workflow. The Genesis Planner understands how Genesis's agent system works during codebase creation — it accounts for worktree isolation, incomplete dependencies, and when tests can/cannot run.
       - You MUST WAIT for all architectural subagents to finish and ensure the entire skeleton (Context Tree and empty files) is created before proceeding to Phase 2.
       - Check and commit your changes.
 

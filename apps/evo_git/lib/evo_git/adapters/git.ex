@@ -3,7 +3,7 @@ defmodule EvoGit.Adapters.Git do
   Wrapper for Git CLI operations, focusing on Worktree isolation.
   """
 
-  @co_author_trailer "\n\nCo-Authored-By: EvoGit <noreply@evogit.ai>"
+  @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
 
   @doc """
   Runs a git command in the given directory.

@@ -229,7 +229,7 @@ defmodule EvoGit.CLI do
 
   defp print_help do
     IO.puts("""
-    EvoGit CLI - Evolutionary Software Development
+    EvoX Genesis CLI - Evolutionary Software Development
 
     Usage:
       evogit genesis [options] [<prompt>]
@@ -289,11 +289,11 @@ defmodule EvoGit.CLI do
         echo '[user]'                                 >> config.toml
         echo 'github_username = "your-username"'      >> config.toml
 
-      Step 4: Run EvoGit!
+      Step 4: Run Genesis!
         evogit genesis "your prompt"
 
     Configuration:
-      EvoGit requires API keys to communicate with LLM providers. Keys are stored
+      Genesis requires API keys to communicate with LLM providers. Keys are stored
       in a credentials file (NOT in evogit.toml or environment variables alone).
 
       Credentials file location (by platform):
@@ -317,7 +317,7 @@ defmodule EvoGit.CLI do
       API keys from credentials.toml are automatically set as environment variables.
       You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).
 
-      At least one API key is required to use EvoGit.
+      At least one API key is required to use Genesis.
 
       Additional settings (scheduler, LLM model, user preferences) can be
       configured in the user config file:
