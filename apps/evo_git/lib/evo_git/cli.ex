@@ -147,6 +147,10 @@ defmodule EvoGit.CLI do
     end
   end
 
+  defp dispatch(["setup" | _rest], _opts) do
+    run_setup_wizard()
+  end
+
   defp dispatch(_, _opts) do
     IO.puts("Error: Unknown command or missing arguments.")
     print_help()
@@ -172,6 +176,207 @@ defmodule EvoGit.CLI do
     else
       false
     end
+  end
+
+  defp run_setup_wizard do
+    alias EvoGit.Config.LLMCatalog
+
+    IO.puts("""
+
+    ╔══════════════════════════════════════════════════════╗
+    ║            EvoGit LLM Configuration Setup           ║
+    ╚══════════════════════════════════════════════════════╝
+    """)
+
+    # Step 1: Provider selection
+    providers = LLMCatalog.providers()
+
+    IO.puts("Step 1: Choose your LLM provider:\n")
+
+    providers
+    |> Enum.with_index(1)
+    |> Enum.each(fn {provider, idx} ->
+      IO.puts("  #{idx}. #{provider.display_name}")
+    end)
+
+    IO.puts("  #{length(providers) + 1}. Other (custom provider)")
+    IO.puts("  0. Exit")
+    IO.puts("")
+
+    provider_choice = prompt_input("Enter your choice [0-#{length(providers) + 1}]: ")
+
+    case parse_int(provider_choice) do
+      nil ->
+        IO.puts("\nInvalid choice. Aborting.")
+
+      0 ->
+        IO.puts("\nSetup cancelled.")
+
+      n when n >= 1 and n <= length(providers) ->
+        provider = Enum.at(providers, n - 1)
+        setup_provider(provider)
+
+      n when n == length(providers) + 1 ->
+        setup_custom_provider()
+
+      _ ->
+        IO.puts("\nInvalid choice. Aborting.")
+    end
+  end
+
+  defp setup_provider(provider) do
+    IO.puts("\nSelected: #{provider.display_name}")
+    IO.puts("API key environment variable: #{provider.env_var}\n")
+
+    # Step 2: Model selection
+    models = provider.models
+
+    IO.puts("Step 2: Choose a model:\n")
+
+    models
+    |> Enum.with_index(1)
+    |> Enum.each(fn {model, idx} ->
+      IO.puts("  #{idx}. #{model.display_name} (#{model.id})")
+    end)
+
+    IO.puts("  #{length(models) + 1}. Custom model name")
+    IO.puts("")
+
+    model_choice = prompt_input("Enter your choice [1-#{length(models) + 1}]: ")
+
+    model_id =
+      case parse_int(model_choice) do
+        nil ->
+          IO.puts("\nInvalid choice. Using custom input.")
+          prompt_input("Enter model name: ")
+
+        n when n >= 1 and n <= length(models) ->
+          model = Enum.at(models, n - 1)
+          IO.puts("\n  ✓ Selected: #{model.display_name}")
+          model.id
+
+        n when n == length(models) + 1 ->
+          prompt_input("Enter model name: ")
+
+        _ ->
+          IO.puts("\nInvalid choice. Using custom input.")
+          prompt_input("Enter model name: ")
+      end
+
+    model_string = "#{hd(provider.provider_atoms)}:#{model_id}"
+
+    # Step 3: API key
+    IO.puts("\nStep 3: Enter your API key.")
+    IO.puts("  This will be stored in your credentials file.\n")
+
+    api_key = prompt_input("Enter #{provider.env_var}: ")
+
+    if api_key == "" do
+      IO.puts("\nNo API key entered. API key can be set later in credentials.toml.")
+    end
+
+    # Save everything
+    save_setup_result(model_string, provider.env_var, api_key)
+  end
+
+  defp setup_custom_provider do
+    IO.puts("\n" <> String.trim(EvoGit.Config.LLMCatalog.unknown_provider_help()))
+    IO.puts("")
+
+    model_string = prompt_input("Enter the full model string (provider:model): ")
+
+    if model_string == "" or not String.contains?(model_string, ":") do
+      IO.puts("\nInvalid model string. Expected format: \"provider:model-name\"")
+      IO.puts("Setup cancelled.")
+    else
+      [provider_part | _] = String.split(model_string, ":", parts: 2)
+      env_var = String.upcase(provider_part) <> "_API_KEY"
+
+      IO.puts("\n  Provider: #{provider_part}")
+      IO.puts("  Expected API key env var: #{env_var}")
+      IO.puts("  (If this is incorrect, check https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html)\n")
+
+      api_key = prompt_input("Enter #{env_var}: ")
+
+      save_setup_result(model_string, env_var, api_key)
+    end
+  end
+
+  defp save_setup_result(model_string, env_var, api_key) do
+    # Save model to config.toml
+    existing_config = EvoGit.Config.user_config()
+
+    # Build atom-keyed config with the model set
+    config =
+      existing_config
+      |> atomize_config_keys()
+      |> ensure_llm_section()
+      |> put_in([:llm, :model], model_string)
+
+    case EvoGit.Config.save_user_config(config) do
+      :ok ->
+        IO.puts("\n  ✓ Model saved to config.toml: #{model_string}")
+
+        # Save API key to credentials.toml if provided
+        if api_key != "" do
+          case EvoGit.Config.save_credentials(%{env_var => api_key}) do
+            :ok ->
+              IO.puts("  ✓ API key saved to credentials.toml: #{env_var}")
+
+            {:error, reason} ->
+              IO.puts("  ✗ Failed to save API key: #{inspect(reason)}")
+              IO.puts("    You can manually add it to your credentials.toml:")
+              IO.puts("    #{env_var} = \"your-api-key\"")
+          end
+        end
+
+        IO.puts("\n  Config file: #{EvoGit.Config.config_path()}")
+        IO.puts("  Credentials file: #{EvoGit.Config.credentials_path()}")
+        IO.puts("\n✅ Setup complete! You can now run:")
+        IO.puts("  evogit genesis \"your prompt here\"")
+
+      {:error, reason} ->
+        IO.puts("\n  ✗ Failed to save config: #{inspect(reason)}")
+    end
+  end
+
+  defp prompt_input(prompt) do
+    case IO.gets(prompt) do
+      nil -> ""
+      input -> String.trim(input)
+    end
+  end
+
+  defp parse_int(str) when is_binary(str) do
+    case Integer.parse(str) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp parse_int(_), do: nil
+
+  defp atomize_config_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {key, value} when is_binary(key) ->
+        atom_key =
+          try do
+            String.to_existing_atom(key)
+          rescue
+            ArgumentError -> key
+          end
+
+        {atom_key, atomize_config_keys(value)}
+
+      {key, value} ->
+        {key, atomize_config_keys(value)}
+    end)
+  end
+
+  defp atomize_config_keys(value), do: value
+
+  defp ensure_llm_section(config) do
+    Map.put_new(config, :llm, %{model: nil})
   end
 
   defp get_input(rest, opts) do
@@ -244,6 +449,9 @@ defmodule EvoGit.CLI do
                  Modes:
                    'simple'   (Default) Top-down evolution for clear tasks.
                    'complex'  Bottom-up evolution for open-ended tasks.
+      setup      Configure LLM provider and API key interactively.
+                 A guided wizard helps you select a provider, choose a
+                 model, and set your API key without manual file editing.
 
     Options:
       -f, --file <path>           Read prompt/objective from a file.
@@ -275,22 +483,26 @@ defmodule EvoGit.CLI do
       -h, --help                  Show this help message.
 
     Getting Started:
-      Step 1: Create the config directory
-        Linux:   mkdir -p ~/.config/evogit
-        macOS:   mkdir -p ~/Library/Application\\ Support/evogit
-        Windows: mkdir %APPDATA%\\evogit
+      Quick setup (recommended):
+        evogit setup
 
-      Step 2: Create credentials.toml with your API key(s)
-        echo 'GOOGLE_API_KEY = "YOUR_API_KEY_HERE"' > credentials.toml
+      Manual setup:
+        Step 1: Create the config directory
+          Linux:   mkdir -p ~/.config/evogit
+          macOS:   mkdir -p ~/Library/Application\\ Support/evogit
+          Windows: mkdir %APPDATA%\\evogit
 
-      Step 3: Create config.toml with your LLM model and username
-        echo '[llm]'                                  > config.toml
-        echo 'model = "your-model-name"'              >> config.toml
-        echo '[user]'                                 >> config.toml
-        echo 'github_username = "your-username"'      >> config.toml
+        Step 2: Create credentials.toml with your API key(s)
+          echo 'GOOGLE_API_KEY = "YOUR_API_KEY_HERE"' > credentials.toml
 
-      Step 4: Run Genesis!
-        evogit genesis "your prompt"
+        Step 3: Create config.toml with your LLM model and username
+          echo '[llm]'                                  > config.toml
+          echo 'model = "your-model-name"'              >> config.toml
+          echo '[user]'                                 >> config.toml
+          echo 'github_username = "your-username"'      >> config.toml
+
+        Step 4: Run Genesis!
+          evogit genesis "your prompt"
 
     Configuration:
       Genesis requires API keys to communicate with LLM providers. Keys are stored
