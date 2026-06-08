@@ -12,12 +12,23 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 | `resolve/1` | Returns resolved value for a specific key path (atom or list of atoms) |
 | `user_config/0` | Reads and returns parsed `config.toml`, or `%{}` if not found |
 | `save_user_config/1` | Persists a config map to `config.toml`. Creates config directory if needed. Returns `:ok` or `{:error, reason}`. |
+| `save_credentials/1` | Merges and persists API key map to `credentials.toml`. Sets env vars. Returns `:ok` or `{:error, reason}`. |
 | `config_status/0` | Returns diagnostic map with `:missing`, `:warnings`, and `:ok?`. Checks LLM model, API key presence, and GitHub username. |
 | `credentials/0` | Reads `credentials.toml`, sets each key-value pair as an env var, returns parsed map |
 | `defaults/0` | Returns built-in application defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode) |
 | `config_path/0` | Returns the full path to `config.toml` |
 | `config_dir/0` | Returns platform-specific config directory (XDG/macos/windows) |
 | `credentials_path/0` | Returns full path to `credentials.toml` |
+
+### `EvoGit.Config.LLMCatalog` (provider/model shortcuts)
+| Function | Description |
+|----------|-------------|
+| `providers/0` | Returns list of predefined provider entries (Anthropic, OpenAI, Google, DeepSeek, ZAI, Alibaba) with models |
+| `provider_models/1` | Returns model shortcuts for a given provider atom |
+| `resolve_model/2` | Resolves `{provider_atom, model_input}` to `"provider:model"` string |
+| `find_provider/1` | Finds provider entry by atom (checks `provider_atoms` list) |
+| `unknown_provider_help/0` | Returns guidance text with links to llmdb.xyz and ReqLLM docs |
+| `known_env_vars/0` | Returns all unique env var names from the catalog |
 
 ### `EvoGit.Defaults` (backward-compatibility shim)
 Delegates all calls to `EvoGit.Config.resolve/1`. Functions: `max_concurrency`, `max_tool_concurrency`, `max_retries`, `agent_max_retries`, `max_agent_depth`, `llm_model`, `github_username`, `compression_threshold_tokens`, `sandbox`.
