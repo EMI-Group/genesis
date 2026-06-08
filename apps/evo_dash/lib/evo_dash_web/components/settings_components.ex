@@ -221,7 +221,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 mt-2"
                     />
                   </div>
-                  <button type="submit" class="btn btn-primary btn-sm rounded-xl">
+                  <button type="submit" class="btn btn-primary btn-sm rounded-xl mt-2">
                     {gettext("Save Key")}
                   </button>
                 </form>
@@ -249,7 +249,7 @@ defmodule EvoDashWeb.SettingsComponents do
           <% else %>
             <%= if @category == :sandbox do %>
               <%!-- Sandbox backend banner --%>
-              <div class="mb-8 relative overflow-hidden rounded-3xl border">
+              <div class="mb-8 relative overflow-hidden rounded-3xl">
                 <div class="absolute inset-0 bg-gradient-to-br opacity-10 pointer-events-none"></div>
                 <%= case @sandbox_backend do %>
                   <% :systemd_run -> %>
