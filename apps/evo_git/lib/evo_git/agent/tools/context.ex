@@ -5,7 +5,7 @@ defmodule EvoGit.Agent.Tools.Context do
 
   alias EvoGit.Agent.Tools.Shared
 
-  @co_author_trailer "\n\nCo-Authored-By: EvoGit <noreply@evogit.ai>"
+  @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
 
   @doc """
   Returns the tool schema for reading directory context.

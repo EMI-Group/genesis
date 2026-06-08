@@ -22,7 +22,7 @@ defmodule EvoGit.Agents.Evaluator do
 
   def system_prompt do
     """
-    You are an evaluator agent for EvoGit. Your job is to verify that code changes satisfy the original objective and maintain quality.
+    You are an evaluator agent for Genesis. Your job is to verify that code changes satisfy the original objective and maintain quality.
     You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives.
 
     ## Finding the Base Commit

@@ -16,7 +16,7 @@ defmodule EvoDash.Application do
           [
             app: :evo_dash,
             id: :evo_dash_window,
-            title: gettext("EvoGit Dashboard"),
+            title: gettext("Genesis Dashboard"),
             url: "http://localhost:#{port}/?client=desktop",
             size: {1280, 800}
           ]}]

@@ -1,6 +1,6 @@
-# EvoGit 1.0
+# Genesis 1.0
 
-EvoGit is a decentralized, evolutionary software development framework. It treats your codebase as a hierarchical tree of "Context Nodes" (Spatial Dimension) and evolves it through a Directed Acyclic Graph of Git commits (Temporal Dimension).
+Genesis is a decentralized, evolutionary software development framework. It treats your codebase as a hierarchical tree of "Context Nodes" (Spatial Dimension) and evolves it through a Directed Acyclic Graph of Git commits (Temporal Dimension).
 
 It uses AI Agents to recursively build and optimize software, leveraging a "Context Tree" to maintain architectural coherence and a "Phylogenetic Graph" to manage code evolution.
 
@@ -19,7 +19,7 @@ It uses AI Agents to recursively build and optimize software, leveraging a "Cont
 
 ## Usage
 
-EvoGit is a CLI tool. You can run it using `mix run` to execute the CLI entry point.
+Genesis is a CLI tool. You can run it using `mix run` to execute the CLI entry point.
 
 ### Commands
 
@@ -80,4 +80,4 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Fix the race condition in
 
 ## Output
 
-EvoGit works in `.evogit/workers/` directory using Git worktrees. It commits changes to your repository.
+Genesis works in `.evogit/workers/` directory using Git worktrees. It commits changes to your repository.

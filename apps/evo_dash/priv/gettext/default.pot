@@ -548,17 +548,16 @@ msgid "Every change is a clean, reviewable commit"
 msgstr ""
 
 #: lib/evo_dash_web/components/layouts/root.html.heex:10
-#: lib/evo_dash_web/components/layouts/root.html.heex:10
 #: lib/evo_dash_web/components/layouts/root.html.heex:12
-#: lib/evo_dash_web/components/layouts/root.html.heex:12
+#: lib/evo_dash_web/components/dashboard_components.ex:358
 #, elixir-autogen, elixir-format
-msgid "EvoGit"
+msgid "Genesis"
 msgstr ""
 
 #: lib/evo_dash/application.ex:19
 #: lib/evo_dash/application.ex:19
 #, elixir-autogen, elixir-format
-msgid "EvoGit Dashboard"
+msgid "Genesis Dashboard"
 msgstr ""
 
 #: lib/evo_dash_web/components/dashboard_components.ex:362
@@ -681,12 +680,6 @@ msgstr ""
 msgid "Full Objective"
 msgstr ""
 
-#: lib/evo_dash_web/components/dashboard_components.ex:358
-#: lib/evo_dash_web/components/dashboard_components.ex:358
-#, elixir-autogen, elixir-format
-msgid "Genesis"
-msgstr ""
-
 #: lib/evo_dash_web/components/dashboard_components.ex:40
 #: lib/evo_dash_web/components/dashboard_components.ex:40
 #, elixir-autogen, elixir-format
@@ -788,7 +781,7 @@ msgstr ""
 #: lib/evo_dash_web/live/help_live.ex:14
 #: lib/evo_dash_web/live/help_live.ex:14
 #, elixir-autogen, elixir-format
-msgid "Manage your EvoGit configuration files"
+msgid "Manage your Genesis configuration files"
 msgstr ""
 
 #: lib/evo_dash_web/live/dashboard_live.ex:11
@@ -1000,7 +993,7 @@ msgstr ""
 #: lib/evo_dash_web/components/dashboard_components.ex:375
 #: lib/evo_dash_web/components/dashboard_components.ex:375
 #, elixir-autogen, elixir-format
-msgid "Open a Git repository above to begin. EvoGit auto-detects the project state and suggests the right task mode."
+msgid "Open a Git repository above to begin. Genesis auto-detects the project state and suggests the right task mode."
 msgstr ""
 
 #: lib/evo_dash_web/components/dashboard_components.ex:269
@@ -1564,7 +1557,7 @@ msgstr ""
 #: lib/evo_dash_web/components/dashboard_components.ex:353
 #: lib/evo_dash_web/components/dashboard_components.ex:353
 #, elixir-autogen, elixir-format
-msgid "Welcome to EvoGit"
+msgid "Welcome to Genesis"
 msgstr ""
 
 #: lib/evo_dash_web/live/agents_live.html.heex:136

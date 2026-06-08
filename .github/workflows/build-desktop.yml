@@ -94,8 +94,8 @@ jobs:
 
       - name: Package .app bundle
         run: |
-          APP_NAME="EvoGit"
-          STAGING="EvoGit.app"
+          APP_NAME="Genesis"
+          STAGING="Genesis.app"
 
           # Create .app bundle structure
           mkdir -p "${STAGING}/Contents/MacOS"
@@ -116,7 +116,7 @@ jobs:
           cp apps/evo_dash/priv/static/favicon.ico "${STAGING}/Contents/Resources/favicon.ico" 2>/dev/null || true
 
           # Zip the .app
-          ARCHIVE_NAME="EvoGit-macOS-${{ matrix.arch }}.zip"
+          ARCHIVE_NAME="Genesis-macOS-${{ matrix.arch }}.zip"
           zip -r "${ARCHIVE_NAME}" "${STAGING}"
 
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
@@ -198,7 +198,7 @@ jobs:
       - name: Package Windows distribution
         shell: bash
         run: |
-          STAGING="EvoGit-Windows"
+          STAGING="Genesis-Windows"
 
           mkdir -p "${STAGING}"
 
@@ -209,7 +209,7 @@ jobs:
           cp rel/overlays/desktop/windows/evogit_launcher.bat "${STAGING}/"
 
           # Zip
-          ARCHIVE_NAME="EvoGit-Windows-x64.zip"
+          ARCHIVE_NAME="Genesis-Windows-x64.zip"
           7z a -tzip "${ARCHIVE_NAME}" "${STAGING}"
 
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
