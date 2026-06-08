@@ -280,8 +280,8 @@ defmodule EvoDashWeb.DashboardComponents do
 
   def project_settings_panel(assigns) do
     ~H"""
-    <details class="group" open={@show}>
-      <summary class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-4 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-3 list-none">
+    <details class="group rounded-2xl overflow-hidden" open={@show}>
+      <summary class="bg-base-100 shadow-sm border border-base-200 p-4 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-3 list-none">
         <.icon name="hero-cog-6-tooth" class="size-5 text-base-content/60" />
         <span class="font-semibold">{gettext("Project Settings")}</span>
         <div class="flex-1"></div>
@@ -298,7 +298,7 @@ defmodule EvoDashWeb.DashboardComponents do
         <.icon name="hero-chevron-down" class="size-4 text-base-content/40 group-open:rotate-180 transition-transform" />
       </summary>
 
-      <div class="bg-base-100 rounded-b-2xl border border-t-0 border-base-200 p-4 sm:p-6 space-y-4">
+      <div class="bg-base-100 border border-t-0 border-base-200 p-4 sm:p-6 space-y-4">
         <!-- Config Info -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
