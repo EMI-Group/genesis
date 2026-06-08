@@ -117,7 +117,7 @@ TAVILY_API_KEY = "tvly-..."
 Keys are set as environment variables on load. Only one key needed (matching the LLM model's provider).
 
 ## Constraints
-- Only `save_user_config/1` writes to disk, and only to `config.toml`. Credentials are never written programmatically.
+- `save_user_config/1` writes to `config.toml` and `save_credentials/1` writes to `credentials.toml`. Both create the config directory if needed.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
 - Config directory follows XDG conventions via `EvoGit.Platform.os()`.
 - All file reads are wrapped in try/rescue-safe patterns with Logger warnings on failure.
