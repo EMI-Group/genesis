@@ -13,7 +13,7 @@ defmodule EvoDashWeb.SettingsComponents do
   def setting_card(assigns) do
     ~H"""
     <div class={[
-      "relative bg-base-100 rounded-[1.5rem] border border-base-200 shadow-sm hover:shadow-md transition-all duration-300 p-6 flex flex-col justify-between group h-full",
+      "relative bg-base-100 rounded-[1.5rem] border border-base-200 shadow-sm hover:shadow-md transition-all duration-300 p-6 flex flex-col justify-between group h-full min-w-[320px] flex-1",
       @disabled && "opacity-60 pointer-events-none grayscale-[20%]"
     ]}>
       <div>
@@ -153,7 +153,7 @@ defmodule EvoDashWeb.SettingsComponents do
 
       <%!-- Scrollable Content --%>
       <div class="flex-1 overflow-y-auto px-8 py-8 relative">
-        <div class="max-w-5xl mx-auto">
+        <div class="">
           <%= if @category == :llm do %>
             <%!-- LLM Provider Quick Setup --%>
             <div class="mb-8 bg-gradient-to-br from-primary/5 to-primary/0 rounded-3xl border border-primary/10 p-6">
@@ -194,7 +194,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         class={[
                           "btn btn-sm rounded-xl font-medium transition-all duration-200",
                           current_model == model_string && "btn-primary shadow-md",
-                          current_model != model_string && "btn-outline btn-primary/50 hover:btn-primary"
+                          current_model != model_string && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
                         ]}
                       >
                         {model.display_name}
@@ -205,7 +205,7 @@ defmodule EvoDashWeb.SettingsComponents do
 
                 <%!-- API Key input --%>
                 <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
-                <form phx-submit="save_api_key" class="flex items-end gap-3">
+                <form phx-submit="save_api_key" class="flex items-end gap-3 pt-4 pb-2">
                   <input type="hidden" name="env_var" value={provider.env_var} />
                   <div class="form-control flex-1">
                     <label class="label">
@@ -236,7 +236,7 @@ defmodule EvoDashWeb.SettingsComponents do
             </div>
 
             <%!-- Render the regular setting cards for LLM --%>
-            <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
+            <div class="flex flex-wrap gap-6">
               <%= for schema <- @schemas do %>
                 <.setting_card
                   schema={schema}
@@ -260,7 +260,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       <div>
                         <h3 class="font-bold text-success mb-1 flex items-center gap-2">
                           systemd-run
-                          <span class="badge badge-success badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Active</span>
+                          <span class="badge badge-success badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                         </h3>
                         <p class="text-sm font-medium text-success/80 leading-relaxed">
                           {gettext("Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active.")}
@@ -275,7 +275,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       <div>
                         <h3 class="font-bold text-warning mb-1 flex items-center gap-2">
                           sandbox-exec
-                          <span class="badge badge-warning badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Active</span>
+                          <span class="badge badge-warning badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                         </h3>
                         <p class="text-sm font-medium text-warning/80 leading-relaxed">
                           {gettext("Filesystem isolation is active. Note: Resource limits are not available on macOS.")}
@@ -290,7 +290,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       <div>
                         <h3 class="font-bold text-error mb-1 flex items-center gap-2">
                           {gettext("Not Available")}
-                          <span class="badge badge-error badge-sm badge-outline text-[10px] uppercase tracking-wider font-bold">Disabled</span>
+                          <span class="badge badge-error badge-sm text-[10px] uppercase tracking-wider font-bold">Disabled</span>
                         </h3>
                         <p class="text-sm font-medium text-error/80 leading-relaxed">
                           {gettext("No sandbox support on this platform. Commands will run directly on the host.")}
@@ -330,7 +330,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 mb-8">
+                <div class="flex flex-wrap gap-6 mb-8">
                   <%= for schema <- resources_schemas do %>
                     <.setting_card
                       schema={schema}
@@ -360,7 +360,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 mb-8">
+                <div class="flex flex-wrap gap-6 mb-8">
                   <%= for schema <- process_schemas do %>
                     <.setting_card
                       schema={schema}
@@ -373,7 +373,7 @@ defmodule EvoDashWeb.SettingsComponents do
               <% end %>
             <% else %>
               <%!-- Other categories: just list all setting cards --%>
-              <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
+              <div class="flex flex-wrap gap-6">
                 <%= for schema <- @schemas do %>
                   <.setting_card
                     schema={schema}
