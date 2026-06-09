@@ -240,7 +240,7 @@
                     <%= gettext("Chat History / Session Memory") %>
                   </h4>
                   <%= if agent.history && agent.history != [] do %>
-                    <div class="bg-base-200 rounded-lg overflow-y-auto agent-history-scroll">
+                    <div id={"agent-history-#{@selected_agent_id}"} class="bg-base-200 rounded-lg overflow-y-auto agent-history-scroll" phx-hook="AgentHistoryAutoScroll">
                       <div class="divide-y divide-base-300">
                         <%= for {entry, index} <- Enum.with_index(agent.history) do %>
                           <div class="p-3 hover:bg-base-300/50">
