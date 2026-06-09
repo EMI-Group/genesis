@@ -22,7 +22,7 @@ defmodule EvoDashWeb.HelpLive do
   # Examples:
   #   "anthropic:claude-sonnet-4-20250514"
   #   "google:gemini-2.0-flash-exp"
-  #   "zai_coding_plan:glm-5.1"
+  #   "zai:glm-5.1"
   model = "your-model-here"
   # Token count threshold for context compression
   compression_threshold_tokens = 100_000
@@ -67,7 +67,7 @@ defmodule EvoDashWeb.HelpLive do
   # Google Gemini (e.g., "google:gemini-2.0-flash-exp")
   GOOGLE_API_KEY = "AIza..."
 
-  # ZAI (e.g., "zai_coding_plan:glm-5.1")
+  # ZAI (e.g., "zai:glm-5.1")
   ZAI_API_KEY = "sk-..."
 
   # DeepSeek (e.g., "deepseek:deepseek-chat")

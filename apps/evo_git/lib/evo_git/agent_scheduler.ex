@@ -386,7 +386,7 @@ defmodule EvoGit.AgentScheduler do
       Example models:
       - "anthropic:claude-sonnet-4-20250514"
       - "google:gemini-2.0-flash-exp"
-      - "zai_coding_plan:glm-5.1"
+      - "zai:glm-5.1"
 
       You can also configure this via the Settings page in the dashboard.
       """)

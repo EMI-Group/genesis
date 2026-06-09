@@ -147,7 +147,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai_coding_plan:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function."
+        "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function."
     },
     %{
       key_path: [:llm, :compression_threshold_tokens],

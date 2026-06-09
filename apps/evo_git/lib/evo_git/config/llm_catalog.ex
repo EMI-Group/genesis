@@ -72,9 +72,19 @@ defmodule EvoGit.Config.LLMCatalog do
       ]
     },
     %{
-      id: :zai_coding_plan,
+      id: :zai,
       display_name: "Z.ai (Zhipu AI)",
-      provider_atoms: [:zai, :zai_coding_plan, :zai_coder],
+      provider_atoms: [:zai],
+      env_var: "ZAI_API_KEY",
+      models: [
+        %{id: "glm-5", display_name: "GLM-5"},
+        %{id: "glm-5.1", display_name: "GLM-5.1"}
+      ]
+    },
+    %{
+      id: :zai_coding_plan,
+      display_name: "Z.ai Coding Plan",
+      provider_atoms: [:zai_coding_plan],
       env_var: "ZAI_API_KEY",
       models: [
         %{id: "glm-5", display_name: "GLM-5"},

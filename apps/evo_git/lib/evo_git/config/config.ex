@@ -26,7 +26,7 @@ defmodule EvoGit.Config do
       # Example models:
       # - "anthropic:claude-sonnet-4-20250514"
       # - "google:gemini-2.0-flash-exp"
-      # - "zai_coding_plan:glm-5.1"
+      # - "zai:glm-5.1"
       model = "your-model-here"
       compression_threshold_tokens = 100_000
 
@@ -149,7 +149,7 @@ defmodule EvoGit.Config do
       #=> 3
 
       Config.resolve([:llm, :model])
-      #=> "zai_coding_plan:glm-5" (or nil if not configured)
+      #=> "zai:glm-5" (or nil if not configured)
   """
   @spec resolve(atom() | [atom()]) :: term()
   def resolve(key) when is_atom(key) do
