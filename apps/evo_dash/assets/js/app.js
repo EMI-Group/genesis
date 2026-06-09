@@ -319,11 +319,35 @@ const ScrollToFile = {
   }
 };
 
+// AgentHistoryAutoScroll hook: auto-scrolls chat history when user is at the bottom
+const AgentHistoryAutoScroll = {
+  mounted() {
+    this.isAtBottom = true;
+    
+    // Scroll to bottom initially
+    this.el.scrollTop = this.el.scrollHeight;
+    
+    // Track whether user has scrolled away from bottom
+    this.el.addEventListener("scroll", () => {
+      this.isAtBottom = this.el.scrollTop + this.el.clientHeight >= this.el.scrollHeight - 30;
+    }, { passive: true });
+  },
+  
+  updated() {
+    if (this.isAtBottom) {
+      this.el.scrollTo({
+        top: this.el.scrollHeight,
+        behavior: "smooth"
+      });
+    }
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll},
 })
 
 // Show progress bar on live navigation and form submits
