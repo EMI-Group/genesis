@@ -286,7 +286,7 @@ defmodule EvoDashWeb.SettingsLive do
   def handle_event("select_llm_provider", %{"provider_id" => id_str}, socket) do
     provider_id = String.to_existing_atom(id_str)
     models = EvoGit.Config.LLMCatalog.provider_models(provider_id)
-    variants = EvoGit.Config.LLMCatalog.provider_variants(provider_id)
+    _variants = EvoGit.Config.LLMCatalog.provider_variants(provider_id)
 
     socket =
       socket

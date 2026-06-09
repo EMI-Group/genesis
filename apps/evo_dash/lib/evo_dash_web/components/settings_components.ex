@@ -183,8 +183,8 @@ defmodule EvoDashWeb.SettingsComponents do
               <%= if @selected_provider_id != nil do %>
                 <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
                 <% variants = provider[:variants] %>
-                <% has_variants = variants != nil and length(variants) > 0 %>
-                <% show_models = !has_variants or (has_variants and @selected_variant_id != nil) %>
+                <% has_variants = is_list(variants) and length(variants) > 0 %>
+                <% show_models = not has_variants or (@selected_variant_id != nil) %>
                 <% current_model = get_in(@file_config, [:llm, :model]) %>
 
                 <%!-- Variant selection (only if provider has variants) --%>
