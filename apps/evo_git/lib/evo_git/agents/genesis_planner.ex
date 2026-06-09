@@ -13,10 +13,11 @@ defmodule EvoGit.Agents.GenesisPlanner do
   def subagent_tool_name, do: "subagent_genesis_planner"
 
   def subagent_tool_description do
-    "[Subagent] A specialized planning agent for the genesis stage that understands Genesis's recursive agent system. " <>
-      "Call this subagent to transform an architectural design into a concrete, step-by-step execution plan " <>
-      "that accounts for worktree isolation, incomplete dependencies, and the genesis workflow. " <>
-      "It does NOT make any changes — it only produces an execution plan."
+    "[Subagent] A planning agent that helps you decide how to structure work at a node. " <>
+      "Analyzes child directory dependencies, identifies parallelization opportunities, " <>
+      "and produces a dependency-aware execution plan with optimal ordering. " <>
+      "Call this when you have multiple child nodes and need to figure out what can run " <>
+      "in parallel, what must be sequential, and what to do yourself vs. delegate."
   end
 
   def subagent_modules do
