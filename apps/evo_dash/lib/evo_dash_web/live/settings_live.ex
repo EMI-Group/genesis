@@ -130,6 +130,7 @@ defmodule EvoDashWeb.SettingsLive do
             llm_providers={@llm_providers}
             selected_provider_id={@selected_provider_id}
             selected_provider_models={@selected_provider_models}
+            selected_variant_id={@selected_variant_id}
           />
         </.form>
       </div>
@@ -164,6 +165,7 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:llm_providers, EvoGit.Config.LLMCatalog.providers())
       |> assign(:selected_provider_id, nil)
       |> assign(:selected_provider_models, [])
+      |> assign(:selected_variant_id, nil)
 
     {:ok, socket}
   end
@@ -284,7 +286,21 @@ defmodule EvoDashWeb.SettingsLive do
   def handle_event("select_llm_provider", %{"provider_id" => id_str}, socket) do
     provider_id = String.to_existing_atom(id_str)
     models = EvoGit.Config.LLMCatalog.provider_models(provider_id)
-    {:noreply, socket |> assign(:selected_provider_id, provider_id) |> assign(:selected_provider_models, models)}
+    variants = EvoGit.Config.LLMCatalog.provider_variants(provider_id)
+
+    socket =
+      socket
+      |> assign(:selected_provider_id, provider_id)
+      |> assign(:selected_provider_models, models)
+      |> assign(:selected_variant_id, nil)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("select_llm_variant", %{"variant_id" => variant_id_str}, socket) do
+    variant_id = String.to_existing_atom(variant_id_str)
+    {:noreply, assign(socket, :selected_variant_id, variant_id)}
   end
 
   @impl true
