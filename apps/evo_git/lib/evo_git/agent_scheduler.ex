@@ -464,8 +464,9 @@ defmodule EvoGit.AgentScheduler do
     #    The meta.from is a GenServer.from() tuple: {pid, ref} where pid is the calling process
     top_level_agent =
       :ets.tab2list(@sched_table)
-      |> Enum.find(fn {_id, %SchedMeta{depth: 0, from: {pid, _}}} ->
-        pid == caller_pid
+      |> Enum.find(fn
+        {_id, %SchedMeta{depth: 0, from: {pid, _}}} -> pid == caller_pid
+        _ -> false
       end)
 
     case top_level_agent do
