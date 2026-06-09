@@ -136,6 +136,7 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:llm_providers, :list, default: [])
   attr(:selected_provider_id, :atom, default: nil)
   attr(:selected_provider_models, :list, default: [])
+  attr(:selected_variant_id, :atom, default: nil)
 
   def category_section(assigns) do
     ~H"""
@@ -178,33 +179,63 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% end %>
               </div>
 
-              <%!-- Model shortcuts when provider is selected --%>
+              <%!-- Variant and model shortcuts when provider is selected --%>
               <%= if @selected_provider_id != nil do %>
+                <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
+                <% variants = provider[:variants] %>
+                <% has_variants = variants != nil and length(variants) > 0 %>
+                <% show_models = !has_variants or (has_variants and @selected_variant_id != nil) %>
                 <% current_model = get_in(@file_config, [:llm, :model]) %>
-                <div class="mb-5">
-                  <p class="text-xs font-bold uppercase tracking-wider text-base-content/50 mb-3">{gettext("Quick-select a model:")}</p>
-                  <div class="flex flex-wrap gap-2">
-                    <%= for model <- @selected_provider_models do %>
-                      <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
-                      <% model_string = "#{hd(provider.provider_atoms)}:#{model.id}" %>
-                      <button
-                        type="button"
-                        phx-click="select_llm_model_shortcut"
-                        phx-value-model_string={model_string}
-                        class={[
-                          "btn btn-sm rounded-xl font-medium transition-all duration-200",
-                          current_model == model_string && "btn-primary shadow-md",
-                          current_model != model_string && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
-                        ]}
-                      >
-                        {model.display_name}
-                      </button>
-                    <% end %>
+
+                <%!-- Variant selection (only if provider has variants) --%>
+                <%= if has_variants do %>
+                  <div class="mb-5">
+                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/50 mb-3">{gettext("Select a variant:")}</p>
+                    <div class="flex flex-wrap gap-2">
+                      <%= for variant <- variants do %>
+                        <button
+                          type="button"
+                          phx-click="select_llm_variant"
+                          phx-value-variant_id={variant.id}
+                          class={[
+                            "btn btn-xs rounded-xl font-medium transition-all duration-200",
+                            @selected_variant_id == variant.id && "btn-secondary shadow-md",
+                            @selected_variant_id != variant.id && "btn-ghost bg-secondary/10 hover:bg-secondary/20 text-secondary"
+                          ]}
+                        >
+                          {variant.display_name}
+                        </button>
+                      <% end %>
+                    </div>
                   </div>
-                </div>
+                <% end %>
+
+                <%!-- Model shortcuts (show only if no variants needed, or variant selected) --%>
+                <%= if show_models do %>
+                  <div class="mb-5">
+                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/50 mb-3">{gettext("Quick-select a model:")}</p>
+                    <div class="flex flex-wrap gap-2">
+                      <%= for model <- @selected_provider_models do %>
+                        <% resolved_atom = EvoGit.Config.LLMCatalog.resolve_provider_atom(@selected_provider_id, @selected_variant_id) %>
+                        <% model_string = "#{resolved_atom}:#{model.id}" %>
+                        <button
+                          type="button"
+                          phx-click="select_llm_model_shortcut"
+                          phx-value-model_string={model_string}
+                          class={[
+                            "btn btn-sm rounded-xl font-medium transition-all duration-200",
+                            current_model == model_string && "btn-primary shadow-md",
+                            current_model != model_string && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                          ]}
+                        >
+                          {model.display_name}
+                        </button>
+                      <% end %>
+                    </div>
+                  </div>
+                <% end %>
 
                 <%!-- API Key input --%>
-                <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
                 <form phx-submit="save_api_key" class="flex items-end gap-3 pt-6 pb-4">
                   <input type="hidden" name="env_var" value={provider.env_var} />
                   <div class="form-control flex-1">
