@@ -151,9 +151,125 @@ defmodule EvoDashWeb.HelpLive do
         </div>
       </div>
 
-      <!-- Config Status -->
+      <!-- System Self-Check -->
       <div class="mt-4 animate-fade-in-up animation-delay-100">
-        <.config_status_badge status={@config_status} />
+        <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 p-5 md:p-6">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <div class="bg-success/15 text-success p-3 rounded-2xl">
+                <.icon name="hero-shield-check" class="size-5" />
+              </div>
+              <div>
+                <h2 class="font-bold text-lg">{gettext("System Self-Check")}</h2>
+                <p class="text-sm text-base-content/60">{gettext("System status and health overview")}</p>
+              </div>
+            </div>
+            <button phx-click="rerun_checks" class="btn btn-ghost btn-sm gap-2">
+              <.icon name="hero-arrow-path" class="size-4" />
+              {gettext("Re-check")}
+            </button>
+          </div>
+
+          <div class="space-y-3">
+            <!-- Config Status Row -->
+            <.system_check_row title={gettext("Configuration")} icon="hero-cog-6-tooth" status={if @config_status.ok?, do: :ok, else: :error}>
+              <:details>
+                <%= if @config_status.ok? do %>
+                  <span class="text-sm text-success">{gettext("All configured")}</span>
+                <% else %>
+                  <div class="flex flex-wrap gap-1.5">
+                    <%= for item <- @config_status.missing do %>
+                      <span class="badge badge-warning badge-sm gap-1">
+                        <.icon name="hero-x-mark" class="size-3" />
+                        {format_config_item(item)}
+                      </span>
+                    <% end %>
+                  </div>
+                <% end %>
+                <%= if @config_status[:validation_errors] != [] and @config_status[:validation_errors] != nil do %>
+                  <div class="mt-1 text-xs text-warning">
+                    {ngettext("%{count} validation warning", "%{count} validation warnings", length(@config_status.validation_errors))}
+                  </div>
+                <% end %>
+              </:details>
+            </.system_check_row>
+
+            <!-- Tools Row -->
+            <.system_check_row title={gettext("Required Tools")} icon="hero-wrench-screwdriver" status={tools_status(@tool_check)}>
+              <:details>
+                <div class="flex flex-wrap gap-3">
+                  <.tool_badge name="git" check={@tool_check.git} />
+                  <.tool_badge name="rg (ripgrep)" check={@tool_check.rg} />
+                </div>
+              </:details>
+            </.system_check_row>
+
+            <!-- Sandbox Row -->
+            <.system_check_row title={gettext("Sandbox")} icon="hero-lock-closed" status={:info}>
+              <:details>
+                <div class="flex flex-wrap gap-2 items-center">
+                  <span class="badge badge-sm {sandbox_badge_color(@sandbox_check)}">
+                    {format_backend(@sandbox_check.backend)}
+                  </span>
+                  <span class="text-sm text-base-content/60">
+                    {if @sandbox_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
+                  </span>
+                  <%= if @sandbox_check.backend != :none do %>
+                    <span class="text-xs text-base-content/40">
+                      {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation, do: "✓", else: "✗"}
+                      · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits, do: "✓", else: "✗"}
+                    </span>
+                  <% end %>
+                </div>
+              </:details>
+            </.system_check_row>
+
+            <!-- Supervisor Row -->
+            <.system_check_row title={gettext("Supervision Tree")} icon="hero-server-stack" status={if @supervisor_check.healthy, do: :ok, else: :error}>
+              <:details>
+                <div class="space-y-1">
+                  <.supervisor_status label="EvoGit" children={@supervisor_check.evo_git} />
+                  <.supervisor_status label="EvoDash" children={@supervisor_check.evo_dash} />
+                </div>
+              </:details>
+            </.system_check_row>
+
+            <!-- LLM Test Row -->
+            <.system_check_row title={gettext("LLM Connection")} icon="hero-chat-bubble-left-right" status={llm_status_icon(@llm_test_status)}>
+              <:details>
+                <div class="flex items-center gap-3">
+                  <%= case @llm_test_status do %>
+                    <% :idle -> %>
+                      <span class="text-sm text-base-content/60">{gettext("Not tested — click to verify LLM connectivity")}</span>
+                      <button phx-click="test_llm" class="btn btn-primary btn-sm gap-2">
+                        <.icon name="hero-signal" class="size-4" />
+                        {gettext("Test Connection")}
+                      </button>
+                    <% :testing -> %>
+                      <span class="loading loading-spinner loading-sm text-primary"></span>
+                      <span class="text-sm text-base-content/60">{gettext("Testing LLM connection...")}</span>
+                    <% {:ok, data} -> %>
+                      <.icon name="hero-check-circle" class="size-5 text-success" />
+                      <span class="text-sm text-success">{gettext("Connected")}</span>
+                      <span class="text-xs text-base-content/40">({data.model})</span>
+                      <span class="text-xs text-base-content/50 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(data.response, 50)}"</span>
+                      <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
+                        <.icon name="hero-arrow-path" class="size-3" />
+                        {gettext("Retest")}
+                      </button>
+                    <% {:error, reason} -> %>
+                      <.icon name="hero-x-circle" class="size-5 text-error" />
+                      <span class="text-sm text-error">{reason}</span>
+                      <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
+                        <.icon name="hero-arrow-path" class="size-3" />
+                        {gettext("Retry")}
+                      </button>
+                  <% end %>
+                </div>
+              </:details>
+            </.system_check_row>
+          </div>
+        </div>
       </div>
 
       <!-- System Dashboard -->
@@ -229,11 +345,15 @@ defmodule EvoDashWeb.HelpLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    config_status = safe_config_status()
+    system_checks = safe_system_checks()
 
     socket =
       socket
-      |> assign(:config_status, config_status)
+      |> assign(:config_status, system_checks.config)
+      |> assign(:tool_check, system_checks.tools)
+      |> assign(:sandbox_check, system_checks.sandbox)
+      |> assign(:supervisor_check, system_checks.supervisor)
+      |> assign(:llm_test_status, :idle)
       |> assign(:config_reference, @config_reference)
       |> assign(:credentials_reference, @credentials_reference)
       |> assign(:usage_reference, @usage_reference)
@@ -242,6 +362,204 @@ defmodule EvoDashWeb.HelpLive do
     {:ok, socket}
   end
 
+  @impl true
+  def handle_event("test_llm", _params, socket) do
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result = EvoGit.SystemCheck.llm_test()
+      send(self(), {:llm_test_result, result})
+    end)
+
+    {:noreply, assign(socket, :llm_test_status, :testing)}
+  end
+
+  @impl true
+  def handle_event("rerun_checks", _params, socket) do
+    system_checks = safe_system_checks()
+
+    socket =
+      socket
+      |> assign(:config_status, system_checks.config)
+      |> assign(:tool_check, system_checks.tools)
+      |> assign(:sandbox_check, system_checks.sandbox)
+      |> assign(:supervisor_check, system_checks.supervisor)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:llm_test_result, result}, socket) do
+    status =
+      case result do
+        {:ok, data} -> {:ok, data}
+        {:error, reason} -> {:error, reason}
+      end
+
+    {:noreply, assign(socket, :llm_test_status, status)}
+  end
+
+  # --- Private Components ---
+
+  attr(:title, :string, required: true)
+  attr(:icon, :string, required: true)
+  attr(:status, :atom, default: :ok)
+  slot(:details, required: true)
+
+  defp system_check_row(assigns) do
+    ~H"""
+    <div class="flex items-start gap-3 py-3 border-b border-base-200/40 last:border-0">
+      <div class={"p-2 rounded-xl #{status_bg(@status)}"}>
+        <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="font-semibold text-sm">{@title}</span>
+          <%= case @status do %>
+            <% :ok -> %><.icon name="hero-check-circle-solid" class="size-4 text-success" />
+            <% :error -> %><.icon name="hero-x-circle-solid" class="size-4 text-error" />
+            <% :info -> %><.icon name="hero-information-circle-solid" class="size-4 text-info" />
+            <% :warning -> %><.icon name="hero-exclamation-triangle-solid" class="size-4 text-warning" />
+          <% end %>
+        </div>
+        {render_slot(@details)}
+      </div>
+    </div>
+    """
+  end
+
+  attr(:name, :string, required: true)
+  attr(:check, :map, required: true)
+
+  defp tool_badge(assigns) do
+    ~H"""
+    <div class="flex items-center gap-1.5">
+      <%= if @check.available do %>
+        <.icon name="hero-check-circle" class="size-4 text-success" />
+        <span class="text-sm">{@name}</span>
+        <span class="text-xs text-base-content/40">{@check.version}</span>
+      <% else %>
+        <.icon name="hero-x-circle" class="size-4 text-error" />
+        <span class="text-sm text-error">{@name}</span>
+        <span class="text-xs text-error/60">{@check.error}</span>
+      <% end %>
+    </div>
+    """
+  end
+
+  attr(:label, :string, required: true)
+  attr(:children, :list, required: true)
+
+  defp supervisor_status(assigns) do
+    ~H"""
+    <div class="flex items-center gap-2 text-sm">
+      <span class="font-medium text-base-content/70">{@label}:</span>
+      <div class="flex flex-wrap gap-1.5">
+        <%= for child <- @children do %>
+          <span class={"badge badge-sm #{if child.status == :running, do: "badge-success", else: "badge-error"}"}>
+            <%= if child.status == :running do %>
+              <.icon name="hero-check" class="size-3" />
+            <% else %>
+              <.icon name="hero-x-mark" class="size-3" />
+            <% end %>
+            {child.id}
+          </span>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  # --- Private Helper Functions ---
+
+  # Status background colors for system_check_row
+  defp status_bg(:ok), do: "bg-success/10"
+  defp status_bg(:error), do: "bg-error/10"
+  defp status_bg(:info), do: "bg-info/10"
+  defp status_bg(:warning), do: "bg-warning/10"
+  defp status_bg(_), do: "bg-base-200/50"
+
+  # Status text colors for system_check_row icon
+  defp status_text(:ok), do: "text-success"
+  defp status_text(:error), do: "text-error"
+  defp status_text(:info), do: "text-info"
+  defp status_text(:warning), do: "text-warning"
+  defp status_text(_), do: "text-base-content/50"
+
+  # Determine tools overall status
+  defp tools_status(%{git: %{available: true}, rg: %{available: true}}), do: :ok
+  defp tools_status(%{git: %{available: false}}), do: :error
+  defp tools_status(%{rg: %{available: false}}), do: :error
+  defp tools_status(_), do: :warning
+
+  # LLM test status to icon status
+  defp llm_status_icon(:idle), do: :info
+  defp llm_status_icon(:testing), do: :info
+  defp llm_status_icon({:ok, _}), do: :ok
+  defp llm_status_icon({:error, _}), do: :error
+
+  # Sandbox badge color
+  defp sandbox_badge_color(%{backend: :systemd_run}), do: "badge-success"
+  defp sandbox_badge_color(%{backend: :sandbox_exec}), do: "badge-info"
+  defp sandbox_badge_color(_), do: "badge-ghost"
+
+  # Format backend name
+  defp format_backend(:systemd_run), do: "systemd-run (Linux)"
+  defp format_backend(:sandbox_exec), do: "sandbox-exec (macOS)"
+  defp format_backend(:none), do: gettext("None")
+
+  # Truncate string helper
+  defp truncate_string(nil, _len), do: ""
+  defp truncate_string(str, len) when byte_size(str) > len, do: String.slice(str, 0, len) <> "..."
+  defp truncate_string(str, _len), do: str
+
+  # Format config item names
+  defp format_config_item(:llm_model), do: gettext("LLM Model")
+  defp format_config_item(:api_key), do: gettext("API Key")
+  defp format_config_item(:github_username), do: gettext("GitHub Username")
+  defp format_config_item(item) do
+    item |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
+  end
+
+  defp safe_system_checks do
+    try do
+      EvoGit.SystemCheck.run_all_checks()
+    rescue
+      e ->
+        %{
+          config: %{missing: [], warnings: [], ok?: true, validation_errors: []},
+          tools: %{
+            git: %{available: false, path: nil, version: nil, error: inspect(e)},
+            rg: %{available: false, path: nil, version: nil, error: inspect(e)}
+          },
+          sandbox: %{
+            backend: :none,
+            enabled: false,
+            capabilities: %{filesystem_isolation: false, resource_limits: false, backend: :none},
+            systemd_available: false,
+            sandbox_exec_available: false
+          },
+          supervisor: %{evo_git: [], evo_dash: [], healthy: false}
+        }
+    catch
+      _, _ ->
+        %{
+          config: %{missing: [], warnings: [], ok?: true, validation_errors: []},
+          tools: %{
+            git: %{available: false, path: nil, version: nil, error: "Unknown error"},
+            rg: %{available: false, path: nil, version: nil, error: "Unknown error"}
+          },
+          sandbox: %{
+            backend: :none,
+            enabled: false,
+            capabilities: %{filesystem_isolation: false, resource_limits: false, backend: :none},
+            systemd_available: false,
+            sandbox_exec_available: false
+          },
+          supervisor: %{evo_git: [], evo_dash: [], healthy: false}
+        }
+    end
+  end
+
+  # Kept for backward compatibility — may be used elsewhere
   defp safe_config_status do
     try do
       EvoGit.Config.config_status()
