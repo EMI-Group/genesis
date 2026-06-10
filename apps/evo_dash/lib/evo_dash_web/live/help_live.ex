@@ -559,14 +559,4 @@ defmodule EvoDashWeb.HelpLive do
     end
   end
 
-  # Kept for backward compatibility — may be used elsewhere
-  defp safe_config_status do
-    try do
-      EvoGit.Config.config_status()
-    rescue
-      _ -> %{missing: [], warnings: [], ok?: true}
-    catch
-      _, _ -> %{missing: [], warnings: [], ok?: true}
-    end
-  end
 end
