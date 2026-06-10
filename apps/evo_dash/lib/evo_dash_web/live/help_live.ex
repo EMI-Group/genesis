@@ -208,7 +208,7 @@ defmodule EvoDashWeb.HelpLive do
             <.system_check_row title={gettext("Sandbox")} icon="hero-lock-closed" status={:info}>
               <:details>
                 <div class="flex flex-wrap gap-2 items-center">
-                  <span class="badge badge-sm {sandbox_badge_color(@sandbox_check)}">
+                  <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
                     {format_backend(@sandbox_check.backend)}
                   </span>
                   <span class="text-sm text-base-content/60">
@@ -495,11 +495,6 @@ defmodule EvoDashWeb.HelpLive do
   defp llm_status_icon(:testing), do: :info
   defp llm_status_icon({:ok, _}), do: :ok
   defp llm_status_icon({:error, _}), do: :error
-
-  # Sandbox badge color
-  defp sandbox_badge_color(%{backend: :systemd_run}), do: "badge-success"
-  defp sandbox_badge_color(%{backend: :sandbox_exec}), do: "badge-info"
-  defp sandbox_badge_color(_), do: "badge-ghost"
 
   # Format backend name
   defp format_backend(:systemd_run), do: "systemd-run (Linux)"
