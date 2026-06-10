@@ -12,10 +12,6 @@ defmodule EvoDash.MarkdownRender do
     shortcodes: true
   ]
 
-  @syntax_highlight [
-    formatter: {:html_inline, theme: "onelight", pre_class: "rounded-lg"}
-  ]
-
   @doc """
   Renders markdown text to HTML.
   Returns an empty string for nil input, falls back to escaped text on error.
@@ -26,11 +22,13 @@ defmodule EvoDash.MarkdownRender do
     MDEx.new(
       markdown: text,
       extension: @md_extensions,
-      render: [unsafe_: true],
-      syntax_highlight: @syntax_highlight
+      render: [unsafe_: true]
     )
     |> MDEx.to_html!()
   rescue
-    _ -> Phoenix.HTML.html_escape(text) |> Phoenix.HTML.safe_to_string()
+    e ->
+      require Logger
+      Logger.warning("MarkdownRender failed: #{inspect(e)}")
+      Phoenix.HTML.html_escape(text) |> Phoenix.HTML.safe_to_string()
   end
 end

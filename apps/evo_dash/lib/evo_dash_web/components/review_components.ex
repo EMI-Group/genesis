@@ -101,33 +101,32 @@ defmodule EvoDashWeb.ReviewComponents do
   def agent_summary(assigns) do
     ~H"""
     <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 overflow-hidden">
-      <details open={@open}>
-        <summary class="p-5 md:p-6 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-4 list-none">
-          <div class="bg-success/15 text-success p-2.5 rounded-xl">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
-          </div>
-          <span class="font-semibold text-base-content/80">{gettext("Agent Summary")}</span>
-          <button
-            id="summary-copy-btn"
-            class="btn btn-ghost btn-sm rounded-full btn-square"
-            phx-hook="ClipboardCopy"
-            data-content={@summary}
-            title={gettext("Copy agent summary")}
-            onclick="event.preventDefault(); event.stopPropagation();"
-          >
-            <.icon name="hero-clipboard" class="size-4" />
-          </button>
-          <div class="flex-1"></div>
-          <.icon name="hero-chevron-down" class="size-4 text-base-content/40" />
-        </summary>
-        <div class="px-5 md:px-6 pb-5 md:pb-6">
-          <div class="bg-success/5 border border-success/10 rounded-2xl p-5">
+      <div class="relative">
+        <details open={@open}>
+          <summary class="p-5 md:p-6 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-4 list-none">
+            <div class="bg-success/15 text-success p-2.5 rounded-xl">
+              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
+            </div>
+            <span class="font-semibold text-base-content/80">{gettext("Agent Summary")}</span>
+            <div class="flex-1"></div>
+            <.icon name="hero-chevron-down" class="size-4 text-base-content/40" />
+          </summary>
+          <div class="px-5 md:px-6 pb-5 md:pb-6">
             <div class="md-content text-sm leading-relaxed">
               {raw(EvoDash.MarkdownRender.render(@summary))}
             </div>
           </div>
-        </div>
-      </details>
+        </details>
+        <button
+          id="summary-copy-btn"
+          class="btn btn-ghost btn-sm rounded-full btn-square absolute top-4 right-4 z-10"
+          phx-hook="ClipboardCopy"
+          data-content={@summary}
+          title={gettext("Copy agent summary")}
+        >
+          <.icon name="hero-clipboard" class="size-4" />
+        </button>
+      </div>
     </div>
     """
   end
