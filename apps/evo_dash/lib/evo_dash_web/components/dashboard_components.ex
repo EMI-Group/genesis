@@ -43,7 +43,7 @@ defmodule EvoDashWeb.DashboardComponents do
               {gettext("Recent")}
               <.icon name="hero-chevron-down" class="size-3" />
             </div>
-            <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-72 p-2 shadow-lg border border-base-200 mt-2">
+            <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-72 p-2 shadow-lg border border-base-200 mt-2 overflow-hidden">
               <%= for project <- Enum.take(@recent_projects, 8) do %>
                 <li>
                   <button phx-click="select_project" phx-value-path={project.path} class="flex items-center gap-2">

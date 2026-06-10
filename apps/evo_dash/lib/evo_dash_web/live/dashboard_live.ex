@@ -331,6 +331,13 @@ defmodule EvoDashWeb.DashboardLive do
     expanded = Path.expand(path)
 
     if File.dir?(expanded) do
+      TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+      recent_projects = TaskRegistry.list_recent_projects()
+
+      socket =
+        socket
+        |> assign(:recent_projects, recent_projects)
+
       {:noreply, push_patch(socket, to: ~p"/?project=#{URI.encode(expanded)}")}
     else
       {:noreply,
