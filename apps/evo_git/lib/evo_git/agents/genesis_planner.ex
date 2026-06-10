@@ -62,7 +62,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
     ## Worktree Isolation Rules
 
     - Each child architect runs in its own worktree — it CANNOT see sibling directories' code
-    - When children run in parallel, neither can reference the other's APIs
+    - When children run in parallel, neither can reference the other's work.
     - The parent architect CAN see all results after children merge back
     - Therefore: if child A depends on child B's types/interfaces, either (a) run B first, or (b) have both reference a shared contract defined at the parent level (in the parent's files or CONTEXT.md)
     - When parallel children both need a shared type/interface, the parent should define it first (at its level) before spawning either child
