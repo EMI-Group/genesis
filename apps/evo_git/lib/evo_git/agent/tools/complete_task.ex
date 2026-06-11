@@ -120,6 +120,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     - `:parent_id` - The parent agent ID (if this is a subagent)
     - `:depth` - The depth of this agent in the hierarchy
     - `:objective` - The objective/task this agent was working on
+    - `:usage` - The cumulative `EvoGit.Agent.Usage.t()` for this agent run
   """
   @spec complete(pos_integer(), String.t(), String.t(), keyword()) :: Result.t()
   def complete(agent_id, result, commit_sha, opts \\ []) do
@@ -152,7 +153,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       result: result,
       commit_sha: commit_sha,
       branch: branch_name,
-      repo_id: Process.get(:evogit_repo_id)
+      repo_id: Process.get(:evogit_repo_id),
+      usage: Keyword.get(opts, :usage)
     }
   end
 
