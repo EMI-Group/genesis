@@ -255,7 +255,8 @@ defmodule EvoDashWeb.AgentsLive do
         sub_agent_results: meta.sub_agent_results,
         task_ref: meta.task_ref,
         result_sent: meta.result_sent,
-        history: history
+        history: history,
+        usage: agent_state && agent_state.usage,
       }
     end)
     |> Enum.sort_by(&{&1.depth, &1.id})

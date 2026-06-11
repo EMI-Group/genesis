@@ -466,4 +466,33 @@ defmodule EvoDashWeb.Helpers do
     do: gettext("Uses a single top-down agent to modify the codebase based on your objective.")
 
   def mode_description(_), do: ""
+
+  # ---------------------------------------------------------------------------
+  # Number / Cost Formatting
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Formats an integer with comma-separated thousands.
+  """
+  def format_number(n) when is_integer(n), do: format_number(Integer.to_string(n))
+
+  def format_number(str) when is_binary(str) do
+    str
+    |> String.reverse()
+    |> String.graphemes()
+    |> Enum.chunk_every(3)
+    |> Enum.join(",")
+    |> String.reverse()
+  end
+
+  def format_number(_), do: "0"
+
+  @doc """
+  Formats a number as a cost string with 6 decimal places.
+  """
+  def format_cost(cost) when is_number(cost) do
+    "~.6f" |> :io_lib.format([cost * 1.0]) |> to_string()
+  end
+
+  def format_cost(_), do: "0.000000"
 end

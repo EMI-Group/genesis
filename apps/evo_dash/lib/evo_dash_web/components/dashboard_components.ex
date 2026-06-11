@@ -586,6 +586,40 @@ defmodule EvoDashWeb.DashboardComponents do
                   </div>
                 <% end %>
               </div>
+
+              <%= if Map.get(@task, :usage) do %>
+              <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
+                <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
+                  <.icon name="hero-currency-dollar" class="size-4.5 text-primary" /> {gettext("Token & Cost Usage")}
+                </h4>
+                <div class="grid grid-cols-3 gap-3">
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">{gettext("Input Tokens")}</div>
+                    <div class="text-sm font-semibold">{format_number(@task.usage.input_tokens)}</div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">{gettext("Output Tokens")}</div>
+                    <div class="text-sm font-semibold">{format_number(@task.usage.output_tokens)}</div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">{gettext("Total Tokens")}</div>
+                    <div class="text-sm font-semibold">{format_number(@task.usage.total_tokens)}</div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">{gettext("Input Cost")}</div>
+                    <div class="text-sm font-semibold">${format_cost(@task.usage.input_cost)}</div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">{gettext("Output Cost")}</div>
+                    <div class="text-sm font-semibold">${format_cost(@task.usage.output_cost)}</div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
+                    <div class="text-sm font-semibold text-primary">${format_cost(@task.usage.total_cost)}</div>
+                  </div>
+                </div>
+              </div>
+              <% end %>
               
               <%= if @task.logs != [] do %>
                 <% log_count = length(@task.logs) %>
