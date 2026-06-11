@@ -187,7 +187,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "Controls how much effort the model spends reasoning before answering. There are four levels: low, medium, high and xhigh (mapped to :low, :medium, :high, :xhigh in Elixir). Leave unset to use the provider's default."
+        "Controls how much effort the model spends reasoning before answering. Valid values: none, minimal, low, medium, high, xhigh, default (mapped to atoms in Elixir). Leave unset to use the provider's default."
     },
     %{
       key_path: [:llm, :top_p],
@@ -610,7 +610,7 @@ defmodule EvoGit.Config.Schema do
     []
     |> maybe_param(:temperature, Map.get(llm_config, :temperature))
     |> maybe_param(:max_tokens, Map.get(llm_config, :max_tokens))
-    |> maybe_param(:reasoning_effort, Map.get(llm_config, :reasoning_effort))
+    |> maybe_param(:reasoning_effort, llm_config |> Map.get(:reasoning_effort) |> convert_reasoning_effort())
     |> maybe_param(:top_p, Map.get(llm_config, :top_p))
     |> maybe_param(:top_k, Map.get(llm_config, :top_k))
     |> maybe_param(:frequency_penalty, Map.get(llm_config, :frequency_penalty))
@@ -619,4 +619,16 @@ defmodule EvoGit.Config.Schema do
 
   defp maybe_param(keyword_list, _key, nil), do: keyword_list
   defp maybe_param(keyword_list, key, value), do: keyword_list ++ [{key, value}]
+
+  # Converts reasoning_effort string from config (TOML) to atom expected by ReqLLM.
+  # Uses explicit case matching rather than String.to_existing_atom for safety.
+  defp convert_reasoning_effort(nil), do: nil
+  defp convert_reasoning_effort("none"), do: :none
+  defp convert_reasoning_effort("minimal"), do: :minimal
+  defp convert_reasoning_effort("low"), do: :low
+  defp convert_reasoning_effort("medium"), do: :medium
+  defp convert_reasoning_effort("high"), do: :high
+  defp convert_reasoning_effort("xhigh"), do: :xhigh
+  defp convert_reasoning_effort("default"), do: :default
+  defp convert_reasoning_effort(other), do: other
 end
