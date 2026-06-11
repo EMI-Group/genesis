@@ -888,4 +888,21 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
+  @doc """
+  Updates the cumulative usage for an agent in the agent state table.
+  """
+  @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
+  def update_agent_usage(agent_id, %EvoGit.Agent.Usage{} = usage) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        updated_state = %{agent_state | usage: usage}
+        put_agent_state(agent_id, updated_state)
+
+        :ok
+
+      :error ->
+        :ok
+    end
+  end
+
 end
