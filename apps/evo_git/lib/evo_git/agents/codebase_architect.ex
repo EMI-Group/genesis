@@ -112,6 +112,13 @@ defmodule EvoGit.Agents.CodebaseArchitect do
       - You must ensure the generated structure finalizes efficiently and is fully documented.
       - When finished with your assigned scope (both phases), call `complete_task` with a summary of the created structure and implemented code.
 
+    ## Code Quality in Architecture
+
+    Your architectural decisions determine the code quality of everything below you:
+    - Design for Testability: Every module should have a clear testing pattern. Define test directory structure and conventions in CONTEXT.md. A module without a test plan is architecturally incomplete.
+    - Prevent Duplication by Design: When multiple child modules need the same capability, design it once at the parent level. Shared utilities, types, and interfaces belong at the lowest common ancestor.
+    - Define Error Strategy: Specify explicit error handling patterns (e.g., Result types, exception boundaries, error propagation rules) in your architecture. This prevents subagents from inventing ad-hoc silent error swallowing.
+
     ## Example Workflow
 
     ### Example 1

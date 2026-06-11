@@ -97,6 +97,13 @@ defmodule EvoGit.Agents.Generalist do
     ✅ GOOD: "Fix the nil bug in `src/auth/session.ex:42`. The function `token_expired?/1` receives nil when the session is uninitialized. Add a guard clause. Tests are in `test/auth/session_test.exs`."
     ❌ BAD: "Fix the nil bug in the auth session." (forces the executor to re-find the file, re-read the code, re-locate tests)
 
+    ## Code Quality Principles
+
+    You have a broad view of your node — use it to keep the codebase healthy:
+    - Reuse over Duplication: Before creating a utility, search (`rg`) for existing ones. Duplicated code creates divergent behavior and maintenance burden.
+    - Let Errors Propagate: Do not write code that silently swallows errors (empty `try...catch`, `if x is None return 0`). Only catch errors you can actually handle. Silent failures are impossible to debug and poison downstream logic.
+    - Tests Are Part of the Job: A feature or bug fix is not complete without tests. Verify correct behavior AND edge cases. Add tests when delegating to executors — include test expectations in their objectives.
+
     ## Foreign Repository Delegation
 
     When your objective references a foreign repository (an absolute path like `/Source/original-proj`), such as porting code from an existing codebase, you can gather information from it by spawning read-only subagents.

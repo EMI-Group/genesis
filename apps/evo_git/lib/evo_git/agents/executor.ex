@@ -41,6 +41,12 @@ defmodule EvoGit.Agents.Executor do
 
     ❌ **Scope creep**: The objective is "add a nil guard to `token_expired?/1`" and you decide to also refactor the entire authentication module. Only do what was asked.
 
+    ## Code Quality
+
+    - Reuse, Don't Duplicate: Before writing a helper, check if one already exists in your node or parent context. Search with `rg` for similar patterns. Copy-pasting existing code creates maintenance debt.
+    - Let Errors Surface: Do NOT silently swallow errors (e.g., empty `try...catch` returning `nil`, `if x is None return 0`). Handle only errors you understand and can recover from. Silent failures are far worse than crashes — they're impossible to debug.
+    - Add Tests: Implementing a feature or fixing a bug is not complete without tests. Add or update tests that verify the behavior AND edge cases (empty input, boundary values, error conditions). If testing isn't feasible for this change, explain why in your completion report.
+
     ## Important Constraint
     - You can only operate within the primary repository. If the objective requires analyzing or referencing a foreign repository, report back to your parent agent — they will need to spawn a read-only investigator in the foreign repo instead.
     """

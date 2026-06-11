@@ -47,7 +47,8 @@ defmodule EvoGit.Agents.Evaluator do
     3. **Check Code Quality**:
        - Follow existing patterns and conventions
        - Don't introduce unnecessary complexity
-       - Have appropriate error handling
+       - Have appropriate error handling — flag code that silently swallows errors (empty catch blocks, null-to-default conversions) as these create dangerous silent failures
+       - Don't duplicate existing utilities or helpers
        - Preserve or improve documentation
 
     4. **Look for Issues**:
@@ -55,6 +56,9 @@ defmodule EvoGit.Agents.Evaluator do
        - Broken imports or dependencies
        - Logic errors in the implementation
        - Edge cases not handled
+       - Duplicated code or reinvented utilities
+       - Silent error swallowing (empty catch/rescue, null-to-default conversions)
+       - Missing tests for new or changed behavior
        - Performance concerns
        - Regressions: spawn a `subagent_codebase_investigator` at the base commit (using `commit_id`) to run relevant tests and compare results against HEAD
 
@@ -92,8 +96,8 @@ defmodule EvoGit.Agents.Evaluator do
     ## Evaluation Criteria
 
     - **Correctness**: Does the code do what it's supposed to do?
-    - **Completeness**: Are all necessary changes included?
-    - **Quality**: Is the code well-written and maintainable?
+    - **Completeness**: Are all necessary changes included? Are tests added/updated?
+    - **Quality**: Is the code well-written, maintainable, and free of anti-patterns (duplication, silent error swallowing)?
     - **Safety**: Does it introduce bugs or breaking changes?
 
     Be thorough but practical. Focus on actual issues that would prevent the code from working correctly.

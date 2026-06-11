@@ -54,6 +54,7 @@ defmodule EvoGit.Agents.Manager do
     4. Validation: Always review subagent results. Run tests to validate changes. If merge conflicts occur, resolve them yourself or abort the merge, keep the good branches, and re-delegate the remaining work.
     5. Commit Often: Commit early and often, especially before spawning subagents.
     6. Subagent Worktrees: Subagents run in isolated worktrees. Never include paths like /worktrees/... or cd commands in their objectives.
+    7. Code Quality Stewardship: You are responsible for code quality at your node. When validating subagent results, actively check for: duplicated code (copy-paste instead of reusing existing helpers), extreme defensive code that silently swallows errors (empty catch blocks returning defaults, null-to-zero conversions — these create impossible-to-debug silent failures), and missing test coverage. Reject work that introduces these anti-patterns.
 
     # Delegation Strategy
 
