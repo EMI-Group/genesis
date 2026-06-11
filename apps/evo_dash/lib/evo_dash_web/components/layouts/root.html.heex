@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="csrf-token" content={get_csrf_token()} />
+    <meta name="locale" content={Gettext.get_locale(EvoDashWeb.Gettext)} />
     <meta name="theme-color" content="#f8fafc" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -61,6 +62,35 @@
         // System theme change — re-resolve when in system mode
         window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
           if (!localStorage.getItem("phx:theme")) applyTheme("system");
+        });
+
+        // --- Locale ---
+        const resolveLocale = () => {
+          let locale = localStorage.getItem("phx:locale");
+          if (!locale) {
+            const meta = document.querySelector('meta[name="locale"]');
+            locale = meta ? meta.content : "en";
+          }
+          if (!locale) locale = "en";
+          localStorage.setItem("phx:locale", locale);
+          document.cookie = "locale=" + locale + ";path=/;SameSite=Lax";
+          return locale;
+        };
+
+        resolveLocale();
+
+        window.addEventListener("phx:set-locale", (e) => {
+          const locale = e.detail.locale;
+          localStorage.setItem("phx:locale", locale);
+          document.cookie = "locale=" + locale + ";path=/;SameSite=Lax";
+          window.location.reload();
+        });
+
+        window.addEventListener("storage", (e) => {
+          if (e.key === "phx:locale") {
+            document.cookie = "locale=" + (e.newValue || "en") + ";path=/;SameSite=Lax";
+            window.location.reload();
+          }
         });
       })();
     </script>

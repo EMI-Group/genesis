@@ -55,6 +55,8 @@ defmodule EvoDashWeb.Layouts do
                 <.nav_link navigate={~p"/help"} current={@current_page == :help} icon="hero-question-mark-circle">{gettext("Help")}</.nav_link>
               </div>
               <div class="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-2"></div>
+              <.language_selector />
+              <div class="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-2"></div>
               <.theme_toggle />
             </div>
 
@@ -94,6 +96,9 @@ defmodule EvoDashWeb.Layouts do
         </nav>
 
         <div class="p-4 border-t border-slate-200 dark:border-slate-800">
+          <div class="flex justify-center mb-3">
+            <.language_selector />
+          </div>
           <div class="flex justify-center">
             <.theme_toggle />
           </div>
@@ -269,6 +274,43 @@ defmodule EvoDashWeb.Layouts do
         <.icon name="hero-moon-micro" class="w-4 h-4" />
       </button>
     </div>
+    """
+  end
+
+  @doc """
+  Provides a language/locale selector dropdown.
+  """
+  def language_selector(assigns) do
+    locale = Gettext.get_locale(EvoDashWeb.Gettext)
+
+    languages = [
+      {"en", "English"},
+      {"zh_CN", "中文 (简体)"},
+      {"zh_HK", "中文 (繁體)"},
+      {"ja", "日本語"},
+      {"es", "español"},
+      {"ru", "русский"},
+      {"pt", "português"},
+      {"id", "Bahasa Indonesia"},
+      {"ko", "한국어"},
+      {"th", "ภาษาไทย"},
+      {"vi", "Tiếng Việt"},
+      {"fr", "Français"},
+      {"it", "Italiano"}
+    ]
+
+    assigns = assign(assigns, :locale, locale)
+    assigns = assign(assigns, :languages, languages)
+
+    ~H"""
+    <select
+      onchange="window.dispatchEvent(new CustomEvent('phx:set-locale', {detail: {locale: this.value}}))"
+      class="select select-sm select-ghost rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-transparent cursor-pointer"
+    >
+      <option :for={{code, name} <- @languages} value={code} selected={@locale == code}>
+        {name}
+      </option>
+    </select>
     """
   end
 end

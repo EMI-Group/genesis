@@ -5,6 +5,7 @@ defmodule EvoDashWeb.Router do
   pipeline :browser do
     plug(:accepts, ["html"])
     plug(:fetch_session)
+    plug(EvoDashWeb.Plugs.Locale)
     plug(:detect_desktop_client)
     plug(:fetch_live_flash)
     plug(:put_root_layout, html: {EvoDashWeb.Layouts, :root})
