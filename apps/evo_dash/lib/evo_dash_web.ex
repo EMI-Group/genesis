@@ -49,6 +49,7 @@ defmodule EvoDashWeb do
   def live_view do
     quote do
       use Phoenix.LiveView
+      on_mount EvoDashWeb.LiveHooks.SetLocale
 
       unquote(html_helpers())
     end

@@ -45,6 +45,7 @@ defmodule EvoDashWeb.Plugs.Locale do
 
     conn
     |> put_private(:locale, locale)
+    |> put_session(:locale, locale)
   end
 
   defp get_cookie_locale(conn) do
