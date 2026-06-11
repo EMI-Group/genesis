@@ -167,7 +167,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "Controls randomness in LLM responses. Lower values (e.g. 0.2) make output more focused and deterministic, while higher values (e.g. 0.8) make it more creative and varied. Range: 0.0–2.0. Leave unset to use the provider's default."
+        "Controls randomness in LLM responses. Lower values make output more focused and deterministic, while higher values make it more creative and varied. Range: 0.0–2.0. Normally you should leave this unset — modern LLMs perform best with their default temperature and changing it may degrade output quality."
     },
     %{
       key_path: [:llm, :max_tokens],
@@ -187,7 +187,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "Controls how much effort the model spends reasoning before answering. Supported values vary by provider. Examples: 'low', 'medium', 'high' for OpenAI; 'none', 'low', 'medium', 'high' for Anthropic. Leave unset to use the provider's default."
+        "Controls how much effort the model spends reasoning before answering. There are four levels: low, medium, high and xhigh (mapped to :low, :medium, :high, :xhigh in Elixir). Leave unset to use the provider's default."
     },
     %{
       key_path: [:llm, :top_p],
@@ -197,7 +197,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "Nucleus sampling threshold. The model considers tokens with top_p probability mass. Lower values make output more focused. Range: 0.0–1.0. Leave unset to use the provider's default."
+        "Nucleus sampling threshold. The model considers tokens with top_p probability mass. Range: 0.0–1.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
     },
     %{
       key_path: [:llm, :top_k],
@@ -207,7 +207,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "Limits token selection to the K most probable tokens. Only supported by some providers (e.g., Anthropic, Google). Leave unset to use the provider's default."
+        "Limits token selection to the K most probable tokens. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
     },
     %{
       key_path: [:llm, :frequency_penalty],
@@ -217,7 +217,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "Penalizes tokens based on their frequency in the generated text so far. Higher values reduce repetition. Range: -2.0 to 2.0. Leave unset to use the provider's default."
+        "Penalizes tokens based on their frequency in the generated text so far. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
     },
     %{
       key_path: [:llm, :presence_penalty],
@@ -227,7 +227,7 @@ defmodule EvoGit.Config.Schema do
       category: :llm,
       sub_category: nil,
       description:
-        "Penalizes tokens that have already appeared in the generated text, encouraging the model to discuss new topics. Range: -2.0 to 2.0. Leave unset to use the provider's default."
+        "Penalizes tokens that have already appeared in the generated text. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
     },
     # ── User ───────────────────────────────────────────────────────────
     %{
