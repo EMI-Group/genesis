@@ -6,14 +6,16 @@ msgstr ""
 msgid "%{count} child"
 msgid_plural "%{count} children"
 msgstr[0] "%{count} дочерний"
-msgstr[1] "%{count} дочерний"
+msgstr[1] "%{count} дочерних"
+msgstr[2] "%{count} дочерних"
 
 #: lib/evo_dash_web/live/tasks_live.ex:151
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
 msgid_plural "%{count} tasks found"
-msgstr[0] "Найдено задач: %{count}"
-msgstr[1] "Найдено задач: %{count}"
+msgstr[0] "Найдена %{count} задача"
+msgstr[1] "Найдено %{count} задачи"
+msgstr[2] "Найдено %{count} задач"
 
 #: lib/evo_dash_web/helpers.ex:156
 #, elixir-autogen, elixir-format
@@ -853,15 +855,17 @@ msgstr "%{count}"
 #, elixir-autogen, elixir-format
 msgid "%{count} commit"
 msgid_plural "%{count} commits"
-msgstr[0] "%{count} коммита"
+msgstr[0] "%{count} коммит"
 msgstr[1] "%{count} коммита"
+msgstr[2] "%{count} коммитов"
 
 #: lib/evo_dash_web/components/review_components.ex:325
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
 msgstr[0] "%{count} файл"
-msgstr[1] "%{count} файл"
+msgstr[1] "%{count} файла"
+msgstr[2] "%{count} файлов"
 
 #: lib/evo_dash_web/components/review_components.ex:150
 #, elixir-autogen, elixir-format
@@ -873,7 +877,8 @@ msgstr "%{count} файлов изменено"
 msgid "%{count} validation warning"
 msgid_plural "%{count} validation warnings"
 msgstr[0] "%{count} предупреждение валидации"
-msgstr[1] "%{count} предупреждение валидации"
+msgstr[1] "%{count} предупреждения валидации"
+msgstr[2] "%{count} предупреждений валидации"
 
 #: lib/evo_dash_web/components/settings_components.ex:291
 #, elixir-autogen, elixir-format
