@@ -317,10 +317,19 @@ defmodule EvoDashWeb.SettingsLive do
       case EvoGit.Config.save_credentials(%{env_var => String.trim(api_key)}) do
         :ok ->
           config_status = safe_config_status()
-          {:noreply, socket |> assign(:config_status, config_status) |> put_flash(:info, gettext("API key saved successfully."))}
+
+          {:noreply,
+           socket
+           |> assign(:config_status, config_status)
+           |> put_flash(:info, gettext("API key saved successfully."))}
 
         {:error, reason} ->
-          {:noreply, put_flash(socket, :error, gettext("Failed to save API key: %{reason}", reason: inspect(reason)))}
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to save API key: %{reason}", reason: inspect(reason))
+           )}
       end
     end
   end
@@ -448,6 +457,10 @@ defmodule EvoDashWeb.SettingsLive do
       |> maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))
       |> maybe_add_kw(:max_turns, get_in(file_config, [:scheduler, :max_turns]))
       |> maybe_add_kw(:llm_model, get_in(file_config, [:llm, :model]))
+
+    # Always include LLM generation params (even when empty, to allow clearing)
+    llm_gen_params = EvoGit.Config.Schema.llm_generation_params(file_config)
+    updates = updates ++ [{:llm_generation_params, llm_gen_params}]
 
     if updates != [] do
       case EvoGit.AgentScheduler.update_config(updates) do
