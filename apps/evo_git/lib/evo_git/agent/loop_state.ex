@@ -23,10 +23,12 @@ defmodule EvoGit.Agent.LoopState do
   - `last_warned_turns_percent` — last turn-percent at which a turn-limit warning was emitted
   - `skill_schemas` — tool schemas from enabled skills
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
+  - `usage` — cumulative token and cost usage tracking across all LLM calls (`EvoGit.Agent.Usage.t()`)
   """
 
   @enforce_keys [:agent_id, :agent_module, :depth, :node_path, :context]
 
+  alias EvoGit.Agent.Usage
   alias EvoGit.Core.ForeignRepo
 
   defstruct [
@@ -42,7 +44,8 @@ defmodule EvoGit.Agent.LoopState do
     total_tokens: 0,
     last_warned_turns_percent: 0,
     skill_schemas: [],
-    foreign_repos: []
+    foreign_repos: [],
+    usage: %EvoGit.Agent.Usage{}
   ]
 
   @type t :: %__MODULE__{
@@ -58,6 +61,7 @@ defmodule EvoGit.Agent.LoopState do
           total_tokens: non_neg_integer(),
           last_warned_turns_percent: non_neg_integer(),
           skill_schemas: [ReqLLM.Tool.t()],
-          foreign_repos: [ForeignRepo.t()]
+          foreign_repos: [ForeignRepo.t()],
+          usage: Usage.t()
         }
 end
