@@ -26,7 +26,6 @@ defmodule EvoDash.Application do
 
     children = [
       EvoDashWeb.Telemetry,
-      {DNSCluster, query: Application.get_env(:evo_dash, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
       EvoDash.TaskRegistry

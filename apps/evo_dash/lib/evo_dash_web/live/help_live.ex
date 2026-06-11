@@ -205,7 +205,7 @@ defmodule EvoDashWeb.HelpLive do
             </.system_check_row>
 
             <!-- Sandbox Row -->
-            <.system_check_row title={gettext("Sandbox")} icon="hero-lock-closed" status={:info}>
+            <.system_check_row title={gettext("Sandbox")} icon="hero-lock-closed" status={sandbox_status(@sandbox_check)}>
               <:details>
                 <div class="flex flex-wrap gap-2 items-center">
                   <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
@@ -225,7 +225,7 @@ defmodule EvoDashWeb.HelpLive do
             </.system_check_row>
 
             <!-- Supervisor Row -->
-            <.system_check_row title={gettext("Supervision Tree")} icon="hero-server-stack" status={if @supervisor_check.healthy, do: :ok, else: :error}>
+            <.system_check_row title="EvoX Genesis Process Tree" icon="hero-server-stack" status={if @supervisor_check.healthy, do: :ok, else: :error}>
               <:details>
                 <div class="space-y-1">
                   <.supervisor_status label="EvoGit" children={@supervisor_check.evo_git} />
@@ -364,9 +364,10 @@ defmodule EvoDashWeb.HelpLive do
 
   @impl true
   def handle_event("test_llm", _params, socket) do
+    parent = self()
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
       result = EvoGit.SystemCheck.llm_test()
-      send(self(), {:llm_test_result, result})
+      send(parent, {:llm_test_result, result})
     end)
 
     {:noreply, assign(socket, :llm_test_status, :testing)}
@@ -453,15 +454,15 @@ defmodule EvoDashWeb.HelpLive do
     <div class="flex items-center gap-2 text-sm">
       <span class="font-medium text-base-content/70">{@label}:</span>
       <div class="flex flex-wrap gap-1.5">
-        <%= for child <- @children do %>
-          <span class={"badge badge-sm #{if child.status == :running, do: "badge-success", else: "badge-error"}"}>
-            <%= if child.status == :running do %>
-              <.icon name="hero-check" class="size-3" />
-            <% else %>
+        <%= if Enum.empty?(@children) || Enum.all?(@children, &(&1.status == :running)) do %>
+          <span class="text-xs text-base-content/40">{gettext("All healthy")}</span>
+        <% else %>
+          <%= for child <- @children, child.status != :running do %>
+            <span class="badge badge-sm badge-error">
               <.icon name="hero-x-mark" class="size-3" />
-            <% end %>
-            {child.id}
-          </span>
+              {child.id}
+            </span>
+          <% end %>
         <% end %>
       </div>
     </div>
@@ -489,6 +490,26 @@ defmodule EvoDashWeb.HelpLive do
   defp tools_status(%{git: %{available: false}}), do: :error
   defp tools_status(%{rg: %{available: false}}), do: :error
   defp tools_status(_), do: :warning
+
+  # Determine sandbox overall status
+  defp sandbox_status(%{backend: :systemd_run} = check) do
+    if check.systemd_available && check.capabilities.filesystem_isolation && check.capabilities.resource_limits do
+      :ok
+    else
+      :error
+    end
+  end
+
+  defp sandbox_status(%{backend: :sandbox_exec} = check) do
+    if check.sandbox_exec_available && check.capabilities.filesystem_isolation do
+      :ok
+    else
+      :error
+    end
+  end
+
+  defp sandbox_status(%{backend: :none}), do: :info
+  defp sandbox_status(_), do: :error
 
   # LLM test status to icon status
   defp llm_status_icon(:idle), do: :info
