@@ -368,6 +368,7 @@ defmodule EvoGit.AgentScheduler do
     max_retries = Map.get(scheduler_config, :max_retries, 15)
     max_turns = Map.get(scheduler_config, :max_turns, 128)
     llm_model = Map.get(config, :llm, %{}) |> Map.get(:model)
+    llm_generation_params = EvoGit.Config.Schema.llm_generation_params(config)
     sandbox_mode = Map.get(sandbox_config, :mode)
     sandbox_resources = Map.get(sandbox_config, :resources)
     sandbox_process_resources = Map.get(sandbox_config, :process)
@@ -400,6 +401,7 @@ defmodule EvoGit.AgentScheduler do
     max_retries = Keyword.get(opts, :max_retries, max_retries)
     max_turns = Keyword.get(opts, :max_turns, max_turns)
     llm_model = Keyword.get(opts, :llm_model, llm_model)
+    llm_generation_params = Keyword.get(opts, :llm_generation_params, llm_generation_params)
 
     {:ok,
      %State{
@@ -409,6 +411,7 @@ defmodule EvoGit.AgentScheduler do
        agent_max_retries: agent_max_retries,
        max_depth: max_depth,
        llm_model: llm_model,
+       llm_generation_params: llm_generation_params,
        max_retries: max_retries,
        max_turns: max_turns,
        next_agent_id: 1,
@@ -550,6 +553,7 @@ defmodule EvoGit.AgentScheduler do
       max_retries: state.max_retries,
       max_turns: state.max_turns,
       llm_model: state.llm_model,
+      llm_generation_params: state.llm_generation_params,
       paused: state.paused,
       sandbox_mode: state.sandbox_mode,
       sandbox_resources: state.sandbox_resources,
@@ -572,6 +576,7 @@ defmodule EvoGit.AgentScheduler do
         :max_retries -> state.max_retries
         :max_turns -> state.max_turns
         :llm_model -> state.llm_model
+        :llm_generation_params -> state.llm_generation_params
         :paused -> state.paused
         :sandbox_mode -> state.sandbox_mode
         :sandbox_resources -> state.sandbox_resources
@@ -697,6 +702,7 @@ defmodule EvoGit.AgentScheduler do
       |> maybe_update(:sandbox_mode, opts)
       |> maybe_update(:sandbox_resources, opts)
       |> maybe_update(:sandbox_process_resources, opts)
+      |> maybe_update(:llm_generation_params, opts)
 
     # Adjust LLM slot counter if max_concurrency changed
     state =

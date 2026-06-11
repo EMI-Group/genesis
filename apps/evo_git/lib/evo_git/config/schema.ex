@@ -159,6 +159,76 @@ defmodule EvoGit.Config.Schema do
       description:
         "Token count threshold that triggers context compression. When an agent's accumulated context (system prompt, conversation history, tool outputs) exceeds this token count, older context is compressed to avoid hitting the LLM's context window limit."
     },
+    %{
+      key_path: [:llm, :temperature],
+      type: :float,
+      default: nil,
+      validation: [min: 0.0, max: 2.0],
+      category: :llm,
+      sub_category: nil,
+      description:
+        "Controls randomness in LLM responses. Lower values (e.g. 0.2) make output more focused and deterministic, while higher values (e.g. 0.8) make it more creative and varied. Range: 0.0–2.0. Leave unset to use the provider's default."
+    },
+    %{
+      key_path: [:llm, :max_tokens],
+      type: :pos_integer,
+      default: nil,
+      validation: [min: 1],
+      category: :llm,
+      sub_category: nil,
+      description:
+        "Maximum number of tokens in the LLM response. Limits the length of generated text. Leave unset to use the provider's default (typically the model's maximum)."
+    },
+    %{
+      key_path: [:llm, :reasoning_effort],
+      type: :string,
+      default: nil,
+      validation: [],
+      category: :llm,
+      sub_category: nil,
+      description:
+        "Controls how much effort the model spends reasoning before answering. Supported values vary by provider. Examples: 'low', 'medium', 'high' for OpenAI; 'none', 'low', 'medium', 'high' for Anthropic. Leave unset to use the provider's default."
+    },
+    %{
+      key_path: [:llm, :top_p],
+      type: :float,
+      default: nil,
+      validation: [min: 0.0, max: 1.0],
+      category: :llm,
+      sub_category: nil,
+      description:
+        "Nucleus sampling threshold. The model considers tokens with top_p probability mass. Lower values make output more focused. Range: 0.0–1.0. Leave unset to use the provider's default."
+    },
+    %{
+      key_path: [:llm, :top_k],
+      type: :pos_integer,
+      default: nil,
+      validation: [min: 1],
+      category: :llm,
+      sub_category: nil,
+      description:
+        "Limits token selection to the K most probable tokens. Only supported by some providers (e.g., Anthropic, Google). Leave unset to use the provider's default."
+    },
+    %{
+      key_path: [:llm, :frequency_penalty],
+      type: :float,
+      default: nil,
+      validation: [min: -2.0, max: 2.0],
+      category: :llm,
+      sub_category: nil,
+      description:
+        "Penalizes tokens based on their frequency in the generated text so far. Higher values reduce repetition. Range: -2.0 to 2.0. Leave unset to use the provider's default."
+    },
+    %{
+      key_path: [:llm, :presence_penalty],
+      type: :float,
+      default: nil,
+      validation: [min: -2.0, max: 2.0],
+      category: :llm,
+      sub_category: nil,
+      description:
+        "Penalizes tokens that have already appeared in the generated text, encouraging the model to discuss new topics. Range: -2.0 to 2.0. Leave unset to use the provider's default."
+    },
     # ── User ───────────────────────────────────────────────────────────
     %{
       key_path: [:user, :github_username],
@@ -522,4 +592,31 @@ defmodule EvoGit.Config.Schema do
       rule: rule
     }
   end
+
+  @doc """
+  Extracts LLM generation parameters from a config map, filtering out nil values.
+
+  Returns a keyword list suitable for passing to `ReqLLM.stream_text/3`.
+
+  ## Example
+
+      iex> Schema.llm_generation_params(%{llm: %{temperature: 0.7, max_tokens: 4096, model: "anthropic:claude-sonnet-4"}})
+      [temperature: 0.7, max_tokens: 4096]
+  """
+  @spec llm_generation_params(map()) :: keyword()
+  def llm_generation_params(config) when is_map(config) do
+    llm_config = Map.get(config, :llm, %{})
+
+    []
+    |> maybe_param(:temperature, Map.get(llm_config, :temperature))
+    |> maybe_param(:max_tokens, Map.get(llm_config, :max_tokens))
+    |> maybe_param(:reasoning_effort, Map.get(llm_config, :reasoning_effort))
+    |> maybe_param(:top_p, Map.get(llm_config, :top_p))
+    |> maybe_param(:top_k, Map.get(llm_config, :top_k))
+    |> maybe_param(:frequency_penalty, Map.get(llm_config, :frequency_penalty))
+    |> maybe_param(:presence_penalty, Map.get(llm_config, :presence_penalty))
+  end
+
+  defp maybe_param(keyword_list, _key, nil), do: keyword_list
+  defp maybe_param(keyword_list, key, value), do: keyword_list ++ [{key, value}]
 end

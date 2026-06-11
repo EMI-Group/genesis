@@ -60,6 +60,12 @@ defmodule EvoGit.Agent do
         agent_state.llm_model
       end
 
+      defp current_generation_params do
+        agent_id = EvoGit.AgentScheduler.current_agent_id()
+        {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
+        agent_state.llm_generation_params || []
+      end
+
       # --- Public API ---
 
       @doc """
@@ -239,7 +245,8 @@ defmodule EvoGit.Agent do
         state =
           EvoGit.Agent.ContextCompression.compress_if_needed(state,
             agent_id: state.agent_id,
-            llm_model: current_model()
+            llm_model: current_model(),
+            llm_generation_params: current_generation_params()
           )
 
         state = check_limit_warnings(state)
@@ -277,6 +284,7 @@ defmodule EvoGit.Agent do
 
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         max_retries = agent_state.max_retries
+        llm_gen_opts = agent_state.llm_generation_params || []
 
         {:ok, response, llm_duration} =
           AgentScheduler.with_llm_slot(state.agent_id, fn ->
@@ -287,7 +295,7 @@ defmodule EvoGit.Agent do
                     |> Stream.take(max_retries) do
               with llm_start <- System.monotonic_time(:millisecond),
                    {:ok, stream_resp} <-
-                     ReqLLM.stream_text(current_model(), context, tools: tools),
+                     ReqLLM.stream_text(current_model(), context, Keyword.merge([tools: tools], llm_gen_opts)),
                    {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
                    llm_end <- System.monotonic_time(:millisecond) do
                 {:ok, response, llm_end - llm_start}

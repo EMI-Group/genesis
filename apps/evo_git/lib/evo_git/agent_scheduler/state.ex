@@ -17,6 +17,7 @@ defmodule EvoGit.AgentScheduler.State do
   - `agent_max_retries` — crash-retry limit per agent
   - `max_depth` — maximum agent recursion depth
   - `llm_model` — the LLM model identifier passed to ReqLLM
+  - `llm_generation_params` — LLM generation parameters (temperature, max_tokens, etc.) passed to ReqLLM calls
   - `max_retries` — maximum total retries across the scheduler
   - `max_turns` — maximum turns per agent loop
 
@@ -49,6 +50,7 @@ defmodule EvoGit.AgentScheduler.State do
     agent_max_retries: 3,
     max_depth: 8,
     llm_model: nil,
+    llm_generation_params: [],
     max_retries: 15,
     max_turns: 128,
     next_agent_id: 1,
@@ -76,6 +78,7 @@ defmodule EvoGit.AgentScheduler.State do
           agent_max_retries: non_neg_integer(),
           max_depth: pos_integer(),
           llm_model: ReqLLM.model_input(),
+          llm_generation_params: keyword(),
           max_retries: pos_integer(),
           max_turns: pos_integer(),
           next_agent_id: pos_integer(),

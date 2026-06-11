@@ -12,6 +12,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `phylo_node` — the temporal state (PhyloGraphNode) with worktree-bound repo path;
     `nil` before the agent is dispatched to a worktree
   - `llm_model` — the LLM model string for this agent to use
+  - `llm_generation_params` — the LLM generation parameters (temperature, max_tokens, etc.) passed to ReqLLM calls
   - `max_retries` — maximum LLM call retries for this agent
   - `max_depth` — maximum agent recursion depth
   - `max_turns` — maximum turns per agent loop
@@ -28,13 +29,14 @@ defmodule EvoGit.AgentScheduler.AgentState do
   alias EvoGit.Core.PhyloGraphNode
 
   @enforce_keys [:context_node, :llm_model, :max_retries, :max_depth]
-  defstruct [:context, :context_node, :phylo_node, :llm_model, :max_retries, :max_depth, :max_turns, :parent_id, :objective, :task_local_id, repo_id: :primary, repo_root: nil, foreign_repos: []]
+  defstruct [:context, :context_node, :phylo_node, :llm_model, :llm_generation_params, :max_retries, :max_depth, :max_turns, :parent_id, :objective, :task_local_id, repo_id: :primary, repo_root: nil, foreign_repos: []]
 
   @type t :: %__MODULE__{
           context: ReqLLM.Context.t() | nil,
           context_node: ContextNode.t(),
           phylo_node: PhyloGraphNode.t() | nil,
           llm_model: ReqLLM.model_input(),
+          llm_generation_params: keyword(),
           max_retries: pos_integer(),
           max_depth: pos_integer(),
           max_turns: pos_integer(),

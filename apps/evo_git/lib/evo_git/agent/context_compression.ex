@@ -44,6 +44,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
     * `:agent_id` — the agent's ID (required, used for logging and LLM slot acquisition)
     * `:llm_model` — the model to use for the compression LLM call (required)
+    * `:llm_generation_params` — keyword list of LLM generation params (temperature, max_tokens, etc.) passed to ReqLLM (optional, defaults to [])
 
   ## Returns
 
@@ -54,6 +55,7 @@ defmodule EvoGit.Agent.ContextCompression do
     threshold = EvoGit.Defaults.compression_threshold_tokens() || 100_000
     agent_id = Keyword.fetch!(opts, :agent_id)
     llm_model = Keyword.fetch!(opts, :llm_model)
+    llm_gen_opts = Keyword.get(opts, :llm_generation_params, [])
 
     if state.total_tokens > threshold do
       Logger.info(
@@ -118,7 +120,7 @@ defmodule EvoGit.Agent.ContextCompression do
             AgentScheduler.with_llm_slot(agent_id, fn ->
               try do
                 with {:ok, stream_response} <-
-                       ReqLLM.stream_text(llm_model, compression_context),
+                       ReqLLM.stream_text(llm_model, compression_context, llm_gen_opts),
                      {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
                      text <- ReqLLM.Response.text(response),
                      summary_msg <- ReqLLM.Context.user("Summary of previous events:\n" <> text),

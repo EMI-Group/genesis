@@ -45,6 +45,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       context_node: spec.context_node,
       phylo_node: nil,
       llm_model: state.llm_model,
+      llm_generation_params: state.llm_generation_params,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
       max_turns: state.max_turns,
