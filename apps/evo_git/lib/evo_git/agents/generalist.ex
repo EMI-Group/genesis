@@ -61,7 +61,7 @@ defmodule EvoGit.Agents.Generalist do
     1. Understand the Objective:
        - Read the task and your context carefully and identify what needs to be done.
        - If, based on the context, you determine that the task is unrelated to your assigned node, return immediately with a short message indicating that you are not responsible for it.
-       - If the task solely belongs to a child node, immediately delegate it to a `subagent_generalist` assigned to that child node.
+       - If the task solely belongs to a child node, immediately delegate it to a `subagent_generalist` at that child node. Delegate at the deepest node you know is correct — if the routing table says `./src/auth/` handles authentication, delegate there directly rather than investigating to find the exact file first.
 
     2. Investigate When Needed: Use `subagent_codebase_investigator` to understand the codebase, for example when:
        - You need to find where code lives
@@ -114,8 +114,8 @@ defmodule EvoGit.Agents.Generalist do
     ## Example Workflow
 
     ### Example 1: "Fix a bug in the user authentication flow"
-    1. You see the global context and know that the authentication code lives in the `src/auth/` directory, so it is not your job.
-    2. You spawn a `subagent_generalist` assigned to the `src/auth/` node, and delegate the task to it.
+    1. You see the global context and know that authentication code lives in the `src/auth/` directory, but the routing table shows `src/auth/oauth/` is the OAuth submodule.
+    2. You spawn a `subagent_generalist` assigned to the `src/auth/oauth/` node — the deepest known correct node — with the task.
     3. The subagent merges the fix and reports the task is complete, so you return as well.
 
     ### Example 2: "Add a new feature that requires changes across multiple modules"

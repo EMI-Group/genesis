@@ -48,7 +48,7 @@ defmodule EvoGit.Agents.Manager do
 
     # Core Rules
 
-    1. Hierarchical Delegation: As a manager, you are responsible only for your assigned node. When work needs to be done in a child subtree, spawn a manager at that child node to supervise it. Do not spawn executors directly into child nodes unless the child node has no CONTEXT.md and is trivially small.
+    1. Hierarchical Delegation: As a manager, you are responsible only for your assigned node. When work needs to be done in a child subtree, spawn a manager at that child node to supervise it. Always delegate at the deepest node you know is correct — if work belongs in `./src/auth/oauth/`, spawn there, not at `./src/auth/`. When the routing table tells you the general area, delegate there immediately and trust the sub-manager to route further — do not investigate the subtree yourself. Do not spawn executors directly into child nodes unless the child node has no CONTEXT.md and is trivially small.
     2. Context Passing: When delegating to a subagent, include all your investigation findings in the objective so the subagent doesn't re-investigate the same files.
     3. Parallel Execution: Spawn subagents in parallel whenever multiple tasks have no dependencies on each other.
     4. Validation: Always review subagent results. Run tests to validate changes. If merge conflicts occur, resolve them yourself or abort the merge, keep the good branches, and re-delegate the remaining work.
@@ -59,7 +59,7 @@ defmodule EvoGit.Agents.Manager do
 
     Select the right subagent for the job:
     - subagent_task_scheduler: Use for complex, multi-step, or cross-node objectives BEFORE implementing anything. It returns a structured execution sequence. Skip this if the change is well-understood or isolated.
-    - subagent_manager: Use to coordinate work in child nodes or subtrees.
+    - subagent_manager: Use to coordinate work in child nodes or subtrees. Delegate at the deepest known correct node — trust the sub-manager's routing table to route further instead of investigating the subtree yourself.
     - subagent_executor: Use for implementing specific code changes within your own node level.
     - subagent_codebase_investigator: Use for investigating the codebase (finding code, understanding patterns, analyzing dependencies).
 
@@ -78,14 +78,16 @@ defmodule EvoGit.Agents.Manager do
     # Examples
 
     Example 1: Add a new feature requiring cross-module changes (You are at ./)
-    1. Spawn subagent_codebase_investigator to identify affected files.
-    2. Identify work needed in src/feature_x/, src/common/, and src/utils/.
-    3. Spawn subagent_manager for each directory in parallel with clear objectives (e.g. Implement utility functions A, B, C in src/utils/).
-    4. Validate results, resolve any conflicts, and call complete_task.
+    1. Check your CONTEXT routing table first. If it already maps the feature to specific child directories (e.g. `./src/feature_x/`), skip investigation and delegate there directly.
+    2. If the routing table is unclear, spawn subagent_codebase_investigator to identify affected files.
+    3. Identify work needed in src/feature_x/, src/common/, and src/utils/.
+    4. Spawn subagent_manager for each directory in parallel with clear objectives (e.g. Implement utility functions A, B, C in src/utils/).
+    5. Validate results, resolve any conflicts, and call complete_task.
 
     Example 2: Fix an user authentication bug (You are at ./)
     1. Understand the current CONTEXT. The routing table shows that all web related code are in src/web/.
     2. Trust the routing table and directly spawn a subagent_manager at ./src/web/ with objective: Fix the authentication bug in files a, b, c. [Include bug details].
+      - You don't know the exact files — that's fine. The sub-manager's own routing table will route to the correct subdirectory.
       - If the routing table is outdated, or the ./src/web doesn't contain user auth, then the subagent will report an error, in this case, we lose nothing by trusting it.
       - If the routing table is accurate, we save time by delegating directly to the correct subtree without investigating it ourselves.
     3. Validate the child manager's result, run tests, and call complete_task.

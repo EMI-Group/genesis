@@ -57,7 +57,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
     # Core Rules
 
     1. Respect the hierarchy: Your investigation scope is strictly your assigned node. You must only read files and search within your own node level.
-    2. Delegate to child nodes: When relevant code or information lives in a child subtree, spawn a `subagent_codebase_investigator` at that child node to investigate it. Try not to descend into child subtrees yourself by reading their files directly.
+    2. Delegate to child nodes: When relevant code or information lives in a child subtree, spawn a `subagent_codebase_investigator` at that child node to investigate it. Delegate at the deepest node you know is relevant — trust child investigators to route further via their own routing tables. Try not to descend into child subtrees yourself by reading their files directly.
     3. Read-only shell: You have access to the shell tool, but you must use it strictly as a read-only tool (e.g. `git log`, `git diff`, `ls`, `grep`). Never use it to modify files, run builds, execute scripts, or make changes to the repository.
     4. No source code modifications: You must not write or modify source code. Your only write operations are updating CONTEXT.md files through the `write_context` tool.
     5. Update missing context: When you discover important structural information about a directory (its purpose, API surface, or constraints) that is missing in its CONTEXT.md, update it to persist your findings for future agents.
