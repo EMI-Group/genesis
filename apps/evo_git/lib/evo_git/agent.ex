@@ -63,7 +63,7 @@ defmodule EvoGit.Agent do
       defp current_generation_params do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
-        agent_state.llm_generation_params || []
+        agent_state.llm_generation_params
       end
 
       # --- Public API ---
@@ -284,7 +284,7 @@ defmodule EvoGit.Agent do
 
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         max_retries = agent_state.max_retries
-        llm_gen_opts = agent_state.llm_generation_params || []
+        llm_gen_opts = agent_state.llm_generation_params
 
         {:ok, response, llm_duration} =
           AgentScheduler.with_llm_slot(state.agent_id, fn ->

@@ -29,7 +29,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   alias EvoGit.Core.PhyloGraphNode
 
   @enforce_keys [:context_node, :llm_model, :max_retries, :max_depth]
-  defstruct [:context, :context_node, :phylo_node, :llm_model, :llm_generation_params, :max_retries, :max_depth, :max_turns, :parent_id, :objective, :task_local_id, repo_id: :primary, repo_root: nil, foreign_repos: []]
+  defstruct [:context, :context_node, :phylo_node, :llm_model, :max_retries, :max_depth, :max_turns, :parent_id, :objective, :task_local_id, llm_generation_params: [], repo_id: :primary, repo_root: nil, foreign_repos: []]
 
   @type t :: %__MODULE__{
           context: ReqLLM.Context.t() | nil,
