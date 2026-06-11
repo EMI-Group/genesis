@@ -11,6 +11,8 @@ defmodule EvoDashWeb.Plugs.Locale do
   import Plug.Conn
 
   @supported_languages %{
+    "ar" => "Arabic العربية",
+    "de" => "German Deutsch",
     "en" => "English",
     "zh_CN" => "Chinese (Simplified) 中文 (简体)",
     "zh_HK" => "Chinese (Traditional) 中文 (繁體)",

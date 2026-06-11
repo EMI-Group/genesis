@@ -285,6 +285,8 @@ defmodule EvoDashWeb.Layouts do
 
     languages = [
       {"en", "English"},
+      {"ar", "العربية"},
+      {"de", "Deutsch"},
       {"zh_CN", "中文 (简体)"},
       {"zh_HK", "中文 (繁體)"},
       {"ja", "日本語"},
@@ -304,20 +306,25 @@ defmodule EvoDashWeb.Layouts do
 
     ~H"""
     <details class="dropdown dropdown-end">
-      <summary class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800" title={gettext("Change language")}>
-        <.icon name="hero-language" class="size-4" />
+      <summary class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title={gettext("Change language")}>
+        <.icon name="hero-language" class="size-5" />
       </summary>
-      <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-2xl w-48 border border-base-200 max-h-64 overflow-y-auto">
-        <li :for={{code, name} <- @languages}>
+      <div class="dropdown-content mt-2 z-50 w-56 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
+        <div class="max-h-80 overflow-y-auto flex flex-col gap-0.5">
           <button
-            class={@locale == code && "active"}
+            :for={{code, name} <- @languages}
+            class={[
+              "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+              @locale == code && "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
+              @locale != code && "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+            ]}
             phx-click={JS.dispatch("phx:set-locale", detail: %{locale: code})}
           >
-            <.icon :if={@locale == code} name="hero-check" class="size-4" />
-            {name}
+            <span class="flex-1 text-left">{name}</span>
+            <.icon :if={@locale == code} name="hero-check-solid" class="size-4 text-indigo-500 shrink-0" />
           </button>
-        </li>
-      </ul>
+        </div>
+      </div>
     </details>
     """
   end

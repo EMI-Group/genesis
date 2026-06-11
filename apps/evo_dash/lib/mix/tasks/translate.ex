@@ -6,6 +6,8 @@ defmodule Mix.Tasks.Translate do
   @requirements ["app.config"]
 
   @languages %{
+    "ar" => "Arabic العربية",
+    "de" => "German Deutsch",
     "zh_CN" => "Chinese (Simplified) 中文 (简体)",
     "zh_HK" => "Chinese (Traditional) 中文 (繁體)",
     "ja" => "Japanese 日本語",

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang={Gettext.get_locale(EvoDashWeb.Gettext)}>
+<html lang={Gettext.get_locale(EvoDashWeb.Gettext)} dir={if Gettext.get_locale(EvoDashWeb.Gettext) in ~w(ar he fa ur), do: "rtl", else: "ltr"}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -65,6 +65,11 @@
         });
 
         // --- Locale ---
+        const rtlLocales = ['ar', 'he', 'fa', 'ur'];
+        const setDirection = (locale) => {
+          document.documentElement.dir = rtlLocales.includes(locale) ? 'rtl' : 'ltr';
+        };
+
         const resolveLocale = () => {
           let locale = localStorage.getItem("phx:locale");
           if (!locale) {
@@ -74,6 +79,7 @@
           if (!locale) locale = "en";
           localStorage.setItem("phx:locale", locale);
           document.cookie = "locale=" + locale + ";path=/;SameSite=Lax";
+          setDirection(locale);
           return locale;
         };
 
@@ -83,6 +89,7 @@
           const locale = e.detail.locale;
           localStorage.setItem("phx:locale", locale);
           document.cookie = "locale=" + locale + ";path=/;SameSite=Lax";
+          setDirection(locale);
           window.location.reload();
         });
 

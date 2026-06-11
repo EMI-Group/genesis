@@ -1000,3 +1000,89 @@ button, a, input, textarea, select, summary,
   margin-right: 0.5em;
   accent-color: oklch(var(--p));
 }
+
+/* === RTL (Right-to-Left) Support === */
+[dir="rtl"] {
+  direction: rtl;
+  text-align: right;
+}
+
+/* RTL: Flip margins and paddings that use physical directions */
+[dir="rtl"] .ml-1 { margin-left: 0; margin-right: 0.25rem; }
+[dir="rtl"] .mr-1 { margin-right: 0; margin-left: 0.25rem; }
+
+/* RTL: Navbar flex items should remain consistent */
+[dir="rtl"] .flex.items-center.justify-between {
+  direction: rtl;
+}
+
+/* RTL: Fix drawer sidebar (currently translate-x-full for right side) */
+[dir="rtl"] .fixed.top-0.right-0 {
+  right: auto;
+  left: 0;
+}
+[dir="rtl"] .fixed.top-0.right-0.translate-x-full {
+  transform: translateX(-100%);
+}
+[dir="rtl"] .fixed.top-0.right-0.peer-checked\:translate-x-0 {
+  transform: translateX(0);
+}
+
+/* RTL: Config warning banner position */
+[dir="rtl"] .fixed.bottom-4.right-4 {
+  right: auto;
+  left: 1rem;
+}
+
+/* RTL: Border radius flipping for asymmetric radii */
+[dir="rtl"] .rounded-xl {
+  border-radius: 0.75rem;
+}
+
+/* RTL: Markdown content adjustments */
+[dir="rtl"] .md-content ul,
+[dir="rtl"] .md-content ol {
+  padding-left: 0;
+  padding-right: 2em;
+}
+
+[dir="rtl"] .md-content blockquote {
+  border-left: 0;
+  border-right: 4px solid oklch(var(--p));
+  border-radius: 0.5rem 0 0 0.5rem;
+}
+
+[dir="rtl"] .md-content th,
+[dir="rtl"] .md-content td {
+  text-align: right;
+}
+
+[dir="rtl"] .md-content input[type="checkbox"] {
+  margin-right: 0;
+  margin-left: 0.5em;
+}
+
+/* RTL: Theme toggle slider direction */
+[dir="rtl"] .theme-toggle-slider,
+[dir="rtl"] [class*="left-1"] {
+  left: auto;
+  right: 0.25rem;
+}
+
+/* RTL: Fix dropdown positioning */
+[dir="rtl"] .dropdown-end .dropdown-content {
+  left: auto;
+  right: auto;
+}
+
+/* RTL: Shimmer animation direction */
+[dir="rtl"] .task-card-active {
+  background-image: linear-gradient(
+    270deg,
+    transparent 0%,
+    oklch(65% 0.18 255 / 0.03) 25%,
+    oklch(65% 0.18 255 / 0.06) 50%,
+    oklch(65% 0.18 255 / 0.03) 75%,
+    transparent 100%
+  );
+}
