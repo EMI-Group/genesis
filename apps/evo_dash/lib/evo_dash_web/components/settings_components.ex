@@ -48,6 +48,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 value={input_value(@value)}
                 min={@schema.validation[:min] || 1}
                 max={@schema.validation[:max]}
+                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
                 class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :non_neg_integer -> %>
@@ -57,6 +58,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 value={input_value(@value)}
                 min={@schema.validation[:min] || 0}
                 max={@schema.validation[:max]}
+                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
                 class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :integer -> %>
@@ -66,6 +68,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 value={input_value(@value)}
                 min={@schema.validation[:min]}
                 max={@schema.validation[:max]}
+                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
                 class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :float -> %>
@@ -76,6 +79,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 value={input_value(@value)}
                 min={@schema.validation[:min]}
                 max={@schema.validation[:max]}
+                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
                 class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :string -> %>
@@ -83,6 +87,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 type="text"
                 name={Enum.join(@schema.key_path, ".")}
                 value={@value || ""}
+                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
                 class="input input-bordered w-full font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :atom -> %>
@@ -111,6 +116,12 @@ defmodule EvoDashWeb.SettingsComponents do
           </p>
         </div>
       </div>
+
+      <%= if is_nil(@value) do %>
+        <p class="text-[11px] text-base-content/40 mt-2 italic">
+          {gettext("Leave empty to use the default value.")}
+        </p>
+      <% end %>
 
       <%= if @error do %>
         <div class="mt-4 p-3 bg-error/10 text-error text-sm rounded-xl flex items-start gap-2.5 border border-error/20">
@@ -236,21 +247,42 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% end %>
 
                 <%!-- API Key input --%>
+                <% key_is_set = System.get_env(provider.env_var) %>
                 <form phx-submit="save_api_key" class="flex items-end gap-3 pt-6 pb-4">
                   <input type="hidden" name="env_var" value={provider.env_var} />
                   <div class="form-control flex-1">
                     <label class="label">
                       <span class="label-text font-semibold text-sm">{provider.env_var}</span>
-                      <%= if System.get_env(provider.env_var) do %>
+                      <%= if key_is_set do %>
                         <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
                       <% end %>
                     </label>
                     <input
                       type="password"
                       name="api_key"
-                      placeholder={gettext("Enter your API key")}
-                      class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 mt-2"
+                      placeholder={
+                        if key_is_set,
+                          do: gettext("API key is already set"),
+                          else: api_key_prefix_hint(provider.id) || gettext("Enter your API key")
+                      }
+                      class={[
+                        "input input-bordered w-full rounded-xl shadow-sm bg-base-50 mt-2",
+                        key_is_set && "input-success"
+                      ]}
                     />
+                    <%= if key_is_set do %>
+                      <p class="text-[11px] text-success/70 mt-1.5 font-medium">
+                        ✓ {gettext("Your API key is configured and ready to use.")}
+                      </p>
+                    <% else %>
+                      <p class="text-[11px] text-base-content/40 mt-1.5">
+                        <%= if prefix = api_key_prefix_hint(provider.id) do %>
+                          {gettext("Enter your API key. It should start with")} <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]"><%= prefix %></code>
+                        <% else %>
+                          {gettext("Enter your API key.")}
+                        <% end %>
+                      </p>
+                    <% end %>
                   </div>
                   <button type="submit" class="btn btn-primary btn-sm rounded-xl mt-2">
                     {gettext("Save Key")}
@@ -567,4 +599,13 @@ defmodule EvoDashWeb.SettingsComponents do
         String.contains?(String.downcase(s.description), lower)
     end)
   end
+
+  defp api_key_prefix_hint(:openai), do: "sk-proj-..."
+  defp api_key_prefix_hint(:anthropic), do: "sk-ant-api03-..."
+  defp api_key_prefix_hint(:google), do: "AIzaSy..."
+  defp api_key_prefix_hint(:deepseek), do: "sk-..."
+  defp api_key_prefix_hint(:alibaba), do: "sk-..."
+  defp api_key_prefix_hint(:zai), do: gettext("No prefix (hexadecimal)")
+  defp api_key_prefix_hint(:minimax), do: "sk-cp-... or sk-..."
+  defp api_key_prefix_hint(_other), do: nil
 end
