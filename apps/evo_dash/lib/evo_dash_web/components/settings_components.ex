@@ -48,7 +48,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 value={input_value(@value)}
                 min={@schema.validation[:min] || 1}
                 max={@schema.validation[:max]}
-                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
+                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
                 class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :non_neg_integer -> %>
@@ -58,7 +58,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 value={input_value(@value)}
                 min={@schema.validation[:min] || 0}
                 max={@schema.validation[:max]}
-                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
+                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
                 class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :integer -> %>
@@ -68,7 +68,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 value={input_value(@value)}
                 min={@schema.validation[:min]}
                 max={@schema.validation[:max]}
-                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
+                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
                 class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :float -> %>
@@ -79,7 +79,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 value={input_value(@value)}
                 min={@schema.validation[:min]}
                 max={@schema.validation[:max]}
-                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
+                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
                 class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :string -> %>
@@ -87,7 +87,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 type="text"
                 name={Enum.join(@schema.key_path, ".")}
                 value={@value || ""}
-                placeholder={if is_nil(@value), do: gettext("Leave empty to use default"), else: ""}
+                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
                 class="input input-bordered w-full font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
               />
             <% :atom -> %>
@@ -116,12 +116,6 @@ defmodule EvoDashWeb.SettingsComponents do
           </p>
         </div>
       </div>
-
-      <%= if is_nil(@value) do %>
-        <p class="text-[11px] text-base-content/40 mt-2 italic">
-          {gettext("Leave empty to use the default value.")}
-        </p>
-      <% end %>
 
       <%= if @error do %>
         <div class="mt-4 p-3 bg-error/10 text-error text-sm rounded-xl flex items-start gap-2.5 border border-error/20">
@@ -546,7 +540,7 @@ defmodule EvoDashWeb.SettingsComponents do
   defp input_value(nil), do: ""
   defp input_value(value), do: to_string(value)
 
-  defp default_label(nil), do: gettext("none")
+  defp default_label(nil), do: gettext("empty")
   defp default_label(value) when is_atom(value), do: to_string(value)
   defp default_label(value), do: to_string(value)
 
