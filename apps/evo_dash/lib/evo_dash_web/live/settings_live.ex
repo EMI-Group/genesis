@@ -408,20 +408,25 @@ defmodule EvoDashWeb.SettingsLive do
 
   defp build_config_from_category_params(params, category, schemas, file_config) do
     # Build a nested map from flat params for this category
-    category_config = params_to_category_config(params, category, schemas)
+    {category_config, emptied_paths} = params_to_category_config(params, category, schemas)
 
     # Deep merge into file_config
-    deep_merge(file_config, category_config)
+    merged = deep_merge(file_config, category_config)
+
+    # Delete keys that were explicitly emptied
+    Enum.reduce(emptied_paths, merged, fn key_path, acc ->
+      deep_delete(acc, key_path)
+    end)
   end
 
   defp params_to_category_config(params, _category, schemas) do
-    Enum.reduce(schemas, %{}, fn schema, acc ->
+    Enum.reduce(schemas, {%{}, []}, fn schema, {config_acc, emptied_acc} ->
       value = Map.get(params, Enum.join(schema.key_path, "."))
 
       parsed =
         cond do
           is_nil(value) or value == "" ->
-            nil
+            :explicitly_empty
 
           schema.type in [:pos_integer, :non_neg_integer, :integer] ->
             parse_int(value)
@@ -436,10 +441,15 @@ defmodule EvoDashWeb.SettingsLive do
             parse_atom(value)
         end
 
-      if is_nil(parsed) do
-        acc
-      else
-        deep_put(acc, schema.key_path, parsed)
+      cond do
+        parsed == :explicitly_empty ->
+          {config_acc, [schema.key_path | emptied_acc]}
+
+        is_nil(parsed) ->
+          {config_acc, emptied_acc}
+
+        true ->
+          {deep_put(config_acc, schema.key_path, parsed), emptied_acc}
       end
     end)
   end
@@ -537,6 +547,26 @@ defmodule EvoDashWeb.SettingsLive do
         v2
       end
     end)
+  end
+
+  defp deep_delete(map, [key]) do
+    Map.delete(map, key)
+  end
+
+  defp deep_delete(map, [key | rest]) do
+    case Map.get(map, key) do
+      nested when is_map(nested) ->
+        updated = deep_delete(nested, rest)
+
+        if updated == %{} do
+          Map.delete(map, key)
+        else
+          Map.put(map, key, updated)
+        end
+
+      _ ->
+        map
+    end
   end
 
   defp maybe_add_kw(list, _key, nil), do: list
