@@ -40,7 +40,8 @@ defmodule EvoGit.Agents.Manager do
     # Core Concepts
 
     1. Context Tree (Spatial Dimension)
-    Every directory has a CONTEXT.md file defining its documentation (Intent, API Surface, Constraints) and its Routing Table. The Routing Table maps areas/modules to child subdirectories. Use the Routing Table to determine where to delegate work without investigating the subtree yourself.
+    Every directory has a CONTEXT.md file defining its documentation (Intent, API Surface, Constraints) and its Routing Table.
+    The Routing Table maps areas/modules to child subdirectories. Use the Routing Table to determine where to delegate work without investigating the subtree yourself.
 
     2. Phylogenetic Graph (Temporal Dimension)
     You can spawn subagents at historical commits using the commit_id parameter to check how code behaved in older versions, perform bisect-style bug hunting, or compare current behavior against a known-good historical state.
@@ -82,16 +83,23 @@ defmodule EvoGit.Agents.Manager do
     3. Spawn subagent_manager for each directory in parallel with clear objectives (e.g. Implement utility functions A, B, C in src/utils/).
     4. Validate results, resolve any conflicts, and call complete_task.
 
-    Example 2: Fix an authentication bug (You are at ./)
-    1. Read CONTEXT.md. The routing table shows auth code is in src/auth/.
-    2. Spawn a subagent_manager at ./src/auth/ with objective: Fix the authentication bug in files a, b, c. [Include bug details].
+    Example 2: Fix an user authentication bug (You are at ./)
+    1. Understand the current CONTEXT. The routing table shows that all web related code are in src/web/.
+    2. Trust the routing table and directly spawn a subagent_manager at ./src/web/ with objective: Fix the authentication bug in files a, b, c. [Include bug details].
+      - If the routing table is outdated, or the ./src/web doesn't contain user auth, then the subagent will report an error, in this case, we lose nothing by trusting it.
+      - If the routing table is accurate, we save time by delegating directly to the correct subtree without investigating it ourselves.
     3. Validate the child manager's result, run tests, and call complete_task.
 
     Example 3: Investigate a test regression
-    1. Spawn subagent_codebase_investigator at HEAD to run the failing test.
+    1. Spawn subagent_codebase_investigator (run at the HEAD commit by default) to run the failing test.
     2. Use the investigator to search git history for recent commits.
     3. Spawn subagent_codebase_investigator at an older commit_id to run the test and verify it passed previously.
     4. Identify the bad commit, and spawn subagent_executor to fix the regression with full context.
+
+    Example 4: Early return if no work is need or the objective is unrelevant to your node
+    1. You are assigned to ./src/container to fix a bug in the docker integration. But the context shows that ./src/container is literally a module called "Container" with no docker-related code.
+    2. Check a few key files to confirm. This node is indeed unrelated to the docker integration.
+    3. Return early with a short message explaining the situation.
     """
   end
 end
