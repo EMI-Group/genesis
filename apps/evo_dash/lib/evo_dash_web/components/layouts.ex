@@ -278,7 +278,7 @@ defmodule EvoDashWeb.Layouts do
   end
 
   @doc """
-  Provides a language/locale selector dropdown.
+  Provides a language/locale selector dropdown with globe icon button.
   """
   def language_selector(assigns) do
     locale = Gettext.get_locale(EvoDashWeb.Gettext)
@@ -303,14 +303,22 @@ defmodule EvoDashWeb.Layouts do
     assigns = assign(assigns, :languages, languages)
 
     ~H"""
-    <select
-      onchange="window.dispatchEvent(new CustomEvent('phx:set-locale', {detail: {locale: this.value}}))"
-      class="select select-sm select-ghost rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-transparent cursor-pointer"
-    >
-      <option :for={{code, name} <- @languages} value={code} selected={@locale == code}>
-        {name}
-      </option>
-    </select>
+    <details class="dropdown dropdown-end">
+      <summary class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800" title={gettext("Change language")}>
+        <.icon name="hero-language" class="size-4" />
+      </summary>
+      <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-2xl w-48 border border-base-200 max-h-64 overflow-y-auto">
+        <li :for={{code, name} <- @languages}>
+          <button
+            class={@locale == code && "active"}
+            phx-click={JS.dispatch("phx:set-locale", detail: %{locale: code})}
+          >
+            <.icon :if={@locale == code} name="hero-check" class="size-4" />
+            {name}
+          </button>
+        </li>
+      </ul>
+    </details>
     """
   end
 end

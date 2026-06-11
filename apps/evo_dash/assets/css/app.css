@@ -797,6 +797,11 @@ button, a, input, textarea, select, summary,
   z-index: 50 !important;
 }
 
+/* Fix DaisyUI dropdown-content z-index — appears below card backgrounds by default */
+.dropdown-content {
+  z-index: 50 !important;
+}
+
 /* Respect reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in-up,

@@ -438,11 +438,11 @@ defmodule EvoDashWeb.DashboardComponents do
   def task_card(assigns) do
     ~H"""
     <div class={[
-      "bg-base-100 rounded-3xl shadow-sm hover:shadow-md transition-all duration-300 border border-base-200/60 overflow-hidden relative group",
+      "bg-base-100 rounded-3xl shadow-sm hover:shadow-md transition-all duration-300 border border-base-200/60 overflow-visible relative group",
       task_card_tint(@task)
     ]}>
       <!-- Accent Top Border instead of left for a more material/futuristic feel -->
-      <div class={["absolute top-0 left-0 right-0 h-1 opacity-80", task_accent_color(@task)]}></div>
+      <div class={["absolute top-0 left-0 right-0 h-1 opacity-80 rounded-t-3xl", task_accent_color(@task)]}></div>
 
       <div class="p-5 md:p-6 flex flex-col gap-5">
         <!-- Top row: Metatags & Status -->
@@ -546,7 +546,7 @@ defmodule EvoDashWeb.DashboardComponents do
               <summary class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-base-200">
                 <.icon name="hero-ellipsis-vertical" class="size-4" />
               </summary>
-              <ul class="menu menu-sm dropdown-content mt-1 z-[1] p-2 shadow-lg bg-base-100 rounded-2xl w-40 border border-base-200">
+              <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-2xl w-40 border border-base-200">
                 <li>
                   <button class="text-error hover:bg-error/10 hover:text-error rounded-xl" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm={gettext("Delete this task?")}>
                     <.icon name="hero-trash" class="size-4 mr-2" /> {gettext("Delete")}
