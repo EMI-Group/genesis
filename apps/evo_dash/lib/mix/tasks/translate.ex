@@ -75,43 +75,57 @@ defmodule Mix.Tasks.Translate do
         else
           Mix.shell().info("Found messages in #{map_size(messages_by_file)} file group(s).")
 
-          for target_lang <- target_langs do
-            Mix.shell().info("\n🌐 Translating to #{Map.get(@languages, target_lang, target_lang)} (#{target_lang})...")
+          # Pre-load existing translations for all languages upfront.
+          # We maintain: %{ "zh_CN" => %{ "msgid" => "msgstr" } }
+          initial_acc =
+            Map.new(target_langs, fn target_lang ->
+              output_path = build_output_path(target_lang)
 
-            output_path = build_output_path(target_lang)
-            ensure_directory_exists(output_path)
+              existing =
+                if not force and File.exists?(output_path) do
+                  load_existing_entries(output_path)
+                else
+                  %{}
+                end
 
-            existing_translations =
-              if not force and File.exists?(output_path) do
-                load_existing_entries(output_path)
-              else
-                %{}
-              end
+              {target_lang, existing}
+            end)
 
-            all_translations =
-              Enum.reduce(messages_by_file, existing_translations, fn {file, file_messages}, acc ->
-                context = get_file_context(file)
+          # File-first, then Language-second — maximizes LLM KV cache hits.
+          # When translating the same file to different languages, the input
+          # context is identical; only the target language changes.
+          total_files = map_size(messages_by_file)
+
+          final_translation_maps =
+            messages_by_file
+            |> Enum.with_index(1)
+            |> Enum.reduce(initial_acc, fn {{file, file_messages}, file_idx}, lang_maps_acc ->
+              context = get_file_context(file)
+              Mix.shell().info("\n[#{file_idx}/#{total_files}] Context: #{file}")
+
+              Enum.reduce(target_langs, lang_maps_acc, fn target_lang, acc ->
+                current_lang_map = acc[target_lang]
 
                 untranslated =
                   Enum.filter(file_messages, fn msg ->
                     key = IO.iodata_to_binary(msg.msgid)
-                    force or not Map.has_key?(acc, key)
+                    force or not Map.has_key?(current_lang_map, key)
                   end)
 
                 if untranslated == [] do
-                  Mix.shell().info("  ✅ #{file} — all up to date")
+                  Mix.shell().info("  ✅ #{Map.get(@languages, target_lang, target_lang)} — all up to date")
                   acc
                 else
-                  Mix.shell().info("  📝 #{file} — #{length(untranslated)} entries to translate")
+                  Mix.shell().info("  📝 #{Map.get(@languages, target_lang, target_lang)} — #{length(untranslated)} entries to translate")
 
                   case translate_batch(context, untranslated, target_lang) do
                     {:ok, translations} ->
-                      new_map =
-                        translations
-                        |> Enum.map(fn t -> {t["msgid"], t["msgstr"]} end)
-                        |> Map.new()
+                      updated_lang_map =
+                        Enum.reduce(translations, current_lang_map, fn t, m_acc ->
+                          Map.put(m_acc, t["msgid"], t["msgstr"])
+                        end)
 
-                      Map.merge(acc, new_map)
+                      Map.put(acc, target_lang, updated_lang_map)
 
                     {:error, error} ->
                       Mix.shell().error("  ❌ Failed to translate #{file}: #{inspect(error)}")
@@ -119,15 +133,23 @@ defmodule Mix.Tasks.Translate do
                   end
                 end
               end)
+            end)
 
-            updated_messages = apply_translations(messages, all_translations)
-            header = pot.headers || [""]
+          # Write output PO files for each language
+          header = pot.headers || [""]
+
+          Enum.each(target_langs, fn target_lang ->
+            translation_map = final_translation_maps[target_lang]
+            updated_messages = apply_translations(messages, translation_map)
+
+            output_path = build_output_path(target_lang)
+            ensure_directory_exists(output_path)
 
             output_po = %Expo.Messages{messages: updated_messages, headers: header}
             File.write!(output_path, Expo.PO.compose(output_po))
 
             Mix.shell().info("  💾 Written to #{output_path}")
-          end
+          end)
 
           :ok
         end
