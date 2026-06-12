@@ -142,6 +142,7 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:selected_provider_id, :atom, default: nil)
   attr(:selected_provider_models, :list, default: [])
   attr(:selected_variant_id, :atom, default: nil)
+  attr(:llm_test_status, :any, default: :idle)
 
   def category_section(assigns) do
     ~H"""
@@ -283,6 +284,48 @@ defmodule EvoDashWeb.SettingsComponents do
                   </button>
                 </form>
               <% end %>
+            </div>
+
+            <%!-- LLM Connection Test --%>
+            <div class="mb-6 bg-base-100 rounded-2xl border border-base-200/60 p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="bg-info/15 text-info p-2 rounded-xl">
+                  <.icon name="hero-signal" class="size-5" />
+                </div>
+                <div>
+                  <h4 class="font-semibold text-sm">{gettext("Connection Test")}</h4>
+                  <p class="text-xs text-base-content/50">{gettext("Verify your LLM configuration is working")}</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                <%= case @llm_test_status do %>
+                  <% :idle -> %>
+                    <span class="text-sm text-base-content/60">{gettext("Not tested — click to verify LLM connectivity")}</span>
+                    <button phx-click="test_llm" class="btn btn-primary btn-sm gap-2">
+                      <.icon name="hero-signal" class="size-4" />
+                      {gettext("Test Connection")}
+                    </button>
+                  <% :testing -> %>
+                    <span class="loading loading-spinner loading-sm text-primary"></span>
+                    <span class="text-sm text-base-content/60">{gettext("Testing LLM connection...")}</span>
+                  <% {:ok, data} -> %>
+                    <.icon name="hero-check-circle" class="size-5 text-success" />
+                    <span class="text-sm text-success font-medium">{gettext("Connected")}</span>
+                    <span class="text-xs text-base-content/40">({data.model})</span>
+                    <span class="text-xs text-base-content/50 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(data.response, 50)}"</span>
+                    <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
+                      <.icon name="hero-arrow-path" class="size-3" />
+                      {gettext("Retest")}
+                    </button>
+                  <% {:error, reason} -> %>
+                    <.icon name="hero-x-circle" class="size-5 text-error" />
+                    <span class="text-sm text-error">{reason}</span>
+                    <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
+                      <.icon name="hero-arrow-path" class="size-3" />
+                      {gettext("Retry")}
+                    </button>
+                <% end %>
+              </div>
             </div>
 
             <%!-- Help text for other providers --%>

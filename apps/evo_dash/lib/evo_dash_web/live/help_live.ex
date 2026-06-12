@@ -235,36 +235,14 @@ defmodule EvoDashWeb.HelpLive do
             </.system_check_row>
 
             <!-- LLM Test Row -->
-            <.system_check_row title={gettext("LLM Connection")} icon="hero-chat-bubble-left-right" status={llm_status_icon(@llm_test_status)}>
+            <.system_check_row title={gettext("LLM Connection")} icon="hero-chat-bubble-left-right" status={:info}>
               <:details>
                 <div class="flex items-center gap-3">
-                  <%= case @llm_test_status do %>
-                    <% :idle -> %>
-                      <span class="text-sm text-base-content/60">{gettext("Not tested — click to verify LLM connectivity")}</span>
-                      <button phx-click="test_llm" class="btn btn-primary btn-sm gap-2">
-                        <.icon name="hero-signal" class="size-4" />
-                        {gettext("Test Connection")}
-                      </button>
-                    <% :testing -> %>
-                      <span class="loading loading-spinner loading-sm text-primary"></span>
-                      <span class="text-sm text-base-content/60">{gettext("Testing LLM connection...")}</span>
-                    <% {:ok, data} -> %>
-                      <.icon name="hero-check-circle" class="size-5 text-success" />
-                      <span class="text-sm text-success">{gettext("Connected")}</span>
-                      <span class="text-xs text-base-content/40">({data.model})</span>
-                      <span class="text-xs text-base-content/50 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(data.response, 50)}"</span>
-                      <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
-                        <.icon name="hero-arrow-path" class="size-3" />
-                        {gettext("Retest")}
-                      </button>
-                    <% {:error, reason} -> %>
-                      <.icon name="hero-x-circle" class="size-5 text-error" />
-                      <span class="text-sm text-error">{reason}</span>
-                      <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
-                        <.icon name="hero-arrow-path" class="size-3" />
-                        {gettext("Retry")}
-                      </button>
-                  <% end %>
+                  <span class="text-sm text-base-content/60">{gettext("LLM connection testing is now available on the Settings page.")}</span>
+                  <.link navigate={~p"/settings?category=llm"} class="btn btn-primary btn-sm gap-2">
+                    <.icon name="hero-sparkles" class="size-4" />
+                    {gettext("Test in Settings")}
+                  </.link>
                 </div>
               </:details>
             </.system_check_row>
@@ -353,24 +331,12 @@ defmodule EvoDashWeb.HelpLive do
       |> assign(:tool_check, system_checks.tools)
       |> assign(:sandbox_check, system_checks.sandbox)
       |> assign(:supervisor_check, system_checks.supervisor)
-      |> assign(:llm_test_status, :idle)
       |> assign(:config_reference, @config_reference)
       |> assign(:credentials_reference, @credentials_reference)
       |> assign(:usage_reference, @usage_reference)
       |> assign(:faq_content, @faq_content)
 
     {:ok, socket}
-  end
-
-  @impl true
-  def handle_event("test_llm", _params, socket) do
-    parent = self()
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result = EvoGit.SystemCheck.llm_test()
-      send(parent, {:llm_test_result, result})
-    end)
-
-    {:noreply, assign(socket, :llm_test_status, :testing)}
   end
 
   @impl true
@@ -385,17 +351,6 @@ defmodule EvoDashWeb.HelpLive do
       |> assign(:supervisor_check, system_checks.supervisor)
 
     {:noreply, socket}
-  end
-
-  @impl true
-  def handle_info({:llm_test_result, result}, socket) do
-    status =
-      case result do
-        {:ok, data} -> {:ok, data}
-        {:error, reason} -> {:error, reason}
-      end
-
-    {:noreply, assign(socket, :llm_test_status, status)}
   end
 
   # --- Private Components ---
@@ -511,21 +466,10 @@ defmodule EvoDashWeb.HelpLive do
   defp sandbox_status(%{backend: :none}), do: :info
   defp sandbox_status(_), do: :error
 
-  # LLM test status to icon status
-  defp llm_status_icon(:idle), do: :info
-  defp llm_status_icon(:testing), do: :info
-  defp llm_status_icon({:ok, _}), do: :ok
-  defp llm_status_icon({:error, _}), do: :error
-
   # Format backend name
   defp format_backend(:systemd_run), do: "systemd-run (Linux)"
   defp format_backend(:sandbox_exec), do: "sandbox-exec (macOS)"
   defp format_backend(:none), do: gettext("None")
-
-  # Truncate string helper
-  defp truncate_string(nil, _len), do: ""
-  defp truncate_string(str, len) when byte_size(str) > len, do: String.slice(str, 0, len) <> "..."
-  defp truncate_string(str, _len), do: str
 
   # Format config item names
   defp format_config_item(:llm_model), do: gettext("LLM Model")

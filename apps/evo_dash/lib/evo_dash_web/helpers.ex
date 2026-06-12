@@ -495,4 +495,15 @@ defmodule EvoDashWeb.Helpers do
   end
 
   def format_cost(_), do: "0.000000"
+
+  # ---------------------------------------------------------------------------
+  # String Helpers
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Truncates a string to `len` characters, appending "..." if truncated.
+  """
+  def truncate_string(nil, _len), do: ""
+  def truncate_string(str, len) when byte_size(str) > len, do: String.slice(str, 0, len) <> "..."
+  def truncate_string(str, _len), do: str
 end
