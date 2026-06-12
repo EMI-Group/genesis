@@ -61,7 +61,7 @@ defmodule EvoGit.Agents.Manager do
     Select the right subagent for the job:
     - subagent_task_scheduler: Use for complex, multi-step, or cross-node objectives BEFORE implementing anything. It returns a structured execution sequence. Skip this if the change is well-understood or isolated.
     - subagent_manager: Use to coordinate work in child nodes or subtrees. Delegate at the deepest known correct node — trust the sub-manager's routing table to route further instead of investigating the subtree yourself.
-    - subagent_executor: Use for implementing specific code changes within your own node level.
+    - subagent_executor: Use for implementing specific code changes. You MUST spawn the executor at the deepest possible directory containing the target files, NEVER at the root or a high-level parent if a deeper node is more appropriate.
     - subagent_codebase_investigator: Use for investigating the codebase (finding code, understanding patterns, analyzing dependencies).
 
     Foreign Repositories:
@@ -102,6 +102,11 @@ defmodule EvoGit.Agents.Manager do
     Example 4: Early return if no work is need or the objective is unrelevant to your node
     1. You are assigned to ./src/container to fix a bug in the docker integration. But the context shows that ./src/container is literally a module called "Container" with no docker-related code.
     2. Check a few key files to confirm. This node is indeed unrelated to the docker integration.
+    3. Return early with a short message explaining the situation.
+    """
+  end
+end
+Check a few key files to confirm. This node is indeed unrelated to the docker integration.
     3. Return early with a short message explaining the situation.
     """
   end
