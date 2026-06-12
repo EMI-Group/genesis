@@ -52,6 +52,11 @@ defmodule EvoGit.Agent do
       @default_tool_timeout 10_000
       @max_tool_timeout 1_800_000
       @complete_tool "complete_task"
+      # Number of write-tool calls to the same child directory before nudging
+      # the agent to spawn a subagent. Set to 0 to disable delegation hints.
+      @delegation_hint_threshold 5
+      # Write tools whose file paths should be tracked for delegation hints
+      @write_tools_for_delegation ~w(write_file edit_file create_files make_dir write_context edit_context)
 
       import ReqLLM.Context, only: [user: 1, assistant: 1, system: 1, tool_result: 3]
 
@@ -606,6 +611,151 @@ defmodule EvoGit.Agent do
           end)
 
         results
+      end
+
+      # --- Delegation Hinting ---
+      # Tracks how many write-tool calls target child directories of the agent's
+      # assigned node. When the count exceeds a threshold, a friendly nudge is
+      # appended to the tool output suggesting the agent spawn a subagent for
+      # that child directory instead of editing files there directly.
+
+      defp delegation_hint_threshold do
+        # Allow config to override the compile-time default
+        EvoGit.Config.get([:scheduler, :delegation_hint_threshold], @delegation_hint_threshold)
+      end
+
+      @doc false
+      defp extract_child_paths(tool_name, args, node_path, repo_path) do
+        if tool_name in @write_tools_for_delegation do
+          do_extract_child_paths(tool_name, args, node_path, repo_path)
+        else
+          []
+        end
+      end
+
+      defp do_extract_child_paths("create_files", args, node_path, repo_path) do
+        case EvoGit.Agent.Tools.Shared.fetch_array_arg(args, "paths") do
+          {:ok, paths} -> Enum.flat_map(paths, &path_to_child_dir(&1, node_path, repo_path))
+          _ -> []
+        end
+      end
+
+      defp do_extract_child_paths("make_dir", args, node_path, repo_path) do
+        case EvoGit.Agent.Tools.Shared.fetch_array_arg(args, "paths") do
+          {:ok, paths} -> Enum.flat_map(paths, &path_to_child_dir(&1, node_path, repo_path))
+          _ -> []
+        end
+      end
+
+      defp do_extract_child_paths(tool_name, args, node_path, repo_path)
+           when tool_name in ~w(write_context edit_context) do
+        case EvoGit.Agent.Tools.Shared.fetch_string_arg(args, "dir_path") do
+          {:ok, dir_path} -> path_to_child_dir(dir_path, node_path, repo_path)
+          _ -> []
+        end
+      end
+
+      defp do_extract_child_paths(_tool_name, args, node_path, repo_path) do
+        # write_file, edit_file
+        case EvoGit.Agent.Tools.Shared.fetch_string_arg(args, "file_path") do
+          {:ok, file_path} -> file_path_to_child_dir(file_path, node_path, repo_path)
+          _ -> []
+        end
+      end
+
+      # For file paths: extract the directory and find the first child segment
+      defp file_path_to_child_dir(file_path, node_path, repo_path) do
+        dir_path = Path.dirname(file_path)
+        path_to_child_dir(dir_path, node_path, repo_path)
+      end
+
+      # For directory paths: find the first child directory segment under node_path
+      defp path_to_child_dir(dir_path, node_path, repo_path) do
+        expanded = EvoGit.Agent.Tools.Shared.expand_path(dir_path, repo_path)
+        relative = Path.relative_to(expanded, repo_path)
+        normalized_target = EvoGit.Agent.Tools.Shared.normalize_relpath(relative)
+        normalized_node = EvoGit.Agent.Tools.Shared.normalize_relpath(node_path)
+
+        # Only track strict children (not the node itself)
+        if normalized_node == "./" do
+          # Root node: extract first path segment as child
+          extract_first_segment(normalized_target)
+        else
+          if String.starts_with?(normalized_target, normalized_node <> "/") do
+            # Extract the first segment under node_path
+            remainder = String.replace_prefix(normalized_target, normalized_node <> "/", "")
+            extract_first_segment_from_remainder(remainder, normalized_node)
+          else
+            []
+          end
+        end
+      end
+
+      defp extract_first_segment("./"), do: []
+      defp extract_first_segment(path) do
+        # Remove leading "./" and take first segment
+        stripped = String.replace_prefix(path, "./", "")
+        case String.split(stripped, "/", parts: 2) do
+          [first | _] when first != "" ->
+            normalized = "./" <> first
+            [normalized]
+          _ ->
+            []
+        end
+      end
+
+      defp extract_first_segment_from_remainder(remainder, node_path) do
+        case String.split(remainder, "/", parts: 2) do
+          [first | _] when first != "" ->
+            [node_path <> "/" <> first]
+          _ ->
+            []
+        end
+      end
+
+      defp update_delegation_hints(hints, child_paths) do
+        Enum.reduce(child_paths, hints, fn child_path, acc ->
+          current = Map.get(acc, child_path, %{count: 0, hint_shown: false})
+          Map.put(acc, child_path, %{current | count: current.count + 1})
+        end)
+      end
+
+      defp maybe_append_delegation_hint(output, hints, child_paths, threshold) do
+        new_hints = update_delegation_hints(hints, child_paths)
+
+        # Check if any child path has crossed the threshold for the first time
+        hint =
+          child_paths
+          |> Enum.filter(fn child_path ->
+            entry = Map.get(new_hints, child_path)
+            entry && entry.count >= threshold && !entry.hint_shown
+          end)
+          |> Enum.map(fn child_path ->
+            "💡 **Delegation Hint**: You've been editing files in `#{child_path}` for #{threshold}+ turns. " <>
+              "Consider spawning a subagent at `#{child_path}` to handle this work more efficiently. " <>
+              "The subagent will run in its own isolated worktree and can handle the implementation autonomously."
+          end)
+          |> Enum.join("\n\n")
+
+        {updated_output, updated_hints} =
+          if hint != "" do
+            # Mark these paths as hint-shown
+            marked_hints =
+              Enum.reduce(child_paths, new_hints, fn child_path, acc ->
+                entry = Map.get(acc, child_path)
+                if entry && entry.count >= threshold do
+                  Map.put(acc, child_path, %{entry | hint_shown: true})
+                else
+                  acc
+                end
+              end)
+
+            {output <> "\n\n" <> hint, marked_hints}
+          else
+            {output, new_hints}
+          end
+
+        {updated_output, updated_hints}
       end
 
       defp is_rate_limit_error?(reason) do
