@@ -343,11 +343,24 @@ const AgentHistoryAutoScroll = {
   }
 };
 
+// WelcomeCheck hook: detects first visit and shows welcome modal
+const WelcomeCheck = {
+  mounted() {
+    if (!localStorage.getItem("evogit:welcomed")) {
+      // Small delay to let the page render first
+      setTimeout(() => this.pushEvent("show_welcome", {}), 500);
+    }
+    this.handleEvent("welcome_dismissed", () => {
+      localStorage.setItem("evogit:welcomed", "true");
+    });
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll},
+  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, WelcomeCheck},
 })
 
 // Show progress bar on live navigation and form submits
