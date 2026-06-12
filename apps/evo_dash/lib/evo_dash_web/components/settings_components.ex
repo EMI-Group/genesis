@@ -35,7 +35,7 @@ defmodule EvoDashWeb.SettingsComponents do
           </button>
         </div>
         
-        <p class="text-sm text-base-content/60 mb-6 leading-relaxed font-medium">{gettext(@schema.description)}</p>
+        <p class="text-sm text-base-content/60 mb-6 leading-relaxed font-medium">{Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}</p>
       </div>
 
       <div class="mt-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
