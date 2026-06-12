@@ -146,6 +146,7 @@ defmodule EvoGit.Agent do
           # Sync initial context to ETS for dashboard
           EvoGit.AgentScheduler.update_agent_context(agent_id, context)
 
+          Process.put(:delegation_hints, %{})
           loop(state)
         end
       end
@@ -369,12 +370,18 @@ defmodule EvoGit.Agent do
         sync_context_to_ets(state.agent_id, state.context)
         sync_usage_to_ets(state.agent_id, state.usage)
 
+        # Initialize delegation hints in process dictionary for this turn
+        Process.put(:delegation_hints, state.delegation_hints)
+
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
             {:ok, final_result}
 
           {:continue, tool_responses} ->
-            state = %{state | context: ReqLLM.Context.append(state.context, tool_responses)}
+            # Pick up updated delegation hints from tool execution
+            updated_hints = Process.get(:delegation_hints, state.delegation_hints)
+            Process.delete(:delegation_hints)
+            state = %{state | context: ReqLLM.Context.append(state.context, tool_responses), delegation_hints: updated_hints}
             sync_context_to_ets(state.agent_id, state.context)
             loop(state)
 
@@ -569,10 +576,12 @@ defmodule EvoGit.Agent do
         {:ok, %{context_node: %{path: node_path}}} =
           EvoGit.AgentScheduler.get_agent_state(agent_id)
 
-        # Execute tools sequentially to avoid parallel execution issues
-        # For example, running two git in parallel would result in git lock issues, and wasting tokens.
-        results =
-          Enum.map(indexed_calls, fn {call, index} ->
+        threshold = delegation_hint_threshold()
+        initial_hints = Process.get(:delegation_hints, %{})
+
+        # Execute tools sequentially, threading delegation hints through
+        {results, final_hints} =
+          Enum.reduce(indexed_calls, {[], initial_hints}, fn {call, index}, {acc_results, hints} ->
             tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
 
             tool_timeout = Map.get(call.arguments, "timeout", @default_tool_timeout)
@@ -607,8 +616,20 @@ defmodule EvoGit.Agent do
                 end
               end)
 
-            {index, tool_call_id, call.name, output}
+            # Track delegation hints for write tools
+            {output, hints} =
+              if threshold > 0 do
+                child_paths = extract_child_paths(call.name, call.arguments, node_path, repo_path)
+                maybe_append_delegation_hint(output, hints, child_paths, threshold)
+              else
+                {output, hints}
+              end
+
+            {acc_results ++ [{index, tool_call_id, call.name, output}], hints}
           end)
+
+        # Store updated hints in process dictionary for do_turn to pick up
+        Process.put(:delegation_hints, final_hints)
 
         results
       end
