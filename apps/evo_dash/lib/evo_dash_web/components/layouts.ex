@@ -309,7 +309,7 @@ defmodule EvoDashWeb.Layouts do
       <summary class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title={gettext("Change language")}>
         <.icon name="hero-language" class="size-5" />
       </summary>
-      <div class="dropdown-content mt-2 z-50 w-56 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
+      <div class={["dropdown-content", (@drop_up && "mb-2") || "mt-2", "z-50 w-56 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2"]}>
         <div class="max-h-48 overflow-y-auto flex flex-col gap-0.5">
           <button
             :for={{code, name} <- @languages}
