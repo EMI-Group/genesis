@@ -466,7 +466,7 @@ defmodule EvoDashWeb.SettingsComponents do
 
   def settings_sidebar(assigns) do
     ~H"""
-    <div class="w-72 bg-base-100 flex-shrink-0 h-full overflow-y-auto p-4 border-r border-base-200/70 relative">
+    <div class="w-full md:w-72 bg-base-100 md:flex-shrink-0 md:h-full overflow-y-auto p-4 border-b md:border-b-0 md:border-r border-base-200/70 relative">
       <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md pb-4 pt-2 -mx-4 px-4">
         <div class="relative group">
           <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">

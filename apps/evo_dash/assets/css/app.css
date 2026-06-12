@@ -593,17 +593,19 @@ button, a, input, textarea, select, summary,
   /* Content area below tabs */
 }
 
-/* Full-screen diff layout — flex row, diff content flows with page */
+/* Full-screen diff layout — flex row on desktop, stacks on mobile */
 .diff-fullscreen-layout {
-  @apply flex;
+  @apply flex flex-col md:flex-row;
 }
 
-/* Sticky sidebar in fullscreen mode — sticks below navbar + tab bar */
-.diff-fullscreen-layout .diff-file-sidebar {
-  position: sticky;
-  top: 108px;
-  height: calc(100dvh - 108px);
-  overflow-y: auto;
+/* Sticky sidebar in fullscreen mode — sticks below navbar + tab bar (desktop only) */
+@media (min-width: 768px) {
+  .diff-fullscreen-layout .diff-file-sidebar {
+    position: sticky;
+    top: 108px;
+    height: calc(100dvh - 108px);
+    overflow-y: auto;
+  }
 }
 
 /* Diff content flows with page in fullscreen — no inner scroll */
@@ -619,11 +621,11 @@ button, a, input, textarea, select, summary,
 
 /* Split layout: file tree sidebar + diff content (non-fullscreen) */
 .diff-split-layout {
-  @apply flex gap-0 h-[calc(100vh-280px)] min-h-[400px];
+  @apply flex flex-col md:flex-row gap-0 md:h-[calc(100vh-280px)] min-h-[400px];
 }
 
 .diff-file-sidebar {
-  @apply w-64 shrink-0 overflow-y-auto border-r border-base-200 bg-base-100;
+  @apply w-full md:w-64 shrink-0 overflow-y-auto border-b md:border-b-0 md:border-r border-base-200 bg-base-100;
 }
 
 .diff-file-sidebar .file-item {
@@ -665,7 +667,7 @@ button, a, input, textarea, select, summary,
 }
 
 .diff-main-content {
-  @apply flex-1 overflow-y-auto overflow-x-auto bg-base-100;
+  @apply flex-1 overflow-y-auto overflow-x-auto bg-base-100 min-w-0;
 }
 
 /* Diff file section with sticky header */
@@ -988,6 +990,8 @@ button, a, input, textarea, select, summary,
   border: 1px solid oklch(var(--b3));
   border-radius: 0.5rem;
   overflow: hidden;
+  display: block;
+  overflow-x: auto;
 }
 .md-content th, .md-content td {
   padding: 0.5em 0.75em;
