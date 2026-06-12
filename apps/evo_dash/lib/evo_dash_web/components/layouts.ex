@@ -37,10 +37,10 @@ defmodule EvoDashWeb.Layouts do
             <!-- Left: Logo -->
             <div class="flex-shrink-0">
               <.link navigate={~p"/"} class="flex items-center gap-2 hover:opacity-80 transition-opacity">
-                <img src={~p"/images/logo.svg"} class="h-8 w-auto block dark:hidden" alt="Genesis" />
-                <img src={~p"/images/logo-alt.svg"} class="h-8 w-auto hidden dark:block" alt="Genesis" />
+                <img src={~p"/images/logo.svg"} class="h-8 w-auto block dark:hidden" alt={gettext("Genesis")} />
+                <img src={~p"/images/logo-alt.svg"} class="h-8 w-auto hidden dark:block" alt={gettext("Genesis")} />
                 <span class="text-xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
-                  Genesis
+                  {gettext("Genesis")}
                 </span>
               </.link>
             </div>

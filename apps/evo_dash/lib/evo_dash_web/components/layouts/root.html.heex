@@ -11,7 +11,7 @@
     <%!-- Brand name: Genesis (启元/啟元) --%>
     <meta name="apple-mobile-web-app-title" content={gettext("Genesis")} />
     <meta name="mobile-web-app-capable" content="yes" />
-    <.live_title default="Genesis" suffix={" · " <> gettext("Genesis")}>
+    <.live_title default={gettext("Genesis")} suffix={" · " <> gettext("Genesis")}>
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />

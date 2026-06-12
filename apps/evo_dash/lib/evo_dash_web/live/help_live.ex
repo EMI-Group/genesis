@@ -225,11 +225,11 @@ defmodule EvoDashWeb.HelpLive do
             </.system_check_row>
 
             <!-- Supervisor Row -->
-            <.system_check_row title="EvoX Genesis Process Tree" icon="hero-server-stack" status={if @supervisor_check.healthy, do: :ok, else: :error}>
+            <.system_check_row title={gettext("EvoX Genesis Process Tree")} icon="hero-server-stack" status={if @supervisor_check.healthy, do: :ok, else: :error}>
               <:details>
                 <div class="space-y-1">
-                  <.supervisor_status label="EvoGit" children={@supervisor_check.evo_git} />
-                  <.supervisor_status label="EvoDash" children={@supervisor_check.evo_dash} />
+                  <.supervisor_status label={gettext("EvoGit")} children={@supervisor_check.evo_git} />
+                  <.supervisor_status label={gettext("EvoDash")} children={@supervisor_check.evo_dash} />
                 </div>
               </:details>
             </.system_check_row>
