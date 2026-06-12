@@ -124,6 +124,15 @@ html { scroll-behavior: smooth; }
   border-radius: 3px;
 }
 
+/* Hide scrollbar utility */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* Glass morphism effect */
 .glass-card {
   backdrop-filter: blur(12px);
@@ -753,7 +762,7 @@ button, a, input, textarea, select, summary,
 
 /* Tab bar styling */
 .review-tab-bar {
-  @apply flex border-b border-base-200 bg-base-100 px-4;
+  @apply flex border-b border-base-200 bg-base-100;
 }
 
 .review-tab {
@@ -1071,7 +1080,7 @@ button, a, input, textarea, select, summary,
 
 /* RTL: Fix dropdown positioning */
 [dir="rtl"] .dropdown-end .dropdown-content {
-  left: auto;
+  left: 0;
   right: auto;
 }
 

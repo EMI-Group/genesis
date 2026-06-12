@@ -60,11 +60,11 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def review_tabs(assigns) do
     ~H"""
-    <div class="review-tab-bar flex gap-2 py-3">
+    <div class="review-tab-bar flex gap-1 sm:gap-2 py-2 sm:py-3 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
       <button
         phx-click="switch_tab"
         phx-value-tab="conversation"
-        class={["review-tab rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200", @active_tab == :conversation && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={["review-tab rounded-full px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :conversation && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
         {gettext("Conversation")}
@@ -72,7 +72,7 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="commits"
-        class={["review-tab rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200", @active_tab == :commits && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={["review-tab rounded-full px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :commits && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-clock" class="size-4 mr-2" />
         {gettext("Commits")}
@@ -81,7 +81,7 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="files_changed"
-        class={["review-tab rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200", @active_tab == :files_changed && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={["review-tab rounded-full px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :files_changed && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-code-bracket" class="size-4 mr-2" />
         {gettext("Files Changed")}

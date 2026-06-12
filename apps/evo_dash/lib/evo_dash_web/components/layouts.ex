@@ -310,7 +310,7 @@ defmodule EvoDashWeb.Layouts do
         <.icon name="hero-language" class="size-5" />
       </summary>
       <div class="dropdown-content mt-2 z-50 w-56 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
-        <div class="max-h-80 overflow-y-auto flex flex-col gap-0.5">
+        <div class="max-h-48 overflow-y-auto flex flex-col gap-0.5">
           <button
             :for={{code, name} <- @languages}
             class={[
