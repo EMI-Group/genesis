@@ -138,6 +138,18 @@ defmodule EvoGit.Config.Schema do
       description:
         "Maximum number of agent turns. An agent turn consists of one LLM call followed by tool execution. This limit prevents runaway loops from consuming excessive API credits."
     },
+    %{
+      key_path: [:scheduler, :delegation_hint_threshold],
+      type: :pos_integer,
+      default: 5,
+      validation: [min: 1],
+      category: :scheduler,
+      sub_category: nil,
+      description:
+        "Number of write-tool calls to the same child directory before the agent is nudged to spawn a subagent. " <>
+          "When an agent edits files in a child directory this many times, a friendly hint is appended to the tool output " <>
+          "suggesting it delegate to a subagent at that path. Set to 0 to disable delegation hints."
+    },
     # ── LLM ────────────────────────────────────────────────────────────
     %{
       key_path: [:llm, :model],
