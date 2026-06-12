@@ -274,8 +274,13 @@ defmodule EvoDashWeb.ReviewLive do
     commit_sha = socket.assigns.commit_sha
     branch_name = socket.assigns.branch_name
     task_id = socket.assigns.task_id
+    repo_path = socket.assigns.repo_path
 
     TaskRegistry.set_review_status(task_id, :continued)
+
+    query = [starting_commit: commit_sha]
+    # Include project query param so the dashboard re-opens the correct project
+    query = if repo_path, do: Keyword.put(query, :project, repo_path), else: query
 
     {:noreply,
      socket
@@ -286,7 +291,7 @@ defmodule EvoDashWeb.ReviewLive do
          sha: String.slice(commit_sha || "", 0..7)
        )
      )
-     |> push_navigate(to: ~p"/?starting_commit=#{commit_sha}")}
+     |> push_navigate(to: ~p"/?#{query}")}
   end
 
   @impl true

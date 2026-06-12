@@ -294,6 +294,16 @@ defmodule EvoDashWeb.DashboardLive do
         socket
       end
 
+    # Preserve starting_commit from URL query param (e.g. ?starting_commit=abc123)
+    socket =
+      case params["starting_commit"] do
+        sha when is_binary(sha) and sha != "" ->
+          assign(socket, :task_starting_commit, sha)
+
+        _ ->
+          socket
+      end
+
     {:noreply, socket}
   end
 
@@ -357,11 +367,19 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("restore_state", params, socket) do
+    # Don't let restore_state overwrite a starting_commit that came from the URL
+    # (set in handle_params from ?starting_commit=... query param)
+    socket =
+      if socket.assigns.task_starting_commit != "" do
+        socket
+      else
+        maybe_restore_assign(socket, :task_starting_commit, params["task_starting_commit"])
+      end
+
     socket =
       socket
       |> maybe_restore_assign(:task_prompt, params["task_prompt"])
       |> maybe_restore_assign(:task_seeds, params["task_seeds"])
-      |> maybe_restore_assign(:task_starting_commit, params["task_starting_commit"])
       |> maybe_restore_show_project_settings(params["show_project_settings"])
 
     # Restore project if we don't already have one active.
