@@ -579,6 +579,12 @@ defmodule EvoGit.Agent do
         threshold = delegation_hint_threshold()
         initial_hints = Process.get(:delegation_hints, %{})
 
+        # Cache conflict files once per batch to avoid repeated git calls
+        conflict_files = case Git.conflict_files(repo_path) do
+          {:ok, files} -> files
+          _ -> []
+        end
+
         # Execute tools sequentially, threading delegation hints through
         {results, final_hints} =
           Enum.reduce(indexed_calls, {[], initial_hints}, fn {call, index}, {acc_results, hints} ->
@@ -616,10 +622,11 @@ defmodule EvoGit.Agent do
                 end
               end)
 
-            # Track delegation hints for write tools
+            # Track delegation hints for write tools (skip during conflict resolution)
             {output, hints} =
               if threshold > 0 do
                 child_paths = extract_child_paths(call.name, call.arguments, node_path, repo_path)
+                child_paths = filter_child_paths_if_conflicts(child_paths, conflict_files)
                 maybe_append_delegation_hint(output, hints, child_paths, threshold)
               else
                 {output, hints}
@@ -741,6 +748,17 @@ defmodule EvoGit.Agent do
         end)
       end
 
+      # When the agent is resolving merge conflicts, it MUST edit files
+      # directly (subagents start on clean commits and can't see conflict
+      # markers).  Suppress delegation nudges so the agent isn't distracted.
+      defp filter_child_paths_if_conflicts(child_paths, []) do
+        child_paths
+      end
+
+      defp filter_child_paths_if_conflicts(_child_paths, _conflict_files) do
+        []
+      end
+
       defp maybe_append_delegation_hint(output, hints, child_paths, threshold) do
         new_hints = update_delegation_hints(hints, child_paths)
 
@@ -753,8 +771,8 @@ defmodule EvoGit.Agent do
           end)
           |> Enum.map(fn child_path ->
             "💡 **Delegation Hint**: You've been editing files in `#{child_path}` for #{threshold}+ turns. " <>
-              "Consider spawning a subagent at `#{child_path}` to handle this work more efficiently. " <>
-              "The subagent will run in its own isolated worktree and can handle the implementation autonomously."
+              "Consider finishing your current changes, committing them, and then spawning a subagent at `#{child_path}` to continue the work. " <>
+              "The subagent will run in its own isolated worktree on top of your committed changes and can handle the implementation autonomously."
           end)
           |> Enum.join("\n\n")
 
