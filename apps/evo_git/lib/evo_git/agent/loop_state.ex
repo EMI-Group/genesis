@@ -24,6 +24,7 @@ defmodule EvoGit.Agent.LoopState do
   - `skill_schemas` — tool schemas from enabled skills
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
   - `usage` — cumulative token and cost usage tracking across all LLM calls (`EvoGit.Agent.Usage.t()`)
+  - `delegation_hints` — map tracking write-tool calls to child directories (key: normalized child path, value: `%{count: non_neg_integer, hint_shown: boolean}`). Used to detect when an agent should be nudged to spawn a subagent.
   """
 
   @enforce_keys [:agent_id, :agent_module, :depth, :node_path, :context]
@@ -45,7 +46,8 @@ defmodule EvoGit.Agent.LoopState do
     last_warned_turns_percent: 0,
     skill_schemas: [],
     foreign_repos: [],
-    usage: %EvoGit.Agent.Usage{}
+    usage: %EvoGit.Agent.Usage{},
+    delegation_hints: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -62,6 +64,7 @@ defmodule EvoGit.Agent.LoopState do
           last_warned_turns_percent: non_neg_integer(),
           skill_schemas: [ReqLLM.Tool.t()],
           foreign_repos: [ForeignRepo.t()],
-          usage: Usage.t()
+          usage: Usage.t(),
+          delegation_hints: %{String.t() => %{count: non_neg_integer(), hint_shown: boolean()}}
         }
 end
