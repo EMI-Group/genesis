@@ -642,7 +642,7 @@ defmodule EvoGit.Agent do
 
       defp delegation_hint_threshold do
         # Allow config to override the compile-time default
-        EvoGit.Config.get([:scheduler, :delegation_hint_threshold], @delegation_hint_threshold)
+        EvoGit.Config.resolve([:scheduler, :delegation_hint_threshold]) || @delegation_hint_threshold
       end
 
       @doc false
