@@ -34,6 +34,16 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 | Standard tools | `read_file`, `create_files`, `write_file`, `edit_file`, `make_dir`, `read_context`, `write_context`, `edit_context`, `run_bash`, `rg`, `glob`, `list_dir`, `search_web`, `search_context`, `search_history` |
 | `CompleteTask` | Special completion tool injected by `use` macro; returns `%Result{}` |
 
+### Delegation Hinting
+
+When an agent repeatedly edits files in a child directory (below its assigned `node_path`), the framework tracks the write-tool call count per child directory. After the count exceeds `delegation_hint_threshold` (default: 5, configurable via `[:scheduler, :delegation_hint_threshold]`), a friendly nudge is appended to the tool output suggesting the agent spawn a subagent for that child directory. The hint is shown only once per child directory (tracked via `hint_shown` flag in `LoopState.delegation_hints`).
+
+The hinting logic is implemented inside the `__using__` macro in `agent.ex`:
+- `batch_execute_tools/3` threads `delegation_hints` through sequential tool execution via `Enum.reduce`
+- `extract_child_paths/4` determines the target child directory from write tool arguments
+- `maybe_append_delegation_hint/4` increments counts and appends the hint message
+- Hints are stored in `LoopState.delegation_hints` and threaded through the process dictionary
+
 ## Constraints
 - Every agent MUST `use EvoGit.Agent` and implement `system_prompt/0`.
 - System prompts MUST NOT contain dynamic state, objectives, or context trees — those are injected as user prompts.
