@@ -15,10 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ELIXIR_VERSION: "1.18.4"
-  OTP_VERSION: "27.3.4.1"
-  RIPGREP_VERSION: "14.1.1"
-  MINGIT_VERSION: "2.47.1.windows.2"
+  ELIXIR_VERSION: "1.20.1"
+  OTP_VERSION: "29"
+  RIPGREP_VERSION: "15.1.0"
+  MINGIT_VERSION: "2.54.0.windows.1"
 
 permissions:
   contents: write
@@ -33,13 +33,10 @@ jobs:
           - runner: macos-14
             arch: arm64
             rg_target: aarch64-apple-darwin
-          - runner: macos-13
-            arch: x86_64
-            rg_target: x86_64-apple-darwin
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -48,7 +45,7 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
 
       - name: Restore dependency cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             deps
@@ -122,7 +119,7 @@ jobs:
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
 
       - name: Upload release asset
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: ${{ env.ARCHIVE_NAME }}
@@ -132,7 +129,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -141,7 +138,7 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
 
       - name: Restore dependency cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             deps
@@ -182,7 +179,8 @@ jobs:
           VENDOR_DIR="apps/evo_git/priv/vendor/windows-x64"
           mkdir -p "${VENDOR_DIR}"
 
-          MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION}-64-bit.zip"
+          MINGIT_VERSION_CLEAN="${MINGIT_VERSION%.windows.*}"
+          MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION_CLEAN}-64-bit.zip"
           MINGIT_URL="https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}/${MINGIT_ARCHIVE}"
           echo "Downloading ${MINGIT_URL}..."
           curl -fsSL "${MINGIT_URL}" -o "/tmp/${MINGIT_ARCHIVE}"
@@ -215,7 +213,7 @@ jobs:
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
 
       - name: Upload release asset
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: ${{ env.ARCHIVE_NAME }}

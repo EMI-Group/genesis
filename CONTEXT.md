@@ -86,4 +86,4 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 - **Windows**: Builds x86_64 on `windows-2022`, packages with batch launcher → `EvoGit-Windows-x64.zip`
 - **Assets**: Built via `mix assets.setup` + `mix assets.deploy` (esbuild + tailwind, no Node.js required)
 - **Launcher scripts**: `rel/overlays/desktop/macos/evogit_launcher` and `rel/overlays/desktop/windows/evogit_launcher.bat` set `EVOGIT_DESKTOP=1`, `PORT=4100`, `PHX_SERVER=true`, and a local `SECRET_KEY_BASE`
-- **Version pinning**: `.tool-versions` pins OTP 27.3.4.1 / Elixir 1.18.4
+- **Version pinning**: `.tool-versions` pins OTP 29 / Elixir 1.20.1
