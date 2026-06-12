@@ -103,7 +103,7 @@ defmodule EvoDashWeb.SettingsLive do
       <% end %>
 
       <%!-- Two-column sidebar + content layout --%>
-      <div class="flex bg-base-100 rounded-[2rem] shadow-sm hover:shadow-md border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-200 min-h-[75vh] max-h-[80vh] transition-all duration-500">
+      <div class="flex flex-col md:flex-row bg-base-100 rounded-[2rem] shadow-sm hover:shadow-md border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-200 md:min-h-[75vh] md:max-h-[80vh] transition-all duration-500">
         <%!-- Sidebar --%>
         <EvoDashWeb.SettingsComponents.settings_sidebar
           categories={@schemas_by_category}
