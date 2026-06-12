@@ -56,7 +56,7 @@ defmodule EvoGit.Agent do
       # the agent to spawn a subagent. Set to 0 to disable delegation hints.
       @delegation_hint_threshold 5
       # Write tools whose file paths should be tracked for delegation hints
-      @write_tools_for_delegation ~w(write_file edit_file create_files make_dir write_context edit_context)
+      @write_tools_for_delegation ~w(write_file edit_file)
 
       import ReqLLM.Context, only: [user: 1, assistant: 1, system: 1, tool_result: 3]
 
