@@ -200,8 +200,8 @@ jobs:
 
           mkdir -p "${STAGING}"
 
-          # Copy release
-          cp -r _build/prod/rel/evogit/* "${STAGING}/"
+          # Copy release contents (use /. to avoid glob expansion issues on Windows)
+          cp -rf _build/prod/rel/evogit/. "${STAGING}/"
 
           # Copy launcher script
           cp rel/overlays/desktop/windows/evogit_launcher.bat "${STAGING}/"
