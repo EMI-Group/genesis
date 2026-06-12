@@ -31,7 +31,7 @@ The full design specification is in `AGENTS.md`.
 | `AGENTS.md` | Full EvoGit design specification (dual-dimension architecture, agent model, runtime phases) |
 | `README.md` | User-facing documentation: installation, CLI usage, architecture overview |
 | `.formatter.exs` | Code format configuration |
-| `.tool-versions` | Pinned Erlang/OTP 27.3.4.1 and Elixir 1.18.4 (for asdf/mise/CI) |
+| `.tool-versions` | Pinned Erlang/OTP 29 and Elixir 1.20.1 (for asdf/mise/CI) |
 | `LICENSE` | Project license |
 
 ### CLI Interface
@@ -82,7 +82,7 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds desktop app packages on every GitHub release:
 
 - **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
-- **macOS**: Builds for both ARM64 (macOS-14 runner) and x86_64 (macOS-13 runner), packages as `.app` bundle → `EvoGit-macOS-{arch}.zip`
+- **macOS**: Builds ARM64 (macOS-14 runner), packages as `.app` bundle → `EvoGit-macOS-arm64.zip`
 - **Windows**: Builds x86_64 on `windows-2022`, packages with batch launcher → `EvoGit-Windows-x64.zip`
 - **Assets**: Built via `mix assets.setup` + `mix assets.deploy` (esbuild + tailwind, no Node.js required)
 - **Launcher scripts**: `rel/overlays/desktop/macos/evogit_launcher` and `rel/overlays/desktop/windows/evogit_launcher.bat` set `EVOGIT_DESKTOP=1`, `PORT=4100`, `PHX_SERVER=true`, and a local `SECRET_KEY_BASE`
