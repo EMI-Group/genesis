@@ -198,10 +198,10 @@ jobs:
         run: |
           STAGING="Genesis-Windows"
 
-          mkdir -p "${STAGING}"
+          mkdir -p "${STAGING}/release"
 
-          # Copy release contents (use /. to avoid glob expansion issues on Windows)
-          cp -rf _build/prod/rel/evogit/. "${STAGING}/"
+          # Use tar piping instead of cp to avoid hardlink/read-only file issues on Windows bash
+          tar -cf - -C _build/prod/rel/evogit . | tar -xf - -C "${STAGING}/release"
 
           # Copy launcher script
           cp rel/overlays/desktop/windows/evogit_launcher.bat "${STAGING}/"
