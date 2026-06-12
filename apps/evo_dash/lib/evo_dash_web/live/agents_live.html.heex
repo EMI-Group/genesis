@@ -234,6 +234,42 @@
 
               </div>
 
+                <%= if agent.usage do %>
+                <details class="group/usage">
+                  <summary class="cursor-pointer text-xs font-semibold uppercase text-base-content/60 mb-2 flex items-center gap-1.5 select-none outline-none hover:text-base-content/80 transition-colors">
+                    <.icon name="hero-currency-dollar" class="size-3.5" />
+                    <%= gettext("Token & Cost Usage") %>
+                    <.icon name="hero-chevron-down" class="size-3 opacity-50 group-open/usage:rotate-180 transition-transform" />
+                  </summary>
+                  <div class="grid grid-cols-3 gap-2 mt-2">
+                    <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="text-xs text-base-content/50"><%= gettext("Input Tokens") %></div>
+                      <div class="text-sm font-semibold"><%= format_number(agent.usage.input_tokens) %></div>
+                    </div>
+                    <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="text-xs text-base-content/50"><%= gettext("Output Tokens") %></div>
+                      <div class="text-sm font-semibold"><%= format_number(agent.usage.output_tokens) %></div>
+                    </div>
+                    <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="text-xs text-base-content/50"><%= gettext("Total Tokens") %></div>
+                      <div class="text-sm font-semibold"><%= format_number(agent.usage.total_tokens) %></div>
+                    </div>
+                    <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="text-xs text-base-content/50"><%= gettext("Input Cost") %></div>
+                      <div class="text-sm font-semibold">$<%= format_cost(agent.usage.input_cost) %></div>
+                    </div>
+                    <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="text-xs text-base-content/50"><%= gettext("Output Cost") %></div>
+                      <div class="text-sm font-semibold">$<%= format_cost(agent.usage.output_cost) %></div>
+                    </div>
+                    <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="text-xs text-base-content/50"><%= gettext("Total Cost") %></div>
+                      <div class="text-sm font-semibold text-primary">$<%= format_cost(agent.usage.total_cost) %></div>
+                    </div>
+                  </div>
+                </details>
+                <% end %>
+
                 <!-- Chat History -->
                 <div class="agent-detail-history mt-6">
                   <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">

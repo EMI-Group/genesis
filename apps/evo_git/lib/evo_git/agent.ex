@@ -30,6 +30,7 @@ defmodule EvoGit.Agent do
   alias EvoGit.Agent.OutputSanitizer
   alias EvoGit.Agent.Tools.CompleteTask
   alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.Usage
 
   @type state :: LoopState.t()
 
@@ -339,6 +340,10 @@ defmodule EvoGit.Agent do
 
         state = %{state | total_tokens: current_tokens}
 
+        # Accumulate cumulative usage (separate from total_tokens used for compression)
+        turn_usage = Usage.from_response_usage(usage)
+        state = %{state | usage: Usage.add(state.usage, turn_usage)}
+
         tool_calls =
           ReqLLM.Response.tool_calls(response)
           |> Enum.map(&ReqLLM.ToolCall.from_map/1)
@@ -357,6 +362,7 @@ defmodule EvoGit.Agent do
         compacted_context = compact_reasoning_details(response.context)
         state = %{state | context: compacted_context, turn: state.turn + 1}
         sync_context_to_ets(state.agent_id, state.context)
+        sync_usage_to_ets(state.agent_id, state.usage)
 
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
@@ -485,7 +491,8 @@ defmodule EvoGit.Agent do
             base_commit: agent_state.phylo_node.base_commit,
             parent_id: agent_state.parent_id,
             depth: depth,
-            objective: agent_state.objective
+            objective: agent_state.objective,
+            usage: state.usage
           )
 
         {:complete, final_result}
@@ -707,6 +714,10 @@ defmodule EvoGit.Agent do
 
       defp sync_context_to_ets(agent_id, context) do
         EvoGit.AgentScheduler.update_agent_context(agent_id, context)
+      end
+
+      defp sync_usage_to_ets(agent_id, usage) do
+        EvoGit.AgentScheduler.update_agent_usage(agent_id, usage)
       end
 
 

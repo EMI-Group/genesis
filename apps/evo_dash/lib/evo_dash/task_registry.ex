@@ -29,7 +29,8 @@ defmodule EvoDash.TaskRegistry do
       status: :pending,
       logs: [],
       result: nil,
-      review_status: nil
+      review_status: nil,
+      usage: nil
     ]
 
     @type t :: %__MODULE__{
@@ -42,7 +43,8 @@ defmodule EvoDash.TaskRegistry do
             finished_at: DateTime.t() | nil,
             logs: [String.t()],
             result: term(),
-            review_status: atom() | nil
+            review_status: atom() | nil,
+            usage: EvoGit.Agent.Usage.t() | nil
           }
   end
 
@@ -70,8 +72,8 @@ defmodule EvoDash.TaskRegistry do
     GenServer.call(__MODULE__, {:cancel_task, task_id})
   end
 
-  def update_task_status(task_id, status, result \\ nil) do
-    GenServer.cast(__MODULE__, {:update_status, task_id, status, result})
+  def update_task_status(task_id, status, result \\ nil, opts \\ []) do
+    GenServer.cast(__MODULE__, {:update_status, task_id, status, result, opts})
   end
 
   def update_task_log(task_id, log_entry) do
@@ -330,11 +332,14 @@ defmodule EvoDash.TaskRegistry do
   end
 
   @impl true
-  def handle_cast({:update_status, task_id, status, result}, state) do
+  def handle_cast({:update_status, task_id, status, result, opts}, state) do
+    usage = Keyword.get(opts, :usage)
+
     case :ets.lookup(state.table_name, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
         finished_at = if status in [:completed, :failed, :cancelled], do: DateTime.utc_now(), else: task.finished_at
         updated = %{task | status: status, result: result, finished_at: finished_at}
+        updated = if usage, do: %{updated | usage: usage}, else: updated
         :ets.insert(state.table_name, {task_id, updated})
 
         if status in [:completed, :failed, :cancelled] do
@@ -747,7 +752,13 @@ defmodule EvoDash.TaskRegistry do
           _ -> :failed
         end
 
-      update_task_status(task_id, status, result)
+      task_usage =
+        case result do
+          {:ok, %{usage: %EvoGit.Agent.Usage{} = u}} -> u
+          _ -> nil
+        end
+
+      update_task_status(task_id, status, result, usage: task_usage)
     end
 
     Process.demonitor(ref, [:flush])
