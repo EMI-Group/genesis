@@ -26,7 +26,9 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
   def subagent_tool_description do
     "[Subagent] A specialized agent for codebase analysis. Call this subagent with a query " <>
       "to let it investigate the codebase and return a report. " <>
-      "The investigator has read-only access and can also update directory CONTEXT.md files."
+      "The investigator has read-only access and can also update directory CONTEXT.md files. " <>
+      "Use this to understand code structure, find patterns, trace dependencies, or investigate test results — " <>
+      "especially when you need information from a child directory before deciding how to proceed."
   end
 
   def available_tools do

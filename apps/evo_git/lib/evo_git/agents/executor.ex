@@ -17,7 +17,9 @@ defmodule EvoGit.Agents.Executor do
 
   def subagent_tool_description do
     "[Subagent] An executor agent specialized in implementing precise code changes. " <>
-      "Call this subagent with a clear, specific objective to execute the necessary file modifications, creations, or deletions within its assigned node."
+      "Call this subagent with a clear, specific objective to execute the necessary file modifications, creations, or deletions within its assigned node. " <>
+      "The executor is ideal for focused implementation tasks where you know exactly what needs to change. " <>
+      "Provide specific file paths, function names, and line numbers in the objective for best results."
   end
 
   def system_prompt do

@@ -21,7 +21,7 @@ defmodule EvoGit.Agents.TaskScheduler do
     "[Subagent] A lightweight task scheduling agent that transforms rough ideas into structured execution sequences. " <>
       "Call this subagent to break down an objective into an ordered sequence of tasks at the current level. " <>
       "The TaskScheduler only plans at its own level — child levels are handled recursively by their own schedulers. " <>
-      "It does NOT make any changes — it only produces an execution sequence."
+      "It does NOT make any changes — it only produces an execution sequence. Use this BEFORE implementing when the change is complex or spans multiple areas."
   end
 
   def subagent_modules do

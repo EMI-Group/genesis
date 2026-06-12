@@ -10,7 +10,9 @@ defmodule EvoGit.Agents.Generalist do
 
   def subagent_tool_description do
     "[Subagent] A versatile software engineering agent that can read, write, and modify code. " <>
-      "Delegate tasks to this subagent that require code changes, refactoring, or implementation work."
+      "Delegate tasks to this subagent that require code changes, refactoring, or implementation work. " <>
+      "The generalist can investigate, plan, and implement autonomously — use it for tasks that need both analysis and coding. " <>
+      "For pure investigation, prefer subagent_codebase_investigator; for precise edits with known targets, prefer subagent_executor."
   end
 
   def subagent_modules do
