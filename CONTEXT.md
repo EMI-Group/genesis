@@ -81,7 +81,7 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 
 The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds desktop app packages on every GitHub release:
 
-- **Trigger**: Release published or manual `workflow_dispatch`
+- **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
 - **macOS**: Builds for both ARM64 (macOS-14 runner) and x86_64 (macOS-13 runner), packages as `.app` bundle → `EvoGit-macOS-{arch}.zip`
 - **Windows**: Builds x86_64 on `windows-2022`, packages with batch launcher → `EvoGit-Windows-x64.zip`
 - **Assets**: Built via `mix assets.setup` + `mix assets.deploy` (esbuild + tailwind, no Node.js required)
