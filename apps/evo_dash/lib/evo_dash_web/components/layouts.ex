@@ -27,7 +27,7 @@ defmodule EvoDashWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <div class="relative min-h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
+    <div class="relative min-h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300 overflow-x-hidden">
       <input id="mobile-nav-drawer" type="checkbox" class="hidden peer" />
 
       <div class="flex flex-col min-h-screen">
