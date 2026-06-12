@@ -2,7 +2,7 @@ name: Build Desktop App
 
 on:
   release:
-    types: [published]
+    types: [published, prereleased]
   workflow_dispatch:
     inputs:
       tag:
