@@ -442,7 +442,7 @@ defmodule EvoDashWeb.DashboardComponents do
       task_card_tint(@task)
     ]}>
       <!-- Accent Top Border instead of left for a more material/futuristic feel -->
-      <div class={["absolute top-0 left-0 right-0 h-1 opacity-80 rounded-t-3xl", task_accent_color(@task)]}></div>
+      <div class={["absolute top-0 inset-x-px h-1 opacity-80 rounded-t-[23px]", task_accent_color(@task)]}></div>
 
       <div class="p-5 md:p-6 flex flex-col gap-5">
         <!-- Top row: Metatags & Status -->
