@@ -13,7 +13,9 @@ defmodule EvoGit.Agents.Evaluator do
 
   def subagent_tool_description do
     "[Subagent] An evaluator agent that reviews code changes and verifies they satisfy the objective. " <>
-      "Call this subagent to check correctness, completeness, quality, and safety of changes made by executors."
+      "Call this subagent to check correctness, completeness, quality, and safety of changes made by executors. " <>
+      "The evaluator reviews diffs, checks for anti-patterns, and can compare test results against a base commit. " <>
+      "Use this after implementation to validate work before reporting completion."
   end
 
   def subagent_modules do

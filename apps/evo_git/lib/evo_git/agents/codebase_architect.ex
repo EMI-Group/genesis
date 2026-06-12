@@ -12,7 +12,9 @@ defmodule EvoGit.Agents.CodebaseArchitect do
 
   def subagent_tool_description do
     "[Subagent] A specialized agent for initializing and architecting codebases. " <>
-      "Call this subagent to design directories, create CONTEXT.md files, and generate initial code."
+      "Call this subagent to design directories, create CONTEXT.md files, and generate initial code. " <>
+      "The architect works in phases: skeleton design → implementation → review. " <>
+      "Use this when creating new project structures or when setting up a child directory that needs its own architecture."
   end
 
   def subagent_modules, do: [

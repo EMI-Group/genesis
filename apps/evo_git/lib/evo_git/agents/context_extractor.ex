@@ -12,7 +12,9 @@ defmodule EvoGit.Agents.ContextExtractor do
 
   def subagent_tool_description do
     "[Subagent] A specialized agent for extracting codebase context. " <>
-      "Call this subagent to analyze child directories and establish their CONTEXT.md files."
+      "Call this subagent to analyze child directories and establish their CONTEXT.md files. " <>
+      "The extractor builds a hierarchical Context Tree by reading code, documenting APIs, and creating routing tables. " <>
+      "Use this to establish or refresh spatial context for directories that lack proper CONTEXT.md documentation."
   end
 
   def subagent_modules, do: [__MODULE__]
