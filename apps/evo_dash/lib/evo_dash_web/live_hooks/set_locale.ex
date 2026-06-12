@@ -8,8 +8,6 @@ defmodule EvoDashWeb.LiveHooks.SetLocale do
   on every LiveView mount.
   """
 
-  import Phoenix.LiveView
-
   def on_mount(:default, _params, session, socket) do
     locale = session["locale"] || "en"
     Gettext.put_locale(EvoDashWeb.Gettext, locale)
