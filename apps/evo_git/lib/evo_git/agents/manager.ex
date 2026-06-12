@@ -106,8 +106,3 @@ defmodule EvoGit.Agents.Manager do
     """
   end
 end
-Check a few key files to confirm. This node is indeed unrelated to the docker integration.
-    3. Return early with a short message explaining the situation.
-    """
-  end
-end
