@@ -79,7 +79,7 @@ defmodule EvoDashWeb.Layouts do
       <label for="mobile-nav-drawer" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm opacity-0 pointer-events-none peer-checked:opacity-100 peer-checked:pointer-events-auto transition-opacity duration-300 lg:hidden"></label>
 
       <!-- Drawer Sidebar -->
-      <div class="fixed top-0 right-0 z-50 h-full w-72 bg-white dark:bg-slate-900 shadow-2xl transform translate-x-full peer-checked:translate-x-0 transition-transform duration-300 ease-in-out lg:hidden border-l border-slate-200 dark:border-slate-800 flex flex-col">
+      <div class="fixed top-0 right-0 z-50 h-dvh w-72 bg-white dark:bg-slate-900 shadow-2xl transform translate-x-full peer-checked:translate-x-0 transition-transform duration-300 ease-in-out lg:hidden border-l border-slate-200 dark:border-slate-800 flex flex-col">
         <div class="flex items-center justify-between h-16 px-4 border-b border-slate-200 dark:border-slate-800">
           <span class="text-lg font-bold text-slate-900 dark:text-white">Menu</span>
           <label for="mobile-nav-drawer" class="p-2 text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
@@ -96,10 +96,8 @@ defmodule EvoDashWeb.Layouts do
         </nav>
 
         <div class="p-4 border-t border-slate-200 dark:border-slate-800">
-          <div class="flex justify-center mb-3">
-            <.language_selector />
-          </div>
-          <div class="flex justify-center">
+          <div class="flex items-center justify-center gap-3">
+            <.language_selector drop_up={true} />
             <.theme_toggle />
           </div>
         </div>
@@ -280,6 +278,8 @@ defmodule EvoDashWeb.Layouts do
   @doc """
   Provides a language/locale selector dropdown with globe icon button.
   """
+  attr(:drop_up, :boolean, default: false)
+
   def language_selector(assigns) do
     locale = Gettext.get_locale(EvoDashWeb.Gettext)
 
@@ -305,7 +305,7 @@ defmodule EvoDashWeb.Layouts do
     assigns = assign(assigns, :languages, languages)
 
     ~H"""
-    <details class="dropdown dropdown-end">
+    <details class={["dropdown", "dropdown-end", @drop_up && "dropdown-top"]}>
       <summary class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title={gettext("Change language")}>
         <.icon name="hero-language" class="size-5" />
       </summary>
