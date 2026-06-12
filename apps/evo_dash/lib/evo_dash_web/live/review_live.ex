@@ -468,10 +468,6 @@ defmodule EvoDashWeb.ReviewLive do
     end
   end
 
-  defp truncate_string(nil, _len), do: ""
-  defp truncate_string(str, len) when byte_size(str) <= len, do: str
-  defp truncate_string(str, len), do: String.slice(str, 0, len) <> "..."
-
   defp file_path_to_id(path) do
     path
     |> String.replace(~r{[^a-zA-Z0-9_-]}, "-")

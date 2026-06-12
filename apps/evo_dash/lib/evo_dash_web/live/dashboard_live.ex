@@ -28,6 +28,7 @@ defmodule EvoDashWeb.DashboardLive do
     <% else %>
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
       <div id="dashboard-root" phx-hook="StatePersistence" data-project={@active_project_path} data-task-mode={@task_mode}>
+        <div id="welcome-check" phx-hook="WelcomeCheck" class="hidden"></div>
         <div id="browser-notifications" phx-hook="BrowserNotifications">
         <!-- Project Selector (always visible) -->
         <EvoDashWeb.DashboardComponents.project_selector
@@ -182,6 +183,33 @@ defmodule EvoDashWeb.DashboardLive do
         <% end %>
       </div>
       </div>
+      <%= if @show_welcome do %>
+        <div class="modal modal-open bg-black/50" id="welcome-modal">
+          <div class="modal-box max-w-lg">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="bg-primary/15 text-primary p-3 rounded-xl">
+                <.icon name="hero-sparkles" class="size-6" />
+              </div>
+              <h3 class="font-bold text-lg">{gettext("Welcome to EvoGit!")}</h3>
+            </div>
+            <p class="text-sm text-base-content/70 leading-relaxed mb-6">
+              {gettext("EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?")}
+            </p>
+            <div class="modal-action">
+              <button class="btn btn-ghost" phx-click="dismiss_welcome">
+                {gettext("Skip")}
+              </button>
+              <button class="btn btn-primary gap-2" phx-click="welcome_configure_llm">
+                <.icon name="hero-sparkles" class="size-4" />
+                {gettext("Configure LLM")}
+              </button>
+            </div>
+          </div>
+          <div class="modal-backdrop" phx-click="dismiss_welcome">
+            <button class="cursor-default">{gettext("close")}</button>
+          </div>
+        </div>
+      <% end %>
     </EvoDashWeb.Layouts.app>
     <% end %>
     """
@@ -236,6 +264,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign_form_defaults()
       |> assign_running_and_pending_tasks()
       |> assign(:config_status, config_status)
+      |> assign(:show_welcome, false)
 
     {:ok, socket}
   end
@@ -305,6 +334,24 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     {:noreply, socket}
+  end
+
+  # --- Welcome Modal Events ---
+
+  @impl true
+  def handle_event("show_welcome", _params, socket) do
+    {:noreply, assign(socket, :show_welcome, true)}
+  end
+
+  @impl true
+  def handle_event("dismiss_welcome", _params, socket) do
+    {:noreply, socket |> assign(:show_welcome, false) |> push_event("welcome_dismissed", %{})}
+  end
+
+  @impl true
+  def handle_event("welcome_configure_llm", _params, socket) do
+    socket = socket |> push_event("welcome_dismissed", %{})
+    {:noreply, push_navigate(socket, to: "/settings?category=llm")}
   end
 
   # --- Project Management Events ---

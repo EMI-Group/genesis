@@ -131,6 +131,7 @@ defmodule EvoDashWeb.SettingsLive do
             selected_provider_id={@selected_provider_id}
             selected_provider_models={@selected_provider_models}
             selected_variant_id={@selected_variant_id}
+            llm_test_status={@llm_test_status}
           />
         </.form>
       </div>
@@ -166,8 +167,38 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:selected_provider_id, nil)
       |> assign(:selected_provider_models, [])
       |> assign(:selected_variant_id, nil)
+      |> assign(:llm_test_status, :idle)
 
     {:ok, socket}
+  end
+
+  @impl true
+  def handle_params(params, _url, socket) do
+    category =
+      case params["category"] do
+        cat when is_binary(cat) ->
+          try do
+            String.to_existing_atom(cat)
+          rescue
+            ArgumentError -> socket.assigns.active_category
+          end
+
+        _ ->
+          socket.assigns.active_category
+      end
+
+    # Only update if category is valid and different
+    valid_categories = Map.keys(socket.assigns.schemas_by_category)
+    category = if category in valid_categories, do: category, else: socket.assigns.active_category
+
+    socket =
+      if category != socket.assigns.active_category do
+        assign(socket, :active_category, category)
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -176,6 +207,17 @@ defmodule EvoDashWeb.SettingsLive do
      socket
      |> assign(:scheduler_config, load_scheduler_config())
      |> assign(:scheduler_paused, load_paused_state())}
+  end
+
+  @impl true
+  def handle_info({:llm_test_result, result}, socket) do
+    status =
+      case result do
+        {:ok, data} -> {:ok, data}
+        {:error, reason} -> {:error, reason}
+      end
+
+    {:noreply, assign(socket, :llm_test_status, status)}
   end
 
   @impl true
@@ -332,6 +374,18 @@ defmodule EvoDashWeb.SettingsLive do
            )}
       end
     end
+  end
+
+  @impl true
+  def handle_event("test_llm", _params, socket) do
+    parent = self()
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result = EvoGit.SystemCheck.llm_test()
+      send(parent, {:llm_test_result, result})
+    end)
+
+    {:noreply, assign(socket, :llm_test_status, :testing)}
   end
 
   @impl true
