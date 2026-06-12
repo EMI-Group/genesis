@@ -968,7 +968,9 @@ defmodule EvoGit.Agent do
                       "(e.g., '/Source/original-proj' rather than '/Source/original-proj/src'). " <>
                       "Since you have no prior knowledge of the foreign repo's structure, starting at the root " <>
                       "allows the subagent to discover the codebase layout via its CONTEXT.md routing table. " <>
-                      "Spawning at a non-root path is allowed but discouraged unless you have specific knowledge of that path."
+                      "Spawning at a non-root path is allowed but discouraged unless you have specific knowledge of that path.\n\n" <>
+                      "IMPORTANT: Delegating work to child directories is more efficient than editing files there yourself. " <>
+                      "When you find yourself repeatedly editing files in the same child directory, spawn a subagent at that path to handle the work autonomously."
                 },
                 "objective" => %{
                   "type" => "string",
@@ -976,7 +978,8 @@ defmodule EvoGit.Agent do
                     "A clear, self-contained objective for the subagent. " <>
                       "Include any relevant context since it starts with a fresh context. " <>
                       "IMPORTANT: The subagent's working directory is automatically set correctly. " <>
-                      "Do NOT include worktree paths or `cd` commands in the objective — just describe what to do (e.g., 'run `mix test`')."
+                      "Do NOT include worktree paths or `cd` commands in the objective — just describe what to do (e.g., 'run `mix test`'). " <>
+                      "Include all relevant context, findings, and file paths so the subagent can start working immediately without re-investigating."
                 },
                 "commit_id" => %{
                   "type" => "string",
