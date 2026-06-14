@@ -265,8 +265,10 @@ msgstr ""
 msgid "Completed"
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:266
-#: lib/evo_dash_web/live/settings_live.ex:266
+#: lib/evo_dash_web/live/settings_live.ex:283
+#: lib/evo_dash_web/live/settings_live.ex:283
+#: lib/evo_dash_web/live/settings_live.ex:348
+#: lib/evo_dash_web/live/settings_live.ex:348
 #, elixir-autogen, elixir-format
 msgid "Configuration saved successfully."
 msgstr ""
@@ -403,8 +405,10 @@ msgstr ""
 msgid "Failed to cancel task: %{reason}"
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:283
-#: lib/evo_dash_web/live/settings_live.ex:283
+#: lib/evo_dash_web/live/settings_live.ex:300
+#: lib/evo_dash_web/live/settings_live.ex:300
+#: lib/evo_dash_web/live/settings_live.ex:368
+#: lib/evo_dash_web/live/settings_live.ex:368
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr ""
@@ -785,14 +789,14 @@ msgstr ""
 msgid "Scheduler Paused"
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:408
-#: lib/evo_dash_web/live/settings_live.ex:408
+#: lib/evo_dash_web/live/settings_live.ex:495
+#: lib/evo_dash_web/live/settings_live.ex:495
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:399
-#: lib/evo_dash_web/live/settings_live.ex:399
+#: lib/evo_dash_web/live/settings_live.ex:486
+#: lib/evo_dash_web/live/settings_live.ex:486
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr ""
@@ -861,8 +865,8 @@ msgstr ""
 msgid "Subdirectory to start evolution from (optional)"
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:595
-#: lib/evo_dash_web/components/settings_components.ex:595
+#: lib/evo_dash_web/components/settings_components.ex:679
+#: lib/evo_dash_web/components/settings_components.ex:679
 #: lib/evo_dash_web/live/tasks_live.ex:17
 #: lib/evo_dash_web/live/tasks_live.ex:17
 #, elixir-autogen, elixir-format
@@ -1137,8 +1141,8 @@ msgstr ""
 msgid "API Key"
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:357
-#: lib/evo_dash_web/live/settings_live.ex:357
+#: lib/evo_dash_web/live/settings_live.ex:444
+#: lib/evo_dash_web/live/settings_live.ex:444
 #, elixir-autogen, elixir-format, fuzzy
 msgid "API key cannot be empty."
 msgstr ""
@@ -1149,8 +1153,8 @@ msgstr ""
 msgid "API key is already set"
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:366
-#: lib/evo_dash_web/live/settings_live.ex:366
+#: lib/evo_dash_web/live/settings_live.ex:453
+#: lib/evo_dash_web/live/settings_live.ex:453
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr ""
@@ -1325,14 +1329,14 @@ msgstr ""
 msgid "Configure and execute a task above to get started."
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:617
-#: lib/evo_dash_web/components/settings_components.ex:617
+#: lib/evo_dash_web/components/settings_components.ex:701
+#: lib/evo_dash_web/components/settings_components.ex:701
 #, elixir-autogen, elixir-format
 msgid "Configure output truncation limits for tool and context windows."
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:608
-#: lib/evo_dash_web/components/settings_components.ex:608
+#: lib/evo_dash_web/components/settings_components.ex:692
+#: lib/evo_dash_web/components/settings_components.ex:692
 #, elixir-autogen, elixir-format
 msgid "Configure the language model provider and token compression."
 msgstr ""
@@ -1373,8 +1377,8 @@ msgstr ""
 msgid "Continuing from branch %{branch} at %{sha}"
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:605
-#: lib/evo_dash_web/components/settings_components.ex:605
+#: lib/evo_dash_web/components/settings_components.ex:689
+#: lib/evo_dash_web/components/settings_components.ex:689
 #, elixir-autogen, elixir-format
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr ""
@@ -1559,14 +1563,14 @@ msgstr ""
 msgid "Failed to reject changes: %{reason}"
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:323
-#: lib/evo_dash_web/live/settings_live.ex:323
+#: lib/evo_dash_web/live/settings_live.ex:410
+#: lib/evo_dash_web/live/settings_live.ex:410
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Failed to reset key: %{reason}"
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:373
-#: lib/evo_dash_web/live/settings_live.ex:373
+#: lib/evo_dash_web/live/settings_live.ex:460
+#: lib/evo_dash_web/live/settings_live.ex:460
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Failed to save API key: %{reason}"
 msgstr ""
@@ -1589,8 +1593,8 @@ msgstr ""
 msgid "Filesystem isolation is active. Note: Resource limits are not available on macOS."
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:522
-#: lib/evo_dash_web/components/settings_components.ex:522
+#: lib/evo_dash_web/components/settings_components.ex:606
+#: lib/evo_dash_web/components/settings_components.ex:606
 #, elixir-autogen, elixir-format
 msgid "Filter settings..."
 msgstr ""
@@ -1671,8 +1675,8 @@ msgstr ""
 msgid "Initialize Existing Codebase"
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:591
-#: lib/evo_dash_web/components/settings_components.ex:591
+#: lib/evo_dash_web/components/settings_components.ex:675
+#: lib/evo_dash_web/components/settings_components.ex:675
 #, elixir-autogen, elixir-format
 msgid "LLM"
 msgstr ""
@@ -1701,14 +1705,14 @@ msgstr ""
 msgid "Loading review data..."
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:620
-#: lib/evo_dash_web/components/settings_components.ex:620
+#: lib/evo_dash_web/components/settings_components.ex:704
+#: lib/evo_dash_web/components/settings_components.ex:704
 #, elixir-autogen, elixir-format
 msgid "Manage how many past tasks are retained and for how long."
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:614
-#: lib/evo_dash_web/components/settings_components.ex:614
+#: lib/evo_dash_web/components/settings_components.ex:698
+#: lib/evo_dash_web/components/settings_components.ex:698
 #, elixir-autogen, elixir-format
 msgid "Manage sandbox isolation, resource limits, and process constraints."
 msgstr ""
@@ -1769,8 +1773,8 @@ msgstr ""
 msgid "No foreign repositories registered"
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:645
-#: lib/evo_dash_web/components/settings_components.ex:645
+#: lib/evo_dash_web/components/settings_components.ex:729
+#: lib/evo_dash_web/components/settings_components.ex:729
 #, elixir-autogen, elixir-format
 msgid "No prefix (hexadecimal)"
 msgstr ""
@@ -1907,8 +1911,8 @@ msgstr ""
 msgid "Required Tools"
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:318
-#: lib/evo_dash_web/live/settings_live.ex:318
+#: lib/evo_dash_web/live/settings_live.ex:405
+#: lib/evo_dash_web/live/settings_live.ex:405
 #, elixir-autogen, elixir-format
 msgid "Reset %{key} to default."
 msgstr ""
@@ -1979,8 +1983,8 @@ msgstr ""
 msgid "Runtime configuration and file settings"
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:593
-#: lib/evo_dash_web/components/settings_components.ex:593
+#: lib/evo_dash_web/components/settings_components.ex:677
+#: lib/evo_dash_web/components/settings_components.ex:677
 #: lib/evo_dash_web/live/help_live.ex:208
 #: lib/evo_dash_web/live/help_live.ex:208
 #, elixir-autogen, elixir-format
@@ -2011,8 +2015,8 @@ msgstr ""
 msgid "Save Key"
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:590
-#: lib/evo_dash_web/components/settings_components.ex:590
+#: lib/evo_dash_web/components/settings_components.ex:674
+#: lib/evo_dash_web/components/settings_components.ex:674
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Scheduler"
 msgstr ""
@@ -2035,8 +2039,8 @@ msgstr ""
 msgid "Set"
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:611
-#: lib/evo_dash_web/components/settings_components.ex:611
+#: lib/evo_dash_web/components/settings_components.ex:695
+#: lib/evo_dash_web/components/settings_components.ex:695
 #, elixir-autogen, elixir-format
 msgid "Set your user identity for Git commits and collaboration."
 msgstr ""
@@ -2103,14 +2107,14 @@ msgstr ""
 msgid "This branch no longer exists. No actions available."
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:594
-#: lib/evo_dash_web/components/settings_components.ex:594
+#: lib/evo_dash_web/components/settings_components.ex:678
+#: lib/evo_dash_web/components/settings_components.ex:678
 #, elixir-autogen, elixir-format
 msgid "Truncation"
 msgstr ""
 
-#: lib/evo_dash_web/components/settings_components.ex:592
-#: lib/evo_dash_web/components/settings_components.ex:592
+#: lib/evo_dash_web/components/settings_components.ex:676
+#: lib/evo_dash_web/components/settings_components.ex:676
 #, elixir-autogen, elixir-format
 msgid "User"
 msgstr ""
@@ -2121,8 +2125,10 @@ msgstr ""
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:296
-#: lib/evo_dash_web/live/settings_live.ex:296
+#: lib/evo_dash_web/live/settings_live.ex:313
+#: lib/evo_dash_web/live/settings_live.ex:313
+#: lib/evo_dash_web/live/settings_live.ex:383
+#: lib/evo_dash_web/live/settings_live.ex:383
 #, elixir-autogen, elixir-format
 msgid "Validation failed. Please fix the errors below."
 msgstr ""
@@ -2173,8 +2179,8 @@ msgstr ""
 #: lib/evo_dash_web/components/settings_components.ex:82
 #: lib/evo_dash_web/components/settings_components.ex:90
 #: lib/evo_dash_web/components/settings_components.ex:90
-#: lib/evo_dash_web/components/settings_components.ex:586
-#: lib/evo_dash_web/components/settings_components.ex:586
+#: lib/evo_dash_web/components/settings_components.ex:670
+#: lib/evo_dash_web/components/settings_components.ex:670
 #, elixir-autogen, elixir-format
 msgid "empty"
 msgstr ""
@@ -2311,4 +2317,34 @@ msgstr ""
 #: lib/evo_dash_web/live/dashboard_live.ex:193
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Welcome to EvoGit!"
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:533
+#: lib/evo_dash_web/components/settings_components.ex:533
+#, elixir-autogen, elixir-format
+msgid "%{count} setting(s) matching \"%{query}\""
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:531
+#: lib/evo_dash_web/components/settings_components.ex:531
+#, elixir-autogen, elixir-format
+msgid "No settings found matching \"%{query}\""
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:579
+#: lib/evo_dash_web/components/settings_components.ex:579
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Save Changes"
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:527
+#: lib/evo_dash_web/components/settings_components.ex:527
+#, elixir-autogen, elixir-format
+msgid "Search Results"
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:545
+#: lib/evo_dash_web/components/settings_components.ex:545
+#, elixir-autogen, elixir-format
+msgid "Try a different search term."
 msgstr ""
