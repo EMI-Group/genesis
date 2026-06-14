@@ -500,6 +500,90 @@ defmodule EvoDashWeb.SettingsComponents do
   end
 
   # ───────────────────────────────────────────────────────────────────────────
+  # search_results/1 — Search results across all categories
+  # ───────────────────────────────────────────────────────────────────────────
+
+  attr(:categories, :map, required: true)
+  attr(:search_text, :string, required: true)
+  attr(:file_config, :map, required: true)
+  attr(:errors, :list, default: [])
+
+  def search_results(assigns) do
+    total_matches =
+      assigns.categories
+      |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
+      |> Enum.count(&schema_matches?(&1, assigns.search_text))
+
+    assigns = assign(assigns, :total_matches, total_matches)
+
+    ~H"""
+    <div class="flex-1 flex flex-col h-full bg-base-100/50" id="search-results">
+      <%!-- Sticky Header --%>
+      <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
+        <div class="flex items-center gap-4 mb-2">
+          <div class="p-2.5 bg-gradient-to-br from-primary/20 to-primary/5 text-primary rounded-xl shadow-sm border border-primary/10">
+            <.icon name="hero-magnifying-glass" class="size-6" />
+          </div>
+          <h2 class="text-2xl font-extrabold tracking-tight text-base-content">{gettext("Search Results")}</h2>
+        </div>
+        <p class="text-sm font-medium text-base-content/60 ml-1.5">
+          <%= if @total_matches == 0 do %>
+            {gettext("No settings found matching \"%{query}\"", query: @search_text)}
+          <% else %>
+            {gettext("%{count} setting(s) matching \"%{query}\"", count: @total_matches, query: @search_text)}
+          <% end %>
+        </p>
+      </div>
+
+      <%!-- Scrollable Content --%>
+      <div class="flex-1 overflow-y-auto px-8 py-8">
+        <%= if @total_matches == 0 do %>
+          <div class="flex flex-col items-center justify-center py-20 text-center">
+            <div class="p-4 bg-base-200/50 rounded-3xl mb-4">
+              <.icon name="hero-magnifying-glass" class="size-10 text-base-content/30" />
+            </div>
+            <p class="text-base-content/50 font-medium">{gettext("Try a different search term.")}</p>
+          </div>
+        <% else %>
+          <%= for {category, schemas} <- sort_categories(@categories) do %>
+            <% matching = Enum.filter(schemas, &schema_matches?(&1, @search_text)) %>
+            <%= if matching != [] do %>
+              <div class="mb-10">
+                <div class="flex items-center gap-4 mb-6">
+                  <div class="p-2 bg-primary/10 text-primary rounded-xl">
+                    <.icon name={category_icon(category)} class="size-5" />
+                  </div>
+                  <h3 class="text-lg font-bold tracking-tight text-base-content">{category_display_name(category)}</h3>
+                  <span class="text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg bg-base-300/50 text-base-content/40">{length(matching)}</span>
+                  <div class="h-px bg-base-200 flex-1"></div>
+                </div>
+                <div class="flex flex-wrap gap-6 items-stretch">
+                  <%= for schema <- matching do %>
+                    <.setting_card
+                      schema={schema}
+                      value={get_in(@file_config, schema.key_path)}
+                      error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                    />
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
+          <% end %>
+        <% end %>
+      </div>
+
+      <%!-- Sticky Footer --%>
+      <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-6 flex justify-end">
+        <button type="submit" class="btn btn-primary rounded-2xl shadow-[0_8px_20px_-6px_rgba(6,81,237,0.4)] hover:shadow-[0_12px_25px_-6px_rgba(6,81,237,0.5)] hover:-translate-y-0.5 transition-all duration-300 min-w-[240px] font-bold tracking-wide text-[15px] h-14">
+          <.icon name="hero-document-check" class="size-5 mr-2" />
+          {gettext("Save Changes")}
+        </button>
+      </div>
+    </div>
+    """
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
   # settings_sidebar/1 — Category sidebar
   # ───────────────────────────────────────────────────────────────────────────
 
@@ -624,17 +708,17 @@ defmodule EvoDashWeb.SettingsComponents do
     Enum.sort_by(categories, fn {cat, _} -> Enum.find_index(order, &(&1 == cat)) || 99 end)
   end
 
-  defp category_match_count(_category, schemas, "") do
-    length(schemas)
+  defp category_match_count(_category, schemas, search_text) do
+    Enum.count(schemas, &schema_matches?(&1, search_text))
   end
 
-  defp category_match_count(_category, schemas, search_text) do
+  defp schema_matches?(_schema, ""), do: true
+
+  defp schema_matches?(schema, search_text) do
     lower = String.downcase(search_text)
 
-    Enum.count(schemas, fn s ->
-      String.contains?(String.downcase(Enum.join(s.key_path, ".")), lower) or
-        String.contains?(String.downcase(s.description), lower)
-    end)
+    String.contains?(String.downcase(Enum.join(schema.key_path, ".")), lower) or
+      String.contains?(String.downcase(schema.description), lower)
   end
 
   defp api_key_prefix_hint(:openai), do: "sk-proj-..."

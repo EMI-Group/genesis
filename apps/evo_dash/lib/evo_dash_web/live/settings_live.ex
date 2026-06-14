@@ -112,28 +112,44 @@ defmodule EvoDashWeb.SettingsLive do
         />
 
         <%!-- Content area --%>
-        <.form
-          for={%{}}
-          phx-submit="save_category"
-          class="flex-1 flex flex-col min-w-0 relative"
-          id={"settings-form-#{@active_category}"}
-        >
-          <input type="hidden" name="category" value={@active_category} />
+        <%= if @search_text != "" do %>
+          <.form
+            for={%{}}
+            phx-submit="save_search"
+            class="flex-1 flex flex-col min-w-0 relative"
+            id="settings-form-search"
+          >
+            <EvoDashWeb.SettingsComponents.search_results
+              categories={@schemas_by_category}
+              search_text={@search_text}
+              file_config={@file_config}
+              errors={all_errors(@per_category_errors)}
+            />
+          </.form>
+        <% else %>
+          <.form
+            for={%{}}
+            phx-submit="save_category"
+            class="flex-1 flex flex-col min-w-0 relative"
+            id={"settings-form-#{@active_category}"}
+          >
+            <input type="hidden" name="category" value={@active_category} />
 
-          <EvoDashWeb.SettingsComponents.category_section
-            category={@active_category}
-            schemas={Map.get(@schemas_by_category, @active_category, [])}
-            file_config={@file_config}
-            errors={Map.get(@per_category_errors, @active_category, [])}
-            sandbox_backend={@scheduler_config[:sandbox_backend]}
-            sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
-            llm_providers={@llm_providers}
-            selected_provider_id={@selected_provider_id}
-            selected_provider_models={@selected_provider_models}
-            selected_variant_id={@selected_variant_id}
-            llm_test_status={@llm_test_status}
-          />
-        </.form>
+            <EvoDashWeb.SettingsComponents.category_section
+              category={@active_category}
+              schemas={Map.get(@schemas_by_category, @active_category, [])}
+              file_config={@file_config}
+              errors={Map.get(@per_category_errors, @active_category, [])}
+              sandbox_backend={@scheduler_config[:sandbox_backend]}
+              sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
+              llm_providers={@llm_providers}
+              selected_provider_id={@selected_provider_id}
+              selected_provider_models={@selected_provider_models}
+              selected_variant_id={@selected_variant_id}
+              llm_test_status={@llm_test_status}
+            />
+          </.form>
+        <% end %>
       </div>
     </EvoDashWeb.Layouts.app>
     """
@@ -227,6 +243,7 @@ defmodule EvoDashWeb.SettingsLive do
     {:noreply,
      socket
      |> assign(:active_category, cat)
+     |> assign(:search_text, "")
      |> assign(:per_category_errors, %{})}
   end
 
@@ -293,6 +310,76 @@ defmodule EvoDashWeb.SettingsLive do
            :per_category_errors,
            Map.put(socket.assigns.per_category_errors, category, category_errors)
          )
+         |> put_flash(:error, gettext("Validation failed. Please fix the errors below."))}
+    end
+  end
+
+  @impl true
+  def handle_event("save_search", params, socket) do
+    search_text = socket.assigns.search_text
+
+    all_matching_schemas =
+      socket.assigns.schemas_by_category
+      |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
+      |> Enum.filter(&schema_matches?(&1, search_text))
+
+    config =
+      build_config_from_category_params(
+        params,
+        nil,
+        all_matching_schemas,
+        socket.assigns.file_config
+      )
+
+    case Schema.validate(config) do
+      {:ok, _validated} ->
+        case EvoGit.Config.save_user_config(config) do
+          :ok ->
+            file_config = load_file_config()
+            config_status = safe_config_status()
+            config_file_exists = File.exists?(socket.assigns.config_path)
+
+            socket =
+              socket
+              |> assign(:file_config, file_config)
+              |> assign(:config_status, config_status)
+              |> assign(:config_file_exists, config_file_exists)
+              |> assign(:per_category_errors, %{})
+              |> put_flash(:info, gettext("Configuration saved successfully."))
+
+            # Update runtime scheduler when LLM or scheduler keys change
+            socket =
+              if Enum.any?(
+                   all_matching_schemas,
+                   &(List.first(&1.key_path) in [:scheduler, :llm])
+                 ) do
+                update_runtime_from_file_config(file_config, socket)
+              else
+                socket
+              end
+
+            {:noreply, socket}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> put_flash(
+               :error,
+               gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
+             )}
+        end
+
+      {:error, errors} ->
+        # Group errors by category for display
+        per_category_errors =
+          Enum.reduce(errors, %{}, fn e, acc ->
+            cat = List.first(e.key_path)
+            Map.update(acc, cat, [e], fn existing -> existing ++ [e] end)
+          end)
+
+        {:noreply,
+         socket
+         |> assign(:per_category_errors, per_category_errors)
          |> put_flash(:error, gettext("Validation failed. Please fix the errors below."))}
     end
   end
@@ -554,6 +641,19 @@ defmodule EvoDashWeb.SettingsLive do
     schemas_by_category
     |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
     |> Enum.find(&(&1.key_path == key_path))
+  end
+
+  defp all_errors(per_category_errors) do
+    Enum.flat_map(per_category_errors, fn {_cat, errors} -> errors end)
+  end
+
+  defp schema_matches?(_schema, ""), do: true
+
+  defp schema_matches?(schema, search_text) do
+    lower = String.downcase(search_text)
+
+    String.contains?(String.downcase(Enum.join(schema.key_path, ".")), lower) or
+      String.contains?(String.downcase(schema.description), lower)
   end
 
   defp parse_int(value) when is_binary(value) do
