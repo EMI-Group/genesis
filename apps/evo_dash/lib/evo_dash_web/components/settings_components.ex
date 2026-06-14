@@ -712,9 +712,9 @@ defmodule EvoDashWeb.SettingsComponents do
     Enum.count(schemas, &schema_matches?(&1, search_text))
   end
 
-  defp schema_matches?(_schema, ""), do: true
+  def schema_matches?(_schema, ""), do: true
 
-  defp schema_matches?(schema, search_text) do
+  def schema_matches?(schema, search_text) do
     lower = String.downcase(search_text)
 
     String.contains?(String.downcase(Enum.join(schema.key_path, ".")), lower) or

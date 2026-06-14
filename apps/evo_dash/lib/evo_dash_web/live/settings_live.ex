@@ -321,7 +321,7 @@ defmodule EvoDashWeb.SettingsLive do
     all_matching_schemas =
       socket.assigns.schemas_by_category
       |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
-      |> Enum.filter(&schema_matches?(&1, search_text))
+      |> Enum.filter(&EvoDashWeb.SettingsComponents.schema_matches?(&1, search_text))
 
     config =
       build_config_from_category_params(
@@ -645,15 +645,6 @@ defmodule EvoDashWeb.SettingsLive do
 
   defp all_errors(per_category_errors) do
     Enum.flat_map(per_category_errors, fn {_cat, errors} -> errors end)
-  end
-
-  defp schema_matches?(_schema, ""), do: true
-
-  defp schema_matches?(schema, search_text) do
-    lower = String.downcase(search_text)
-
-    String.contains?(String.downcase(Enum.join(schema.key_path, ".")), lower) or
-      String.contains?(String.downcase(schema.description), lower)
   end
 
   defp parse_int(value) when is_binary(value) do
