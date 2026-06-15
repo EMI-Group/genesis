@@ -580,7 +580,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         tag: tag,
         branch_name: branch_name,
         pr_url: pr_url,
-        pr_title: pr_title
+        pr_title: pr_title,
+        agent_count: agent_output.agent_count
       }}
     else
       Logger.info("Evolution Engine: No changes detected from agent")
@@ -591,7 +592,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         branch_name: nil,
         pr_url: nil,
         pr_title: nil,
-        no_changes: true
+        no_changes: true,
+        agent_count: agent_output.agent_count
       }}
     end
   end

@@ -781,7 +781,10 @@ defmodule EvoGit.AgentScheduler do
           state = Subagents.maybe_resume_parent(state, meta.parent_id)
           {:noreply, state}
         else
+          agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
+          result = inject_agent_count(result, agent_count)
           GenServer.reply(meta.from, result)
+          state = %{state | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)}
           {:noreply, state}
         end
     end
@@ -856,6 +859,12 @@ defmodule EvoGit.AgentScheduler do
       end
     end)
   end
+
+  defp inject_agent_count({:ok, %EvoGit.Agent.Result{} = res}, agent_count) do
+    {:ok, %{res | agent_count: agent_count}}
+  end
+
+  defp inject_agent_count(result, _agent_count), do: result
 
   # --- ETS Helpers (Agent History Table) ---
 
