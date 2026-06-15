@@ -866,6 +866,8 @@ defmodule EvoGit.AgentScheduler do
 
   defp inject_agent_count(result, _agent_count), do: result
 
+  # --- ETS Helpers (Agent History Table) ---
+
   @doc """
   Gets the conversation context for an agent from the agent state table.
   Returns the context or nil if not set.
