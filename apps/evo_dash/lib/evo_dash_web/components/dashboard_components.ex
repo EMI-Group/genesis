@@ -509,6 +509,12 @@ defmodule EvoDashWeb.DashboardComponents do
                 {gettext("Finished")} {relative_time(@task.finished_at)}
               </span>
             <% end %>
+            <%= if Map.get(@task, :agent_count) do %>
+              <span class="flex items-center gap-1.5">
+                <.icon name="hero-user-group" class="size-4 opacity-60" />
+                {gettext("%{count} Agents", count: @task.agent_count)}
+              </span>
+            <% end %>
           </div>
           
           <div class="flex items-center gap-2 sm:gap-3">
@@ -619,6 +625,18 @@ defmodule EvoDashWeb.DashboardComponents do
                     <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
                     <div class="text-sm font-semibold text-primary">${format_cost(@task.usage.total_cost)}</div>
                   </div>
+                </div>
+              </div>
+              <% end %>
+
+              <%= if Map.get(@task, :agent_count) do %>
+              <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
+                <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
+                  <.icon name="hero-user-group" class="size-4.5 text-primary" /> {gettext("Agents Spawned")}
+                </h4>
+                <div class="flex items-center gap-3">
+                  <span class="text-2xl font-bold text-primary">{format_number(@task.agent_count)}</span>
+                  <span class="text-xs text-base-content/50">{gettext("total agents (incl. subagents)")}</span>
                 </div>
               </div>
               <% end %>

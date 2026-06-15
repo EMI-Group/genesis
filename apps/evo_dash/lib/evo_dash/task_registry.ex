@@ -30,7 +30,8 @@ defmodule EvoDash.TaskRegistry do
       logs: [],
       result: nil,
       review_status: nil,
-      usage: nil
+      usage: nil,
+      agent_count: nil
     ]
 
     @type t :: %__MODULE__{
@@ -44,7 +45,8 @@ defmodule EvoDash.TaskRegistry do
             logs: [String.t()],
             result: term(),
             review_status: atom() | nil,
-            usage: EvoGit.Agent.Usage.t() | nil
+            usage: EvoGit.Agent.Usage.t() | nil,
+            agent_count: pos_integer() | nil
           }
   end
 
@@ -334,12 +336,14 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_cast({:update_status, task_id, status, result, opts}, state) do
     usage = Keyword.get(opts, :usage)
+    agent_count = Keyword.get(opts, :agent_count)
 
     case :ets.lookup(state.table_name, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
         finished_at = if status in [:completed, :failed, :cancelled], do: DateTime.utc_now(), else: task.finished_at
         updated = %{task | status: status, result: result, finished_at: finished_at}
         updated = if usage, do: %{updated | usage: usage}, else: updated
+        updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
         :ets.insert(state.table_name, {task_id, updated})
 
         if status in [:completed, :failed, :cancelled] do
@@ -758,7 +762,13 @@ defmodule EvoDash.TaskRegistry do
           _ -> nil
         end
 
-      update_task_status(task_id, status, result, usage: task_usage)
+      task_agent_count =
+        case result do
+          {:ok, %{agent_count: count}} when is_integer(count) -> count
+          _ -> nil
+        end
+
+      update_task_status(task_id, status, result, usage: task_usage, agent_count: task_agent_count)
     end
 
     Process.demonitor(ref, [:flush])
