@@ -220,6 +220,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
         {:noreply, state}
       else
         GenServer.reply(meta.from, {:error, :agent_max_retries_exceeded})
+        state = %{state | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)}
         state = Dispatch.process_queue(state)
         {:noreply, state}
       end

@@ -37,6 +37,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     task_local_id = Map.get(state.task_local_counters, task_id, 1)
     state = %{state | task_local_counters: Map.put(state.task_local_counters, task_id, task_local_id + 1)}
 
+    # Track total agents spawned per task (for stats reporting)
+    state = %{state | task_agent_counts: Map.update(state.task_agent_counts, task_id, 1, &(&1 + 1))}
+
     # Agent state table: live spatial/temporal state for the agent process
     # Resolve repo root from the spec's own data (avoids reading shared mutable state)
     agent_repo_root = resolve_agent_repo_root(spec, state)
