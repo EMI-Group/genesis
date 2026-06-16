@@ -308,7 +308,9 @@ defmodule EvoGit.Adapters.Git do
   def branch_exists?(repo_path, branch_name) do
     case System.cmd(
            EvoGit.Executable.resolve("git"),
-           ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"], cd: repo_path) do
+           ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
+           cd: repo_path
+         ) do
       {_output, 0} -> true
       {_output, _code} -> false
     end
