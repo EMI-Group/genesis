@@ -30,35 +30,55 @@ defmodule EvoDashWeb.NativePicker do
   end
 
   defp do_pick_directory do
-    # Ensure wx is started
-    :wx.new()
+    if display_available?() do
+      # Ensure wx is started
+      :wx.new()
 
-    try do
-      dialog =
-        :wxDirDialog.new(
-          :wx.null(),
-          title: ~c"#{gettext("Select Project Directory")}",
-          style: 0
-        )
+      try do
+        dialog =
+          :wxDirDialog.new(
+            :wx.null(),
+            title: ~c"#{gettext("Select Project Directory")}",
+            style: 0
+          )
 
-      result =
-        case :wxDirDialog.showModal(dialog) do
-          5100 ->
-            # wxID_OK
-            path = :wxDirDialog.getPath(dialog) |> List.to_string()
-            {:ok, path}
+        result =
+          case :wxDirDialog.showModal(dialog) do
+            5100 ->
+              # wxID_OK
+              path = :wxDirDialog.getPath(dialog) |> List.to_string()
+              {:ok, path}
 
-          _ ->
-            {:error, :cancelled}
-        end
+            _ ->
+              {:error, :cancelled}
+          end
 
-      :wxDirDialog.destroy(dialog)
-      result
-    rescue
-      e ->
-        {:error, gettext("wx directory picker failed: %{message}", message: Exception.message(e))}
-    after
-      :wx.destroy()
+        :wxDirDialog.destroy(dialog)
+        result
+      rescue
+        e ->
+          {:error, gettext("wx directory picker failed: %{message}", message: Exception.message(e))}
+      after
+        :wx.destroy()
+      end
+    else
+      {:error, gettext("Native directory picker is not available on this system (no display)")}
+    end
+  end
+
+  defp display_available? do
+    case :os.type() do
+      {:unix, :linux} ->
+        System.get_env("DISPLAY") != nil or System.get_env("WAYLAND_DISPLAY") != nil
+
+      {:unix, :darwin} ->
+        true
+
+      {:win32, _} ->
+        true
+
+      _ ->
+        false
     end
   end
 end

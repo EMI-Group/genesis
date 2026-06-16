@@ -10,6 +10,11 @@ defmodule EvoDash.Application do
   def start(_type, _args) do
     desktop_children =
       if Application.get_env(:evo_dash, :desktop, false) do
+        # Explicitly start the :desktop application (and its :wx dependency)
+        # only when desktop mode is enabled. The dependency uses runtime: false
+        # and :wx is not in extra_applications, so neither auto-starts.
+        Application.ensure_all_started(:desktop)
+
         port = Application.get_env(:evo_dash, :desktop_port, 4100)
 
         [{Desktop.Window,
