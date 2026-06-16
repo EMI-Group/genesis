@@ -413,6 +413,27 @@ defmodule EvoDash.TaskRegistry do
     EvoGit.Runtime.Evolution.run(objective, runtime_opts)
   end
 
+  def execute_task(:extract_skills, opts, task_id) do
+    repo_path = Keyword.fetch!(opts, :path)
+    Application.ensure_all_started(:evo_git)
+
+    runtime_opts = [repo_path: repo_path, task_id: task_id]
+
+    # Pass through PR context keys to the runtime
+    pr_context_keys = [:pr_title, :pr_objective, :pr_summary, :pr_commit_history,
+                       :base_sha, :commit_sha, :user_note, :foreign_repos]
+
+    runtime_opts =
+      Enum.reduce(pr_context_keys, runtime_opts, fn key, acc ->
+        case Keyword.get(opts, key) do
+          nil -> acc
+          value -> Keyword.put(acc, key, value)
+        end
+      end)
+
+    EvoGit.Runtime.SkillExtraction.run(runtime_opts)
+  end
+
   ## Private Functions
 
   defp generate_id do

@@ -217,6 +217,7 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:has_pr, :boolean, default: false)
   attr(:pr_url, :string, default: nil)
   attr(:loading, :boolean, default: false)
+  attr(:show_extract_modal, :boolean, default: false)
 
   def action_buttons(assigns) do
     ~H"""
@@ -271,6 +272,17 @@ defmodule EvoDashWeb.ReviewComponents do
             {gettext("View GitHub PR")}
           </a>
         <% end %>
+        <%= if @branch_exists do %>
+          <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50"></div>
+          <button
+            class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
+            phx-click="extract_skills"
+            disabled={@loading}
+          >
+            <.icon name="hero-academic-cap" class="size-4.5" />
+            {gettext("Extract Skills")}
+          </button>
+        <% end %>
         <%= if not @branch_exists do %>
           <div class="bg-warning/10 border border-warning/20 rounded-2xl p-5 w-full">
             <div class="flex items-center gap-3">
@@ -281,6 +293,62 @@ defmodule EvoDashWeb.ReviewComponents do
         <% end %>
       </div>
     </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # extract_skills_modal/1 — Modal for extracting skills from a PR
+  # ---------------------------------------------------------------------------
+
+  attr(:show, :boolean, default: false)
+
+  def extract_skills_modal(assigns) do
+    ~H"""
+    <%= if @show do %>
+      <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_extract_skills"></div>
+        <div class="relative bg-base-100 rounded-3xl shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="flex items-center justify-center size-10 rounded-2xl bg-secondary/10">
+              <.icon name="hero-academic-cap" class="size-5 text-secondary" />
+            </div>
+            <h3 class="text-lg font-bold">{gettext("Extract Skills")}</h3>
+          </div>
+
+          <p class="text-sm text-base-content/70 mb-5">
+            {gettext("Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/.")}
+          </p>
+
+          <.form for={%{}} phx-submit="confirm_extract_skills" class="space-y-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm font-medium">
+                  {gettext("Optional: Note for the skill extraction agent")}
+                </span>
+              </label>
+              <textarea
+                class="textarea textarea-bordered h-24 rounded-2xl text-sm"
+                name="user_note"
+                placeholder={gettext("e.g., Focus on the deployment workflow and database migration patterns discovered in this PR.")}
+              ></textarea>
+              <p class="text-xs text-base-content/50 mt-1">
+                {gettext("Provide specific instructions on what knowledge should be captured as skills.")}
+              </p>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-2">
+              <button type="button" class="btn btn-ghost rounded-full px-6" phx-click="cancel_extract_skills">
+                {gettext("Cancel")}
+              </button>
+              <button type="submit" class="btn btn-secondary rounded-full px-6 gap-2">
+                <.icon name="hero-academic-cap" class="size-4.5" />
+                {gettext("Extract Skills")}
+              </button>
+            </div>
+          </.form>
+        </div>
+      </div>
+    <% end %>
     """
   end
 

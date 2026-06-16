@@ -78,6 +78,10 @@ defmodule EvoDashWeb.ReviewLive do
                         has_pr={@has_pr}
                         pr_url={@pr_url}
                         loading={@action_loading}
+                        show_extract_modal={@show_extract_modal}
+                      />
+                      <EvoDashWeb.ReviewComponents.extract_skills_modal
+                        show={@show_extract_modal}
                       />
                     </div>
 
@@ -149,6 +153,7 @@ defmodule EvoDashWeb.ReviewLive do
       |> assign(:branch_exists, false)
       |> assign(:has_pr, false)
       |> assign(:pr_url, nil)
+      |> assign(:show_extract_modal, false)
       |> assign(:repo_path, nil)
       |> assign(:base_sha, nil)
       |> assign(:objective, nil)
@@ -327,6 +332,48 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
+  def handle_event("extract_skills", _params, socket) do
+    {:noreply, assign(socket, :show_extract_modal, true)}
+  end
+
+  @impl true
+  def handle_event("cancel_extract_skills", _params, socket) do
+    {:noreply, assign(socket, :show_extract_modal, false)}
+  end
+
+  @impl true
+  def handle_event("confirm_extract_skills", %{"user_note" => user_note}, socket) do
+    %{repo_path: repo_path, title: title, objective: objective, agent_summary: summary,
+      base_sha: base_sha, commit_sha: commit_sha, commits: commits} = socket.assigns
+
+    # Build the commit history string from the CommitInfo list
+    commit_history = format_commit_history(commits)
+
+    opts = [
+      path: repo_path,
+      pr_title: title,
+      pr_objective: objective,
+      pr_summary: summary,
+      pr_commit_history: commit_history,
+      base_sha: base_sha,
+      commit_sha: commit_sha
+    ]
+
+    opts = if user_note && user_note != "", do: Keyword.put(opts, :user_note, user_note), else: opts
+
+    case TaskRegistry.start_task(:extract_skills, opts) do
+      {:ok, _task} ->
+        {:noreply,
+         socket
+         |> assign(:show_extract_modal, false)
+         |> put_flash(:info, gettext("Skill extraction task started. You can monitor its progress on the dashboard."))}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, gettext("Failed to start skill extraction: %{reason}", reason: inspect(reason)))}
+    end
+  end
+
+  @impl true
   def handle_info({:tasks_updated}, socket) do
     {:noreply, load_task_data(socket, socket.assigns.task_id)}
   end
@@ -428,6 +475,16 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:objective, objective)
         |> assign(:commits, commits)
     end
+  end
+
+  defp format_commit_history([]), do: nil
+
+  defp format_commit_history(commits) do
+    commits
+    |> Enum.map(fn commit ->
+      "#{commit.short_sha || commit.sha} (#{commit.author_name}, #{commit.date}): #{commit.message}"
+    end)
+    |> Enum.join("\n")
   end
 
   defp maybe_load_diff(socket, path) do
