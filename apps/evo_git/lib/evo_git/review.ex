@@ -153,21 +153,22 @@ defmodule EvoGit.Review do
   Returns `{:ok, metadata_map}` with the same shape as `load_review_metadata/2`.
   """
   def load_review_metadata_from_shas(repo_path, base_sha, commit_sha) do
-    {:ok, diff_stat} = Git.diff_numstat(repo_path, base_sha, commit_sha)
-    files = parse_diff_stat_into_files(diff_stat)
-    {total_additions, total_deletions} = count_changes(files)
+    with {:ok, diff_stat} <- Git.diff_numstat(repo_path, base_sha, commit_sha) do
+      files = parse_diff_stat_into_files(diff_stat)
+      {total_additions, total_deletions} = count_changes(files)
 
-    {:ok,
-     %{
-       commit_sha: commit_sha,
-       base_sha: base_sha,
-       diff_stat: diff_stat,
-       diff: nil,
-       files: files,
-       changed_files_count: length(files),
-       total_additions: total_additions,
-       total_deletions: total_deletions
-     }}
+      {:ok,
+       %{
+         commit_sha: commit_sha,
+         base_sha: base_sha,
+         diff_stat: diff_stat,
+         diff: nil,
+         files: files,
+         changed_files_count: length(files),
+         total_additions: total_additions,
+         total_deletions: total_deletions
+       }}
+    end
   end
 
   @doc """
@@ -202,25 +203,28 @@ defmodule EvoGit.Review do
   Uses `commit_sha~1` as the base, so only the changes introduced by that commit
   are shown.
 
-  Returns `{:ok, metadata_map}` with the same shape as `load_review_metadata/2`.
+  Returns `{:ok, metadata_map}` with the same shape as `load_review_metadata/2`,
+  or `{:error, reason}` if the diff cannot be computed.
   """
   def load_commit_files(repo_path, commit_sha) do
     base_sha = "#{commit_sha}~1"
-    {:ok, diff_stat} = Git.diff_numstat(repo_path, base_sha, commit_sha)
-    files = parse_diff_stat_into_files(diff_stat)
-    {total_additions, total_deletions} = count_changes(files)
 
-    {:ok,
-     %{
-       commit_sha: commit_sha,
-       base_sha: base_sha,
-       diff_stat: diff_stat,
-       diff: nil,
-       files: files,
-       changed_files_count: length(files),
-       total_additions: total_additions,
-       total_deletions: total_deletions
-     }}
+    with {:ok, diff_stat} <- Git.diff_numstat(repo_path, base_sha, commit_sha) do
+      files = parse_diff_stat_into_files(diff_stat)
+      {total_additions, total_deletions} = count_changes(files)
+
+      {:ok,
+       %{
+         commit_sha: commit_sha,
+         base_sha: base_sha,
+         diff_stat: diff_stat,
+         diff: nil,
+         files: files,
+         changed_files_count: length(files),
+         total_additions: total_additions,
+         total_deletions: total_deletions
+       }}
+    end
   end
 
   @doc """
