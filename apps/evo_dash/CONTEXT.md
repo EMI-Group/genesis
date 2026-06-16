@@ -70,9 +70,9 @@ At runtime, set env var `EVOGIT_DESKTOP=1` (and optionally `EVOGIT_DESKTOP_PORT`
 
 ### Architecture
 
-- **`EvoDash.Application`** — Conditionally adds `{Desktop.Window, [...]}` to the supervision tree when `:desktop` is `true`. The window is configured with title "EvoGit Dashboard", size `{1280, 800}`, and loads `http://localhost:<port>/?client=desktop`.
+- **`EvoDash.Application`** — Conditionally adds `{Desktop.Window, [...]}` to the supervision tree when `:desktop` is `true`. Before adding the window child, calls `Application.ensure_all_started(:desktop)` to explicitly start the `:desktop` application (and its `:wx` dependency) only when desktop mode is enabled — neither auto-starts at boot (see Lazy Start below). The window is configured with title "Genesis Dashboard", size `{1280, 800}`, and loads `http://localhost:<port>/?client=desktop`.
 - **`EvoDashWeb.Router`** — Contains a custom plug `detect_desktop_client/2` that checks for `?client=desktop` query param and sets `session[:is_desktop] = true`.
-- **`EvoDashWeb.NativePicker`** — Server-side native OS directory picker using Erlang's `:wxDirDialog`. Runs in a separate `Task` process with 120s timeout. Requires `:wx` extra application (declared in `mix.exs`).
+- **`EvoDashWeb.NativePicker`** — Server-side native OS directory picker using Erlang's `:wxDirDialog`. Runs in a separate `Task` process with 120s timeout. Uses `:wx` lazily (not auto-started); gracefully degrades when no display is available (`display_available?/0` checks `DISPLAY`/`WAYLAND_DISPLAY` on Linux, assumes available on macOS/Windows) by returning `{:error, "..."}` instead of crashing the VM.
 - **`DashboardLive`** — Reads `session["is_desktop"]` and assigns it as `@is_desktop`, passes it to `DirectoryPicker` JS hook via `data-is-desktop` attribute.
 - **`DirectoryPicker` JS hook** — In desktop mode (`data-is-desktop="true"`), bypasses browser File System Access API and directly calls server-side `pick_directory` event (→ `NativePicker.pick_directory()`).
 
