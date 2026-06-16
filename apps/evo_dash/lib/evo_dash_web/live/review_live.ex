@@ -342,8 +342,15 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("confirm_extract_skills", %{"user_note" => user_note}, socket) do
-    %{repo_path: repo_path, title: title, objective: objective, agent_summary: summary,
-      base_sha: base_sha, commit_sha: commit_sha, commits: commits} = socket.assigns
+    %{
+      repo_path: repo_path,
+      title: title,
+      objective: objective,
+      agent_summary: summary,
+      base_sha: base_sha,
+      commit_sha: commit_sha,
+      commits: commits
+    } = socket.assigns
 
     # Build the commit history string from the CommitInfo list
     commit_history = format_commit_history(commits)
@@ -358,17 +365,28 @@ defmodule EvoDashWeb.ReviewLive do
       commit_sha: commit_sha
     ]
 
-    opts = if user_note && user_note != "", do: Keyword.put(opts, :user_note, user_note), else: opts
+    opts =
+      if user_note && user_note != "", do: Keyword.put(opts, :user_note, user_note), else: opts
 
     case TaskRegistry.start_task(:extract_skills, opts) do
       {:ok, _task} ->
         {:noreply,
          socket
          |> assign(:show_extract_modal, false)
-         |> put_flash(:info, gettext("Skill extraction task started. You can monitor its progress on the dashboard."))}
+         |> put_flash(
+           :info,
+           gettext(
+             "Skill extraction task started. You can monitor its progress on the dashboard."
+           )
+         )}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, gettext("Failed to start skill extraction: %{reason}", reason: inspect(reason)))}
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to start skill extraction: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -434,24 +452,47 @@ defmodule EvoDashWeb.ReviewLive do
             true -> :open
           end
 
+        commit_sha = commit_sha || task.commit_sha
+
         review_data =
-          if branch_exists && repo_path do
-            case Review.load_review_metadata(repo_path, branch_name) do
-              {:ok, data} -> data
-              _ -> nil
-            end
-          else
-            nil
+          cond do
+            # Normal case: branch still exists
+            branch_exists && repo_path ->
+              case Review.load_review_metadata(repo_path, branch_name) do
+                {:ok, data} -> data
+                _ -> nil
+              end
+
+            # Post-merge/reject case: branch gone but SHAs persisted
+            not branch_exists && repo_path && task.base_sha && commit_sha ->
+              case Review.load_review_metadata_from_shas(repo_path, task.base_sha, commit_sha) do
+                {:ok, data} -> data
+                _ -> nil
+              end
+
+            true ->
+              nil
           end
 
-        base_sha = if review_data, do: review_data.base_sha, else: nil
+        base_sha = if review_data, do: review_data.base_sha, else: task.base_sha
+
+        # Persist SHAs when loading from branch (for future post-merge access)
+        if (branch_exists && review_data && is_nil(task.base_sha)) and base_sha do
+          TaskRegistry.set_review_metadata(task_id, base_sha, commit_sha)
+        end
 
         commits =
-          if branch_exists && repo_path do
-            {:ok, commits} = Review.list_commits(repo_path, branch_name)
-            commits
-          else
-            []
+          cond do
+            branch_exists && repo_path ->
+              {:ok, commits} = Review.list_commits(repo_path, branch_name)
+              commits
+
+            not branch_exists && repo_path && task.base_sha && commit_sha ->
+              {:ok, commits} = Review.list_commits_from_shas(repo_path, task.base_sha, commit_sha)
+              commits
+
+            true ->
+              []
           end
 
         socket
