@@ -59,6 +59,17 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 EvoDash can run as a native desktop application using the `:desktop` Hex package (v1.5.3) and Erlang `:wx`. When enabled, it opens a native OS window wrapping the Phoenix web interface.
 
+### Lazy Start (Headless-Safe)
+
+The app is fully usable headless (no display, no `:wx`). Neither `:wx` nor `:desktop` auto-start at boot:
+
+- `:wx` is **NOT** in `extra_applications` in `mix.exs` — it does not start at boot
+- The `:desktop` dependency uses `runtime: false` — it does not auto-start either
+- Both are explicitly started via `Application.ensure_all_started(:desktop)` inside `EvoDash.Application.start/2`, **only** when `desktop: true` config is set
+- `NativePicker.display_available?/0` guards against calling `:wx.new()` when no display is available, returning a graceful error instead of SIGSEGV
+
+This prevents the SIGSEGV crash that previously occurred when `:desktop`'s `Desktop.Env` GenServer called `:wx.new()` during unconditional auto-start on headless servers.
+
 ### Activation
 
 Desktop mode is controlled by two config flags, both of which must be set:
