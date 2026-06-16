@@ -21,14 +21,16 @@ defmodule EvoDash.TaskRegistryTest do
     data_dir = Path.join(System.tmp_dir!(), "evogit_test_tasks_#{unique}")
     File.mkdir_p!(data_dir)
 
-    {:ok, _pid} = start_supervised({TaskRegistry,
-      name: EvoDash.TaskRegistry,
-      table_name: @table_name,
-      recent_projects_table: @recent_projects_table,
-      dets_tasks: @dets_tasks,
-      dets_projects: @dets_projects,
-      data_dir: data_dir
-    })
+    {:ok, _pid} =
+      start_supervised(
+        {TaskRegistry,
+         name: EvoDash.TaskRegistry,
+         table_name: @table_name,
+         recent_projects_table: @recent_projects_table,
+         dets_tasks: @dets_tasks,
+         dets_projects: @dets_projects,
+         data_dir: data_dir}
+      )
 
     on_exit(fn ->
       File.rm_rf(data_dir)
@@ -36,7 +38,7 @@ defmodule EvoDash.TaskRegistryTest do
       Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
     end)
 
-    :ok
+    {:ok, %{data_dir: data_dir}}
   end
 
   # Helper: trigger persist_tasks_to_dets (which calls cleanup_expired_tasks)
@@ -97,6 +99,7 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil
       }
+
       :ets.insert(@table_name, {"test_old_#{unique}", old_task})
 
       # Insert a recent finished task (today)
@@ -111,6 +114,7 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil
       }
+
       :ets.insert(@table_name, {"test_recent_#{unique}", recent_task})
 
       # Verify both exist
@@ -143,6 +147,7 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil
       }
+
       :ets.insert(@table_name, {"test_5day_#{unique}", task})
 
       # Trigger cleanup
@@ -168,6 +173,7 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil
       }
+
       :ets.insert(@table_name, {"test_running_#{unique}", running_task})
 
       # Pending task
@@ -182,6 +188,7 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil
       }
+
       :ets.insert(@table_name, {"test_pending_#{unique}", pending_task})
 
       # Old finished task (should be cleaned)
@@ -196,6 +203,7 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil
       }
+
       :ets.insert(@table_name, {"test_oldfin_#{unique}", old_finished})
 
       # Trigger cleanup
@@ -228,6 +236,7 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil
       }
+
       :ets.insert(@table_name, {"test_combined_old_#{unique}", old_task})
 
       # Recent tasks (within 14 days) - should be kept
@@ -243,6 +252,7 @@ defmodule EvoDash.TaskRegistryTest do
           logs: [],
           result: nil
         }
+
         :ets.insert(@table_name, {"test_combined_recent_#{unique}_#{i}", recent})
       end
 
@@ -258,6 +268,7 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil
       }
+
       :ets.insert(@table_name, {"test_combined_running_#{unique}", running})
 
       # Trigger cleanup
@@ -274,6 +285,171 @@ defmodule EvoDash.TaskRegistryTest do
       assert "test_combined_recent_#{unique}_3" in task_ids
       # Running task always kept
       assert "test_combined_running_#{unique}" in task_ids
+    end
+  end
+
+  describe "set_review_metadata/3" do
+    test "updates a task's base_sha and commit_sha in ETS" do
+      unique = System.unique_integer([:positive])
+      task_id = "review_meta_#{unique}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      :ets.insert(@table_name, {task_id, task})
+
+      TaskRegistry.set_review_metadata(task_id, "abc123", "def456")
+
+      # Sync with a call to ensure cast was processed
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.base_sha == "abc123"
+      assert fetched.commit_sha == "def456"
+    end
+
+    test "persists to DETS after update" do
+      unique = System.unique_integer([:positive])
+      task_id = "review_meta_dets_#{unique}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      :ets.insert(@table_name, {task_id, task})
+
+      TaskRegistry.set_review_metadata(task_id, "base_sha_1", "commit_sha_1")
+
+      # Sync to ensure the cast (and its persist_tasks_to_dets) has been processed
+      TaskRegistry.list_tasks()
+
+      # Read directly from DETS to confirm persistence
+      dets_entry =
+        :dets.foldl(
+          fn
+            {^task_id, %TaskInfo{} = stored}, _acc -> {:found, stored}
+            _other, acc -> acc
+          end,
+          :not_found,
+          @dets_tasks
+        )
+
+      assert {:found, stored_task} = dets_entry
+      assert stored_task.base_sha == "base_sha_1"
+      assert stored_task.commit_sha == "commit_sha_1"
+    end
+
+    test "does nothing for a non-existent task" do
+      # Should not raise; task simply not found
+      TaskRegistry.set_review_metadata("nonexistent_task", "base", "commit")
+
+      # Sync
+      TaskRegistry.list_tasks()
+
+      # Ensure no crash occurred — registry is still responsive
+      assert is_list(TaskRegistry.list_tasks())
+    end
+
+    test "can overwrite previously set metadata" do
+      unique = System.unique_integer([:positive])
+      task_id = "review_meta_overwrite_#{unique}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      :ets.insert(@table_name, {task_id, task})
+
+      TaskRegistry.set_review_metadata(task_id, "base1", "commit1")
+      TaskRegistry.list_tasks()
+
+      TaskRegistry.set_review_metadata(task_id, "base2", "commit2")
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.base_sha == "base2"
+      assert fetched.commit_sha == "commit2"
+    end
+  end
+
+  describe "DETS backfill of new TaskInfo fields" do
+    test "load_tasks_from_dets backfills base_sha and commit_sha as nil for old entries",
+         %{data_dir: data_dir} do
+      unique = System.unique_integer([:positive])
+      task_id = "backfill_#{unique}"
+
+      # Simulate an old persisted entry WITHOUT base_sha/commit_sha keys.
+      # This mimics a DETS entry written before these fields existed.
+      old_task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      # Strip the new fields from the struct map to emulate an old persisted entry.
+      # A struct is just a map with a __struct__ key. Old persisted entries (written
+      # before base_sha/commit_sha existed) won't have these keys. load_tasks_from_dets
+      # calls Map.merge(%TaskInfo{}, task) which backfills them as nil.
+      old_map =
+        old_task
+        |> Map.from_struct()
+        |> Map.put(:__struct__, TaskInfo)
+        |> Map.drop([:base_sha, :commit_sha])
+
+      :dets.insert(@dets_tasks, {task_id, old_map})
+      :dets.sync(@dets_tasks)
+
+      # Stop the supervised registry, then restart it so load_tasks_from_dets runs.
+      # Reuse the same data_dir so the DETS file path is unchanged.
+      stop_supervised(EvoDash.TaskRegistry)
+
+      {:ok, _pid} =
+        start_supervised(
+          {TaskRegistry,
+           name: EvoDash.TaskRegistry,
+           table_name: @table_name,
+           recent_projects_table: @recent_projects_table,
+           dets_tasks: @dets_tasks,
+           dets_projects: @dets_projects,
+           data_dir: data_dir}
+        )
+
+      # The backfilled task should exist with nil for the new fields
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.base_sha == nil
+      assert fetched.commit_sha == nil
     end
   end
 end

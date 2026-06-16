@@ -31,7 +31,9 @@ defmodule EvoDash.TaskRegistry do
       result: nil,
       review_status: nil,
       usage: nil,
-      agent_count: nil
+      agent_count: nil,
+      base_sha: nil,
+      commit_sha: nil
     ]
 
     @type t :: %__MODULE__{
@@ -46,7 +48,9 @@ defmodule EvoDash.TaskRegistry do
             result: term(),
             review_status: atom() | nil,
             usage: EvoGit.Agent.Usage.t() | nil,
-            agent_count: pos_integer() | nil
+            agent_count: pos_integer() | nil,
+            base_sha: String.t() | nil,
+            commit_sha: String.t() | nil
           }
   end
 
@@ -84,6 +88,10 @@ defmodule EvoDash.TaskRegistry do
 
   def set_review_status(task_id, status) do
     GenServer.cast(__MODULE__, {:set_review_status, task_id, status})
+  end
+
+  def set_review_metadata(task_id, base_sha, commit_sha) do
+    GenServer.cast(__MODULE__, {:set_review_metadata, task_id, base_sha, commit_sha})
   end
 
   def list_tasks_by_path(path) do
@@ -305,7 +313,11 @@ defmodule EvoDash.TaskRegistry do
 
     # Remove existing entry for this path (if any), then add updated entry
     :ets.delete(state.recent_projects_table, path)
-    :ets.insert(state.recent_projects_table, {path, %{path: path, name: name, last_opened_at: now}})
+
+    :ets.insert(
+      state.recent_projects_table,
+      {path, %{path: path, name: name, last_opened_at: now}}
+    )
 
     # Enforce max limit
     trim_recent_projects(state)
@@ -337,13 +349,19 @@ defmodule EvoDash.TaskRegistry do
   def handle_cast({:update_status, task_id, status, result, opts}, state) do
     usage = Keyword.get(opts, :usage)
     agent_count = Keyword.get(opts, :agent_count)
+    commit_sha = Keyword.get(opts, :commit_sha)
 
     case :ets.lookup(state.table_name, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
-        finished_at = if status in [:completed, :failed, :cancelled], do: DateTime.utc_now(), else: task.finished_at
+        finished_at =
+          if status in [:completed, :failed, :cancelled],
+            do: DateTime.utc_now(),
+            else: task.finished_at
+
         updated = %{task | status: status, result: result, finished_at: finished_at}
         updated = if usage, do: %{updated | usage: usage}, else: updated
         updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
+        updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
         :ets.insert(state.table_name, {task_id, updated})
 
         if status in [:completed, :failed, :cancelled] do
@@ -396,6 +414,22 @@ defmodule EvoDash.TaskRegistry do
     {:noreply, state}
   end
 
+  @impl true
+  def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
+    case :ets.lookup(state.table_name, task_id) do
+      [{^task_id, %TaskInfo{} = task}] ->
+        updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
+        :ets.insert(state.table_name, {task_id, updated})
+        persist_tasks_to_dets(state)
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+
+      _ ->
+        :ok
+    end
+
+    {:noreply, state}
+  end
+
   ## Public Task Functions
 
   @doc """
@@ -420,8 +454,16 @@ defmodule EvoDash.TaskRegistry do
     runtime_opts = [repo_path: repo_path, task_id: task_id]
 
     # Pass through PR context keys to the runtime
-    pr_context_keys = [:pr_title, :pr_objective, :pr_summary, :pr_commit_history,
-                       :base_sha, :commit_sha, :user_note, :foreign_repos]
+    pr_context_keys = [
+      :pr_title,
+      :pr_objective,
+      :pr_summary,
+      :pr_commit_history,
+      :base_sha,
+      :commit_sha,
+      :user_note,
+      :foreign_repos
+    ]
 
     runtime_opts =
       Enum.reduce(pr_context_keys, runtime_opts, fn key, acc ->
@@ -530,6 +572,7 @@ defmodule EvoDash.TaskRegistry do
   defp set_crash_details(%{status: :failed, finished_at: nil} = task) do
     %{task | finished_at: DateTime.utc_now(), result: "Process crashed while task was running"}
   end
+
   defp set_crash_details(task), do: task
 
   defp task_history_config do
@@ -555,7 +598,9 @@ defmodule EvoDash.TaskRegistry do
 
     # Enforce max_tasks limit (keep newest finished tasks)
     remaining = :ets.tab2list(state.table_name) |> Enum.map(&elem(&1, 1))
-    finished = remaining
+
+    finished =
+      remaining
       |> Enum.filter(&(&1.finished_at != nil))
       |> Enum.sort_by(& &1.finished_at, {:desc, DateTime})
 
@@ -673,8 +718,10 @@ defmodule EvoDash.TaskRegistry do
       # If a .bak file was left from previous corruption recovery,
       # clean it up now that we have successfully persisted fresh data.
       dets_file = :dets.info(state.dets_projects)[:file]
+
       if is_list(dets_file) do
         bak_file = List.to_string(dets_file) <> ".bak"
+
         if File.exists?(bak_file) do
           File.rm(bak_file)
           Logger.info("Removed stale backup file #{bak_file}")
@@ -721,17 +768,30 @@ defmodule EvoDash.TaskRegistry do
       task_id: task_id
     ]
 
-    runtime_opts = if node_path, do: Keyword.put(runtime_opts, :node_path, node_path), else: runtime_opts
+    runtime_opts =
+      if node_path, do: Keyword.put(runtime_opts, :node_path, node_path), else: runtime_opts
 
     seed_content = Keyword.get(opts, :seed_content)
-    runtime_opts = if seed_content, do: Keyword.put(runtime_opts, :seed_content, seed_content), else: runtime_opts
+
+    runtime_opts =
+      if seed_content,
+        do: Keyword.put(runtime_opts, :seed_content, seed_content),
+        else: runtime_opts
 
     starting_commit = Keyword.get(opts, :starting_commit)
-    runtime_opts = if starting_commit, do: Keyword.put(runtime_opts, :starting_commit, starting_commit), else: runtime_opts
+
+    runtime_opts =
+      if starting_commit,
+        do: Keyword.put(runtime_opts, :starting_commit, starting_commit),
+        else: runtime_opts
 
     # Foreign repos are passed through opts from the dashboard (per-task scoping)
     foreign_repos = Keyword.get(opts, :foreign_repos)
-    runtime_opts = if foreign_repos, do: Keyword.put(runtime_opts, :foreign_repos, foreign_repos), else: runtime_opts
+
+    runtime_opts =
+      if foreign_repos,
+        do: Keyword.put(runtime_opts, :foreign_repos, foreign_repos),
+        else: runtime_opts
 
     {nil, runtime_opts}
   end
@@ -742,7 +802,11 @@ defmodule EvoDash.TaskRegistry do
   def handle_info({:task_status, task_id, status}, state) do
     case :ets.lookup(state.table_name, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
-        finished_at = if status in [:completed, :failed, :cancelled], do: DateTime.utc_now(), else: task.finished_at
+        finished_at =
+          if status in [:completed, :failed, :cancelled],
+            do: DateTime.utc_now(),
+            else: task.finished_at
+
         updated = %{task | status: status, finished_at: finished_at}
         :ets.insert(state.table_name, {task_id, updated})
 
@@ -789,7 +853,17 @@ defmodule EvoDash.TaskRegistry do
           _ -> nil
         end
 
-      update_task_status(task_id, status, result, usage: task_usage, agent_count: task_agent_count)
+      task_commit_sha =
+        case result do
+          {:ok, %{commit_sha: sha}} when is_binary(sha) -> sha
+          _ -> nil
+        end
+
+      update_task_status(task_id, status, result,
+        usage: task_usage,
+        agent_count: task_agent_count,
+        commit_sha: task_commit_sha
+      )
     end
 
     Process.demonitor(ref, [:flush])
