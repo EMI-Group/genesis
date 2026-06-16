@@ -135,6 +135,6 @@ EvoDash uses **Gettext** for internationalization. All user-facing strings in Li
 - Single-node (DNSCluster configured but no distributed clustering)
 - Naming conventions: domain modules in `./lib/evo_dash/`, web modules in `./lib/evo_dash_web/`
 - Build: `mix assets.build` (esbuild + tailwind), `mix assets.deploy` (minified + digested)
-- Desktop mode requires Erlang `:wx` — not available in all OTP builds (headless servers)
+- Desktop mode is lazy-started — `:wx` and `:desktop` do NOT auto-start at boot; they are started via `Application.ensure_all_started(:desktop)` only when desktop mode is enabled. The app gracefully handles missing `:wx` / headless environments (no display) without crashing.
 - No CI/CD pipeline, no Docker, no `rel/` directory — release packaging not yet configured
 - The `:desktop` dependency (hex package v1.5.3) provides the native window wrapper via `Desktop.Window`
