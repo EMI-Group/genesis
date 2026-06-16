@@ -137,4 +137,4 @@ EvoDash uses **Gettext** for internationalization. All user-facing strings in Li
 - Build: `mix assets.build` (esbuild + tailwind), `mix assets.deploy` (minified + digested)
 - Desktop mode is lazy-started — `:wx` and `:desktop` do NOT auto-start at boot; they are started via `Application.ensure_all_started(:desktop)` only when desktop mode is enabled. The app gracefully handles missing `:wx` / headless environments (no display) without crashing.
 - No CI/CD pipeline, no Docker, no `rel/` directory — release packaging not yet configured
-- The `:desktop` dependency (hex package v1.5.3) provides the native window wrapper via `Desktop.Window`
+- The `:desktop` dependency (hex package v1.5.3, `runtime: false`) provides the native window wrapper via `Desktop.Window` — started lazily only in desktop mode
