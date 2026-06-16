@@ -8,6 +8,7 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 | Module | Route | Summary |
 |--------|-------|---------|
 | `DashboardLive` | `GET /` | Project-based task dashboard with genesis/evolve forms, auto-mode detection, real-time task cards, and project tabs. Delegates to `TaskRegistry` and `DashboardComponents`. |
+| `ReviewLive` | `GET /review/:task_id` | Code review page — diff viewer with syntax highlighting, commit list, agent summary, and action buttons (Merge, Reject, Continue, Create GitHub PR, Extract Skills). The Extract Skills action opens a modal for an optional user note, then starts an `:extract_skills` task via `TaskRegistry` that spawns a `SkillExtractor` agent to distill PR knowledge into `.agents/skills/` files. |
 | `AgentsLive` | `GET /agents` | Recursive agent tree inspector with selectable agent detail panel. Reads from ETS tables, auto-refreshes every 500ms. Uses `AgentsComponents.agent_tree/1`. |
 | `SettingsLive` | `GET /settings` | Runtime scheduler configuration (concurrency, retries, depth, LLM model). Shows config status warnings. Updates via `AgentScheduler.update_config/1`. Auto-refreshes every 2s. |
 | `HelpLive` | `GET /help` | Configuration file manager with in-browser TOML editor, syntax validation, and save via `Config.save_user_config/1`. Shows config file paths and reference values. |
