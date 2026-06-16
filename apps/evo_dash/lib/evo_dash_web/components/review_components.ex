@@ -210,14 +210,13 @@ defmodule EvoDashWeb.ReviewComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # action_buttons/1 — Merge, Reject, Continue, and optional Create PR
+  # action_buttons/1 — Merge, Reject, Continue, Create PR, and Extract Skills
   # ---------------------------------------------------------------------------
 
   attr(:branch_exists, :boolean, default: true)
   attr(:has_pr, :boolean, default: false)
   attr(:pr_url, :string, default: nil)
   attr(:loading, :boolean, default: false)
-  attr(:show_extract_modal, :boolean, default: false)
 
   def action_buttons(assigns) do
     ~H"""

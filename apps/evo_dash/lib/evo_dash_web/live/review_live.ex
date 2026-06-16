@@ -78,7 +78,6 @@ defmodule EvoDashWeb.ReviewLive do
                         has_pr={@has_pr}
                         pr_url={@pr_url}
                         loading={@action_loading}
-                        show_extract_modal={@show_extract_modal}
                       />
                       <EvoDashWeb.ReviewComponents.extract_skills_modal
                         show={@show_extract_modal}
