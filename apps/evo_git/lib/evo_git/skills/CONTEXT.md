@@ -62,6 +62,8 @@ YAML frontmatter delimited by `---`, containing `name` (required), `description`
 - Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive); files named `{name}.md`
 - Skills reload on every `load_skills/1` call (no caching); case-insensitive fallback lookup
 - YAML frontmatter parsed with `yaml_elixir`; bash scripts run in repo root
+- Skill tool calls are dispatched dynamically: `EvoGit.Agent.Tools.execute_tool/5` has a catch-all clause that reloads skills via `load_skills/1` and calls `execute/4` when the tool name matches a skill. The statically-named `skill_*` management tools (skill_add, skill_edit, etc.) are dispatched by name first.
+- Skill management tools live in `./lib/evo_git/agent/tools/skill/` (SkillAdd, SkillEdit, SkillRemove, SkillRead, SkillList, SkillEnable, SkillDisable, SkillWhere)
 
 ## Routing Table
 
