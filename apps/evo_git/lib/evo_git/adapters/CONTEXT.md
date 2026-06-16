@@ -19,7 +19,7 @@ Low-level Git CLI wrapper centred on **worktree isolation**. Every function take
 | **Merge** | `merge/2`, `merge_octopus/2`, `merge_base/3` |
 | **Status / query** | `conflict_files/1`, `status/1`, `rev_parse/2`, `check_ignore/2` |
 | **History** | `log/2`, `file_history/3`, `show/2` |
-| **Diff** | `diff/4`, `file_diff/5` |
+| **Diff** | `diff/4`, `file_diff/5`, `diff_stat/3`, `diff_numstat/3` |
 | **Notes** | `add_note/4`, `remove_note/3`, `show_note/3`, `list_notes/2` |
 | **Tags** | `tag/3`, `delete_tag/2` |
 | **Branches** | `create_branch/3`, `current_branch/1`, `branch_exists?/2`, `delete_branch/2` |
