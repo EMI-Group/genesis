@@ -25,6 +25,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 | `EvoGit.Runtime` | Top-level coordinator: Genesis and Evolution phases |
 | `EvoGit.ProjectConfig` | Reads `evogit.toml` from repo root |
 | `EvoGit.Config` | Unified 3-level configuration resolver (defaults → user TOML → runtime overrides) |
+| `EvoGit.Review` | Code review context — diff loading (`--numstat` for accurate counts), commit listing, SHA-based review (post-merge), expandable context diffs, single-commit inspection, branch merge/reject, GitHub PR creation |
 | `EvoGit.Platform` | Cross-platform OS detection, config/data directory resolution |
 
 ### Key Overridable Callbacks (via `use EvoGit.Agent`)
