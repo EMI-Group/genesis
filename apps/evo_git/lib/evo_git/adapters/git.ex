@@ -79,7 +79,10 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def merge(path, commit_sha) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["merge", commit_sha], cd: path, stderr_to_stdout: true) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["merge", commit_sha],
+           cd: path,
+           stderr_to_stdout: true
+         ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
       {output, code} -> {:error, code, String.trim(output)}
@@ -87,7 +90,10 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def merge_no_commit(path, commit_sha) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["merge", "--no-commit", commit_sha], cd: path, stderr_to_stdout: true) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["merge", "--no-commit", commit_sha],
+           cd: path,
+           stderr_to_stdout: true
+         ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
       {output, code} -> {:error, code, String.trim(output)}
@@ -95,7 +101,10 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def merge_octopus(path, commit_shas) when is_list(commit_shas) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["merge" | commit_shas], cd: path, stderr_to_stdout: true) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["merge" | commit_shas],
+           cd: path,
+           stderr_to_stdout: true
+         ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
       {output, code} -> {:error, code, String.trim(output)}
@@ -129,7 +138,10 @@ defmodule EvoGit.Adapters.Git do
   def check_ignore(path, files) when is_list(files) do
     # git check-ignore returns 0 if any matches, 1 if none.
     # We want the list of ignored files.
-    case System.cmd(EvoGit.Executable.resolve("git"), ["check-ignore" | files], cd: path, stderr_to_stdout: true) do
+    case System.cmd(EvoGit.Executable.resolve("git"), ["check-ignore" | files],
+           cd: path,
+           stderr_to_stdout: true
+         ) do
       {output, 0} -> {:ok, String.split(output, "\n", trim: true)}
       {_output, 1} -> {:ok, []}
       {output, code} -> {:error, code, String.trim(output)}
@@ -184,6 +196,15 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Returns the numeric diff stats between two commits.
+  Outputs `additions\tdeletions\tfilepath` per line with exact counts (no terminal-width scaling).
+  Binary files show `-` for additions and deletions.
+  """
+  def diff_numstat(path, commit_a, commit_b) do
+    run(["diff", "--numstat", commit_a, commit_b], path)
+  end
+
+  @doc """
   Adds a note to a given object (usually a commit).
 
   Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the
@@ -227,6 +248,7 @@ defmodule EvoGit.Adapters.Git do
           {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
           _ -> :error
         end
+
       _ ->
         :error
     end
@@ -284,9 +306,9 @@ defmodule EvoGit.Adapters.Git do
   Uses `git show-ref --verify --quiet refs/heads/<branch_name>` and checks the exit code.
   """
   def branch_exists?(repo_path, branch_name) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
-           cd: repo_path
-         ) do
+    case System.cmd(
+           EvoGit.Executable.resolve("git"),
+           ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"], cd: repo_path) do
       {_output, 0} -> true
       {_output, _code} -> false
     end
@@ -309,13 +331,18 @@ defmodule EvoGit.Adapters.Git do
   """
   def branch_has_unique_commits?(repo_path, branch, base) do
     # Check if branch tip is an ancestor of base (meaning branch has no unique commits)
-    case System.cmd(EvoGit.Executable.resolve("git"), ["merge-base", "--is-ancestor", branch, base],
+    case System.cmd(
+           EvoGit.Executable.resolve("git"),
+           ["merge-base", "--is-ancestor", branch, base],
            cd: repo_path,
            stderr_to_stdout: true
          ) do
-      {_output, 0} -> false  # branch is ancestor of base, no unique commits
-      {_output, 1} -> true   # branch has commits not in base
-      {_output, _} -> true   # assume unique commits on other errors
+      # branch is ancestor of base, no unique commits
+      {_output, 0} -> false
+      # branch has commits not in base
+      {_output, 1} -> true
+      # assume unique commits on other errors
+      {_output, _} -> true
     end
   end
 
@@ -383,7 +410,15 @@ defmodule EvoGit.Adapters.Git do
 
     case System.cmd(
            "gh",
-           ["repo", "create", dir_name, "--private", "--source=.", "--remote=origin", "--push=false"],
+           [
+             "repo",
+             "create",
+             dir_name,
+             "--private",
+             "--source=.",
+             "--remote=origin",
+             "--push=false"
+           ],
            cd: repo_path,
            stderr_to_stdout: true
          ) do

@@ -1,23 +1,23 @@
 defmodule EvoGit.Review do
   @moduledoc """
   Review context module for managing code review operations.
-  
+
   Provides functions for loading diff data, listing commits, merging/rejecting branches,
   and creating GitHub PRs manually from the review page.
   """
-  
+
   alias EvoGit.Adapters.Git
-  
+
   defmodule FileInfo do
     @moduledoc "Structured info about a changed file"
     defstruct [:path, :status, :additions, :deletions, :diff, :language]
   end
-  
+
   defmodule CommitInfo do
     @moduledoc "Structured info about a commit"
     defstruct [:sha, :short_sha, :message, :author_name, :author_email, :date]
   end
-  
+
   @doc """
   Lists commits between base and branch tip, returning a list of CommitInfo structs.
   Returns {:ok, commits} or {:error, reason}.
@@ -27,6 +27,7 @@ defmodule EvoGit.Review do
          {:ok, base_sha} <- resolve_merge_base(repo_path, commit_sha) do
       separator = "|||COMMIT_SEP|||"
       format = "%H%n%h%n%s%n%an%n%ae%n%aI%n#{separator}"
+
       case Git.log(repo_path, ["--format=#{format}", "#{base_sha}..#{commit_sha}"]) do
         {:ok, output} ->
           commits =
@@ -35,8 +36,9 @@ defmodule EvoGit.Review do
             |> String.split(separator)
             |> Enum.map(&parse_commit_entry/1)
             |> Enum.reject(&is_nil/1)
+
           {:ok, commits}
-        
+
         {:error, _, _} ->
           {:ok, []}
       end
@@ -53,23 +55,23 @@ defmodule EvoGit.Review do
   def load_review_data(repo_path, branch_name) do
     with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
          {:ok, base_sha} <- resolve_merge_base(repo_path, commit_sha) do
-      
       {:ok, diff_stat} = Git.diff_stat(repo_path, base_sha, commit_sha)
       {:ok, diff} = Git.diff(repo_path, base_sha, commit_sha)
-      
+
       files = parse_diff_into_files(diff)
       {total_additions, total_deletions} = count_changes(files)
-      
-      {:ok, %{
-        commit_sha: commit_sha,
-        base_sha: base_sha,
-        diff_stat: diff_stat,
-        diff: diff,
-        files: files,
-        changed_files_count: length(files),
-        total_additions: total_additions,
-        total_deletions: total_deletions
-      }}
+
+      {:ok,
+       %{
+         commit_sha: commit_sha,
+         base_sha: base_sha,
+         diff_stat: diff_stat,
+         diff: diff,
+         files: files,
+         changed_files_count: length(files),
+         total_additions: total_additions,
+         total_deletions: total_deletions
+       }}
     else
       error -> error
     end
@@ -87,22 +89,22 @@ defmodule EvoGit.Review do
   def load_review_metadata(repo_path, branch_name) do
     with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
          {:ok, base_sha} <- resolve_merge_base(repo_path, commit_sha) do
-
-      {:ok, diff_stat} = Git.diff_stat(repo_path, base_sha, commit_sha)
+      {:ok, diff_stat} = Git.diff_numstat(repo_path, base_sha, commit_sha)
 
       files = parse_diff_stat_into_files(diff_stat)
       {total_additions, total_deletions} = count_changes(files)
 
-      {:ok, %{
-        commit_sha: commit_sha,
-        base_sha: base_sha,
-        diff_stat: diff_stat,
-        diff: nil,
-        files: files,
-        changed_files_count: length(files),
-        total_additions: total_additions,
-        total_deletions: total_deletions
-      }}
+      {:ok,
+       %{
+         commit_sha: commit_sha,
+         base_sha: base_sha,
+         diff_stat: diff_stat,
+         diff: nil,
+         files: files,
+         changed_files_count: length(files),
+         total_additions: total_additions,
+         total_deletions: total_deletions
+       }}
     else
       error -> error
     end
@@ -115,29 +117,141 @@ defmodule EvoGit.Review do
   Returns `{:ok, diff_string}` or `{:error, code, output}`.
   """
   def load_file_diff(repo_path, base_sha, commit_sha, file_path) do
-    Git.file_diff(repo_path, file_path, base_sha, commit_sha)
+    Git.file_diff(repo_path, file_path, base_sha, commit_sha, [])
   end
-  
+
+  @doc """
+  Loads the diff for a single file between two commits with options.
+
+  ## Options
+
+    * `:context` - the number of context lines around changes. Pass an integer
+      for a specific number of lines, `:all` for the full file, or `nil` (default)
+      for git's default of 3 context lines.
+
+  Returns `{:ok, diff_string}` or `{:error, code, output}`.
+  """
+  def load_file_diff(repo_path, base_sha, commit_sha, file_path, opts) when is_list(opts) do
+    args =
+      case Keyword.get(opts, :context) do
+        :all -> ["-U999999"]
+        n when is_integer(n) -> ["-U#{n}"]
+        nil -> []
+      end
+
+    Git.file_diff(repo_path, file_path, base_sha, commit_sha, args)
+  end
+
+  @doc """
+  Loads review metadata from explicit base and commit SHAs.
+
+  Unlike `load_review_metadata/2`, this does not resolve a merge base or require
+  the branch to still exist — it uses the provided SHAs directly. This is useful
+  after a branch has been merged or deleted but the commit objects are still
+  reachable in the object database.
+
+  Returns `{:ok, metadata_map}` with the same shape as `load_review_metadata/2`.
+  """
+  def load_review_metadata_from_shas(repo_path, base_sha, commit_sha) do
+    {:ok, diff_stat} = Git.diff_numstat(repo_path, base_sha, commit_sha)
+    files = parse_diff_stat_into_files(diff_stat)
+    {total_additions, total_deletions} = count_changes(files)
+
+    {:ok,
+     %{
+       commit_sha: commit_sha,
+       base_sha: base_sha,
+       diff_stat: diff_stat,
+       diff: nil,
+       files: files,
+       changed_files_count: length(files),
+       total_additions: total_additions,
+       total_deletions: total_deletions
+     }}
+  end
+
+  @doc """
+  Lists commits between two explicit SHAs, returning a list of CommitInfo structs.
+
+  Like `list_commits_from_shas/3` but without requiring the branch to exist.
+  Returns `{:ok, commits}`.
+  """
+  def list_commits_from_shas(repo_path, base_sha, commit_sha) do
+    separator = "|||COMMIT_SEP|||"
+    format = "%H%n%h%n%s%n%an%n%ae%n%aI%n#{separator}"
+
+    case Git.log(repo_path, ["--format=#{format}", "#{base_sha}..#{commit_sha}"]) do
+      {:ok, output} ->
+        commits =
+          output
+          |> String.trim()
+          |> String.split(separator)
+          |> Enum.map(&parse_commit_entry/1)
+          |> Enum.reject(&is_nil/1)
+
+        {:ok, commits}
+
+      {:error, _, _} ->
+        {:ok, []}
+    end
+  end
+
+  @doc """
+  Loads review metadata for a single commit (its diff against its parent).
+
+  Uses `commit_sha~1` as the base, so only the changes introduced by that commit
+  are shown.
+
+  Returns `{:ok, metadata_map}` with the same shape as `load_review_metadata/2`.
+  """
+  def load_commit_files(repo_path, commit_sha) do
+    base_sha = "#{commit_sha}~1"
+    {:ok, diff_stat} = Git.diff_numstat(repo_path, base_sha, commit_sha)
+    files = parse_diff_stat_into_files(diff_stat)
+    {total_additions, total_deletions} = count_changes(files)
+
+    {:ok,
+     %{
+       commit_sha: commit_sha,
+       base_sha: base_sha,
+       diff_stat: diff_stat,
+       diff: nil,
+       files: files,
+       changed_files_count: length(files),
+       total_additions: total_additions,
+       total_deletions: total_deletions
+     }}
+  end
+
+  @doc """
+  Loads the diff for a single file in a single commit (against its parent).
+
+  Returns `{:ok, diff_string}` or `{:error, code, output}`.
+  """
+  def load_commit_file_diff(repo_path, commit_sha, file_path) do
+    Git.file_diff(repo_path, file_path, "#{commit_sha}~1", commit_sha)
+  end
+
   @doc """
   Merges the branch into the current HEAD and deletes the branch.
   Returns {:ok, merged_sha} or {:conflict, details} or {:error, reason}.
   """
   def merge_branch(repo_path, branch_name) do
     {:ok, commit_sha} = Git.rev_parse(repo_path, branch_name)
-    
+
     case Git.merge(repo_path, commit_sha) do
       {:ok, _output} ->
         Git.delete_branch(repo_path, branch_name)
         {:ok, commit_sha}
-      
+
       {:conflict, details} ->
         {:conflict, details}
-      
+
       {:error, code, output} ->
         {:error, {code, output}}
     end
   end
-  
+
   @doc """
   Rejects the changes by deleting the branch.
   Returns :ok or {:error, reason}.
@@ -148,7 +262,7 @@ defmodule EvoGit.Review do
       {:error, code, output} -> {:error, {code, output}}
     end
   end
-  
+
   @doc """
   Creates a GitHub PR manually (delegates to PullRequest.try_create).
   Returns {pr_url, pr_title} or {nil, nil}.
@@ -156,14 +270,14 @@ defmodule EvoGit.Review do
   def create_github_pr(repo_path, branch_name, objective, result) do
     EvoGit.Runtime.PullRequest.try_create(repo_path, branch_name, objective, result)
   end
-  
+
   @doc """
   Checks if a branch exists in the repository.
   """
   def branch_exists?(repo_path, branch_name) do
     Git.branch_exists?(repo_path, branch_name)
   end
-  
+
   @doc """
   Detects the Lumis language name from a file extension.
   """
@@ -212,9 +326,9 @@ defmodule EvoGit.Review do
       _ -> "text"
     end
   end
-  
+
   # --- Private helpers ---
-  
+
   defp resolve_merge_base(repo_path, commit_sha) do
     case Git.merge_base(repo_path, "HEAD", commit_sha) do
       {:ok, base_sha} -> {:ok, base_sha}
@@ -223,6 +337,7 @@ defmodule EvoGit.Review do
   end
 
   defp parse_commit_entry(""), do: nil
+
   defp parse_commit_entry(entry) do
     case String.split(String.trim(entry), "\n", parts: 6) do
       [sha, short_sha, message, author_name, author_email, date] ->
@@ -234,6 +349,7 @@ defmodule EvoGit.Review do
           author_email: author_email,
           date: parse_iso_date(date)
         }
+
       _ ->
         nil
     end
@@ -245,77 +361,81 @@ defmodule EvoGit.Review do
     |> Enum.map(&parse_file_section/1)
     |> Enum.reject(&is_nil/1)
   end
-  
+
   defp parse_diff_into_files(_), do: []
 
   defp parse_diff_stat_into_files(diff_stat) when is_binary(diff_stat) do
     diff_stat
-    |> String.split("\n")
-    |> Enum.map(&parse_diff_stat_line/1)
+    |> String.split("\n", trim: true)
+    |> Enum.map(&parse_numstat_line/1)
     |> Enum.reject(&is_nil/1)
   end
 
   defp parse_diff_stat_into_files(_), do: []
 
-  defp parse_diff_stat_line(line) do
-    # Match lines like: " path/to/file.ex | 10 ++++----"
-    # Does NOT match summary lines like: " 2 files changed, 8 insertions(+), 7 deletions(-)"
-    case Regex.run(~r/^\s*(.+?)\s+\|\s+(\d+)\s+([+\-]*?)\s*$/, line) do
-      [_, path, _total_changes, change_symbols] ->
-        additions =
-          change_symbols
-          |> String.graphemes()
-          |> Enum.count(&(&1 == "+"))
+  defp parse_numstat_line(line) do
+    # Numstat format: "additions\tdeletions\tpath"
+    # Binary files show "-" for additions and deletions.
+    case Regex.run(~r/^(\d+|-)\t(\d+|-)\t(.+)$/, line) do
+      [_, add_str, del_str, path] ->
+        additions = parse_numstat_count(add_str)
+        deletions = parse_numstat_count(del_str)
+        trimmed_path = String.trim(path)
 
-        deletions =
-          change_symbols
-          |> String.graphemes()
-          |> Enum.count(&(&1 == "-"))
-
-        status = cond do
-          additions == 0 and deletions > 0 -> "deleted"
-          deletions == 0 -> "added"
-          true -> "modified"
-        end
+        status =
+          cond do
+            additions == 0 and deletions > 0 -> "deleted"
+            deletions == 0 -> "added"
+            true -> "modified"
+          end
 
         %FileInfo{
-          path: String.trim(path),
+          path: trimmed_path,
           status: status,
           additions: additions,
           deletions: deletions,
           diff: nil,
-          language: language_for_file(String.trim(path))
+          language: language_for_file(trimmed_path)
         }
 
       nil ->
         nil
     end
   end
-  
+
+  defp parse_numstat_count("-"), do: 0
+  defp parse_numstat_count(str), do: String.to_integer(str)
+
   defp parse_file_section(section) do
     lines = String.split(section, "\n")
-    
+
     # Extract file path from "--- a/path" or "+++ b/path" lines
     path = extract_file_path(lines)
-    
+
     if path do
       # Count additions and deletions
-      {additions, deletions} = 
+      {additions, deletions} =
         Enum.reduce(lines, {0, 0}, fn line, {add, del} ->
           cond do
-            String.starts_with?(line, "+") and not String.starts_with?(line, "+++") -> {add + 1, del}
-            String.starts_with?(line, "-") and not String.starts_with?(line, "---") -> {add, del + 1}
-            true -> {add, del}
+            String.starts_with?(line, "+") and not String.starts_with?(line, "+++") ->
+              {add + 1, del}
+
+            String.starts_with?(line, "-") and not String.starts_with?(line, "---") ->
+              {add, del + 1}
+
+            true ->
+              {add, del}
           end
         end)
-      
+
       # Determine status
-      status = cond do
-        Enum.any?(lines, &String.starts_with?(&1, "new file")) -> "added"
-        Enum.any?(lines, &String.starts_with?(&1, "deleted file")) -> "deleted"
-        true -> "modified"
-      end
-      
+      status =
+        cond do
+          Enum.any?(lines, &String.starts_with?(&1, "new file")) -> "added"
+          Enum.any?(lines, &String.starts_with?(&1, "deleted file")) -> "deleted"
+          true -> "modified"
+        end
+
       %FileInfo{
         path: path,
         status: status,
@@ -326,21 +446,22 @@ defmodule EvoGit.Review do
       }
     end
   end
-  
+
   defp extract_file_path(lines) do
     # Try +++ b/path first (works for all cases including new files)
     case Enum.find(lines, &String.starts_with?(&1, "+++ b/")) do
-      nil -> 
+      nil ->
         # Fallback: try --- a/path (works for deleted files)
         case Enum.find(lines, &String.starts_with?(&1, "--- a/")) do
           nil -> nil
           line -> String.replace_prefix(line, "--- a/", "")
         end
-      line -> 
+
+      line ->
         String.replace_prefix(line, "+++ b/", "")
     end
   end
-  
+
   defp parse_iso_date(str) when is_binary(str) do
     case DateTime.from_iso8601(str) do
       {:ok, dt, _offset} -> dt
