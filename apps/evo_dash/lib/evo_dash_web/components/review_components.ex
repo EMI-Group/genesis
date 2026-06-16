@@ -189,7 +189,11 @@ defmodule EvoDashWeb.ReviewComponents do
       </div>
       <div class="divide-y divide-base-200/50">
         <%= for {commit, _i} <- Enum.with_index(@commits) do %>
-          <div class="flex items-center gap-4 px-5 md:px-6 py-4 hover:bg-base-200/30 transition-colors">
+          <button
+            class="commit-row flex items-center gap-4 w-full px-5 md:px-6 py-4 text-left"
+            phx-click="inspect_commit"
+            phx-value-sha={commit.sha}
+          >
             <span class="badge badge-sm badge-ghost rounded-full font-mono text-xs px-2.5 py-3 shrink-0">
               {commit.short_sha}
             </span>
@@ -202,7 +206,8 @@ defmodule EvoDashWeb.ReviewComponents do
             <span class="text-sm text-base-content/50 shrink-0">
               {relative_time(commit.date)}
             </span>
-          </div>
+            <.icon name="hero-chevron-right" class="size-4 text-base-content/30 shrink-0" />
+          </button>
         <% end %>
       </div>
     </div>
@@ -424,6 +429,7 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:files, :list, required: true)
   attr(:expanded_files, :map, default: %{})
   attr(:selected_file, :string, default: nil)
+  attr(:file_context_levels, :map, default: %{})
 
   def diff_viewer(assigns) do
     ~H"""
@@ -446,7 +452,8 @@ defmodule EvoDashWeb.ReviewComponents do
           </button>
           <%= if Map.get(@expanded_files, file.path, false) do %>
             <div class="overflow-x-auto">
-              {render_diff_content(file)}
+              <% context_level = Map.get(@file_context_levels, file.path, 3) %>
+              {render_diff_content(file, file.path, context_level)}
             </div>
           <% end %>
         </div>
@@ -462,6 +469,7 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:files, :list, required: true)
   attr(:expanded_files, :map, default: %{})
   attr(:selected_file, :string, default: nil)
+  attr(:file_context_levels, :map, default: %{})
 
   def split_diff_layout(assigns) do
     ~H"""
@@ -471,6 +479,62 @@ defmodule EvoDashWeb.ReviewComponents do
         files={@files}
         expanded_files={@expanded_files}
         selected_file={@selected_file}
+        file_context_levels={@file_context_levels}
+      />
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # commit_detail_header/1 — Header for a commit inspection view
+  # ---------------------------------------------------------------------------
+
+  attr(:commit, :map, required: true)
+
+  def commit_detail_header(assigns) do
+    ~H"""
+    <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 overflow-hidden">
+      <div class="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-5 sm:p-6">
+        <div class="flex items-start gap-4">
+          <div class="bg-primary/15 text-primary p-3.5 rounded-2xl shrink-0">
+            <.icon name="hero-code-bracket-square" class="size-6" />
+          </div>
+          <div class="flex-1 min-w-0">
+            <h1 class="text-xl md:text-2xl font-bold leading-tight">{@commit.message}</h1>
+            <div class="flex flex-wrap items-center gap-2 mt-3.5">
+              <span class="badge badge-sm badge-ghost rounded-full px-2.5 py-3 font-mono">
+                <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" />
+                {String.slice(@commit.sha, 0..7)}
+              </span>
+              <span class="text-sm text-base-content/50">{@commit.author_name}</span>
+              <span class="text-sm text-base-content/30">·</span>
+              <span class="text-sm text-base-content/50">{relative_time(@commit.date)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # commit_diff_layout/1 — Commit detail view with sidebar + diff viewer
+  # ---------------------------------------------------------------------------
+
+  attr(:files, :list, required: true)
+  attr(:expanded_files, :map, default: %{})
+  attr(:selected_file, :string, default: nil)
+  attr(:file_context_levels, :map, default: %{})
+
+  def commit_diff_layout(assigns) do
+    ~H"""
+    <div class="diff-fullscreen-layout">
+      <.file_tree_sidebar files={@files} selected_file={@selected_file} />
+      <.diff_viewer
+        files={@files}
+        expanded_files={@expanded_files}
+        selected_file={@selected_file}
+        file_context_levels={@file_context_levels}
       />
     </div>
     """
@@ -480,8 +544,8 @@ defmodule EvoDashWeb.ReviewComponents do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  defp render_diff_content(file) do
-    assigns = %{file: file}
+  defp render_diff_content(file, file_path, context_level) do
+    assigns = %{file: file, file_path: file_path, context_level: context_level}
 
     ~H"""
     <div class="text-xs font-mono">
@@ -491,15 +555,55 @@ defmodule EvoDashWeb.ReviewComponents do
           <span><%= gettext("Loading diff...") %></span>
         </div>
       <% else %>
-        <%= for line <- parse_diff_lines(@file) do %>
+        <% lines = parse_diff_lines(@file) %>
+        <% {hunk_starts, _} =
+            Enum.reduce(lines, {[], 0}, fn line, {acc, idx} ->
+              if line.type == :hunk, do: {[idx | acc], idx + 1}, else: {acc, idx + 1}
+            end) %>
+        <% hunk_indices = Enum.reverse(hunk_starts) %>
+        <% show_top_expand = length(hunk_indices) > 0 %>
+        <% show_bottom_expand = @context_level != :all %>
+        <%= if show_top_expand do %>
+          <.diff_expand_bar path={@file_path} context_level={@context_level} />
+        <% end %>
+        <%= for {line, i} <- Enum.with_index(lines) do %>
+          <%= if i in hunk_indices and i > 0 do %>
+            <.diff_expand_bar path={@file_path} context_level={@context_level} />
+          <% end %>
           <div class={["diff-line", diff_line_class(line.type)]}>
             <span class="diff-line-gutter">{line.line_number}</span>
             <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
             <span class="diff-line-content" phx-no-format>{if line.type in [:addition, :deletion, :context], do: highlight_line_content(line.content, @file.language), else: line.content}</span>
           </div>
         <% end %>
+        <%= if show_bottom_expand do %>
+          <.diff_expand_bar path={@file_path} context_level={@context_level} />
+        <% end %>
       <% end %>
     </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # diff_expand_bar/1 — Expandable context bar at hunk edges
+  # ---------------------------------------------------------------------------
+
+  attr(:path, :string, required: true)
+  attr(:context_level, :any, default: nil)
+
+  def diff_expand_bar(assigns) do
+    ~H"""
+    <%= if @context_level != :all do %>
+      <div class="diff-expand-bar">
+        <button
+          class="diff-expand-btn"
+          phx-click="expand_context"
+          phx-value-path={@path}
+        >
+          <.icon name="hero-chevron-double-down" class="size-3.5" />
+        </button>
+      </div>
+    <% end %>
     """
   end
 

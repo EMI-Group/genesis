@@ -20,9 +20,15 @@ defmodule EvoDashWeb.ReviewLive do
         <div class="space-y-4">
           <!-- Back button -->
           <div class="flex items-center gap-3">
-            <.link navigate={~p"/"} class="btn btn-ghost rounded-full btn-sm gap-1 px-4">
-              <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
-            </.link>
+            <%= if @live_action == :commit do %>
+              <.link navigate={~p"/review/#{@task_id}"} class="btn btn-ghost rounded-full btn-sm gap-1 px-4">
+                <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Review")}
+              </.link>
+            <% else %>
+              <.link navigate={~p"/"} class="btn btn-ghost rounded-full btn-sm gap-1 px-4">
+                <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
+              </.link>
+            <% end %>
           </div>
 
           <!-- Loading state -->
@@ -32,83 +38,95 @@ defmodule EvoDashWeb.ReviewLive do
               <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
             </div>
           <% else %>
-            <!-- Review Header (always at top) -->
-            <EvoDashWeb.ReviewComponents.review_header
-              title={@title}
-              task_type={@task_type}
-              branch_name={@branch_name}
-              commit_sha={@commit_sha}
-              status={@review_status}
-            />
+            <%= if @live_action == :commit and @commit_data do %>
+              <!-- Commit detail view -->
+              <EvoDashWeb.ReviewComponents.commit_detail_header commit={@commit_header} />
+              <EvoDashWeb.ReviewComponents.commit_diff_layout
+                files={@commit_data.files}
+                expanded_files={@expanded_files}
+                selected_file={@selected_file}
+                file_context_levels={@file_context_levels}
+              />
+            <% else %>
+              <!-- Review Header (always at top) -->
+              <EvoDashWeb.ReviewComponents.review_header
+                title={@title}
+                task_type={@task_type}
+                branch_name={@branch_name}
+                commit_sha={@commit_sha}
+                status={@review_status}
+              />
 
-            <!-- Unified review card: tab bar + content -->
-            <div class="review-card">
-              <!-- Tab Bar (sticky header of the card) -->
-              <div class="review-card-tabs">
-                <EvoDashWeb.ReviewComponents.review_tabs
-                  active_tab={@review_tab}
-                  files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
-                  commits_count={length(@commits)}
-                />
-              </div>
+              <!-- Unified review card: tab bar + content -->
+              <div class="review-card">
+                <!-- Tab Bar (sticky header of the card) -->
+                <div class="review-card-tabs">
+                  <EvoDashWeb.ReviewComponents.review_tabs
+                    active_tab={@review_tab}
+                    files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
+                    commits_count={length(@commits)}
+                  />
+                </div>
 
-              <!-- Content area -->
-              <div class="review-card-content">
-                <%= cond do %>
-                  <% @review_tab == :conversation -> %>
-                    <div class="space-y-4 p-4 sm:p-6 lg:p-8">
-                      <!-- Agent Summary -->
-                      <%= if @agent_summary do %>
-                        <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
-                      <% end %>
+                <!-- Content area -->
+                <div class="review-card-content">
+                  <%= cond do %>
+                    <% @review_tab == :conversation -> %>
+                      <div class="space-y-4 p-4 sm:p-6 lg:p-8">
+                        <!-- Agent Summary -->
+                        <%= if @agent_summary do %>
+                          <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
+                        <% end %>
 
-                      <!-- Diff Stats -->
-                      <%= if @review_data do %>
-                        <EvoDashWeb.ReviewComponents.diff_stats_bar
-                          files_count={@review_data.changed_files_count}
-                          additions={@review_data.total_additions}
-                          deletions={@review_data.total_deletions}
-                          commits_count={length(@commits)}
+                        <!-- Diff Stats -->
+                        <%= if @review_data do %>
+                          <EvoDashWeb.ReviewComponents.diff_stats_bar
+                            files_count={@review_data.changed_files_count}
+                            additions={@review_data.total_additions}
+                            deletions={@review_data.total_deletions}
+                            commits_count={length(@commits)}
+                          />
+                        <% end %>
+
+                        <!-- Action Buttons -->
+                        <EvoDashWeb.ReviewComponents.action_buttons
+                          branch_exists={@branch_exists}
+                          has_pr={@has_pr}
+                          pr_url={@pr_url}
+                          loading={@action_loading}
                         />
-                      <% end %>
-
-                      <!-- Action Buttons -->
-                      <EvoDashWeb.ReviewComponents.action_buttons
-                        branch_exists={@branch_exists}
-                        has_pr={@has_pr}
-                        pr_url={@pr_url}
-                        loading={@action_loading}
-                      />
-                      <EvoDashWeb.ReviewComponents.extract_skills_modal
-                        show={@show_extract_modal}
-                      />
-                    </div>
-
-                  <% @review_tab == :commits -> %>
-                    <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-
-                  <% @review_tab == :files_changed -> %>
-                    <%= if @review_data do %>
-                      <EvoDashWeb.ReviewComponents.split_diff_layout
-                        files={@review_data.files}
-                        expanded_files={@expanded_files}
-                        selected_file={@selected_file}
-                      />
-                    <% else %>
-                      <div class="p-8 text-center">
-                        <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
-                        <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
+                        <EvoDashWeb.ReviewComponents.extract_skills_modal
+                          show={@show_extract_modal}
+                        />
                       </div>
-                    <% end %>
-                <% end %>
-              </div>
-            </div>
 
-            <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
-              <div class="bg-warning/10 border border-warning/20 rounded-3xl p-6 text-center">
-                <.icon name="hero-exclamation-triangle" class="size-8 text-warning mx-auto mb-3" />
-                <p class="text-sm text-warning">{gettext("Could not load diff data. The branch may have been modified externally.")}</p>
+                    <% @review_tab == :commits -> %>
+                      <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
+
+                    <% @review_tab == :files_changed -> %>
+                      <%= if @review_data do %>
+                        <EvoDashWeb.ReviewComponents.split_diff_layout
+                          files={@review_data.files}
+                          expanded_files={@expanded_files}
+                          selected_file={@selected_file}
+                          file_context_levels={@file_context_levels}
+                        />
+                      <% else %>
+                        <div class="p-8 text-center">
+                          <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
+                          <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
+                        </div>
+                      <% end %>
+                  <% end %>
+                </div>
               </div>
+
+              <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
+                <div class="bg-warning/10 border border-warning/20 rounded-3xl p-6 text-center">
+                  <.icon name="hero-exclamation-triangle" class="size-8 text-warning mx-auto mb-3" />
+                  <p class="text-sm text-warning">{gettext("Could not load diff data. The branch may have been modified externally.")}</p>
+                </div>
+              <% end %>
             <% end %>
           <% end %>
         </div>
@@ -118,7 +136,7 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def mount(%{"task_id" => task_id}, _session, socket) do
+  def mount(%{"task_id" => task_id} = params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end
@@ -141,6 +159,7 @@ defmodule EvoDashWeb.ReviewLive do
       |> assign(:action_loading, false)
       |> assign(:selected_file, nil)
       |> assign(:expanded_files, %{})
+      |> assign(:file_context_levels, %{})
       |> assign(:review_tab, :conversation)
       |> assign(:review_data, nil)
       |> assign(:title, "")
@@ -156,9 +175,23 @@ defmodule EvoDashWeb.ReviewLive do
       |> assign(:repo_path, nil)
       |> assign(:base_sha, nil)
       |> assign(:objective, nil)
+      |> assign(:inspect_commit_sha, params["commit_sha"])
+      |> assign(:commit_data, nil)
+      |> assign(:commit_header, nil)
       |> load_task_data(task_id)
 
     {:ok, socket}
+  end
+
+  @impl true
+  def handle_params(params, _url, socket) do
+    case {socket.assigns.live_action, params["commit_sha"]} do
+      {:commit, commit_sha} when is_binary(commit_sha) ->
+        {:noreply, load_commit_inspection(socket, commit_sha)}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   @impl true
@@ -210,6 +243,38 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_event("load_file_diff", %{"path" => path}, socket) do
     maybe_load_diff(socket, path)
+  end
+
+  @impl true
+  def handle_event("inspect_commit", %{"sha" => sha}, socket) do
+    {:noreply, push_patch(socket, to: ~p"/review/#{socket.assigns.task_id}/commit/#{sha}")}
+  end
+
+  @impl true
+  def handle_event("expand_context", %{"path" => path}, socket) do
+    current_level = Map.get(socket.assigns.file_context_levels, path, 3)
+
+    new_level =
+      cond do
+        current_level == :all -> :all
+        current_level >= 30 -> :all
+        true -> current_level + 20
+      end
+
+    opts = if new_level == :all, do: [context: :all], else: [context: new_level]
+
+    case load_file_diff_for_mode(socket, path, opts) do
+      {:ok, diff_string} ->
+        {:noreply, update_file_diff_in_socket(socket, path, diff_string, new_level)}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to expand context: %{reason}", reason: inspect(reason))
+         )}
+    end
   end
 
   @impl true
@@ -510,6 +575,7 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:pr_url, pr_url)
         |> assign(:review_data, review_data)
         |> assign(:expanded_files, %{})
+        |> assign(:file_context_levels, %{})
         |> assign(:selected_file, nil)
         |> assign(:repo_path, repo_path)
         |> assign(:objective, objective)
@@ -528,6 +594,14 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   defp maybe_load_diff(socket, path) do
+    if socket.assigns.live_action == :commit do
+      maybe_load_commit_diff(socket, path)
+    else
+      maybe_load_review_diff(socket, path)
+    end
+  end
+
+  defp maybe_load_review_diff(socket, path) do
     review_data = socket.assigns.review_data
     file = review_data && Enum.find(review_data.files, &(&1.path == path))
 
@@ -536,18 +610,7 @@ defmodule EvoDashWeb.ReviewLive do
 
       case Review.load_file_diff(repo_path, base_sha, commit_sha, path) do
         {:ok, diff_string} ->
-          updated_files =
-            Enum.map(review_data.files, fn f ->
-              if f.path == path, do: %{f | diff: diff_string}, else: f
-            end)
-
-          updated_review_data = %{review_data | files: updated_files}
-          expanded_files = Map.put(socket.assigns.expanded_files, path, true)
-
-          {:noreply,
-           socket
-           |> assign(:review_data, updated_review_data)
-           |> assign(:expanded_files, expanded_files)}
+          {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3)}
 
         {:error, reason} ->
           {:noreply,
@@ -563,6 +626,98 @@ defmodule EvoDashWeb.ReviewLive do
     else
       {:noreply, socket}
     end
+  end
+
+  defp maybe_load_commit_diff(socket, path) do
+    commit_data = socket.assigns.commit_data
+    file = commit_data && Enum.find(commit_data.files, &(&1.path == path))
+
+    if file && is_nil(file.diff) do
+      %{repo_path: repo_path, inspect_commit_sha: commit_sha} = socket.assigns
+
+      case Review.load_commit_file_diff(repo_path, commit_sha, path) do
+        {:ok, diff_string} ->
+          {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3)}
+
+        {:error, reason} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to load diff for %{path}: %{reason}",
+               path: path,
+               reason: inspect(reason)
+             )
+           )}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Loads a file diff using the appropriate mode (commit vs review).
+  defp load_file_diff_for_mode(socket, path, opts) do
+    %{repo_path: repo_path} = socket.assigns
+
+    if socket.assigns.live_action == :commit do
+      %{inspect_commit_sha: commit_sha} = socket.assigns
+      Review.load_file_diff(repo_path, "#{commit_sha}~1", commit_sha, path, opts)
+    else
+      %{base_sha: base_sha, commit_sha: commit_sha} = socket.assigns
+      Review.load_file_diff(repo_path, base_sha, commit_sha, path, opts)
+    end
+  end
+
+  # Updates a file's diff in the appropriate data source (commit_data or review_data)
+  # and sets the context level and expanded state.
+  defp update_file_diff_in_socket(socket, path, diff_string, context_level) do
+    data_key =
+      if socket.assigns.live_action == :commit, do: :commit_data, else: :review_data
+
+    data = Map.get(socket.assigns, data_key)
+
+    updated_files =
+      Enum.map(data.files, fn f ->
+        if f.path == path, do: %{f | diff: diff_string}, else: f
+      end)
+
+    updated_data = %{data | files: updated_files}
+    expanded_files = Map.put(socket.assigns.expanded_files, path, true)
+    file_context_levels = Map.put(socket.assigns.file_context_levels, path, context_level)
+
+    socket
+    |> assign(data_key, updated_data)
+    |> assign(:expanded_files, expanded_files)
+    |> assign(:file_context_levels, file_context_levels)
+  end
+
+  # Loads commit inspection data (file list) for a specific commit.
+  defp load_commit_inspection(socket, commit_sha) do
+    %{repo_path: repo_path, commits: commits} = socket.assigns
+
+    commit_header =
+      Enum.find(commits, &(&1.sha == commit_sha)) ||
+        %EvoGit.Review.CommitInfo{
+          sha: commit_sha,
+          short_sha: String.slice(commit_sha, 0..7),
+          message: gettext("Commit details"),
+          author_name: "",
+          date: DateTime.utc_now()
+        }
+
+    commit_data =
+      case Review.load_commit_files(repo_path, commit_sha) do
+        {:ok, data} -> data
+        _ -> nil
+      end
+
+    socket
+    |> assign(:inspect_commit_sha, commit_sha)
+    |> assign(:commit_header, commit_header)
+    |> assign(:commit_data, commit_data)
+    |> assign(:expanded_files, %{})
+    |> assign(:file_context_levels, %{})
+    |> assign(:selected_file, nil)
   end
 
   defp file_path_to_id(path) do
