@@ -26,6 +26,21 @@ enabling project-specific automation without modifying EvoGit source.
 | `add_skill/4`, `edit_skill/3`, `remove_skill/2` | Create / update / delete skill files |
 | `list_skills/1`, `read_skill/2` | List all skills or read raw markdown |
 
+### Hierarchical Enablement (Spatial Dimension)
+
+Skills are **globally defined** in `.agents/skills/` but **hierarchically enabled** per Context Tree node. Each `CONTEXT.md` may carry a YAML frontmatter `skill:` list naming skills active at that node. Skills are **inherited downward**: enabling at a parent node makes the skill available to all agents in that subtree.
+
+| Function | Purpose |
+|----------|---------|
+| `enable_skill/3` | Add a skill name to a node's CONTEXT.md frontmatter (avoids redundant entries if already enabled here/above) |
+| `disable_skill/3` | Remove a skill name from a node's CONTEXT.md frontmatter |
+| `hierarchical_skill_names/2` | Walk root→node, collecting all inherited skill names (used by agent loop to filter available skills) |
+| `where_enabled/2` | Search all CONTEXT.md files to find which nodes have a skill enabled |
+| `extract_context_skill_names/1` | Parse a CONTEXT.md's `skill:` frontmatter field |
+| `remove_skill_from_all_contexts/2` | Clean up all CONTEXT.md references (used when deleting a skill) |
+
+The agent loop (`EvoGit.Agent`, lines ~120-131) loads skills at startup: `load_skills/1` → `hierarchical_skill_names/2` → `filter_skills/2` → `to_tool_schemas/1`. Only skills enabled at/above the agent's node become LLM-callable tools.
+
 ### Skill Struct (`EvoGit.Skills.Skill`)
 
 Fields: `name`, `description`, `parameters` (list of `{name, type, description, required, default}` maps), `body`, `file_path`.
