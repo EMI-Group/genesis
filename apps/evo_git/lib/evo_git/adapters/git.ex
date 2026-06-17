@@ -7,9 +7,14 @@ defmodule EvoGit.Adapters.Git do
 
   @doc """
   Runs a git command in the given directory.
+  Sets LC_ALL=C to ensure locale-independent (English) output for reliable parsing.
   """
   def run(args, cd) do
-    System.cmd(EvoGit.Executable.resolve("git"), args, cd: cd, stderr_to_stdout: true)
+    System.cmd(EvoGit.Executable.resolve("git"), args,
+      cd: cd,
+      stderr_to_stdout: true,
+      env: %{"LC_ALL" => "C"}
+    )
     |> handle_git_command_result(args, cd)
   end
 
