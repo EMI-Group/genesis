@@ -863,8 +863,19 @@ defmodule EvoDashWeb.DashboardLive do
 
   defp activate_project(socket, path) do
     name = Path.basename(path)
-    mode = detect_mode(path)
-    mode_info = mode_info_message(mode)
+    is_project_change = socket.assigns[:active_project_path] != path
+
+    # Only auto-detect mode when switching to a different project.
+    # Preserve the user's manual mode selection on re-navigation/reconnect.
+    {mode, mode_info} =
+      if is_project_change do
+        detected = detect_mode(path)
+        {detected, mode_info_message(detected)}
+      else
+        current_mode = socket.assigns[:task_mode]
+        {current_mode, socket.assigns[:task_mode_info]}
+      end
+
     tasks = TaskRegistry.list_tasks_by_path(path)
 
     # Load project settings eagerly
