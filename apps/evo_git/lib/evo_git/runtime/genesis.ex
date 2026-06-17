@@ -35,12 +35,15 @@ defmodule EvoGit.Runtime.Genesis do
     Logger.info("Genesis: Running Mode A (Existing Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
+
     # Load foreign repos: evogit.toml defaults merged with CLI-provided repos (CLI takes precedence)
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
     cli_repos = Keyword.get(opts, :foreign_repos, [])
     foreign_repos = merge_foreign_repos(toml_repos, cli_repos)
 
-    case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective, foreign_repos: foreign_repos)
+    case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective,
+           foreign_repos: foreign_repos
+         )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
         Helpers.notify_finalizing(opts)
@@ -57,12 +60,15 @@ defmodule EvoGit.Runtime.Genesis do
     Logger.info("Genesis: Running Mode B (New Codebase)")
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
+
     # Load foreign repos: evogit.toml defaults merged with CLI-provided repos (CLI takes precedence)
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
     cli_repos = Keyword.get(opts, :foreign_repos, [])
     foreign_repos = merge_foreign_repos(toml_repos, cli_repos)
 
-    case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective, foreign_repos: foreign_repos)
+    case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective,
+           foreign_repos: foreign_repos
+         )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
         Helpers.notify_finalizing(opts)
