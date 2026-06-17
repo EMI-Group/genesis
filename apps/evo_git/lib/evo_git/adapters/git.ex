@@ -205,6 +205,18 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Returns a short diff stat summary between two commits.
+  Outputs a single line like:
+    " 89 files changed, 18628 insertions(+), 0 deletions(-)"
+  or:
+    " 89 files changed, 18628 insertions(+)"
+  (deletions are omitted when 0).
+  """
+  def diff_shortstat(path, commit_a, commit_b) do
+    run(["diff", "--shortstat", commit_a, commit_b], path)
+  end
+
+  @doc """
   Adds a note to a given object (usually a commit).
 
   Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the

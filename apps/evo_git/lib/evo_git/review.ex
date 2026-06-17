@@ -7,6 +7,7 @@ defmodule EvoGit.Review do
   """
 
   alias EvoGit.Adapters.Git
+  require Logger
 
   defmodule FileInfo do
     @moduledoc "Structured info about a changed file"
@@ -85,6 +86,9 @@ defmodule EvoGit.Review do
   This is much faster than `load_review_data/2` because it skips the full diff.
   Use this to show the file list immediately, then lazy-load individual file diffs
   via `load_file_diff/4`.
+
+  Uses `git diff --shortstat` for accurate total line counts, since the summary
+  is computed directly by git rather than summed from per-file entries.
   """
   def load_review_metadata(repo_path, branch_name) do
     with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
@@ -92,7 +96,24 @@ defmodule EvoGit.Review do
       {:ok, diff_stat} = Git.diff_numstat(repo_path, base_sha, commit_sha)
 
       files = parse_diff_stat_into_files(diff_stat)
-      {total_additions, total_deletions} = count_changes(files)
+
+      # Use --shortstat for accurate totals (single line from git, no per-file summing)
+      {total_additions, total_deletions} =
+        case Git.diff_shortstat(repo_path, base_sha, commit_sha) do
+          {:ok, shortstat} ->
+            totals = parse_shortstat(shortstat)
+            # Log discrepancy if per-file summing differs from shortstat
+            per_file = count_changes(files)
+            if totals != per_file do
+              Logger.warning(
+                "Review totals mismatch for #{branch_name}: shortstat=#{inspect(totals)}, per_file=#{inspect(per_file)}"
+              )
+            end
+            totals
+
+          _ ->
+            count_changes(files)
+        end
 
       {:ok,
        %{
@@ -155,7 +176,12 @@ defmodule EvoGit.Review do
   def load_review_metadata_from_shas(repo_path, base_sha, commit_sha) do
     with {:ok, diff_stat} <- Git.diff_numstat(repo_path, base_sha, commit_sha) do
       files = parse_diff_stat_into_files(diff_stat)
-      {total_additions, total_deletions} = count_changes(files)
+
+      {total_additions, total_deletions} =
+        case Git.diff_shortstat(repo_path, base_sha, commit_sha) do
+          {:ok, shortstat} -> parse_shortstat(shortstat)
+          _ -> count_changes(files)
+        end
 
       {:ok,
        %{
@@ -211,7 +237,12 @@ defmodule EvoGit.Review do
 
     with {:ok, diff_stat} <- Git.diff_numstat(repo_path, base_sha, commit_sha) do
       files = parse_diff_stat_into_files(diff_stat)
-      {total_additions, total_deletions} = count_changes(files)
+
+      {total_additions, total_deletions} =
+        case Git.diff_shortstat(repo_path, base_sha, commit_sha) do
+          {:ok, shortstat} -> parse_shortstat(shortstat)
+          _ -> count_changes(files)
+        end
 
       {:ok,
        %{
@@ -409,6 +440,25 @@ defmodule EvoGit.Review do
 
   defp parse_numstat_count("-"), do: 0
   defp parse_numstat_count(str), do: String.to_integer(str)
+
+  @doc false
+  def parse_shortstat(shortstat) when is_binary(shortstat) do
+    shortstat = String.trim(shortstat)
+
+    insertions =
+      case Regex.run(~r/(\d+)\s+insertions?\(\+\)/, shortstat) do
+        [_, n] -> String.to_integer(n)
+        nil -> 0
+      end
+
+    deletions =
+      case Regex.run(~r/(\d+)\s+deletions?\(-\)/, shortstat) do
+        [_, n] -> String.to_integer(n)
+        nil -> 0
+      end
+
+    {insertions, deletions}
+  end
 
   defp parse_file_section(section) do
     lines = String.split(section, "\n")
