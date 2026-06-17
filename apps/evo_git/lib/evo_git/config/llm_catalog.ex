@@ -97,7 +97,8 @@ defmodule EvoGit.Config.LLMCatalog do
       ],
       models: [
         %{id: "glm-5", display_name: "GLM-5"},
-        %{id: "glm-5.1", display_name: "GLM-5.1"}
+        %{id: "glm-5.1", display_name: "GLM-5.1"},
+        %{id: "glm-5.2", display_name: "GLM-5.2"}
       ]
     },
     %{
