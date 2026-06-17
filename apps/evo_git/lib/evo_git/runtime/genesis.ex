@@ -16,7 +16,9 @@ defmodule EvoGit.Runtime.Genesis do
 
     with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do
-      if Helpers.new_codebase?(repo_path) do
+      mode = resolve_mode(repo_path, opts)
+
+      if mode == :new do
         run_new_codebase(objective, repo_path, head_sha, opts)
       else
         run_existing_codebase(objective, repo_path, head_sha, opts)
@@ -69,6 +71,15 @@ defmodule EvoGit.Runtime.Genesis do
       error ->
         Logger.error("Genesis Mode B failed: #{inspect(error)}")
         error
+    end
+  end
+
+  # Use the explicitly-specified mode if provided; otherwise auto-detect.
+  defp resolve_mode(repo_path, opts) do
+    case Keyword.get(opts, :mode) do
+      :new -> :new
+      :existing -> :existing
+      _ -> if Helpers.new_codebase?(repo_path), do: :new, else: :existing
     end
   end
 
