@@ -26,5 +26,11 @@ defmodule EvoGit.ExecutableTest do
         assert result =~ "priv/vendor"
       end
     end
+
+    test "resolve/1 never crashes for unknown binaries" do
+      # Should always return a path string, never raise
+      result = Executable.resolve("definitely_not_on_path_xyz")
+      assert is_binary(result)
+    end
   end
 end
