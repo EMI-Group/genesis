@@ -19,13 +19,6 @@ import Config
 if System.get_env("PHX_SERVER") do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
-
-if System.get_env("EVOGIT_DESKTOP") do
-  config :evo_dash,
-    desktop: true,
-    desktop_port: String.to_integer(System.get_env("EVOGIT_DESKTOP_PORT") || "4100")
-end
-
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
