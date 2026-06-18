@@ -8,7 +8,7 @@ Environment-based Elixir configuration for the EvoGit umbrella project. Follows 
 | File | Purpose | Phase |
 |------|---------|-------|
 | `config.exs` | Base config — endpoint, asset builders (esbuild/tailwind), logger, JSON lib, `req_llm` HTTP timeouts, sandbox mode | Compile |
-| `dev.exs` | Dev overrides — port 4100, code reloader, asset watchers, debug errors, desktop mode off | Compile |
+| `dev.exs` | Dev overrides — port 4100, code reloader, asset watchers, debug errors | Compile |
 | `test.exs` | Test overrides — port 4002, server disabled, warning-level logger | Compile |
 | `prod.exs` | Production overrides — static cache manifest, info-level logger | Compile |
 | `runtime.exs` | Secrets & dynamic config — `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`, desktop mode env vars | Runtime |
