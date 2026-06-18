@@ -6,7 +6,6 @@ defmodule EvoDashWeb.Router do
     plug(:accepts, ["html"])
     plug(:fetch_session)
     plug(EvoDashWeb.Plugs.Locale)
-    plug(:detect_desktop_client)
     plug(:fetch_live_flash)
     plug(:put_root_layout, html: {EvoDashWeb.Layouts, :root})
     plug(:protect_from_forgery)
@@ -36,11 +35,4 @@ defmodule EvoDashWeb.Router do
   #   pipe_through :api
   # end
 
-  defp detect_desktop_client(conn, _opts) do
-    if conn.params["client"] == "desktop" do
-      Plug.Conn.put_session(conn, :is_desktop, true)
-    else
-      conn
-    end
-  end
 end

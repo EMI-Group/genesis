@@ -8,7 +8,6 @@ defmodule EvoDashWeb.DashboardComponents do
 
   attr(:active_project, :map, default: nil)
   attr(:recent_projects, :list, default: [])
-  attr(:is_desktop, :boolean, default: false)
   attr(:show_open_form, :boolean, default: false)
   attr(:path_suggestions, :list, default: [])
 
@@ -99,7 +98,6 @@ defmodule EvoDashWeb.DashboardComponents do
                 class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
                 phx-click="pick_directory"
                 phx-hook="DirectoryPicker"
-                data-is-desktop={to_string(@is_desktop)}
                 data-picker-id="project"
                 title={gettext("Browse for directory")}
               >
@@ -255,7 +253,6 @@ defmodule EvoDashWeb.DashboardComponents do
   attr(:new_repo_id, :string, default: "")
   attr(:new_repo_path, :string, default: "")
   attr(:new_repo_name, :string, default: "")
-  attr(:is_desktop, :boolean, default: false)
 
   def project_settings_panel(assigns) do
     ~H"""
@@ -391,7 +388,6 @@ defmodule EvoDashWeb.DashboardComponents do
                         class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
                         phx-click="pick_directory"
                         phx-hook="DirectoryPicker"
-                        data-is-desktop={to_string(@is_desktop)}
                         data-picker-id="foreign-repo"
                         title={gettext("Browse for directory")}
                       >
