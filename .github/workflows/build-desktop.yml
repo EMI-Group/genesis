@@ -30,9 +30,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
-            arch: arm64
+          - arch: arm64
+            runner: macos-14
+            burrito_target: darwin_arm64
+            rust_target: aarch64-apple-darwin
             rg_target: aarch64-apple-darwin
+            vendor_platform: macos-arm64
+          - arch: x64
+            runner: macos-13
+            burrito_target: darwin_amd64
+            rust_target: x86_64-apple-darwin
+            rg_target: x86_64-apple-darwin
+            vendor_platform: macos-x86_64
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -44,29 +53,28 @@ jobs:
           otp-version: ${{ env.OTP_VERSION }}
           elixir-version: ${{ env.ELIXIR_VERSION }}
 
-      - name: Restore dependency cache
-        uses: actions/cache@v5
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-
+          targets: ${{ matrix.rust_target }}
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0"
 
       - name: Install dependencies
         run: mix deps.get
-
-      - name: Compile dependencies
-        run: mix deps.compile
 
       - name: Build assets
         run: |
           mix assets.setup
           mix assets.deploy
 
-      - name: Bundle vendor binaries (git, rg)
+      - name: Bundle vendor binaries
         run: |
-          VENDOR_DIR="apps/evo_git/priv/vendor/macos-${{ matrix.arch }}"
+          VENDOR_DIR="apps/evo_git/priv/vendor/${{ matrix.vendor_platform }}"
           mkdir -p "${VENDOR_DIR}"
 
           # Download and extract ripgrep
@@ -86,47 +94,48 @@ jobs:
           echo "Vendor binaries installed to ${VENDOR_DIR}"
           ls -la "${VENDOR_DIR}/"
 
-      - name: Build release
-        run: MIX_ENV=prod mix release evogit
+      - name: Build Burrito release
+        env:
+          BURRITO_TARGET: ${{ matrix.burrito_target }}
+        run: MIX_ENV=prod mix release evogit_desktop
 
-      - name: Package .app bundle
+      - name: Locate Burrito binary
         run: |
-          APP_NAME="Genesis"
-          STAGING="Genesis.app"
+          echo "Contents of burrito_ex output directory:"
+          ls -la _build/prod/rel/evogit_desktop/burrito_ex/ || true
 
-          # Create .app bundle structure
-          mkdir -p "${STAGING}/Contents/MacOS"
-          mkdir -p "${STAGING}/Contents/Resources"
-          mkdir -p "${STAGING}/Contents/Frameworks"
+      - name: Place sidecar binary
+        run: |
+          SIDECAR_DIR="desktop/src-tauri/sidecars"
+          mkdir -p "${SIDECAR_DIR}"
+          # Burrito output is at _build/prod/rel/evogit_desktop/burrito_ex/
+          cp _build/prod/rel/evogit_desktop/burrito_ex/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}"
+          chmod +x "${SIDECAR_DIR}/"*
 
-          # Copy release into Contents/release/
-          cp -r _build/prod/rel/evogit "${STAGING}/Contents/release"
+          echo "Sidecar binaries:"
+          ls -la "${SIDECAR_DIR}/"
 
-          # Copy launcher script
-          cp rel/overlays/desktop/macos/evogit_launcher "${STAGING}/Contents/MacOS/evogit_launcher"
-          chmod +x "${STAGING}/Contents/MacOS/evogit_launcher"
-
-          # Copy Info.plist
-          cp rel/overlays/desktop/macos/Info.plist "${STAGING}/Contents/Info.plist"
-
-          # Copy icon as placeholder
-          cp apps/evo_dash/priv/static/favicon.ico "${STAGING}/Contents/Resources/favicon.ico" 2>/dev/null || true
-
-          # Zip the .app
-          ARCHIVE_NAME="Genesis-macOS-${{ matrix.arch }}.zip"
-          zip -r "${ARCHIVE_NAME}" "${STAGING}"
-
-          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
+      - name: Build Tauri app
+        run: |
+          cd desktop/src-tauri
+          cargo tauri build --target ${{ matrix.rust_target }}
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-          files: ${{ env.ARCHIVE_NAME }}
+          files: |
+            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/*.app
 
   build-windows:
     name: Build Windows (x86_64)
     runs-on: windows-2022
+    env:
+      burrito_target: windows_x64
+      rust_target: x86_64-pc-windows-msvc
+      rg_target: x86_64-pc-windows-msvc
+      vendor_platform: windows-x64
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -137,27 +146,26 @@ jobs:
           otp-version: ${{ env.OTP_VERSION }}
           elixir-version: ${{ env.ELIXIR_VERSION }}
 
-      - name: Restore dependency cache
-        uses: actions/cache@v5
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0"
 
       - name: Install dependencies
         run: mix deps.get
-
-      - name: Compile dependencies
-        run: mix deps.compile
 
       - name: Build assets
         run: |
           mix assets.setup
           mix assets.deploy
 
-      - name: Bundle vendor ripgrep (Windows)
+      - name: Bundle vendor ripgrep
         shell: bash
         run: |
           VENDOR_DIR="apps/evo_git/priv/vendor/windows-x64"
@@ -173,7 +181,7 @@ jobs:
           echo "ripgrep installed:"
           ls -la "${VENDOR_DIR}/rg.exe"
 
-      - name: Bundle vendor MinGit (Windows)
+      - name: Bundle vendor MinGit
         shell: bash
         run: |
           VENDOR_DIR="apps/evo_git/priv/vendor/windows-x64"
@@ -189,31 +197,39 @@ jobs:
           echo "MinGit installed:"
           ls "${VENDOR_DIR}/mingit/cmd/git.exe"
 
-      - name: Build release
-        run: MIX_ENV=prod mix release evogit
+      - name: Build Burrito release
         shell: bash
+        env:
+          BURRITO_TARGET: windows_x64
+        run: MIX_ENV=prod mix release evogit_desktop
 
-      - name: Package Windows distribution
+      - name: Locate Burrito binary
         shell: bash
         run: |
-          STAGING="Genesis-Windows"
+          echo "Contents of burrito_ex output directory:"
+          ls -la _build/prod/rel/evogit_desktop/burrito_ex/ || true
 
-          mkdir -p "${STAGING}/release"
+      - name: Place sidecar binary
+        shell: bash
+        run: |
+          SIDECAR_DIR="desktop/src-tauri/sidecars"
+          mkdir -p "${SIDECAR_DIR}"
+          # Burrito output is at _build/prod/rel/evogit_desktop/burrito_ex/
+          cp _build/prod/rel/evogit_desktop/burrito_ex/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-x86_64-pc-windows-msvc.exe"
 
-          # Use tar piping instead of cp to avoid hardlink/read-only file issues on Windows bash
-          tar -cf - -C _build/prod/rel/evogit . | tar -xf - -C "${STAGING}/release"
+          echo "Sidecar binaries:"
+          ls -la "${SIDECAR_DIR}/"
 
-          # Copy launcher script
-          cp rel/overlays/desktop/windows/evogit_launcher.bat "${STAGING}/"
-
-          # Zip
-          ARCHIVE_NAME="Genesis-Windows-x64.zip"
-          7z a -tzip "${ARCHIVE_NAME}" "${STAGING}"
-
-          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
+      - name: Build Tauri app
+        shell: bash
+        run: |
+          cd desktop/src-tauri
+          cargo tauri build --target x86_64-pc-windows-msvc
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-          files: ${{ env.ARCHIVE_NAME }}
+          files: |
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe

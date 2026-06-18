@@ -18,7 +18,7 @@ The full design specification is in `AGENTS.md`.
 - `./apps/evo_git/` → Core runtime (agents, scheduler, git adapter, runtime phases)
 - `./apps/evo_dash/` → Web dashboard (LiveView pages, components, task registry)
 - `./config/` → Environment-based Elixir configuration
-- `./rel/overlays/desktop/` → Desktop app packaging resources (launcher scripts, .app bundle metadata)
+- `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management)
 - `./.github/workflows/` → CI/CD pipelines (desktop app build on release)
 
 ## API Surface
@@ -79,11 +79,14 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 
 ### Desktop App Build Pipeline
 
-The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds desktop app packages on every GitHub release:
+The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds native desktop app installers on every GitHub release. The build process uses a **Tauri + Burrito** architecture:
 
 - **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
-- **macOS**: Builds ARM64 (macOS-14 runner), packages as `.app` bundle → `EvoGit-macOS-arm64.zip`
-- **Windows**: Builds x86_64 on `windows-2022`, packages with batch launcher → `EvoGit-Windows-x64.zip`
-- **Assets**: Built via `mix assets.setup` + `mix assets.deploy` (esbuild + tailwind, no Node.js required)
-- **Launcher scripts**: `rel/overlays/desktop/macos/evogit_launcher` and `rel/overlays/desktop/windows/evogit_launcher.bat` set `EVOGIT_DESKTOP=1`, `PORT=4100`, `PHX_SERVER=true`, and a local `SECRET_KEY_BASE`
+- **Build process**: Burrito-wrapped Elixir release (`mix release evogit_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers
+- **macOS**: Builds ARM64 (macOS-14) and x86_64 (macos-13) → `.dmg` / `.app` bundles
+- **Windows**: Builds x86_64 on `windows-2022` → `.msi` / `.exe` (NSIS) installers
+- **Toolchains**: CI requires Elixir/OTP, Rust (Tauri), and Zig (Burrito wrapper compilation) on all platforms
+- **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
 - **Version pinning**: `.tool-versions` pins OTP 29 / Elixir 1.20.1
+
+The legacy launcher scripts and manual `.app`/zip packaging have been removed — Tauri generates native bundles and the Rust sidecar (`desktop/src-tauri/src/sidecar.rs`) handles backend lifecycle with the correct env vars.
