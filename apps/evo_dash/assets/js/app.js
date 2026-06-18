@@ -102,7 +102,7 @@ const PathAutocomplete = {
   }
 };
 
-// DirectoryPicker hook: native directory picker via browser API or server fallback
+// DirectoryPicker hook: native directory picker via Tauri dialog, browser API, or fallback
 const DirectoryPicker = {
   mounted() {
     // Detect if browser is on the same machine as the server
@@ -114,58 +114,55 @@ const DirectoryPicker = {
         ? "true"
         : "false";
 
-    // Generate unique picker ID so multiple instances don't collide
-    this.pickerId = this.el.dataset.pickerId ||
-      ("picker-" + Math.random().toString(36).substr(2, 9));
-    this.el.dataset.pickerId = this.pickerId;
-
-    // Listen for targeted picker_result events pushed from the server
-    this.handleEvent("picker_result:" + this.pickerId, ({path}) => {
-      if (path) {
-        const container = this.el.closest(".picker-container") ||
-          this.el.closest(".form-control") ||
-          this.el.closest(".relative") ||
-          this.el.parentElement;
-        if (container) {
-          const input = container.querySelector('input[type="text"]');
-          if (input) {
-            input.value = path;
-            input.dispatchEvent(new Event("input", {bubbles: true}));
-          }
-        }
-      }
-    });
-
     this.el.addEventListener("click", async () => {
-      // In Tauri webview, use native dialog
+      // 1. Tauri native dialog (desktop app)
       if (window.__TAURI__) {
-        // Tauri dialog API will be wired up in a later task
-        // For now, fall through to browser API / server fallback
+        try {
+          let selected;
+          if (window.__TAURI__.dialog && window.__TAURI__.dialog.open) {
+            selected = await window.__TAURI__.dialog.open({directory: true});
+          } else {
+            selected = await window.__TAURI__.core.invoke('plugin:dialog|open', {directory: true});
+          }
+          if (selected) {
+            // Tauri returns the full path
+            this.fillInput(selected);
+          }
+        } catch (_err) {
+          // User cancelled or dialog failed — silently ignore
+        }
+        return;
       }
 
-      // Try the browser File System Access API (Chromium, secure context)
+      // 2. Browser File System Access API (Chromium browsers)
       if (typeof window.showDirectoryPicker === "function") {
         try {
           const handle = await window.showDirectoryPicker();
-          // For browser picker, fill the input directly (no server round-trip needed)
-          const container = this.el.closest(".picker-container") ||
-            this.el.closest(".form-control") ||
-            this.el.closest(".relative") ||
-            this.el.parentElement;
-          if (container) {
-            const input = container.querySelector('input[type="text"]');
-            if (input) {
-              input.value = handle.name;
-              input.dispatchEvent(new Event("input", {bubbles: true}));
-            }
-          }
+          this.fillInput(handle.name);
           return;
         } catch (_err) {
-          // User cancelled or API failed — no fallback available
+          // User cancelled or API failed — fall through to prompt
         }
       }
+
+      // 3. Fallback: text input prompt (non-Chromium browsers without Tauri)
+      // The input is already visible and editable, so no action needed
     });
   },
+
+  fillInput(value) {
+    const container = this.el.closest(".picker-container") ||
+      this.el.closest(".form-control") ||
+      this.el.closest(".relative") ||
+      this.el.parentElement;
+    if (container) {
+      const input = container.querySelector('input[type="text"]');
+      if (input) {
+        input.value = value;
+        input.dispatchEvent(new Event("input", {bubbles: true}));
+      }
+    }
+  }
 };
 
 // StatePersistence hook: saves/restores dashboard state via sessionStorage
