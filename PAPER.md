@@ -1,22 +1,48 @@
-# EvoX Genesis: A Dual-Dimensional Evolutionary Framework for Autonomous Software Development
+# EvoX Genesis: From AI vibe coding to Autonomous Software Evolution
 
 --- ENGLISH VERSION ---
 
 ## Abstract
 
-EvoX Genesis is a decentralized, evolutionary software development framework that combines Large Language Model (LLM)-powered agents with a principled architectural model to achieve autonomous software creation and modification. The system introduces a **Dual-Dimension Architecture** that intersects a *Spatial Dimension* — a hierarchical Context Tree providing semantic structural awareness — with a *Temporal Dimension* — a phylogenetic Directed Acyclic Graph (DAG) of immutable Git commits tracking evolutionary history. Within this framework, **stateless agents** serve as pure transformation functions over `{commit, node_path} × objective → new_commit`, recursively decomposing tasks along the Context Tree to achieve unbounded scalability without context window exhaustion. The system supports two execution phases — *Genesis* (bootstrapping) and *Evolution* (iterative modification) — with Evolution further divided into *Simple* (top-down planning) and *Complex* (bottom-up novelty search with quality diversity) modes. This report presents the Genesis system's design philosophy, architectural principles, agent taxonomy, runtime mechanics, and situates it within the broader landscape of evolutionary computation and autonomous coding agents.
+The rise of **"vibe coding"** — free-flowing, AI-assisted development powered by Large Language Models (LLMs) — has democratized software creation but inherits fundamental structural limitations: a hard scalability ceiling imposed by monolithic context windows, architectural blindness from flat-file perception, unconstrained editing scope, fragile session state, and single-path linear execution. As codebases grow beyond what a single conversation can hold, these limitations cause vibe coding to degrade from a productivity multiplier into an unreliable crutch.
+
+EvoX Genesis is a decentralized, evolutionary software development framework designed to transcend these limitations. The system introduces a **Dual-Dimension Architecture** that intersects a *Spatial Dimension* — a hierarchical Context Tree providing semantic structural awareness — with a *Temporal Dimension* — a phylogenetic Directed Acyclic Graph (DAG) of immutable Git commits tracking evolutionary history. Within this framework, **stateless agents** serve as pure transformation functions over `{commit, node_path} × objective → new_commit`, recursively decomposing tasks along the Context Tree to achieve unbounded scalability without context window exhaustion. The system supports two execution phases — *Genesis* (bootstrapping) and *Evolution* (iterative modification) — with Evolution further divided into *Simple* (top-down planning) and *Complex* (bottom-up novelty search with quality diversity) modes. This report presents the Genesis system's design philosophy, architectural principles, agent taxonomy, runtime mechanics, and situates it within the broader landscape of evolutionary computation and autonomous coding agents.
 
 ## 1. Introduction
 
-### 1.1 Problem Context
+### 1.1 The Rise and Limits of Vibe Coding
 
-The emergence of LLM-based coding agents has transformed software development practices. However, existing approaches face fundamental limitations. Traditional coding agents (e.g., Claude Code, GitHub Copilot Workspace) operate as monolithic, stateful processes that must load an entire codebase context into a single conversation window. This creates a hard scalability ceiling: as codebases grow beyond the context window's capacity, the agent's understanding degrades, and its ability to make architecturally coherent changes collapses.
+The widespread adoption of LLM-powered coding tools has given rise to **"vibe coding"** — a development practice where programmers interact with AI assistants in a free-flowing, conversational manner, accepting generated code based on whether it "feels right" rather than rigorously verifying every detail. Tools like Cursor, GitHub Copilot Workspace, Aider, and Claude Code have made this style of development accessible to millions, dramatically lowering the barrier to producing functional code. For small-scale projects and rapid prototyping, vibe coding is transformative.
 
-Simultaneously, the field of evolutionary computation offers powerful optimization paradigms — genetic algorithms, novelty search, quality diversity — but these have traditionally operated on low-level representations (bit strings, real-valued vectors) rather than the semantic, architectural structures of real software.
+However, as projects grow in size and complexity, vibe coding inherits and amplifies several fundamental limitations rooted in its underlying tool architecture:
 
-EvoX Genesis bridges these gaps by introducing a framework where LLM-powered agents operate as evolutionary operators within a structurally-aware, hierarchical space, guided by Git's DAG as the temporal substrate.
+**Problem 1: The Context Wall.** Traditional coding agents operate as monolithic, stateful processes that must load relevant codebase context into a single conversation window. As codebases grow, the agent faces an inexorable dilemma: either include more context (risking window exhaustion) or include less (missing critical dependencies). This creates a hard scalability ceiling — beyond a certain project size, the agent's understanding degrades, and its ability to make architecturally coherent changes collapses.
 
-### 1.2 Design Principles
+**Problem 2: Architectural Blindness.** Vibe coding tools perceive the codebase as a flat collection of files. Structure is discovered through exploration (grepping, reading files), which is both expensive — consuming precious context window capacity — and inherently incomplete. An agent has no inherited awareness of the system's architecture; it must reconstruct the big picture from scratch in every session, and it does so imperfectly.
+
+**Problem 3: Unconstrained Editing Scope.** An agent asked to fix a bug in one module can freely modify any other module it deems relevant. There is no enforcement of architectural boundaries — the agent's edit scope is bounded only by its own judgment, which may be flawed, especially when operating with incomplete context (see Problem 2). This leads to architectural violations, unintended side effects, and tangled, low-cohesion codebases.
+
+**Problem 4: Fragile Session State.** The agent's "memory" is its conversation history, which grows monotonically and can never be reset without losing context. If the session crashes, is interrupted, or becomes too long to manage, work may be lost. There is no principled recovery mechanism — the entire session must be restarted from scratch, with no guarantee of reproducing prior progress.
+
+**Problem 5: Single-Path Execution.** Vibe coding follows a strictly linear trajectory: make changes → review → repeat. There is no mechanism to explore multiple alternative approaches in parallel, or to branch from a historical state to try a different strategy when the current path stalls. The developer is locked into a single line of evolution.
+
+These problems are not merely inconveniences — they represent structural limitations that prevent vibe coding from scaling to the autonomous, large-scale software development that real-world projects demand.
+
+### 1.2 How Genesis Solves These Problems
+
+EvoX Genesis was designed from the ground up as a direct response to each of these limitations. The following table maps each vibe coding problem to the specific Genesis mechanism that resolves it:
+
+| Vibe Coding Problem | Genesis Solution | Key Mechanism |
+|---------------------|------------------|---------------|
+| **Context Wall** (Problem 1) | Recursive decomposition with context isolation | Stateless agents delegate to subagents at child nodes; each subagent's context footprint does not count against the parent's limits (§3.3) |
+| **Architectural Blindness** (Problem 2) | Inherited spatial context via the Context Tree | Every agent inherits the architectural contract chain — Intent, API Surface, Routing Table — from root down to its assigned node (§2.1) |
+| **Unconstrained Scope** (Problem 3) | Spatial contract enforcement | Agents can only modify files within their assigned node and its descendants; write permissions are hierarchically scoped and cannot be escalated (§3.4) |
+| **Fragile Session State** (Problem 4) | Stateless agents + Git-backed persistence | Agent state is fully captured by `{node_path, base_commit, current_commit}`; any crash is recovered by re-dispatching from the last commit (§3.1) |
+| **Single-Path Execution** (Problem 5) | Phylogenetic DAG + worktree isolation | Agents branch from specific commits and explore independently in isolated worktrees; successful branches are selectively merged (§2.2, §5.1) |
+
+This problem-to-solution correspondence is not incidental — each Genesis mechanism was designed as a principled response to a specific structural failure mode of the vibe coding paradigm. The remainder of this paper elaborates on each of these mechanisms in detail.
+
+### 1.3 Design Principles
 
 Genesis is founded on three core principles:
 
@@ -407,36 +433,51 @@ These design choices position Genesis not merely as a coding assistant, but as a
 
 ---
 
-## References
-
-1. Lehman, J., & Stanley, K. O. (2011). Abandoning objectives: Evolution through the search for novelty alone. *Evolutionary Computation*, 19(2), 189–223.
-2. Mouret, J. B., & Clune, J. (2015). Illuminating search spaces by mapping elites. *arXiv preprint arXiv:1504.04909*.
-3. Pincus, M. (1970). Letter to the editor—a Monte Carlo method for the approximate solution of certain types of constrained optimization problems. *Operations Research*, 18(6), 1225–1228.
-4. Hofstadter, D. R. (1979). *Gödel, Escher, Bach: An Eternal Golden Braid*. Basic Books.
-5. Turing, A. M. (1952). The chemical basis of morphogenesis. *Philosophical Transactions of the Royal Society of London*, 237(641), 37–72.
-6. Simon, H. A. (1962). The architecture of complexity. *Proceedings of the American Philosophical Society*, 106(6), 467–482.
-
----
-
-# EvoX Genesis：面向自主软件开发的双维度演化框架
+# EvoX Genesis：从AI vibe coding到自主软件演化
 
 --- 中文版本 ---
 
 ## 摘要
 
-EvoX Genesis是一个去中心化的演化式软件开发框架，它结合了大语言模型（LLM）驱动的智能体与严谨的架构模型，实现自主软件创建与修改。该系统引入了**双维度架构**，将提供语义结构感知的*空间维度*——层次化上下文树——与追踪演化历史的*时间维度*——不可变Git提交的系统发育有向无环图（DAG）——相交融合。在此框架中，**无状态智能体**作为纯变换函数运行于 `{commit, node_path} × objective → new_commit`，沿上下文树递归分解任务，从而在无上下文窗口耗尽的情况下实现无界可扩展性。系统支持两个执行阶段——*创世*（引导）和*演化*（迭代修改），其中演化进一步分为*简单*（自顶向下规划）和*复杂*（基于新颖性搜索和质量多样性的自底向上）两种模式。本报告呈现Genesis系统的设计哲学、架构原理、智能体分类学、运行时机制，并将其置于演化计算和自主编程智能体的更广阔背景中。
+**"Vibe coding"**——由大语言模型（LLM）驱动的自由流式AI辅助开发——的兴起，虽然使软件创建民主化，但继承了根本性的结构限制：单体式上下文窗口带来的硬性可扩展性上限、扁平文件感知导致的架构盲目性、不受约束的编辑范围、脆弱的会话状态，以及单路径的线性执行。随着代码库增长超出单一对话所能容纳的范围，这些限制使vibe coding从生产力倍增器退化为不可靠的拐杖。
+
+EvoX Genesis是一个去中心化的演化式软件开发框架，旨在超越这些限制。该系统引入了**双维度架构**，将提供语义结构感知的*空间维度*——层次化上下文树——与追踪演化历史的*时间维度*——不可变Git提交的系统发育有向无环图（DAG）——相交融合。在此框架中，**无状态智能体**作为纯变换函数运行于 `{commit, node_path} × objective → new_commit`，沿上下文树递归分解任务，从而在无上下文窗口耗尽的情况下实现无界可扩展性。系统支持两个执行阶段——*创世*（引导）和*演化*（迭代修改），其中演化进一步分为*简单*（自顶向下规划）和*复杂*（基于新颖性搜索和质量多样性的自底向上）两种模式。本报告呈现Genesis系统的设计哲学、架构原理、智能体分类学、运行时机制，并将其置于演化计算和自主编程智能体的更广阔背景中。
 
 ## 1. 引言
 
-### 1.1 问题背景
+### 1.1 Vibe Coding的兴起与局限
 
-基于LLM的编程智能体的出现已经改变了软件开发实践。然而，现有方法面临根本性的限制。传统编程智能体（如Claude Code、GitHub Copilot Workspace）作为单体式、有状态的进程运行，必须将整个代码库上下文加载到单一对话窗口中。这造成了硬性可扩展性上限：随着代码库增长超出上下文窗口的容量，智能体的理解能力下降，其进行架构一致性修改的能力崩溃。
+基于LLM的编程工具的广泛采用催生了**"vibe coding"**——一种开发实践，程序员以自由流式、对话式的方式与AI助手交互，根据代码"感觉对不对"来接受生成的代码，而非严格验证每一个细节。Cursor、GitHub Copilot Workspace、Aider和Claude Code等工具使这种开发方式触达了数百万人，极大地降低了产出可用代码的门槛。对于小规模项目和快速原型开发，vibe coding是变革性的。
 
-与此同时，演化计算领域提供了强大的优化范式——遗传算法、新颖性搜索、质量多样性——但这些传统上作用于低层表示（位串、实值向量），而非真实软件的语义化、架构化结构。
+然而，随着项目规模和复杂性的增长，vibe coding继承并放大了几个根植于其底层工具架构的根本性限制：
 
-EvoX Genesis通过引入一个框架来弥合这些差距，在该框架中，LLM驱动的智能体作为演化算子在具有结构感知的层次化空间中运行，以Git的DAG作为时间基底。
+**问题1：上下文之墙。** 传统编程智能体作为单体式、有状态的进程运行，必须将相关代码库上下文加载到单一对话窗口中。随着代码库增长，智能体面临一个不可回避的困境：要么包含更多上下文（冒着窗口耗尽的风险），要么包含更少（遗漏关键依赖）。这造成了硬性可扩展性上限——超过一定的项目规模，智能体的理解能力下降，其进行架构一致性修改的能力崩溃。
 
-### 1.2 设计原则
+**问题2：架构盲目性。** Vibe coding工具将代码库感知为扁平的文件集合。结构通过探索（搜索、读取文件）来发现，这不仅昂贵——消耗宝贵的上下文窗口容量——而且本质上不完整。智能体没有继承的系统架构感知能力；它必须在每次会话中从零开始重建全局图景，而且这种重建是不完美的。
+
+**问题3：无约束的编辑范围。** 被要求修复一个模块中bug的智能体可以自由修改它认为相关的任何其他模块。没有对架构边界的强制执行——智能体的编辑范围仅受其自身判断的限制，而特别是在上下文不完整时（见问题2），这种判断可能是有缺陷的。这导致架构违规、意外副作用以及低内聚的混乱代码库。
+
+**问题4：脆弱的会话状态。** 智能体的"记忆"是其对话历史，单调增长且无法在不丢失上下文的情况下重置。如果会话崩溃、被中断或变得过长而难以管理，工作可能会丢失。没有原则性的恢复机制——整个会话必须从头开始，且无法保证重现先前的进展。
+
+**问题5：单路径执行。** Vibe coding遵循严格的线性轨迹：修改→审查→重复。没有并行探索多种替代方案的机制，也没有在当前路径停滞时从历史状态分支以尝试不同策略的机制。开发者被锁定在单一的演化路线上。
+
+这些问题不仅仅是不便——它们代表了阻止vibe coding扩展到现实世界项目所需的自主、大规模软件开发的结构性限制。
+
+### 1.2 Genesis如何解决这些问题
+
+EvoX Genesis从头开始设计，作为对这些限制中每一个的直接回应。下表将每个vibe coding问题映射到解决它的具体Genesis机制：
+
+| Vibe Coding问题 | Genesis解决方案 | 关键机制 |
+|----------------|----------------|---------|
+| **上下文之墙**（问题1） | 具有上下文隔离的递归分解 | 无状态智能体在子节点处委托给子智能体；每个子智能体的上下文足迹不计入父智能体的限制（§3.3） |
+| **架构盲目性**（问题2） | 通过上下文树继承的空间上下文 | 每个智能体从根到其分配节点继承架构契约链——意图、API表面、路由表（§2.1） |
+| **无约束范围**（问题3） | 空间契约强制执行 | 智能体只能修改其分配节点及其后代内的文件；写权限是层次化范围的，不能升级（§3.4） |
+| **脆弱会话状态**（问题4） | 无状态智能体 + Git支撑的持久化 | 智能体状态完全由`{node_path, base_commit, current_commit}`捕获；任何崩溃通过从最后提交重新分发来恢复（§3.1） |
+| **单路径执行**（问题5） | 系统发育DAG + 工作树隔离 | 智能体从特定提交分支并在隔离的工作树中独立探索；成功分支被选择性合并（§2.2、§5.1） |
+
+这种问题到解决方案的对应并非偶然——每个Genesis机制都是作为对vibe coding范式特定结构性失败模式的原则性回应而设计的。本文的其余部分详细阐述这些机制中的每一个。
+
+### 1.3 设计原则
 
 Genesis建立在三个核心原则之上：
 
@@ -824,17 +865,6 @@ EvoX Genesis代表了一种自主软件开发的全新方法，综合了演化�
 5. **LLM作为语义变异算子** ——利用LLM的语义理解在领域边界间执行有意义的交叉和突变，实现算法意外发现。
 
 这些设计选择使Genesis不仅仅是一个编程助手，而是一个**演化式软件开发框架**——它将软件创建视为一个由架构契约指导、由语义AI算子驱动的层次化、递归的演化过程。该框架扩展到任意大代码库的能力、从任何故障中恢复的能力，以及通过定向规划和开放式新颖性搜索探索解空间的能力，使其成为自主软件工程领域的独特贡献。
-
----
-
-## 参考文献
-
-1. Lehman, J., & Stanley, K. O. (2011). Abandoning objectives: Evolution through the search for novelty alone. *Evolutionary Computation*, 19(2), 189–223.
-2. Mouret, J. B., & Clune, J. (2015). Illuminating search spaces by mapping elites. *arXiv preprint arXiv:1504.04909*.
-3. Pincus, M. (1970). Letter to the editor—a Monte Carlo method for the approximate solution of certain types of constrained optimization problems. *Operations Research*, 18(6), 1225–1228.
-4. Hofstadter, D. R. (1979). *Gödel, Escher, Bach: An Eternal Golden Braid*. Basic Books.
-5. Turing, A. M. (1952). The chemical basis of morphogenesis. *Philosophical Transactions of the Royal Society of London*, 237(641), 37–72.
-6. Simon, H. A. (1962). The architecture of complexity. *Proceedings of the American Philosophical Society*, 106(6), 467–482.
 
 ---
 
