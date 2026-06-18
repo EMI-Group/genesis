@@ -73,6 +73,30 @@ The Spatial Dimension models the codebase as a **Context Tree** — a recursive,
 
 The formal Context Hierarchy applies down to the **directory level**. Once an agent targets a specific file, it relies on the LLM's natural code comprehension to navigate internal logic (docstrings, comments, code structure). This design decision reflects the observation that modern LLMs natively excel at file-level comprehension, making explicit sub-file modeling unnecessary.
 
+### 2.1.1 Token Efficiency via Prefix-Tree Structure
+
+The hierarchical context inheritance means that an agent's world view is built by concatenating ancestor CONTEXT.md files from the root down to its assigned node. Critically, because all agents within a subtree share the same set of ancestor nodes, this concatenation forms a **prefix tree (trie) of context**. When a parent agent delegates to multiple child agents, or when sequential agents work within the same subtree, the shared ancestor context tokens are already present in the LLM's Key-Value (KV) cache — they do not need to be recomputed.
+
+This is a deliberate structural alignment between the Context Tree's hierarchy and how transformer attention caching works: the tree structure mirrors the cache locality of the underlying inference engine. The deeper the tree, the more prefix is reused across agents operating in that subtree. When a parent agent delegates to several children, each child's prompt begins with the same ancestor prefix that the parent has already processed, so the KV cache entries for those tokens are reused directly. This turns what would be O(n²) redundant attention computation for repeated context into near-O(1) for the shared prefix, making inference dramatically cheaper and faster as the system scales.
+
+### 2.1.2 The Routing Table as a Delegation Compass
+
+The routing table is not mere documentation — it is the mechanism that enables **precise delegation**. A parent agent, by reading its CONTEXT.md routing table, knows exactly which child node owns which functional area. When it receives an objective, it can route each subtask to the correct child node with high precision, without needing to investigate the subtree's internals or understand how the child is implemented.
+
+This eliminates the expensive and error-prone exploration that traditional agents must perform — grepping through directories, reading files to discover structure, and inferring responsibility boundaries from code. The routing table effectively makes each parent agent an informed dispatcher: it knows the system's decomposition at a glance. This also means delegation errors are minimized. An agent does not accidentally send database work to the authentication subsystem, because the routing table explicitly maps "database" to the correct child node. The routing table thus transforms delegation from a fuzzy, exploratory process into a deterministic lookup.
+
+### 2.1.3 Accumulated Wisdom: Context as Inherited Experience
+
+The Context Tree is not just static architecture documentation — it is a living repository of **accumulated wisdom**. Every agent that works at a node can record what it learned: a tricky constraint discovered during implementation, an important trap that caused a bug, a design decision and its rationale, a performance gotcha. These are recorded in the CONTEXT.md's Constraints and Intent sections, persisting beyond the agent's transient session.
+
+Future agents working at the same node inherit this wisdom immediately — they start their work already knowing the important traps and design decisions, without having to rediscover them through trial and error. This creates a **self-improving** property: the system gets smarter over time because every agent's hard-won insights are persisted and inherited. An agent working in a mature subtree benefits from the collective experience of all agents that came before. The cost of learning a lesson is paid once, by the first agent that encounters it, and that lesson is then available to every subsequent agent at no additional cost.
+
+### 2.1.4 The Self-Evolving Context Tree
+
+The above properties converge on the deepest insight: the Context Tree is genuinely **self-evolving**. The hierarchical context is not passive documentation — it is effectively **part of the agent's behavior specification**. Agents read CONTEXT.md to know how to behave: what constraints to follow, what the intent is, where to route work. But agents also **update** CONTEXT.md as they work: when they discover a new constraint, resolve a trap, change an API, or learn a better way to do something, they persist this new knowledge into the context.
+
+This creates a feedback loop: the context shapes agent behavior, and agent behavior shapes the context. Over time, the Context Tree evolves — not just the code, but the knowledge that guides code creation. This is analogous to **epigenetic inheritance** in biology: beyond the static genome (the initial architecture), there is a dynamic layer of inherited modifications that accumulates through lived experience and shapes how genes are expressed. The Context Tree is both genotype (structural contract) and this epigenetic memory. This is the deepest sense in which the system is "self-evolving": the very knowledge that governs agent behavior is itself a living, growing artifact that improves through use.
+
 ### 2.2 The Temporal Dimension: The Phylogenetic Graph
 
 The Temporal Dimension models code evolution as a **Phylogenetic Graph** — a Directed Acyclic Graph (DAG) of immutable Git commits. The biological metaphor is deliberate: each commit is an organism in an evolutionary lineage, with parent-child relationships representing ancestry.
@@ -344,7 +368,7 @@ Genesis provides **inherited architectural context** through the Context Tree. A
 - Where to delegate work (from the routing table)
 - What constraints apply (from each level's constraints)
 
-This architectural awareness is **structural, not discovered** — it is inherited as part of the agent's initialization, not derived through expensive exploration.
+This architectural awareness is **structural, not discovered** — it is inherited as part of the agent's initialization, not derived through expensive exploration. Furthermore, because the inherited context is structured as a prefix tree, the shared ancestor tokens maximize KV cache reuse, making inference far cheaper than flat-context approaches where every agent must re-process the full codebase from scratch. And because agents persist their discoveries into CONTEXT.md as they work, the context itself accumulates wisdom over time — making the system genuinely self-improving, not merely self-executing.
 
 ### 7.2 Summary Comparison Table
 
@@ -429,6 +453,8 @@ EvoX Genesis represents a novel approach to autonomous software development that
 
 5. **LLM as Semantic Variation Operator** — using the LLM's semantic understanding to perform meaningful crossover and mutation across domain boundaries, enabling algorithmic serendipity.
 
+6. **The Self-Evolving Context Tree** — the hierarchical context is not static documentation but a living artifact that agents both read and update, accumulating wisdom over time. This makes the system genuinely self-evolving: the knowledge governing agent behavior improves through use, creating a positive feedback loop between structure and agency.
+
 These design choices position Genesis not merely as a coding assistant, but as an **evolutionary software development framework** — one that treats software creation as a hierarchical, recursive, evolutionary process guided by architectural contracts and powered by semantic AI operators. The framework's ability to scale to arbitrarily large codebases, recover from any failure, and explore solution spaces through both directed planning and open-ended novelty search makes it a distinct contribution to the field of autonomous software engineering.
 
 ---
@@ -507,6 +533,30 @@ Genesis的核心创新是两个正交维度——空间和时间——的交集�
 **上下文继承**自顶向下流动。被分配到`src/auth/oauth/`的智能体通过聚合从根 → `src/` → `src/auth/` → `src/auth/oauth/`的显式上下文来构建其世界观。这种继承的上下文提供了架构一致性，而不需要每个智能体重新推导整个系统结构。
 
 正式的上下文层次结构下至**目录级别**。一旦智能体针对特定文件，它就依赖LLM的自然代码理解能力来导航内部逻辑（文档字符串、注释、代码结构）。这一设计决策反映了现代LLM在文件级理解方面的天然优势，使得显式的子文件建模变得不必要。
+
+### 2.1.1 通过前缀树结构实现令牌效率
+
+层次化的上下文继承意味着，智能体的世界观是通过将从根到其分配节点的祖先CONTEXT.md文件拼接而构建的。关键在于，由于子树内的所有智能体共享相同的祖先节点集合，这种拼接形成了一棵**上下文的前缀树（trie）**。当父智能体委托给多个子智能体，或当顺序智能体在同一子树内工作时，共享的祖先上下文令牌已经存在于LLM的键值（KV）缓存中——它们不需要被重新计算。
+
+这是上下文树层次结构与Transformer注意力缓存工作方式之间的刻意结构对齐：树结构镜像了底层推理引擎的缓存局部性。树越深，在该子树中操作的智能体之间复用的前缀就越多。当父智能体委托给多个子智能体时，每个子智能体的提示以与父智能体已处理内容相同的祖先前缀开始，因此这些令牌的KV缓存条目被直接复用。这将本应是对重复上下文的O(n²)冗余注意力计算转化为共享前缀的近O(1)，使推理在系统扩展时显著更廉价、更快速。
+
+### 2.1.2 路由表作为委托指南针
+
+路由表不仅仅是文档——它是实现**精确委托**的机制。父智能体通过读取其CONTEXT.md路由表，准确知道哪个子节点拥有哪个功能区域。当它接收到一个目标时，可以高精度地将每个子任务路由到正确的子节点，而无需调查子树的内部或了解子节点的实现方式。
+
+这消除了传统智能体必须执行的昂贵且易错的探索——搜索目录、读取文件以发现结构、从代码推断责任边界。路由表实际上使每个父智能体成为一个知情的调度器：它一目了然地了解系统的分解。这也意味着委托错误被最小化。智能体不会意外地将数据库工作发送到认证子系统，因为路由表明确地将"数据库"映射到正确的子节点。因此，路由表将委托从模糊的、探索性的过程转变为确定性的查找。
+
+### 2.1.3 积累的智慧：上下文作为继承的经验
+
+上下文树不仅仅是静态的架构文档——它是一个**积累的智慧**的活态仓库。在每个节点工作的每个智能体都可以记录它所学到的东西：实现过程中发现的棘手约束、导致bug的重要陷阱、设计决策及其理由、性能注意事项。这些被记录在CONTEXT.md的约束和意图部分中，在智能体的瞬态会话之后持久化。
+
+在同一节点工作的未来智能体立即继承这些智慧——它们在开始工作时就已经知道了重要的陷阱和设计决策，而无需通过试错重新发现它们。这创造了一种**自我改进**的特性：系统随着时间的推移变得更聪明，因为每个智能体来之不易的洞见都被持久化并继承。在成熟的子树中工作的智能体受益于之前所有智能体的集体经验。学习一个教训的代价只支付一次——由第一个遇到它的智能体承担——然后该教训就可以无额外成本地提供给每个后续智能体。
+
+### 2.1.4 自我演化的上下文树
+
+上述特性汇聚为最深刻的洞见：上下文树是真正**自我演化**的。层次化的上下文不是被动的文档——它实际上是**智能体行为规范的一部分**。智能体读取CONTEXT.md来了解如何行动：遵循什么约束、意图是什么、将工作路由到哪里。但智能体在工作时也会**更新**CONTEXT.md：当它们发现新的约束、解决一个陷阱、更改API或学到更好的做事方式时，它们会将这些新知识持久化到上下文中。
+
+这创造了一个反馈循环：上下文塑造智能体行为，而智能体行为也塑造上下文。随着时间的推移，上下文树发生演化——不仅是代码，还有指导代码创建的知识。这类似于生物学中的**表观遗传继承**：在静态基因组（初始架构）之外，还存在一层通过生活经验积累的动态遗传修饰，它塑造了基因的表达方式。上下文树既是基因型（结构契约），也是这种表观遗传记忆。这是系统"自我演化"的最深层含义：指导智能体行为的知识本身就是一种活的、不断增长的制品，它通过使用而不断改进。
 
 ### 2.2 时间维度：系统发育图
 
@@ -779,7 +829,7 @@ Genesis通过上下文树提供**继承的架构上下文**。`src/auth/oauth/`�
 - 在哪里委托工作（从路由表）
 - 适用什么约束（从每一级的约束）
 
-这种架构感知是**结构化的，非发现的**——它作为智能体初始化的一部分被继承，而非通过昂贵的探索推导。
+这种架构感知是**结构化的，非发现的**——它作为智能体初始化的一部分被继承，而非通过昂贵的探索推导。此外，由于继承的上下文被结构化为前缀树，共享的祖先令牌最大化了KV缓存复用，使推理远比扁平上下文方法廉价——在后者中，每个智能体都必须从头重新处理整个代码库。而且，由于智能体在工作时将其发现持久化到CONTEXT.md中，上下文本身随着时间的推移积累智慧——使系统真正具有自我改进性，而不仅仅是自我执行。
 
 ### 7.2 总结比较表
 
@@ -863,6 +913,8 @@ EvoX Genesis代表了一种自主软件开发的全新方法，综合了演化�
 4. **多模态演化** ——同时支持自顶向下规划（简单模式）和基于新颖性搜索与质量多样性的自底向上（复杂模式），兼顾明确定义和开放式任务。
 
 5. **LLM作为语义变异算子** ——利用LLM的语义理解在领域边界间执行有意义的交叉和突变，实现算法意外发现。
+
+6. **自我演化的上下文树** ——层次化上下文不是静态文档，而是智能体既读取又更新的活的制品，随时间积累智慧。这使系统真正实现自我演化：指导智能体行为的知识通过使用而改进，在结构与能动性之间创造正向反馈循环。
 
 这些设计选择使Genesis不仅仅是一个编程助手，而是一个**演化式软件开发框架**——它将软件创建视为一个由架构契约指导、由语义AI算子驱动的层次化、递归的演化过程。该框架扩展到任意大代码库的能力、从任何故障中恢复的能力，以及通过定向规划和开放式新颖性搜索探索解空间的能力，使其成为自主软件工程领域的独特贡献。
 
