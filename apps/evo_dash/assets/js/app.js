@@ -137,10 +137,10 @@ const DirectoryPicker = {
     });
 
     this.el.addEventListener("click", async () => {
-      // In desktop mode, go straight to server-side picker
-      if (this.el.dataset.isDesktop === "true") {
-        this.pushEvent("pick_directory", {picker_id: this.pickerId});
-        return;
+      // In Tauri webview, use native dialog
+      if (window.__TAURI__) {
+        // Tauri dialog API will be wired up in a later task
+        // For now, fall through to browser API / server fallback
       }
 
       // Try the browser File System Access API (Chromium, secure context)
@@ -161,12 +161,9 @@ const DirectoryPicker = {
           }
           return;
         } catch (_err) {
-          // User cancelled or API failed — fall through to server-side fallback
+          // User cancelled or API failed — no fallback available
         }
       }
-
-      // Fallback: ask the server to open a native OS dialog
-      this.pushEvent("pick_directory", {picker_id: this.pickerId});
     });
   },
 };

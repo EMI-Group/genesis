@@ -55,56 +55,21 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 - `AgentsComponents` — Recursive path tree with connector lines and status coloring
 - `Layouts` — App layout with navbar, theme toggle, flash group
 
-## Desktop Mode
+## Desktop Mode (Tauri Shell)
 
-EvoDash can run as a native desktop application using the `:desktop` Hex package (v1.5.3) and Erlang `:wx`. When enabled, it opens a native OS window wrapping the Phoenix web interface.
+The backend is a **standalone web server** with NO GUI dependencies (no `:desktop`, no `:wx`). Desktop mode is provided externally by a **Tauri shell** (in `./desktop/` at the repository root) that launches this backend as a sidecar process.
 
-### Lazy Start (Headless-Safe)
-
-The app is fully usable headless (no display, no `:wx`). Neither `:wx` nor `:desktop` auto-start at boot:
-
-- `:wx` is **NOT** in `extra_applications` in `mix.exs` — it does not start at boot
-- The `:desktop` dependency uses `runtime: false` — it does not auto-start either
-- Both are explicitly started via `Application.ensure_all_started(:desktop)` inside `EvoDash.Application.start/2`, **only** when `desktop: true` config is set
-- `NativePicker.display_available?/0` guards against calling `:wx.new()` when no display is available, returning a graceful error instead of SIGSEGV
-
-This prevents the SIGSEGV crash that previously occurred when `:desktop`'s `Desktop.Env` GenServer called `:wx.new()` during unconditional auto-start on headless servers.
-
-### Activation
-
-Desktop mode is controlled by two config flags, both of which must be set:
-
-1. **`config :evo_dash, desktop: true`** — Application-level config (compile-time default: `false`)
-2. **`config :evo_dash, desktop_port: 4100`** — Port for the embedded HTTP server
-
-At runtime, set env var `EVOGIT_DESKTOP=1` (and optionally `EVOGIT_DESKTOP_PORT`) to activate. In `config/runtime.exs`, these are read and applied as application env. In dev mode (`config/dev.exs`), desktop is explicitly set to `false`.
-
-### Architecture
-
-- **`EvoDash.Application`** — Conditionally adds `{Desktop.Window, [...]}` to the supervision tree when `:desktop` is `true`. Before adding the window child, calls `Application.ensure_all_started(:desktop)` to explicitly start the `:desktop` application (and its `:wx` dependency) only when desktop mode is enabled — neither auto-starts at boot (see Lazy Start below). The window is configured with title "Genesis Dashboard", size `{1280, 800}`, and loads `http://localhost:<port>/?client=desktop`.
-- **`EvoDashWeb.Router`** — Contains a custom plug `detect_desktop_client/2` that checks for `?client=desktop` query param and sets `session[:is_desktop] = true`.
-- **`EvoDashWeb.NativePicker`** — Server-side native OS directory picker using Erlang's `:wxDirDialog`. Runs in a separate `Task` process with 120s timeout. Uses `:wx` lazily (not auto-started); gracefully degrades when no display is available (`display_available?/0` checks `DISPLAY`/`WAYLAND_DISPLAY` on Linux, assumes available on macOS/Windows) by returning `{:error, "..."}` instead of crashing the VM.
-- **`DashboardLive`** — Reads `session["is_desktop"]` and assigns it as `@is_desktop`, passes it to `DirectoryPicker` JS hook via `data-is-desktop` attribute.
-- **`DirectoryPicker` JS hook** — In desktop mode (`data-is-desktop="true"`), bypasses browser File System Access API and directly calls server-side `pick_directory` event (→ `NativePicker.pick_directory()`).
-
-### Native Window Configuration
-
-```elixir
-{Desktop.Window, [
-  app: :evo_dash,
-  id: :evo_dash_window,
-  title: "EvoGit Dashboard",
-  url: "http://localhost:#{port}/?client=desktop",
-  size: {1280, 800}
-]}
-```
+- **Directory picking** is handled client-side via the browser File System Access API, or Tauri's native dialog plugin when running in a Tauri webview.
+- The former `EvoDashWeb.NativePicker` module (server-side `:wx` directory dialog) has been removed.
+- There are NO references to `:desktop`, `:wx`, `Desktop.Window`, `desktop_port`, `is_desktop`, `?client=desktop`, `detect_desktop_client`, or `EVOGIT_DESKTOP` in the codebase.
 
 ### Release Configuration
 
-- **No `rel/` directory exists** — no custom release steps, no Dockerfile, no CI configuration.
+- **No `rel/` directory exists within this app** — no custom release steps, no Dockerfile.
 - The umbrella `mix.exs` defines a release named `:evogit` including both apps (`evo_git: :permanent`, `evo_dash: :permanent`).
 - `config/runtime.exs` handles `PHX_SERVER=true` to enable the Phoenix server in release mode.
 - Production requires `SECRET_KEY_BASE` and `PHX_HOST` env vars.
+- The Tauri desktop shell (separate project at `./desktop/`) packages the backend as a sidecar for desktop distribution.
 
 ### Static Assets (`priv/static/`)
 
@@ -135,6 +100,4 @@ EvoDash uses **Gettext** for internationalization. All user-facing strings in Li
 - Single-node (DNSCluster configured but no distributed clustering)
 - Naming conventions: domain modules in `./lib/evo_dash/`, web modules in `./lib/evo_dash_web/`
 - Build: `mix assets.build` (esbuild + tailwind), `mix assets.deploy` (minified + digested)
-- Desktop mode is lazy-started — `:wx` and `:desktop` do NOT auto-start at boot; they are started via `Application.ensure_all_started(:desktop)` only when desktop mode is enabled. The app gracefully handles missing `:wx` / headless environments (no display) without crashing.
 - No CI/CD pipeline, no Docker, no `rel/` directory — release packaging not yet configured
-- The `:desktop` dependency (hex package v1.5.3, `runtime: false`) provides the native window wrapper via `Desktop.Window` — started lazily only in desktop mode

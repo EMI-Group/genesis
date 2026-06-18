@@ -34,7 +34,6 @@ defmodule EvoDashWeb.DashboardLive do
         <EvoDashWeb.DashboardComponents.project_selector
           active_project={@active_project}
           recent_projects={@recent_projects}
-          is_desktop={@is_desktop}
           show_open_form={@show_open_project_form}
           path_suggestions={@path_suggestions}
         />
@@ -65,7 +64,6 @@ defmodule EvoDashWeb.DashboardLive do
             new_repo_id={@new_repo_id}
             new_repo_path={@new_repo_path}
             new_repo_name={@new_repo_name}
-            is_desktop={@is_desktop}
           />
         </div>
 
@@ -216,9 +214,7 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def mount(_params, session, socket) do
-    is_desktop = Map.get(session, "is_desktop", false)
-
+  def mount(_params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
@@ -237,7 +233,6 @@ defmodule EvoDashWeb.DashboardLive do
 
     socket =
       socket
-      |> assign(:is_desktop, is_desktop)
       |> assign(:active_project, nil)
       |> assign(:active_project_path, nil)
       |> assign(:show_open_project_form, false)
@@ -724,25 +719,6 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event("path_input", %{"path" => value}, socket) do
     suggestions = path_suggestions(value)
     {:noreply, assign(socket, :path_suggestions, suggestions)}
-  end
-
-  @impl true
-  def handle_event("pick_directory", %{"picker_id" => picker_id}, socket) do
-    case EvoDashWeb.NativePicker.pick_directory() do
-      {:ok, path} ->
-        {:noreply, push_event(socket, "picker_result:#{picker_id}", %{path: path})}
-
-      {:error, :cancelled} ->
-        {:noreply, socket}
-
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Could not open directory picker: %{reason}", reason: reason)
-         )}
-    end
   end
 
   @impl true
