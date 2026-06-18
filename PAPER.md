@@ -417,7 +417,6 @@ These design choices position Genesis not merely as a coding assistant, but as a
 6. Simon, H. A. (1962). The architecture of complexity. *Proceedings of the American Philosophical Society*, 106(6), 467–482.
 
 ---
----
 
 # EvoX Genesis：面向自主软件开发的双维度演化框架
 
