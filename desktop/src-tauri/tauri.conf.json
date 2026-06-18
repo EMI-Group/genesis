@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Genesis",
+  "version": "0.1.0",
+  "identifier": "com.evogit.desktop",
+  "build": {
+    "beforeDevCommand": "",
+    "devUrl": "http://localhost:4100",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Genesis Dashboard",
+        "url": "http://localhost:4100",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "sidecars/evogit-backend"
+    ],
+    "publisher": "EvoGit",
+    "copyright": "Copyright © 2025 EvoGit. All rights reserved.",
+    "category": "DeveloperTool",
+    "shortDescription": "Evolutionary software development with AI agents",
+    "longDescription": "EvoGit is an evolutionary software development framework where AI agents create, analyze, and modify codebases."
+  }
+}
