@@ -26,8 +26,8 @@ const POLL_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Environment variables passed to the sidecar process.
 ///
-/// These mirror the values set by the bundled desktop launcher scripts
-/// (`rel/overlays/desktop/`).
+/// These configure the Phoenix backend to run as a local, single-user
+/// server (no distributed Erlang, fixed port, server mode enabled).
 fn sidecar_env() -> [(&'static str, &'static str); 6] {
     [
         ("PORT", "4100"),
