@@ -119,7 +119,7 @@
             echo "  cargo install tauri-cli --version \"^2.0\""
             echo ""
             echo "  # 4. Bundle vendor binaries into the release"
-            echo "  ./nix/bundle-vendor.sh   # (creates the script first: see flake comments)"
+            echo "  ./nix/bundle-vendor.sh"
             echo ""
             echo "  # 5. Build the Burrito-wrapped Elixir release"
             echo "  MIX_ENV=prod mix release evogit_desktop"
