@@ -29,6 +29,7 @@ The full design specification is in `AGENTS.md`.
 | File | Purpose |
 |------|---------|
 | `mix.exs` | Umbrella Mix project — apps_path, release config (`:evogit` release with both apps) |
+| `flake.nix` | Nix flake — `devShells.default` provides a complete NixOS toolchain (Erlang/OTP 29, Elixir 1.20, Rust, Zig 0.15.2, Tauri v2 native deps) for local desktop app builds |
 | `AGENTS.md` | Full EvoGit design specification (dual-dimension architecture, agent model, runtime phases) |
 | `README.md` | User-facing documentation: installation, CLI usage, architecture overview |
 | `.formatter.exs` | Code format configuration |
