@@ -83,10 +83,14 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 
 - **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
 - **Build process**: Burrito-wrapped Elixir release (`mix release evogit_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers
+- **Job structure**: Two jobs — `build-unix` (matrix: macOS arm64/x64 + Linux x64/arm64) and `build-windows` (x86_64). macOS and Linux share a common Unix step sequence; Windows is separate (bash shell, MinGit).
 - **macOS**: Builds ARM64 (macOS-14) and x86_64 (macos-13) → `.dmg` / `.app` bundles
+- **Linux**: Builds x86_64 (ubuntu-24.04) and ARM64 (ubuntu-24.04-arm) → `.deb` / `.rpm` / AppImage
 - **Windows**: Builds x86_64 on `windows-2022` → `.msi` / `.exe` (NSIS) installers
-- **Toolchains**: CI requires Elixir/OTP, Rust (Tauri), and Zig (Burrito wrapper compilation) on all platforms
+- **Caching**: Mix deps (`deps/`), Mix build (`_build/`), and Rust target (`Swatinem/rust-cache@v2`) are cached per platform/target to speed up CI
+- **Toolchains**: CI requires Elixir/OTP, Rust (Tauri), and Zig (Burrito wrapper compilation) on all platforms; Linux also needs system packages (webkit2gtk, etc.)
 - **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
+- **Burrito targets**: `darwin_arm64`, `darwin_amd64`, `windows_x64`, `linux_x64`, `linux_arm64` (defined in `mix.exs`)
 - **Version pinning**: `.tool-versions` pins OTP 29 / Elixir 1.20.1
 
 The legacy launcher scripts and manual `.app`/zip packaging have been removed — Tauri generates native bundles and the Rust sidecar (`desktop/src-tauri/src/sidecar.rs`) handles backend lifecycle with the correct env vars.
