@@ -19,6 +19,7 @@ The full design specification is in `AGENTS.md`.
 - `./apps/evo_dash/` → Web dashboard (LiveView pages, components, task registry)
 - `./config/` → Environment-based Elixir configuration
 - `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management)
+- `./nix/` → NixOS build support (vendor bundling helper for local desktop builds)
 - `./.github/workflows/` → CI/CD pipelines (desktop app build on release)
 
 ## API Surface
