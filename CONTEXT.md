@@ -96,3 +96,23 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 - **Version pinning**: `.tool-versions` pins OTP 29 / Elixir 1.20.1
 
 The legacy launcher scripts and manual `.app`/zip packaging have been removed — Tauri generates native bundles and the Rust sidecar (`desktop/src-tauri/src/sidecar.rs`) handles backend lifecycle with the correct env vars.
+
+### NixOS Local Build
+
+For building and testing the desktop app on NixOS, a `flake.nix` is provided at the repository root:
+
+```bash
+# Enter the development shell with all native dependencies (Erlang/OTP 29,
+# Elixir 1.20, Rust, Zig 0.15.2, webkitgtk-4.1, etc.)
+nix develop
+
+# Then follow the build steps printed by the shell hook:
+#   1. mix deps.get && mix assets.setup && mix assets.deploy
+#   2. cargo install tauri-cli --version "^2.0"   (first time only)
+#   3. ./nix/bundle-vendor.sh                      (vendor binaries)
+#   4. MIX_ENV=prod mix release evogit_desktop      (Burrito release)
+#   5. cp burrito_out/evogit_desktop_* desktop/src-tauri/sidecars/evogit-backend-<rust-target>
+#   6. cd desktop/src-tauri && cargo tauri build    (native desktop app)
+```
+
+**Key constraint:** Burrito 1.5.0 (pinned in `mix.lock`) hard-requires exactly Zig 0.15.2 — it calls `exit(1)` on any other version. Since nixpkgs does not yet ship Zig 0.15.x, the flake uses `mitchellh/zig-overlay` to provide the exact version. The flake locks this in `flake.lock`.
