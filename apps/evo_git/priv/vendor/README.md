@@ -6,6 +6,8 @@ Directory layout:
 - `macos-arm64/` - Apple Silicon (M1/M2/M3)
 - `macos-x86_64/` - Intel Mac
 - `windows-x64/` - Windows x86_64
+- `linux-x86_64/` - Linux x86_64 (Intel/AMD)
+- `linux-arm64/` - Linux ARM64 (aarch64)
 
 On Windows, MinGit is extracted to `windows-x64/mingit/` with the git
 executable at `mingit/cmd/git.exe`. The resolver handles this automatically.

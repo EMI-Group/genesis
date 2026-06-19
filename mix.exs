@@ -26,7 +26,8 @@ defmodule EvoGit.Umbrella.MixProject do
               darwin_arm64: [os: :darwin, cpu: :aarch64],
               darwin_amd64: [os: :darwin, cpu: :x86_64],
               windows_x64: [os: :windows, cpu: :x86_64],
-              linux_x64: [os: :linux, cpu: :x86_64]
+              linux_x64: [os: :linux, cpu: :x86_64],
+              linux_arm64: [os: :linux, cpu: :aarch64]
             ]
           ]
         ]
