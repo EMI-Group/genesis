@@ -150,14 +150,14 @@ jobs:
 
       - name: Locate Burrito binary
         run: |
-          echo "Contents of burrito_ex output directory:"
-          ls -la _build/prod/rel/evogit_desktop/burrito_ex/ || true
+          echo "Contents of burrito_out directory:"
+          ls -la burrito_out/ || true
 
       - name: Place sidecar binary
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          cp _build/prod/rel/evogit_desktop/burrito_ex/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}"
+          cp burrito_out/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}"
           chmod +x "${SIDECAR_DIR}/"*
 
           echo "Sidecar binaries:"
@@ -281,15 +281,15 @@ jobs:
       - name: Locate Burrito binary
         shell: bash
         run: |
-          echo "Contents of burrito_ex output directory:"
-          ls -la _build/prod/rel/evogit_desktop/burrito_ex/ || true
+          echo "Contents of burrito_out directory:"
+          ls -la burrito_out/ || true
 
       - name: Place sidecar binary
         shell: bash
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          cp _build/prod/rel/evogit_desktop/burrito_ex/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-x86_64-pc-windows-msvc.exe"
+          cp burrito_out/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-x86_64-pc-windows-msvc.exe"
 
           echo "Sidecar binaries:"
           ls -la "${SIDECAR_DIR}/"
