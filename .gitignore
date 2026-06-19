@@ -26,5 +26,14 @@ evo_git-*.tar
 
 # Genesis runtime artifacts
 .evogit/
+
 # Ignore local config files
 *.local.exs
+
+# Nix — flake.lock is committed, but result/ symlinks from nix build are not
+/result
+/result-*
+
+# Vendor binaries (downloaded at build time, not committed)
+/apps/evo_git/priv/vendor/*/git
+/apps/evo_git/priv/vendor/*/rg
