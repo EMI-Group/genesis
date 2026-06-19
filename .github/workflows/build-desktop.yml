@@ -24,34 +24,72 @@ permissions:
   contents: write
 
 jobs:
-  build-macos:
-    name: Build macOS (${{ matrix.arch }})
+  build-unix:
+    name: Build ${{ matrix.os_label }} (${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: arm64
+          - os_label: macOS
+            arch: arm64
             runner: macos-14
             burrito_target: darwin_arm64
             rust_target: aarch64-apple-darwin
             rg_target: aarch64-apple-darwin
             vendor_platform: macos-arm64
-          - arch: x64
+          - os_label: macOS
+            arch: x64
             runner: macos-13
             burrito_target: darwin_amd64
             rust_target: x86_64-apple-darwin
             rg_target: x86_64-apple-darwin
             vendor_platform: macos-x86_64
+          - os_label: Linux
+            arch: x64
+            runner: ubuntu-24.04
+            burrito_target: linux_x64
+            rust_target: x86_64-unknown-linux-gnu
+            rg_target: x86_64-unknown-linux-musl
+            vendor_platform: linux-x86_64
+          - os_label: Linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            burrito_target: linux_arm64
+            rust_target: aarch64-unknown-linux-gnu
+            rg_target: aarch64-unknown-linux-gnu
+            vendor_platform: linux-arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Install Linux system dependencies
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
           otp-version: ${{ env.OTP_VERSION }}
           elixir-version: ${{ env.ELIXIR_VERSION }}
+
+      - name: Cache mix deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: mix-deps-${{ matrix.vendor_platform }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-deps-${{ matrix.vendor_platform }}-
+
+      - name: Cache mix build
+        uses: actions/cache@v4
+        with:
+          path: _build
+          key: mix-build-${{ matrix.vendor_platform }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-build-${{ matrix.vendor_platform }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -60,6 +98,12 @@ jobs:
 
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: ${{ matrix.rust_target }}
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0"
@@ -108,7 +152,6 @@ jobs:
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          # Burrito output is at _build/prod/rel/evogit_desktop/burrito_ex/
           cp _build/prod/rel/evogit_desktop/burrito_ex/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}"
           chmod +x "${SIDECAR_DIR}/"*
 
@@ -127,6 +170,9 @@ jobs:
           files: |
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/*.app
+            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb/*.deb
+            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/rpm/*.rpm
+            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/appimage/*.AppImage
 
   build-windows:
     name: Build Windows (x86_64)
@@ -146,6 +192,22 @@ jobs:
           otp-version: ${{ env.OTP_VERSION }}
           elixir-version: ${{ env.ELIXIR_VERSION }}
 
+      - name: Cache mix deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: mix-deps-windows-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-deps-windows-
+
+      - name: Cache mix build
+        uses: actions/cache@v4
+        with:
+          path: _build
+          key: mix-build-windows-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-build-windows-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -153,6 +215,12 @@ jobs:
 
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: x86_64-pc-windows-msvc
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0"
@@ -214,7 +282,6 @@ jobs:
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          # Burrito output is at _build/prod/rel/evogit_desktop/burrito_ex/
           cp _build/prod/rel/evogit_desktop/burrito_ex/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-x86_64-pc-windows-msvc.exe"
 
           echo "Sidecar binaries:"
