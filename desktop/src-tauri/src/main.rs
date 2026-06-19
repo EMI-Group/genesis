@@ -19,6 +19,17 @@ const BACKEND_READY_TIMEOUT_SECS: u64 = 30;
 type SidecarHandle = Mutex<Option<CommandChild>>;
 
 fn main() {
+    // On Linux, WebKitGTK's hardware-accelerated EGL compositing fails to
+    // initialize in confined environments such as AppImage, producing
+    // "Could not create default EGL display: EGL_BAD_PARAMETER. Aborting..."
+    // and rendering an empty window. Disable compositing mode and the
+    // DMA-BUF renderer to fall back to software rendering.
+    #[cfg(target_os = "linux")]
+    {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
