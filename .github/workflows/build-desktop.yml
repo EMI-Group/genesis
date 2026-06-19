@@ -40,13 +40,15 @@ jobs:
             rust_target: aarch64-apple-darwin
             rg_target: aarch64-apple-darwin
             vendor_platform: macos-arm64
+            tauri_bundles: ""
           - os_label: macOS
             arch: x64
-            runner: macos-13
+            runner: macos-15-intel
             burrito_target: darwin_amd64
             rust_target: x86_64-apple-darwin
             rg_target: x86_64-apple-darwin
             vendor_platform: macos-x86_64
+            tauri_bundles: ""
           - os_label: Linux
             arch: x64
             runner: ubuntu-24.04
@@ -54,6 +56,7 @@ jobs:
             rust_target: x86_64-unknown-linux-gnu
             rg_target: x86_64-unknown-linux-musl
             vendor_platform: linux-x86_64
+            tauri_bundles: "deb,rpm,appimage"
           - os_label: Linux
             arch: arm64
             runner: ubuntu-24.04-arm
@@ -61,6 +64,9 @@ jobs:
             rust_target: aarch64-unknown-linux-gnu
             rg_target: aarch64-unknown-linux-gnu
             vendor_platform: linux-arm64
+            # AppImage is excluded on ARM64: appimagetool/linuxdeploy are
+            # x86_64-only binaries and the bundling step fails on ARM hosts.
+            tauri_bundles: "deb,rpm"
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -166,7 +172,11 @@ jobs:
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
-          cargo tauri build --target ${{ matrix.rust_target }}
+          if [ -n "${{ matrix.tauri_bundles }}" ]; then
+            cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.tauri_bundles }}
+          else
+            cargo tauri build --target ${{ matrix.rust_target }}
+          fi
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
@@ -180,11 +190,27 @@ jobs:
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/appimage/*.AppImage
 
   build-windows:
-    name: Build Windows (x86_64)
-    runs-on: windows-2022
+    name: Build Windows (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2022
+            rust_target: x86_64-pc-windows-msvc
+          - arch: arm64
+            runner: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
     env:
+      # Both Windows targets use the x64 Burrito release because Erlang/OTP has
+      # no native ARM64 Windows build.  On ARM64 machines the x64 ERTS runs via
+      # Windows' transparent x86_64 emulation layer, while the Tauri shell
+      # itself compiles natively for aarch64.
       burrito_target: windows_x64
-      rust_target: x86_64-pc-windows-msvc
+      rust_target: ${{ matrix.rust_target }}
+      # ripgrep and MinGit are x64 for both architectures; they run through x64
+      # emulation on ARM64 Windows.
       rg_target: x86_64-pc-windows-msvc
       vendor_platform: windows-x64
     steps:
@@ -201,22 +227,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps
-          key: mix-deps-windows-${{ hashFiles('mix.lock') }}
+          key: mix-deps-windows-${{ matrix.rust_target }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            mix-deps-windows-
+            mix-deps-windows-${{ matrix.rust_target }}-
 
       - name: Cache mix build
         uses: actions/cache@v4
         with:
           path: _build
-          key: mix-build-windows-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          key: mix-build-windows-${{ matrix.rust_target }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            mix-build-windows-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+            mix-build-windows-${{ matrix.rust_target }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.rust_target }}
 
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
@@ -227,7 +253,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
-          key: x86_64-pc-windows-msvc
+          key: ${{ matrix.rust_target }}
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0"
@@ -289,7 +315,7 @@ jobs:
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          cp burrito_out/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-x86_64-pc-windows-msvc.exe"
+          cp burrito_out/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}.exe"
 
           echo "Sidecar binaries:"
           ls -la "${SIDECAR_DIR}/"
@@ -298,12 +324,12 @@ jobs:
         shell: bash
         run: |
           cd desktop/src-tauri
-          cargo tauri build --target x86_64-pc-windows-msvc
+          cargo tauri build --target ${{ matrix.rust_target }}
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: |
-            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/msi/*.msi
+            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/nsis/*.exe
