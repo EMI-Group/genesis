@@ -85,10 +85,10 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 
 - **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
 - **Build process**: Burrito-wrapped Elixir release (`mix release evogit_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers
-- **Job structure**: Two jobs — `build-unix` (matrix: macOS arm64/x64 + Linux x64/arm64) and `build-windows` (x86_64). macOS and Linux share a common Unix step sequence; Windows is separate (bash shell, MinGit).
-- **macOS**: Builds ARM64 (macOS-14) and x86_64 (macos-13) → `.dmg` / `.app` bundles
-- **Linux**: Builds x86_64 (ubuntu-24.04) and ARM64 (ubuntu-24.04-arm) → `.deb` / `.rpm` / AppImage
-- **Windows**: Builds x86_64 on `windows-2022` → `.msi` / `.exe` (NSIS) installers
+- **Job structure**: Two jobs — `build-unix` (matrix: macOS arm64/x64 + Linux x64/arm64) and `build-windows` (matrix: x86_64 + ARM64). macOS and Linux share a common Unix step sequence; Windows is separate (bash shell, MinGit).
+- **macOS**: Builds ARM64 (`macos-14`) and x86_64 (`macos-15-intel`) → `.dmg` / `.app` bundles
+- **Linux**: Builds x86_64 (`ubuntu-24.04`) and ARM64 (`ubuntu-24.04-arm`) → `.deb` / `.rpm` / AppImage (AppImage excluded on ARM64 — `appimagetool`/`linuxdeploy` are x86_64-only)
+- **Windows**: Builds x86_64 (`windows-2022`) and ARM64 (`windows-11-arm`) → `.msi` / `.exe` (NSIS) installers. Both use the x64 Burrito/ERTS release (no native ARM64 Erlang/OTP build exists; x64 ERTS runs via Windows' emulation layer on ARM), while the Tauri shell compiles natively (`aarch64-pc-windows-msvc`).
 - **Caching**: Mix deps (`deps/`), Mix build (`_build/`), and Rust target (`Swatinem/rust-cache@v2`) are cached per platform/target to speed up CI
 - **Toolchains**: CI requires Elixir/OTP, Rust (Tauri), and Zig (Burrito wrapper compilation) on all platforms; Linux also needs system packages (webkit2gtk, etc.)
 - **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
