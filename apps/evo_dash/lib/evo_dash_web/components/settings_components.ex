@@ -599,7 +599,7 @@ defmodule EvoDashWeb.SettingsComponents do
           <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
             <.icon name="hero-magnifying-glass" class="size-4 text-base-content/40 group-focus-within:text-primary transition-colors" />
           </div>
-          <form class="contents">
+          <form id="settings-search" class="contents" phx-submit="noop">
             <input
               type="text"
               name="value"

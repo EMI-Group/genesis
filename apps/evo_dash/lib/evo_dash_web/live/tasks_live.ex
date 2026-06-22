@@ -27,7 +27,7 @@ defmodule EvoDashWeb.TasksLive do
 
       <!-- Filter Bar -->
       <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-4 sm:p-5 mb-6 animate-fade-in-up animation-delay-100">
-        <form>
+        <form id="task-filters" phx-submit="noop">
           <div class="flex flex-col sm:flex-row gap-3">
           <!-- Status Filter -->
           <div class="form-control">
@@ -303,6 +303,10 @@ defmodule EvoDashWeb.TasksLive do
      |> assign(:search_query, query)
      |> assign_filtered_tasks()}
   end
+
+  # Prevents page reload when pressing Enter in the filter/search form
+  @impl true
+  def handle_event("noop", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("reset_filters", _params, socket) do

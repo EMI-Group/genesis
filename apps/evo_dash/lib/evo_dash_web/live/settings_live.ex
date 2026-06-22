@@ -252,6 +252,10 @@ defmodule EvoDashWeb.SettingsLive do
     {:noreply, assign(socket, :search_text, text)}
   end
 
+  # Prevents page reload when pressing Enter in the search form
+  @impl true
+  def handle_event("noop", _params, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("save_category", params, socket) do
     category =
