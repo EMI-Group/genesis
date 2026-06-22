@@ -7,17 +7,17 @@ defmodule EvoGit.Core.ForeignRepoTest do
       repo = ForeignRepo.new(:test, "/tmp/test-repo")
       assert repo.id == :test
       assert repo.root == Path.expand("/tmp/test-repo")
-      assert repo.name == "test"
+      assert repo.description == nil
     end
 
-    test "accepts custom name" do
-      repo = ForeignRepo.new(:orig, "/tmp/orig", name: "Original Project")
-      assert repo.name == "Original Project"
+    test "accepts custom description" do
+      repo = ForeignRepo.new(:orig, "/tmp/orig", description: "The original project")
+      assert repo.description == "The original project"
     end
 
-    test "defaults name to stringified id" do
+    test "defaults description to nil" do
       repo = ForeignRepo.new(:my_repo, "/tmp/my")
-      assert repo.name == "my_repo"
+      assert repo.description == nil
     end
 
     test "expands relative paths via Path.expand" do

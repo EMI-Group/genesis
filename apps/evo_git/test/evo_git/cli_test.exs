@@ -10,7 +10,7 @@ defmodule EvoGit.CLITest do
       repo = hd(repos)
       assert repo.id == :original
       assert repo.root == Path.expand("/Source/original-proj")
-      assert repo.name == "original"
+      assert repo.description == nil
     end
 
     test "parses path-only format (uses basename as id)" do

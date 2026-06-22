@@ -420,12 +420,12 @@ defmodule EvoGit.CLI do
         Enum.map(values, fn spec ->
           case String.split(spec, ":", parts: 2) do
             [path] ->
-              # No name specified, use directory basename
-              name = path |> Path.basename() |> String.to_atom()
-              EvoGit.Core.ForeignRepo.new(name, path)
-            [name_str, path] ->
-              name = String.to_atom(name_str)
-              EvoGit.Core.ForeignRepo.new(name, path)
+              # No id specified, use directory basename
+              id = path |> Path.basename() |> String.to_atom()
+              EvoGit.Core.ForeignRepo.new(id, path)
+            [id_str, path] ->
+              id = String.to_atom(id_str)
+              EvoGit.Core.ForeignRepo.new(id, path)
           end
         end)
     end
@@ -464,10 +464,11 @@ defmodule EvoGit.CLI do
       -p, --path <path>           Path to the git repository (default: current directory).
       -m, --model <model>         Override the default LLM model.
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).
-      -R, --foreign-repo <name:path | path>
+      -R, --foreign-repo <path>
                                   Add a foreign repository for cross-repo operations.
-                                  Can be specified multiple times. If name is omitted,
-                                  the directory basename is used. (e.g., -R original:/Source/proj)
+                                  Can be specified multiple times. To assign a custom id,
+                                  prefix the path with `id:`. If omitted, the directory
+                                  basename is used as the id. (e.g., -R original:/Source/proj)
       -S, --seeds <path>          Path to a seed code file for bottom-up evolution.
                                   Can be specified multiple times. User seeds are
                                   preferred over built-in seeds. (complex mode only)

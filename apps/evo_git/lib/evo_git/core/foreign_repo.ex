@@ -2,7 +2,7 @@ defmodule EvoGit.Core.ForeignRepo do
   @moduledoc """
   Represents a reference to a Git repository in the multi-repo system.
 
-  Each repo has a unique `id` (atom), an absolute `root` path, and a human-readable `name`.
+  Each repo has a unique `id` (atom), an absolute `root` path, and an optional `description`.
   The primary repo always has id `:primary`. Foreign repos have user-defined ids.
 
   ## Usage
@@ -11,18 +11,19 @@ defmodule EvoGit.Core.ForeignRepo do
 
       [foreign_repos.original]
       path = "/Source/original-proj"
+      description = "The original monorepo"
 
       [foreign_repos.reference]
       path = "/Source/rust-rewrite-proj"
   """
 
   @enforce_keys [:id, :root]
-  defstruct [:id, :root, :name]
+  defstruct [:id, :root, :description]
 
   @type t :: %__MODULE__{
           id: atom(),
           root: String.t(),
-          name: String.t() | nil
+          description: String.t() | nil
         }
 
   @doc """
@@ -32,15 +33,15 @@ defmodule EvoGit.Core.ForeignRepo do
   - `id` - unique atom identifier (e.g., `:primary`, `:original`)
   - `root` - absolute path to the repository root
   - `opts` - keyword options:
-    - `:name` - human-readable name (defaults to id as string)
+    - `:description` - human-readable description of the repo (optional, defaults to nil)
 
   ## Examples
 
-      i18> ForeignRepo.new(:primary, "/Source/my-project")
-      %ForeignRepo{id: :primary, root: "/Source/my-project", name: "primary"}
+      iex> ForeignRepo.new(:primary, "/Source/my-project")
+      %ForeignRepo{id: :primary, root: "/Source/my-project", description: nil}
 
-      i18> ForeignRepo.new(:original, "/Source/legacy-proj", name: "Legacy Project")
-      %ForeignRepo{id: :original, root: "/Source/legacy-proj", name: "Legacy Project"}
+      iex> ForeignRepo.new(:original, "/Source/legacy-proj", description: "The legacy codebase")
+      %ForeignRepo{id: :original, root: "/Source/legacy-proj", description: "The legacy codebase"}
   """
   @spec new(atom(), String.t(), keyword()) :: t()
   def new(id, root, opts \\ []) when is_atom(id) and is_binary(root) do
@@ -49,7 +50,7 @@ defmodule EvoGit.Core.ForeignRepo do
     %__MODULE__{
       id: id,
       root: root,
-      name: Keyword.get(opts, :name, Atom.to_string(id))
+      description: Keyword.get(opts, :description)
     }
   end
 

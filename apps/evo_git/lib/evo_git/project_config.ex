@@ -102,7 +102,7 @@ defmodule EvoGit.ProjectConfig do
   Each entry under `[foreign_repos]` is a table with:
 
   - `path` (required) - absolute path to the foreign repo
-  - `name` (optional) - human-readable name
+  - `description` (optional) - human-readable description of the repo
   """
   @spec foreign_repos(String.t()) :: [EvoGit.Core.ForeignRepo.t()]
   def foreign_repos(repo_root) do
@@ -111,8 +111,8 @@ defmodule EvoGit.ProjectConfig do
         Enum.map(repos, fn {id_str, config} ->
           id = String.to_atom(id_str)
           path = Map.fetch!(config, "path")
-          name = Map.get(config, "name")
-          ForeignRepo.new(id, path, name: name)
+          description = Map.get(config, "description")
+          ForeignRepo.new(id, path, description: description)
         end)
 
       _ ->

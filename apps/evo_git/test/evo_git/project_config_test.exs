@@ -128,11 +128,11 @@ defmodule EvoGit.ProjectConfigTest do
       assert roots == ["/Source/original-proj", "/Source/rust-rewrite-proj"]
     end
 
-    test "handles optional name field", %{tmp_dir: tmp_dir} do
+    test "handles optional description field", %{tmp_dir: tmp_dir} do
       toml_content = """
       [foreign_repos.original]
       path = "/Source/original-proj"
-      name = "Legacy Project"
+      description = "Legacy Project"
 
       [foreign_repos.reference]
       path = "/Source/rust-rewrite-proj"
@@ -145,10 +145,10 @@ defmodule EvoGit.ProjectConfigTest do
       original = Enum.find(repos, &(&1.id == :original))
       reference = Enum.find(repos, &(&1.id == :reference))
 
-      # Explicit name is used when provided
-      assert original.name == "Legacy Project"
-      # Falls back to nil when name is omitted (default name is set by ForeignRepo.new/3 only when name key is absent)
-      assert reference.name == nil
+      # Explicit description is used when provided
+      assert original.description == "Legacy Project"
+      # Defaults to nil when description is omitted
+      assert reference.description == nil
     end
 
     test "returns empty list and logs warning for invalid foreign_repos config", %{

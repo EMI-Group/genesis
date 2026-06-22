@@ -893,11 +893,14 @@ defmodule EvoGit.Agent do
         else
           rows =
             repos
-            |> Enum.map(fn repo -> "| #{repo.name} | :#{repo.id} | #{repo.root} |" end)
+            |> Enum.map(fn repo ->
+              desc = repo.description || "(no description)"
+              "| :#{repo.id} | #{repo.root} | #{desc} |"
+            end)
             |> Enum.join("\n")
 
           "# Foreign Repositories\n\n" <>
-            "| Name | ID | Path |\n|------|----|------|\n#{rows}\n\n" <>
+            "| ID | Path | Description |\n|------|------|-------------|\n#{rows}\n\n" <>
             "Use absolute paths (e.g., `#{hd(repos).root}`) when delegating to foreign repositories."
         end
       end
