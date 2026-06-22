@@ -204,42 +204,21 @@ defmodule EvoGit.Agent do
         current_sha
       end
 
-      # Checks and sends warnings when approaching time/turn limits.
-      # Threshold configs and messages live in EvoGit.Agents.Warnings.
+      # Checks and sends turn-limit warnings via the adaptive TurnWarning module.
+      # See EvoGit.Agent.TurnWarning for threshold logic and message generation.
       defp check_limit_warnings(state) do
-        state
-        |> maybe_warn_limit(:turns, EvoGit.Agents.Warnings.turn_thresholds(state.max_turns))
-      end
+        case EvoGit.Agent.TurnWarning.check(
+               state.turn,
+               state.max_turns,
+               state.last_warned_level
+             ) do
+          {:ok, warning} ->
+            msg = EvoGit.Agent.TurnWarning.message(warning)
+            new_context = ReqLLM.Context.append(state.context, user(msg))
+            %{state | context: new_context, last_warned_level: warning.level}
 
-      defp maybe_warn_limit(state, :turns, thresholds) do
-        percentage_used = div(state.turn * 100, state.max_turns)
-        last_warned = state.last_warned_turns_percent
-        threshold_values = Enum.map(thresholds, fn {t, _} -> t end)
-
-        {should_warn, new_last_warned} =
-          check_thresholds(percentage_used, last_warned, threshold_values)
-
-        if should_warn do
-          {_, msg_fn} = Enum.find(thresholds, fn {t, _} -> t == new_last_warned end)
-          warning_msg = msg_fn.(percentage_used, state)
-
-          new_context = ReqLLM.Context.append(state.context, user(warning_msg))
-          %{state | context: new_context, last_warned_turns_percent: new_last_warned}
-        else
-          state
-        end
-      end
-
-      # Returns {should_warn, new_last_warned}
-      defp check_thresholds(current_percent, last_warned, thresholds) do
-        passed_thresholds =
-          thresholds
-          |> Enum.filter(&(&1 > last_warned and &1 <= current_percent))
-          |> Enum.sort()
-
-        case passed_thresholds do
-          [] -> {false, last_warned}
-          [h | _] -> {true, h}
+          :none ->
+            state
         end
       end
 
