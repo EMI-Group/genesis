@@ -367,6 +367,7 @@ defmodule EvoGit.AgentScheduler do
     max_depth = Map.get(scheduler_config, :max_agent_depth, 8)
     max_retries = Map.get(scheduler_config, :max_retries, 15)
     max_turns = Map.get(scheduler_config, :max_turns, 128)
+    max_turns_root = Map.get(scheduler_config, :max_turns_root, 128)
     llm_model = Map.get(config, :llm, %{}) |> Map.get(:model)
     llm_generation_params = EvoGit.Config.Schema.llm_generation_params(config)
     sandbox_mode = Map.get(sandbox_config, :mode)
@@ -400,6 +401,7 @@ defmodule EvoGit.AgentScheduler do
     max_depth = Keyword.get(opts, :max_depth, max_depth)
     max_retries = Keyword.get(opts, :max_retries, max_retries)
     max_turns = Keyword.get(opts, :max_turns, max_turns)
+    max_turns_root = Keyword.get(opts, :max_turns_root, max_turns_root)
     llm_model = Keyword.get(opts, :llm_model, llm_model)
     llm_generation_params = Keyword.get(opts, :llm_generation_params, llm_generation_params)
 
@@ -414,6 +416,7 @@ defmodule EvoGit.AgentScheduler do
        llm_generation_params: llm_generation_params,
        max_retries: max_retries,
        max_turns: max_turns,
+       max_turns_root: max_turns_root,
        next_agent_id: 1,
        running_count: 0,
        ref_to_agent: %{},
@@ -552,6 +555,7 @@ defmodule EvoGit.AgentScheduler do
       max_agent_depth: state.max_depth,
       max_retries: state.max_retries,
       max_turns: state.max_turns,
+      max_turns_root: state.max_turns_root,
       llm_model: state.llm_model,
       llm_generation_params: state.llm_generation_params,
       paused: state.paused,
@@ -575,6 +579,7 @@ defmodule EvoGit.AgentScheduler do
         :max_agent_depth -> state.max_depth
         :max_retries -> state.max_retries
         :max_turns -> state.max_turns
+        :max_turns_root -> state.max_turns_root
         :llm_model -> state.llm_model
         :llm_generation_params -> state.llm_generation_params
         :paused -> state.paused
@@ -698,6 +703,7 @@ defmodule EvoGit.AgentScheduler do
       |> maybe_update(:llm_model, opts)
       |> maybe_update(:max_retries, opts)
       |> maybe_update(:max_turns, opts)
+      |> maybe_update(:max_turns_root, opts)
       |> maybe_update(:max_tool_concurrency, opts)
       |> maybe_update(:sandbox_mode, opts)
       |> maybe_update(:sandbox_resources, opts)

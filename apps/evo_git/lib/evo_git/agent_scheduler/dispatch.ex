@@ -51,7 +51,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       llm_generation_params: state.llm_generation_params,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
-      max_turns: state.max_turns,
+      max_turns: if(is_nil(parent_id), do: state.max_turns_root, else: state.max_turns),
       parent_id: parent_id,
       objective: spec.objective,
       repo_id: spec.repo_id,

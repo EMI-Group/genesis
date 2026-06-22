@@ -139,6 +139,20 @@ defmodule EvoGit.Config.Schema do
         "Maximum number of agent turns. An agent turn consists of one LLM call followed by tool execution. This limit prevents runaway loops from consuming excessive API credits."
     },
     %{
+      key_path: [:scheduler, :max_turns_root],
+      type: :pos_integer,
+      default: 128,
+      validation: [min: 1],
+      category: :scheduler,
+      sub_category: nil,
+      description:
+        "Maximum number of turns for the root (top-level) agent only. " <>
+          "This is separate from `max_turns` which controls sub-agents. " <>
+          "The root agent is special because when it exits, the entire task ends — " <>
+          "unlike sub-agents which can be respawned by their parent. Use a higher value " <>
+          "here if you want the root agent to have more room to complete complex tasks."
+    },
+    %{
       key_path: [:scheduler, :delegation_hint_threshold],
       type: :pos_integer,
       default: 5,

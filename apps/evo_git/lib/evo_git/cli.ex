@@ -16,6 +16,7 @@ defmodule EvoGit.CLI do
           tool_concurrency: :integer,
           retries: :integer,
           max_turns: :integer,
+          max_turns_root: :integer,
           path: :string,
           model: :string,
           mode: :string,
@@ -62,6 +63,7 @@ defmodule EvoGit.CLI do
       |> maybe_put(:max_tool_concurrency, opts[:tool_concurrency])
       |> maybe_put(:max_retries, opts[:retries])
       |> maybe_put(:max_turns, opts[:max_turns])
+      |> maybe_put(:max_turns_root, opts[:max_turns_root])
       |> maybe_put(:llm_model, opts[:model])
 
     if scheduler_opts != [] do

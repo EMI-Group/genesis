@@ -20,6 +20,7 @@ defmodule EvoGit.AgentScheduler.State do
   - `llm_generation_params` — LLM generation parameters (temperature, max_tokens, etc.) passed to ReqLLM calls
   - `max_retries` — maximum total retries across the scheduler
   - `max_turns` — maximum turns per agent loop
+  - `max_turns_root` — maximum turns for the root (top-level) agent only
 
   ### Agent Lifecycle
   - `next_agent_id` — monotonically increasing agent ID counter
@@ -54,6 +55,7 @@ defmodule EvoGit.AgentScheduler.State do
     llm_generation_params: [],
     max_retries: 15,
     max_turns: 128,
+    max_turns_root: 128,
     next_agent_id: 1,
     running_count: 0,
     ref_to_agent: %{},
@@ -83,6 +85,7 @@ defmodule EvoGit.AgentScheduler.State do
           llm_generation_params: keyword(),
           max_retries: pos_integer(),
           max_turns: pos_integer(),
+          max_turns_root: pos_integer(),
           next_agent_id: pos_integer(),
           running_count: non_neg_integer(),
           ref_to_agent: %{reference() => pos_integer()},
