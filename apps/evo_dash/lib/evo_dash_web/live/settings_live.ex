@@ -607,6 +607,7 @@ defmodule EvoDashWeb.SettingsLive do
       |> maybe_add_kw(:max_agent_depth, get_in(file_config, [:scheduler, :max_agent_depth]))
       |> maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))
       |> maybe_add_kw(:max_turns, get_in(file_config, [:scheduler, :max_turns]))
+      |> maybe_add_kw(:max_turns_root, get_in(file_config, [:scheduler, :max_turns_root]))
       |> maybe_add_kw(:llm_model, get_in(file_config, [:llm, :model]))
 
     # Always include LLM generation params (even when empty, to allow clearing)
