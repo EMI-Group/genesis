@@ -63,7 +63,7 @@ defmodule EvoDashWeb.DashboardLive do
             show_add_foreign_repo={@show_add_foreign_repo_form}
             new_repo_id={@new_repo_id}
             new_repo_path={@new_repo_path}
-            new_repo_name={@new_repo_name}
+            new_repo_description={@new_repo_description}
           />
         </div>
 
@@ -249,7 +249,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:show_add_foreign_repo_form, false)
       |> assign(:new_repo_id, "")
       |> assign(:new_repo_path, "")
-      |> assign(:new_repo_name, "")
+      |> assign(:new_repo_description, "")
       |> assign(:tasks, [])
       |> assign(:notified_task_ids,
           TaskRegistry.list_tasks()
@@ -625,14 +625,14 @@ defmodule EvoDashWeb.DashboardLive do
      |> assign(:show_add_foreign_repo_form, !socket.assigns.show_add_foreign_repo_form)
      |> assign(:new_repo_id, "")
      |> assign(:new_repo_path, "")
-     |> assign(:new_repo_name, "")}
+     |> assign(:new_repo_description, "")}
   end
 
   @impl true
   def handle_event("add_foreign_repo", params, socket) do
     repo_id_str = String.trim(params["repo_id"] || "")
     path = String.trim(params["path"] || "")
-    name = String.trim(params["name"] || "")
+    description = String.trim(params["description"] || "")
 
     cond do
       repo_id_str == "" ->
@@ -660,8 +660,8 @@ defmodule EvoDashWeb.DashboardLive do
            )}
         else
           repo =
-            if name != "" do
-              ForeignRepo.new(repo_id, path, name: name)
+            if description != "" do
+              ForeignRepo.new(repo_id, path, description: description)
             else
               ForeignRepo.new(repo_id, path)
             end
@@ -677,7 +677,7 @@ defmodule EvoDashWeb.DashboardLive do
            |> assign(:show_add_foreign_repo_form, false)
            |> assign(:new_repo_id, "")
            |> assign(:new_repo_path, "")
-           |> assign(:new_repo_name, "")
+           |> assign(:new_repo_description, "")
            |> put_flash(
              :info,
              gettext("Foreign repo '%{repo_id}' registered successfully.",

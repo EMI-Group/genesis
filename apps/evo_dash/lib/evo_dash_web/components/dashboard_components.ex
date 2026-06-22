@@ -252,7 +252,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr(:show_add_foreign_repo, :boolean, default: false)
   attr(:new_repo_id, :string, default: "")
   attr(:new_repo_path, :string, default: "")
-  attr(:new_repo_name, :string, default: "")
+  attr(:new_repo_description, :string, default: "")
 
   def project_settings_panel(assigns) do
     ~H"""
@@ -354,8 +354,8 @@ defmodule EvoDashWeb.DashboardComponents do
                   </div>
                   <div class="ml-2 mt-1">
                     <span class="text-sm font-mono block truncate" title={repo.root}>{repo.root}</span>
-                    <%= if repo.name && repo.name != Atom.to_string(repo.id) do %>
-                      <span class="text-xs text-base-content/50 block mt-1">{repo.name}</span>
+                    <%= if repo.description do %>
+                      <span class="text-xs text-base-content/50 block mt-1">{repo.description}</span>
                     <% end %>
                   </div>
                 </div>
@@ -397,9 +397,9 @@ defmodule EvoDashWeb.DashboardComponents do
                   </div>
                   <div>
                     <label class="label py-1">
-                      <span class="label-text text-xs font-medium">{gettext("Name (optional)")}</span>
+                      <span class="label-text text-xs font-medium">{gettext("Description (optional)")}</span>
                     </label>
-                    <input type="text" name="name" value={@new_repo_name} placeholder={gettext("Human-readable name")}
+                    <input type="text" name="description" value={@new_repo_description} placeholder={gettext("Short description of what this repo does")}
                       class="input input-bordered input-sm w-full" />
                   </div>
                 </div>
