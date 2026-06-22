@@ -29,3 +29,4 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 - The behaviour module (`EvoGit.Agent`) lives in `../agent.ex`, NOT in this directory.
 - Tool modules (`EvoGit.Agent.Tools.*`) live in `../agent/tools/`, NOT in this directory.
 - Cross-references between agent types use the `EvoGit.Agents.*` namespace.
+- Each agent declares a `delegation_level/0` (`:high` or `:low`) controlling turn-budget warning frequency for delegation reminders. High-level agents (Manager, Generalist, CodebaseArchitect, CodebaseInvestigator, GenesisPlanner) receive full delegation guidance. Low-level agents (Executor, TaskScheduler, Evaluator, ContextExtractor, SkillExtractor) receive reduced warnings.
