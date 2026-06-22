@@ -43,13 +43,13 @@ The full design specification is in `AGENTS.md`.
 mix run -e 'EvoGit.CLI.main(System.argv())' -- setup
 
 # Genesis — create a codebase from a prompt
-mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-c concurrency] [-p path] [-R name:path]
+mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-c concurrency] [-p path] [-R <id:>path]
 
 # Evolution — modify an existing codebase
-mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-R name:path]
+mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-R <id:>path]
 ```
 
-Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots, `-R name:/path` for foreign repos (repeatable), `-C` / `--concepts` for concept expansion seeding (repeatable, complex mode only).
+Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots, `-R <id:>path` for foreign repos (repeatable), `-C` / `--concepts` for concept expansion seeding (repeatable, complex mode only).
 
 ## Architecture Summary
 

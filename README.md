@@ -53,7 +53,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<Your Prompt>"
 *   `--concurrency`, `-c`: Number of parallel LLM workers (default: 3).
 *   `--tool-concurrency`: Number of parallel tool executions (default: 2).
 *   `--path`, `-p`: Path to the git repository (default: current directory).
-*   `-R name:/path`: Reference a foreign repository (repeatable).
+*   `-R <id:>path`: Reference a foreign repository (repeatable). Prefix with `id:` for a custom repo id; otherwise the directory basename is used.
 
 **Examples:**
 
@@ -81,7 +81,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<Objective>"
 *   `--mode`, `-d`: Evolution mode — `simple` (default) for well-defined tasks, `complex` for open-ended exploration.
 *   `--path`, `-p`: Path to the git repository (default: current directory).
 *   `--node`, `-n`: Target a specific directory node (default: root).
-*   `-R name:/path`: Reference a foreign repository (repeatable).
+*   `-R <id:>path`: Reference a foreign repository (repeatable).
 *   `--concurrency`, `-c`: Number of parallel workers.
 
 **Complex mode flags** (open-ended evolution):
