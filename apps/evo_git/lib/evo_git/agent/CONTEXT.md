@@ -26,6 +26,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 |---|---|
 | `EvoGit.Agent.ContextCompression` | Compresses chat history when `total_tokens` exceeds threshold |
 | `EvoGit.Agent.SubagentProcessing` | Spawns subagents, resolves cross-repo paths, merges results via octopus merge, formats results for LLM context |
+| `EvoGit.Agent.TurnWarning` | Adaptive turn-budget warning system — hybrid relative/absolute thresholds that scale with max_turns |
 
 ### Tool Library (`EvoGit.Agent.Tools`)
 | Component | Role |
