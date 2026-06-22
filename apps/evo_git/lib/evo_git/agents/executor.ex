@@ -8,6 +8,7 @@ defmodule EvoGit.Agents.Executor do
   use EvoGit.Agent
 
   def agent_type, do: :read_write
+  def delegation_level, do: :low
 
   def subagent_tool_name, do: "subagent_executor"
 

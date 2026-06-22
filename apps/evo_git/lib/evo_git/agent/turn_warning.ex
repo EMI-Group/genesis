@@ -40,6 +40,7 @@ defmodule EvoGit.Agent.TurnWarning do
   @critical_turns 3
   @critical_floor 1
   @middle_interval 15
+  @middle_interval_low 45   # for :low agents (3x less frequent)
 
   defstruct [:level, :turn, :turns_remaining, :max_turns, :percent_used, :turns_since_subagent]
 
@@ -57,7 +58,7 @@ defmodule EvoGit.Agent.TurnWarning do
   Determines the highest applicable positional warning level for the current turn.
 
   Only checks `:beginning`, `:end`, and `:critical` (NOT `:middle`, which is
-  handled separately via `check_middle/3`).
+  handled separately via `check_middle/4`).
 
   Returns `:none` if no positional warning level applies yet.
 
@@ -72,8 +73,8 @@ defmodule EvoGit.Agent.TurnWarning do
       iex> EvoGit.Agent.TurnWarning.current_positional_level(125, 128)
       :critical
   """
-  @spec current_positional_level(non_neg_integer(), pos_integer()) :: level() | :none
-  def current_positional_level(turn, max_turns) do
+  @spec current_positional_level(non_neg_integer(), pos_integer(), :high | :low) :: level() | :none
+  def current_positional_level(turn, max_turns, delegation_level \\ :high) do
     turns_remaining = max_turns - turn
     percent_used = div(turn * 100, max_turns)
 
@@ -83,7 +84,7 @@ defmodule EvoGit.Agent.TurnWarning do
     cond do
       turns_remaining <= critical_remaining -> :critical
       turns_remaining <= near_remaining -> :end
-      percent_used >= 25 and turn >= @min_beginning_turn -> :beginning
+      delegation_level == :high and percent_used >= 25 and turn >= @min_beginning_turn -> :beginning
       true -> :none
     end
   end
@@ -95,10 +96,10 @@ defmodule EvoGit.Agent.TurnWarning do
   last warned level, or `:none` otherwise. Each positional level fires at most once
   per agent run — the caller tracks `last_warned_level` to prevent duplicates.
   """
-  @spec check_positional(non_neg_integer(), pos_integer(), level() | :none) ::
+  @spec check_positional(non_neg_integer(), pos_integer(), level() | :none, :high | :low) ::
           {:ok, t()} | :none
-  def check_positional(turn, max_turns, last_level) do
-    level = current_positional_level(turn, max_turns)
+  def check_positional(turn, max_turns, last_level, delegation_level \\ :high) do
+    level = current_positional_level(turn, max_turns, delegation_level)
 
     if level != :none and level_index(level) > level_index(last_level) do
       {:ok, build(level, turn, max_turns)}
@@ -116,13 +117,14 @@ defmodule EvoGit.Agent.TurnWarning do
 
   Returns `{:ok, %__MODULE__{}}` if the warning should fire, or `:none`.
   """
-  @spec check_middle(non_neg_integer(), pos_integer(), non_neg_integer()) ::
+  @spec check_middle(non_neg_integer(), pos_integer(), non_neg_integer(), :high | :low) ::
           {:ok, t()} | :none
-  def check_middle(turn, max_turns, turns_since_subagent) do
+  def check_middle(turn, max_turns, turns_since_subagent, delegation_level \\ :high) do
     if turn < 1 do
       :none
     else
-      if should_fire_middle?(turns_since_subagent) do
+      interval = middle_interval(delegation_level)
+      if turns_since_subagent >= interval do
         {:ok, build_middle(turn, max_turns, turns_since_subagent)}
       else
         :none
@@ -154,8 +156,8 @@ defmodule EvoGit.Agent.TurnWarning do
 
   defp level_index(level), do: Map.fetch!(@level_order, level)
 
-  # Returns true if the middle warning should fire.
-  defp should_fire_middle?(turns_since_subagent), do: turns_since_subagent >= @middle_interval
+  defp middle_interval(:high), do: @middle_interval
+  defp middle_interval(:low), do: @middle_interval_low
 
   defp build(level, turn, max_turns) do
     %__MODULE__{

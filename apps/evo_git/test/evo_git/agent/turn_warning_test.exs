@@ -191,4 +191,29 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert w3.turns_since_subagent == 30
     end
   end
+
+  describe "low delegation level behavior" do
+    test ":low agents never get :beginning level" do
+      assert TurnWarning.current_positional_level(32, 128, :low) == :none
+    end
+
+    test ":low agents need turns_since_subagent >= 45 for middle to fire" do
+      assert :none = TurnWarning.check_middle(20, 128, 44, :low)
+      assert {:ok, _} = TurnWarning.check_middle(50, 128, 45, :low)
+    end
+
+    test ":low agents still get :end" do
+      assert {:ok, warning} = TurnWarning.check_positional(118, 128, :none, :low)
+      assert warning.level == :end
+    end
+
+    test ":low agents still get :critical" do
+      assert {:ok, warning} = TurnWarning.check_positional(125, 128, :none, :low)
+      assert warning.level == :critical
+    end
+
+    test ":low agents: check_positional(32, 128, :none, :low) returns :none (beginning suppressed)" do
+      assert :none = TurnWarning.check_positional(32, 128, :none, :low)
+    end
+  end
 end

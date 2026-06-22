@@ -140,7 +140,8 @@ defmodule EvoGit.Agent do
             context: context,
             max_turns: max_turns,
             skill_schemas: skill_schemas,
-            foreign_repos: agent_state.foreign_repos
+            foreign_repos: agent_state.foreign_repos,
+            delegation_level: __MODULE__.delegation_level()
           }
 
           # Sync initial context to ETS for dashboard
@@ -210,7 +211,8 @@ defmodule EvoGit.Agent do
         case EvoGit.Agent.TurnWarning.check_positional(
                state.turn,
                state.max_turns,
-               state.last_warned_level
+               state.last_warned_level,
+               state.delegation_level
              ) do
           {:ok, warning} ->
             msg = EvoGit.Agent.TurnWarning.message(warning)
@@ -221,7 +223,8 @@ defmodule EvoGit.Agent do
             case EvoGit.Agent.TurnWarning.check_middle(
                    state.turn,
                    state.max_turns,
-                   state.turns_since_subagent
+                   state.turns_since_subagent,
+                   state.delegation_level
                  ) do
               {:ok, warning} ->
                 msg = EvoGit.Agent.TurnWarning.message(warning)
@@ -946,6 +949,23 @@ defmodule EvoGit.Agent do
       def agent_type, do: :read_write
 
       @doc """
+      Returns the delegation level for this agent type.
+
+      `:high` — The agent is expected to actively delegate work to subagents.
+      These are orchestration/planning agents (Manager, Generalist, CodebaseArchitect, etc.)
+      that receive broad objectives and should break them down into subtasks.
+
+      `:low` — The agent receives precise, well-scoped objectives and primarily
+      does the work itself. Subagent delegation, if used at all, is occasional.
+      These are worker agents (Executor, TaskScheduler, Evaluator, etc.).
+
+      The turn-budget warning system uses this to adjust its behavior: low-level
+      agents receive significantly fewer delegation reminders since they are not
+      expected to actively delegate.
+      """
+      def delegation_level, do: :high
+
+      @doc """
       Returns a list of agent modules that can be spawned as subagents.
       The framework automatically generates tool schemas and execution logic
       from each module's `subagent_tool_name/0` and `subagent_tool_description/0`.
@@ -1053,7 +1073,8 @@ defmodule EvoGit.Agent do
                      subagent_tool_name: 0,
                      subagent_tool_description: 0,
                      subagent_modules: 0,
-                     agent_type: 0
+                     agent_type: 0,
+                     delegation_level: 0
     end
   end
 end

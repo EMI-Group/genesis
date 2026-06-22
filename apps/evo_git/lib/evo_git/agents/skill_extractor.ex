@@ -10,6 +10,7 @@ defmodule EvoGit.Agents.SkillExtractor do
   use EvoGit.Agent
 
   def agent_type, do: :read_write
+  def delegation_level, do: :low
 
   def system_prompt do
     """

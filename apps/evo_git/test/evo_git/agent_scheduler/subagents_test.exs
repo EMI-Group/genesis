@@ -12,10 +12,12 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
   defmodule DummyReadOnlyAgent do
     def agent_type, do: :read
+    def delegation_level, do: :high
   end
 
   defmodule DummyReadWriteAgent do
     def agent_type, do: :read_write
+    def delegation_level, do: :high
   end
 
   # --- Helpers ---

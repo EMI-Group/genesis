@@ -5,6 +5,7 @@ defmodule EvoGit.Agents.Generalist do
   use EvoGit.Agent
 
   def agent_type, do: :read_write
+  def delegation_level, do: :high
 
   def subagent_tool_name, do: "subagent_generalist"
 

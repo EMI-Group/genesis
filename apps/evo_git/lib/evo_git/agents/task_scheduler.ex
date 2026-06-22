@@ -14,6 +14,7 @@ defmodule EvoGit.Agents.TaskScheduler do
   use EvoGit.Agent
 
   def agent_type, do: :read
+  def delegation_level, do: :low
 
   def subagent_tool_name, do: "subagent_task_scheduler"
 

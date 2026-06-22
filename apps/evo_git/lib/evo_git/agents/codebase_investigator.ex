@@ -20,6 +20,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
   }
 
   def agent_type, do: :read
+  def delegation_level, do: :high
 
   def subagent_tool_name, do: "subagent_codebase_investigator"
 
