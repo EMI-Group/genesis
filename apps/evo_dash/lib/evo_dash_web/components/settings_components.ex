@@ -599,14 +599,16 @@ defmodule EvoDashWeb.SettingsComponents do
           <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
             <.icon name="hero-magnifying-glass" class="size-4 text-base-content/40 group-focus-within:text-primary transition-colors" />
           </div>
-          <input
-            type="text"
-            name="search"
-            value={@search_text}
-            placeholder={gettext("Filter settings...")}
-            phx-change="search"
-            class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 focus:border-primary/30 focus:ring-2 focus:ring-primary/20 transition-all duration-300 rounded-2xl font-medium text-sm h-12"
-          />
+          <form class="contents">
+            <input
+              type="text"
+              name="value"
+              value={@search_text}
+              placeholder={gettext("Filter settings...")}
+              phx-change="search"
+              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 focus:border-primary/30 focus:ring-2 focus:ring-primary/20 transition-all duration-300 rounded-2xl font-medium text-sm h-12"
+            />
+          </form>
           <%= if @search_text != "" do %>
             <button
               type="button"
