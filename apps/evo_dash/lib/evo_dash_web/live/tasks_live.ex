@@ -27,7 +27,8 @@ defmodule EvoDashWeb.TasksLive do
 
       <!-- Filter Bar -->
       <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-4 sm:p-5 mb-6 animate-fade-in-up animation-delay-100">
-        <div class="flex flex-col sm:flex-row gap-3">
+        <form>
+          <div class="flex flex-col sm:flex-row gap-3">
           <!-- Status Filter -->
           <div class="form-control">
             <select
@@ -91,6 +92,7 @@ defmodule EvoDashWeb.TasksLive do
           <!-- Actions -->
           <div class="flex items-center gap-2 shrink-0">
             <button
+              type="button"
               class="btn btn-ghost"
               phx-click="reset_filters"
               title={gettext("Reset all filters")}
@@ -98,6 +100,7 @@ defmodule EvoDashWeb.TasksLive do
               <.icon name="hero-x-mark" class="size-4" /> {gettext("Reset")}
             </button>
             <button
+              type="button"
               class="btn btn-outline btn-error"
               phx-click="clear_task_history"
               phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
@@ -105,7 +108,8 @@ defmodule EvoDashWeb.TasksLive do
               <.icon name="hero-trash" class="size-4" /> {gettext("Clear History")}
             </button>
           </div>
-        </div>
+          </div>
+        </form>
 
         <!-- Active filters indicator -->
         <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
