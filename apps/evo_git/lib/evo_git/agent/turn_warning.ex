@@ -2,100 +2,131 @@ defmodule EvoGit.Agent.TurnWarning do
   @moduledoc """
   Adaptive turn-budget warning system for the agent loop.
 
-  Unlike pure percentage-based thresholds, this module uses a hybrid model that
-  combines **relative progress thresholds** (for early/mid-budget behavioural
-  guidance) and **absolute countdown thresholds** (for near-limit urgency).
-  This ensures warning behaviour is consistent and useful regardless of the
-  `max_turns` setting.
+  Uses a hybrid model combining **relative progress thresholds** (for early-stage
+  guidance) and **absolute countdown thresholds** (for near-limit urgency), plus a
+  **periodic middle reminder** that scales naturally with any budget size.
 
-  ## Warning Levels
+  ## Warning Categories
 
-  Levels escalate monotonically — each fires at most once per agent run:
+  Two independent tracks:
+
+  ### Positional (monotonic — each fires at most once per agent run)
 
   | Level | Purpose | Trigger |
   |-------|---------|---------|
-  | `:nudge` | Encourage delegation | ~25% of budget (min 6 turns) |
-  | `:accelerate` | Focus on critical work | ~50% of budget (min 8 turns) |
-  | `:near_limit` | Wrap up and prepare to complete | ≤ N turns remaining (adaptive) |
+  | `:beginning` | Early-stage delegation guidance | ~25% of budget (min 6 turns) |
+  | `:end` | Wrap up and prepare to complete | ≤ N turns remaining (adaptive) |
   | `:critical` | Call complete_task immediately | ≤ M turns remaining (adaptive) |
 
-  The near-limit and critical countdowns scale with `max_turns`:
-  - Large budgets (≥ ~60 turns): 10-turn near-limit, 3-turn critical.
-  - Smaller budgets: proportionally shorter countdowns with minimum floors
-    (3 turns for near-limit, 1 turn for critical).
+  ### Periodic (fires repeatedly)
 
-  This means a 128-turn agent gets the same 10-turn countdown as a 64-turn
-  agent, while a 16-turn agent gets a compressed 3-turn countdown — preventing
-  the near-limit warning from firing before behavioural warnings.
+  | Level | Purpose | Trigger |
+  |-------|---------|---------|
+  | `:middle` | Periodic delegation reminder | `turns_since_subagent` ≥ 15 |
+
+  The `:middle` warning is NOT monotonic — it fires repeatedly. It only fires when
+  no positional warning fires that turn (positional warnings take priority). The
+  counter resets to 0 each time it fires, and also resets when a subagent call is made.
+
+  The end and critical countdowns scale with `max_turns`:
+  - Large budgets (≥ ~60 turns): 10-turn end, 3-turn critical.
+  - Smaller budgets: proportionally shorter countdowns with minimum floors
+    (3 turns for end, 1 turn for critical).
   """
 
-  @min_nudge_turn 6
-  @min_accelerate_turn 8
+  @min_beginning_turn 6
   @near_limit_turns 10
   @near_limit_floor 3
   @critical_turns 3
   @critical_floor 1
+  @middle_interval 15
 
-  defstruct [:level, :turn, :turns_remaining, :max_turns, :percent_used]
+  defstruct [:level, :turn, :turns_remaining, :max_turns, :percent_used, :turns_since_subagent]
 
-  @type level :: :nudge | :accelerate | :near_limit | :critical
+  @type level :: :beginning | :middle | :end | :critical
   @type t :: %__MODULE__{
           level: level(),
           turn: non_neg_integer(),
           turns_remaining: non_neg_integer(),
           max_turns: pos_integer(),
-          percent_used: non_neg_integer()
+          percent_used: non_neg_integer(),
+          turns_since_subagent: non_neg_integer() | nil
         }
 
   @doc """
-  Determines the highest applicable warning level for the current turn.
+  Determines the highest applicable positional warning level for the current turn.
 
-  Returns `:none` if no warning level applies yet.
+  Only checks `:beginning`, `:end`, and `:critical` (NOT `:middle`, which is
+  handled separately via `check_middle/3`).
+
+  Returns `:none` if no positional warning level applies yet.
 
   ## Examples
 
-      iex> EvoGit.Agent.TurnWarning.current_level(0, 128)
+      iex> EvoGit.Agent.TurnWarning.current_positional_level(0, 128)
       :none
 
-      iex> EvoGit.Agent.TurnWarning.current_level(32, 128)
-      :nudge
+      iex> EvoGit.Agent.TurnWarning.current_positional_level(32, 128)
+      :beginning
 
-      iex> EvoGit.Agent.TurnWarning.current_level(125, 128)
+      iex> EvoGit.Agent.TurnWarning.current_positional_level(125, 128)
       :critical
   """
-  @spec current_level(non_neg_integer(), pos_integer()) :: level() | :none
-  def current_level(turn, max_turns) do
+  @spec current_positional_level(non_neg_integer(), pos_integer()) :: level() | :none
+  def current_positional_level(turn, max_turns) do
     turns_remaining = max_turns - turn
     percent_used = div(turn * 100, max_turns)
 
-    near_remaining = near_limit_remaining(max_turns)
+    near_remaining = end_remaining(max_turns)
     critical_remaining = critical_remaining(max_turns)
 
     cond do
       turns_remaining <= critical_remaining -> :critical
-      turns_remaining <= near_remaining -> :near_limit
-      percent_used >= 50 and turn >= @min_accelerate_turn -> :accelerate
-      percent_used >= 25 and turn >= @min_nudge_turn -> :nudge
+      turns_remaining <= near_remaining -> :end
+      percent_used >= 25 and turn >= @min_beginning_turn -> :beginning
       true -> :none
     end
   end
 
   @doc """
-  Checks whether a **new** (escalated) warning should fire at this turn.
+  Checks whether a **new** (escalated) positional warning should fire at this turn.
 
-  Returns `{:ok, %__MODULE__{}}` if the current level is higher than the last
-  warned level, or `:none` otherwise. Each level fires at most once per agent
-  run — the caller tracks `last_warned_level` to prevent duplicates.
+  Returns `{:ok, %__MODULE__{}}` if the current positional level is higher than the
+  last warned level, or `:none` otherwise. Each positional level fires at most once
+  per agent run — the caller tracks `last_warned_level` to prevent duplicates.
   """
-  @spec check(non_neg_integer(), pos_integer(), level() | :none) ::
+  @spec check_positional(non_neg_integer(), pos_integer(), level() | :none) ::
           {:ok, t()} | :none
-  def check(turn, max_turns, last_level) do
-    level = current_level(turn, max_turns)
+  def check_positional(turn, max_turns, last_level) do
+    level = current_positional_level(turn, max_turns)
 
     if level != :none and level_index(level) > level_index(last_level) do
       {:ok, build(level, turn, max_turns)}
     else
       :none
+    end
+  end
+
+  @doc """
+  Checks whether the periodic middle warning should fire.
+
+  The middle warning is NOT monotonic — it fires every time `turns_since_subagent`
+  reaches the interval threshold. It does not fire if `turn` is less than 1, or if
+  there is not enough budget remaining for delegation to be meaningful.
+
+  Returns `{:ok, %__MODULE__{}}` if the warning should fire, or `:none`.
+  """
+  @spec check_middle(non_neg_integer(), pos_integer(), non_neg_integer()) ::
+          {:ok, t()} | :none
+  def check_middle(turn, max_turns, turns_since_subagent) do
+    if turn < 1 do
+      :none
+    else
+      if should_fire_middle?(turns_since_subagent) do
+        {:ok, build_middle(turn, max_turns, turns_since_subagent)}
+      else
+        :none
+      end
     end
   end
 
@@ -107,9 +138,9 @@ defmodule EvoGit.Agent.TurnWarning do
 
   # --- Internals ---
 
-  # Adaptive near-limit countdown: 10 turns for large budgets, scales down
+  # Adaptive end countdown: 10 turns for large budgets, scales down
   # for smaller ones, with a floor of 3 turns remaining.
-  defp near_limit_remaining(max_turns) do
+  defp end_remaining(max_turns) do
     min(@near_limit_turns, max(@near_limit_floor, div(max_turns, 6)))
   end
 
@@ -119,9 +150,12 @@ defmodule EvoGit.Agent.TurnWarning do
     min(@critical_turns, max(@critical_floor, div(max_turns, 30)))
   end
 
-  @level_order %{:none => 0, :nudge => 1, :accelerate => 2, :near_limit => 3, :critical => 4}
+  @level_order %{:none => 0, :beginning => 1, :end => 2, :critical => 3}
 
   defp level_index(level), do: Map.fetch!(@level_order, level)
+
+  # Returns true if the middle warning should fire.
+  defp should_fire_middle?(turns_since_subagent), do: turns_since_subagent >= @middle_interval
 
   defp build(level, turn, max_turns) do
     %__MODULE__{
@@ -129,43 +163,53 @@ defmodule EvoGit.Agent.TurnWarning do
       turn: turn,
       turns_remaining: max_turns - turn,
       max_turns: max_turns,
-      percent_used: div(turn * 100, max_turns)
+      percent_used: div(turn * 100, max_turns),
+      turns_since_subagent: nil
     }
   end
 
-  defp message_for_level(%__MODULE__{level: :nudge} = w) do
+  defp build_middle(turn, max_turns, turns_since_subagent) do
+    %__MODULE__{
+      level: :middle,
+      turn: turn,
+      turns_remaining: max_turns - turn,
+      max_turns: max_turns,
+      percent_used: div(turn * 100, max_turns),
+      turns_since_subagent: turns_since_subagent
+    }
+  end
+
+  defp message_for_level(%__MODULE__{level: :beginning} = w) do
     """
     [NOTICE] Turn #{w.turn}/#{w.max_turns} (#{w.percent_used}% used). #{w.turns_remaining} turns remaining.
 
-    You are starting to use a significant portion of your turn budget. \
-    If you haven't already, consider delegating independent subtasks to subagents — \
-    they run concurrently, keep your context lean, and their costs do not count \
-    against your turn budget.
+    You are in the early stages of your run — this is the ideal time to set up your approach:
+    1. Break your objective into independent subtasks
+    2. Delegate subtasks to subagents so they can work in parallel — their work runs in isolated worktrees and does NOT count against your turn budget
+    3. Reserve your own turns for coordination, review, and integration
+
+    Planning your delegation strategy early will help you make the most of your remaining budget.
     """
   end
 
-  defp message_for_level(%__MODULE__{level: :accelerate} = w) do
+  defp message_for_level(%__MODULE__{level: :middle} = w) do
     """
-    [NOTICE] Turn #{w.turn}/#{w.max_turns} (#{w.percent_used}% used). #{w.turns_remaining} turns remaining.
+    [NOTICE] Turn #{w.turn}/#{w.max_turns}. #{w.turns_since_subagent} turns have passed since your last subagent delegation.
 
-    You are past the halfway point of your turn budget. Prioritize the most \
-    critical aspects of your objective and delegate aggressively to subagents. \
-    It is acceptable to complete only the most important parts and report the \
-    situation in your completion message.
+    As a periodic reminder: delegating independent subtasks to subagents keeps your context lean and lets work proceed in parallel. If you have unblocked work that a subagent could handle, consider spawning one now. Doing so will also reset this reminder.
     """
   end
 
-  defp message_for_level(%__MODULE__{level: :near_limit} = w) do
+  defp message_for_level(%__MODULE__{level: :end} = w) do
     """
     [WARNING] Turn #{w.turn}/#{w.max_turns} — only #{w.turns_remaining} #{turn_word(w.turns_remaining)} remaining.
 
-    You are approaching the turn limit. STOP starting new work and focus on \
-    wrapping up:
+    You are approaching the end of your turn budget. Shift focus to wrapping up:
     1. Commit any uncommitted changes you have made
-    2. Call complete_task as soon as possible with a clear status report
+    2. If critical work remains, delegate it to subagents for parallel completion
+    3. Prepare to call complete_task with a clear status report
 
-    A partial completion with a clear explanation of what remains is perfectly \
-    acceptable.
+    A partial completion with a clear explanation of what remains is perfectly acceptable.
     """
   end
 

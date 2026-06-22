@@ -20,7 +20,8 @@ defmodule EvoGit.Agent.LoopState do
   - `in_grace_period` — whether the agent is in a grace period after a warning
   - `max_turns` — maximum turns allowed for this agent (from config)
   - `total_tokens` — cumulative token count across all LLM calls
-  - `last_warned_level` — last turn-limit warning level emitted (`:none` initially; escalates through `:nudge` → `:accelerate` → `:near_limit` → `:critical`)
+  - `last_warned_level` — last positional warning level emitted (`:none` initially; escalates through `:beginning` → `:end` → `:critical`)
+  - `turns_since_subagent` — turns elapsed since the last subagent delegation (resets to 0 on delegation or when the middle warning fires; used by the periodic middle reminder)
   - `skill_schemas` — tool schemas from enabled skills
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
   - `usage` — cumulative token and cost usage tracking across all LLM calls (`EvoGit.Agent.Usage.t()`)
@@ -44,6 +45,7 @@ defmodule EvoGit.Agent.LoopState do
     max_turns: 128,
     total_tokens: 0,
     last_warned_level: :none,
+    turns_since_subagent: 0,
     skill_schemas: [],
     foreign_repos: [],
     usage: %EvoGit.Agent.Usage{},
@@ -61,7 +63,8 @@ defmodule EvoGit.Agent.LoopState do
           in_grace_period: boolean(),
           max_turns: pos_integer(),
           total_tokens: non_neg_integer(),
-          last_warned_level: :nudge | :accelerate | :near_limit | :critical | :none,
+          last_warned_level: :beginning | :end | :critical | :none,
+          turns_since_subagent: non_neg_integer(),
           skill_schemas: [ReqLLM.Tool.t()],
           foreign_repos: [ForeignRepo.t()],
           usage: Usage.t(),

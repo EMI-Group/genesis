@@ -207,7 +207,7 @@ defmodule EvoGit.Agent do
       # Checks and sends turn-limit warnings via the adaptive TurnWarning module.
       # See EvoGit.Agent.TurnWarning for threshold logic and message generation.
       defp check_limit_warnings(state) do
-        case EvoGit.Agent.TurnWarning.check(
+        case EvoGit.Agent.TurnWarning.check_positional(
                state.turn,
                state.max_turns,
                state.last_warned_level
@@ -218,7 +218,19 @@ defmodule EvoGit.Agent do
             %{state | context: new_context, last_warned_level: warning.level}
 
           :none ->
-            state
+            case EvoGit.Agent.TurnWarning.check_middle(
+                   state.turn,
+                   state.max_turns,
+                   state.turns_since_subagent
+                 ) do
+              {:ok, warning} ->
+                msg = EvoGit.Agent.TurnWarning.message(warning)
+                new_context = ReqLLM.Context.append(state.context, user(msg))
+                %{state | context: new_context, turns_since_subagent: 0}
+
+              :none ->
+                state
+            end
         end
       end
 
@@ -360,7 +372,14 @@ defmodule EvoGit.Agent do
             # Pick up updated delegation hints from tool execution
             updated_hints = Process.get(:delegation_hints, state.delegation_hints)
             Process.delete(:delegation_hints)
-            state = %{state | context: ReqLLM.Context.append(state.context, tool_responses), delegation_hints: updated_hints}
+
+            # Detect subagent calls to reset the middle-warning counter
+            had_subagent_call = Enum.any?(tool_calls, fn call ->
+              subagent_module_for(call.name) != nil
+            end)
+            new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
+
+            state = %{state | context: ReqLLM.Context.append(state.context, tool_responses), delegation_hints: updated_hints, turns_since_subagent: new_turns_since}
             sync_context_to_ets(state.agent_id, state.context)
             loop(state)
 
