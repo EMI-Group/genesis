@@ -17,10 +17,10 @@ defmodule EvoGit.Agents.Manager do
   def subagent_tool_name, do: "subagent_manager"
 
   def subagent_tool_description do
-    "[Subagent] A manager agent responsible for planning, delegation, and validation. " <>
-      "Delegate objectives to this subagent when you need coordination of work within a specific node or subtree. " <>
-      "The manager will plan, break down the work, delegate to executors and investigators, validate results, and handle conflicts. " <>
-      "Use this when a task requires multi-step coordination in a child directory — the manager handles the orchestration so you don't have to manage each edit yourself."
+    "[Subagent] A manager agent that orchestrates work within a child node. " <>
+      "Delegate to this when work belongs in a child subtree — it will plan, break down the work, delegate to its own specialists, and validate results. " <>
+      "This is the primary tool for hierarchical delegation: spawn it at the deepest correct child node and let it handle the orchestration. " <>
+      "The sub-manager has its own routing table and will navigate its domain autonomously — you don't need to investigate the subtree first."
   end
 
   def subagent_modules do
