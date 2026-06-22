@@ -122,14 +122,14 @@ defmodule EvoGit.Agent.TurnWarningTest do
   end
 
   describe "message/1" do
-    test "beginning message includes turn count, percent, and early-stage guidance" do
+    test "beginning message includes turn count, percent, and delegation guidance" do
       {:ok, warning} = TurnWarning.check_positional(32, 128, :none)
       msg = TurnWarning.message(warning)
       assert msg =~ "[NOTICE]"
       assert msg =~ "Turn 32/128"
       assert msg =~ "25% used"
       assert msg =~ "96 turns remaining"
-      assert msg =~ "early stages"
+      assert msg =~ "routing table"
       assert msg =~ "subagent"
     end
 
@@ -139,7 +139,7 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert msg =~ "[NOTICE]"
       assert msg =~ "Turn 30/128"
       assert msg =~ "20 turns have passed"
-      assert msg =~ "delegating"
+      assert msg =~ "delegate"
     end
 
     test "end message includes urgency, wrap-up steps, and suggestions" do

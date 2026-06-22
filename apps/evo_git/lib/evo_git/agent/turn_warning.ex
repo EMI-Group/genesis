@@ -185,12 +185,12 @@ defmodule EvoGit.Agent.TurnWarning do
     """
     [NOTICE] Turn #{w.turn}/#{w.max_turns} (#{w.percent_used}% used). #{w.turns_remaining} turns remaining.
 
-    You are in the early stages of your run — this is the ideal time to set up your approach:
-    1. Break your objective into independent subtasks
-    2. Delegate subtasks to subagents so they can work in parallel — their work runs in isolated worktrees and does NOT count against your turn budget
-    3. Reserve your own turns for coordination, review, and integration
+    You are a high-level agent in EvoGit's recursive hierarchy. Your role is to ORGANIZE, not to do the work yourself:
+    1. Check your routing table — where does the objective belong? Identify the deepest correct child node.
+    2. Delegate IMMEDIATELY to a subagent at that node. Do NOT investigate the child subtree yourself first — the subagent has its own routing table and will navigate faster than you.
+    3. Reserve your own turns for coordination, review, and integration. Subagent work runs in isolated worktrees and does NOT count against your turn budget.
 
-    Planning your delegation strategy early will help you make the most of your remaining budget.
+    Remember: delegating is an investment that always pays off. If the target turns out wrong, the subagent returns early — you lose nothing.
     """
   end
 
@@ -198,7 +198,8 @@ defmodule EvoGit.Agent.TurnWarning do
     """
     [NOTICE] Turn #{w.turn}/#{w.max_turns}. #{w.turns_since_subagent} turns have passed since your last subagent delegation.
 
-    As a periodic reminder: delegating independent subtasks to subagents keeps your context lean and lets work proceed in parallel. If you have unblocked work that a subagent could handle, consider spawning one now. Doing so will also reset this reminder.
+    #{if w.turns_since_subagent >= 10, do: "You've been working solo for a while — if you're doing investigation or implementation that a subagent could handle, you may be over-investing your own budget. ", else: ""}
+    If you have unblocked work that belongs in a child subtree, delegate it now — the subagent works at a more correct level with its own context. Spawning a subagent resets this reminder.
     """
   end
 

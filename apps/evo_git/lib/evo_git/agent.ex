@@ -1003,6 +1003,8 @@ defmodule EvoGit.Agent do
                       "Use a RELATIVE path from the repository root for the current project (e.g., './src/auth', './lib/utils'). " <>
                       "Use an ABSOLUTE path to delegate to a FOREIGN REPOSITORY configured in evogit.toml " <>
                       "(e.g., '/Source/original-proj'). MUST be a directory node, NOT a file path.\n\n" <>
+                      "IMPORTANT: Delegate at the DEEPEST correct node you know — if your routing table shows work belongs in `./src/auth/oauth/`, " <>
+                      "delegate there directly, not at the higher-level `./src/auth/`. The subagent has its own routing table and will navigate further.\n\n" <>
                       "IMPORTANT: When delegating to a foreign repo, prefer using the repository ROOT path " <>
                       "(e.g., '/Source/original-proj' rather than '/Source/original-proj/src'). " <>
                       "Since you have no prior knowledge of the foreign repo's structure, starting at the root " <>
