@@ -23,7 +23,6 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 | `EvoGit.Agents.ContextExtractor` | `context_extractor.ex` | Extracts semantic context from existing codebases into CONTEXT.md | `:read` | → self (recursive) | CONTEXT.md only |
 | `EvoGit.Agents.Evaluator` | `evaluator.ex` | Verifies code changes satisfy objectives via git diff review | `:read` | → CodebaseInvestigator | CONTEXT.md only |
 | `EvoGit.Agents.SkillExtractor` | `skill_extractor.ex` | Analyzes a completed PR and distills reusable knowledge into EvoGit skills | `:read_write` | None (non-recursive) | ✅ Full (`.agents/skills/`) |
-| `EvoGit.Agents.Warnings` | `warnings.ex` | Budget warning thresholds and messages (not an agent; utility module) | N/A | N/A | N/A |
 
 ## Constraints
 - Every agent module MUST `use EvoGit.Agent` and implement `system_prompt/0`.
