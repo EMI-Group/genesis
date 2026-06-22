@@ -37,6 +37,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 | `subagent_tool_name/0` | `nil` | Tool name when this agent appears as a subagent |
 | `subagent_tool_description/0` | `""` | Tool description when this agent appears as a subagent |
 | `agent_type/0` | `:read_write` | `:read` or `:read_write` — controls spatial contract validation |
+| `delegation_level/0` | `:high` | `:high` or `:low` — controls turn-budget warning frequency for delegation reminders |
 
 ## Constraints
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` outside adapters.
