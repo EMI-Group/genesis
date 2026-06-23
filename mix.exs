@@ -20,6 +20,10 @@ defmodule EvoGit.Umbrella.MixProject do
             evo_git: :permanent,
             evo_dash: :permanent
           ],
+          # Bake a compile-time desktop flag into sys.config so that the
+          # backend reliably detects desktop mode even if the Burrito Zig
+          # wrapper does not forward the EVOGIT_DESKTOP env var to the VM.
+          config: [evo_dash: [desktop_release: true]],
           steps: [:assemble, &Burrito.wrap/1],
           burrito: [
             targets: [

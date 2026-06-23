@@ -36,7 +36,16 @@ if config_env() == :prod do
 
   config :evo_dash, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
-  if System.get_env("EVOGIT_DESKTOP") == "1" do
+  # Detect desktop mode from two independent signals so detection is robust
+  # against env var forwarding issues through the Burrito Zig wrapper:
+  #   1. The compile-time `:desktop_release` flag baked into sys.config by the
+  #      evogit_desktop release definition in mix.exs (loaded before
+  #      runtime.exs evaluates).
+  #   2. The EVOGIT_DESKTOP env var set by the Tauri sidecar (sidecar.rs).
+  desktop_mode = Application.get_env(:evo_dash, :desktop_release, false) or
+                  System.get_env("EVOGIT_DESKTOP") == "1"
+
+  if desktop_mode do
     # Desktop mode: local single-user server accessed via Tauri WebView.
     # check_origin is disabled because the WebView connects over plain HTTP
     # to localhost, which would otherwise be rejected by Phoenix's origin check.
