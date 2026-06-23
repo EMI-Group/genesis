@@ -26,6 +26,7 @@ defmodule EvoGit.Agent.LoopState do
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
   - `usage` — cumulative token and cost usage tracking across all LLM calls (`EvoGit.Agent.Usage.t()`)
   - `delegation_hints` — map tracking write-tool calls to child directories (key: normalized child path, value: `%{count: non_neg_integer, hint_shown: boolean}`). Used to detect when an agent should be nudged to spawn a subagent.
+  - `read_delegation_hints` — map tracking read-tool calls (read_file, rg, glob, list_dir) to child directories (key: normalized child path, value: `%{count: non_neg_integer, hint_shown: boolean}`). Used to detect when a high-level agent should be nudged to delegate investigation to a subagent.
   - `delegation_level` — whether this agent is expected to actively delegate (`:high`) or primarily do work itself (`:low`). Controls the frequency of delegation reminders from the turn-budget warning system.
   """
 
@@ -51,6 +52,7 @@ defmodule EvoGit.Agent.LoopState do
     foreign_repos: [],
     usage: %EvoGit.Agent.Usage{},
     delegation_hints: %{},
+    read_delegation_hints: %{},
     delegation_level: :high
   ]
 
@@ -71,6 +73,7 @@ defmodule EvoGit.Agent.LoopState do
           foreign_repos: [ForeignRepo.t()],
           usage: Usage.t(),
           delegation_hints: %{String.t() => %{count: non_neg_integer(), hint_shown: boolean()}},
+          read_delegation_hints: %{String.t() => %{count: non_neg_integer(), hint_shown: boolean()}},
           delegation_level: :high | :low
         }
 end

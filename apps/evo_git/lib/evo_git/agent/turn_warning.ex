@@ -14,7 +14,7 @@ defmodule EvoGit.Agent.TurnWarning do
 
   | Level | Purpose | Trigger |
   |-------|---------|---------|
-  | `:beginning` | Early-stage delegation guidance | ~25% of budget (min 6 turns) |
+  | `:beginning` | Early-stage delegation guidance | ~15% of budget (min 3 turns) |
   | `:end` | Wrap up and prepare to complete | ≤ N turns remaining (adaptive) |
   | `:critical` | Call complete_task immediately | ≤ M turns remaining (adaptive) |
 
@@ -22,7 +22,7 @@ defmodule EvoGit.Agent.TurnWarning do
 
   | Level | Purpose | Trigger |
   |-------|---------|---------|
-  | `:middle` | Periodic delegation reminder | `turns_since_subagent` ≥ 15 |
+  | `:middle` | Periodic delegation reminder | `turns_since_subagent` ≥ 8 |
 
   The `:middle` warning is NOT monotonic — it fires repeatedly. It only fires when
   no positional warning fires that turn (positional warnings take priority). The
@@ -34,13 +34,13 @@ defmodule EvoGit.Agent.TurnWarning do
     (3 turns for end, 1 turn for critical).
   """
 
-  @min_beginning_turn 6
+  @min_beginning_turn 3
   @near_limit_turns 10
   @near_limit_floor 3
   @critical_turns 3
   @critical_floor 1
-  @middle_interval 15
-  @middle_interval_low 45   # for :low agents (3x less frequent)
+  @middle_interval 8
+  @middle_interval_low 24   # for :low agents (3x less frequent)
 
   defstruct [:level, :turn, :turns_remaining, :max_turns, :percent_used, :turns_since_subagent]
 
@@ -84,7 +84,7 @@ defmodule EvoGit.Agent.TurnWarning do
     cond do
       turns_remaining <= critical_remaining -> :critical
       turns_remaining <= near_remaining -> :end
-      delegation_level == :high and percent_used >= 25 and turn >= @min_beginning_turn -> :beginning
+      delegation_level == :high and percent_used >= 15 and turn >= @min_beginning_turn -> :beginning
       true -> :none
     end
   end
@@ -183,14 +183,9 @@ defmodule EvoGit.Agent.TurnWarning do
 
   defp message_for_level(%__MODULE__{level: :beginning} = w) do
     """
-    [NOTICE] Turn #{w.turn}/#{w.max_turns} (#{w.percent_used}% used). #{w.turns_remaining} turns remaining.
+    [NOTICE] Turn #{w.turn}/#{w.max_turns}. Before doing ANYTHING else, ask yourself: "Can this work be delegated to a subagent?"
 
-    You are a high-level agent in EvoGit's recursive hierarchy. Your role is to ORGANIZE, not to do the work yourself:
-    1. Check your routing table — where does the objective belong? Identify the deepest correct child node.
-    2. Delegate IMMEDIATELY to a subagent at that node. Do NOT investigate the child subtree yourself first — the subagent has its own routing table and will navigate faster than you.
-    3. Reserve your own turns for coordination, review, and integration. Subagent work runs in isolated worktrees and does NOT count against your turn budget.
-
-    Remember: delegating is an investment that always pays off. If the target turns out wrong, the subagent returns early — you lose nothing.
+    As a high-level agent, your FIRST action should ALWAYS be to identify the correct child node from your routing table and spawn a subagent there. Do NOT investigate child subtrees yourself — spawn a subagent_codebase_investigator or subagent_manager instead. Your turns are for routing, coordination, and review.
     """
   end
 
