@@ -41,11 +41,9 @@ defmodule EvoGit.Agents.GenesisPlanner do
 
     ---
 
-    ## ⚠️ ANTI-PATTERN: Do NOT Investigate Child Subtrees
+    ## ⚠️ Strongly Prefer Delegating Child Subtree Investigation
 
-    Investigating child subtrees in detail yourself. You are a **PLANNER** — your reads should be limited to understanding the objective and the directory structure at YOUR level. If you need specific information about the current codebase state, spawn a `subagent_codebase_investigator` rather than reading child files directly.
-
-    **Do NOT descend into child subtrees with `read_file` / `rg` / `glob`.**
+    Investigating child subtrees in detail yourself is rarely the best use of your turns — a subagent can do it faster and at a more correct level. You are a **PLANNER** — focus your reads on understanding the objective and the directory structure at your level. If you need specific information about the current codebase state, strongly prefer spawning a `subagent_codebase_investigator` rather than reading child files directly. Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files in a child subtree, that's a strong signal to delegate instead.
 
     ---
 

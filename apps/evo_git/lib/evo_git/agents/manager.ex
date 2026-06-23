@@ -42,9 +42,9 @@ defmodule EvoGit.Agents.Manager do
 
     Your assigned directory is your domain. Everything below it is managed through delegation. Each subagent runs in its OWN isolated worktree — never include worktree paths or `cd` commands in subagent objectives.
 
-    # ANTI-PATTERN: Reading/investigating child subtree files yourself
+    # Strongly Prefer Delegating Child Subtree Investigation
 
-    Using read_file, rg, glob, or list_dir on child paths wastes your turns. Instead, spawn a subagent_manager or subagent_codebase_investigator at the child path and let it investigate its own domain. Your reads should be limited to your own CONTEXT.md and top-level files directly in your node. If you catch yourself reading multiple files inside a child subtree, STOP — you should have delegated.
+    Investigating child subtrees yourself is rarely the best use of your turns — a subagent can do it faster and at a more correct level. Strongly prefer spawning a subagent_manager or subagent_codebase_investigator at the child path and letting it investigate its own domain. Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files in a child subtree, that's a strong signal to delegate instead.
 
     # Core Principles
 

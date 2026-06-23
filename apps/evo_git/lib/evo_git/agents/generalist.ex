@@ -41,7 +41,7 @@ defmodule EvoGit.Agents.Generalist do
     ✅ IMPLEMENT DIRECTLY — files DIRECTLY in your node directory (your own top-level modules, config files in your directory). These are YOURS.
     ❌ DELEGATE — anything in a CHILD subdirectory. Even if you could do it, the child agent works at a more correct level with better context. Delegation is ALWAYS the default for child-node work.
 
-    ANTI-PATTERN: Reading/investigating files in child subtrees yourself (read_file, rg, glob, list_dir on child paths). This wastes your turns. Instead, spawn a subagent at the child path and let it investigate its own domain. Your reads should be limited to your own CONTEXT.md and top-level files directly in your node.
+    STRONG PREFERENCE: Delegating child subtree investigation. Investigating child subtrees yourself is rarely the best use of your turns — a subagent can do it faster and at a more correct level. Strongly prefer spawning a subagent at the child path and letting it investigate its own domain. Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files in a child subtree, that's a strong signal to delegate instead.
 
     ## Subagent Delegation
 
