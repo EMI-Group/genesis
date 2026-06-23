@@ -20,6 +20,8 @@ defmodule EvoGit.Config.SchemaTest do
       assert [:scheduler, :max_retries] in paths
       assert [:scheduler, :max_turns] in paths
       assert [:scheduler, :max_turns_root] in paths
+      assert [:scheduler, :delegation_hint_threshold] in paths
+      assert [:scheduler, :read_delegation_hint_threshold] in paths
 
       # LLM
       assert [:llm, :model] in paths
@@ -64,8 +66,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 33 schemas" do
-      assert length(Schema.all_schemas()) == 33
+    test "has exactly 34 schemas" do
+      assert length(Schema.all_schemas()) == 34
     end
   end
 
@@ -82,6 +84,8 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.scheduler.max_retries == 15
       assert defaults.scheduler.max_turns == 128
       assert defaults.scheduler.max_turns_root == 128
+      assert defaults.scheduler.delegation_hint_threshold == 5
+      assert defaults.scheduler.read_delegation_hint_threshold == 3
 
       # LLM
       assert defaults.llm.model == nil
@@ -138,7 +142,7 @@ defmodule EvoGit.Config.SchemaTest do
 
     test "each category has expected count" do
       grouped = Schema.schemas_by_category()
-      assert length(grouped[:scheduler]) == 8
+      assert length(grouped[:scheduler]) == 9
       assert length(grouped[:llm]) == 9
       assert length(grouped[:user]) == 1
       assert length(grouped[:sandbox]) == 9

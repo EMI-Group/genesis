@@ -8,8 +8,11 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert TurnWarning.current_positional_level(0, 128) == :none
     end
 
-    test "returns :beginning at ~25% for large budgets" do
-      assert TurnWarning.current_positional_level(32, 128) == :beginning
+    test "returns :beginning at ~15% for large budgets" do
+      # 15% of 128 = turn ~19.2; turn 20 = 15% used, fires :beginning
+      assert TurnWarning.current_positional_level(20, 128) == :beginning
+      # turn 19 = 14% used, below threshold
+      assert TurnWarning.current_positional_level(19, 128) == :none
     end
 
     test "returns :end when turns_remaining hits adaptive threshold" do
