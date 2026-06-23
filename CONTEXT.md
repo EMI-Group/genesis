@@ -89,7 +89,8 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 - **macOS**: Builds ARM64 (`macos-14`) and x86_64 (`macos-15-intel`) → `.dmg` / `.app` bundles
 - **Linux**: Builds x86_64 (`ubuntu-24.04`) and ARM64 (`ubuntu-24.04-arm`) → `.deb` / `.rpm` / AppImage (AppImage excluded on ARM64 — `appimagetool`/`linuxdeploy` are x86_64-only)
 - **Windows**: Builds x86_64 (`windows-2022`) and ARM64 (`windows-11-arm`) → `.msi` / `.exe` (NSIS) installers. Both use the x64 Burrito/ERTS release (no native ARM64 Erlang/OTP build exists; x64 ERTS runs via Windows' emulation layer on ARM), while the Tauri shell compiles natively (`aarch64-pc-windows-msvc`).
-- **Caching**: Mix deps (`deps/`), Mix build (`_build/`), and Rust target (`Swatinem/rust-cache@v2`) are cached per platform/target to speed up CI
+- **Caching**: Mix deps (`deps/`), Mix build (`_build/`), and Rust target (`Swatinem/rust-cache@v2`) are cached per platform/target to speed up CI. The Burrito release step uses `--overwrite` to ensure the `Burrito.wrap/1` step always re-runs even when `_build/` is cache-restored (otherwise the wrapped binary in `burrito_out/` is skipped and missing).
+- **ARM runner ImageOS fix**: GitHub-hosted ARM partner runners (`ubuntu-24.04-arm`, `windows-11-arm`) report `ImageOS` values (`ubuntu24-arm64`, `win11-arm64`) that `erlef/setup-beam` does not recognize. The workflow sets `ImageOS` to the base value (`ubuntu24` / `win22`) via `$GITHUB_ENV` before the setup-beam step for ARM targets only.
 - **Toolchains**: CI requires Elixir/OTP, Rust (Tauri), and Zig (Burrito wrapper compilation) on all platforms; Linux also needs system packages (webkit2gtk, etc.)
 - **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
 - **Burrito targets**: `darwin_arm64`, `darwin_amd64`, `windows_x64`, `linux_x64`, `linux_arm64` (defined in `mix.exs`)
