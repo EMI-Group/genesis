@@ -57,6 +57,11 @@ defmodule EvoGit.Agent do
       @delegation_hint_threshold 5
       # Write tools whose file paths should be tracked for delegation hints
       @write_tools_for_delegation ~w(write_file edit_file)
+      # Number of read-tool calls to the same child directory before nudging
+      # the agent to delegate investigation to a subagent.
+      @read_delegation_hint_threshold 3
+      # Read/investigation tools whose paths should be tracked for read delegation hints
+      @read_tools_for_delegation ~w(read_file rg glob list_dir)
 
       import ReqLLM.Context, only: [user: 1, assistant: 1, system: 1, tool_result: 3]
 
@@ -148,6 +153,7 @@ defmodule EvoGit.Agent do
           EvoGit.AgentScheduler.update_agent_context(agent_id, context)
 
           Process.put(:delegation_hints, %{})
+          Process.put(:read_delegation_hints, %{})
           loop(state)
         end
       end
@@ -366,6 +372,7 @@ defmodule EvoGit.Agent do
 
         # Initialize delegation hints in process dictionary for this turn
         Process.put(:delegation_hints, state.delegation_hints)
+        Process.put(:read_delegation_hints, state.read_delegation_hints)
 
         case process_tool_calls(tool_calls, state) do
           {:complete, final_result} ->
@@ -375,6 +382,8 @@ defmodule EvoGit.Agent do
             # Pick up updated delegation hints from tool execution
             updated_hints = Process.get(:delegation_hints, state.delegation_hints)
             Process.delete(:delegation_hints)
+            updated_read_hints = Process.get(:read_delegation_hints, state.read_delegation_hints)
+            Process.delete(:read_delegation_hints)
 
             # Detect subagent calls to reset the middle-warning counter
             had_subagent_call = Enum.any?(tool_calls, fn call ->
@@ -382,7 +391,7 @@ defmodule EvoGit.Agent do
             end)
             new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
 
-            state = %{state | context: ReqLLM.Context.append(state.context, tool_responses), delegation_hints: updated_hints, turns_since_subagent: new_turns_since}
+            state = %{state | context: ReqLLM.Context.append(state.context, tool_responses), delegation_hints: updated_hints, read_delegation_hints: updated_read_hints, turns_since_subagent: new_turns_since}
             sync_context_to_ets(state.agent_id, state.context)
             loop(state)
 
@@ -580,6 +589,10 @@ defmodule EvoGit.Agent do
         threshold = delegation_hint_threshold()
         initial_hints = Process.get(:delegation_hints, %{})
 
+        read_threshold = read_delegation_hint_threshold()
+        read_initial_hints = Process.get(:read_delegation_hints, %{})
+        delegation_level = __MODULE__.delegation_level()
+
         # Cache conflict files once per batch to avoid repeated git calls
         conflict_files = case Git.conflict_files(repo_path) do
           {:ok, files} -> files
@@ -587,8 +600,8 @@ defmodule EvoGit.Agent do
         end
 
         # Execute tools sequentially, threading delegation hints through
-        {results, final_hints} =
-          Enum.reduce(indexed_calls, {[], initial_hints}, fn {call, index}, {acc_results, hints} ->
+        {results, final_hints, read_final_hints} =
+          Enum.reduce(indexed_calls, {[], initial_hints, read_initial_hints}, fn {call, index}, {acc_results, hints, read_hints} ->
             tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
 
             tool_timeout = Map.get(call.arguments, "timeout", @default_tool_timeout)
@@ -633,11 +646,22 @@ defmodule EvoGit.Agent do
                 {output, hints}
               end
 
-            {acc_results ++ [{index, tool_call_id, call.name, output}], hints}
+            # Track read delegation hints for read tools (skip during conflict resolution)
+            {output, read_hints} =
+              if read_threshold > 0 do
+                read_child_paths = extract_read_child_paths(call.name, call.arguments, node_path, repo_path)
+                read_child_paths = filter_child_paths_if_conflicts(read_child_paths, conflict_files)
+                maybe_append_read_delegation_hint(output, read_hints, read_child_paths, read_threshold, delegation_level)
+              else
+                {output, read_hints}
+              end
+
+            {acc_results ++ [{index, tool_call_id, call.name, output}], hints, read_hints}
           end)
 
         # Store updated hints in process dictionary for do_turn to pick up
         Process.put(:delegation_hints, final_hints)
+        Process.put(:read_delegation_hints, read_final_hints)
 
         results
       end
@@ -796,6 +820,105 @@ defmodule EvoGit.Agent do
           end
 
         {updated_output, updated_hints}
+      end
+
+      # --- Read-Tool Delegation Hinting ---
+      # Tracks how many read-tool calls (read_file, rg, glob, list_dir) target
+      # child directories of the agent's assigned node. When the count exceeds a
+      # threshold, a friendly nudge is appended to the tool output suggesting the
+      # agent delegate investigation to a subagent instead of reading files
+      # directly. Only fires for high-level agents.
+
+      defp read_delegation_hint_threshold do
+        EvoGit.Config.resolve([:scheduler, :read_delegation_hint_threshold]) || @read_delegation_hint_threshold
+      end
+
+      @doc false
+      defp extract_read_child_paths(tool_name, args, node_path, repo_path) do
+        if tool_name in @read_tools_for_delegation do
+          do_extract_read_child_paths(tool_name, args, node_path, repo_path)
+        else
+          []
+        end
+      end
+
+      defp do_extract_read_child_paths("read_file", args, node_path, repo_path) do
+        case EvoGit.Agent.Tools.Shared.fetch_string_arg(args, "file_path") do
+          {:ok, file_path} -> file_path_to_child_dir(file_path, node_path, repo_path)
+          _ -> []
+        end
+      end
+
+      defp do_extract_read_child_paths("list_dir", args, node_path, repo_path) do
+        case EvoGit.Agent.Tools.Shared.fetch_string_arg(args, "dir_path") do
+          {:ok, dir_path} -> path_to_child_dir(dir_path, node_path, repo_path)
+          _ -> []
+        end
+      end
+
+      defp do_extract_read_child_paths(tool_name, args, node_path, repo_path)
+           when tool_name in ~w(rg glob) do
+        case EvoGit.Agent.Tools.Shared.fetch_string_arg(args, "path") do
+          {:ok, path} -> path_to_child_dir(path, node_path, repo_path)
+          _ -> []
+        end
+      end
+
+      defp update_read_delegation_hints(read_hints, child_paths) do
+        Enum.reduce(child_paths, read_hints, fn child_path, acc ->
+          current = Map.get(acc, child_path, %{count: 0, hint_shown: false})
+          Map.put(acc, child_path, %{current | count: current.count + 1})
+        end)
+      end
+
+      defp maybe_append_read_delegation_hint(output, read_hints, child_paths, threshold, delegation_level) do
+        new_read_hints = update_read_delegation_hints(read_hints, child_paths)
+
+        # Only emit read delegation hints for high-level agents
+        {updated_output, updated_read_hints} =
+          if delegation_level == :high do
+            # Check if any child path has crossed the threshold for the first time
+            hint =
+              child_paths
+              |> Enum.filter(fn child_path ->
+                entry = Map.get(new_read_hints, child_path)
+                entry && entry.count >= threshold && !entry.hint_shown
+              end)
+              |> Enum.map(fn child_path ->
+                "💡 **Delegation Hint**: You've been reading/investigating files in `#{child_path}` for #{entry_count(new_read_hints, child_path)} turns. " <>
+                  "As a high-level agent, investigation of child subtrees should be delegated — spawn a `subagent_codebase_investigator` (or `subagent_manager`) at `#{child_path}` and let it investigate its own domain. " <>
+                  "Your turns are for routing decisions, coordination, and review — not deep investigation."
+              end)
+              |> Enum.join("\n\n")
+
+            if hint != "" do
+              # Mark these paths as hint-shown
+              marked_read_hints =
+                Enum.reduce(child_paths, new_read_hints, fn child_path, acc ->
+                  entry = Map.get(acc, child_path)
+                  if entry && entry.count >= threshold do
+                    Map.put(acc, child_path, %{entry | hint_shown: true})
+                  else
+                    acc
+                  end
+                end)
+
+              {output <> "\n\n" <> hint, marked_read_hints}
+            else
+              {output, new_read_hints}
+            end
+          else
+            {output, new_read_hints}
+          end
+
+        {updated_output, updated_read_hints}
+      end
+
+      defp entry_count(hints, child_path) do
+        case Map.get(hints, child_path) do
+          %{count: count} -> count
+          _ -> 0
+        end
       end
 
       defp is_rate_limit_error?(reason) do

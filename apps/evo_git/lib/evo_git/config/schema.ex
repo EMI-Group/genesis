@@ -164,6 +164,18 @@ defmodule EvoGit.Config.Schema do
           "When an agent edits files in a child directory this many times, a friendly hint is appended to the tool output " <>
           "suggesting it delegate to a subagent at that path. Set to 0 to disable delegation hints."
     },
+    %{
+      key_path: [:scheduler, :read_delegation_hint_threshold],
+      type: :pos_integer,
+      default: 3,
+      validation: [min: 1],
+      category: :scheduler,
+      sub_category: nil,
+      description:
+        "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. " <>
+          "When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output " <>
+          "suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
+    },
     # ── LLM ────────────────────────────────────────────────────────────
     %{
       key_path: [:llm, :model],
