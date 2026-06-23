@@ -67,6 +67,10 @@ jobs:
             # AppImage is excluded on ARM64: appimagetool/linuxdeploy are
             # x86_64-only binaries and the bundling step fails on ARM hosts.
             tauri_bundles: "deb,rpm"
+            # The GitHub-hosted ARM partner runner reports ImageOS as
+            # 'ubuntu24-arm64', which erlef/setup-beam does not recognize.
+            # Override to the base value so setup-beam maps it correctly.
+            beam_image_os: ubuntu24
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -77,6 +81,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Fix ImageOS for ARM partner runners
+        # The GitHub-hosted ARM partner runner reports ImageOS as
+        # 'ubuntu24-arm64', which erlef/setup-beam does not recognize.
+        # Override to the base value so setup-beam can map it correctly.
+        if: matrix.beam_image_os != ''
+        run: echo "ImageOS=${{ matrix.beam_image_os }}" >> "$GITHUB_ENV"
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -152,7 +163,10 @@ jobs:
       - name: Build Burrito release
         env:
           BURRITO_TARGET: ${{ matrix.burrito_target }}
-        run: MIX_ENV=prod mix release evogit_desktop
+        # --overwrite is required: when _build/ is cache-restored, mix detects
+        # an existing assembled release and skips the Burrito.wrap/1 step,
+        # leaving burrito_out/ empty. This forces a fresh wrap every run.
+        run: MIX_ENV=prod mix release evogit_desktop --overwrite
 
       - name: Locate Burrito binary
         run: |
@@ -163,7 +177,7 @@ jobs:
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          cp burrito_out/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}"
+          cp burrito_out/evogit_desktop_${{ matrix.burrito_target }} "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}"
           chmod +x "${SIDECAR_DIR}/"*
 
           echo "Sidecar binaries:"
@@ -201,6 +215,12 @@ jobs:
           - arch: arm64
             runner: windows-11-arm
             rust_target: aarch64-pc-windows-msvc
+            # The GitHub-hosted ARM partner runner reports ImageOS as
+            # 'win11-arm64', which erlef/setup-beam does not recognize.
+            # Map it to 'win22' (Windows Server 2022) so setup-beam resolves
+            # the correct OTP build (Windows OTP is x86_64-only, runs via
+            # emulation on ARM64).
+            beam_image_os: win22
     runs-on: ${{ matrix.runner }}
     env:
       # Both Windows targets use the x64 Burrito release because Erlang/OTP has
@@ -216,6 +236,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Fix ImageOS for ARM partner runners
+        # The GitHub-hosted ARM partner runner reports ImageOS as
+        # 'win11-arm64', which erlef/setup-beam does not recognize.
+        # Override to the base value so setup-beam can map it correctly.
+        if: matrix.beam_image_os != ''
+        shell: bash
+        run: echo "ImageOS=${{ matrix.beam_image_os }}" >> "$GITHUB_ENV"
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -302,7 +330,10 @@ jobs:
         shell: bash
         env:
           BURRITO_TARGET: windows_x64
-        run: MIX_ENV=prod mix release evogit_desktop
+        # --overwrite is required: when _build/ is cache-restored, mix detects
+        # an existing assembled release and skips the Burrito.wrap/1 step,
+        # leaving burrito_out/ empty. This forces a fresh wrap every run.
+        run: MIX_ENV=prod mix release evogit_desktop --overwrite
 
       - name: Locate Burrito binary
         shell: bash
@@ -315,7 +346,7 @@ jobs:
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          cp burrito_out/evogit_desktop_* "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}.exe"
+          cp burrito_out/evogit_desktop_windows_x64.exe "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}.exe"
 
           echo "Sidecar binaries:"
           ls -la "${SIDECAR_DIR}/"
