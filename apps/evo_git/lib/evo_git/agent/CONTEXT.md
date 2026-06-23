@@ -37,7 +37,13 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 
 ### Delegation Hinting
 
-When an agent repeatedly edits files in a child directory (below its assigned `node_path`), the framework tracks the write-tool call count per child directory. After the count exceeds `delegation_hint_threshold` (default: 5, configurable via `[:scheduler, :delegation_hint_threshold]`), a friendly nudge is appended to the tool output suggesting the agent spawn a subagent for that child directory. The hint is shown only once per child directory (tracked via `hint_shown` flag in `LoopState.delegation_hints`).
+The framework tracks TWO independent hinting mechanisms, both following the same per-child-directory counter + fire-once architecture:
+
+**Write-tool hint** — When an agent repeatedly *edits* files in a child directory (below its assigned `node_path`), the framework tracks the write-tool call count per child directory. After the count exceeds `delegation_hint_threshold` (default: 5, configurable via `[:scheduler, :delegation_hint_threshold]`), a friendly nudge is appended to the tool output suggesting the agent spawn a subagent for that child directory.
+
+**Read-tool hint** — When a *high-level* agent (delegation_level `:high`) repeatedly *reads/investigates* files in a child directory (via `read_file`, `rg`, `glob`, `list_dir`), the framework tracks the read-tool call count per child directory in a separate counter (`read_delegation_hints`). After the count exceeds `read_delegation_hint_threshold` (default: 3, configurable via `[:scheduler, :read_delegation_hint_threshold]`), a nudge is appended suggesting the agent spawn a `subagent_codebase_investigator`. This only applies to `:high` agents — low-level agents are expected to read files directly.
+
+Both hints are shown only once per child directory (tracked via `hint_shown` flag), and both are suppressed during merge conflict resolution (via `filter_child_paths_if_conflicts/2`).
 
 The hinting logic is implemented inside the `__using__` macro in `agent.ex`:
 - `batch_execute_tools/3` threads `delegation_hints` through sequential tool execution via `Enum.reduce`
