@@ -85,7 +85,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.scheduler.max_turns == 128
       assert defaults.scheduler.max_turns_root == 128
       assert defaults.scheduler.delegation_hint_threshold == 5
-      assert defaults.scheduler.read_delegation_hint_threshold == 3
+      assert defaults.scheduler.read_delegation_hint_threshold == 8
 
       # LLM
       assert defaults.llm.model == nil

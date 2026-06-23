@@ -167,7 +167,7 @@ defmodule EvoGit.Config.Schema do
     %{
       key_path: [:scheduler, :read_delegation_hint_threshold],
       type: :pos_integer,
-      default: 3,
+      default: 8,
       validation: [min: 1],
       category: :scheduler,
       sub_category: nil,

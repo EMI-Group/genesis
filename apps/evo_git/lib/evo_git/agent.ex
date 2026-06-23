@@ -59,7 +59,7 @@ defmodule EvoGit.Agent do
       @write_tools_for_delegation ~w(write_file edit_file)
       # Number of read-tool calls to the same child directory before nudging
       # the agent to delegate investigation to a subagent.
-      @read_delegation_hint_threshold 3
+      @read_delegation_hint_threshold 8
       # Read/investigation tools whose paths should be tracked for read delegation hints
       @read_tools_for_delegation ~w(read_file rg glob list_dir)
 
