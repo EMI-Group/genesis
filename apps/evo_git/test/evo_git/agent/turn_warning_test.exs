@@ -34,9 +34,9 @@ defmodule EvoGit.Agent.TurnWarningTest do
     end
 
     test "beginning does not fire before minimum turn floor" do
-      # For max_turns=16, 25% = turn 4, but floor is 6
-      assert TurnWarning.current_positional_level(4, 16) == :none
-      assert TurnWarning.current_positional_level(6, 16) == :beginning
+      # For max_turns=16, 15% = turn ~2.4; floor is 3
+      assert TurnWarning.current_positional_level(2, 16) == :none
+      assert TurnWarning.current_positional_level(3, 16) == :beginning
     end
   end
 
@@ -92,17 +92,17 @@ defmodule EvoGit.Agent.TurnWarningTest do
   end
 
   describe "check_middle/3" do
-    test "returns :none when turns_since_subagent < 15" do
+    test "returns :none when turns_since_subagent < 8" do
       assert :none = TurnWarning.check_middle(10, 128, 0)
       assert :none = TurnWarning.check_middle(10, 128, 5)
-      assert :none = TurnWarning.check_middle(10, 128, 14)
+      assert :none = TurnWarning.check_middle(10, 128, 7)
     end
 
-    test "returns {:ok, warning} when turns_since_subagent >= 15" do
-      assert {:ok, warning} = TurnWarning.check_middle(20, 128, 15)
+    test "returns {:ok, warning} when turns_since_subagent >= 8" do
+      assert {:ok, warning} = TurnWarning.check_middle(20, 128, 8)
       assert warning.level == :middle
       assert warning.turn == 20
-      assert warning.turns_since_subagent == 15
+      assert warning.turns_since_subagent == 8
     end
 
     test "warning includes turns_since_subagent in the struct" do
@@ -114,26 +114,25 @@ defmodule EvoGit.Agent.TurnWarningTest do
 
     test "can fire repeatedly (no monotonic blocking)" do
       # Calling check_middle twice with the same turns_since_subagent both return {:ok, ...}
-      assert {:ok, _} = TurnWarning.check_middle(20, 128, 15)
-      assert {:ok, _} = TurnWarning.check_middle(21, 128, 15)
-      assert {:ok, _} = TurnWarning.check_middle(22, 128, 15)
+      assert {:ok, _} = TurnWarning.check_middle(20, 128, 8)
+      assert {:ok, _} = TurnWarning.check_middle(21, 128, 8)
+      assert {:ok, _} = TurnWarning.check_middle(22, 128, 8)
     end
 
     test "returns :none at turn 0" do
-      assert :none = TurnWarning.check_middle(0, 128, 15)
+      assert :none = TurnWarning.check_middle(0, 128, 8)
     end
   end
 
   describe "message/1" do
-    test "beginning message includes turn count, percent, and delegation guidance" do
+    test "beginning message includes turn count and delegation guidance" do
       {:ok, warning} = TurnWarning.check_positional(32, 128, :none)
       msg = TurnWarning.message(warning)
       assert msg =~ "[NOTICE]"
       assert msg =~ "Turn 32/128"
-      assert msg =~ "25% used"
-      assert msg =~ "96 turns remaining"
       assert msg =~ "routing table"
       assert msg =~ "subagent"
+      assert msg =~ "Before doing ANYTHING else"
     end
 
     test "middle message includes turns_since_subagent and delegation reminder" do
@@ -175,23 +174,23 @@ defmodule EvoGit.Agent.TurnWarningTest do
   end
 
   describe "scaling behavior" do
-    test "for max_turns=8 (small budget), middle never fires" do
-      # turns_since_subagent can't reach 15 since max_turns is only 8
-      assert :none = TurnWarning.check_middle(5, 8, 14)
+    test "for max_turns=8 (small budget), middle fires at interval 8" do
+      assert :none = TurnWarning.check_middle(5, 8, 7)
+      assert {:ok, _} = TurnWarning.check_middle(5, 8, 8)
     end
 
     test "for max_turns=128 (large budget), middle fires multiple times if counter keeps growing" do
-      # First fire at 15
-      assert {:ok, w1} = TurnWarning.check_middle(16, 128, 15)
-      assert w1.turns_since_subagent == 15
+      # First fire at 8
+      assert {:ok, w1} = TurnWarning.check_middle(16, 128, 8)
+      assert w1.turns_since_subagent == 8
 
-      # After reset (0) and growing again to 15
-      assert {:ok, w2} = TurnWarning.check_middle(32, 128, 15)
-      assert w2.turns_since_subagent == 15
+      # After reset (0) and growing again to 8
+      assert {:ok, w2} = TurnWarning.check_middle(32, 128, 8)
+      assert w2.turns_since_subagent == 8
 
-      # And again at 30 (if somehow not reset)
-      assert {:ok, w3} = TurnWarning.check_middle(48, 128, 30)
-      assert w3.turns_since_subagent == 30
+      # And again at 16 (if somehow not reset)
+      assert {:ok, w3} = TurnWarning.check_middle(48, 128, 16)
+      assert w3.turns_since_subagent == 16
     end
   end
 
@@ -200,9 +199,9 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert TurnWarning.current_positional_level(32, 128, :low) == :none
     end
 
-    test ":low agents need turns_since_subagent >= 45 for middle to fire" do
-      assert :none = TurnWarning.check_middle(20, 128, 44, :low)
-      assert {:ok, _} = TurnWarning.check_middle(50, 128, 45, :low)
+    test ":low agents need turns_since_subagent >= 24 for middle to fire" do
+      assert :none = TurnWarning.check_middle(20, 128, 23, :low)
+      assert {:ok, _} = TurnWarning.check_middle(50, 128, 24, :low)
     end
 
     test ":low agents still get :end" do
