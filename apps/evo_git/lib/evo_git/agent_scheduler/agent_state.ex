@@ -23,6 +23,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or evogit.toml)
   - `usage` — cumulative token and cost usage for this agent (`nil` until the first LLM call completes)
+  - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `LoopState.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
   """
 
   alias EvoGit.Agent.Usage
@@ -31,7 +32,24 @@ defmodule EvoGit.AgentScheduler.AgentState do
   alias EvoGit.Core.PhyloGraphNode
 
   @enforce_keys [:context_node, :llm_model, :max_retries, :max_depth]
-  defstruct [:context, :context_node, :phylo_node, :llm_model, :max_retries, :max_depth, :max_turns, :parent_id, :objective, :task_local_id, usage: nil, llm_generation_params: [], repo_id: :primary, repo_root: nil, foreign_repos: []]
+  defstruct [
+    :context,
+    :context_node,
+    :phylo_node,
+    :llm_model,
+    :max_retries,
+    :max_depth,
+    :max_turns,
+    :parent_id,
+    :objective,
+    :task_local_id,
+    :turn,
+    usage: nil,
+    llm_generation_params: [],
+    repo_id: :primary,
+    repo_root: nil,
+    foreign_repos: []
+  ]
 
   @type t :: %__MODULE__{
           context: ReqLLM.Context.t() | nil,
@@ -48,6 +66,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           repo_root: String.t() | nil,
           task_local_id: pos_integer() | nil,
           usage: Usage.t() | nil,
+          turn: non_neg_integer() | nil,
           foreign_repos: [ForeignRepo.t()]
         }
 end
