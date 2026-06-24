@@ -36,7 +36,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `./lib/evo_git/core/` | `ContextNode` (spatial) and `PhyloGraphNode` (temporal) data structures |
 | `./lib/evo_git/adapters/` | `Git` CLI adapter — thin wrapper around `System.cmd("git", ...)` |
 | `./lib/evo_git/agent/` | Agent behaviour, tool library, context compression, subagent processing, usage tracking |
-| `./lib/evo_git/agents/` | Agent implementations (Generalist, Manager, Executor, TaskScheduler, Investigator, Architect, Extractor, Evaluator) |
+| `./lib/evo_git/agents/` | Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, Extractor, Evaluator) |
 | `./lib/evo_git/runtime/` | Genesis, Evolution, and Prompts (LLM templates) |
 | `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, `Worktrees` — ETS schemas and helper logic |
 | `./lib/evo_git/config/` | `EvoGit.Config` — defaults, user TOML, credentials, API keys |

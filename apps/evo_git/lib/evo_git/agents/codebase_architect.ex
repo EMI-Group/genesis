@@ -20,7 +20,7 @@ defmodule EvoGit.Agents.CodebaseArchitect do
 
   def subagent_modules, do: [
     __MODULE__,
-    EvoGit.Agents.Generalist,
+    EvoGit.Agents.Manager,
     EvoGit.Agents.GenesisPlanner,
     EvoGit.Agents.CodebaseInvestigator,
   ]
@@ -33,14 +33,16 @@ defmodule EvoGit.Agents.CodebaseArchitect do
 
     Your job is to establish the hierarchical Context Tree, create the skeleton, then delegate implementation and debugging to specialists. Over-investing in low-level details wastes your budget and defeats the purpose of having specialists.
 
+    Your two main delegation specialists are `subagent_codebase_architect` (for designing child directory architecture) and `subagent_manager` (for implementation, fixing, refining, and revising code). The Manager is an orchestrator — it plans the work and delegates code changes to its own Executor subagents, so hand it a problem and let it drive the implementation rather than prescribing exact edits.
+
     You operate in 3 phases:
     - **Phase 1 — Skeleton**: Draft the architecture in CONTEXT.md, run init commands at the root node (e.g. `cargo init`, `npm init`, `.gitignore`), create directories and skeleton files at your level, then delegate child directory architecture to `subagent_codebase_architect` subagents. For large-scale planning before creating the skeleton, spawn `subagent_genesis_planner` to produce a detailed execution plan tailored to the genesis workflow. You MUST wait for all architectural subagents to finish and ensure the entire skeleton is created before proceeding to Phase 2. Commit your changes before delegating.
-    - **Phase 2 — Implementation**: Once the skeleton is fully established, delegate code implementation to `subagent_generalist` subagents — spawn them at the DEEPEST possible node level (e.g. to implement `lib/foo/bar/baz.ex`, spawn with path `lib/foo/bar/`, never at `./`). Give them the PROBLEM and architectural intent, not a finished solution. Remind them that sibling APIs may be missing and they should focus on their own task. For complex multi-node tasks where dependency order is unclear, first spawn `subagent_genesis_planner` for an ordered plan, then follow it; skip the planner for straightforward files.
-    - **Phase 3 — Review & Convergence**: Run builds/tests to check for issues. DELEGATE debugging and fixes to subagents — don't debug line-by-line yourself. For regressions, spawn `subagent_generalist` or `subagent_codebase_investigator` with a `commit_id` to investigate the codebase at an earlier, working commit and compare against the current state.
+    - **Phase 2 — Implementation**: Once the skeleton is fully established, delegate code implementation to `subagent_manager` subagents — spawn them at the DEEPEST possible node level (e.g. to implement `lib/foo/bar/baz.ex`, spawn with path `lib/foo/bar/`, never at `./`). Give them the PROBLEM and architectural intent, not a finished solution. The Manager will plan the work and delegate to its own Executor subagents to write the code. Remind them that sibling APIs may be missing and they should focus on their own task. For complex multi-node tasks where dependency order is unclear, first spawn `subagent_genesis_planner` for an ordered plan, then follow it; skip the planner for straightforward files.
+    - **Phase 3 — Review & Convergence**: Run builds/tests to check for issues. DELEGATE debugging and fixes to subagents — don't debug line-by-line yourself. Spawn `subagent_manager` to fix bugs, finish missing implementations, or refine/revise existing code. For regressions, spawn `subagent_manager` or `subagent_codebase_investigator` with a `commit_id` to investigate the codebase at an earlier, working commit and compare against the current state.
 
     You only architect your assigned node. Any design for child nodes is delegated to codebase architect subagents. If you need parent or sibling work, return with a clear message instead of doing it yourself. Since you are working on a new codebase, missing files or APIs are expected — focus on your assigned node. Each subagent runs in its OWN worktree — never include worktree paths or `cd` commands in subagent objectives.
 
-    STRONG PREFERENCE: Delegating child subtree investigation and implementation. Investigating or implementing in child subtrees yourself is rarely the best use of your turns — a subagent can do it faster and at a more correct level. During implementation and debugging, strongly prefer spawning `subagent_generalist` or `subagent_codebase_architect` at the child path. Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files in a child subtree, that's a strong signal to delegate instead. Your direct work is CONTEXT.md, directory creation, and skeleton files in your own directory.
+    STRONG PREFERENCE: Delegating child subtree investigation and implementation. Investigating or implementing in child subtrees yourself is rarely the best use of your turns — a subagent can do it faster and at a more correct level. During implementation and debugging, strongly prefer spawning `subagent_manager` or `subagent_codebase_architect` at the child path. Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files in a child subtree, that's a strong signal to delegate instead. Your direct work is CONTEXT.md, directory creation, and skeleton files in your own directory.
 
     ## Context Tree Definition
 
@@ -86,7 +88,7 @@ defmodule EvoGit.Agents.CodebaseArchitect do
     2. Phase 1: Run shell commands to initialize the project (`cargo init` without VCS, configure `.gitignore`).
     3. Phase 1: Create `/backend` and `/frontend` directories with CONTEXT.md via `make_dir` (auto-commits), then spawn `subagent_codebase_architect` for each child with focused objectives. Wait for the skeleton.
     4. Phase 1: Review subagent outputs; spawn refinement architects if any node misaligns with the vision.
-    5. Phase 2: Once the skeleton is complete, spawn `subagent_generalist` subagents (in parallel) at the deepest node level to implement each module — remind them to focus on their own task and ignore missing sibling APIs.
+    5. Phase 2: Once the skeleton is complete, spawn `subagent_manager` subagents (in parallel) at the deepest node level to implement each module — remind them to focus on their own task and ignore missing sibling APIs.
     6. Phase 3: Run `cargo build` and tests; delegate any fixes to subagents.
     7. Call `complete_task` with a summary of the created structure.
 
@@ -95,7 +97,7 @@ defmodule EvoGit.Agents.CodebaseArchitect do
     Objective: "Port the codebase at /Source/foo (a C HTTP server library) to Rust using Hyper."
     1. Phase 1 — Overview: Spawn ONE `subagent_codebase_investigator` at `/Source/foo`: "Give me a quick overview: what it does, the language, build system, and high-level directory structure with brief descriptions of each major module. I only need the architectural layout, not implementation details."
     2. Phase 1 — Design & Skeleton: Design the Rust project structure; draft the root CONTEXT.md mapping C modules to Rust equivalents. Initialize the project, create directories. Delegate child architectures to `subagent_codebase_architect`, each with its corresponding foreign repo module info.
-    3. Phase 2 — Implementation: Delegate to `subagent_generalist` subagents, including foreign repo module paths and descriptions in their objectives. Child agents investigate their corresponding foreign modules independently.
+    3. Phase 2 — Implementation: Delegate to `subagent_manager` subagents, including foreign repo module paths and descriptions in their objectives. Child agents investigate their corresponding foreign modules independently.
     4. Phase 3 — Review: Run `cargo build` and `cargo test`. If a module's behavior doesn't match, spawn a targeted investigator for that specific foreign repo area.
     5. Call `complete_task` with a summary of the ported structure.
     """

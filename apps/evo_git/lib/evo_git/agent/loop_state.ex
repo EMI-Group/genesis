@@ -11,7 +11,7 @@ defmodule EvoGit.Agent.LoopState do
   ## Fields
 
   - `agent_id` — scheduler-assigned integer agent ID
-  - `agent_module` — the agent implementation module (e.g. `EvoGit.Agents.Generalist`)
+  - `agent_module` — the agent implementation module (e.g. `EvoGit.Agents.Manager`)
   - `depth` — recursion depth (0 for top-level agents)
   - `node_path` — the context-node path this agent is working on
   - `repo_path` — absolute path to the agent's worktree, or `nil` before assignment

@@ -94,8 +94,8 @@ CodebaseArchitect (root)
   ├── subagent_task_scheduler (optional — complex architecture scheduling)
   ├── subagent_codebase_architect (child dir)
   │     ├── subagent_codebase_architect (grandchild...)
-  │     └── subagent_generalist (implementation)
-  └── subagent_generalist (implementation)
+  │     └── subagent_manager (implementation)
+  └── subagent_manager (implementation)
 ```
 
 **Evolution Simple Mode**:
@@ -168,10 +168,9 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Agent.Result` | Structured agent output (result string, commit_sha, tag, branch, base_commit) |
 | `EvoGit.Agents.CodebaseArchitect` | Genesis Mode B agent — 3-phase: skeleton → implementation → review |
 | `EvoGit.Agents.ContextExtractor` | Genesis Mode A agent — read-only context extraction |
-| `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation |
+| `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation; also used by CodebaseArchitect for implementation/fixing/refining |
 | `EvoGit.Agents.Executor` | Code implementation subagent (spawned by Manager) |
 | `EvoGit.Agents.TaskScheduler` | Lightweight task scheduling subagent (spawned by Manager for complex tasks) |
-| `EvoGit.Agents.Generalist` | General-purpose subagent (used by CodebaseArchitect for implementation) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
 | `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |
 | `ReqLLM` | LLM streaming for PR title generation in `PullRequest`, and for evolution synthesis/behavioral profiling |

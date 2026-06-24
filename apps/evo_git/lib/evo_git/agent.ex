@@ -1087,7 +1087,7 @@ defmodule EvoGit.Agent do
       Returns the delegation level for this agent type.
 
       `:high` — The agent is expected to actively delegate work to subagents.
-      These are orchestration/planning agents (Manager, Generalist, CodebaseArchitect, etc.)
+      These are orchestration/planning agents (Manager, CodebaseArchitect, etc.)
       that receive broad objectives and should break them down into subtasks.
 
       `:low` — The agent receives precise, well-scoped objectives and primarily
