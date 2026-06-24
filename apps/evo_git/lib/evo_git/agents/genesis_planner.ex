@@ -56,13 +56,13 @@ defmodule EvoGit.Agents.GenesisPlanner do
     - What context/objective to give each child architect
     - What to implement directly (at this level) vs. delegate
 
-    **What you're planning for:** The CodebaseArchitect works recursively — at each node it creates the CONTEXT.md, creates empty code files/directories at its level, spawns child `subagent_codebase_architect` instances for child directories, spawns `subagent_generalist` instances for file-level implementation, and reviews/validates.
+    **What you're planning for:** The CodebaseArchitect works recursively — at each node it creates the CONTEXT.md, creates empty code files/directories at its level, spawns child `subagent_codebase_architect` instances for child directories, spawns `subagent_manager` instances for file-level implementation, and reviews/validates.
 
     ## Available Agents
 
     Reference ONLY these in the plan:
     - `subagent_codebase_architect` at `./child/path/` — spawns a child architect for a child directory. The child handles its own CONTEXT.md, children, and implementation. Include all relevant architectural context in its objective.
-    - `subagent_generalist` at `./` or `./child/` — implements specific files. Use for code that belongs at THIS level (not deep in a child subtree).
+    - `subagent_manager` at `./` or `./child/` — implements specific files. Use for code that belongs at THIS level (not deep in a child subtree).
     - `subagent_codebase_investigator` — for investigation when you need to check something about the current state.
 
     ## Worktree Isolation Rules
@@ -102,7 +102,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
     - `subagent_codebase_architect` at `./src/auth/` with objective: "...uses types from `./src/db/models/user.ex`..."
 
     ### Step 4: [Description] (implementation at this level)
-    - `subagent_generalist` at `./` with objective: "Implement [specific files at this level]"
+    - `subagent_manager` at `./` with objective: "Implement [specific files at this level]"
 
     ### Step 5: Validate
     - Run build/tests if applicable; check for integration issues

@@ -6,7 +6,7 @@ defmodule EvoGit.Task do
   worktree preparation and state management via ETS.
   """
   alias EvoGit.Adapters.Git
-  alias EvoGit.Agents.Generalist
+  alias EvoGit.Agents.Manager
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
   require Logger
@@ -41,7 +41,7 @@ defmodule EvoGit.Task do
         "You have access to the files in the current directory.\n" <>
         "Modify the files as needed."
 
-    agent_module = Keyword.get(opts, :agent_module, Generalist)
+    agent_module = Keyword.get(opts, :agent_module, Manager)
 
     spec = AgentSpec.new(context_node, phylo_node, agent_module, prompt)
 
@@ -68,7 +68,7 @@ defmodule EvoGit.Task do
     context_node = EvoGit.Core.ContextNode.load("./", phylo_node.repo)
 
     result =
-      AgentSpec.new(context_node, phylo_node, Generalist, diag_prompt)
+      AgentSpec.new(context_node, phylo_node, Manager, diag_prompt)
       |> EvoGit.AgentScheduler.run_agent()
 
     case result do
@@ -158,7 +158,7 @@ defmodule EvoGit.Task do
 
           conflict_phylo = PhyloGraphNode.new(worktree_path, current_sha)
 
-          AgentSpec.new(context_node, conflict_phylo, Generalist, prompt)
+          AgentSpec.new(context_node, conflict_phylo, Manager, prompt)
           |> EvoGit.AgentScheduler.run_agent()
         end)
 
