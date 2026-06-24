@@ -729,18 +729,27 @@ defmodule EvoGit.Agent do
         normalized_target = EvoGit.Agent.Tools.Shared.normalize_relpath(relative)
         normalized_node = EvoGit.Agent.Tools.Shared.normalize_relpath(node_path)
 
-        # Only track strict children (not the node itself)
-        if normalized_node == "./" do
-          # Root node: extract first path segment as child
-          extract_first_segment(normalized_target)
-        else
-          if String.starts_with?(normalized_target, normalized_node <> "/") do
-            # Extract the first segment under node_path
-            remainder = String.replace_prefix(normalized_target, normalized_node <> "/", "")
-            extract_first_segment_from_remainder(remainder, normalized_node)
+        # An absolute or out-of-repo path (e.g. "/tmp/foo") has no meaningful
+        # child directory to track for delegation hints — normalize_relpath
+        # returns {:error, _} for such paths, so bail out gracefully instead of
+        # crashing the hinting code (which runs in the main agent process).
+        with normalized_target when is_binary(normalized_target) <- normalized_target,
+             normalized_node when is_binary(normalized_node) <- normalized_node do
+          # Only track strict children (not the node itself)
+          if normalized_node == "./" do
+            # Root node: extract first path segment as child
+            extract_first_segment(normalized_target)
           else
-            []
+            if String.starts_with?(normalized_target, normalized_node <> "/") do
+              # Extract the first segment under node_path
+              remainder = String.replace_prefix(normalized_target, normalized_node <> "/", "")
+              extract_first_segment_from_remainder(remainder, normalized_node)
+            else
+              []
+            end
           end
+        else
+          _ -> []
         end
       end
 
