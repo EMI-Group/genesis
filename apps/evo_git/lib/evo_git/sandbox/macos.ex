@@ -29,12 +29,14 @@ defmodule EvoGit.Sandbox.MacOS do
           {String.t(), non_neg_integer()}
   def run(cwd, executable, args \\ [], repo_root \\ nil) do
     if enabled?() do
+      resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
       profile = generate_profile(cwd, repo_root)
 
       # sandbox-exec -p <profile> -- <executable> <args...>
       System.cmd("sandbox-exec", ["-p", profile, "--", executable | args],
         cd: cwd,
-        stderr_to_stdout: true
+        stderr_to_stdout: true,
+        env: [{"TMPDIR", resolved_tmpdir}]
       )
     else
       System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
@@ -104,19 +106,6 @@ defmodule EvoGit.Sandbox.MacOS do
       end)
       |> Enum.join("\n    ")
 
-    # The host $TMPDIR may point outside Platform.tmp_paths/0 (e.g. macOS
-    # /var/folders/...). Since the parent env is inherited verbatim, grant write
-    # access to the resolved TMPDIR when it is not already covered by the
-    # tmp_rules above, so LLM-generated temp-file writes don't get denied.
-    resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
-
-    extra_tmp_rule =
-      if tmpdir_covered?(resolved_tmpdir, tmp_paths) do
-        ""
-      else
-        ~s{(allow file-write* (subpath "#{resolved_tmpdir}"))}
-      end
-
     # Repo .git access
     git_rule =
       if repo_root do
@@ -132,7 +121,6 @@ defmodule EvoGit.Sandbox.MacOS do
     (allow file-read*)
     (allow file-write* (subpath "#{cwd}"))
     #{tmp_rules}
-    #{extra_tmp_rule}
     #{cache_rw_rules}
     #{git_rule}
     (allow process-exec)
@@ -150,11 +138,4 @@ defmodule EvoGit.Sandbox.MacOS do
     |> String.trim()
   end
 
-  # Returns true when `path` is equal to, or a subdirectory of, one of `prefixes`.
-  # Uses `prefix <> "/"` so that `/tmpfoo` does NOT match the `/tmp` prefix.
-  defp tmpdir_covered?(path, prefixes) do
-    Enum.any?(prefixes, fn prefix ->
-      path == prefix or String.starts_with?(path, prefix <> "/")
-    end)
-  end
 end

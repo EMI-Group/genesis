@@ -31,36 +31,28 @@ defmodule EvoGit.Sandbox.MacOSTest do
       assert profile =~ ~s{(allow file-write* (subpath "/some/cwd"))}
     end
 
-    test "adds an extra allow rule when resolved TMPDIR is outside Platform.tmp_paths/0" do
+    test "always grants write to /tmp and /var/tmp regardless of host TMPDIR" do
       save_tmpdir()
 
-      # Simulate a macOS-style per-user TMPDIR. Use a real dir under the home or
-      # a writable location that is NOT under /tmp or /var/tmp, and that exists.
+      # Simulate a macOS-style per-user TMPDIR that is NOT under /tmp or /var/tmp.
+      # Since TMPDIR is now overridden at runtime via the :env option (not via
+      # profile rules), the profile should always contain the /tmp and /var/tmp
+      # write rules regardless of the host TMPDIR state.
       extra = Path.join([System.tmp_dir!(), "evogit_macos_profile_#{System.unique_integer([:positive])}"])
       File.mkdir_p!(extra)
       on_exit(fn -> File.rm_rf!(extra) end)
+      System.put_env("TMPDIR", extra)
 
-      # resolve_tmpdir/0 only keeps the host value if it exists AND is under a
-      # Platform.tmp_paths/0 entry. To force the "outside" branch, we bypass
-      # resolution: directly verify that a path not covered by /tmp or /var/tmp
-      # would produce an extra rule by checking the resolved value here.
-      #
-      # Since on this host TMPDIR is likely unset, resolve_tmpdir() returns /tmp,
-      # which IS covered → no extra rule. We assert the no-extra-needed invariant
-      # for the default case and that the profile remains well-formed.
       profile = MacOS.generate_profile("/some/cwd", nil)
 
-      # The profile should be well-formed SBPL regardless of the TMPDIR state.
-      assert profile =~ "(version 1)"
-      assert profile =~ "(deny default)"
-      assert profile =~ "(allow file-read*)"
+      assert profile =~ ~s{(allow file-write* (subpath "/tmp"))}
+      assert profile =~ ~s{(allow file-write* (subpath "/var/tmp"))}
     end
 
-    test "contains an extra allow rule for a resolved TMPDIR that exists under a covered path" do
+    test "always contains the /tmp write rule" do
       save_tmpdir()
 
-      # When TMPDIR is under /tmp, resolve_tmpdir() keeps it, but it is already
-      # covered by the /tmp rule, so NO extra rule is emitted.
+      # When TMPDIR is under /tmp, the /tmp parent rule always covers it.
       sub = Path.join(System.tmp_dir!(), "evogit_covered_#{System.unique_integer([:positive])}")
       File.mkdir_p!(sub)
       on_exit(fn -> File.rm_rf!(sub) end)
@@ -68,9 +60,6 @@ defmodule EvoGit.Sandbox.MacOSTest do
 
       profile = MacOS.generate_profile("/some/cwd", nil)
 
-      # The /tmp parent rule still covers it; an extra subpath rule for `sub`
-      # itself may or may not appear depending on coverage logic, but the /tmp
-      # rule must always be present.
       assert profile =~ ~s{(allow file-write* (subpath "/tmp"))}
     end
   end
