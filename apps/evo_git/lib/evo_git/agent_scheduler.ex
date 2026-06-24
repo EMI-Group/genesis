@@ -775,23 +775,31 @@ defmodule EvoGit.AgentScheduler do
         {:noreply, state}
 
       agent_id ->
-        {:ok, meta} = get_sched_meta(agent_id)
+        case get_sched_meta(agent_id) do
+          {:ok, meta} ->
+            # Completion Cleanliness
+            meta = Dispatch.auto_commit_fallback(agent_id, meta)
 
-        # Completion Cleanliness
-        meta = Dispatch.auto_commit_fallback(agent_id, meta)
+            put_sched_meta(agent_id, %{meta | result_sent: true})
 
-        put_sched_meta(agent_id, %{meta | result_sent: true})
+            if meta.parent_id do
+              Subagents.store_sub_result(meta.parent_id, agent_id, result)
+              state = Subagents.maybe_resume_parent(state, meta.parent_id)
+              {:noreply, state}
+            else
+              agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
+              result = inject_agent_count(result, agent_count)
+              GenServer.reply(meta.from, result)
+              state = %{state | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)}
+              {:noreply, state}
+            end
 
-        if meta.parent_id do
-          Subagents.store_sub_result(meta.parent_id, agent_id, result)
-          state = Subagents.maybe_resume_parent(state, meta.parent_id)
-          {:noreply, state}
-        else
-          agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
-          result = inject_agent_count(result, agent_count)
-          GenServer.reply(meta.from, result)
-          state = %{state | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)}
-          {:noreply, state}
+          :error ->
+            Logger.warning(
+              "AgentScheduler: result for agent #{agent_id} but no sched_meta found. Ignoring."
+            )
+
+            {:noreply, state}
         end
     end
   end
@@ -805,14 +813,24 @@ defmodule EvoGit.AgentScheduler do
 
       {agent_id, ref_to_agent} ->
         state = %{state | ref_to_agent: ref_to_agent}
-        {:ok, meta} = get_sched_meta(agent_id)
 
-        if reason == :normal or meta.result_sent do
-          state = Lifecycle.recycle_agent(state, agent_id)
-          state = Dispatch.process_queue(state)
-          {:noreply, state}
-        else
-          Lifecycle.handle_agent_crash(state, agent_id, reason)
+        case get_sched_meta(agent_id) do
+          {:ok, meta} ->
+            if reason == :normal or meta.result_sent do
+              state = Lifecycle.recycle_agent(state, agent_id)
+              state = Dispatch.process_queue(state)
+              {:noreply, state}
+            else
+              Lifecycle.handle_agent_crash(state, agent_id, reason)
+            end
+
+          :error ->
+            # Meta already gone — decrement running_count if tracked and return
+            Logger.warning(
+              "AgentScheduler: :DOWN for agent #{agent_id} but no sched_meta found. Decrementing running_count and ignoring."
+            )
+
+            {:noreply, %{state | running_count: max(state.running_count - 1, 0)}}
         end
     end
   end

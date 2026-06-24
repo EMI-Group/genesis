@@ -117,8 +117,20 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   """
   @spec handle_agent_crash(State.t(), pos_integer(), term()) :: {:noreply, State.t()}
   def handle_agent_crash(state, agent_id, reason) do
-    {:ok, meta} = get_sched_meta(agent_id)
+    case get_sched_meta(agent_id) do
+      {:ok, meta} ->
+        do_handle_agent_crash(state, agent_id, reason, meta)
 
+      :error ->
+        Logger.warning(
+          "AgentScheduler: Agent #{agent_id} crashed but no sched_meta found (already cleaned up). Ignoring."
+        )
+
+        {:noreply, %{state | running_count: max(state.running_count - 1, 0)}}
+    end
+  end
+
+  defp do_handle_agent_crash(state, agent_id, reason, meta) do
     Logger.error(
       "AgentScheduler: Agent #{agent_id} crashed: #{inspect(reason)}. " <>
         "Retry #{meta.retries}/#{state.agent_max_retries}"
@@ -135,8 +147,22 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       })
 
       # Reset agent state phylo_node (will be re-set on dispatch)
-      {:ok, agent_state} = get_agent_state(agent_id)
-      put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
+      case get_agent_state(agent_id) do
+        {:ok, agent_state} ->
+          put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
+
+        :error ->
+          Logger.warning(
+            "AgentScheduler: Agent #{agent_id} missing agent_state during retry, skipping reset."
+          )
+
+          :ok
+      end
+
+      # Decrement running_count before re-dispatch — the crashed task's slot
+      # is consumed. try_dispatch will re-increment it. Without this, each
+      # retry leaks +1 to running_count and can permanently block dispatch.
+      state = %{state | running_count: max(state.running_count - 1, 0)}
 
       # Wrap dispatch in try/rescue to prevent GenServer crash on worktree creation failure
       state =
@@ -166,7 +192,9 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
             delete_agent_state(agent_id)
             delete_sched_meta(agent_id)
-            updated_state = %{state | running_count: state.running_count - 1}
+            # NOTE: running_count was already decremented before this try block,
+            # so do NOT decrement again here.
+            updated_state = state
 
             updated_state =
               if meta.parent_id do
@@ -206,7 +234,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
       delete_agent_state(agent_id)
       delete_sched_meta(agent_id)
-      state = %{state | running_count: state.running_count - 1}
+      state = %{state | running_count: max(state.running_count - 1, 0)}
 
       if meta.parent_id do
         Subagents.store_sub_result(
