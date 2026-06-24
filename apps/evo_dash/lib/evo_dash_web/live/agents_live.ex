@@ -279,8 +279,7 @@ defmodule EvoDashWeb.AgentsLive do
   # Converts ReqLLM.Message structs to history entry format
   defp convert_messages_to_history(messages) when is_list(messages) do
     messages
-    |> Enum.with_index()
-    |> Enum.map(fn {msg, index} ->
+    |> Enum.map(fn msg ->
       content_text =
         case msg.content do
           parts when is_list(parts) ->
@@ -296,10 +295,13 @@ defmodule EvoDashWeb.AgentsLive do
             ""
         end
 
+      metadata = Map.get(msg, :metadata, %{})
+      turn = Map.get(metadata, :turn, 0)
+
       base_data = %{
         content: content_text,
         tool_calls: Map.get(msg, :tool_calls),
-        metadata: Map.get(msg, :metadata, %{})
+        metadata: metadata
       }
 
       data =
@@ -315,7 +317,7 @@ defmodule EvoDashWeb.AgentsLive do
         end
 
       %{
-        turn: index + 1,
+        turn: turn,
         type: Atom.to_string(msg.role),
         data: data
       }
