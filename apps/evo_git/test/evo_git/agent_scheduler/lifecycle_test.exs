@@ -45,8 +45,6 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     }
   end
 
-  defp base_state, do: %State{paused: true, agent_max_retries: 3, running_count: 1}
-
   defp base_state(overrides) when is_list(overrides) do
     struct!(%State{paused: true, agent_max_retries: 3, running_count: 1}, overrides)
   end
