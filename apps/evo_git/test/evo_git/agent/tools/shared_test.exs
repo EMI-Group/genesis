@@ -19,10 +19,10 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       assert Shared.normalize_relpath(".") == "./"
     end
 
-    test "raises on absolute paths" do
-      assert_raise RuntimeError, ~r/absolute/, fn ->
-        Shared.normalize_relpath("/etc/passwd")
-      end
+    test "returns error tuple on absolute paths (does not raise)" do
+      assert {:error, message} = Shared.normalize_relpath("/etc/passwd")
+      assert message =~ "absolute"
+      assert message =~ "relative to the repository root"
     end
 
     test "strips trailing slashes" do
@@ -82,6 +82,24 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       expanded = "/home/user/repo/test/app_test.exs"
       result = Shared.validate_file_scope(expanded, "./lib", repo_path)
       assert {:error, _msg} = result
+    end
+
+    test "returns error (not a crash) for absolute path outside the repo" do
+      repo_path = "/home/user/repo"
+      expanded = "/tmp/test_simple.c"
+      result = Shared.validate_file_scope(expanded, "./lib", repo_path)
+      assert {:error, message} = result
+      assert message =~ "outside the repository root"
+      assert message =~ "relative to the repository root"
+      assert message =~ "/tmp/test_simple.c"
+    end
+
+    test "returns error for absolute path even when node is root" do
+      repo_path = "/home/user/repo"
+      expanded = "/etc/passwd"
+      result = Shared.validate_file_scope(expanded, "./", repo_path)
+      assert {:error, message} = result
+      assert message =~ "outside the repository root"
     end
 
     test "allows any file when node_path is nil" do

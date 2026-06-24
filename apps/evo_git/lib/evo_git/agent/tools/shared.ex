@@ -180,26 +180,29 @@ defmodule EvoGit.Agent.Tools.Shared do
   Normalizes a relative path for comparison by trimming leading/trailing slashes
   and ensuring all paths start with `./` (root is `./`).
 
-  Crashes if given an absolute path (starts with "/").
+  Returns the normalized path as a string for valid relative paths.
+  Returns `{:error, message}` if given an absolute path (starts with "/")
+  instead of raising, so callers can surface a graceful error message.
   """
   def normalize_relpath(path) when is_binary(path) do
     if String.starts_with?(path, "/") do
-      raise "normalize_relpath expects a relative path, got absolute: #{inspect(path)}"
+      {:error,
+       "Path #{inspect(path)} is absolute. All file paths must be relative to the repository root (e.g. './src/main.ex'), not absolute."}
+    else
+      path
+      |> String.trim_leading("/")
+      |> String.trim_trailing("/")
+      |> then(fn
+        "" -> "./"
+        "." -> "./"
+        p ->
+          if String.starts_with?(p, "./") do
+            p
+          else
+            "./" <> p
+          end
+      end)
     end
-
-    path
-    |> String.trim_leading("/")
-    |> String.trim_trailing("/")
-    |> then(fn
-      "" -> "./"
-      "." -> "./"
-      p ->
-        if String.starts_with?(p, "./") do
-          p
-        else
-          "./" <> p
-        end
-    end)
   end
 
   @doc """
@@ -221,26 +224,57 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   @doc """
   Validates that a file path is within the agent's assigned node scope.
-  Returns :ok if valid, {:error, message} if the path is outside the scope.
+  Returns :ok if valid, {:error, message} if the path is outside the scope
+  or is an absolute path outside the repository root.
   """
   def validate_file_scope(expanded_path, node_path, repo_path) when is_binary(node_path) do
-    # Get the relative path from repo_path
+    # Get the relative path from repo_path.
+    # If expanded_path is outside repo_path, Path.relative_to/2 returns it
+    # unchanged (still absolute) — detect that and return a clear error.
     relative_path = Path.relative_to(expanded_path, repo_path)
 
-    # Normalize for comparison
-    normalized_target = normalize_relpath(relative_path)
-    normalized_node = normalize_relpath(node_path)
+    cond do
+      # Path is outside the repository root (Path.relative_to returned it
+      # unchanged and it's still absolute).
+      is_absolute_outside_repo?(relative_path) ->
+        {:error, format_outside_repo_error(expanded_path)}
 
-    if is_child_or_same_node?(normalized_node, normalized_target) do
-      :ok
-    else
-      {:error, format_scope_error(relative_path, node_path)}
+      true ->
+        # Normalize for comparison. normalize_relpath may return {:error, _}
+        # for any remaining absolute path edge cases — propagate it.
+        with normalized_target when is_binary(normalized_target) <-
+               normalize_relpath(relative_path),
+             normalized_node when is_binary(normalized_node) <-
+               normalize_relpath(node_path) do
+          if is_child_or_same_node?(normalized_node, normalized_target) do
+            :ok
+          else
+            {:error, format_scope_error(relative_path, node_path)}
+          end
+        else
+          {:error, _message} = error -> error
+        end
     end
   end
 
   def validate_file_scope(_expanded_path, _node_path, _repo_path) do
     # If no node_path assigned, allow all (backward compatibility)
     :ok
+  end
+
+  # Path.relative_to/2 returns the path unchanged when it is not under the
+  # base. If the result still starts with "/", the original expanded path was
+  # outside the repository root.
+  defp is_absolute_outside_repo?(relative_path) when is_binary(relative_path) do
+    String.starts_with?(relative_path, "/")
+  end
+
+  defp format_outside_repo_error(path) do
+    display = if is_binary(path), do: path, else: inspect(path)
+
+    "Path '#{display}' is outside the repository root. " <>
+      "All file paths must be relative to the repository root " <>
+      "(e.g. './src/main.ex'), not absolute."
   end
 
   defp format_scope_error(target_path, node_path) do
