@@ -450,7 +450,10 @@ defmodule EvoGit.AgentScheduler do
     repo_path = spec.phylo_node.repo
     state = Worktrees.ensure_initialized(state, repo_path)
     task_id = state.next_task_id
-    {agent_id, state} = Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
+
+    {agent_id, state} =
+      Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
+
     state = %{state | next_task_id: task_id + 1}
     Logger.info("AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id})")
 
@@ -480,7 +483,9 @@ defmodule EvoGit.AgentScheduler do
         {:reply, {:error, :not_found}, state}
 
       {_id, %SchedMeta{task_id: task_id}} ->
-        Logger.info("AgentScheduler: Cancelling all agents for task #{task_id} (caller PID #{inspect(caller_pid)})")
+        Logger.info(
+          "AgentScheduler: Cancelling all agents for task #{task_id} (caller PID #{inspect(caller_pid)})"
+        )
 
         # 2. Find ALL agents with this task_id
         agent_ids =
@@ -517,9 +522,10 @@ defmodule EvoGit.AgentScheduler do
           |> Enum.sort_by(fn {_id, %SchedMeta{depth: d}} -> d end, :desc)
           |> Enum.map(fn {id, _meta} -> id end)
 
-        state = Enum.reduce(sorted_agents, state, fn agent_id, acc_state ->
-          Lifecycle.cancel_agent(acc_state, agent_id)
-        end)
+        state =
+          Enum.reduce(sorted_agents, state, fn agent_id, acc_state ->
+            Lifecycle.cancel_agent(acc_state, agent_id)
+          end)
 
         # 7. Process queue to dispatch any newly-eligible agents
         state = Dispatch.process_queue(state)
@@ -609,7 +615,10 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call(:resume, _from, %State{} = state) do
     if state.paused do
-      Logger.info("AgentScheduler: Resuming scheduler — granting pending slots and dispatching queued agents")
+      Logger.info(
+        "AgentScheduler: Resuming scheduler — granting pending slots and dispatching queued agents"
+      )
+
       state = struct(state, paused: false)
       {state, status_updates} = Slots.grant_pending_on_resume(state)
       apply_status_updates(status_updates)
@@ -662,7 +671,9 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:report_llm_error, agent_id, error_type}, _from, state) do
-    {:reply, :ok, new_state, status_updates} = Slots.handle_report_llm_error(agent_id, error_type, state)
+    {:reply, :ok, new_state, status_updates} =
+      Slots.handle_report_llm_error(agent_id, error_type, state)
+
     apply_status_updates(status_updates)
     {:reply, :ok, new_state}
   end
@@ -734,11 +745,15 @@ defmodule EvoGit.AgentScheduler do
     state =
       if Keyword.has_key?(opts, :sandbox_resources) and EvoGit.Platform.linux?() do
         resources = Keyword.get(opts, :sandbox_resources)
+
         case EvoGit.SandboxSlice.update_resources(resources) do
-          :ok -> :ok
+          :ok ->
+            :ok
+
           {:error, reason} ->
             Logger.warning("Failed to update sandbox slice resources: #{inspect(reason)}")
         end
+
         state
       else
         state
@@ -790,7 +805,12 @@ defmodule EvoGit.AgentScheduler do
               agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
               result = inject_agent_count(result, agent_count)
               GenServer.reply(meta.from, result)
-              state = %{state | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)}
+
+              state = %{
+                state
+                | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)
+              }
+
               {:noreply, state}
             end
 
@@ -938,4 +958,20 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
+  @doc """
+  Updates the current turn for an agent in the agent state table.
+  """
+  @spec update_agent_turn(pos_integer(), non_neg_integer()) :: :ok
+  def update_agent_turn(agent_id, turn) when is_integer(turn) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        updated_state = %{agent_state | turn: turn}
+        put_agent_state(agent_id, updated_state)
+
+        :ok
+
+      :error ->
+        :ok
+    end
+  end
 end

@@ -118,22 +118,29 @@ defmodule EvoGit.Agent do
           context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
           foreign_repos_section = build_foreign_repos_section(agent_state.foreign_repos)
           objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
-          combined_prompt = "Current Context Tree:\n#{context_tree}\n\n#{foreign_repos_section}\n\n#{objective_prompt}"
+
+          combined_prompt =
+            "Current Context Tree:\n#{context_tree}\n\n#{foreign_repos_section}\n\n#{objective_prompt}"
 
           context = ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)])
+          # Tag initial messages (system + user prompt) with turn 0
+          context = tag_context_messages_with_turn(context, 0)
 
           # Load skill schemas hierarchically — only skills enabled in the
           # Context Tree (from root to this agent's node) are available.
           repo_root = Process.get(:evogit_repo_root)
-          skill_schemas = if repo_root && is_binary(repo_root) do
-            all_skills = EvoGit.Skills.load_skills(repo_root)
-            skill_names = EvoGit.Skills.hierarchical_skill_names(node_path, repo_path)
-            all_skills
-            |> EvoGit.Skills.filter_skills(skill_names)
-            |> EvoGit.Skills.to_tool_schemas()
-          else
-            []
-          end
+
+          skill_schemas =
+            if repo_root && is_binary(repo_root) do
+              all_skills = EvoGit.Skills.load_skills(repo_root)
+              skill_names = EvoGit.Skills.hierarchical_skill_names(node_path, repo_path)
+
+              all_skills
+              |> EvoGit.Skills.filter_skills(skill_names)
+              |> EvoGit.Skills.to_tool_schemas()
+            else
+              []
+            end
 
           max_turns = agent_state.max_turns || @default_max_turns
 
@@ -151,6 +158,7 @@ defmodule EvoGit.Agent do
 
           # Sync initial context to ETS for dashboard
           EvoGit.AgentScheduler.update_agent_context(agent_id, context)
+          sync_turn_to_ets(agent_id, 0)
 
           Process.put(:delegation_hints, %{})
           Process.put(:read_delegation_hints, %{})
@@ -222,7 +230,8 @@ defmodule EvoGit.Agent do
              ) do
           {:ok, warning} ->
             msg = EvoGit.Agent.TurnWarning.message(warning)
-            new_context = ReqLLM.Context.append(state.context, user(msg))
+            warning_msg = tag_message_turn(user(msg), state.turn)
+            new_context = ReqLLM.Context.append(state.context, warning_msg)
             %{state | context: new_context, last_warned_level: warning.level}
 
           :none ->
@@ -234,7 +243,8 @@ defmodule EvoGit.Agent do
                  ) do
               {:ok, warning} ->
                 msg = EvoGit.Agent.TurnWarning.message(warning)
-                new_context = ReqLLM.Context.append(state.context, user(msg))
+                warning_msg = tag_message_turn(user(msg), state.turn)
+                new_context = ReqLLM.Context.append(state.context, warning_msg)
                 %{state | context: new_context, turns_since_subagent: 0}
 
               :none ->
@@ -279,7 +289,8 @@ defmodule EvoGit.Agent do
         Do not call any other tools.
         """
 
-        new_context = ReqLLM.Context.append(state.context, user(warning_msg))
+        recovery_msg = tag_message_turn(user(warning_msg), state.turn)
+        new_context = ReqLLM.Context.append(state.context, recovery_msg)
 
         state = %{state | context: new_context, in_grace_period: true}
         loop(state)
@@ -302,7 +313,11 @@ defmodule EvoGit.Agent do
                     |> Stream.take(max_retries) do
               with llm_start <- System.monotonic_time(:millisecond),
                    {:ok, stream_resp} <-
-                     ReqLLM.stream_text(current_model(), context, Keyword.merge([tools: tools], llm_gen_opts)),
+                     ReqLLM.stream_text(
+                       current_model(),
+                       context,
+                       Keyword.merge([tools: tools], llm_gen_opts)
+                     ),
                    {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
                    llm_end <- System.monotonic_time(:millisecond) do
                 {:ok, response, llm_end - llm_start}
@@ -366,8 +381,11 @@ defmodule EvoGit.Agent do
         # Use the updated context from response (already has assistant message appended)
         # Compact reasoning_details to avoid N small fragments from streaming
         compacted_context = compact_reasoning_details(response.context)
-        state = %{state | context: compacted_context, turn: state.turn + 1}
+        new_turn = state.turn + 1
+        compacted_context = tag_context_tail_with_turn(compacted_context, new_turn)
+        state = %{state | context: compacted_context, turn: new_turn}
         sync_context_to_ets(state.agent_id, state.context)
+        sync_turn_to_ets(state.agent_id, state.turn)
         sync_usage_to_ets(state.agent_id, state.usage)
 
         # Initialize delegation hints in process dictionary for this turn
@@ -386,12 +404,23 @@ defmodule EvoGit.Agent do
             Process.delete(:read_delegation_hints)
 
             # Detect subagent calls to reset the middle-warning counter
-            had_subagent_call = Enum.any?(tool_calls, fn call ->
-              subagent_module_for(call.name) != nil
-            end)
+            had_subagent_call =
+              Enum.any?(tool_calls, fn call ->
+                subagent_module_for(call.name) != nil
+              end)
+
             new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
 
-            state = %{state | context: ReqLLM.Context.append(state.context, tool_responses), delegation_hints: updated_hints, read_delegation_hints: updated_read_hints, turns_since_subagent: new_turns_since}
+            tagged_tool_responses = Enum.map(tool_responses, &tag_message_turn(&1, state.turn))
+
+            state = %{
+              state
+              | context: ReqLLM.Context.append(state.context, tagged_tool_responses),
+                delegation_hints: updated_hints,
+                read_delegation_hints: updated_read_hints,
+                turns_since_subagent: new_turns_since
+            }
+
             sync_context_to_ets(state.agent_id, state.context)
             loop(state)
 
@@ -594,14 +623,18 @@ defmodule EvoGit.Agent do
         delegation_level = __MODULE__.delegation_level()
 
         # Cache conflict files once per batch to avoid repeated git calls
-        conflict_files = case Git.conflict_files(repo_path) do
-          {:ok, files} -> files
-          _ -> []
-        end
+        conflict_files =
+          case Git.conflict_files(repo_path) do
+            {:ok, files} -> files
+            _ -> []
+          end
 
         # Execute tools sequentially, threading delegation hints through
         {results, final_hints, read_final_hints} =
-          Enum.reduce(indexed_calls, {[], initial_hints, read_initial_hints}, fn {call, index}, {acc_results, hints, read_hints} ->
+          Enum.reduce(indexed_calls, {[], initial_hints, read_initial_hints}, fn {call, index},
+                                                                                 {acc_results,
+                                                                                  hints,
+                                                                                  read_hints} ->
             tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
 
             tool_timeout = Map.get(call.arguments, "timeout", @default_tool_timeout)
@@ -625,7 +658,9 @@ defmodule EvoGit.Agent do
                     "Error: #{inspect(reason)}"
 
                   {:ok, result} ->
-                    {sanitized, truncation_info} = OutputSanitizer.sanitize_and_truncate(result, call.name, call.arguments)
+                    {sanitized, truncation_info} =
+                      OutputSanitizer.sanitize_and_truncate(result, call.name, call.arguments)
+
                     append_truncation_feedback(sanitized, truncation_info, call.name)
 
                   {:exit, reason} ->
@@ -649,9 +684,19 @@ defmodule EvoGit.Agent do
             # Track read delegation hints for read tools (skip during conflict resolution)
             {output, read_hints} =
               if read_threshold > 0 do
-                read_child_paths = extract_read_child_paths(call.name, call.arguments, node_path, repo_path)
-                read_child_paths = filter_child_paths_if_conflicts(read_child_paths, conflict_files)
-                maybe_append_read_delegation_hint(output, read_hints, read_child_paths, read_threshold, delegation_level)
+                read_child_paths =
+                  extract_read_child_paths(call.name, call.arguments, node_path, repo_path)
+
+                read_child_paths =
+                  filter_child_paths_if_conflicts(read_child_paths, conflict_files)
+
+                maybe_append_read_delegation_hint(
+                  output,
+                  read_hints,
+                  read_child_paths,
+                  read_threshold,
+                  delegation_level
+                )
               else
                 {output, read_hints}
               end
@@ -674,7 +719,8 @@ defmodule EvoGit.Agent do
 
       defp delegation_hint_threshold do
         # Allow config to override the compile-time default
-        EvoGit.Config.resolve([:scheduler, :delegation_hint_threshold]) || @delegation_hint_threshold
+        EvoGit.Config.resolve([:scheduler, :delegation_hint_threshold]) ||
+          @delegation_hint_threshold
       end
 
       @doc false
@@ -754,13 +800,16 @@ defmodule EvoGit.Agent do
       end
 
       defp extract_first_segment("./"), do: []
+
       defp extract_first_segment(path) do
         # Remove leading "./" and take first segment
         stripped = String.replace_prefix(path, "./", "")
+
         case String.split(stripped, "/", parts: 2) do
           [first | _] when first != "" ->
             normalized = "./" <> first
             [normalized]
+
           _ ->
             []
         end
@@ -770,6 +819,7 @@ defmodule EvoGit.Agent do
         case String.split(remainder, "/", parts: 2) do
           [first | _] when first != "" ->
             [node_path <> "/" <> first]
+
           _ ->
             []
         end
@@ -816,6 +866,7 @@ defmodule EvoGit.Agent do
             marked_hints =
               Enum.reduce(child_paths, new_hints, fn child_path, acc ->
                 entry = Map.get(acc, child_path)
+
                 if entry && entry.count >= threshold do
                   Map.put(acc, child_path, %{entry | hint_shown: true})
                 else
@@ -839,7 +890,8 @@ defmodule EvoGit.Agent do
       # directly. Only fires for high-level agents.
 
       defp read_delegation_hint_threshold do
-        EvoGit.Config.resolve([:scheduler, :read_delegation_hint_threshold]) || @read_delegation_hint_threshold
+        EvoGit.Config.resolve([:scheduler, :read_delegation_hint_threshold]) ||
+          @read_delegation_hint_threshold
       end
 
       @doc false
@@ -880,7 +932,13 @@ defmodule EvoGit.Agent do
         end)
       end
 
-      defp maybe_append_read_delegation_hint(output, read_hints, child_paths, threshold, delegation_level) do
+      defp maybe_append_read_delegation_hint(
+             output,
+             read_hints,
+             child_paths,
+             threshold,
+             delegation_level
+           ) do
         new_read_hints = update_read_delegation_hints(read_hints, child_paths)
 
         # Only emit read delegation hints for high-level agents
@@ -905,6 +963,7 @@ defmodule EvoGit.Agent do
               marked_read_hints =
                 Enum.reduce(child_paths, new_read_hints, fn child_path, acc ->
                   entry = Map.get(acc, child_path)
+
                   if entry && entry.count >= threshold do
                     Map.put(acc, child_path, %{entry | hint_shown: true})
                   else
@@ -957,7 +1016,8 @@ defmodule EvoGit.Agent do
         output <> "\n\n" <> feedback
       end
 
-      defp tool_truncation_suggestion(tool_name) when tool_name in ["run_bash", "run_powershell"] do
+      defp tool_truncation_suggestion(tool_name)
+           when tool_name in ["run_bash", "run_powershell"] do
         "Consider using `head`, `tail`, `grep`, or piping output to a file. You can also pass `max_bytes` to increase the output limit."
       end
 
@@ -994,7 +1054,9 @@ defmodule EvoGit.Agent do
       end
 
       defp format_truncation_reason(%{reason: :size_exceeded}), do: "output exceeded size limit"
-      defp format_truncation_reason(%{reason: :invalid_utf8}), do: "invalid UTF-8 data was repaired/truncated"
+
+      defp format_truncation_reason(%{reason: :invalid_utf8}),
+        do: "invalid UTF-8 data was repaired/truncated"
 
       defp format_byte_size(bytes) do
         cond do
@@ -1045,6 +1107,35 @@ defmodule EvoGit.Agent do
         EvoGit.AgentScheduler.update_agent_usage(agent_id, usage)
       end
 
+      defp sync_turn_to_ets(agent_id, turn) do
+        EvoGit.AgentScheduler.update_agent_turn(agent_id, turn)
+      end
+
+      # Tags a single message struct with the given turn number via its metadata.
+      defp tag_message_turn(%ReqLLM.Message{} = msg, turn) when is_integer(turn) do
+        %{msg | metadata: Map.put(msg.metadata || %{}, :turn, turn)}
+      end
+
+      # Tags the last message in a context with the given turn number.
+      defp tag_context_tail_with_turn(%ReqLLM.Context{} = context, turn)
+           when is_integer(turn) do
+        case context.messages do
+          [] ->
+            context
+
+          msgs ->
+            last = List.last(msgs)
+            tagged = tag_message_turn(last, turn)
+            %{context | messages: List.replace_at(msgs, length(msgs) - 1, tagged)}
+        end
+      end
+
+      # Tags ALL messages in a context with the given turn number (for initial setup).
+      defp tag_context_messages_with_turn(%ReqLLM.Context{} = context, turn)
+           when is_integer(turn) do
+        tagged_msgs = Enum.map(context.messages, &tag_message_turn(&1, turn))
+        %{context | messages: tagged_msgs}
+      end
 
       def available_tools do
         EvoGit.Agent.Tools.schemas() ++ subagent_schemas() ++ [CompleteTask.schema()]
