@@ -4,6 +4,22 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.Config.Schema
 
+  # A minimal module that adopts the EvoGit.Agent behaviour so we can exercise
+  # the private delegation-hinting path helpers directly. The behaviour injects
+  # the private functions (path_to_child_dir/3, file_path_to_child_dir/3, etc.)
+  # into this module; we re-export them through public test wrappers.
+  defmodule HintAgent do
+    use EvoGit.Agent
+
+    def test_path_to_child_dir(dir_path, node_path, repo_path) do
+      path_to_child_dir(dir_path, node_path, repo_path)
+    end
+
+    def test_file_path_to_child_dir(file_path, node_path, repo_path) do
+      file_path_to_child_dir(file_path, node_path, repo_path)
+    end
+  end
+
   # ── Config schema tests ──────────────────────────────────────────────────
 
   describe "delegation_hint_threshold config schema" do
@@ -117,6 +133,54 @@ defmodule EvoGit.Agent.DelegationHintsTest do
       paths = ["apps/evo_git/lib", "./apps/evo_git/lib", "apps/evo_git/lib/"]
       normalized = Enum.map(paths, &Shared.normalize_relpath/1)
       assert Enum.uniq(normalized) == ["./apps/evo_git/lib"]
+    end
+  end
+
+  # ── Absolute / out-of-repo paths must not crash hinting ───────────────────
+  #
+  # path_to_child_dir/3 (and file_path_to_child_dir/3, which delegates to it)
+  # is the single chokepoint through which ALL write- and read-tool delegation
+  # hinting flows. When an LLM passes an absolute path (e.g. "/tmp/foo"),
+  # normalize_relpath/1 returns {:error, _} instead of a string. The hinting
+  # code runs in the MAIN agent process (not the guarded tool-execution Task),
+  # so a crash here would crash the entire agent. These tests verify the hinting
+  # path returns [] (no hint) instead of raising.
+
+  describe "absolute path resilience in path_to_child_dir/3" do
+    @repo_path "/home/user/project"
+
+    test "absolute dir path returns [] instead of raising (root node)" do
+      assert [] = HintAgent.test_path_to_child_dir("/tmp/foo", "./", @repo_path)
+    end
+
+    test "absolute dir path returns [] instead of raising (non-root node)" do
+      assert [] = HintAgent.test_path_to_child_dir("/tmp/foo", "./src", @repo_path)
+    end
+
+    test "absolute file path returns [] instead of raising (root node)" do
+      assert [] = HintAgent.test_file_path_to_child_dir("/tmp/foo/bar.ex", "./", @repo_path)
+    end
+
+    test "absolute file path returns [] instead of raising (non-root node)" do
+      assert [] = HintAgent.test_file_path_to_child_dir("/tmp/foo/bar.ex", "./src", @repo_path)
+    end
+
+    test "path outside repo returns [] instead of raising" do
+      assert [] = HintAgent.test_path_to_child_dir("/etc/passwd", "./", @repo_path)
+    end
+
+    test "valid relative dir path still produces a hint target (regression)" do
+      assert ["./src"] = HintAgent.test_path_to_child_dir("./src/components", "./", @repo_path)
+    end
+
+    test "valid relative file path still produces a hint target (regression)" do
+      assert ["./src"] =
+               HintAgent.test_file_path_to_child_dir("./src/components/button.tsx", "./", @repo_path)
+    end
+
+    test "valid relative path under non-root node still produces a hint target" do
+      assert ["./src/components"] =
+               HintAgent.test_path_to_child_dir("./src/components/widget.tsx", "./src", @repo_path)
     end
   end
 end

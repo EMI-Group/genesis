@@ -297,5 +297,20 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
       assert {:error, message} = result
       assert message =~ "must be an array"
     end
+
+    test "returns error string (not a crash) for absolute path with node_path set", %{tmp_dir: tmp_dir} do
+      result =
+        MakeDir.execute(
+          %{"paths" => ["/tmp/test_outside_dir"], "commit" => false},
+          tmp_dir,
+          nil,
+          "./lib"
+        )
+
+      assert is_binary(result)
+      assert result =~ "outside the repository root"
+      assert result =~ "/tmp/test_outside_dir"
+      assert result =~ "relative to the repository root"
+    end
   end
 end
