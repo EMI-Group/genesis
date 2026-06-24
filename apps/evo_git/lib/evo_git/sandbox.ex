@@ -80,4 +80,47 @@ defmodule EvoGit.Sandbox do
   def ensure_initialized do
     backend().ensure_initialized()
   end
+
+  @doc """
+  Resolves a writable `TMPDIR` value for use inside the sandbox.
+
+  The forwarded `TMPDIR` must point to a path the sandbox profile actually grants
+  write access to. Returns a path based on `Platform.tmp_paths/0`:
+
+    * If `$TMPDIR` is unset, falls back to the first entry of `Platform.tmp_paths/0`
+      (e.g. `/tmp` on Linux/macOS).
+    * If `$TMPDIR` is set, keeps it only when its expanded path exists AND is equal
+      to, or a subdirectory of, one of the `Platform.tmp_paths/0` entries.
+      Otherwise falls back to the first entry.
+
+  This prevents forwarding a `TMPDIR` that the sandbox profile does not cover
+  (e.g. macOS `/var/folders/...`) or that points to a non-existent directory.
+  """
+  @spec resolve_tmpdir() :: String.t()
+  def resolve_tmpdir do
+    tmp_paths = Platform.tmp_paths()
+    default = List.first(tmp_paths)
+
+    case System.get_env("TMPDIR") do
+      nil ->
+        default
+
+      raw ->
+        expanded = Path.expand(raw)
+
+        if File.exists?(expanded) and under_any?(expanded, tmp_paths) do
+          expanded
+        else
+          default
+        end
+    end
+  end
+
+  # Returns true when `path` is equal to, or a subdirectory of, one of `prefixes`.
+  # Uses `prefix <> "/"` so that `/tmpfoo` does NOT match the `/tmp` prefix.
+  defp under_any?(path, prefixes) do
+    Enum.any?(prefixes, fn prefix ->
+      path == prefix or String.starts_with?(path, prefix <> "/")
+    end)
+  end
 end

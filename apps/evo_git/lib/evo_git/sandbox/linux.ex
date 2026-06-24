@@ -111,9 +111,15 @@ defmodule EvoGit.Sandbox.Linux do
 
     # Propagate PATH and HOME so tools installed in non-standard locations (e.g. /usr/local/bin,
     # nix store, user-local bin) are found inside the sandbox the same way they are in
-    # the user's interactive shell.
+    # the user's interactive shell. TMPDIR is forwarded to a path the sandbox actually
+    # grants write access to (resolved by EvoGit.Sandbox.resolve_tmpdir/0) so that
+    # LLM-generated temp-file writes don't fail.
     env_args =
-      [{"PATH", System.get_env("PATH")}, {"HOME", System.get_env("HOME")}]
+      [
+        {"PATH", System.get_env("PATH")},
+        {"HOME", System.get_env("HOME")},
+        {"TMPDIR", EvoGit.Sandbox.resolve_tmpdir()}
+      ]
       |> Enum.flat_map(fn
         {_key, nil} -> []
         {key, value} -> ["--setenv=#{key}=#{value}"]

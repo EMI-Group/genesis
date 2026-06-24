@@ -95,12 +95,27 @@ defmodule EvoGit.Sandbox.MacOS do
       |> Enum.join("\n    ")
 
     # Tmp paths
+    tmp_paths = Platform.tmp_paths()
+
     tmp_rules =
-      Platform.tmp_paths()
+      tmp_paths
       |> Enum.map(fn path ->
         ~s{(allow file-write* (subpath "#{path}"))}
       end)
       |> Enum.join("\n    ")
+
+    # The host $TMPDIR may point outside Platform.tmp_paths/0 (e.g. macOS
+    # /var/folders/...). Since the parent env is inherited verbatim, grant write
+    # access to the resolved TMPDIR when it is not already covered by the
+    # tmp_rules above, so LLM-generated temp-file writes don't get denied.
+    resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
+
+    extra_tmp_rule =
+      if tmpdir_covered?(resolved_tmpdir, tmp_paths) do
+        ""
+      else
+        ~s{(allow file-write* (subpath "#{resolved_tmpdir}"))}
+      end
 
     # Repo .git access
     git_rule =
@@ -117,6 +132,7 @@ defmodule EvoGit.Sandbox.MacOS do
     (allow file-read*)
     (allow file-write* (subpath "#{cwd}"))
     #{tmp_rules}
+    #{extra_tmp_rule}
     #{cache_rw_rules}
     #{git_rule}
     (allow process-exec)
@@ -132,5 +148,13 @@ defmodule EvoGit.Sandbox.MacOS do
     """
     |> String.replace(~r/\n{3,}/, "\n\n")
     |> String.trim()
+  end
+
+  # Returns true when `path` is equal to, or a subdirectory of, one of `prefixes`.
+  # Uses `prefix <> "/"` so that `/tmpfoo` does NOT match the `/tmp` prefix.
+  defp tmpdir_covered?(path, prefixes) do
+    Enum.any?(prefixes, fn prefix ->
+      path == prefix or String.starts_with?(path, prefix <> "/")
+    end)
   end
 end
