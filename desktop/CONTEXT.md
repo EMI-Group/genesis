@@ -2,7 +2,7 @@
 
 ## Intent
 
-The Tauri desktop shell provides a native OS WebView window for the EvoGit Phoenix dashboard. It launches the Burrito-wrapped Elixir backend as a **sidecar process**, waits for it to be ready, then opens a WebView pointing to `http://localhost:4100`.
+The Tauri desktop shell provides a native OS WebView window for the EvoGit Phoenix dashboard. It launches the Burrito-wrapped Elixir backend as a **sidecar process**, waits for it to be ready, then opens a WebView pointing to `http://localhost:9999`.
 
 This is the native application layer — it contains NO Elixir code. The actual application logic lives in `./apps/evo_dash/` (Phoenix backend) and `./apps/evo_git/` (core runtime).
 
@@ -41,9 +41,9 @@ Tauri launches the Phoenix app as a sidecar process. The WebView connects to Pho
 
 ## Sidecar Lifecycle
 
-1. Tauri spawns the Burrito-wrapped Elixir binary (`evogit-backend`) with env vars: `PORT=4100`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1`
-2. Tauri polls `http://localhost:4100` until the backend responds (up to 30s)
-3. The WebView window opens, pointing to `http://localhost:4100`
+1. Tauri spawns the Burrito-wrapped Elixir binary (`evogit-backend`) with env vars: `PORT=9999`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1`
+2. Tauri polls `http://localhost:9999` until the backend responds (up to 30s)
+3. The WebView window opens, pointing to `http://localhost:9999`
 4. On window close, the sidecar process is killed
 
 ## Build Process
