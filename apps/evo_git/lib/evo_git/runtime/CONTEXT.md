@@ -168,7 +168,7 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Agent.Result` | Structured agent output (result string, commit_sha, tag, branch, base_commit) |
 | `EvoGit.Agents.CodebaseArchitect` | Genesis Mode B agent — 3-phase: structure & public API → rough implementation → review & refinement. The architect does rough implementation of real, functional working code itself (not just skeletons). |
 | `EvoGit.Agents.ContextExtractor` | Genesis Mode A agent — read-only context extraction |
-| `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation; also used by CodebaseArchitect for implementation/fixing/refining |
+| `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation; also used by CodebaseArchitect for fixing/refining/polishing (the architect does rough implementation itself) |
 | `EvoGit.Agents.Executor` | Code implementation subagent (spawned by Manager) |
 | `EvoGit.Agents.TaskScheduler` | Lightweight task scheduling subagent (spawned by Manager for complex tasks) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
