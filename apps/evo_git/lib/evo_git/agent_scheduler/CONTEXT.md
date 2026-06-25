@@ -1,31 +1,43 @@
 # Agent Scheduler Data Structures and Helper Modules
 
 ## Intent
+
 Contains data structs and extracted helper modules used internally by `EvoGit.AgentScheduler` GenServer. The data structs back two ETS tables (`:evogit_agent_state` and `:evogit_sched_meta`) tracking agent execution state and scheduling metadata. Helper modules encapsulate slot management, worktree lifecycle, agent dispatching, subagent management, and agent lifecycle logic.
 
 ## API Surface
 
 | Module | Description |
 |---|---|
-| `EvoGit.AgentScheduler.State` | GenServer state struct — configuration, agent lifecycle queues, slot counters |
+| `EvoGit.AgentScheduler.State` | GenServer state struct — configuration, agent lifecycle queues, slot holder sets |
 | `EvoGit.AgentScheduler.AgentState` | Live agent state in `:evogit_agent_state` ETS — context_node, phylo_node, objective, repo_id |
 | `EvoGit.AgentScheduler.SchedMeta` | Scheduler-private metadata in `:evogit_sched_meta` ETS — status, depth, worktree, subagent tracking |
-| `EvoGit.AgentScheduler.Slots` | Pure-function LLM/tool slot management with FIFO queuing and rate-limit backoff |
+| `EvoGit.AgentScheduler.Slots` | Pure-function LLM/tool slot management using holder MapSets with FIFO queuing and rate-limit backoff |
 | `EvoGit.AgentScheduler.Worktrees` | Pure-function worktree lifecycle: init, assign, prepare, sync, delete, teardown |
-| `EvoGit.AgentScheduler.Dispatch` | Agent registration, dispatching, auto-commit, repo root resolution, queue processing |
+| `EvoGit.AgentScheduler.Dispatch` | Agent registration, dispatching, agent-process git commit, repo root resolution, queue processing |
 | `EvoGit.AgentScheduler.Subagents` | Subagent validation/spawning, spatial contract checks, result tracking, parent resumption |
 | `EvoGit.AgentScheduler.Lifecycle` | Agent recycling (cleanup) and crash handling (retry logic, permanent failure) |
 
 ### Slot Management (Slots module)
 
-Two independent slot pools with FIFO queuing:
+Two independent slot pools tracked as `MapSet`s of agent IDs. Available capacity is derived: `capacity - map_size(holders)`. This makes slot leaks impossible by construction — when an agent dies, `release_agent_slots/2` removes it from both holder sets, restoring the slot automatically.
 
-| Pool | State Keys | Default Size | Backoff |
-|------|-----------|--------------|---------|
-| LLM slots | `llm_slots_available`, `llm_waiting`, `llm_backoff_until` | `max_concurrency` (3) | 60s global cooldown on `:rate_limit` errors |
-| Tool slots | `tool_slots_available`, `tool_waiting` | `max_tool_concurrency` (2) | None |
+| Pool | State Keys | Capacity | Backoff |
+|------|-----------|----------|---------|
+| LLM slots | `llm_holders`, `llm_waiting`, `llm_backoff_until` | `max_concurrency` (3) | 60s global cooldown on `:rate_limit` errors |
+| Tool slots | `tool_holders`, `tool_waiting` | `max_tool_concurrency` (2) | None |
+
+Key functions:
+- `handle_request_llm_slot/3`, `handle_request_tool_slot/3` — Grant if capacity available, else enqueue
+- `handle_release_llm_slot/2`, `handle_release_tool_slot/2` — Remove from holder set, grant pending
+- `release_agent_slots/2` — Called on agent death (`:DOWN` handler): removes from both holder sets, purges from queues, grants pending slots
+- `purge_agents_from_queues/2` — Removes agents from waiting queues, replies `{:error, :cancelled}` to each
+- `grant_pending_on_resume/1` — Grants all available slots when resuming from pause
 
 All slot functions return `{result, state, status_updates}` where `status_updates` is a list of `{agent_id, :blocked | :running}` tuples applied to ETS SchedMeta for dashboard visibility.
+
+### Running Count
+
+There is no `running_count` field. The running count is always derived as `map_size(state.ref_to_agent)`. Every agent lifecycle transition (dispatch, completion, crash) pops or puts from `ref_to_agent`, keeping the count authoritative at all times.
 
 ### Multi-Task Repo Root Resolution
 
@@ -55,8 +67,8 @@ Worktrees are **persistent per-agent** (created on dispatch, reused on retry, de
 Handles the mechanics of registering and dispatching agents:
 
 1. `register_agent/6` — Assigns agent IDs, computes task-local IDs, resolves event sink inheritance, writes both ETS tables
-2. `try_dispatch/2` — Creates persistent worktree, runs init script, spawns Task, updates ETS
-3. `auto_commit_fallback/2` — Commits pending changes before transitions (pre-delegation, completion)
+2. `try_dispatch/2` — Creates persistent worktree, runs init script, spawns Task, updates ETS. Uses `with` guard to bail cleanly if ETS entries are missing (genuine race).
+3. `commit_pending_in_worktree/0` — Best-effort git commit of pending changes, designed to run in the **agent process** (not the scheduler). Uses `Process.get(:repo_path)` for the worktree path. Has `try/rescue` to swallow git errors — the only place where defensive error handling is warranted since git may fail if the worktree is in a bad state. Called via `try/after` in the Task spawn after `spec.agent_module.run(spec.objective)`. **The scheduler process NEVER calls git directly.**
 4. `resolve_agent_repo_root/2` — Resolves repo root from spec (primary vs foreign repo)
 5. `dispatch_queued_agents/1` — Drains queue dispatching agents (used after resume)
 6. `process_queue/1` — Processes queue with ready-parent detection (delegates to Subagents)
@@ -65,7 +77,7 @@ Handles the mechanics of registering and dispatching agents:
 
 Handles subagent validation, spawning, and result collection:
 
-1. `spawn_validated_subagents/5` — Validates all specs, registers valid ones, replies immediately if all invalid
+1. `spawn_validated_subagents/5` — Validates all specs, registers valid ones, replies immediately if all invalid. The parent agent commits its pending changes BEFORE calling `spawn_sub_agents` (done in the agent process via `Dispatch.commit_pending_in_worktree/0`), so the scheduler does not perform git operations.
 2. `validate_single_subagent/5` — Per-spec validation chain (depth, ignored, spatial)
 3. `validate_subagent_depth/3`, `validate_subagent_not_ignored/1` — Individual validation checks
 4. `validate_spatial_contract_for_spec/3`, `validate_spawn_spatiality/4` — Spatial contract enforcement
@@ -78,14 +90,19 @@ Handles subagent validation, spawning, and result collection:
 
 Handles agent completion and crash recovery:
 
-1. `recycle_agent/2` — Deletes worktree and both ETS entries on normal completion. Resolves `repo_root` from the agent's own `AgentState` ETS entry (not global state) so worktree cleanup targets the correct repo in multi-task scenarios. If per-agent repo_root is unavailable, skips worktree deletion with a warning.
-2. `handle_agent_crash/3` — Retry logic (keep worktree, re-dispatch) or permanent failure (cleanup, notify parent/reply error). Both paths resolve `repo_root` from per-agent ETS state; worktree deletion is skipped if repo_root cannot be determined.
+1. `recycle_agent/2` — Deletes worktree and both ETS entries on normal completion. Uses `with` guard to return state unchanged if ETS entry is already gone (genuine race between `:DOWN` completion and another cleanup path). Resolves `repo_root` from the agent's own `AgentState` ETS entry (not global state).
+2. `cancel_agent/2` — Kills the agent's Task process via `Task.shutdown(meta.task_ref, :brutal_kill)`. The `task_ref` field stores a full `%Task{}` struct (not a bare reference), enabling proper shutdown. Replies to blocked callers, deletes worktree and ETS entries. Uses `case` to skip worktree deletion if agent_state is missing.
+3. `handle_agent_crash/3` — Retry logic (keep worktree, re-dispatch) or permanent failure (cleanup, notify parent/reply error). Both paths resolve `repo_root` from per-agent ETS state.
 
 ## Constraints
+
 - Data structs are plain data with no behaviour or callbacks.
 - `Slots`, `Worktrees`, `Dispatch`, `Subagents`, and `Lifecycle` are pure-function modules operating on `State.t()`; they don't maintain their own state.
 - `AgentState` is shared (scheduler + agent processes); `SchedMeta` is scheduler-exclusive.
 - Both ETS tables are created by parent `AgentScheduler` GenServer, not in this directory.
 - GenServer state must always be `%State{}`; use struct update syntax, not `Map.put/3`.
-- All helper modules have private ETS helpers (`get_sched_meta`, `put_sched_meta`, etc.) that directly access the same named tables — this is an intentional coupling since these modules are only called from the scheduler process context.
+- The scheduler process NEVER calls git directly — all git operations (auto-commit, sync) happen in the agent (Task) process. The scheduler only does filesystem operations (worktree creation/deletion).
+- Slot availability is derived from holder MapSets, never stored as a counter — this eliminates leak/deadlock bugs by construction.
+- `SchedMeta.task_ref` stores a `%Task{}` struct (for `Task.shutdown/2`), NOT a bare reference. The `ref_to_agent` map still keys on `task.ref` (the monitor reference).
+- `case`/`with` guards on ETS lookups are used ONLY where a genuine race can cause the entry to be absent (recycle_agent, try_dispatch, cancel_agent). Not used defensively everywhere.
 - Cross-module calls: `Dispatch.process_queue/1` calls `Subagents.dispatch_ready_parent/3` for ready parents. `Lifecycle.handle_agent_crash/3` calls `Dispatch.try_dispatch/2`, `Dispatch.process_queue/1`, `Subagents.store_sub_result/3`, and `Subagents.maybe_resume_parent/2`.
