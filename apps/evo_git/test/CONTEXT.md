@@ -30,7 +30,8 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 ### `evo_git/agent_scheduler/`
 - **`dispatch_test.exs`** — `EvoGit.AgentScheduler.DispatchTest`: tests `Dispatch.resolve_agent_repo_root/2` — worktree path stripping and foreign repo root resolution.
 - **`subagents_test.exs`** — `EvoGit.AgentScheduler.SubagentsTest`: tests `Subagents` — spatial contract validation (cross-repo read-only, same-repo hierarchy) and `store_sub_result/3` foreign repo commit tracking. Uses global named ETS tables directly.
-- **`lifecycle_test.exs`** — `EvoGit.AgentScheduler.LifecycleTest`: tests `Lifecycle.handle_agent_crash/3` — retry path (decrements running_count before re-dispatch, resets agent_state, queues when paused), permanent failure (deletes ETS entries, replies to caller), missing sched_meta/agent_state defensive handling, and running_count balance across multiple retries. Uses `async: false` with global named ETS tables.
+- **`lifecycle_test.exs`** — `EvoGit.AgentScheduler.LifecycleTest`: tests `Lifecycle.handle_agent_crash/3` — retry path (updates meta, resets agent_state, queues when paused), permanent failure (deletes ETS entries, replies to caller), missing sched_meta/agent_state defensive handling. Also tests `cancel_agent/2` — verifies the stored `%Task{}` struct is killed via `Task.shutdown/2`. Uses `async: false` with global named ETS tables.
+- **`slots_test.exs`** — `EvoGit.AgentScheduler.SlotsTest`: tests holder-set slot management — LLM/tool slot request grants when available, blocks when full, release frees + grants pending waiters, and `release_agent_slots/2` releases held slots and purges queues on agent death.
 
 ## Constraints
 - Tests use `@moduletag :tmp_dir` which provides a temporary directory via ExUnit's built-in fixture mechanism.
