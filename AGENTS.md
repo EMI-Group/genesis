@@ -58,10 +58,10 @@ Agents are divided into specialized roles, each with its own system prompt, tool
 
 | Agent | Role | Type | Key Capabilities |
 |-------|------|------|-----------------|
-| **Manager** | Planning, delegation, validation orchestrator | Read-Write | Does NOT implement directly; coordinates work via subagents |
+| **Manager** | Gradual improvements, bug fixing, refining | Read-Write | Does NOT do initial implementation; coordinates refinements via subagents |
 | **Generalist** | Versatile full-stack agent | Read-Write | Investigates, plans, and implements autonomously |
 | **Executor** | Precise, targeted code changes | Read-Write | Focused implementation from well-defined objectives |
-| **CodebaseArchitect** | Greenfield architecture design | Read-Write | Creates project skeletons; 3-phase: skeleton → implementation → review |
+| **CodebaseArchitect** | Greenfield architecture design and rough implementation | Read-Write | Initializes sub-trees with structure + working code; 3-phase: structure & public API → rough implementation → review & refinement |
 | **CodebaseInvestigator** | Deep codebase analysis | Read-Only | Read-only investigation; can update CONTEXT.md |
 | **ContextExtractor** | Semantic context extraction | Read-Only | Builds CONTEXT.md tree from existing codebases |
 | **TaskScheduler** | Execution sequence planning | Read-Only | Transforms objectives into ordered task sequences |
@@ -98,7 +98,7 @@ Initialize the Context Tree and Phylogenetic Graph, starting from either an exis
 
 **Mode B: New Codebase**
 - A `CodebaseArchitect` agent interprets the user's prompt at the root node, drafts the initial architectural plan, creates the folder tree with CONTEXT.md files, and then recursively delegates to child architects for subdirectories.
-- After the context hierarchy is established, the architect proceeds through a 3-phase cycle: **skeleton design → implementation → review & refinement**.
+- After the context hierarchy is established, the architect proceeds through a 3-phase cycle: **structure & public API → rough implementation → review & refinement**. The architect does rough implementation of real, functional code itself (not just empty stubs); the Manager is used only for fixing/refining/polishing afterward.
 - Fixed Point Convergence applies identically, with the same circuit breaker.
 
 ### **4.2 Phase 2: Evolution**

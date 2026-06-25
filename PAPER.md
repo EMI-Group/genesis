@@ -143,10 +143,10 @@ Genesis employs a specialized agent taxonomy, where each agent type has a distin
 **Read-Write Agents** (can modify code):
 | Agent | Role | Description |
 |-------|------|-------------|
-| **Manager** | Orchestrator | Plans, delegates, validates — does NOT implement directly. Coordinates work via subagents, resolving conflicts and ensuring quality. |
+| **Manager** | Refinement orchestrator | Plans, delegates, validates — does NOT do initial implementation. Coordinates gradual improvements, bug fixing, and polishing via subagents. |
 | **Generalist** | Full-stack engineer | Versatile agent that investigates, plans, and implements autonomously. Can delegate to investigators and executors. |
 | **Executor** | Implementation specialist | Receives well-defined objectives and executes precise, targeted code changes. Focuses strictly on the assigned scope. |
-| **CodebaseArchitect** | Greenfield designer | Creates project skeletons from scratch. Works in three phases: skeleton design → implementation → review. |
+| **CodebaseArchitect** | Greenfield designer & implementer | Initializes sub-trees with structure + working code (real, functional code — not empty stubs). Works in three phases: structure & public API → rough implementation → review & refinement. |
 | **SkillExtractor** | Knowledge distiller | Analyzes completed work and distills reusable knowledge into skills for future agents. |
 
 **Read-Only Agents** (can read and update CONTEXT.md, but not modify code):
@@ -158,7 +158,7 @@ Genesis employs a specialized agent taxonomy, where each agent type has a distin
 | **GenesisPlanner** | Architecture planner | Produces dependency-aware execution plans for genesis-stage architecture work. |
 | **Evaluator** | Quality verifier | Reviews code changes against objectives, checking correctness, completeness, and quality. |
 
-This specialization mirrors the division of labor in human software teams: architects design, managers coordinate, engineers implement, investigators research, and evaluators verify.
+This specialization mirrors the division of labor in human software teams: architects design and rough-implement, managers refine and coordinate fixes, engineers implement precise changes, investigators research, and evaluators verify.
 
 ### 3.3 Recursive SubAgent Delegation
 
@@ -204,9 +204,9 @@ A **Convergence Circuit Breaker** prevents infinite loops: agents evaluate conte
 
 **Mode B — New Codebase (Architecture and Implementation):**
 A `CodebaseArchitect` agent interprets the user's prompt and drafts the initial architectural plan at the root node. It then operates in three phases:
-1. **Skeleton Design:** Creates the folder tree with CONTEXT.md files, establishing the spatial hierarchy.
-2. **Implementation:** Populates code files, delegating to child architects for subdirectories.
-3. **Review & Refinement:** Reviews the overall structure, debugs issues, and finalizes.
+1. **Structure & Public API:** Creates the folder tree with CONTEXT.md files, defines the public API (interfaces, shared types), establishing the spatial hierarchy.
+2. **Rough Implementation:** Writes real, functional code in its own files (internal APIs, data structures, core logic) — not empty stubs. Delegates child directory initialization (structure + rough implementation) to child architects.
+3. **Review & Refinement:** Reviews the overall structure, delegates debugging and polishing to Manager subagents, and finalizes.
 
 For each planned submodule, child architects are recursively spawned to initialize the corresponding nodes. The same Fixed Point Convergence with circuit breaker applies.
 
