@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent do
   @moduledoc """
-  A stateful pure-function loop template that manages a single agent session,
+  An agent session loop template that manages a single agent session,
   handling tool loops, timeouts, and graceful recovery.
 
   Agent state follows the design spec:

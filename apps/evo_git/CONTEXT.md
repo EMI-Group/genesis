@@ -45,7 +45,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.
-- Agents are stateless modules using `EvoGit.Agent` behaviour; the framework manages state via ETS.
+- Agents are transient modules using `EvoGit.Agent` behaviour; the framework manages state via ETS.
 - Agent execution happens in **isolated git worktrees** managed by `AgentScheduler` — never on the main working copy.
 - Subdirectories follow Elixir convention: `./lib/evo_git/<subdir>/` maps to `EvoGit.<Subdir>` namespace.
 - **Three-level configuration**: `EvoGit.Config` merges built-in defaults → user config (`~/.config/evogit/config.toml`) → runtime overrides. No default model or username is hardcoded.
