@@ -1,6 +1,6 @@
 defmodule EvoGit.Task do
   @moduledoc """
-  An Agent is a stateless function: NewState = Agent(State, Objective).
+  An Agent is a transient function: NewState = Agent(State, Objective).
 
   Task orchestrates agent execution through the AgentScheduler, which handles
   worktree preparation and state management via ETS.
@@ -90,7 +90,13 @@ defmodule EvoGit.Task do
 
   defp validate_path(path, files) do
     # Strip ./ prefix for comparison with git file list
-    bare_path = path |> String.trim_leading("./") |> then(fn "" -> "."; p -> p end)
+    bare_path =
+      path
+      |> String.trim_leading("./")
+      |> then(fn
+        "" -> "."
+        p -> p
+      end)
 
     if bare_path == "." or bare_path in files or (bare_path <> "/") in files or
          Enum.any?(files, &String.starts_with?(&1, bare_path <> "/")) do

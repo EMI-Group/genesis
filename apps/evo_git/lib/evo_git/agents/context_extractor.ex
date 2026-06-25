@@ -4,7 +4,8 @@ defmodule EvoGit.Agents.ContextExtractor do
   and building a hierarchical semantic tree (Context Tree).
   """
   use EvoGit.Agent
-  alias EvoGit.Agent.Tools.{FileRead, Ripgrep, Glob, ListDirectory, Context, WebSearch, Curl, ShellTool, CompleteTask, SearchContext, SearchHistory}
+  alias EvoGit.Agent.Tools
+  alias EvoGit.Agent.Tools.CompleteTask
 
   def agent_type, do: :read
   def delegation_level, do: :low
@@ -21,20 +22,7 @@ defmodule EvoGit.Agents.ContextExtractor do
   def subagent_modules, do: [__MODULE__]
 
   def available_tools do
-    [
-      FileRead.schema(),
-      Ripgrep.schema(),
-      Glob.schema(),
-      ListDirectory.schema(),
-      Context.read_schema(),
-      Context.write_schema(),
-      Context.edit_schema(),
-      WebSearch.schema(),
-      Curl.schema(),
-      ShellTool.schema(),
-      SearchContext.schema(),
-      SearchHistory.schema()
-    ] ++ subagent_schemas() ++ [CompleteTask.schema()]
+    Tools.read_only_schemas() ++ subagent_schemas() ++ [CompleteTask.schema()]
   end
 
   def system_prompt do

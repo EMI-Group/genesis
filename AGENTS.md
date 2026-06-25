@@ -6,7 +6,7 @@ EvoX Genesis 1.0 is a decentralized, evolutionary software development framework
 
 The original EvoGit approach focused purely on the temporal dimension — a phylogenetic graph of code versions — but lacked structural awareness, treating codebases as flat collections of files. Genesis 1.0 introduces the spatial dimension to provide agents with hierarchical architectural context at every level of granularity.
 
-A foundational principle is that **agents are stateless functions**. All persistent memory exists either in the spatial dimension (the Context Tree) or the temporal dimension (the Git history). An agent can be invoked with any combination of states drawn from these dimensions to perform a transformation. This eliminates memory corruption issues and enables seamless state rollbacks and parallelization.
+A foundational principle is that **agents are transient functions with session-scoped memory**. All persistent memory exists either in the spatial dimension (the Context Tree) or the temporal dimension (the Git history). An agent can be invoked with any combination of states drawn from these dimensions to perform a transformation. This eliminates memory corruption issues and enables seamless state rollbacks and parallelization.
 
 ---
 
@@ -33,7 +33,7 @@ Code evolves through a Directed Acyclic Graph (DAG) of immutable Git commits.
 
 ---
 
-## **3. The Stateless Agent Model**
+## **3. The Transient Agent Model**
 
 Agents do not maintain long-term memory. They are transient processes utilizing short-term session memory, relying entirely on the Context Tree and Phylogenetic Graph for historical and structural awareness.
 
@@ -126,7 +126,7 @@ Used for open-ended tasks requiring exploration and creative problem-solving (e.
 ## **5. Implementation Specifications**
 
 ### **5.1 Core Technology**
-- **Runtime:** **Elixir/OTP**. Selected for lightweight processes, fault tolerance, and an actor model that naturally mirrors the stateless agent design.
+- **Runtime:** **Elixir/OTP**. Selected for lightweight processes, fault tolerance, and an actor model that naturally mirrors the transient agent design.
 - **Version Control:** **Git CLI** (via thin adapter). libgit2 bindings are explicitly avoided to minimize complexity and ease debugging.
 
 ### **5.2 The Agent Scheduler & Git Isolation**

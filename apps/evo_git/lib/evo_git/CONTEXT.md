@@ -41,7 +41,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 
 ## Constraints
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` outside adapters.
-- Agents are stateless modules using `EvoGit.Agent` behaviour; persistent state lives in ETS.
+- Agents are transient modules using `EvoGit.Agent` behaviour; persistent state lives in ETS.
 - System prompts MUST NOT contain dynamic state, objectives, or context trees.
 - Worktrees are persistent per-agent (created on dispatch, reused on retry, deleted on recycle).
 - Agents commit before delegating subagents (auto-commit fallback enforced by scheduler).

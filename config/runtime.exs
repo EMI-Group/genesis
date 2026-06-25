@@ -19,6 +19,7 @@ import Config
 if System.get_env("PHX_SERVER") do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
+
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
@@ -42,8 +43,9 @@ if config_env() == :prod do
   #      evogit_desktop release definition in mix.exs (loaded before
   #      runtime.exs evaluates).
   #   2. The EVOGIT_DESKTOP env var set by the Tauri sidecar (sidecar.rs).
-  desktop_mode = Application.get_env(:evo_dash, :desktop_release, false) or
-                  System.get_env("EVOGIT_DESKTOP") == "1"
+  desktop_mode =
+    Application.get_env(:evo_dash, :desktop_release, false) or
+      System.get_env("EVOGIT_DESKTOP") == "1"
 
   if desktop_mode do
     # Desktop mode: local single-user server accessed via Tauri WebView.

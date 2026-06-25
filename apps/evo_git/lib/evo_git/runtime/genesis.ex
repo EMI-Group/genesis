@@ -39,7 +39,7 @@ defmodule EvoGit.Runtime.Genesis do
     # Load foreign repos: evogit.toml defaults merged with CLI-provided repos (CLI takes precedence)
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
     cli_repos = Keyword.get(opts, :foreign_repos, [])
-    foreign_repos = merge_foreign_repos(toml_repos, cli_repos)
+    foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
 
     case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective,
            foreign_repos: foreign_repos
@@ -64,7 +64,7 @@ defmodule EvoGit.Runtime.Genesis do
     # Load foreign repos: evogit.toml defaults merged with CLI-provided repos (CLI takes precedence)
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
     cli_repos = Keyword.get(opts, :foreign_repos, [])
-    foreign_repos = merge_foreign_repos(toml_repos, cli_repos)
+    foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
 
     case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective,
            foreign_repos: foreign_repos
@@ -89,11 +89,4 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  # Merge two foreign repo lists. CLI repos take precedence over TOML repos
-  # when there's an id conflict.
-  defp merge_foreign_repos(toml_repos, cli_repos) do
-    toml_map = Map.new(toml_repos, &{&1.id, &1})
-    cli_map = Map.new(cli_repos, &{&1.id, &1})
-    Map.merge(toml_map, cli_map) |> Map.values()
-  end
 end

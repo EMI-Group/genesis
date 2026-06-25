@@ -12,13 +12,11 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.AgentScheduler.Subagents
-
-  @agent_table :evogit_agent_state
-  @sched_table :evogit_sched_meta
 
   # --- Agent Registry ---
 
@@ -28,23 +26,37 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   Assigns agent IDs, computes task-local IDs,
   and writes both the agent state and scheduler metadata ETS tables.
   """
-  @spec register_agent(State.t(), AgentSpec.t(), GenServer.from() | nil, pos_integer() | nil, non_neg_integer(), pos_integer()) ::
+  @spec register_agent(
+          State.t(),
+          AgentSpec.t(),
+          GenServer.from() | nil,
+          pos_integer() | nil,
+          non_neg_integer(),
+          pos_integer()
+        ) ::
           {pos_integer(), State.t()}
   def register_agent(state, spec, from, parent_id, depth, task_id) do
     id = state.next_agent_id
 
     # Compute per-task local agent ID (display/branch naming only)
     task_local_id = Map.get(state.task_local_counters, task_id, 1)
-    state = %{state | task_local_counters: Map.put(state.task_local_counters, task_id, task_local_id + 1)}
+
+    state = %{
+      state
+      | task_local_counters: Map.put(state.task_local_counters, task_id, task_local_id + 1)
+    }
 
     # Track total agents spawned per task (for stats reporting)
-    state = %{state | task_agent_counts: Map.update(state.task_agent_counts, task_id, 1, &(&1 + 1))}
+    state = %{
+      state
+      | task_agent_counts: Map.update(state.task_agent_counts, task_id, 1, &(&1 + 1))
+    }
 
     # Agent state table: live spatial/temporal state for the agent process
     # Resolve repo root from the spec's own data (avoids reading shared mutable state)
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
-    put_agent_state(id, %AgentState{
+    Store.put_agent_state(id, %AgentState{
       context_node: spec.context_node,
       phylo_node: nil,
       llm_model: state.llm_model,
@@ -61,7 +73,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     })
 
     # Scheduler metadata table: scheduling bookkeeping
-    put_sched_meta(id, %SchedMeta{
+    Store.put_sched_meta(id, %SchedMeta{
       id: id,
       depth: depth,
       status: :pending,
@@ -88,8 +100,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   def try_dispatch(state, agent_id) do
     # Bail cleanly if either ETS entry is missing — genuine race with cleanup.
     # Returns state unchanged rather than crashing the GenServer.
-    with {:ok, meta} <- get_sched_meta(agent_id),
-         {:ok, agent_state} <- get_agent_state(agent_id) do
+    with {:ok, meta} <- Store.get_sched_meta(agent_id),
+         {:ok, agent_state} <- Store.get_agent_state(agent_id) do
       do_try_dispatch(state, agent_id, meta, agent_state)
     else
       _ ->
@@ -108,7 +120,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # Determine repo root from the agent's spec data, with repos map as fallback
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
-    worktree_path = Path.join([agent_repo_root, ".evogit/workers", "worker_T#{task_id}_A#{task_local_id}"])
+    worktree_path =
+      Path.join([agent_repo_root, ".evogit/workers", "worker_T#{task_id}_A#{task_local_id}"])
 
     # Create the worktree if it doesn't exist (e.g., on first dispatch)
     newly_created =
@@ -140,7 +153,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       # Resolve parent worktree path for SOURCE_WORKTREE_PATH env var
       parent_worktree =
         if meta.parent_id do
-          case get_sched_meta(meta.parent_id) do
+          case Store.get_sched_meta(meta.parent_id) do
             {:ok, parent_meta} -> parent_meta.worktree
             :error -> nil
           end
@@ -185,7 +198,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # Update scheduler metadata with worktree assignment and running status.
     # Store the full %Task{} struct so cancel_agent can call Task.shutdown/2.
     # ref_to_agent still keys on task.ref (the monitor reference).
-    put_sched_meta(agent_id, %{
+    Store.put_sched_meta(agent_id, %{
       meta
       | status: :running,
         worktree: worktree_path,
@@ -250,7 +263,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         end
       rescue
         e ->
-          Logger.warning("Agent: Auto-commit fallback failed (best-effort, ignoring): #{inspect(e)}")
+          Logger.warning(
+            "Agent: Auto-commit fallback failed (best-effort, ignoring): #{inspect(e)}"
+          )
       end
     end
 
@@ -317,7 +332,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       {{:value, agent_id}, new_queue} ->
         state = %{state | queue: new_queue}
 
-        case get_sched_meta(agent_id) do
+        case Store.get_sched_meta(agent_id) do
           {:ok, %{status: :ready} = meta} ->
             # Ready parent agent - resume with its persistent worktree
             state = Subagents.dispatch_ready_parent(state, agent_id, meta)
@@ -337,31 +352,5 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       {:empty, _} ->
         state
     end
-  end
-
-  # --- Private ETS Helpers ---
-
-  defp get_sched_meta(agent_id) do
-    case :ets.lookup(@sched_table, agent_id) do
-      [{^agent_id, %SchedMeta{} = meta}] -> {:ok, meta}
-      [] -> :error
-    end
-  end
-
-  defp put_sched_meta(agent_id, meta) do
-    :ets.insert(@sched_table, {agent_id, meta})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-  end
-
-  defp get_agent_state(agent_id) do
-    case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %AgentState{} = agent_state}] -> {:ok, agent_state}
-      [] -> :error
-    end
-  end
-
-  defp put_agent_state(agent_id, agent_state) do
-    :ets.insert(@agent_table, {agent_id, agent_state})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 end
