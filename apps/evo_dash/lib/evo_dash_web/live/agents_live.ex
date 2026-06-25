@@ -1,4 +1,10 @@
 defmodule EvoDashWeb.AgentsLive do
+  @moduledoc """
+  Agent tree inspector.
+
+  Renders the recursive agent hierarchy from the scheduler's runtime state
+  (ETS tables), with chat-history and token/cost usage viewers.
+  """
   use EvoDashWeb, :live_view
 
   @agent_state_table :evogit_agent_state
@@ -15,14 +21,7 @@ defmodule EvoDashWeb.AgentsLive do
     id_to_display =
       Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
 
-    config_status =
-      try do
-        EvoGit.Config.config_status()
-      rescue
-        _ -> %{missing: [], warnings: [], ok?: true}
-      catch
-        _, _ -> %{missing: [], warnings: [], ok?: true}
-      end
+    config_status = safe_config_status()
 
     socket =
       socket

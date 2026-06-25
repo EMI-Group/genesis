@@ -1,4 +1,8 @@
 defmodule EvoDashWeb.HelpLive do
+  @moduledoc """
+  Guidance page: configuration status, example config, CLI usage, FAQ,
+  and credentials reference.
+  """
   use EvoDashWeb, :live_view
 
   @config_reference """

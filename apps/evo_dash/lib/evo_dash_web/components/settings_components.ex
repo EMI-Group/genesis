@@ -1,4 +1,8 @@
 defmodule EvoDashWeb.SettingsComponents do
+  @moduledoc """
+  Components for the settings GUI editor: config-key cards, category
+  sections, and schema-driven inputs.
+  """
   use EvoDashWeb, :html
 
   # ───────────────────────────────────────────────────────────────────────────

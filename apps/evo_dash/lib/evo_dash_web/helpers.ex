@@ -304,6 +304,20 @@ defmodule EvoDashWeb.Helpers do
   # ---------------------------------------------------------------------------
 
   @doc """
+  Safely calls `EvoGit.Config.config_status/0`, returning a benign default
+  status map if the call raises or throws.
+  """
+  def safe_config_status do
+    try do
+      EvoGit.Config.config_status()
+    rescue
+      _ -> %{missing: [], warnings: [], ok?: true}
+    catch
+      _, _ -> %{missing: [], warnings: [], ok?: true}
+    end
+  end
+
+  @doc """
   Renders a status badge for configuration completeness.
 
   Takes a map with `:ok?` (boolean) and `:missing` (list of atoms) keys, as

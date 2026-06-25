@@ -1,4 +1,8 @@
 defmodule EvoDashWeb.AgentsComponents do
+  @moduledoc """
+  LiveView components for rendering the recursive agent path tree with
+  connector lines and per-node status coloring.
+  """
   use EvoDashWeb, :html
   use Gettext, backend: EvoDashWeb.Gettext
 

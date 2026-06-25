@@ -1,9 +1,9 @@
 defmodule EvoDash do
   @moduledoc """
-  EvoDash keeps the contexts that define your domain
-  and business logic.
+  EvoDash — the web dashboard application for EvoGit.
 
-  Contexts are also responsible for managing your data, regardless
-  if it comes from the database, an external API or others.
+  Provides the domain logic for project-based task management, agent-task
+  tracking, and runtime integration with the EvoGit scheduler. Web-facing
+  modules live under `EvoDashWeb`.
   """
 end

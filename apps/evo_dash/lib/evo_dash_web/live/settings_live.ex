@@ -1,4 +1,8 @@
 defmodule EvoDashWeb.SettingsLive do
+  @moduledoc """
+  Settings page with two tabs: runtime scheduler/sandbox controls and a
+  GUI editor for the user configuration file (config.toml).
+  """
   use EvoDashWeb, :live_view
   alias EvoGit.Config.Schema
 
@@ -514,16 +518,6 @@ defmodule EvoDashWeb.SettingsLive do
       _ -> %{}
     catch
       _, _ -> %{}
-    end
-  end
-
-  defp safe_config_status do
-    try do
-      EvoGit.Config.config_status()
-    rescue
-      _ -> %{missing: [], warnings: [], ok?: true}
-    catch
-      _, _ -> %{missing: [], warnings: [], ok?: true}
     end
   end
 

@@ -1,4 +1,11 @@
 defmodule EvoDashWeb.DashboardLive do
+  @moduledoc """
+  Project-based task dashboard for launching and monitoring EvoGit tasks.
+
+  Users open a repository, and the dashboard auto-detects the task mode
+  (genesis or evolve). Displays active tasks with live logs and inline
+  project settings including foreign repositories.
+  """
   use EvoDashWeb, :live_view
   alias EvoDash.TaskRegistry
   alias EvoGit.Core.ForeignRepo
@@ -222,14 +229,7 @@ defmodule EvoDashWeb.DashboardLive do
 
     recent_projects = TaskRegistry.list_recent_projects()
 
-    config_status =
-      try do
-        EvoGit.Config.config_status()
-      rescue
-        _ -> %{missing: [], warnings: [], ok?: true}
-      catch
-        _, _ -> %{missing: [], warnings: [], ok?: true}
-      end
+    config_status = safe_config_status()
 
     socket =
       socket

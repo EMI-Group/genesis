@@ -1,4 +1,7 @@
 defmodule EvoDashWeb.TasksLive do
+  @moduledoc """
+  Cross-project task list with filtering by status, project, and review state.
+  """
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
   alias EvoDash.TaskRegistry
@@ -238,14 +241,7 @@ defmodule EvoDashWeb.TasksLive do
     tasks = TaskRegistry.list_tasks()
     project_paths = TaskRegistry.get_unique_paths()
 
-    config_status =
-      try do
-        EvoGit.Config.config_status()
-      rescue
-        _ -> %{missing: [], warnings: [], ok?: true}
-      catch
-        _, _ -> %{missing: [], warnings: [], ok?: true}
-      end
+    config_status = safe_config_status()
 
     socket =
       socket

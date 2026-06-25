@@ -1,4 +1,8 @@
 defmodule EvoDashWeb.DashboardComponents do
+  @moduledoc """
+  Domain-specific components for the dashboard: task forms, task cards,
+  project selector/tabs, and config-status badges.
+  """
   use EvoDashWeb, :html
   alias EvoGit.Core.ForeignRepo
 

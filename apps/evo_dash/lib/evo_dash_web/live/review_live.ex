@@ -1,4 +1,10 @@
 defmodule EvoDashWeb.ReviewLive do
+  @moduledoc """
+  Code review page for completed tasks.
+
+  Displays agent-produced changes as a GitHub-style diff with merge,
+  reject, and continue actions, plus optional GitHub PR creation.
+  """
   use EvoDashWeb, :live_view
   alias EvoDash.TaskRegistry
   alias EvoGit.Review
@@ -141,14 +147,7 @@ defmodule EvoDashWeb.ReviewLive do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end
 
-    config_status =
-      try do
-        EvoGit.Config.config_status()
-      rescue
-        _ -> %{missing: [], warnings: [], ok?: true}
-      catch
-        _, _ -> %{missing: [], warnings: [], ok?: true}
-      end
+    config_status = safe_config_status()
 
     socket =
       socket
