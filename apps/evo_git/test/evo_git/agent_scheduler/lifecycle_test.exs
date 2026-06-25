@@ -1,7 +1,7 @@
 defmodule EvoGit.AgentScheduler.LifecycleTest do
   @moduledoc """
-  Tests for the crash-retry logic in `EvoGit.AgentScheduler.Lifecycle.handle_agent_crash/3`
-  and the defensive handling for missing ETS entries.
+  Tests for the crash-retry logic in `EvoGit.AgentScheduler.Lifecycle.handle_agent_crash/3`,
+  the cancellation logic in `cancel_agent/2`, and the defensive handling for missing ETS entries.
 
   Uses `async: false` because the tests manipulate global named ETS tables
   (`:evogit_agent_state` and `:evogit_sched_meta`).
@@ -46,7 +46,10 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   end
 
   defp base_state(overrides) when is_list(overrides) do
-    struct!(%State{paused: true, agent_max_retries: 3, running_count: 1}, overrides)
+    struct!(
+      %State{paused: true, agent_max_retries: 3, ref_to_agent: %{make_ref() => 1}},
+      overrides
+    )
   end
 
   # --- ETS helpers ---
@@ -100,19 +103,20 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   # --- Tests ---
 
   describe "handle_agent_crash/3 — retry path" do
-    test "retries agent and decrements running_count before re-dispatch" do
+    test "retries agent and queues it for re-dispatch" do
       agent_id = 1
 
       meta = %SchedMeta{id: agent_id, depth: 0, spec: agent_spec(), retries: 0}
       put_sched_meta(agent_id, meta)
       put_agent_state(agent_id, agent_state())
 
-      state = base_state(running_count: 1, agent_max_retries: 3)
+      state = base_state(agent_max_retries: 3)
 
-      assert {:noreply, new_state} = Lifecycle.handle_agent_crash(state, agent_id, {:error, :test_crash})
+      assert {:noreply, new_state} =
+               Lifecycle.handle_agent_crash(state, agent_id, {:error, :test_crash})
 
-      # running_count decremented before re-dispatch; paused so no re-increment
-      assert new_state.running_count == 0
+      # The lifecycle function does NOT touch ref_to_agent; the derived count stays stable.
+      assert map_size(new_state.ref_to_agent) == map_size(state.ref_to_agent)
 
       # Meta updated in ETS
       {:ok, updated_meta} = get_sched_meta(agent_id)
@@ -120,7 +124,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert updated_meta.status == :pending
       assert updated_meta.task_ref == nil
 
-      # Agent queued for re-dispatch
+      # Agent queued for re-dispatch (paused → queued, not dispatched)
       assert :queue.to_list(new_state.queue) == [agent_id]
     end
 
@@ -131,12 +135,14 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       meta = %SchedMeta{id: agent_id, depth: 0, spec: agent_spec(), retries: 0}
       put_sched_meta(agent_id, meta)
 
-      state = base_state(running_count: 1)
+      state = base_state([])
 
-      # Should NOT raise — returns normally with updated meta and decremented count
-      assert {:noreply, new_state} = Lifecycle.handle_agent_crash(state, agent_id, {:error, :test})
+      # Should NOT raise — returns normally with updated meta
+      assert {:noreply, new_state} =
+               Lifecycle.handle_agent_crash(state, agent_id, {:error, :test})
 
-      assert new_state.running_count == 0
+      # ref_to_agent is untouched by the lifecycle function
+      assert map_size(new_state.ref_to_agent) == map_size(state.ref_to_agent)
 
       {:ok, updated_meta} = get_sched_meta(agent_id)
       assert updated_meta.retries == 1
@@ -156,65 +162,14 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           context: %{messages: ["fake"]}
       })
 
-      state = base_state(running_count: 1)
+      state = base_state([])
 
-      assert {:noreply, _new_state} = Lifecycle.handle_agent_crash(state, agent_id, {:error, :test})
+      assert {:noreply, _new_state} =
+               Lifecycle.handle_agent_crash(state, agent_id, {:error, :test})
 
       {:ok, updated_agent_state} = get_agent_state(agent_id)
       assert updated_agent_state.phylo_node == nil
       assert updated_agent_state.context == nil
-    end
-  end
-
-  describe "handle_agent_crash/3 — running_count balance" do
-    test "running_count balances over multiple retries without inflating" do
-      agent_id = 1
-      ref = make_ref()
-
-      # Start with retries=0 and a valid from (needed for the eventual permanent failure)
-      meta = %SchedMeta{
-        id: agent_id,
-        depth: 0,
-        spec: agent_spec(),
-        retries: 0,
-        from: {self(), ref}
-      }
-
-      put_sched_meta(agent_id, meta)
-      put_agent_state(agent_id, agent_state())
-
-      # Start with running_count=1, agent_max_retries=3
-      state = base_state(running_count: 1, agent_max_retries: 3)
-
-      # Call 1: retries 0 < 3 → retry. running_count 1→0
-      assert {:noreply, s1} = Lifecycle.handle_agent_crash(state, agent_id, {:error, :crash1})
-      assert s1.running_count == 0
-      assert get_sched_meta(agent_id) |> elem(1) |> Map.get(:retries) == 1
-
-      # Call 2: retries 1 < 3 → retry. running_count 0→max(-1,0)=0
-      assert {:noreply, s2} = Lifecycle.handle_agent_crash(s1, agent_id, {:error, :crash2})
-      assert s2.running_count == 0
-      assert get_sched_meta(agent_id) |> elem(1) |> Map.get(:retries) == 2
-
-      # Call 3: retries 2 < 3 → retry. running_count stays 0
-      assert {:noreply, s3} = Lifecycle.handle_agent_crash(s2, agent_id, {:error, :crash3})
-      assert s3.running_count == 0
-      assert get_sched_meta(agent_id) |> elem(1) |> Map.get(:retries) == 3
-
-      # Call 4: retries 3 >= 3 → permanent failure. running_count stays 0
-      assert {:noreply, s4} = Lifecycle.handle_agent_crash(s3, agent_id, {:error, :final})
-
-      assert s4.running_count == 0
-
-      # running_count never went negative and never inflated beyond the initial value of 1
-      assert s1.running_count <= 1
-      assert s2.running_count <= 1
-      assert s3.running_count <= 1
-      assert s4.running_count >= 0
-
-      # Both ETS entries should be deleted after permanent failure
-      assert get_sched_meta(agent_id) == :missing
-      assert get_agent_state(agent_id) == :missing
     end
   end
 
@@ -235,16 +190,14 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       put_sched_meta(agent_id, meta)
       put_agent_state(agent_id, agent_state())
 
-      state = base_state(running_count: 1, agent_max_retries: 3)
+      state = base_state(agent_max_retries: 3)
 
-      assert {:noreply, new_state} = Lifecycle.handle_agent_crash(state, agent_id, {:error, :final})
+      assert {:noreply, _new_state} =
+               Lifecycle.handle_agent_crash(state, agent_id, {:error, :final})
 
       # Both ETS entries deleted
       assert get_sched_meta(agent_id) == :missing
       assert get_agent_state(agent_id) == :missing
-
-      # running_count decremented
-      assert new_state.running_count == 0
 
       # Caller receives the error reply via GenServer.reply({pid, ref}, msg)
       # which sends {ref, msg} to the pid
@@ -253,21 +206,45 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   end
 
   describe "handle_agent_crash/3 — missing sched_meta" do
-    test "missing sched_meta doesn't crash and decrements running_count" do
-      state = base_state(running_count: 5)
+    test "missing sched_meta returns state completely unchanged" do
+      state = base_state([])
 
       # Agent ID 9999 has no sched_meta or agent_state in ETS
       assert {:noreply, new_state} = Lifecycle.handle_agent_crash(state, 9999, {:error, :ghost})
 
-      assert new_state.running_count == 4
+      # The function returns the state completely unchanged on :error
+      assert new_state == state
     end
+  end
 
-    test "running_count clamped to zero when already zero" do
-      state = base_state(running_count: 0)
+  describe "cancel_agent/2" do
+    test "kills the agent's Task process and cleans up ETS entries" do
+      agent_id = 1
 
-      assert {:noreply, new_state} = Lifecycle.handle_agent_crash(state, 9999, {:error, :ghost})
+      # Spawn a real long-running task
+      task = Task.async(fn -> Process.sleep(10_000) end)
 
-      assert new_state.running_count == 0
+      meta = %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        spec: agent_spec(),
+        retries: 0,
+        task_ref: task,
+        worktree: nil
+      }
+
+      put_sched_meta(agent_id, meta)
+
+      state = base_state([])
+
+      assert Lifecycle.cancel_agent(state, agent_id) == state
+
+      # Task process should be dead
+      Process.sleep(50)
+      refute Process.alive?(task.pid)
+
+      # ETS entry deleted
+      assert get_sched_meta(agent_id) == :missing
     end
   end
 end
