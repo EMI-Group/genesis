@@ -166,7 +166,7 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.AgentScheduler` | Lifecycle manager — worktrees, ETS state, slot management, subagent spawning |
 | `EvoGit.AgentSpec` | Structured specification passed to scheduler (context_node + phylo_node + module + objective) |
 | `EvoGit.Agent.Result` | Structured agent output (result string, commit_sha, tag, branch, base_commit) |
-| `EvoGit.Agents.CodebaseArchitect` | Genesis Mode B agent — 3-phase: skeleton → implementation → review |
+| `EvoGit.Agents.CodebaseArchitect` | Genesis Mode B agent — 3-phase: structure & public API → rough implementation → review & refinement. The architect does rough implementation of real, functional working code itself (not just skeletons). |
 | `EvoGit.Agents.ContextExtractor` | Genesis Mode A agent — read-only context extraction |
 | `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation; also used by CodebaseArchitect for implementation/fixing/refining |
 | `EvoGit.Agents.Executor` | Code implementation subagent (spawned by Manager) |
