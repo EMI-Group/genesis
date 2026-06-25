@@ -6,7 +6,7 @@
 
 The rise of **"vibe coding"** — free-flowing, AI-assisted development powered by Large Language Models (LLMs) — has democratized software creation but inherits fundamental structural limitations: a hard scalability ceiling imposed by monolithic context windows, architectural blindness from flat-file perception, unconstrained editing scope, fragile session state, and single-path linear execution. As codebases grow beyond what a single conversation can hold, these limitations cause vibe coding to degrade from a productivity multiplier into an unreliable crutch.
 
-EvoX Genesis is a decentralized, evolutionary software development framework designed to transcend these limitations. The system introduces a **Dual-Dimension Architecture** that intersects a *Spatial Dimension* — a hierarchical Context Tree providing semantic structural awareness — with a *Temporal Dimension* — a phylogenetic Directed Acyclic Graph (DAG) of immutable Git commits tracking evolutionary history. Within this framework, **stateless agents** serve as pure transformation functions over `{commit, node_path} × objective → new_commit`, recursively decomposing tasks along the Context Tree to achieve unbounded scalability without context window exhaustion. The system supports two execution phases — *Genesis* (bootstrapping) and *Evolution* (iterative modification) — with Evolution further divided into *Simple* (top-down planning) and *Complex* (bottom-up novelty search with quality diversity) modes. This report presents the Genesis system's design philosophy, architectural principles, agent taxonomy, runtime mechanics, and situates it within the broader landscape of evolutionary computation and autonomous coding agents.
+EvoX Genesis is a decentralized, evolutionary software development framework designed to transcend these limitations. The system introduces a **Dual-Dimension Architecture** that intersects a *Spatial Dimension* — a hierarchical Context Tree providing semantic structural awareness — with a *Temporal Dimension* — a phylogenetic Directed Acyclic Graph (DAG) of immutable Git commits tracking evolutionary history. Within this framework, **transient agents** serve as pure transformation functions over `{commit, node_path} × objective → new_commit`, recursively decomposing tasks along the Context Tree to achieve unbounded scalability without context window exhaustion. The system supports two execution phases — *Genesis* (bootstrapping) and *Evolution* (iterative modification) — with Evolution further divided into *Simple* (top-down planning) and *Complex* (bottom-up novelty search with quality diversity) modes. This report presents the Genesis system's design philosophy, architectural principles, agent taxonomy, runtime mechanics, and situates it within the broader landscape of evolutionary computation and autonomous coding agents.
 
 ## 1. Introduction
 
@@ -34,10 +34,10 @@ EvoX Genesis was designed from the ground up as a direct response to each of the
 
 | Vibe Coding Problem | Genesis Solution | Key Mechanism |
 |---------------------|------------------|---------------|
-| **Context Wall** (Problem 1) | Recursive decomposition with context isolation | Stateless agents delegate to subagents at child nodes; each subagent's context footprint does not count against the parent's limits (§3.3) |
+| **Context Wall** (Problem 1) | Recursive decomposition with context isolation | Transient agents delegate to subagents at child nodes; each subagent's context footprint does not count against the parent's limits (§3.3) |
 | **Architectural Blindness** (Problem 2) | Inherited spatial context via the Context Tree | Every agent inherits the architectural contract chain — Intent, API Surface, Routing Table — from root down to its assigned node (§2.1) |
 | **Unconstrained Scope** (Problem 3) | Spatial contract enforcement | Agents can only modify files within their assigned node and its descendants; write permissions are hierarchically scoped and cannot be escalated (§3.4) |
-| **Fragile Session State** (Problem 4) | Stateless agents + Git-backed persistence | Agent state is fully captured by `{node_path, base_commit, current_commit}`; any crash is recovered by re-dispatching from the last commit (§3.1) |
+| **Fragile Session State** (Problem 4) | Transient agents + Git-backed persistence | Agent state is fully captured by `{node_path, base_commit, current_commit}`; any crash is recovered by re-dispatching from the last commit (§3.1) |
 | **Single-Path Execution** (Problem 5) | Phylogenetic DAG + worktree isolation | Agents branch from specific commits and explore independently in isolated worktrees; successful branches are selectively merged (§2.2, §5.1) |
 
 This problem-to-solution correspondence is not incidental — each Genesis mechanism was designed as a principled response to a specific structural failure mode of the vibe coding paradigm. The remainder of this paper elaborates on each of these mechanisms in detail.
@@ -48,7 +48,7 @@ Genesis is founded on three core principles:
 
 1. **Structural Awareness over Flat Files:** The codebase is not a flat collection of files but a hierarchical tree of semantic nodes, each carrying explicit architectural contracts. Agents navigate this tree spatially, always operating within a well-defined scope.
 
-2. **Stateless Agents over Stateful Sessions:** Agents are transient, stateless functions. All persistent knowledge resides in the spatial dimension (Context Tree) or temporal dimension (Git history). This eliminates state corruption, enables trivial parallelization, and allows any agent to be instantiated at any point in the codebase's evolutionary history.
+2. **Transient Agents over Stateful Sessions:** Agents are ephemeral, session-scoped functions with no persistent state. All persistent knowledge resides in the spatial dimension (Context Tree) or temporal dimension (Git history). This eliminates state corruption, enables trivial parallelization, and allows any agent to be instantiated at any point in the codebase's evolutionary history.
 
 3. **Evolutionary Progress over Green Builds:** The system accepts partial progress — a version that implements one more feature or passes one more test is valued, even if other parts remain broken. This mirrors natural selection's gradual, directional improvement and enables rapid exploration of the solution space.
 
@@ -111,7 +111,7 @@ The intersection of spatial and temporal dimensions is powerful: an agent's comp
 
 ---
 
-## 3. The Stateless Agent Model
+## 3. The Transient Agent Model
 
 ### 3.1 Formal Definition
 
@@ -130,7 +130,7 @@ Critically, agents maintain **no long-term memory**. They rely entirely on:
 - The Git history (temporal dimension) for understanding prior work and decisions
 - A short-term session memory (the current conversation with the LLM) that is discarded upon completion
 
-This statelessness has profound implications:
+This lack of persistent state has profound implications:
 - Any agent can be instantiated at any point in the codebase's evolution
 - Agents can be trivially parallelized — no shared mutable state
 - State rollback is as simple as checking out a historical commit
@@ -322,11 +322,11 @@ This developmental perspective explains why Genesis can produce architecturally 
 
 The landscape of LLM-based coding agents has expanded rapidly, with tools like Claude Code, GitHub Copilot Workspace, Cursor, and Aider gaining adoption. Genesis differs from these in several fundamental ways:
 
-**1. Stateless Agents vs. Stateful Sessions:**
+**1. Transient Agents vs. Stateful Sessions:**
 
 Traditional coding agents (e.g., Claude Code) operate as a single, stateful conversation. The agent loads context, makes changes, and iterates — all within one continuous session. The agent's "memory" is the conversation history, which grows monotonically.
 
-Genesis agents are **stateless functions**. An agent's state is fully captured by `{node_path, base_commit, current_commit}`. There is no conversation history carried between invocations — only the spatial context (Context Tree) and temporal context (Git history) persist. This means:
+Genesis agents are **transient functions**. An agent's state is fully captured by `{node_path, base_commit, current_commit}`. There is no persistent state carried between invocations — only the spatial context (Context Tree) and temporal context (Git history) persist. This means:
 - Agents can be trivially parallelized (no shared mutable state)
 - Crashes are fully recoverable (re-dispatch from last commit)
 - Context never accumulates beyond a single agent's session
@@ -374,7 +374,7 @@ This architectural awareness is **structural, not discovered** — it is inherit
 
 | Feature | Traditional Coding Agents | Genesis |
 |---------|--------------------------|---------|
-| State model | Stateful session | Stateless function |
+| State model | Stateful session | Transient function |
 | Scalability | Limited by context window | Unbounded (recursive decomposition) |
 | Architecture awareness | Discovered through exploration | Inherited via Context Tree |
 | Codebase perception | Flat files | Hierarchical semantic tree |
@@ -417,7 +417,7 @@ This ensures that even if an LLM generates malicious or buggy code, the blast ra
 
 ### 8.4 Context Compression
 
-When an agent's total token count exceeds a configurable threshold, the framework automatically compresses the chat history. This compression preserves essential information (decisions made, files modified, key findings) while discarding verbose intermediate outputs. This allows individual agents to work on complex tasks within their node without hitting hard context limits, while still maintaining the stateless principle — the compressed context is transient and discarded upon agent completion.
+When an agent's total token count exceeds a configurable threshold, the framework automatically compresses the chat history. This compression preserves essential information (decisions made, files modified, key findings) while discarding verbose intermediate outputs. This allows individual agents to work on complex tasks within their node without hitting hard context limits, while still maintaining the transient principle — the compressed context is transient and discarded upon agent completion.
 
 ### 8.5 Delegation Hinting
 
@@ -429,7 +429,7 @@ When an agent repeatedly edits files in a child directory (below its assigned no
 
 Genesis is implemented in **Elixir/OTP**, selected for several properties that align with the framework's design:
 
-- **Actor Model Concurrency:** Elixir's lightweight processes and message-passing model naturally mirror the stateless agent design. Each agent runs as an isolated process, and the scheduler coordinates them through message passing.
+- **Actor Model Concurrency:** Elixir's lightweight processes and message-passing model naturally mirror the transient agent design. Each agent runs as an isolated process, and the scheduler coordinates them through message passing.
 - **Fault Tolerance:** OTP's supervision trees provide crash recovery and retry logic — critical for a system where LLM API calls may fail and agents may crash.
 - **Pattern Matching and Immutability:** Elixir's functional paradigm enforces immutability, preventing the kind of shared-state bugs that plague object-oriented agent implementations.
 
@@ -445,7 +445,7 @@ EvoX Genesis represents a novel approach to autonomous software development that
 
 1. **The Dual-Dimension Architecture** — intersecting a spatial Context Tree with a temporal phylogenetic DAG to provide complete state specification for any agent at any evolutionary point.
 
-2. **The Stateless Agent Model** — agents as pure functions over `{commit, node_path} × objective`, enabling unbounded scalability through recursive decomposition with context isolation.
+2. **The Transient Agent Model** — agents as pure functions over `{commit, node_path} × objective`, enabling unbounded scalability through recursive decomposition with context isolation.
 
 3. **Spatial Contract Enforcement** — hierarchical permission scoping that transforms architectural documentation into an active enforcement mechanism.
 

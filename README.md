@@ -8,7 +8,7 @@ Genesis is a decentralized, evolutionary software development framework powered 
 
 **Evolutionary, not just generative.** Unlike one-shot code generators, Genesis evolves code through a phylogenetic DAG of Git commits. Partial progress is accepted — a version that passes more tests or implements one more feature is valued, even if other parts remain broken. This mirrors natural selection: gradual, directional improvement.
 
-**Stateless agents, persistent architecture.** Agents are pure functions with no long-term memory. All structural and historical knowledge lives in the Context Tree and Git history. This means any agent can be instantiated at any point in the codebase's evolution, rolled back, or parallelized without state corruption.
+**Transient agents, persistent architecture.** Agents are ephemeral functions with session-scoped memory; all persistent knowledge lives in the Context Tree and Git history. This means any agent can be instantiated at any point in the codebase's evolution, rolled back, or parallelized without state corruption.
 
 **Two evolution modes.** *Simple mode* handles well-defined tasks through top-down planning and hierarchical delegation. *Complex mode* tackles open-ended problems through bottom-up novelty search with quality diversity (MAP-Elites), using cross-domain code exaptation guided by LLM semantic bridging.
 
@@ -117,7 +117,7 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Optimize the rendering pi
 
 *   **Spatial Dimension:** The codebase is a tree of Context Nodes. Each directory has a `CONTEXT.md` defining its intent, API, constraints, and a routing table to child nodes.
 *   **Temporal Dimension:** Code evolves via Git commits. Agents branch off, attempt changes, and successful branches are merged.
-*   **Agents:** Stateless functions that transform `{commit, node_path}` + `objective` → `new_commit`. Specialized roles include Managers, Executors, Investigators, Architects, and more.
+*   **Agents:** Transient functions that transform `{commit, node_path}` + `objective` → `new_commit`. Specialized roles include Managers, Executors, Investigators, Architects, and more.
 *   **Scheduler:** Manages a pool of isolated Git worktrees with cooperative multitasking, LLM/tool slot management, and rate-limit backoff.
 
 ## Output
