@@ -106,6 +106,16 @@ defmodule EvoGit.Runtime.Helpers do
     end
   end
 
+  @doc """
+  Merges two foreign repo lists. CLI repos take precedence over TOML repos
+  when there's an id conflict.
+  """
+  def merge_foreign_repos(toml_repos, cli_repos) do
+    toml_map = Map.new(toml_repos, &{&1.id, &1})
+    cli_map = Map.new(cli_repos, &{&1.id, &1})
+    Map.merge(toml_map, cli_map) |> Map.values()
+  end
+
   def resolve_starting_commit(repo_path, nil) do
     EvoGit.Core.PhyloGraphNode.current_head(repo_path)
   end

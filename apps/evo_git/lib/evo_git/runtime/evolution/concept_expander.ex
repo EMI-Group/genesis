@@ -283,12 +283,14 @@ defmodule EvoGit.Runtime.Evolution.ConceptExpander do
   # ── Parsing ────────────────────────────────────────────────────────
 
   defp parse_subtopics(text) do
-    ~r/^\s*\d+\.\s+(.+)$/m
-    |> Regex.scan(text)
-    |> Enum.map(fn [_, item] -> String.trim(item) end)
+    parse_numbered_list(text)
   end
 
   defp parse_implementations(text) do
+    parse_numbered_list(text)
+  end
+
+  defp parse_numbered_list(text) do
     ~r/^\s*\d+\.\s+(.+)$/m
     |> Regex.scan(text)
     |> Enum.map(fn [_, item] -> String.trim(item) end)
