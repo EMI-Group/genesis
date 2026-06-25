@@ -65,6 +65,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
         {index, tool_call_id, call.name, "Error: #{error_msg}"}
       end)
 
+    # The parent agent commits its pending changes before spawning subagents.
+    # Runs in the agent process (this process), using Process.get(:repo_path).
+    EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree()
+
     results = AgentScheduler.spawn_sub_agents(subagent_specs)
 
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)

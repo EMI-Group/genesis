@@ -418,13 +418,10 @@ defmodule EvoGit.AgentScheduler do
        max_turns: max_turns,
        max_turns_root: max_turns_root,
        next_agent_id: 1,
-       running_count: 0,
        ref_to_agent: %{},
        queue: :queue.new(),
-       llm_slots_available: max_concurrency,
        llm_waiting: :queue.new(),
        llm_backoff_until: nil,
-       tool_slots_available: max_tool_concurrency,
        tool_waiting: :queue.new(),
        max_tool_concurrency: max_tool_concurrency,
        next_task_id: 1,
@@ -701,10 +698,6 @@ defmodule EvoGit.AgentScheduler do
   # --- Private Helpers ---
 
   defp do_update_config(opts, %State{} = state) do
-    # Capture old values for slot adjustment
-    old_max_concurrency = state.max_concurrency
-    old_max_tool_concurrency = state.max_tool_concurrency
-
     # Apply all field updates
     state =
       state
@@ -720,26 +713,6 @@ defmodule EvoGit.AgentScheduler do
       |> maybe_update(:sandbox_resources, opts)
       |> maybe_update(:sandbox_process_resources, opts)
       |> maybe_update(:llm_generation_params, opts)
-
-    # Adjust LLM slot counter if max_concurrency changed
-    state =
-      if state.max_concurrency != old_max_concurrency do
-        delta = state.max_concurrency - old_max_concurrency
-        new_available = max(state.llm_slots_available + delta, 0)
-        struct(state, llm_slots_available: new_available)
-      else
-        state
-      end
-
-    # Adjust tool slot counter if max_tool_concurrency changed
-    state =
-      if state.max_tool_concurrency != old_max_tool_concurrency do
-        delta = state.max_tool_concurrency - old_max_tool_concurrency
-        new_available = max(state.tool_slots_available + delta, 0)
-        struct(state, tool_slots_available: new_available)
-      else
-        state
-      end
 
     # Propagate sandbox resource changes to the live slice (Linux only)
     state =
@@ -792,9 +765,6 @@ defmodule EvoGit.AgentScheduler do
       agent_id ->
         case get_sched_meta(agent_id) do
           {:ok, meta} ->
-            # Completion Cleanliness
-            meta = Dispatch.auto_commit_fallback(agent_id, meta)
-
             put_sched_meta(agent_id, %{meta | result_sent: true})
 
             if meta.parent_id do
@@ -834,6 +804,12 @@ defmodule EvoGit.AgentScheduler do
       {agent_id, ref_to_agent} ->
         state = %{state | ref_to_agent: ref_to_agent}
 
+        # Release any slots held by the dead agent and purge from queues.
+        # This makes slot leaks impossible by construction — the holder sets
+        # are cleaned up regardless of exit path.
+        {state, slot_status} = Slots.release_agent_slots(state, agent_id)
+        apply_status_updates(slot_status)
+
         case get_sched_meta(agent_id) do
           {:ok, meta} ->
             if reason == :normal or meta.result_sent do
@@ -845,12 +821,11 @@ defmodule EvoGit.AgentScheduler do
             end
 
           :error ->
-            # Meta already gone — decrement running_count if tracked and return
             Logger.warning(
-              "AgentScheduler: :DOWN for agent #{agent_id} but no sched_meta found. Decrementing running_count and ignoring."
+              "AgentScheduler: :DOWN for agent #{agent_id} but no sched_meta found. Slots already released, ignoring."
             )
 
-            {:noreply, %{state | running_count: max(state.running_count - 1, 0)}}
+            {:noreply, state}
         end
     end
   end
