@@ -13,11 +13,9 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.Store
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
-
-  @agent_table :evogit_agent_state
-  @sched_table :evogit_sched_meta
 
   # --- Initialization ---
 
@@ -135,8 +133,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @spec assign_and_prepare_worktree(pos_integer(), String.t()) :: String.t()
 
   def assign_and_prepare_worktree(agent_id, wt) do
-    {:ok, meta} = get_sched_meta(agent_id)
-    {:ok, agent_state} = get_agent_state(agent_id)
+    {:ok, meta} = Store.get_sched_meta(agent_id)
+    {:ok, agent_state} = Store.get_agent_state(agent_id)
     spec = meta.spec
 
     commit_sha = spec.phylo_node.current_commit
@@ -154,7 +152,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
       current_commit: commit_sha
     }
 
-    put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
+    Store.put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
 
     commit_sha
   end
@@ -275,19 +273,13 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @spec clean_orphaned_branches(String.t()) :: :ok
 
   def clean_orphaned_branches(repo_root) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["branch", "--list", "evogit-agent-*"], cd: repo_root) do
-      {output, 0} when is_binary(output) and byte_size(output) > 0 ->
-        output
-        |> String.split("\n", trim: true)
-        |> Enum.map(&String.trim/1)
-        |> Enum.each(fn branch ->
-          Logger.info("AgentScheduler: Cleaning up orphaned branch #{branch}")
-          Git.delete_branch(repo_root, branch)
-        end)
+    Git.list_branches(repo_root, "evogit-agent-*")
+    |> Enum.each(fn branch ->
+      Logger.info("AgentScheduler: Cleaning up orphaned branch #{branch}")
+      Git.delete_branch(repo_root, branch)
+    end)
 
-      _ ->
-        :ok
-    end
+    :ok
   end
 
   # --- Commit Sync ---
@@ -304,14 +296,14 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
   def sync_current_commit(agent_id, %{worktree: wt} = meta) do
     {:ok, current_sha} = Git.rev_parse(wt)
-    {:ok, agent_state} = get_agent_state(agent_id)
+    {:ok, agent_state} = Store.get_agent_state(agent_id)
 
     agent_needs_update? = agent_state.phylo_node.current_commit != current_sha
     meta_needs_update? = meta.spec.phylo_node.current_commit != current_sha
 
     if agent_needs_update? do
       updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-      put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
+      Store.put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
     end
 
     if meta_needs_update? do
@@ -322,40 +314,11 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
       updated_spec = %{meta.spec | phylo_node: updated_spec_phylo}
       updated_meta = %{meta | spec: updated_spec}
-      put_sched_meta(agent_id, updated_meta)
+      Store.put_sched_meta(agent_id, updated_meta)
 
       updated_meta
     else
       meta
     end
-  end
-
-  # --- Private ETS Helpers ---
-
-  # These are needed because the Worktrees module operates on ETS tables
-  # that are shared with the AgentScheduler.
-
-  defp get_sched_meta(agent_id) do
-    case :ets.lookup(@sched_table, agent_id) do
-      [{^agent_id, %SchedMeta{} = meta}] -> {:ok, meta}
-      [] -> :error
-    end
-  end
-
-  defp put_sched_meta(agent_id, meta) do
-    :ets.insert(@sched_table, {agent_id, meta})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-  end
-
-  defp get_agent_state(agent_id) do
-    case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %AgentState{} = agent_state}] -> {:ok, agent_state}
-      [] -> :error
-    end
-  end
-
-  defp put_agent_state(agent_id, agent_state) do
-    :ets.insert(@agent_table, {agent_id, agent_state})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 end

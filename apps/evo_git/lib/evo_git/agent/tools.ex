@@ -67,6 +67,27 @@ defmodule EvoGit.Agent.Tools do
   end
 
   @doc """
+  Returns the list of read-only tool schemas shared by read-only agents
+  (CodebaseInvestigator, ContextExtractor).
+  """
+  def read_only_schemas do
+    [
+      FileRead.schema(),
+      Ripgrep.schema(),
+      Glob.schema(),
+      ListDirectory.schema(),
+      Context.read_schema(),
+      Context.write_schema(),
+      Context.edit_schema(),
+      WebSearch.schema(),
+      Curl.schema(),
+      ShellTool.schema(),
+      SearchContext.schema(),
+      SearchHistory.schema()
+    ]
+  end
+
+  @doc """
   Executes a tool by name with the given arguments.
 
   ## Parameters

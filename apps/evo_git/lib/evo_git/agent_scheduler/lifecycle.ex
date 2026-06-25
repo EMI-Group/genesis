@@ -9,14 +9,11 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   require Logger
 
   alias EvoGit.AgentScheduler.AgentState
-  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentScheduler.Dispatch
   alias EvoGit.AgentScheduler.Subagents
-
-  @agent_table :evogit_agent_state
-  @sched_table :evogit_sched_meta
 
   # --- Agent Recycling ---
 
@@ -30,14 +27,14 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   def recycle_agent(state, agent_id) do
     # Genuine race: the :DOWN completion may race with another cleanup path.
     # If the entry is already gone, return state unchanged.
-    with {:ok, meta} <- get_sched_meta(agent_id),
-         {:ok, %{repo_root: agent_repo_root}} <- get_agent_state(agent_id) do
+    with {:ok, meta} <- Store.get_sched_meta(agent_id),
+         {:ok, %{repo_root: agent_repo_root}} <- Store.get_agent_state(agent_id) do
       if meta.worktree && agent_repo_root do
         Worktrees.delete(meta.worktree, agent_repo_root)
       end
 
-      delete_agent_state(agent_id)
-      delete_sched_meta(agent_id)
+      Store.delete_agent_state(agent_id)
+      Store.delete_sched_meta(agent_id)
       state
     else
       _ ->
@@ -62,7 +59,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   """
   @spec cancel_agent(State.t(), pos_integer()) :: State.t()
   def cancel_agent(state, agent_id) do
-    case get_sched_meta(agent_id) do
+    case Store.get_sched_meta(agent_id) do
       {:ok, meta} ->
         # Kill the agent's Task process if it has one and is alive
         if meta.task_ref do
@@ -82,7 +79,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
         # Delete worktree — skip if agent_state is already gone (race with cleanup)
         agent_repo_root =
-          case get_agent_state(agent_id) do
+          case Store.get_agent_state(agent_id) do
             {:ok, %{repo_root: root}} -> root
             :error -> nil
           end
@@ -92,8 +89,8 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
         end
 
         # Remove ETS entries
-        delete_agent_state(agent_id)
-        delete_sched_meta(agent_id)
+        Store.delete_agent_state(agent_id)
+        Store.delete_sched_meta(agent_id)
 
         state
 
@@ -114,7 +111,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   """
   @spec handle_agent_crash(State.t(), pos_integer(), term()) :: {:noreply, State.t()}
   def handle_agent_crash(state, agent_id, reason) do
-    case get_sched_meta(agent_id) do
+    case Store.get_sched_meta(agent_id) do
       {:ok, meta} ->
         do_handle_agent_crash(state, agent_id, reason, meta)
 
@@ -136,7 +133,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     if meta.retries < state.agent_max_retries do
       # On retry, keep the persistent worktree - just update retry count and status
       # The worktree will be reused on next dispatch (assign_and_prepare_worktree will clean/checkout)
-      put_sched_meta(agent_id, %{
+      Store.put_sched_meta(agent_id, %{
         meta
         | retries: meta.retries + 1,
           status: :pending,
@@ -144,9 +141,9 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       })
 
       # Reset agent state phylo_node (will be re-set on dispatch)
-      case get_agent_state(agent_id) do
+      case Store.get_agent_state(agent_id) do
         {:ok, agent_state} ->
-          put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
+          Store.put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
 
         :error ->
           Logger.warning(
@@ -175,7 +172,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
             # Clean up and permanently fail the agent
             agent_repo_root =
-              case get_agent_state(agent_id) do
+              case Store.get_agent_state(agent_id) do
                 {:ok, %{repo_root: root}} when is_binary(root) -> root
                 _ -> nil
               end
@@ -184,8 +181,8 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
               Worktrees.delete(meta.worktree, agent_repo_root)
             end
 
-            delete_agent_state(agent_id)
-            delete_sched_meta(agent_id)
+            Store.delete_agent_state(agent_id)
+            Store.delete_sched_meta(agent_id)
             updated_state = state
 
             updated_state =
@@ -215,7 +212,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
       # Delete the agent's persistent worktree on permanent failure
       agent_repo_root =
-        case get_agent_state(agent_id) do
+        case Store.get_agent_state(agent_id) do
           {:ok, %{repo_root: root}} when is_binary(root) -> root
           _ -> nil
         end
@@ -224,8 +221,8 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
         Worktrees.delete(meta.worktree, agent_repo_root)
       end
 
-      delete_agent_state(agent_id)
-      delete_sched_meta(agent_id)
+      Store.delete_agent_state(agent_id)
+      Store.delete_sched_meta(agent_id)
 
       if meta.parent_id do
         Subagents.store_sub_result(
@@ -244,41 +241,5 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
         {:noreply, state}
       end
     end
-  end
-
-  # --- Private ETS Helpers ---
-
-  defp get_sched_meta(agent_id) do
-    case :ets.lookup(@sched_table, agent_id) do
-      [{^agent_id, %SchedMeta{} = meta}] -> {:ok, meta}
-      [] -> :error
-    end
-  end
-
-  defp put_sched_meta(agent_id, meta) do
-    :ets.insert(@sched_table, {agent_id, meta})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-  end
-
-  defp delete_sched_meta(agent_id) do
-    :ets.delete(@sched_table, agent_id)
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-  end
-
-  defp get_agent_state(agent_id) do
-    case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %AgentState{} = agent_state}] -> {:ok, agent_state}
-      [] -> :error
-    end
-  end
-
-  defp put_agent_state(agent_id, agent_state) do
-    :ets.insert(@agent_table, {agent_id, agent_state})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-  end
-
-  defp delete_agent_state(agent_id) do
-    :ets.delete(@agent_table, agent_id)
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
 end

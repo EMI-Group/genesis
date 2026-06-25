@@ -300,6 +300,27 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Lists branches, optionally filtered by a glob pattern.
+
+  Returns a list of branch names (without the `*` current-branch marker
+  or surrounding whitespace). When `pattern` is `nil`, all local branches
+  are listed.
+  """
+  def list_branches(repo_root, pattern \\ nil) do
+    args = if pattern, do: ["branch", "--list", pattern], else: ["branch", "--list"]
+
+    case run(args, repo_root) do
+      {:ok, output} ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.map(fn line -> line |> String.trim_leading("* ") |> String.trim() end)
+
+      _ ->
+        []
+    end
+  end
+
+  @doc """
   Creates a branch pointing at a specific commit.
 
   Uses `git branch <name> <sha>`.
