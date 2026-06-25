@@ -510,6 +510,22 @@ defmodule EvoDashWeb.Helpers do
 
   def format_cost(_), do: "0.000000"
 
+  @doc """
+  Formats the cache hit rate as a percentage (cached tokens / input tokens).
+  """
+  def format_cache_hit_rate(usage) when is_map(usage) do
+    input = Map.get(usage, :input_tokens, 0)
+    cached = Map.get(usage, :cached_tokens, 0)
+
+    if input > 0 do
+      :io_lib.format("~.1f%", [cached / input * 100.0]) |> to_string()
+    else
+      "0.0%"
+    end
+  end
+
+  def format_cache_hit_rate(_), do: "0.0%"
+
   # ---------------------------------------------------------------------------
   # String Helpers
   # ---------------------------------------------------------------------------
