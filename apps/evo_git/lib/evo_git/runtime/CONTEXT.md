@@ -32,7 +32,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 5. **Detect mode**: `new_codebase?/1` checks if directory has files beyond `.git`, `README.md`, `.evogit`, `.gitignore`.
 6. **Dispatch agent**:
    - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
-   - **Mode B (New)** → `CodebaseArchitect` agent (read-write, 3-phase: skeleton → implementation → review).
+   - **Mode B (New)** → `CodebaseArchitect` agent (read-write, 3-phase: structure & public API → rough implementation → review & refinement).
 7. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
 8. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `evogit/genesis_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
 
