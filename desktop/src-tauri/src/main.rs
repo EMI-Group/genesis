@@ -9,7 +9,7 @@ use tauri_plugin_shell::process::CommandChild;
 mod sidecar;
 
 /// The Phoenix dashboard backend listens here.
-const BACKEND_URL: &str = "http://localhost:4100";
+const BACKEND_URL: &str = "http://localhost:9999";
 /// How long (in seconds) to wait for the backend to become ready.
 const BACKEND_READY_TIMEOUT_SECS: u64 = 30;
 

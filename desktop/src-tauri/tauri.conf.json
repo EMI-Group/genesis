@@ -5,7 +5,7 @@
   "identifier": "com.evogit.desktop",
   "build": {
     "beforeDevCommand": "",
-    "devUrl": "http://localhost:4100",
+    "devUrl": "http://localhost:9999",
     "beforeBuildCommand": ""
   },
   "app": {
@@ -14,7 +14,7 @@
       {
         "label": "main",
         "title": "Genesis Dashboard",
-        "url": "http://localhost:4100",
+        "url": "http://localhost:9999",
         "width": 1280,
         "height": 800,
         "resizable": true,

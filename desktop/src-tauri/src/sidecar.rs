@@ -30,8 +30,8 @@ const POLL_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 /// server (no distributed Erlang, fixed port, server mode enabled).
 fn sidecar_env() -> [(&'static str, &'static str); 6] {
     [
-        ("PORT", "4100"),
-        ("EVOGIT_DESKTOP_PORT", "4100"),
+        ("PORT", "9999"),
+        ("EVOGIT_DESKTOP_PORT", "9999"),
         ("PHX_SERVER", "true"),
         ("SECRET_KEY_BASE", SECRET_KEY_BASE),
         ("RELEASE_DISTRIBUTION", "none"),
