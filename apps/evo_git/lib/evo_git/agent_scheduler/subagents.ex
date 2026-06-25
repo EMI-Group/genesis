@@ -12,10 +12,8 @@ defmodule EvoGit.AgentScheduler.Subagents do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Dispatch
-
-  @agent_table :evogit_agent_state
-  @sched_table :evogit_sched_meta
 
   # --- Validation and Spawning ---
 
@@ -35,7 +33,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
         ) :: {:noreply, State.t()}
   def spawn_validated_subagents(parent_id, parent, specs, from, state) do
     # Get parent agent state for validation context
-    {:ok, parent_agent_state} = get_agent_state(parent_id)
+    {:ok, parent_agent_state} = Store.get_agent_state(parent_id)
 
     # Pre-Delegation Cleanliness: the parent agent commits its pending changes
     # BEFORE calling spawn_sub_agents (done in the agent process via
@@ -45,7 +43,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
     Logger.info("AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents")
 
     parent = %{parent | status: :waiting}
-    put_sched_meta(parent_id, parent)
+    Store.put_sched_meta(parent_id, parent)
 
     # Validate each spec and partition into valid/invalid
     {valid_specs_with_idx, invalid_results} =
@@ -72,7 +70,14 @@ defmodule EvoGit.AgentScheduler.Subagents do
     {idx_to_sub_id, state} =
       Enum.map_reduce(valid_specs_with_idx, state, fn {spec, idx}, acc ->
         {sub_id, acc} =
-          Dispatch.register_agent(acc, spec, _from = nil, parent_id, parent.depth + 1, parent.task_id)
+          Dispatch.register_agent(
+            acc,
+            spec,
+            _from = nil,
+            parent_id,
+            parent.depth + 1,
+            parent.task_id
+          )
 
         {{idx, sub_id}, acc}
       end)
@@ -83,7 +88,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
     sub_agent_indices = Map.new(idx_to_sub_id, fn {idx, sub_id} -> {sub_id, idx} end)
 
     # Track pending subagents, pre-failed results, and index mapping on the parent
-    put_sched_meta(parent_id, %{
+    Store.put_sched_meta(parent_id, %{
       parent
       | sub_agent_from: from,
         total_sub_specs: length(specs),
@@ -99,7 +104,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
     if sub_ids == [] do
       results = build_ordered_results(invalid_results, length(specs))
       GenServer.reply(from, results)
-      put_sched_meta(parent_id, %{parent | status: :running})
+      Store.put_sched_meta(parent_id, %{parent | status: :running})
       {:noreply, state}
     else
       {:noreply, state}
@@ -258,7 +263,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
   """
   @spec store_sub_result(pos_integer(), pos_integer(), term()) :: :ok
   def store_sub_result(parent_id, sub_id, result) do
-    {:ok, parent} = get_sched_meta(parent_id)
+    {:ok, parent} = Store.get_sched_meta(parent_id)
     idx = Map.get(parent.sub_agent_indices, sub_id)
     results = Map.put(parent.sub_agent_results, idx, result)
 
@@ -274,7 +279,11 @@ defmodule EvoGit.AgentScheduler.Subagents do
           parent.foreign_repo_commits
       end
 
-    put_sched_meta(parent_id, %{parent | sub_agent_results: results, foreign_repo_commits: foreign_repo_commits})
+    Store.put_sched_meta(parent_id, %{
+      parent
+      | sub_agent_results: results,
+        foreign_repo_commits: foreign_repo_commits
+    })
   end
 
   @doc """
@@ -285,7 +294,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
   """
   @spec maybe_resume_parent(State.t(), pos_integer()) :: State.t()
   def maybe_resume_parent(state, parent_id) do
-    {:ok, parent} = get_sched_meta(parent_id)
+    {:ok, parent} = Store.get_sched_meta(parent_id)
 
     all_done? = map_size(parent.sub_agent_results) == parent.total_sub_specs
 
@@ -294,7 +303,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
       # Parent always has its persistent worktree - resume immediately
       parent = %{parent | status: :ready}
-      put_sched_meta(parent_id, parent)
+      Store.put_sched_meta(parent_id, parent)
 
       if state.paused do
         %{state | queue: :queue.in(parent_id, state.queue)}
@@ -316,7 +325,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
     GenServer.reply(meta.sub_agent_from, results)
 
-    put_sched_meta(agent_id, %{
+    Store.put_sched_meta(agent_id, %{
       meta
       | status: :running,
         sub_agent_from: nil,
@@ -326,7 +335,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
         total_sub_specs: 0
     })
 
-    {:ok, agent_state} = get_agent_state(agent_id)
+    {:ok, agent_state} = Store.get_agent_state(agent_id)
     commit_sha = agent_state.phylo_node.current_commit
 
     Logger.info(
@@ -335,26 +344,4 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
     state
   end
-
-  # --- Private ETS Helpers ---
-
-  defp get_sched_meta(agent_id) do
-    case :ets.lookup(@sched_table, agent_id) do
-      [{^agent_id, %SchedMeta{} = meta}] -> {:ok, meta}
-      [] -> :error
-    end
-  end
-
-  defp put_sched_meta(agent_id, meta) do
-    :ets.insert(@sched_table, {agent_id, meta})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-  end
-
-  defp get_agent_state(agent_id) do
-    case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %AgentState{} = agent_state}] -> {:ok, agent_state}
-      [] -> :error
-    end
-  end
-
 end
