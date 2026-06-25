@@ -13,12 +13,12 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 
 | Module | File | Role | Type | Subagents | Write Access |
 |---|---|---|---|---|---|
-| `EvoGit.Agents.Manager` | `manager.ex` | Planning, delegation, validation orchestrator — does NOT implement features directly | `:read_write` | → Manager (self/recursive), Executor, TaskScheduler, CodebaseInvestigator | ✅ Full |
+| `EvoGit.Agents.Manager` | `manager.ex` | Gradual improvements, bug fixing, refining, and polishing orchestrator — does NOT do initial implementation; delegates code changes to Executors | `:read_write` | → Manager (self/recursive), Executor, TaskScheduler, CodebaseInvestigator | ✅ Full |
 | `EvoGit.Agents.TaskScheduler` | `task_scheduler.ex` | Lightweight task scheduling agent; transforms rough ideas into execution sequences | `:read` | → CodebaseInvestigator | CONTEXT.md only |
 | `EvoGit.Agents.GenesisPlanner` | `genesis_planner.ex` | Specialized planning agent for genesis stage; transforms architectural designs into genesis-aware execution plans | `:read` | → CodebaseInvestigator | CONTEXT.md only |
 | `EvoGit.Agents.Executor` | `executor.ex` | Implements precise, targeted code changes from a specific objective | `:read_write` | → CodebaseInvestigator, self (recursive) | ✅ Full |
 | `EvoGit.Agents.CodebaseInvestigator` | `codebase_investigator.ex` | Read-only deep codebase analysis; updates CONTEXT.md | `:read` | → self (recursive) | CONTEXT.md only |
-| `EvoGit.Agents.CodebaseArchitect` | `codebase_architect.ex` | Greenfield architecture design; creates project skeletons | `:read_write` | → self (recursive), Manager, GenesisPlanner | ✅ Full |
+| `EvoGit.Agents.CodebaseArchitect` | `codebase_architect.ex` | Greenfield architecture design and rough implementation; initializes sub-trees with structure + working code (real, functional code — not empty stubs) | `:read_write` | → self (recursive), Manager, GenesisPlanner | ✅ Full |
 | `EvoGit.Agents.ContextExtractor` | `context_extractor.ex` | Extracts semantic context from existing codebases into CONTEXT.md | `:read` | → self (recursive) | CONTEXT.md only |
 | `EvoGit.Agents.Evaluator` | `evaluator.ex` | Verifies code changes satisfy objectives via git diff review | `:read` | → CodebaseInvestigator | CONTEXT.md only |
 | `EvoGit.Agents.SkillExtractor` | `skill_extractor.ex` | Analyzes a completed PR and distills reusable knowledge into EvoGit skills | `:read_write` | None (non-recursive) | ✅ Full (`.agents/skills/`) |
