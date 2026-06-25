@@ -4,7 +4,7 @@ defmodule EvoGit.Umbrella.MixProject do
   def project do
     [
       apps_path: "apps",
-      version: "0.1.0",
+      version: version(),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       listeners: [Phoenix.CodeReloader],
@@ -43,5 +43,17 @@ defmodule EvoGit.Umbrella.MixProject do
     [
       {:burrito, "~> 1.0"}
     ]
+  end
+
+  # Single source of truth for the project version. All mix.exs files in this
+  # umbrella read from the root VERSION file so the version only needs to be
+  # bumped in one place (run `mix bump.version <new-version>` to propagate it
+  # everywhere, including the Tauri/Cargo desktop manifests).
+  @version_file Path.expand("VERSION", __DIR__)
+
+  defp version do
+    @version_file
+    |> File.read!()
+    |> String.trim()
   end
 end

@@ -4,7 +4,7 @@ defmodule EvoGit.MixProject do
   def project do
     [
       app: :evo_git,
-      version: "0.1.0",
+      version: version(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -32,5 +32,15 @@ defmodule EvoGit.MixProject do
       {:toml_elixir, "~> 3.1"},
       {:yaml_elixir, "~> 2.11"}
     ]
+  end
+
+  # Read the version from the root VERSION file so all umbrella apps and the
+  # Tauri desktop shell share a single source of truth.
+  @version_file Path.expand("../../VERSION", __DIR__)
+
+  defp version do
+    @version_file
+    |> File.read!()
+    |> String.trim()
   end
 end

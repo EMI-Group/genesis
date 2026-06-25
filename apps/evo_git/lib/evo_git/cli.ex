@@ -11,6 +11,7 @@ defmodule EvoGit.CLI do
       OptionParser.parse(args,
         switches: [
           help: :boolean,
+          version: :boolean,
           file: :string,
           concurrency: :integer,
           tool_concurrency: :integer,
@@ -32,6 +33,7 @@ defmodule EvoGit.CLI do
         ],
         aliases: [
           h: :help,
+          v: :version,
           f: :file,
           c: :concurrency,
           r: :retries,
@@ -48,11 +50,16 @@ defmodule EvoGit.CLI do
         ]
       )
 
-    if opts[:help] do
-      print_help()
-    else
-      configure_scheduler(opts)
-      dispatch(argv, opts)
+    cond do
+      opts[:version] ->
+        print_version()
+
+      opts[:help] ->
+        print_help()
+
+      true ->
+        configure_scheduler(opts)
+        dispatch(argv, opts)
     end
   end
 
@@ -434,6 +441,11 @@ defmodule EvoGit.CLI do
   @doc false
   def do_parse_foreign_repos(opts), do: parse_foreign_repos(opts)
 
+  defp print_version do
+    version = Application.spec(:evo_git, :vsn) |> to_string()
+    IO.puts("evogit #{version}")
+  end
+
   defp print_help do
     IO.puts("""
     EvoX Genesis CLI - Evolutionary Software Development
@@ -484,7 +496,7 @@ defmodule EvoGit.CLI do
           --crossover-rate <f>    Crossover probability 0.0-1.0 (default: 0.7).
           --mutation-rate <f>     Mutation probability 0.0-1.0 (default: 0.3).
       -h, --help                  Show this help message.
-
+      -v, --version               Print the evogit version and exit.
     Getting Started:
       Quick setup (recommended):
         evogit setup

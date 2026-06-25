@@ -4,7 +4,7 @@ defmodule EvoDash.MixProject do
   def project do
     [
       app: :evo_dash,
-      version: "0.1.0",
+      version: version(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -70,6 +70,16 @@ defmodule EvoDash.MixProject do
       {:lumis, "~> 0.5"},
       {:mdex, "~> 0.1"}
     ]
+  end
+
+  # Read the version from the root VERSION file so all umbrella apps and the
+  # Tauri desktop shell share a single source of truth.
+  @version_file Path.expand("../../VERSION", __DIR__)
+
+  defp version do
+    @version_file
+    |> File.read!()
+    |> String.trim()
   end
 
   # Aliases are shortcuts or tasks specific to the current project.

@@ -28,7 +28,8 @@ The full design specification is in `AGENTS.md`.
 
 | File | Purpose |
 |------|---------|
-| `mix.exs` | Umbrella Mix project — apps_path, release config (`:evogit` release with both apps) |
+| `mix.exs` | Umbrella Mix project — apps_path, release config (`:evogit` release with both apps). Version is read dynamically from `VERSION` (single source of truth). |
+| `VERSION` | Single source of truth for the project version (e.g. `0.1.0`). All umbrella `mix.exs` files read this; the desktop manifests are synced by `mix bump.version`. |
 | `flake.nix` | Nix flake — `devShells.default` provides a complete NixOS toolchain (Erlang/OTP 29, Elixir 1.20, Rust, Zig 0.15.2, Tauri v2 native deps) for local desktop app builds |
 | `AGENTS.md` | Full EvoGit design specification (dual-dimension architecture, agent model, runtime phases) |
 | `README.md` | User-facing documentation: installation, CLI usage, architecture overview |
@@ -78,6 +79,19 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 - `mix test` — execute the test suite
 - `mix deps.get` — fetch dependencies
 - `mix compile` — compile and check for errors
+- `mix bump.version <new-version>` — bump the project version from the single source of truth (`VERSION`) and sync it to the Tauri/Cargo desktop manifests in one step
+
+### Versioning
+
+The project version has a **single source of truth**: the root `VERSION` file. The three umbrella `mix.exs` files (`./mix.exs`, `apps/evo_git/mix.exs`, `apps/evo_dash/mix.exs`) all read the version dynamically from `VERSION` via a shared `version/0` helper. The desktop manifests (`desktop/src-tauri/tauri.conf.json` and `Cargo.toml`) carry a literal copy that must stay in sync.
+
+To bump the version, run:
+
+```bash
+mix bump.version 0.2.0
+```
+
+This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, and `Cargo.lock` in one command, then prints next-step guidance (compile, commit, tag). The CLI also supports `--version` / `-v` to print the version at runtime.
 
 ### Desktop App Build Pipeline
 
