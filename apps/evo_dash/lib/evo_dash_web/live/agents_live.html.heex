@@ -254,17 +254,40 @@
                       <div class="text-xs text-base-content/50"><%= gettext("Total Tokens") %></div>
                       <div class="text-sm font-semibold"><%= format_number(agent.usage.total_tokens) %></div>
                     </div>
-                    <div class="bg-base-200 rounded-lg p-2.5">
-                      <div class="text-xs text-base-content/50"><%= gettext("Input Cost") %></div>
-                      <div class="text-sm font-semibold">$<%= format_cost(agent.usage.input_cost) %></div>
+                  </div>
+                  <%= if Map.get(agent.usage, :cached_tokens, 0) > 0 or Map.get(agent.usage, :cache_creation_tokens, 0) > 0 do %>
+                    <div class="mt-4 pt-4 border-t border-base-200">
+                      <div class="grid grid-cols-3 gap-2 mt-2">
+                        <div class="bg-base-200 rounded-lg p-2.5">
+                          <div class="text-xs text-base-content/50"><%= gettext("Cached Tokens") %></div>
+                          <div class="text-sm font-semibold"><%= format_number(Map.get(agent.usage, :cached_tokens, 0)) %></div>
+                        </div>
+                        <div class="bg-base-200 rounded-lg p-2.5">
+                          <div class="text-xs text-base-content/50"><%= gettext("Cache Creation") %></div>
+                          <div class="text-sm font-semibold"><%= format_number(Map.get(agent.usage, :cache_creation_tokens, 0)) %></div>
+                        </div>
+                        <div class="bg-base-200 rounded-lg p-2.5">
+                          <div class="text-xs text-base-content/50"><%= gettext("Cache Hit Rate") %></div>
+                          <div class="text-sm font-semibold text-success"><%= format_cache_hit_rate(agent.usage) %></div>
+                          <progress class="progress progress-success w-full mt-1" value={if agent.usage.input_tokens > 0, do: min(round(Map.get(agent.usage, :cached_tokens, 0) / agent.usage.input_tokens * 100), 100), else: 0} max="100"></progress>
+                        </div>
+                      </div>
                     </div>
-                    <div class="bg-base-200 rounded-lg p-2.5">
-                      <div class="text-xs text-base-content/50"><%= gettext("Output Cost") %></div>
-                      <div class="text-sm font-semibold">$<%= format_cost(agent.usage.output_cost) %></div>
-                    </div>
-                    <div class="bg-base-200 rounded-lg p-2.5">
-                      <div class="text-xs text-base-content/50"><%= gettext("Total Cost") %></div>
-                      <div class="text-sm font-semibold text-primary">$<%= format_cost(agent.usage.total_cost) %></div>
+                  <% end %>
+                  <div class="mt-4 pt-4 border-t border-base-200">
+                    <div class="grid grid-cols-3 gap-2 mt-2">
+                      <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="text-xs text-base-content/50"><%= gettext("Input Cost") %></div>
+                        <div class="text-sm font-semibold">$<%= format_cost(agent.usage.input_cost) %></div>
+                      </div>
+                      <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="text-xs text-base-content/50"><%= gettext("Output Cost") %></div>
+                        <div class="text-sm font-semibold">$<%= format_cost(agent.usage.output_cost) %></div>
+                      </div>
+                      <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="text-xs text-base-content/50"><%= gettext("Total Cost") %></div>
+                        <div class="text-sm font-semibold text-primary">$<%= format_cost(agent.usage.total_cost) %></div>
+                      </div>
                     </div>
                   </div>
                 </details>

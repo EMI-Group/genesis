@@ -613,17 +613,40 @@ defmodule EvoDashWeb.DashboardComponents do
                     <div class="text-xs text-base-content/50 mb-1">{gettext("Total Tokens")}</div>
                     <div class="text-sm font-semibold">{format_number(@task.usage.total_tokens)}</div>
                   </div>
-                  <div>
-                    <div class="text-xs text-base-content/50 mb-1">{gettext("Input Cost")}</div>
-                    <div class="text-sm font-semibold">${format_cost(@task.usage.input_cost)}</div>
+                </div>
+                <%= if Map.get(@task.usage, :cached_tokens, 0) > 0 or Map.get(@task.usage, :cache_creation_tokens, 0) > 0 do %>
+                  <div class="mt-4 pt-4 border-t border-base-200">
+                    <div class="grid grid-cols-3 gap-3">
+                      <div>
+                        <div class="text-xs text-base-content/50 mb-1">{gettext("Cached Tokens")}</div>
+                        <div class="text-sm font-semibold">{format_number(Map.get(@task.usage, :cached_tokens, 0))}</div>
+                      </div>
+                      <div>
+                        <div class="text-xs text-base-content/50 mb-1">{gettext("Cache Creation")}</div>
+                        <div class="text-sm font-semibold">{format_number(Map.get(@task.usage, :cache_creation_tokens, 0))}</div>
+                      </div>
+                      <div>
+                        <div class="text-xs text-base-content/50 mb-1">{gettext("Cache Hit Rate")}</div>
+                        <div class="text-sm font-semibold text-success">{format_cache_hit_rate(@task.usage)}</div>
+                        <progress class="progress progress-success w-full mt-1" value={if @task.usage.input_tokens > 0, do: min(round(Map.get(@task.usage, :cached_tokens, 0) / @task.usage.input_tokens * 100), 100), else: 0} max="100"></progress>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div class="text-xs text-base-content/50 mb-1">{gettext("Output Cost")}</div>
-                    <div class="text-sm font-semibold">${format_cost(@task.usage.output_cost)}</div>
-                  </div>
-                  <div>
-                    <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
-                    <div class="text-sm font-semibold text-primary">${format_cost(@task.usage.total_cost)}</div>
+                <% end %>
+                <div class="mt-4 pt-4 border-t border-base-200">
+                  <div class="grid grid-cols-3 gap-3">
+                    <div>
+                      <div class="text-xs text-base-content/50 mb-1">{gettext("Input Cost")}</div>
+                      <div class="text-sm font-semibold">${format_cost(@task.usage.input_cost)}</div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-base-content/50 mb-1">{gettext("Output Cost")}</div>
+                      <div class="text-sm font-semibold">${format_cost(@task.usage.output_cost)}</div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
+                      <div class="text-sm font-semibold text-primary">${format_cost(@task.usage.total_cost)}</div>
+                    </div>
                   </div>
                 </div>
               </div>
