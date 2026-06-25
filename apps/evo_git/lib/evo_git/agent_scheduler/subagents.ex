@@ -37,8 +37,9 @@ defmodule EvoGit.AgentScheduler.Subagents do
     # Get parent agent state for validation context
     {:ok, parent_agent_state} = get_agent_state(parent_id)
 
-    # Pre-Delegation Cleanliness
-    parent = Dispatch.auto_commit_fallback(parent_id, parent)
+    # Pre-Delegation Cleanliness: the parent agent commits its pending changes
+    # BEFORE calling spawn_sub_agents (done in the agent process via
+    # Dispatch.commit_pending_in_worktree/0, not in the scheduler).
 
     # Mark parent as :waiting
     Logger.info("AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents")

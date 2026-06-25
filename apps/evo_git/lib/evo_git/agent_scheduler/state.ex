@@ -27,12 +27,11 @@ defmodule EvoGit.AgentScheduler.State do
   - `next_task_id` — monotonically increasing task ID counter (groups subagents)
   - `task_local_counters` — map of `task_id => next_local_id` for per-task agent numbering
   - `task_agent_counts` — map of `task_id => total agents spawned` (for stats reporting)
-  - `running_count` — number of currently executing agents
   - `ref_to_agent` — maps `Task` monitor references to agent IDs
   - `queue` — FIFO queue of agent IDs waiting for a worktree
 
   ### LLM Slot Management
-  - `llm_slots_available` — remaining LLM slots in the pool
+  - `llm_holders` — `MapSet` of agent IDs currently holding an LLM slot
   - `llm_waiting` — FIFO queue of `{agent_id, from}` pairs blocked on an LLM slot
   - `llm_backoff_until` — monotonic timestamp until which all LLM calls are paused (`nil` when none)
 
@@ -40,7 +39,7 @@ defmodule EvoGit.AgentScheduler.State do
   - `paused` — whether the scheduler is paused (no new slots or agent dispatches granted)
 
   ### Tool Slot Management
-  - `tool_slots_available` — remaining tool slots in the pool
+  - `tool_holders` — `MapSet` of agent IDs currently holding a tool slot
   - `tool_waiting` — FIFO queue of `{agent_id, from}` pairs blocked on a tool slot
   """
 
@@ -57,13 +56,12 @@ defmodule EvoGit.AgentScheduler.State do
     max_turns: 128,
     max_turns_root: 128,
     next_agent_id: 1,
-    running_count: 0,
     ref_to_agent: %{},
     queue: :queue.new(),
-    llm_slots_available: 3,
+    llm_holders: MapSet.new(),
     llm_waiting: :queue.new(),
     llm_backoff_until: nil,
-    tool_slots_available: 2,
+    tool_holders: MapSet.new(),
     tool_waiting: :queue.new(),
     max_tool_concurrency: 2,
     next_task_id: 1,
@@ -87,13 +85,12 @@ defmodule EvoGit.AgentScheduler.State do
           max_turns: pos_integer(),
           max_turns_root: pos_integer(),
           next_agent_id: pos_integer(),
-          running_count: non_neg_integer(),
           ref_to_agent: %{reference() => pos_integer()},
           queue: :queue.queue(pos_integer()),
-          llm_slots_available: non_neg_integer(),
+          llm_holders: MapSet.t(pos_integer()),
           llm_waiting: :queue.queue(term()),
           llm_backoff_until: integer() | nil,
-          tool_slots_available: non_neg_integer(),
+          tool_holders: MapSet.t(pos_integer()),
           tool_waiting: :queue.queue(term()),
           max_tool_concurrency: pos_integer(),
           next_task_id: pos_integer(),

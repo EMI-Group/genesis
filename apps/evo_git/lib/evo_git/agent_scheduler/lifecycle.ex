@@ -28,20 +28,22 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   """
   @spec recycle_agent(State.t(), pos_integer()) :: State.t()
   def recycle_agent(state, agent_id) do
-    {:ok, meta} = get_sched_meta(agent_id)
+    # Genuine race: the :DOWN completion may race with another cleanup path.
+    # If the entry is already gone, return state unchanged.
+    with {:ok, meta} <- get_sched_meta(agent_id),
+         {:ok, %{repo_root: agent_repo_root}} <- get_agent_state(agent_id) do
+      if meta.worktree && agent_repo_root do
+        Worktrees.delete(meta.worktree, agent_repo_root)
+      end
 
-    # Resolve repo_root from the agent's own ETS state (correct even when
-    # multiple tasks target different repos concurrently). No global fallback
-    # — if the per-agent state is missing, skip worktree deletion.
-    {:ok, %{repo_root: agent_repo_root}} = get_agent_state(agent_id)
-    # Delete the agent's persistent worktree
-    if meta.worktree && agent_repo_root do
-      Worktrees.delete(meta.worktree, agent_repo_root)
+      delete_agent_state(agent_id)
+      delete_sched_meta(agent_id)
+      state
+    else
+      _ ->
+        Logger.debug("AgentScheduler: recycle_agent for #{agent_id} — entry already cleaned up")
+        state
     end
-
-    delete_agent_state(agent_id)
-    delete_sched_meta(agent_id)
-    %{state | running_count: state.running_count - 1}
   end
 
   @doc """
@@ -64,16 +66,8 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       {:ok, meta} ->
         # Kill the agent's Task process if it has one and is alive
         if meta.task_ref do
-          # The task_ref is actually a Task struct with .pid and .ref fields
-          case meta.task_ref do
-            %Task{pid: pid} when is_pid(pid) ->
-              if Process.alive?(pid) do
-                Task.shutdown(meta.task_ref, :brutal_kill)
-              end
-
-            _ ->
-              :ok
-          end
+          # task_ref is a %Task{} struct — Task.shutdown accepts it directly
+          Task.shutdown(meta.task_ref, :brutal_kill)
         end
 
         # Reply to the top-level caller (EvoDash Task process) if not yet replied
@@ -86,8 +80,12 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
           GenServer.reply(meta.sub_agent_from, {:error, :cancelled})
         end
 
-        # Delete worktree
-        {:ok, %{repo_root: agent_repo_root}} = get_agent_state(agent_id)
+        # Delete worktree — skip if agent_state is already gone (race with cleanup)
+        agent_repo_root =
+          case get_agent_state(agent_id) do
+            {:ok, %{repo_root: root}} -> root
+            :error -> nil
+          end
 
         if meta.worktree && agent_repo_root do
           Worktrees.delete(meta.worktree, agent_repo_root)
@@ -97,8 +95,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
         delete_agent_state(agent_id)
         delete_sched_meta(agent_id)
 
-        # Decrement running count
-        %{state | running_count: max(state.running_count - 1, 0)}
+        state
 
       :error ->
         # Agent already cleaned up, nothing to do
@@ -126,7 +123,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
           "AgentScheduler: Agent #{agent_id} crashed but no sched_meta found (already cleaned up). Ignoring."
         )
 
-        {:noreply, %{state | running_count: max(state.running_count - 1, 0)}}
+        {:noreply, state}
     end
   end
 
@@ -159,12 +156,9 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
           :ok
       end
 
-      # Decrement running_count before re-dispatch — the crashed task's slot
-      # is consumed. try_dispatch will re-increment it. Without this, each
-      # retry leaks +1 to running_count and can permanently block dispatch.
-      state = %{state | running_count: max(state.running_count - 1, 0)}
-
-      # Wrap dispatch in try/rescue to prevent GenServer crash on worktree creation failure
+      # Re-dispatch the agent (worktree is persistent and reused).
+      # Note: the crashed task's ref was already popped from ref_to_agent
+      # in the :DOWN handler, so the derived running count is correct.
       state =
         try do
           if state.paused do
@@ -192,8 +186,6 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
             delete_agent_state(agent_id)
             delete_sched_meta(agent_id)
-            # NOTE: running_count was already decremented before this try block,
-            # so do NOT decrement again here.
             updated_state = state
 
             updated_state =
@@ -234,7 +226,6 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
       delete_agent_state(agent_id)
       delete_sched_meta(agent_id)
-      state = %{state | running_count: max(state.running_count - 1, 0)}
 
       if meta.parent_id do
         Subagents.store_sub_result(

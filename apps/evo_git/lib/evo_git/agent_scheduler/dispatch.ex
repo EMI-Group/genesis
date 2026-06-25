@@ -86,8 +86,19 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   """
   @spec try_dispatch(State.t(), pos_integer()) :: State.t()
   def try_dispatch(state, agent_id) do
-    {:ok, meta} = get_sched_meta(agent_id)
-    {:ok, agent_state} = get_agent_state(agent_id)
+    # Bail cleanly if either ETS entry is missing — genuine race with cleanup.
+    # Returns state unchanged rather than crashing the GenServer.
+    with {:ok, meta} <- get_sched_meta(agent_id),
+         {:ok, agent_state} <- get_agent_state(agent_id) do
+      do_try_dispatch(state, agent_id, meta, agent_state)
+    else
+      _ ->
+        Logger.debug("AgentScheduler: try_dispatch for #{agent_id} — entry missing, skipping")
+        state
+    end
+  end
+
+  defp do_try_dispatch(state, agent_id, meta, agent_state) do
     retries = meta.retries
     spec = meta.spec
     task_id = meta.task_id
@@ -160,73 +171,91 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           )
         end
 
-        spec.agent_module.run(spec.objective)
+        # The agent process owns git operations. After the agent finishes
+        # (any exit path), commit any pending changes as a best-effort
+        # fallback so the worktree is clean before the scheduler processes
+        # the result. The scheduler never touches git directly.
+        try do
+          spec.agent_module.run(spec.objective)
+        after
+          commit_pending_in_worktree()
+        end
       end)
 
-    # Update scheduler metadata with worktree assignment and running status
+    # Update scheduler metadata with worktree assignment and running status.
+    # Store the full %Task{} struct so cancel_agent can call Task.shutdown/2.
+    # ref_to_agent still keys on task.ref (the monitor reference).
     put_sched_meta(agent_id, %{
       meta
       | status: :running,
         worktree: worktree_path,
-        task_ref: task.ref
+        task_ref: task
     })
 
     %{
       state
-      | running_count: state.running_count + 1,
-        ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
+      | ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
     }
   end
 
-  # --- Auto-Commit Fallback ---
+  # --- Auto-Commit Fallback (agent process) ---
 
   @doc """
-  Commits any pending changes in the agent's worktree before a transition.
+  Best-effort commit of pending changes in the agent's worktree.
 
-  Called before spawning subagents and on task completion to ensure a clean
-  working tree. Returns the updated meta with synced commit SHA.
+  Designed to run in the AGENT (Task) process — not the scheduler. Uses
+  `Process.get(:repo_path)` for the worktree path. This is a safety net
+  called after agent execution completes (normal or max-turns) and is the
+  idiomatic place for a try/rescue: git may fail if the worktree is in a
+  bad state, but that must not crash the agent.
+
+  The scheduler process must NEVER call git directly.
   """
-  @spec auto_commit_fallback(pos_integer(), SchedMeta.t()) :: SchedMeta.t()
-  def auto_commit_fallback(agent_id, %{status: :running, worktree: wt} = meta)
-       when not is_nil(wt) do
-    case Git.status(wt) do
-      {:ok, ""} ->
-        Worktrees.sync_current_commit(agent_id, meta)
+  @spec commit_pending_in_worktree() :: :ok
+  def commit_pending_in_worktree do
+    wt = Process.get(:repo_path)
 
-      {:ok, _changes} ->
-        Logger.info("AgentScheduler: Auto-committing pending changes for agent #{agent_id}")
+    if wt do
+      try do
+        case Git.status(wt) do
+          {:ok, ""} ->
+            :ok
 
-        {:ok, prev_sha} = Git.rev_parse(wt)
+          {:ok, _changes} ->
+            Logger.info("Agent: Auto-committing pending changes in worktree #{wt}")
 
-        Git.run(["add", "--all"], wt)
-        objective = meta.spec.objective || "task"
-        Git.commit(wt, "Agent: #{objective} (auto-commit)")
+            {:ok, prev_sha} = Git.rev_parse(wt)
 
-        # Log diff stats for the auto-commit
-        case Git.rev_parse(wt) do
-          {:ok, ^prev_sha} ->
-            Logger.debug(
-              "AgentScheduler: Auto-commit for agent #{agent_id} resulted in no new commit"
-            )
+            Git.run(["add", "--all"], wt)
+            Git.commit(wt, "Agent: auto-commit fallback")
 
-          {:ok, new_sha} ->
-            case Git.diff_stat(wt, prev_sha, new_sha) do
-              {:ok, stats} when stats != "" ->
-                Logger.info("AgentScheduler: Auto-commit stats for agent #{agent_id}:\n#{stats}")
+            case Git.rev_parse(wt) do
+              {:ok, ^prev_sha} ->
+                Logger.debug("Agent: Auto-commit resulted in no new commit")
 
-              _ ->
-                :ok
+              {:ok, new_sha} ->
+                case Git.diff_stat(wt, prev_sha, new_sha) do
+                  {:ok, stats} when stats != "" ->
+                    Logger.info("Agent: Auto-commit stats:\n#{stats}")
+
+                  _ ->
+                    :ok
+                end
             end
+
+            :ok
+
+          _ ->
+            :ok
         end
-
-        Worktrees.sync_current_commit(agent_id, meta)
-
-      _ ->
-        meta
+      rescue
+        e ->
+          Logger.warning("Agent: Auto-commit fallback failed (best-effort, ignoring): #{inspect(e)}")
+      end
     end
-  end
 
-  def auto_commit_fallback(_agent_id, meta), do: meta
+    :ok
+  end
 
   # --- Repo Root Resolution ---
 

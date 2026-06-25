@@ -62,12 +62,12 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     # Per-agent repo_root resolution (via Dispatch.resolve_agent_repo_root/2)
     # derives the correct root from spec data, so we don't need a global
     # state.repo_root.
-    if state.running_count > 0 do
+    if map_size(state.ref_to_agent) > 0 do
       initialized_keys = Map.keys(state.initialized_repos)
 
       Logger.warning(
         "AgentScheduler: Concurrent task targets #{new_root} while " <>
-          "#{state.running_count} agent(s) still running (initialized repos: #{inspect(initialized_keys)}) — " <>
+          "#{map_size(state.ref_to_agent)} agent(s) still running (initialized repos: #{inspect(initialized_keys)}) — " <>
           "creating worker directory for new repo"
       )
 
