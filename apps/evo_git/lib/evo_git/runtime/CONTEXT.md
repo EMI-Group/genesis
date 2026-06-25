@@ -94,8 +94,8 @@ CodebaseArchitect (root)
   ├── subagent_task_scheduler (optional — complex architecture scheduling)
   ├── subagent_codebase_architect (child dir)
   │     ├── subagent_codebase_architect (grandchild...)
-  │     └── subagent_manager (implementation)
-  └── subagent_manager (implementation)
+  │     └── subagent_manager (refining/fixing/polishing)
+  └── subagent_manager (refining/fixing/polishing)
 ```
 
 **Evolution Simple Mode**:
