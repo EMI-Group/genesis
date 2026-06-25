@@ -246,6 +246,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
       path
       |> Path.basename()
       |> String.replace_prefix("worker_", "evogit-agent-")
+      |> String.replace("_", "-")
 
     case File.rm_rf(path) do
       {:ok, _} ->

@@ -16,9 +16,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
   alias EvoGit.{AgentSpec, AgentScheduler, Config, Defaults}
   alias EvoGit.Core.{ContextNode, PhyloGraphNode}
-  alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
-  alias EvoGit.Runtime.PullRequest
+  alias EvoGit.Runtime.Helpers
 
   @type state :: %__MODULE__{}
 
@@ -547,66 +546,13 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
     case AgentScheduler.run_agent(spec) do
       {:ok, %Result{} = agent_output} ->
-        notify_finalizing(state)
-        merge_and_report(state, agent_output)
+        Helpers.notify_finalizing(state.opts)
+        Helpers.merge_and_report(state.repo_path, agent_output, "evolve")
 
       {:error, reason} = err ->
         Logger.error("Evolution Engine: Manager agent failed: #{inspect(reason)}")
         err
     end
-  end
-
-  # ── Merge & Report (mirrors Evolution.merge_and_report) ───────────
-
-  defp merge_and_report(state, %Result{} = agent_output) do
-    final_sha = agent_output.commit_sha
-    result = agent_output.result
-    tag = agent_output.tag
-
-    {:ok, base_sha} = Git.rev_parse(state.repo_path)
-
-    if final_sha && final_sha != base_sha do
-      Logger.info("Evolution Engine: Agent produced changes (#{String.slice(base_sha, 0, 7)} -> #{String.slice(final_sha, 0, 7)})")
-
-      branch_name = generate_branch_name("evolve")
-      {:ok, _} = Git.create_branch(state.repo_path, branch_name, final_sha)
-      Logger.info("Evolution Engine: Created branch '#{branch_name}'")
-
-      {pr_url, pr_title} = PullRequest.try_create(state.repo_path, branch_name, state.objective, result)
-
-      {:ok, %{
-        commit_sha: final_sha,
-        result: result,
-        tag: tag,
-        branch_name: branch_name,
-        pr_url: pr_url,
-        pr_title: pr_title,
-        agent_count: agent_output.agent_count
-      }}
-    else
-      Logger.info("Evolution Engine: No changes detected from agent")
-      {:ok, %{
-        commit_sha: final_sha || base_sha,
-        result: result,
-        tag: tag,
-        branch_name: nil,
-        pr_url: nil,
-        pr_title: nil,
-        no_changes: true,
-        agent_count: agent_output.agent_count
-      }}
-    end
-  end
-
-  defp notify_finalizing(state) do
-    if task_id = state.opts[:task_id] do
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
-    end
-  end
-
-  defp generate_branch_name(prefix) do
-    short_id = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
-    "evogit/#{prefix}_#{short_id}"
   end
 
   # ── Helpers ───────────────────────────────────────────────────────
