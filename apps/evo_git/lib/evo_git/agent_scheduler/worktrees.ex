@@ -291,8 +291,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   `phylo_node.current_commit` in both ETS tables if it has changed.
   Returns the updated meta.
   """
-  @spec sync_current_commit(pos_integer(), EvoGit.AgentScheduler.SchedMeta.t()) ::
-          EvoGit.AgentScheduler.SchedMeta.t()
+  @spec sync_current_commit(pos_integer(), SchedMeta.t()) ::
+          SchedMeta.t()
 
   def sync_current_commit(agent_id, %{worktree: wt} = meta) do
     {:ok, current_sha} = Git.rev_parse(wt)
