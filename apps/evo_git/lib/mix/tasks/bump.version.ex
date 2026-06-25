@@ -100,11 +100,17 @@ defmodule Mix.Tasks.Bump.Version do
     if File.exists?(@tauri_conf) do
       contents = File.read!(@tauri_conf)
 
+      # Use the function form of Regex.replace/replace to avoid the classic
+      # backreference-followed-by-digit pitfall: a replacement like "\\10.9.9\\2"
+      # is parsed as backreference #10 (which does not exist → empty string)
+      # instead of "\\1" followed by the literal "0.9.9", which corrupts the
+      # file (e.g. `"version": "0.9.9"` becomes `.9.9`). The function form
+      # inserts the value verbatim with no interpolation.
       updated =
         Regex.replace(
           ~r/^(\s*"version"\s*:\s*")[^"]+(")/m,
           contents,
-          "\\1#{version}\\2"
+          fn _, prefix, suffix -> prefix <> version <> suffix end
         )
 
       File.write!(@tauri_conf, updated)
@@ -122,7 +128,7 @@ defmodule Mix.Tasks.Bump.Version do
         Regex.replace(
           ~r/^(version\s*=\s*")[^"]+(")/m,
           contents,
-          "\\1#{version}\\2"
+          fn _, prefix, suffix -> prefix <> version <> suffix end
         )
 
       File.write!(@cargo_toml, updated)
@@ -140,11 +146,10 @@ defmodule Mix.Tasks.Bump.Version do
       contents = File.read!(@cargo_lock)
 
       updated =
-        contents
-        # Match the evogit-desktop package block and replace its version line.
-        |> String.replace(
+        Regex.replace(
           ~r/(\[\[package\]\]\nname = "evogit-desktop"\nversion = ")[^"]+(")/,
-          "\\1#{version}\\2"
+          contents,
+          fn _, prefix, suffix -> prefix <> version <> suffix end
         )
 
       File.write!(@cargo_lock, updated)
