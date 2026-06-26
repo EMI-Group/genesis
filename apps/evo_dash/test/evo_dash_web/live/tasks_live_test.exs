@@ -7,7 +7,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   setup do
     # Terminate the production registry to prevent automatic restarts and
-    # to use an isolated ETS/DETS table for the test.
+    # to use an isolated DETS table for the test.
     case Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry) do
       :ok -> :ok
       {:error, :not_found} -> :ok
@@ -21,8 +21,6 @@ defmodule EvoDashWeb.TasksLiveTest do
       start_supervised(
         {TaskRegistry,
          name: EvoDash.TaskRegistry,
-         table_name: :test_tasks_live_ets,
-         recent_projects_table: :test_tasks_live_recent,
          dets_tasks: :test_tasks_live_dets,
          dets_projects: :test_tasks_live_projects_dets,
          data_dir: data_dir}
@@ -36,7 +34,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     :ok
   end
 
-  # Inserts a task directly into the registry's ETS table (bypasses the async
+  # Inserts a task directly into the registry's DETS table (bypasses the async
   # task spawn that `start_task/2` triggers). This lets us create deterministic
   # fixture tasks for search/filter assertions.
   defp insert_fixture!(overrides) do
@@ -55,7 +53,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     }
     |> Map.merge(Enum.into(overrides, %{}))
 
-    :ets.insert(:test_tasks_live_ets, {id, task})
+    :dets.insert(:test_tasks_live_dets, {id, task})
     id
   end
 
