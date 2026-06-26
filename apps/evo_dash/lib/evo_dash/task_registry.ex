@@ -198,7 +198,7 @@ defmodule EvoDash.TaskRegistry do
     }
 
     # Persist to DETS with ref nulled (ref is runtime-only data)
-    :dets.insert(state.dets_tasks, {task_id, %{task | ref: nil}})
+    safe_insert(state.dets_tasks, {task_id, %{task | ref: nil}})
 
     # Keep the runtime ref in-memory only
     state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
@@ -245,7 +245,7 @@ defmodule EvoDash.TaskRegistry do
 
                 Task.shutdown(task_ref, :brutal_kill)
                 updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
-                :dets.insert(state.dets_tasks, {task_id, updated})
+                safe_insert(state.dets_tasks, {task_id, updated})
                 cleanup_expired_tasks(state)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
@@ -298,7 +298,7 @@ defmodule EvoDash.TaskRegistry do
     safe_match_object(state.dets_tasks)
     |> Enum.each(fn {id, task} ->
       unless task.status in [:running, :pending] do
-        :dets.delete(state.dets_tasks, id)
+        safe_delete(state.dets_tasks, id)
       end
     end)
 
@@ -314,9 +314,9 @@ defmodule EvoDash.TaskRegistry do
     now = DateTime.utc_now()
 
     # Remove existing entry for this path (if any), then add updated entry
-    :dets.delete(state.dets_projects, path)
+    safe_delete(state.dets_projects, path)
 
-    :dets.insert(
+    safe_insert(
       state.dets_projects,
       {path, %{path: path, name: name, last_opened_at: now}}
     )
@@ -340,7 +340,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    :dets.delete(state.dets_projects, path)
+    safe_delete(state.dets_projects, path)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
@@ -363,7 +363,7 @@ defmodule EvoDash.TaskRegistry do
           updated = if usage, do: %{updated | usage: usage}, else: updated
           updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
           updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
-          :dets.insert(state.dets_tasks, {task_id, updated})
+          safe_insert(state.dets_tasks, {task_id, updated})
 
           if status in [:completed, :failed, :cancelled] do
             cleanup_expired_tasks(state)
@@ -385,7 +385,7 @@ defmodule EvoDash.TaskRegistry do
     case safe_lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{logs: logs} = task}] ->
         updated = %{task | logs: [log_entry | logs]}
-        :dets.insert(state.dets_tasks, {task_id, updated})
+        safe_insert(state.dets_tasks, {task_id, updated})
 
       _ ->
         :ok
@@ -396,7 +396,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
-    :dets.delete(state.dets_tasks, task_id)
+    safe_delete(state.dets_tasks, task_id)
     cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -407,7 +407,7 @@ defmodule EvoDash.TaskRegistry do
     case safe_lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
         updated = %{task | review_status: status}
-        :dets.insert(state.dets_tasks, {task_id, updated})
+        safe_insert(state.dets_tasks, {task_id, updated})
         cleanup_expired_tasks(state)
         Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
@@ -423,7 +423,7 @@ defmodule EvoDash.TaskRegistry do
     case safe_lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
         updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        :dets.insert(state.dets_tasks, {task_id, updated})
+        safe_insert(state.dets_tasks, {task_id, updated})
         cleanup_expired_tasks(state)
         Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
@@ -486,53 +486,108 @@ defmodule EvoDash.TaskRegistry do
     :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
   end
 
-  defp tasks_dets_path(data_dir), do: Path.join(data_dir, "tasks.dets")
-
   # --- DETS Corruption Recovery ---
 
   defp open_or_reset_dets(table_name, file_path) do
     case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
       {:ok, _} ->
-        :ok
+        # Verify the table is actually readable (repair may have succeeded at open
+        # but corruption can surface during reads).
+        if dets_readable?(table_name) do
+          :ok
+        else
+          Logger.warning(
+            "DETS table #{inspect(table_name)} opened but reads fail (corruption). " <>
+              "Attempting recovery for #{file_path}."
+          )
+
+          recover_dets_table(table_name, file_path)
+        end
 
       {:error, reason} ->
         Logger.error(
           "Failed to open DETS file #{file_path}: #{inspect(reason)}. " <>
-            "Attempting repair before recreating."
+            "Attempting recovery."
         )
 
-        # Try opening with auto-repair — this can often recover data from an unclean shutdown
-        case :dets.open_file(table_name,
-               type: :set,
-               file: to_charlist(file_path),
-               repair: :auto
-             ) do
-          {:ok, _} ->
-            Logger.warning("DETS auto-repair succeeded for #{file_path}")
-            :ok
-
-          {:error, repair_reason} ->
-            Logger.error(
-              "DETS auto-repair failed for #{file_path}: #{inspect(repair_reason)}. " <>
-                "Backing up corrupted file to #{file_path}.bak and recreating. " <>
-                "DATA LOSS HAS OCCURRED — recent projects and/or tasks have been lost."
-            )
-
-            # Backup the corrupted file before deletion so data can potentially be recovered
-            _ = File.cp(file_path, file_path <> ".bak")
-
-            _ = File.rm(file_path)
-            {:ok, _} = :dets.open_file(table_name, type: :set, file: to_charlist(file_path))
-            :ok
-        end
+        recover_dets_table(table_name, file_path)
     end
   end
 
-  defp reset_dets_table(table_name, file_path) do
-    :dets.close(table_name)
+  # Probe whether the table can be read without errors.
+  defp dets_readable?(table_name) do
+    # safe_match_object returns [] on error, but we need to distinguish "genuinely
+    # empty" from "corrupt". Use a raw :dets.match_object and check the return type.
+    case :dets.match_object(table_name, {:_, :_}) do
+      objects when is_list(objects) -> true
+      {:error, _reason} -> false
+    end
+  end
+
+  defp recover_dets_table(table_name, file_path) do
+    # Step 1: Try to salvage whatever records are readable before doing anything destructive.
+    salvaged = salvage_dets_objects(table_name, file_path)
+
+    # Step 2: Close the table if it's open.
+    _ = :dets.close(table_name)
+
+    # Step 3: Back up the corrupt file with a timestamp (never overwrite a previous backup).
+    backup_path = corrupt_backup_path(file_path)
+    _ = File.cp(file_path, backup_path)
+    Logger.warning("Backed up corrupt DETS file to #{backup_path}")
+
+    # Step 4: Delete the corrupt file and recreate a fresh table.
     _ = File.rm(file_path)
-    {:ok, _} = :dets.open_file(table_name, type: :set, file: to_charlist(file_path))
-    :ok
+
+    case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
+      {:ok, _} ->
+        # Step 5: Re-insert salvaged records.
+        count = length(salvaged)
+
+        if count > 0 do
+          for obj <- salvaged, do: :dets.insert(table_name, obj)
+
+          Logger.info("Recovered #{count} record(s) into fresh DETS table #{inspect(table_name)}")
+        else
+          Logger.error(
+            "No records could be salvaged from corrupt DETS file #{file_path}. " <>
+              "Starting with an empty table. Backup preserved at #{backup_path}."
+          )
+        end
+
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "CRITICAL: Could not recreate DETS file #{file_path}: #{inspect(reason)}. " <>
+            "Backup preserved at #{backup_path}."
+        )
+
+        {:error, reason}
+    end
+  end
+
+  # Attempt to read as many objects as possible from the table.
+  defp salvage_dets_objects(table_name, _file_path) do
+    case :dets.match_object(table_name, {:_, :_}) do
+      objects when is_list(objects) ->
+        objects
+
+      {:error, reason} ->
+        Logger.warning(
+          "Could not salvage any objects from DETS table #{inspect(table_name)}: #{inspect(reason)}"
+        )
+
+        []
+    end
+  end
+
+  defp corrupt_backup_path(file_path) do
+    timestamp =
+      DateTime.utc_now()
+      |> Calendar.strftime("%Y%m%d-%H%M%S")
+
+    "#{file_path}.corrupt.#{timestamp}"
   end
 
   def safe_match_object(table_name) do
@@ -541,6 +596,33 @@ defmodule EvoDash.TaskRegistry do
 
   def safe_lookup(table_name, key) do
     from_dets(table_name, :dets.lookup(table_name, key), "lookup(#{inspect(key)})")
+  end
+
+  defp safe_insert(table_name, object) do
+    case :dets.insert(table_name, object) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "DETS insert failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
+            "Data may not be persisted."
+        )
+
+        {:error, reason}
+    end
+  end
+
+  defp safe_delete(table_name, key) do
+    case :dets.delete(table_name, key) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("DETS delete failed for table #{inspect(table_name)}: #{inspect(reason)}.")
+
+        {:error, reason}
+    end
   end
 
   # Pure dispatcher over a :dets read result. Public + documented as internal so the
@@ -566,32 +648,26 @@ defmodule EvoDash.TaskRegistry do
   # --- Task Normalization (DETS in-place) ---
 
   defp normalize_tasks_in_dets(state) do
-    try do
-      :dets.foldl(
-        fn
-          {_key, %TaskInfo{} = task}, acc ->
-            # Backfill any missing struct fields (e.g. review_status added after initial persist)
-            task = Map.merge(%TaskInfo{}, task)
-            # Reset non-persistable fields
-            task = %{task | ref: nil, status: maybe_reset_status(task.status)}
-            task = set_crash_details(task)
-            :dets.insert(state.dets_tasks, {task.id, task})
-            acc
+    objects = safe_match_object(state.dets_tasks)
 
-          _other, acc ->
-            acc
-        end,
-        :ok,
-        state.dets_tasks
-      )
+    try do
+      for {_key, %TaskInfo{} = task} <- objects do
+        # Backfill any missing struct fields (e.g. review_status added after initial persist)
+        task = Map.merge(%TaskInfo{}, task)
+        # Reset non-persistable fields
+        task = %{task | ref: nil, status: maybe_reset_status(task.status)}
+        task = set_crash_details(task)
+        safe_insert(state.dets_tasks, {task.id, task})
+      end
+
+      :ok
     rescue
       error ->
         Logger.error(
           "Failed to normalize tasks in DETS: #{inspect(error)}. " <>
-            "Resetting corrupted tasks store."
+            "Skipping normalization — existing records preserved."
         )
 
-        reset_dets_table(state.dets_tasks, tasks_dets_path(state.data_dir))
         :ok
     end
   end
@@ -624,7 +700,7 @@ defmodule EvoDash.TaskRegistry do
     for task <- all_tasks,
         task.finished_at != nil,
         DateTime.compare(task.finished_at, cutoff) == :lt do
-      :dets.delete(state.dets_tasks, task.id)
+      safe_delete(state.dets_tasks, task.id)
     end
 
     # Enforce max_tasks limit (keep newest finished tasks)
@@ -637,7 +713,7 @@ defmodule EvoDash.TaskRegistry do
 
     if length(finished) > max_tasks do
       to_delete = Enum.drop(finished, max_tasks)
-      for task <- to_delete, do: :dets.delete(state.dets_tasks, task.id)
+      for task <- to_delete, do: safe_delete(state.dets_tasks, task.id)
     end
 
     :ok
@@ -657,7 +733,7 @@ defmodule EvoDash.TaskRegistry do
 
       {_kept, to_remove} ->
         for project <- to_remove do
-          :dets.delete(state.dets_projects, project.path)
+          safe_delete(state.dets_projects, project.path)
         end
     end
   end
@@ -718,7 +794,7 @@ defmodule EvoDash.TaskRegistry do
               else: task.finished_at
 
           updated = %{task | status: status, finished_at: finished_at}
-          :dets.insert(state.dets_tasks, {task_id, updated})
+          safe_insert(state.dets_tasks, {task_id, updated})
 
           if status in [:completed, :failed, :cancelled] do
             cleanup_expired_tasks(state)
