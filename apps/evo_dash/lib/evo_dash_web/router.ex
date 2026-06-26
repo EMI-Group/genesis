@@ -23,16 +23,15 @@ defmodule EvoDashWeb.Router do
     live("/tasks", TasksLive, :index)
     live("/agents", AgentsLive, :index)
     live("/settings", SettingsLive, :index)
-    live("/help", HelpLive, :index)
+    live("/system", SystemLive, :index)
     live("/review/:task_id", ReviewLive, :show)
     live("/review/:task_id/commit/:commit_sha", ReviewLive, :commit)
-    live "/dashboard", DashboardLive, :system_dashboard
-    live_dashboard "/phoenix/dashboard"
+    live("/dashboard", DashboardLive, :system_dashboard)
+    live_dashboard("/phoenix/dashboard")
   end
 
   # Other scopes may use custom stacks.
   # scope "/api", EvoDashWeb do
   #   pipe_through :api
   # end
-
 end

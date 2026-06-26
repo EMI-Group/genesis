@@ -65,11 +65,10 @@ defmodule EvoDashWeb.SettingsLive do
         </div>
       <% end %>
 
-      <%!-- Three major sections in a flex column container with `gap-8` spacing.
-           Note: `space-y-8`, `mt-8`, and `gap-8` all generate correctly in
-           Tailwind v4 via `calc(var(--spacing) * N)` (with `--spacing: 0.25rem`
-           at `:root`). The cards ARE direct children (HEEx comments emit no DOM
-           nodes), so any of these utilities works — including `space-y-*`.
+      <%!-- Settings card: two-column sidebar + content layout.
+           Note: `gap-8` generates correctly in Tailwind v4 via
+           `calc(var(--spacing) * N)` (with `--spacing: 0.25rem` at `:root`).
+           The cards ARE direct children (HEEx comments emit no DOM nodes).
            The earlier spacing fixes (commits 08c3ec35 and 6a48e9e2) appeared to
            fail only because the gitignored CSS build (`priv/static/assets/css/`)
            was never regenerated after the HEEx edits, so the app served a stale
@@ -126,146 +125,6 @@ defmodule EvoDashWeb.SettingsLive do
           </.form>
         <% end %>
       </div>
-
-      <%!-- Runtime Controls banner (moved to bottom: after the settings editor) --%>
-      <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group">
-        <div class="absolute inset-0 bg-gradient-to-r from-base-200/30 to-transparent pointer-events-none"></div>
-        <div class="relative p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 transition-all duration-300">
-          <div class="flex items-center gap-5">
-            <div class={[
-              "p-4 rounded-2xl flex items-center justify-center transition-colors duration-500",
-              if(@scheduler_paused, do: "bg-warning/15 text-warning shadow-[0_0_20px_rgba(251,189,35,0.15)]", else: "bg-success/15 text-success shadow-[0_0_20px_rgba(54,211,153,0.15)]")
-            ]}>
-              <.icon
-                name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
-                class={"size-8" <> if(!@scheduler_paused, do: " animate-pulse", else: "")}
-              />
-            </div>
-            <div>
-              <h2 class="text-xl font-bold tracking-tight mb-1">
-                {if @scheduler_paused, do: gettext("Scheduler Paused"), else: gettext("Scheduler Active")}
-              </h2>
-              <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
-                <%= if @scheduler_paused do %>
-                  {gettext("Running agents continue. No new slots or agents will be granted until resumed.")}
-                <% else %>
-                  {gettext("Agents and slots are being granted normally.")}
-                <% end %>
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            phx-click="toggle_pause"
-            class={[
-              "btn btn-lg rounded-2xl font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none shrink-0",
-              if(@scheduler_paused, do: "bg-success/20 hover:bg-success/30 text-success-content", else: "bg-warning/20 hover:bg-warning/30 text-warning-content")
-            ]}
-          >
-            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
-            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")}
-          </button>
-        </div>
-      </div>
-
-      <%!-- System Control section (destructive actions) --%>
-      <div class="bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-sm">
-        <div class="flex items-start gap-4">
-          <div class="p-3 bg-error/15 text-error rounded-2xl shrink-0">
-            <.icon name="hero-power" class="size-6" />
-          </div>
-          <div>
-            <h2 class="text-xl font-bold tracking-tight text-error mb-1">
-              {gettext("System Control")}
-            </h2>
-            <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
-              {gettext("Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases.")}
-            </p>
-          </div>
-        </div>
-        <div class="flex flex-col sm:flex-row gap-3 shrink-0">
-          <button
-            type="button"
-            phx-click="request_restart"
-            class="btn btn-lg rounded-2xl bg-error/15 hover:bg-error/25 text-error font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none gap-2"
-          >
-            <.icon name="hero-arrow-path" class="size-5" />
-            {gettext("Restart System")}
-          </button>
-          <button
-            type="button"
-            phx-click="request_stop"
-            class="btn btn-lg rounded-2xl bg-error/15 hover:bg-error/25 text-error font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none gap-2"
-          >
-            <.icon name="hero-stop-circle" class="size-5" />
-            {gettext("Stop System")}
-          </button>
-        </div>
-      </div>
-
-      <%!-- Restart confirmation modal --%>
-      <%= if @show_restart_confirm do %>
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_restart"></div>
-          <div class="relative bg-base-100 rounded-3xl shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
-            <div class="flex items-center gap-3 mb-4">
-              <div class="flex items-center justify-center size-10 rounded-2xl bg-error/15">
-                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-              </div>
-              <h3 class="text-lg font-bold">{gettext("Restart System?")}</h3>
-            </div>
-
-            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext("This will gracefully restart the Erlang VM. All applications will be torn down and restarted.")}
-            </p>
-            <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-              {gettext("All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone.")}
-            </p>
-
-            <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-full px-6" phx-click="cancel_restart">
-                {gettext("Cancel")}
-              </button>
-              <button type="button" class="btn btn-error rounded-full px-6 gap-2" phx-click="confirm_restart">
-                <.icon name="hero-arrow-path" class="size-4.5" />
-                {gettext("Restart System")}
-              </button>
-            </div>
-          </div>
-        </div>
-      <% end %>
-
-      <%!-- Stop confirmation modal --%>
-      <%= if @show_stop_confirm do %>
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_stop"></div>
-          <div class="relative bg-base-100 rounded-3xl shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
-            <div class="flex items-center gap-3 mb-4">
-              <div class="flex items-center justify-center size-10 rounded-2xl bg-error/15">
-                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-              </div>
-              <h3 class="text-lg font-bold">{gettext("Stop System?")}</h3>
-            </div>
-
-            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext("This will gracefully shut down the Erlang VM. All applications will be stopped in order.")}
-            </p>
-            <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-              {gettext("The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone.")}
-            </p>
-
-            <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-full px-6" phx-click="cancel_stop">
-                {gettext("Cancel")}
-              </button>
-              <button type="button" class="btn btn-error rounded-full px-6 gap-2" phx-click="confirm_stop">
-                <.icon name="hero-stop-circle" class="size-4.5" />
-                {gettext("Stop System")}
-              </button>
-            </div>
-          </div>
-        </div>
-      <% end %>
       </div>
     </EvoDashWeb.Layouts.app>
     """
@@ -290,7 +149,6 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:search_text, "")
       |> assign(:per_category_errors, %{})
       |> assign(:scheduler_config, load_scheduler_config())
-      |> assign(:scheduler_paused, load_paused_state())
       |> assign(:config_status, config_status)
       |> assign(:file_config, file_config)
       |> assign(:config_path, config_path)
@@ -300,8 +158,6 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:selected_provider_models, [])
       |> assign(:selected_variant_id, nil)
       |> assign(:llm_test_status, :idle)
-      |> assign(:show_restart_confirm, false)
-      |> assign(:show_stop_confirm, false)
 
     {:ok, socket}
   end
@@ -337,10 +193,7 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_info({:scheduler_config_updated}, socket) do
-    {:noreply,
-     socket
-     |> assign(:scheduler_config, load_scheduler_config())
-     |> assign(:scheduler_paused, load_paused_state())}
+    {:noreply, assign(socket, :scheduler_config, load_scheduler_config())}
   end
 
   @impl true
@@ -597,91 +450,6 @@ defmodule EvoDashWeb.SettingsLive do
     {:noreply, assign(socket, :llm_test_status, :testing)}
   end
 
-  @impl true
-  def handle_event("toggle_pause", _params, socket) do
-    if socket.assigns.scheduler_paused do
-      EvoGit.AgentScheduler.resume()
-
-      {:noreply,
-       socket
-       |> assign(:scheduler_paused, false)
-       |> put_flash(:info, gettext("Scheduler resumed. New agents and slots are being granted."))}
-    else
-      EvoGit.AgentScheduler.pause()
-
-      {:noreply,
-       socket
-       |> assign(:scheduler_paused, true)
-       |> put_flash(
-         :info,
-         gettext(
-           "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
-         )
-       )}
-    end
-  end
-
-  @impl true
-  def handle_event("request_restart", _params, socket) do
-    {:noreply, assign(socket, :show_restart_confirm, true)}
-  end
-
-  @impl true
-  def handle_event("cancel_restart", _params, socket) do
-    {:noreply, assign(socket, :show_restart_confirm, false)}
-  end
-
-  @impl true
-  def handle_event("confirm_restart", _params, socket) do
-    # Spawn a short-lived process so this LiveView can finish replying (and the
-    # browser can close the modal) before the VM tears down. System.restart/0
-    # gracefully restarts the BEAM runtime — all applications are stopped and
-    # started again. It does NOT shut down the host OS.
-    spawn(fn ->
-      Process.sleep(150)
-      System.restart()
-    end)
-
-    {:noreply,
-     socket
-     |> assign(:show_restart_confirm, false)
-     |> put_flash(
-       :info,
-       gettext("System is restarting. Please wait while the Erlang VM comes back up.")
-     )}
-  end
-
-  @impl true
-  def handle_event("request_stop", _params, socket) do
-    {:noreply, assign(socket, :show_stop_confirm, true)}
-  end
-
-  @impl true
-  def handle_event("cancel_stop", _params, socket) do
-    {:noreply, assign(socket, :show_stop_confirm, false)}
-  end
-
-  @impl true
-  def handle_event("confirm_stop", _params, socket) do
-    # Spawn a short-lived process so this LiveView can finish replying (and the
-    # browser can close the modal) before the VM shuts down. System.stop/0
-    # gracefully shuts down the BEAM runtime — all applications are stopped in
-    # order and the VM exits. It does NOT affect the host OS, but the VM will
-    # need to be started again manually.
-    spawn(fn ->
-      Process.sleep(150)
-      System.stop()
-    end)
-
-    {:noreply,
-     socket
-     |> assign(:show_stop_confirm, false)
-     |> put_flash(
-       :info,
-       gettext("System is stopping. The Erlang VM will shut down and must be started again manually.")
-     )}
-  end
-
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config loading
   # ───────────────────────────────────────────────────────────────────────────
@@ -703,16 +471,6 @@ defmodule EvoDashWeb.SettingsLive do
       _ -> %{}
     catch
       _, _ -> %{}
-    end
-  end
-
-  defp load_paused_state do
-    try do
-      EvoGit.AgentScheduler.get_config()[:paused] || false
-    rescue
-      _ -> false
-    catch
-      _, _ -> false
     end
   end
 

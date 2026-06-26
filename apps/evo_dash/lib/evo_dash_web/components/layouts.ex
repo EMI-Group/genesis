@@ -52,7 +52,7 @@ defmodule EvoDashWeb.Layouts do
                 <.nav_link navigate={~p"/agents"} current={@current_page == :agents} icon="hero-server">{gettext("Agents")}</.nav_link>
                 <.nav_link navigate={~p"/tasks"} current={@current_page == :tasks} icon="hero-clipboard-document-list">{gettext("Tasks")}</.nav_link>
                 <.nav_link navigate={~p"/settings"} current={@current_page == :settings} icon="hero-cog-6-tooth">{gettext("Settings")}</.nav_link>
-                <.nav_link navigate={~p"/help"} current={@current_page == :help} icon="hero-question-mark-circle">{gettext("Help")}</.nav_link>
+                <.nav_link navigate={~p"/system"} current={@current_page == :system} icon="hero-server-stack">{gettext("System")}</.nav_link>
               </div>
               <div class="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-2"></div>
               <.language_selector />
@@ -92,7 +92,7 @@ defmodule EvoDashWeb.Layouts do
           <.mobile_nav_link navigate={~p"/agents"} current={@current_page == :agents} icon="hero-server">{gettext("Agents")}</.mobile_nav_link>
           <.mobile_nav_link navigate={~p"/tasks"} current={@current_page == :tasks} icon="hero-clipboard-document-list">{gettext("Tasks")}</.mobile_nav_link>
           <.mobile_nav_link navigate={~p"/settings"} current={@current_page == :settings} icon="hero-cog-6-tooth">{gettext("Settings")}</.mobile_nav_link>
-          <.mobile_nav_link navigate={~p"/help"} current={@current_page == :help} icon="hero-question-mark-circle">{gettext("Help")}</.mobile_nav_link>
+          <.mobile_nav_link navigate={~p"/system"} current={@current_page == :system} icon="hero-server-stack">{gettext("System")}</.mobile_nav_link>
         </nav>
 
         <div class="p-4 border-t border-slate-200 dark:border-slate-800">
@@ -189,7 +189,7 @@ defmodule EvoDashWeb.Layouts do
   def current_page(:agents), do: "/agents"
   def current_page(:tasks), do: "/tasks"
   def current_page(:settings), do: "/settings"
-  def current_page(:help), do: "/help"
+  def current_page(:system), do: "/system"
   def current_page(:review), do: "/review/:task_id"
 
   @doc """
