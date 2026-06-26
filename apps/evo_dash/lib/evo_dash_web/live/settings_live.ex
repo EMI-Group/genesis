@@ -65,9 +65,15 @@ defmodule EvoDashWeb.SettingsLive do
         </div>
       <% end %>
 
-      <%!-- Three major sections with explicit per-section top margins for spacing --%>
-      <%!-- Two-column sidebar + content layout --%>
-      <div class="flex flex-col md:flex-row bg-base-100 rounded-[2rem] shadow-sm hover:shadow-md border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-200 md:min-h-[75vh] md:max-h-[80vh] transition-all duration-500">
+      <%!-- Three major sections in a flex column container.
+           Using `gap-8` (not `space-y-*` or margins) because flex `gap` is
+           immune to (a) the LiveView slot wrapper trap that defeats the
+           `space-y-*` sibling-combinator selector, and (b) margin collapsing /
+           specificity issues that defeat per-card `mt-8`. See git history:
+           commits 08c3ec35 (space-y-8) and 6a48e9e2 (mt-8) both failed. --%>
+      <div class="flex flex-col gap-8">
+        <%!-- Two-column sidebar + content layout --%>
+        <div class="flex flex-col md:flex-row bg-base-100 rounded-[2rem] shadow-sm hover:shadow-md border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-200 md:min-h-[75vh] md:max-h-[80vh] transition-all duration-500">
         <%!-- Sidebar --%>
         <EvoDashWeb.SettingsComponents.settings_sidebar
           categories={@schemas_by_category}
@@ -117,7 +123,7 @@ defmodule EvoDashWeb.SettingsLive do
       </div>
 
       <%!-- Runtime Controls banner (moved to bottom: after the settings editor) --%>
-      <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group mt-8">
+      <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group">
         <div class="absolute inset-0 bg-gradient-to-r from-base-200/30 to-transparent pointer-events-none"></div>
         <div class="relative p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 transition-all duration-300">
           <div class="flex items-center gap-5">
@@ -158,7 +164,7 @@ defmodule EvoDashWeb.SettingsLive do
       </div>
 
       <%!-- System Control section (destructive actions) --%>
-      <div class="bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-sm mt-8">
+      <div class="bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-sm">
         <div class="flex items-start gap-4">
           <div class="p-3 bg-error/15 text-error rounded-2xl shrink-0">
             <.icon name="hero-power" class="size-6" />
@@ -255,6 +261,7 @@ defmodule EvoDashWeb.SettingsLive do
           </div>
         </div>
       <% end %>
+      </div>
     </EvoDashWeb.Layouts.app>
     """
   end
