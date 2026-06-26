@@ -18,8 +18,9 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
   5. `EvoDashWeb.Endpoint`
 
 ### `EvoDash.TaskRegistry` (`task_registry.ex`)
-- Singleton `GenServer` backed by a named ETS table (`:evo_dash_tasks`).
+- Singleton `GenServer` backed by DETS (single source of truth).
 - Tracks EvoGit tasks (`:genesis` / `:evolve`) with id, type, status, opts, pid, timestamps, logs, and result.
+- Runtime-only task references (`%Task{}`) are kept in an in-memory `task_refs` map (`%{task_id => %Task{}}`), not persisted.
 
 **Client API:**
 | Function | Description |
