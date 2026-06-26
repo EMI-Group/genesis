@@ -22,47 +22,6 @@ defmodule EvoDashWeb.SettingsLive do
         </div>
       </div>
 
-      <%!-- Runtime Controls banner --%>
-      <div class="mb-8 bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group">
-        <div class="absolute inset-0 bg-gradient-to-r from-base-200/30 to-transparent pointer-events-none"></div>
-        <div class="relative p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 transition-all duration-300">
-          <div class="flex items-center gap-5">
-            <div class={[
-              "p-4 rounded-2xl flex items-center justify-center transition-colors duration-500",
-              if(@scheduler_paused, do: "bg-warning/15 text-warning shadow-[0_0_20px_rgba(251,189,35,0.15)]", else: "bg-success/15 text-success shadow-[0_0_20px_rgba(54,211,153,0.15)]")
-            ]}>
-              <.icon
-                name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
-                class={"size-8" <> if(!@scheduler_paused, do: " animate-pulse", else: "")}
-              />
-            </div>
-            <div>
-              <h2 class="text-xl font-bold tracking-tight mb-1">
-                {if @scheduler_paused, do: gettext("Scheduler Paused"), else: gettext("Scheduler Active")}
-              </h2>
-              <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
-                <%= if @scheduler_paused do %>
-                  {gettext("Running agents continue. No new slots or agents will be granted until resumed.")}
-                <% else %>
-                  {gettext("Agents and slots are being granted normally.")}
-                <% end %>
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            phx-click="toggle_pause"
-            class={[
-              "btn btn-lg rounded-2xl font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none shrink-0",
-              if(@scheduler_paused, do: "bg-success/20 hover:bg-success/30 text-success-content", else: "bg-warning/20 hover:bg-warning/30 text-warning-content")
-            ]}
-          >
-            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
-            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")}
-          </button>
-        </div>
-      </div>
-
       <%!-- Config Status Warning --%>
       <%= if not @config_status.ok? do %>
         <div class="mb-8 bg-warning/5 border border-warning/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex gap-4 items-start shadow-sm">
@@ -155,6 +114,104 @@ defmodule EvoDashWeb.SettingsLive do
           </.form>
         <% end %>
       </div>
+
+      <%!-- Runtime Controls banner (moved to bottom: after the settings editor) --%>
+      <div class="mt-8 bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group">
+        <div class="absolute inset-0 bg-gradient-to-r from-base-200/30 to-transparent pointer-events-none"></div>
+        <div class="relative p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 transition-all duration-300">
+          <div class="flex items-center gap-5">
+            <div class={[
+              "p-4 rounded-2xl flex items-center justify-center transition-colors duration-500",
+              if(@scheduler_paused, do: "bg-warning/15 text-warning shadow-[0_0_20px_rgba(251,189,35,0.15)]", else: "bg-success/15 text-success shadow-[0_0_20px_rgba(54,211,153,0.15)]")
+            ]}>
+              <.icon
+                name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
+                class={"size-8" <> if(!@scheduler_paused, do: " animate-pulse", else: "")}
+              />
+            </div>
+            <div>
+              <h2 class="text-xl font-bold tracking-tight mb-1">
+                {if @scheduler_paused, do: gettext("Scheduler Paused"), else: gettext("Scheduler Active")}
+              </h2>
+              <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
+                <%= if @scheduler_paused do %>
+                  {gettext("Running agents continue. No new slots or agents will be granted until resumed.")}
+                <% else %>
+                  {gettext("Agents and slots are being granted normally.")}
+                <% end %>
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            phx-click="toggle_pause"
+            class={[
+              "btn btn-lg rounded-2xl font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none shrink-0",
+              if(@scheduler_paused, do: "bg-success/20 hover:bg-success/30 text-success-content", else: "bg-warning/20 hover:bg-warning/30 text-warning-content")
+            ]}
+          >
+            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
+            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")}
+          </button>
+        </div>
+      </div>
+
+      <%!-- System Control section (destructive actions) --%>
+      <div class="mt-8 bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-sm">
+        <div class="flex items-start gap-4">
+          <div class="p-3 bg-error/15 text-error rounded-2xl shrink-0">
+            <.icon name="hero-power" class="size-6" />
+          </div>
+          <div>
+            <h2 class="text-xl font-bold tracking-tight text-error mb-1">
+              {gettext("System Control")}
+            </h2>
+            <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
+              {gettext("Gracefully restart the Erlang VM. All applications are torn down and restarted — in-memory runtime state will be lost.")}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          phx-click="request_restart"
+          class="btn btn-lg rounded-2xl bg-error/15 hover:bg-error/25 text-error font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none shrink-0 gap-2"
+        >
+          <.icon name="hero-arrow-path" class="size-5" />
+          {gettext("Restart System")}
+        </button>
+      </div>
+
+      <%!-- Restart confirmation modal --%>
+      <%= if @show_restart_confirm do %>
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_restart"></div>
+          <div class="relative bg-base-100 rounded-3xl shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="flex items-center justify-center size-10 rounded-2xl bg-error/15">
+                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
+              </div>
+              <h3 class="text-lg font-bold">{gettext("Restart System?")}</h3>
+            </div>
+
+            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+              {gettext("This will gracefully restart the Erlang VM. All applications will be torn down and restarted.")}
+            </p>
+            <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
+              {gettext("All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone.")}
+            </p>
+
+            <div class="flex justify-end gap-3 pt-2">
+              <button type="button" class="btn btn-ghost rounded-full px-6" phx-click="cancel_restart">
+                {gettext("Cancel")}
+              </button>
+              <button type="button" class="btn btn-error rounded-full px-6 gap-2" phx-click="confirm_restart">
+                <.icon name="hero-arrow-path" class="size-4.5" />
+                {gettext("Restart System")}
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
     </EvoDashWeb.Layouts.app>
     """
   end
@@ -188,6 +245,7 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:selected_provider_models, [])
       |> assign(:selected_variant_id, nil)
       |> assign(:llm_test_status, :idle)
+      |> assign(:show_restart_confirm, false)
 
     {:ok, socket}
   end
@@ -505,6 +563,36 @@ defmodule EvoDashWeb.SettingsLive do
          )
        )}
     end
+  end
+
+  @impl true
+  def handle_event("request_restart", _params, socket) do
+    {:noreply, assign(socket, :show_restart_confirm, true)}
+  end
+
+  @impl true
+  def handle_event("cancel_restart", _params, socket) do
+    {:noreply, assign(socket, :show_restart_confirm, false)}
+  end
+
+  @impl true
+  def handle_event("confirm_restart", _params, socket) do
+    # Spawn a short-lived process so this LiveView can finish replying (and the
+    # browser can close the modal) before the VM tears down. :init.restart/0
+    # gracefully restarts the BEAM runtime — all applications are stopped and
+    # started again. It does NOT shut down the host OS.
+    spawn(fn ->
+      Process.sleep(150)
+      :init.restart()
+    end)
+
+    {:noreply,
+     socket
+     |> assign(:show_restart_confirm, false)
+     |> put_flash(
+       :info,
+       gettext("System is restarting. Please wait while the Erlang VM comes back up.")
+     )}
   end
 
   # ───────────────────────────────────────────────────────────────────────────
