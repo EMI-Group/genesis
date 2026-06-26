@@ -273,6 +273,25 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
+  def handle_info({:task_status, _task_id, _status}, socket) do
+    # Task status transitions (e.g. :finalizing, :running) are broadcast on the
+    # "tasks" PubSub topic. Re-fetch the task list so the UI reflects the change.
+    tasks = TaskRegistry.list_tasks()
+    project_paths = TaskRegistry.get_unique_paths()
+
+    {:noreply,
+     socket
+     |> assign(:tasks, tasks)
+     |> assign(:project_paths, project_paths)
+     |> assign_filtered_tasks()}
+  end
+
+  @impl true
+  def handle_info(_msg, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("filter_tasks", params, socket) do
     status_filter = params["status_filter"] || socket.assigns.status_filter
     project_filter = params["project_filter"] || socket.assigns.project_filter
