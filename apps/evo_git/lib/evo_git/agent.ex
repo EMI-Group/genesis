@@ -40,6 +40,39 @@ defmodule EvoGit.Agent do
   def tool_name(%{name: name}), do: name
   def tool_name(_), do: nil
 
+  @doc """
+  Determines whether the agent loop should trigger turn-limit recovery.
+
+  Returns `true` when the turn limit is exceeded and the agent is NOT already
+  in a grace period. The `in_grace_period` guard is critical: without it,
+  `trigger_recovery/2` sets `in_grace_period: true` and re-enters `loop/1`,
+  where the same condition re-fires — an infinite loop with no termination.
+
+  ## The bug
+
+  Previously this only checked `turn >= max_turns`. When recovery set
+  `in_grace_period: true` and looped back, the condition re-fired immediately.
+  The `in_grace_period` guard breaks the cycle.
+  """
+  @spec trigger_turn_limit_recovery?(LoopState.t()) :: boolean()
+  def trigger_turn_limit_recovery?(%LoopState{in_grace_period: true}), do: false
+  def trigger_turn_limit_recovery?(%LoopState{turn: turn, max_turns: max}), do: turn >= max
+
+  @doc """
+  Determines whether a `{:continue, _}` outcome during the grace period should
+  fail recovery.
+
+  During the grace period (the recovery turn), the agent gets exactly one turn
+  to call `complete_task`. If it instead calls other tools, recovery has failed
+  and the loop must terminate with `{:error, :recovery_failed}`.
+
+  This bounds the grace period to exactly one turn, guaranteeing the loop can
+  never run indefinitely.
+  """
+  @spec grace_period_continue_failed?(LoopState.t()) :: boolean()
+  def grace_period_continue_failed?(%LoopState{in_grace_period: true}), do: true
+  def grace_period_continue_failed?(%LoopState{in_grace_period: false}), do: false
+
   defmacro __using__(_opts) do
     quote do
       require Logger
@@ -274,7 +307,7 @@ defmodule EvoGit.Agent do
         end
 
         cond do
-          state.turn >= state.max_turns ->
+          not state.in_grace_period and state.turn >= state.max_turns ->
             trigger_recovery(state, "max turns (#{state.max_turns}) exceeded")
 
           true ->
@@ -397,32 +430,36 @@ defmodule EvoGit.Agent do
             {:ok, final_result}
 
           {:continue, tool_responses} ->
-            # Pick up updated delegation hints from tool execution
-            updated_hints = Process.get(:delegation_hints, state.delegation_hints)
-            Process.delete(:delegation_hints)
-            updated_read_hints = Process.get(:read_delegation_hints, state.read_delegation_hints)
-            Process.delete(:read_delegation_hints)
+            if state.in_grace_period do
+              {:error, :recovery_failed}
+            else
+              # Pick up updated delegation hints from tool execution
+              updated_hints = Process.get(:delegation_hints, state.delegation_hints)
+              Process.delete(:delegation_hints)
+              updated_read_hints = Process.get(:read_delegation_hints, state.read_delegation_hints)
+              Process.delete(:read_delegation_hints)
 
-            # Detect subagent calls to reset the middle-warning counter
-            had_subagent_call =
-              Enum.any?(tool_calls, fn call ->
-                subagent_module_for(call.name) != nil
-              end)
+              # Detect subagent calls to reset the middle-warning counter
+              had_subagent_call =
+                Enum.any?(tool_calls, fn call ->
+                  subagent_module_for(call.name) != nil
+                end)
 
-            new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
+              new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
 
-            tagged_tool_responses = Enum.map(tool_responses, &tag_message_turn(&1, state.turn))
+              tagged_tool_responses = Enum.map(tool_responses, &tag_message_turn(&1, state.turn))
 
-            state = %{
-              state
-              | context: ReqLLM.Context.append(state.context, tagged_tool_responses),
-                delegation_hints: updated_hints,
-                read_delegation_hints: updated_read_hints,
-                turns_since_subagent: new_turns_since
-            }
+              state = %{
+                state
+                | context: ReqLLM.Context.append(state.context, tagged_tool_responses),
+                  delegation_hints: updated_hints,
+                  read_delegation_hints: updated_read_hints,
+                  turns_since_subagent: new_turns_since
+              }
 
-            sync_context_to_ets(state.agent_id, state.context)
-            loop(state)
+              sync_context_to_ets(state.agent_id, state.context)
+              loop(state)
+            end
 
           {:error, :protocol_violation} ->
             if state.in_grace_period do
