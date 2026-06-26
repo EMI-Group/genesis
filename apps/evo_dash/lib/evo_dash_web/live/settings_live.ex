@@ -65,12 +65,17 @@ defmodule EvoDashWeb.SettingsLive do
         </div>
       <% end %>
 
-      <%!-- Three major sections in a flex column container.
-           Using `gap-8` (not `space-y-*` or margins) because flex `gap` is
-           immune to (a) the LiveView slot wrapper trap that defeats the
-           `space-y-*` sibling-combinator selector, and (b) margin collapsing /
-           specificity issues that defeat per-card `mt-8`. See git history:
-           commits 08c3ec35 (space-y-8) and 6a48e9e2 (mt-8) both failed. --%>
+      <%!-- Three major sections in a flex column container with `gap-8` spacing.
+           Note: `space-y-8`, `mt-8`, and `gap-8` all generate correctly in
+           Tailwind v4 via `calc(var(--spacing) * N)` (with `--spacing: 0.25rem`
+           at `:root`). The cards ARE direct children (HEEx comments emit no DOM
+           nodes), so any of these utilities works — including `space-y-*`.
+           The earlier spacing fixes (commits 08c3ec35 and 6a48e9e2) appeared to
+           fail only because the gitignored CSS build (`priv/static/assets/css/`)
+           was never regenerated after the HEEx edits, so the app served a stale
+           bundle lacking the new utility classes. After editing Tailwind classes
+           here, rebuild assets with `mix tailwind evo_dash` (dev) or
+           `mix assets.deploy` (prod) so the new utilities are emitted. --%>
       <div class="flex flex-col gap-8">
         <%!-- Two-column sidebar + content layout --%>
         <div class="flex flex-col md:flex-row bg-base-100 rounded-[2rem] shadow-sm hover:shadow-md border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-200 md:min-h-[75vh] md:max-h-[80vh] transition-all duration-500">
