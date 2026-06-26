@@ -536,34 +536,31 @@ defmodule EvoDash.TaskRegistry do
   end
 
   def safe_match_object(table_name) do
-    case :dets.match_object(table_name, {:_, :_}) do
-      {:error, reason} ->
-        Logger.error(
-          "DETS read failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
-            "Returning empty result to avoid crash; table will auto-repair on next open."
-        )
-
-        []
-
-      objects when is_list(objects) ->
-        objects
-    end
+    from_dets(table_name, :dets.match_object(table_name, {:_, :_}), "match_object")
   end
 
   def safe_lookup(table_name, key) do
-    case :dets.lookup(table_name, key) do
-      {:error, reason} ->
-        Logger.error(
-          "DETS lookup failed for table #{inspect(table_name)} key #{inspect(key)}: " <>
-            "#{inspect(reason)}. Returning empty result to avoid crash; " <>
-            "table will auto-repair on next open."
-        )
+    from_dets(table_name, :dets.lookup(table_name, key), "lookup(#{inspect(key)})")
+  end
 
-        []
+  # Pure dispatcher over a :dets read result. Public + documented as internal so the
+  # error branch (a `{:error, {:bad_object, ...}}` return from mid-read corruption) can
+  # be unit-tested deterministically — that tuple cannot be reliably reproduced against a
+  # real open table (OTP's in-memory cache usually masks it) and closed/never-opened
+  # tables raise `:badarg` rather than returning `{:error, _}`.
+  @doc false
+  def from_dets(table_name, {:error, reason}, op) do
+    Logger.error(
+      "DETS #{op} failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
+        "Returning empty result to avoid crash; table will auto-repair on next open."
+    )
 
-      objects when is_list(objects) ->
-        objects
-    end
+    []
+  end
+
+  @doc false
+  def from_dets(_table_name, objects, _op) when is_list(objects) do
+    objects
   end
 
   # --- Task Normalization (DETS in-place) ---
