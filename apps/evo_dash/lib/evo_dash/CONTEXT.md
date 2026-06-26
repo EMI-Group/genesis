@@ -66,9 +66,9 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 
 ## Constraints
 - `TaskRegistry` is a singleton (registered under its module name); do not start multiple instances.
-- ETS table is `:public` — direct reads are possible but mutations must go through the GenServer API to preserve consistency.
+- DETS is the single source of truth — all reads and writes go directly to DETS through the GenServer API.
+- Runtime task refs (`%Task{}`) are kept in-memory only (`task_refs` map); DETS entries always have `ref: nil`.
 - Task log list is stored in reverse chronological order (newest first).
 - All task types must be either `:genesis` or `:evolve`; new types require extending `execute_task/4`.
 - This module depends on `evo_git` application (`EvoGit.Runtime.*`, `EvoGit.AgentScheduler`); it must be available at runtime.
-- No automatic task cleanup — finished tasks accumulate in ETS until manual clear or server restart; only 10 most recent persist across restarts.
-- DETS persistence is synchronous (`:dets.sync`) and triggered on every status change to a terminal state, which could become a bottleneck under high task throughput.
+- Finished tasks are cleaned up by `cleanup_expired_tasks/1` on most state mutations, enforcing `max_age_days` (default 14) and `max_tasks` (default 100) limits.
