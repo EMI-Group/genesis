@@ -145,15 +145,21 @@ defmodule EvoDash.TaskRegistry do
     dets_tasks = Keyword.get(opts, :dets_tasks, @dets_tasks)
     dets_projects = Keyword.get(opts, :dets_projects, @dets_projects)
 
+    tasks_file = Path.join(data_dir, "tasks.dets")
+    projects_file = Path.join(data_dir, "recent_projects.dets")
+
     # Open or create DETS tables (auto-recover from corruption)
-    open_or_reset_dets(dets_tasks, Path.join(data_dir, "tasks.dets"))
-    open_or_reset_dets(dets_projects, Path.join(data_dir, "recent_projects.dets"))
+    log_open_result(open_or_reset_dets(dets_tasks, tasks_file), tasks_file)
+    log_open_result(open_or_reset_dets(dets_projects, projects_file), projects_file)
 
     state = %{
       data_dir: data_dir,
       dets_tasks: dets_tasks,
       dets_projects: dets_projects,
-      task_refs: %{}
+      dets_tasks_file: tasks_file,
+      dets_projects_file: projects_file,
+      task_refs: %{},
+      recovering: MapSet.new()
     }
 
     # Normalize DETS entries in place (backfill fields, reset crashed tasks)
@@ -488,6 +494,21 @@ defmodule EvoDash.TaskRegistry do
 
   # --- DETS Corruption Recovery ---
 
+  defp log_open_result(result, file_path) do
+    case result do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "CRITICAL: DETS table for #{file_path} could not be opened/recovered: #{inspect(reason)}. " <>
+            "Proceeding with a stale table reference; future operations will trigger recovery messages."
+        )
+
+        :ok
+    end
+  end
+
   defp open_or_reset_dets(table_name, file_path) do
     case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
       {:ok, _} ->
@@ -525,28 +546,27 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp recover_dets_table(table_name, file_path) do
-    # Step 1: Try to salvage whatever records are readable before doing anything destructive.
-    salvaged = salvage_dets_objects(table_name, file_path)
-
-    # Step 2: Close the table if it's open.
+    # Close the current (corrupt) handle first.
     _ = :dets.close(table_name)
 
-    # Step 3: Back up the corrupt file with a timestamp (never overwrite a previous backup).
+    # Back up the original corrupt file BEFORE any repair, to preserve the evidence.
     backup_path = corrupt_backup_path(file_path)
     _ = File.cp(file_path, backup_path)
     Logger.warning("Backed up corrupt DETS file to #{backup_path}")
 
-    # Step 4: Delete the corrupt file and recreate a fresh table.
+    # Salvage via repair + reopen (operates on a fresh read of the file).
+    salvaged = salvage_dets_objects(table_name, file_path)
+    _ = :dets.close(table_name)
+
+    # Delete the corrupt file and recreate a fresh table.
     _ = File.rm(file_path)
 
     case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
       {:ok, _} ->
-        # Step 5: Re-insert salvaged records.
         count = length(salvaged)
 
         if count > 0 do
           for obj <- salvaged, do: :dets.insert(table_name, obj)
-
           Logger.info("Recovered #{count} record(s) into fresh DETS table #{inspect(table_name)}")
         else
           Logger.error(
@@ -567,18 +587,49 @@ defmodule EvoDash.TaskRegistry do
     end
   end
 
-  # Attempt to read as many objects as possible from the table.
-  defp salvage_dets_objects(table_name, _file_path) do
-    case :dets.match_object(table_name, {:_, :_}) do
-      objects when is_list(objects) ->
-        objects
+  # Close the current handle, reopen with explicit repair, and salvage as many
+  # records as possible. Closes the repaired table before returning so the caller
+  # can delete the file and reopen fresh.
+  defp salvage_dets_objects(table_name, file_path) do
+    _ = :dets.close(table_name)
 
-      {:error, reason} ->
-        Logger.warning(
-          "Could not salvage any objects from DETS table #{inspect(table_name)}: #{inspect(reason)}"
-        )
+    salvaged =
+      case :dets.open_file(table_name, type: :set, file: to_charlist(file_path), repair: true) do
+        {:ok, _} ->
+          try_match_object(table_name)
 
-        []
+        {:error, reason} ->
+          Logger.warning("Could not reopen for repair: #{inspect(reason)}")
+          []
+      end
+
+    _ = :dets.close(table_name)
+    salvaged
+  end
+
+  # Attempt a full match_object; on failure fall back to per-object foldl iteration.
+  defp try_match_object(table_name) do
+    case safe_match_object_attempt(table_name) do
+      {:ok, objects} -> objects
+      {:error, _} -> salvage_via_foldl(table_name)
+    end
+  end
+
+  defp safe_match_object_attempt(table_name) do
+    try do
+      {:ok, :dets.match_object(table_name, {:_, :_})}
+    rescue
+      _ -> {:error, :rescued}
+    catch
+      _, _ -> {:error, :caught}
+    end
+  end
+
+  defp salvage_via_foldl(table_name) do
+    try do
+      :dets.foldl(fn obj, acc -> [obj | acc] end, [], table_name)
+    rescue
+      _ -> []
     end
   end
 
@@ -599,28 +650,51 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp safe_insert(table_name, object) do
-    case :dets.insert(table_name, object) do
+    result =
+      try do
+        :dets.insert(table_name, object)
+      rescue
+        e -> {:error, {:rescued, e}}
+      catch
+        kind, reason -> {:error, {kind, reason}}
+      end
+
+    case result do
       :ok ->
         :ok
 
       {:error, reason} ->
         Logger.error(
           "DETS insert failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
-            "Data may not be persisted."
+            "Triggering runtime recovery."
         )
 
+        send(self(), {:recover_dets, table_name})
         {:error, reason}
     end
   end
 
   defp safe_delete(table_name, key) do
-    case :dets.delete(table_name, key) do
+    result =
+      try do
+        :dets.delete(table_name, key)
+      rescue
+        e -> {:error, {:rescued, e}}
+      catch
+        kind, reason -> {:error, {kind, reason}}
+      end
+
+    case result do
       :ok ->
         :ok
 
       {:error, reason} ->
-        Logger.error("DETS delete failed for table #{inspect(table_name)}: #{inspect(reason)}.")
+        Logger.error(
+          "DETS delete failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
+            "Triggering runtime recovery."
+        )
 
+        send(self(), {:recover_dets, table_name})
         {:error, reason}
     end
   end
@@ -634,8 +708,11 @@ defmodule EvoDash.TaskRegistry do
   def from_dets(table_name, {:error, reason}, op) do
     Logger.error(
       "DETS #{op} failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
-        "Returning empty result to avoid crash; table will auto-repair on next open."
+        "Returning empty result to avoid crash. Triggering runtime recovery."
     )
+
+    # Trigger immediate runtime recovery instead of waiting for a restart.
+    send(self(), {:recover_dets, table_name})
 
     []
   end
@@ -860,6 +937,44 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:recover_dets, table_name}, state) do
+    file_path =
+      cond do
+        MapSet.member?(state.recovering, table_name) ->
+          nil
+
+        table_name == state.dets_tasks ->
+          state.dets_tasks_file
+
+        table_name == state.dets_projects ->
+          state.dets_projects_file
+
+        true ->
+          Logger.warning(
+            "Received recovery request for unknown DETS table #{inspect(table_name)}; skipping."
+          )
+
+          nil
+      end
+
+    if file_path do
+      # Guard the table so concurrent recovery signals are skipped.
+      recovering = MapSet.put(state.recovering, table_name)
+      result = recover_dets_table(table_name, file_path)
+
+      # The table name atom stays the same after reopen, so the state references
+      # remain valid — only the recovering guard is cleared.
+      if result != :ok do
+        Logger.error("Runtime DETS recovery for #{inspect(table_name)} did not fully succeed.")
+      end
+
+      {:noreply, %{state | recovering: MapSet.delete(recovering, table_name)}}
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
