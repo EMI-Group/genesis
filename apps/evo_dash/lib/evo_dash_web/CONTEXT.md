@@ -22,7 +22,7 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 ### Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `live/` | Phoenix LiveView pages: Dashboard, Agents, Settings, Help. |
+| `live/` | Phoenix LiveView pages: Dashboard, Agents, Settings, System. |
 | `components/` | Reusable HEEx components: CoreComponents, DashboardComponents, AgentsComponents, Layouts. |
 | `controllers/` | Classic HTTP controllers and error handlers. |
 
