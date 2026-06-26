@@ -36,8 +36,8 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 |----------|-------|---------|
 | `DashboardLive` | `GET /` | Main dashboard: project tabs, task form, task cards, project settings |
 | `AgentsLive` | `GET /agents` | Agent tree inspector with chat history |
-| `SettingsLive` | `GET /settings` | Runtime scheduler config (concurrency, retries, depth, model, pause/resume) |
-| `HelpLive` | `GET /help` | User config file manager, TOML editor, credentials reference |
+| `SettingsLive` | `GET /settings` | Runtime scheduler config (concurrency, retries, depth, model) |
+| `SystemLive` | `GET /system` | System controls (scheduler pause/resume, restart/stop VM), system self-check, usage guides and references |
 
 #### Components (`./evo_dash_web/components/`)
 
