@@ -1,7 +1,8 @@
 defmodule EvoDash.TaskRegistry do
   @moduledoc """
   Registry for tracking running EvoGit tasks.
-  Tasks are identified by unique IDs and tracked in-memory via ETS.
+  Tasks are identified by unique IDs and persisted to DETS (the single source of truth).
+  Runtime-only task references (`%Task{}`) are kept in-memory in `task_refs`.
   Supports configurable persistence of finished tasks and
   recently opened projects to DETS (platform data directory via EvoGit.Platform).
   """
@@ -9,8 +10,6 @@ defmodule EvoDash.TaskRegistry do
 
   require Logger
 
-  @table_name :evo_dash_tasks
-  @recent_projects_table :evo_dash_recent_projects
   @dets_tasks :evo_dash_tasks_dets
   @dets_projects :evo_dash_projects_dets
   @max_recent_projects 10
@@ -143,8 +142,6 @@ defmodule EvoDash.TaskRegistry do
     File.mkdir_p!(data_dir)
 
     # Allow table names to be overridden via opts (for test isolation)
-    table_name = Keyword.get(opts, :table_name, @table_name)
-    recent_projects_table = Keyword.get(opts, :recent_projects_table, @recent_projects_table)
     dets_tasks = Keyword.get(opts, :dets_tasks, @dets_tasks)
     dets_projects = Keyword.get(opts, :dets_projects, @dets_projects)
 
@@ -152,21 +149,15 @@ defmodule EvoDash.TaskRegistry do
     open_or_reset_dets(dets_tasks, Path.join(data_dir, "tasks.dets"))
     open_or_reset_dets(dets_projects, Path.join(data_dir, "recent_projects.dets"))
 
-    # Create ETS tables for fast in-memory access
-    :ets.new(table_name, [:named_table, :public, :set])
-    :ets.new(recent_projects_table, [:named_table, :public, :set])
-
     state = %{
       data_dir: data_dir,
-      table_name: table_name,
-      recent_projects_table: recent_projects_table,
       dets_tasks: dets_tasks,
-      dets_projects: dets_projects
+      dets_projects: dets_projects,
+      task_refs: %{}
     }
 
-    # Load persisted data from DETS into ETS
-    load_tasks_from_dets(state)
-    load_recent_projects_from_dets(state)
+    # Normalize DETS entries in place (backfill fields, reset crashed tasks)
+    normalize_tasks_in_dets(state)
 
     # Cleanup expired tasks on startup
     cleanup_expired_tasks(state)
@@ -206,8 +197,12 @@ defmodule EvoDash.TaskRegistry do
       result: nil
     }
 
-    :ets.insert(state.table_name, {task_id, task})
-    persist_tasks_to_dets(state)
+    # Persist to DETS with ref nulled (ref is runtime-only data)
+    :dets.insert(state.dets_tasks, {task_id, %{task | ref: nil}})
+
+    # Keep the runtime ref in-memory only
+    state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
+
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:reply, {:ok, task}, state}
   end
@@ -215,7 +210,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call({:get_task, task_id}, _from, state) do
     task =
-      case :ets.lookup(state.table_name, task_id) do
+      case :dets.lookup(state.dets_tasks, task_id) do
         [{^task_id, task_data}] -> task_data
         [] -> nil
       end
@@ -225,41 +220,48 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call(:list_tasks, _from, state) do
-    tasks = :ets.tab2list(state.table_name) |> Enum.map(fn {_id, task} -> task end)
+    tasks = :dets.match_object(state.dets_tasks, {:_, :_}) |> Enum.map(fn {_id, task} -> task end)
     {:reply, tasks, state}
   end
 
   @impl true
   def handle_call({:cancel_task, task_id}, _from, state) do
-    result =
-      case :ets.lookup(state.table_name, task_id) do
-        [{^task_id, %TaskInfo{status: :running, ref: %Task{pid: pid} = task_ref} = task}] ->
-          if Process.alive?(pid) do
-            # Notify the AgentScheduler to cancel all agents for this task
-            # before killing the wrapper process. The scheduler uses the caller PID
-            # to find the matching top-level agent and cascade cleanup to subagents.
-            try do
-              EvoGit.AgentScheduler.cancel_task_agents(pid)
-            rescue
-              _ -> :ok
-            catch
-              _, _ -> :ok
-            end
+    {result, state} =
+      case :dets.lookup(state.dets_tasks, task_id) do
+        [{^task_id, %TaskInfo{status: :running} = task}] ->
+          case Map.get(state.task_refs, task_id) do
+            %Task{pid: pid} = task_ref ->
+              if Process.alive?(pid) do
+                # Notify the AgentScheduler to cancel all agents for this task
+                # before killing the wrapper process. The scheduler uses the caller PID
+                # to find the matching top-level agent and cascade cleanup to subagents.
+                try do
+                  EvoGit.AgentScheduler.cancel_task_agents(pid)
+                rescue
+                  _ -> :ok
+                catch
+                  _, _ -> :ok
+                end
 
-            Task.shutdown(task_ref, :brutal_kill)
-            updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
-            :ets.insert(state.table_name, {task_id, updated})
-            persist_tasks_to_dets(state)
-            :ok
-          else
-            {:error, :not_running}
+                Task.shutdown(task_ref, :brutal_kill)
+                updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
+                :dets.insert(state.dets_tasks, {task_id, updated})
+                cleanup_expired_tasks(state)
+                state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
+                {:ok, state}
+              else
+                {{:error, :not_running}, state}
+              end
+
+            nil ->
+              {{:error, :not_running}, state}
           end
 
         [{^task_id, %TaskInfo{}}] ->
-          {:error, :not_running}
+          {{:error, :not_running}, state}
 
         [] ->
-          {:error, :not_found}
+          {{:error, :not_found}, state}
       end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -271,7 +273,7 @@ defmodule EvoDash.TaskRegistry do
     expanded = Path.expand(path)
 
     tasks =
-      :ets.tab2list(state.table_name)
+      :dets.match_object(state.dets_tasks, {:_, :_})
       |> Enum.filter(fn {_id, task} ->
         task.opts[:path] && Path.expand(task.opts[:path]) == expanded
       end)
@@ -283,7 +285,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call(:get_unique_paths, _from, state) do
     paths =
-      :ets.tab2list(state.table_name)
+      :dets.match_object(state.dets_tasks, {:_, :_})
       |> Enum.map(fn {_id, task} -> task.opts[:path] end)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
@@ -293,14 +295,14 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call(:clear_finished_tasks, _from, state) do
-    :ets.tab2list(state.table_name)
+    :dets.match_object(state.dets_tasks, {:_, :_})
     |> Enum.each(fn {id, task} ->
       unless task.status in [:running, :pending] do
-        :ets.delete(state.table_name, id)
+        :dets.delete(state.dets_tasks, id)
       end
     end)
 
-    persist_tasks_to_dets(state)
+    cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:reply, :ok, state}
   end
@@ -312,16 +314,15 @@ defmodule EvoDash.TaskRegistry do
     now = DateTime.utc_now()
 
     # Remove existing entry for this path (if any), then add updated entry
-    :ets.delete(state.recent_projects_table, path)
+    :dets.delete(state.dets_projects, path)
 
-    :ets.insert(
-      state.recent_projects_table,
+    :dets.insert(
+      state.dets_projects,
       {path, %{path: path, name: name, last_opened_at: now}}
     )
 
     # Enforce max limit
     trim_recent_projects(state)
-    save_recent_projects_to_dets(state)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
@@ -330,7 +331,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call(:list_recent_projects, _from, state) do
     projects =
-      :ets.tab2list(state.recent_projects_table)
+      :dets.match_object(state.dets_projects, {:_, :_})
       |> Enum.map(fn {_path, project} -> project end)
       |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
 
@@ -339,8 +340,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    :ets.delete(state.recent_projects_table, path)
-    save_recent_projects_to_dets(state)
+    :dets.delete(state.dets_projects, path)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
@@ -351,26 +351,30 @@ defmodule EvoDash.TaskRegistry do
     agent_count = Keyword.get(opts, :agent_count)
     commit_sha = Keyword.get(opts, :commit_sha)
 
-    case :ets.lookup(state.table_name, task_id) do
-      [{^task_id, %TaskInfo{} = task}] ->
-        finished_at =
-          if status in [:completed, :failed, :cancelled],
-            do: DateTime.utc_now(),
-            else: task.finished_at
+    state =
+      case :dets.lookup(state.dets_tasks, task_id) do
+        [{^task_id, %TaskInfo{} = task}] ->
+          finished_at =
+            if status in [:completed, :failed, :cancelled],
+              do: DateTime.utc_now(),
+              else: task.finished_at
 
-        updated = %{task | status: status, result: result, finished_at: finished_at}
-        updated = if usage, do: %{updated | usage: usage}, else: updated
-        updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
-        updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
-        :ets.insert(state.table_name, {task_id, updated})
+          updated = %{task | status: status, result: result, finished_at: finished_at}
+          updated = if usage, do: %{updated | usage: usage}, else: updated
+          updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
+          updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
+          :dets.insert(state.dets_tasks, {task_id, updated})
 
-        if status in [:completed, :failed, :cancelled] do
-          persist_tasks_to_dets(state)
-        end
+          if status in [:completed, :failed, :cancelled] do
+            cleanup_expired_tasks(state)
+            %{state | task_refs: Map.delete(state.task_refs, task_id)}
+          else
+            state
+          end
 
-      _ ->
-        :ok
-    end
+        _ ->
+          state
+      end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -378,10 +382,10 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:append_log, task_id, log_entry}, state) do
-    case :ets.lookup(state.table_name, task_id) do
+    case :dets.lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{logs: logs} = task}] ->
         updated = %{task | logs: [log_entry | logs]}
-        :ets.insert(state.table_name, {task_id, updated})
+        :dets.insert(state.dets_tasks, {task_id, updated})
 
       _ ->
         :ok
@@ -392,19 +396,19 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
-    :ets.delete(state.table_name, task_id)
-    persist_tasks_to_dets(state)
+    :dets.delete(state.dets_tasks, task_id)
+    cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
-    case :ets.lookup(state.table_name, task_id) do
+    case :dets.lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
         updated = %{task | review_status: status}
-        :ets.insert(state.table_name, {task_id, updated})
-        persist_tasks_to_dets(state)
+        :dets.insert(state.dets_tasks, {task_id, updated})
+        cleanup_expired_tasks(state)
         Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
       _ ->
@@ -416,11 +420,11 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
-    case :ets.lookup(state.table_name, task_id) do
+    case :dets.lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
         updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        :ets.insert(state.table_name, {task_id, updated})
-        persist_tasks_to_dets(state)
+        :dets.insert(state.dets_tasks, {task_id, updated})
+        cleanup_expired_tasks(state)
         Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
       _ ->
@@ -483,7 +487,6 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp tasks_dets_path(data_dir), do: Path.join(data_dir, "tasks.dets")
-  defp recent_projects_dets_path(data_dir), do: Path.join(data_dir, "recent_projects.dets")
 
   # --- DETS Corruption Recovery ---
 
@@ -532,9 +535,9 @@ defmodule EvoDash.TaskRegistry do
     :ok
   end
 
-  # --- Task Persistence (DETS) ---
+  # --- Task Normalization (DETS in-place) ---
 
-  defp load_tasks_from_dets(state) do
+  defp normalize_tasks_in_dets(state) do
     try do
       :dets.foldl(
         fn
@@ -544,7 +547,7 @@ defmodule EvoDash.TaskRegistry do
             # Reset non-persistable fields
             task = %{task | ref: nil, status: maybe_reset_status(task.status)}
             task = set_crash_details(task)
-            :ets.insert(state.table_name, {task.id, task})
+            :dets.insert(state.dets_tasks, {task.id, task})
             acc
 
           _other, acc ->
@@ -556,7 +559,7 @@ defmodule EvoDash.TaskRegistry do
     rescue
       error ->
         Logger.error(
-          "Failed to load tasks from DETS: #{inspect(error)}. " <>
+          "Failed to normalize tasks in DETS: #{inspect(error)}. " <>
             "Resetting corrupted tasks store."
         )
 
@@ -588,16 +591,16 @@ defmodule EvoDash.TaskRegistry do
     cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
 
     # Delete tasks older than cutoff (only finished tasks)
-    all_tasks = :ets.tab2list(state.table_name) |> Enum.map(&elem(&1, 1))
+    all_tasks = :dets.match_object(state.dets_tasks, {:_, :_}) |> Enum.map(&elem(&1, 1))
 
     for task <- all_tasks,
         task.finished_at != nil,
         DateTime.compare(task.finished_at, cutoff) == :lt do
-      :ets.delete(state.table_name, task.id)
+      :dets.delete(state.dets_tasks, task.id)
     end
 
     # Enforce max_tasks limit (keep newest finished tasks)
-    remaining = :ets.tab2list(state.table_name) |> Enum.map(&elem(&1, 1))
+    remaining = :dets.match_object(state.dets_tasks, {:_, :_}) |> Enum.map(&elem(&1, 1))
 
     finished =
       remaining
@@ -606,139 +609,17 @@ defmodule EvoDash.TaskRegistry do
 
     if length(finished) > max_tasks do
       to_delete = Enum.drop(finished, max_tasks)
-      for task <- to_delete, do: :ets.delete(state.table_name, task.id)
+      for task <- to_delete, do: :dets.delete(state.dets_tasks, task.id)
     end
 
     :ok
   end
 
-  defp persist_tasks_to_dets(state) do
-    try do
-      # Run cleanup before persisting so only retained tasks get persisted
-      cleanup_expired_tasks(state)
-
-      all_tasks =
-        :ets.tab2list(state.table_name)
-        |> Enum.map(fn {_id, task} -> task end)
-
-      running_tasks = Enum.filter(all_tasks, &(&1.status in [:pending, :running]))
-
-      finished_tasks =
-        all_tasks
-        |> Enum.reject(&(&1.status in [:pending, :running]))
-        |> Enum.sort_by(& &1.started_at, {:desc, DateTime})
-        |> Enum.take(task_history_config().max_tasks)
-
-      tasks_to_save = running_tasks ++ finished_tasks
-
-      # Atomically replace DETS contents using a temporary ETS table.
-      # This avoids the dangerous delete-all → rewrite pattern that risks
-      # data loss if the app crashes between the delete and the sync.
-      temp_table = :"#{state.table_name}_temp"
-      :ets.new(temp_table, [:set, :named_table, :private])
-
-      try do
-        for task <- tasks_to_save do
-          # Drop non-serializable ref field before persisting
-          persistable = %{task | ref: nil}
-          :ets.insert(temp_table, {task.id, persistable})
-        end
-
-        :ets.to_dets(temp_table, state.dets_tasks)
-      after
-        :ets.delete(temp_table)
-      end
-
-      :ok
-    rescue
-      error ->
-        Logger.error("Failed to persist tasks: #{inspect(error)}")
-        :ok
-    end
-  end
-
-  # --- Recent Projects (DETS) ---
-
-  defp load_recent_projects_from_dets(state) do
-    try do
-      :dets.foldl(
-        fn
-          {_path, %{last_opened_at: %DateTime{}} = project}, acc ->
-            :ets.insert(state.recent_projects_table, {project.path, project})
-            acc
-
-          _other, acc ->
-            acc
-        end,
-        :ok,
-        state.dets_projects
-      )
-    rescue
-      error ->
-        file_path = recent_projects_dets_path(state.data_dir)
-
-        Logger.error(
-          "Failed to load recent projects from DETS: #{inspect(error)}. " <>
-            "Backing up corrupted projects store to #{file_path}.bak before resetting. " <>
-            "DATA LOSS HAS OCCURRED — recent projects have been lost."
-        )
-
-        # Backup before resetting so data can potentially be recovered
-        _ = File.cp(file_path, file_path <> ".bak")
-
-        reset_dets_table(state.dets_projects, file_path)
-        :ok
-    end
-  end
-
-  defp save_recent_projects_to_dets(state) do
-    try do
-      projects =
-        :ets.tab2list(state.recent_projects_table)
-        |> Enum.map(fn {_path, project} -> project end)
-        |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
-        |> Enum.take(@max_recent_projects)
-
-      # Atomically replace DETS contents using a temporary ETS table.
-      # This avoids the dangerous delete-all → rewrite pattern that risks
-      # data loss if the app crashes between the delete and the sync.
-      temp_table = :"#{state.recent_projects_table}_temp"
-      :ets.new(temp_table, [:set, :named_table, :private])
-
-      try do
-        for project <- projects do
-          :ets.insert(temp_table, {project.path, project})
-        end
-
-        :ets.to_dets(temp_table, state.dets_projects)
-      after
-        :ets.delete(temp_table)
-      end
-
-      # If a .bak file was left from previous corruption recovery,
-      # clean it up now that we have successfully persisted fresh data.
-      dets_file = :dets.info(state.dets_projects)[:file]
-
-      if is_list(dets_file) do
-        bak_file = List.to_string(dets_file) <> ".bak"
-
-        if File.exists?(bak_file) do
-          File.rm(bak_file)
-          Logger.info("Removed stale backup file #{bak_file}")
-        end
-      end
-
-      :ok
-    rescue
-      error ->
-        Logger.error("Failed to save recent projects to DETS: #{inspect(error)}")
-        :ok
-    end
-  end
+  # --- Recent Projects ---
 
   defp trim_recent_projects(state) do
     projects =
-      :ets.tab2list(state.recent_projects_table)
+      :dets.match_object(state.dets_projects, {:_, :_})
       |> Enum.map(fn {_path, project} -> project end)
       |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
 
@@ -748,7 +629,7 @@ defmodule EvoDash.TaskRegistry do
 
       {_kept, to_remove} ->
         for project <- to_remove do
-          :ets.delete(state.recent_projects_table, project.path)
+          :dets.delete(state.dets_projects, project.path)
         end
     end
   end
@@ -800,37 +681,38 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_info({:task_status, task_id, status}, state) do
-    case :ets.lookup(state.table_name, task_id) do
-      [{^task_id, %TaskInfo{} = task}] ->
-        finished_at =
-          if status in [:completed, :failed, :cancelled],
-            do: DateTime.utc_now(),
-            else: task.finished_at
+    state =
+      case :dets.lookup(state.dets_tasks, task_id) do
+        [{^task_id, %TaskInfo{} = task}] ->
+          finished_at =
+            if status in [:completed, :failed, :cancelled],
+              do: DateTime.utc_now(),
+              else: task.finished_at
 
-        updated = %{task | status: status, finished_at: finished_at}
-        :ets.insert(state.table_name, {task_id, updated})
+          updated = %{task | status: status, finished_at: finished_at}
+          :dets.insert(state.dets_tasks, {task_id, updated})
 
-        if status in [:completed, :failed, :cancelled] do
-          persist_tasks_to_dets(state)
-        end
+          if status in [:completed, :failed, :cancelled] do
+            cleanup_expired_tasks(state)
+            %{state | task_refs: Map.delete(state.task_refs, task_id)}
+          else
+            state
+          end
 
-      _ ->
-        :ok
-    end
+        _ ->
+          state
+      end
 
     {:noreply, state}
   end
 
   @impl true
   def handle_info({ref, result}, state) when is_reference(ref) do
+    # Search the in-memory task_refs map for the matching task reference
     task_id =
-      case :ets.tab2list(state.table_name)
-           |> Enum.find(fn {_id, task} ->
-             match?(%TaskInfo{ref: %{ref: ^ref}}, task)
-           end) do
-        {id, _task} -> id
-        nil -> nil
-      end
+      Enum.find_value(state.task_refs, fn {id, %Task{ref: task_ref}} ->
+        if task_ref == ref, do: id
+      end)
 
     if task_id do
       status =

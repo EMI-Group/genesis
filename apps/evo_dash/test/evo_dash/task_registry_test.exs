@@ -4,14 +4,12 @@ defmodule EvoDash.TaskRegistryTest do
   alias EvoDash.TaskRegistry
   alias EvoDash.TaskRegistry.TaskInfo
 
-  @table_name :test_evo_dash_tasks
-  @recent_projects_table :test_evo_dash_recent_projects
   @dets_tasks :test_evo_dash_tasks_dets
   @dets_projects :test_evo_dash_projects_dets
 
   setup do
     # Terminate the production registry via its supervisor to prevent
-    # automatic restarts and to clean up its ETS/DETS tables.
+    # automatic restarts and to clean up its DETS tables.
     case Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry) do
       :ok -> :ok
       {:error, :not_found} -> :ok
@@ -25,8 +23,6 @@ defmodule EvoDash.TaskRegistryTest do
       start_supervised(
         {TaskRegistry,
          name: EvoDash.TaskRegistry,
-         table_name: @table_name,
-         recent_projects_table: @recent_projects_table,
          dets_tasks: @dets_tasks,
          dets_projects: @dets_projects,
          data_dir: data_dir}
@@ -41,9 +37,8 @@ defmodule EvoDash.TaskRegistryTest do
     {:ok, %{data_dir: data_dir}}
   end
 
-  # Helper: trigger persist_tasks_to_dets (which calls cleanup_expired_tasks)
-  # by inserting a dummy task and deleting it via cast, then synchronizing
-  # with a synchronous call.
+  # Helper: trigger cleanup_expired_tasks (which runs on mutations) by inserting
+  # a dummy task and deleting it via cast, then synchronizing with a synchronous call.
   defp trigger_cleanup! do
     trigger_id = "cleanup_trigger_#{System.unique_integer([:positive])}"
 
@@ -59,8 +54,8 @@ defmodule EvoDash.TaskRegistryTest do
       result: nil
     }
 
-    :ets.insert(@table_name, {trigger_id, trigger})
-    # delete_task is a cast that calls persist_tasks_to_dets() → cleanup_expired_tasks()
+    :dets.insert(@dets_tasks, {trigger_id, trigger})
+    # delete_task is a cast that calls cleanup_expired_tasks()
     TaskRegistry.delete_task(trigger_id)
     # Sync with a call to ensure all prior casts have been processed
     TaskRegistry.list_tasks()
@@ -87,7 +82,7 @@ defmodule EvoDash.TaskRegistryTest do
     test "removes tasks older than max_age_days via persist cycle" do
       unique = System.unique_integer([:positive])
 
-      # Insert an old finished task directly into ETS (20 days old > 14 day default)
+      # Insert an old finished task directly into DETS (20 days old > 14 day default)
       old_task = %TaskInfo{
         id: "test_old_#{unique}",
         type: :genesis,
@@ -100,7 +95,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {"test_old_#{unique}", old_task})
+      :dets.insert(@dets_tasks, {"test_old_#{unique}", old_task})
 
       # Insert a recent finished task (today)
       recent_task = %TaskInfo{
@@ -115,7 +110,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {"test_recent_#{unique}", recent_task})
+      :dets.insert(@dets_tasks, {"test_recent_#{unique}", recent_task})
 
       # Verify both exist
       tasks = TaskRegistry.list_tasks()
@@ -148,7 +143,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {"test_5day_#{unique}", task})
+      :dets.insert(@dets_tasks, {"test_5day_#{unique}", task})
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -174,7 +169,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {"test_running_#{unique}", running_task})
+      :dets.insert(@dets_tasks, {"test_running_#{unique}", running_task})
 
       # Pending task
       pending_task = %TaskInfo{
@@ -189,7 +184,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {"test_pending_#{unique}", pending_task})
+      :dets.insert(@dets_tasks, {"test_pending_#{unique}", pending_task})
 
       # Old finished task (should be cleaned)
       old_finished = %TaskInfo{
@@ -204,7 +199,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {"test_oldfin_#{unique}", old_finished})
+      :dets.insert(@dets_tasks, {"test_oldfin_#{unique}", old_finished})
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -237,7 +232,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {"test_combined_old_#{unique}", old_task})
+      :dets.insert(@dets_tasks, {"test_combined_old_#{unique}", old_task})
 
       # Recent tasks (within 14 days) - should be kept
       for i <- 1..3 do
@@ -253,7 +248,7 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        :ets.insert(@table_name, {"test_combined_recent_#{unique}_#{i}", recent})
+        :dets.insert(@dets_tasks, {"test_combined_recent_#{unique}_#{i}", recent})
       end
 
       # Running task - should always be kept regardless of age
@@ -269,7 +264,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {"test_combined_running_#{unique}", running})
+      :dets.insert(@dets_tasks, {"test_combined_running_#{unique}", running})
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -289,7 +284,7 @@ defmodule EvoDash.TaskRegistryTest do
   end
 
   describe "set_review_metadata/3" do
-    test "updates a task's base_sha and commit_sha in ETS" do
+    test "updates a task's base_sha and commit_sha in DETS" do
       unique = System.unique_integer([:positive])
       task_id = "review_meta_#{unique}"
 
@@ -305,7 +300,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {task_id, task})
+      :dets.insert(@dets_tasks, {task_id, task})
 
       TaskRegistry.set_review_metadata(task_id, "abc123", "def456")
 
@@ -333,11 +328,11 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {task_id, task})
+      :dets.insert(@dets_tasks, {task_id, task})
 
       TaskRegistry.set_review_metadata(task_id, "base_sha_1", "commit_sha_1")
 
-      # Sync to ensure the cast (and its persist_tasks_to_dets) has been processed
+      # Sync to ensure the cast (which writes directly to DETS) has been processed
       TaskRegistry.list_tasks()
 
       # Read directly from DETS to confirm persistence
@@ -383,7 +378,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ets.insert(@table_name, {task_id, task})
+      :dets.insert(@dets_tasks, {task_id, task})
 
       TaskRegistry.set_review_metadata(task_id, "base1", "commit1")
       TaskRegistry.list_tasks()
@@ -398,7 +393,7 @@ defmodule EvoDash.TaskRegistryTest do
   end
 
   describe "DETS backfill of new TaskInfo fields" do
-    test "load_tasks_from_dets backfills base_sha and commit_sha as nil for old entries",
+    test "normalize_tasks_in_dets backfills base_sha and commit_sha as nil for old entries",
          %{data_dir: data_dir} do
       unique = System.unique_integer([:positive])
       task_id = "backfill_#{unique}"
@@ -419,7 +414,7 @@ defmodule EvoDash.TaskRegistryTest do
 
       # Strip the new fields from the struct map to emulate an old persisted entry.
       # A struct is just a map with a __struct__ key. Old persisted entries (written
-      # before base_sha/commit_sha existed) won't have these keys. load_tasks_from_dets
+      # before base_sha/commit_sha existed) won't have these keys. normalize_tasks_in_dets
       # calls Map.merge(%TaskInfo{}, task) which backfills them as nil.
       old_map =
         old_task
@@ -430,7 +425,7 @@ defmodule EvoDash.TaskRegistryTest do
       :dets.insert(@dets_tasks, {task_id, old_map})
       :dets.sync(@dets_tasks)
 
-      # Stop the supervised registry, then restart it so load_tasks_from_dets runs.
+      # Stop the supervised registry, then restart it so normalize_tasks_in_dets runs.
       # Reuse the same data_dir so the DETS file path is unchanged.
       stop_supervised(EvoDash.TaskRegistry)
 
@@ -438,8 +433,6 @@ defmodule EvoDash.TaskRegistryTest do
         start_supervised(
           {TaskRegistry,
            name: EvoDash.TaskRegistry,
-           table_name: @table_name,
-           recent_projects_table: @recent_projects_table,
            dets_tasks: @dets_tasks,
            dets_projects: @dets_projects,
            data_dir: data_dir}
