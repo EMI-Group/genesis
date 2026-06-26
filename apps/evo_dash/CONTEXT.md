@@ -19,7 +19,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 ### Core Modules
 
 - `EvoDash.Application` — OTP supervisor (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskRegistry → Endpoint)
-- `EvoDash.TaskRegistry` — ETS+DETS-backed GenServer tracking tasks; spawns `EvoGit.Runtime.*` processes
+- `EvoDash.TaskRegistry` — DETS-backed GenServer tracking tasks; spawns `EvoGit.Runtime.*` processes
 - `EvoDashWeb.Endpoint` — Phoenix endpoint (LiveView socket, static files, Plug pipeline)
 - `EvoDashWeb.Router` — Routes to LiveViews and Phoenix LiveDashboard
 - `EvoDashWeb.Helpers` — Shared UI utilities (status badges, datetime formatting, icons, modals)
