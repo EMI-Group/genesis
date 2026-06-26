@@ -9,6 +9,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
   use ExUnit.Case, async: false
 
+  alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.Lifecycle
   alias EvoGit.AgentScheduler.SchedMeta
@@ -245,6 +246,110 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
       # ETS entry deleted
       assert get_sched_meta(agent_id) == :missing
+    end
+  end
+
+  describe "handle_call({:cancel_task_agents, _}, _, _)" do
+    test "filters cancelled agents from the dispatch queue without crashing" do
+      caller_pid = self()
+      caller_ref = make_ref()
+      task_id = 42
+
+      # Spawn real long-running tasks for each agent that will be cancelled.
+      # Lifecycle.cancel_agent/2 calls Task.shutdown/2 on the stored task_ref.
+      tasks =
+        Enum.map(1..3, fn _ -> Task.async(fn -> Process.sleep(:infinity) end) end)
+
+      # A separate process whose pid is distinct from self() so that the
+      # caller_pid scan in the handler does NOT match this agent.
+      dummy_caller = spawn(fn -> Process.sleep(:infinity) end)
+
+      try do
+        [task1, task2, task3] = tasks
+
+        # Agent 1: top-level (depth: 0) whose `from` contains caller_pid.
+        # This is the entry point the handler keys off of.
+        meta1 = %SchedMeta{
+          id: 1,
+          depth: 0,
+          spec: agent_spec(),
+          retries: 0,
+          task_id: task_id,
+          from: {caller_pid, caller_ref},
+          task_ref: task1
+        }
+
+        # Agent 2: subagent (depth: 1) sharing the same task_id.
+        meta2 = %SchedMeta{
+          id: 2,
+          depth: 1,
+          spec: agent_spec(),
+          retries: 0,
+          task_id: task_id,
+          parent_id: 1,
+          task_ref: task2
+        }
+
+        # Agent 3: another subagent (depth: 2) sharing the same task_id.
+        meta3 = %SchedMeta{
+          id: 3,
+          depth: 2,
+          spec: agent_spec(),
+          retries: 0,
+          task_id: task_id,
+          parent_id: 2,
+          task_ref: task3
+        }
+
+        # Agent 4: belongs to a DIFFERENT task_id — must NOT be cancelled.
+        # Its `from` uses dummy_caller (a different pid) so it isn't matched by
+        # the caller_pid scan (ETS tab2list order is unspecified).
+        meta4 = %SchedMeta{
+          id: 4,
+          depth: 0,
+          spec: agent_spec(),
+          retries: 0,
+          task_id: 99,
+          from: {dummy_caller, make_ref()},
+          task_ref: nil
+        }
+
+        put_sched_meta(1, meta1)
+        put_sched_meta(2, meta2)
+        put_sched_meta(3, meta3)
+        put_sched_meta(4, meta4)
+
+        # Put all four agent IDs into the dispatch queue.
+        state =
+          base_state([])
+          |> then(fn s -> %{s | queue: Enum.reduce([1, 2, 3, 4], s.queue, &:queue.in/2)} end)
+
+        from = {self(), make_ref()}
+
+        # The old (buggy) code raised ArgumentError here because :queue.filter/2
+        # was called with the queue as the first argument instead of the function.
+        assert {:reply, :ok, new_state} =
+                 AgentScheduler.handle_call({:cancel_task_agents, caller_pid}, from, state)
+
+        # Agents 1-3 are removed from the queue; agent 4 (different task) survives.
+        assert :queue.to_list(new_state.queue) == [4]
+
+        # Cancelled agents are deleted from ETS.
+        assert get_sched_meta(1) == :missing
+        assert get_sched_meta(2) == :missing
+        assert get_sched_meta(3) == :missing
+
+        # The unrelated agent's metadata is untouched.
+        assert {:ok, ^meta4} = get_sched_meta(4)
+      after
+        # Clean up spawned tasks (Task.shutdown is idempotent if already killed).
+        Enum.each(tasks, fn task ->
+          Task.shutdown(task, :brutal_kill)
+        end)
+
+        # Clean up the dummy caller process used for the unrelated agent.
+        Process.exit(dummy_caller, :kill)
+      end
     end
   end
 end

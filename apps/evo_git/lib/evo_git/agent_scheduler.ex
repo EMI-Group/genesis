@@ -502,9 +502,12 @@ defmodule EvoGit.AgentScheduler do
 
         # 4. Remove from dispatch queue
         queue =
-          :queue.filter(state.queue, fn aid ->
-            not MapSet.member?(cancel_set, aid)
-          end)
+          :queue.filter(
+            fn aid ->
+              not MapSet.member?(cancel_set, aid)
+            end,
+            state.queue
+          )
 
         state = %{state | queue: queue}
 
