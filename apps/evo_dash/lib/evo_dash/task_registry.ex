@@ -961,17 +961,28 @@ defmodule EvoDash.TaskRegistry do
       end
 
     if file_path do
-      # Guard the table so concurrent recovery signals are skipped.
-      recovering = MapSet.put(state.recovering, table_name)
-      result = recover_dets_table(table_name, file_path)
+      # Check if the table is actually still corrupt. A previous recovery in the
+      # queue may have already repaired it — in that case skip to avoid creating
+      # spurious backup files of a now-healthy table.
+      if dets_readable?(table_name) do
+        Logger.info(
+          "DETS table #{inspect(table_name)} is already readable; skipping redundant recovery."
+        )
 
-      # The table name atom stays the same after reopen, so the state references
-      # remain valid — only the recovering guard is cleared.
-      if result != :ok do
-        Logger.error("Runtime DETS recovery for #{inspect(table_name)} did not fully succeed.")
+        {:noreply, state}
+      else
+        # Guard the table so concurrent recovery signals are skipped.
+        recovering = MapSet.put(state.recovering, table_name)
+        result = recover_dets_table(table_name, file_path)
+
+        # The table name atom stays the same after reopen, so the state references
+        # remain valid — only the recovering guard is cleared.
+        if result != :ok do
+          Logger.error("Runtime DETS recovery for #{inspect(table_name)} did not fully succeed.")
+        end
+
+        {:noreply, %{state | recovering: MapSet.delete(recovering, table_name)}}
       end
-
-      {:noreply, %{state | recovering: MapSet.delete(recovering, table_name)}}
     else
       {:noreply, state}
     end

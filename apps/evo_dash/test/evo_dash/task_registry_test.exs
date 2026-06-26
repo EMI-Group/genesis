@@ -603,8 +603,9 @@ defmodule EvoDash.TaskRegistryTest do
       {:ok, bytes} = File.read(tasks_file)
       File.write!(tasks_file, binary_part(bytes, 0, max(div(byte_size(bytes), 2), 1)))
 
-      # Send MANY recovery messages rapidly — the guard must ensure only one
-      # recovery runs and the GenServer does not enter an infinite loop.
+      # Send MANY recovery messages rapidly — the first repair must heal the table
+      # so subsequent messages skip recovery (avoiding spurious backups). Only ONE
+      # recovery should actually run.
       for _ <- 1..10, do: send(pid, {:recover_dets, @dets_tasks})
 
       sync_registry()
@@ -612,6 +613,16 @@ defmodule EvoDash.TaskRegistryTest do
       # The GenServer is still alive and responsive (no crash from re-entrancy).
       assert Process.alive?(registry_pid())
       assert is_list(sync_registry())
+
+      # Only ONE recovery should have run — there must be at most a single
+      # `.corrupt.` backup file (created by the first, genuine recovery).
+      corrupt_backups =
+        data_dir
+        |> File.ls!()
+        |> Enum.filter(&String.contains?(&1, ".corrupt."))
+
+      assert length(corrupt_backups) <= 1,
+             "Expected at most 1 corrupt backup, found #{length(corrupt_backups)}: #{inspect(corrupt_backups)}"
     end
 
     test "salvage via repair recovers records from a damaged-but-readable file" do
