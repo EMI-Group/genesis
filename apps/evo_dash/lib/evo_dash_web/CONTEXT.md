@@ -4,7 +4,7 @@
 The web interface layer for the EvoDash Phoenix application — a real-time dashboard for the EvoGit evolutionary software development system. Contains the Phoenix endpoint, router, telemetry supervisor, and delegates interactive UI to LiveView pages, reusable components, and classic controllers in subdirectories.
 
 ## Routing Table
-- `live/` → Phoenix LiveView pages (Dashboard, Agents, Settings, Help & Config)
+- `live/` → Phoenix LiveView pages (Dashboard, Agents, Settings, System & Config)
 - `components/` → Reusable HEEx UI components and layout templates
 - `controllers/` → Classic HTTP controllers and error handlers
 
