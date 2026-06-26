@@ -34,7 +34,7 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 | `GET /review/:task_id/commit/:commit_sha` | `ReviewLive` (`:commit`) | Single-commit inspection — reuses the shared diff viewer component to show changes for one commit. |
 | `GET /agents` | `AgentsLive` | Agent tree inspector with real-time hierarchy |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration |
-| `GET /help` | `HelpLive` | Configuration file management and TOML editor |
+| `GET /system` | `SystemLive` | Scheduler controls, system controls (restart/stop), system self-check, and usage guides/references |
 
 ## Constraints
 - All web modules use `use EvoDashWeb, <role>` as their entrypoint — do not bypass the shared `__using__` macro.
