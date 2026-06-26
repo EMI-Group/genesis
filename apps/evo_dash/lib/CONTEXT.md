@@ -88,7 +88,7 @@ Foreign repos are loaded from `evogit.toml` via `EvoGit.ProjectConfig.foreign_re
 |-------|--------|-------------|
 | `"tasks"` | `{:tasks_updated}` | TaskRegistry, DashboardLive |
 | `"agents"` | `{:agents_updated}` | AgentsLive |
-| `"scheduler_config"` | `{:scheduler_config_updated}` | SettingsLive |
+| `"scheduler_config"` | `{:scheduler_config_updated}` | SettingsLive, SystemLive |
 | `"recent_projects"` | `{:recent_projects_updated}` | DashboardLive |
 
 EvoDash has its own `EvoDash.PubSub` but it is not used for cross-app communication.
