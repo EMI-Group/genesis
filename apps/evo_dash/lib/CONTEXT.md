@@ -75,7 +75,7 @@ When AgentScheduler processes these, it broadcasts `{:scheduler_config_updated}`
 
 Foreign repos are loaded from `evogit.toml` via `EvoGit.ProjectConfig.foreign_repos/1` when a project is opened. Add/remove operations modify the in-memory list in LiveView socket assigns. When a task is started, foreign repos are passed as `foreign_repos` in opts to `TaskRegistry.start_task/2`.
 
-#### 4. Configuration File Management (HelpLive → EvoGit.Config)
+#### 4. Configuration File Management (SettingsLive → EvoGit.Config)
 
 - `EvoGit.Config.config_status()` — check if all critical config values are set
 - `EvoGit.Config.config_dir()` / `config_path()` / `credentials_path()` — get file paths
