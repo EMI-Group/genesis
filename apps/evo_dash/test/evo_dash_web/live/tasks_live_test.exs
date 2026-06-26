@@ -168,4 +168,35 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "beta task"
     end
   end
+
+  describe ":task_status broadcast handling" do
+    # The EvoGit runtime broadcasts {:task_status, task_id, status} on the "tasks"
+    # PubSub topic. Before the fix, TasksLive had no clause matching this tuple,
+    # so a :finalizing status transition crashed the LiveView. These tests verify
+    # the handle_info clauses added by the fix handle these messages gracefully.
+
+    test "handle_info {:task_status, _, :finalizing} does not crash the LiveView", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      # Broadcast a :finalizing status transition (the message that previously crashed).
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, "test-finalizing", :finalizing})
+
+      # render/1 flushes pending messages synchronously; a crash would propagate here.
+      html = render(view)
+      assert is_binary(html)
+      assert html =~ "Task History"
+    end
+
+    test "handle_info catch-all does not crash on unknown messages", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      # An arbitrary message the LiveView doesn't specifically handle should be
+      # swallowed by the catch-all clause rather than crashing.
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:some_unexpected_event, 42})
+
+      html = render(view)
+      assert is_binary(html)
+      assert html =~ "Task History"
+    end
+  end
 end

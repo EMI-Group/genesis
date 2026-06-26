@@ -489,4 +489,74 @@ defmodule EvoDash.TaskRegistryTest do
       assert is_list(TaskRegistry.list_tasks())
     end
   end
+
+  describe "GenServer resilience and state preservation" do
+    test "registry stays alive and returns inserted tasks" do
+      unique = System.unique_integer([:positive])
+      task_id = "resilient_#{unique}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      :dets.insert(@dets_tasks, {task_id, task})
+
+      pid = GenServer.whereis(EvoDash.TaskRegistry)
+      assert is_pid(pid)
+      assert Process.alive?(pid)
+
+      # list_tasks returns the inserted task (DETS is the source of truth)
+      tasks = TaskRegistry.list_tasks()
+      assert Enum.any?(tasks, &(&1.id == task_id))
+
+      # get_task retrieves it individually
+      assert %TaskInfo{} = TaskRegistry.get_task(task_id)
+
+      # The process stays alive after reads
+      assert Process.alive?(pid)
+    end
+
+    test "registry survives mutation operations that trigger cleanup_expired_tasks" do
+      unique = System.unique_integer([:positive])
+      pid = GenServer.whereis(EvoDash.TaskRegistry)
+      assert Process.alive?(pid)
+
+      # Each delete_task cast triggers cleanup_expired_tasks internally.
+      # Before the fix, a DETS read error during cleanup crashed the GenServer.
+      for i <- 1..5 do
+        id = "survive_#{unique}_#{i}"
+
+        task = %TaskInfo{
+          id: id,
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil
+        }
+
+        :dets.insert(@dets_tasks, {id, task})
+        TaskRegistry.delete_task(id)
+      end
+
+      # Synchronize (list_tasks is a call that flushes pending casts)
+      TaskRegistry.list_tasks()
+
+      # The process survived all cleanup_expired_tasks invocations without crashing
+      assert Process.alive?(pid)
+      assert is_list(TaskRegistry.list_tasks())
+      assert is_list(TaskRegistry.get_unique_paths())
+    end
+  end
 end
