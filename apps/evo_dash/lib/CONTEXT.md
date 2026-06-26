@@ -62,12 +62,12 @@ Runtime opts passed: `[repo_path:, mode:, task_id:, node_path?:, seed_content?:]
 Task status updates are broadcast on `EvoGit.PubSub` topic `"tasks"` (e.g., `{:task_status, task_id, :finalizing}`). The TaskRegistry subscribes to this topic and handles status changes via `handle_info/2`.
 `Application.ensure_all_started(:evo_git)` is called before execution to guarantee the core runtime is up.
 
-#### 2. Scheduler Configuration (SettingsLive → EvoGit.AgentScheduler)
+#### 2. Scheduler Configuration (SystemLive / SettingsLive → EvoGit.AgentScheduler)
 
-`SettingsLive` directly calls the AgentScheduler GenServer:
+`SystemLive` and `SettingsLive` directly call the AgentScheduler GenServer:
 - `EvoGit.AgentScheduler.get_config()` — read current scheduler config (concurrency, retries, depth, model, paused)
 - `EvoGit.AgentScheduler.update_config(keyword_list)` — push runtime config changes (max_concurrency, max_tool_concurrency, agent_max_retries, max_agent_depth, max_retries, llm_model)
-- `EvoGit.AgentScheduler.pause()` / `EvoGit.AgentScheduler.resume()` — toggle scheduler pause state
+- `EvoGit.AgentScheduler.pause()` / `EvoGit.AgentScheduler.resume()` — toggle scheduler pause state (SystemLive)
 
 When AgentScheduler processes these, it broadcasts `{:scheduler_config_updated}` on `EvoGit.PubSub` topic `"scheduler_config"`.
 
