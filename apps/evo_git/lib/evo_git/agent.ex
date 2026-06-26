@@ -307,7 +307,7 @@ defmodule EvoGit.Agent do
         end
 
         cond do
-          not state.in_grace_period and state.turn >= state.max_turns ->
+          EvoGit.Agent.trigger_turn_limit_recovery?(state) ->
             trigger_recovery(state, "max turns (#{state.max_turns}) exceeded")
 
           true ->
@@ -430,7 +430,7 @@ defmodule EvoGit.Agent do
             {:ok, final_result}
 
           {:continue, tool_responses} ->
-            if state.in_grace_period do
+            if EvoGit.Agent.grace_period_continue_failed?(state) do
               {:error, :recovery_failed}
             else
               # Pick up updated delegation hints from tool execution
