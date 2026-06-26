@@ -445,4 +445,48 @@ defmodule EvoDash.TaskRegistryTest do
       assert fetched.commit_sha == nil
     end
   end
+
+  describe "DETS corruption safety (safe_match_object / safe_lookup)" do
+    # The exact {:error, _} shape returned by :dets.match_object/2 when a table
+    # is corrupted mid-read (e.g. not properly closed on unclean shutdown).
+    @corrupt_reason {{:bad_object, :read_buckets}, ~c"/tmp/fake/tasks.dets"}
+
+    test "from_dets/3 returns [] on the exact {:error, _} tuple from the crash report" do
+      result = TaskRegistry.from_dets(:some_table, {:error, @corrupt_reason}, "match_object")
+      assert result == []
+    end
+
+    test "from_dets/3 returns [] for any {:error, reason} without raising" do
+      assert TaskRegistry.from_dets(:t, {:error, :some_other_reason}, "lookup(\"k\")") == []
+    end
+
+    test "from_dets/3 passes the success list through unchanged" do
+      objects = [{"id1", %{a: 1}}, {"id2", %{a: 2}}]
+      assert TaskRegistry.from_dets(:t, objects, "match_object") == objects
+    end
+
+    test "safe_match_object/1 returns the stored objects on a healthy table" do
+      task_id = "safe_match_#{System.unique_integer([:positive])}"
+      :dets.insert(@dets_tasks, {task_id, "marker"})
+      objects = TaskRegistry.safe_match_object(@dets_tasks)
+      assert is_list(objects)
+      assert {task_id, "marker"} in objects
+      :dets.delete(@dets_tasks, task_id)
+    end
+
+    test "safe_lookup/2 returns [{key, value}] for a present key and [] for a missing key" do
+      task_id = "safe_lookup_#{System.unique_integer([:positive])}"
+      :dets.insert(@dets_tasks, {task_id, "marker"})
+      assert TaskRegistry.safe_lookup(@dets_tasks, task_id) == [{task_id, "marker"}]
+      assert TaskRegistry.safe_lookup(@dets_tasks, "absent_#{task_id}") == []
+      :dets.delete(@dets_tasks, task_id)
+    end
+
+    test "list_tasks returns a list even when a read would error (degraded to [])" do
+      # The error tuple is handled by from_dets/3 and degrades to [], so list_tasks
+      # receives a list rather than a raw {:error, _} tuple.
+      assert TaskRegistry.from_dets(@dets_tasks, {:error, @corrupt_reason}, "match_object") == []
+      assert is_list(TaskRegistry.list_tasks())
+    end
+  end
 end

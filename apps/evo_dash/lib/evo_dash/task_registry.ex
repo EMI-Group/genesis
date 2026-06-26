@@ -210,7 +210,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call({:get_task, task_id}, _from, state) do
     task =
-      case :dets.lookup(state.dets_tasks, task_id) do
+      case safe_lookup(state.dets_tasks, task_id) do
         [{^task_id, task_data}] -> task_data
         [] -> nil
       end
@@ -220,14 +220,14 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call(:list_tasks, _from, state) do
-    tasks = :dets.match_object(state.dets_tasks, {:_, :_}) |> Enum.map(fn {_id, task} -> task end)
+    tasks = safe_match_object(state.dets_tasks) |> Enum.map(fn {_id, task} -> task end)
     {:reply, tasks, state}
   end
 
   @impl true
   def handle_call({:cancel_task, task_id}, _from, state) do
     {result, state} =
-      case :dets.lookup(state.dets_tasks, task_id) do
+      case safe_lookup(state.dets_tasks, task_id) do
         [{^task_id, %TaskInfo{status: :running} = task}] ->
           case Map.get(state.task_refs, task_id) do
             %Task{pid: pid} = task_ref ->
@@ -273,7 +273,7 @@ defmodule EvoDash.TaskRegistry do
     expanded = Path.expand(path)
 
     tasks =
-      :dets.match_object(state.dets_tasks, {:_, :_})
+      safe_match_object(state.dets_tasks)
       |> Enum.filter(fn {_id, task} ->
         task.opts[:path] && Path.expand(task.opts[:path]) == expanded
       end)
@@ -285,7 +285,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call(:get_unique_paths, _from, state) do
     paths =
-      :dets.match_object(state.dets_tasks, {:_, :_})
+      safe_match_object(state.dets_tasks)
       |> Enum.map(fn {_id, task} -> task.opts[:path] end)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
@@ -295,7 +295,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call(:clear_finished_tasks, _from, state) do
-    :dets.match_object(state.dets_tasks, {:_, :_})
+    safe_match_object(state.dets_tasks)
     |> Enum.each(fn {id, task} ->
       unless task.status in [:running, :pending] do
         :dets.delete(state.dets_tasks, id)
@@ -331,7 +331,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call(:list_recent_projects, _from, state) do
     projects =
-      :dets.match_object(state.dets_projects, {:_, :_})
+      safe_match_object(state.dets_projects)
       |> Enum.map(fn {_path, project} -> project end)
       |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
 
@@ -352,7 +352,7 @@ defmodule EvoDash.TaskRegistry do
     commit_sha = Keyword.get(opts, :commit_sha)
 
     state =
-      case :dets.lookup(state.dets_tasks, task_id) do
+      case safe_lookup(state.dets_tasks, task_id) do
         [{^task_id, %TaskInfo{} = task}] ->
           finished_at =
             if status in [:completed, :failed, :cancelled],
@@ -382,7 +382,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:append_log, task_id, log_entry}, state) do
-    case :dets.lookup(state.dets_tasks, task_id) do
+    case safe_lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{logs: logs} = task}] ->
         updated = %{task | logs: [log_entry | logs]}
         :dets.insert(state.dets_tasks, {task_id, updated})
@@ -404,7 +404,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
-    case :dets.lookup(state.dets_tasks, task_id) do
+    case safe_lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
         updated = %{task | review_status: status}
         :dets.insert(state.dets_tasks, {task_id, updated})
@@ -420,7 +420,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
-    case :dets.lookup(state.dets_tasks, task_id) do
+    case safe_lookup(state.dets_tasks, task_id) do
       [{^task_id, %TaskInfo{} = task}] ->
         updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
         :dets.insert(state.dets_tasks, {task_id, updated})
@@ -535,6 +535,34 @@ defmodule EvoDash.TaskRegistry do
     :ok
   end
 
+  def safe_match_object(table_name) do
+    from_dets(table_name, :dets.match_object(table_name, {:_, :_}), "match_object")
+  end
+
+  def safe_lookup(table_name, key) do
+    from_dets(table_name, :dets.lookup(table_name, key), "lookup(#{inspect(key)})")
+  end
+
+  # Pure dispatcher over a :dets read result. Public + documented as internal so the
+  # error branch (a `{:error, {:bad_object, ...}}` return from mid-read corruption) can
+  # be unit-tested deterministically — that tuple cannot be reliably reproduced against a
+  # real open table (OTP's in-memory cache usually masks it) and closed/never-opened
+  # tables raise `:badarg` rather than returning `{:error, _}`.
+  @doc false
+  def from_dets(table_name, {:error, reason}, op) do
+    Logger.error(
+      "DETS #{op} failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
+        "Returning empty result to avoid crash; table will auto-repair on next open."
+    )
+
+    []
+  end
+
+  @doc false
+  def from_dets(_table_name, objects, _op) when is_list(objects) do
+    objects
+  end
+
   # --- Task Normalization (DETS in-place) ---
 
   defp normalize_tasks_in_dets(state) do
@@ -591,7 +619,7 @@ defmodule EvoDash.TaskRegistry do
     cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
 
     # Delete tasks older than cutoff (only finished tasks)
-    all_tasks = :dets.match_object(state.dets_tasks, {:_, :_}) |> Enum.map(&elem(&1, 1))
+    all_tasks = safe_match_object(state.dets_tasks) |> Enum.map(&elem(&1, 1))
 
     for task <- all_tasks,
         task.finished_at != nil,
@@ -600,7 +628,7 @@ defmodule EvoDash.TaskRegistry do
     end
 
     # Enforce max_tasks limit (keep newest finished tasks)
-    remaining = :dets.match_object(state.dets_tasks, {:_, :_}) |> Enum.map(&elem(&1, 1))
+    remaining = safe_match_object(state.dets_tasks) |> Enum.map(&elem(&1, 1))
 
     finished =
       remaining
@@ -619,7 +647,7 @@ defmodule EvoDash.TaskRegistry do
 
   defp trim_recent_projects(state) do
     projects =
-      :dets.match_object(state.dets_projects, {:_, :_})
+      safe_match_object(state.dets_projects)
       |> Enum.map(fn {_path, project} -> project end)
       |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
 
@@ -682,7 +710,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_info({:task_status, task_id, status}, state) do
     state =
-      case :dets.lookup(state.dets_tasks, task_id) do
+      case safe_lookup(state.dets_tasks, task_id) do
         [{^task_id, %TaskInfo{} = task}] ->
           finished_at =
             if status in [:completed, :failed, :cancelled],
