@@ -65,6 +65,8 @@ defmodule EvoDashWeb.SettingsLive do
         </div>
       <% end %>
 
+      <%!-- Three major sections wrapped for consistent vertical spacing --%>
+      <div class="space-y-8">
       <%!-- Two-column sidebar + content layout --%>
       <div class="flex flex-col md:flex-row bg-base-100 rounded-[2rem] shadow-sm hover:shadow-md border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-200 md:min-h-[75vh] md:max-h-[80vh] transition-all duration-500">
         <%!-- Sidebar --%>
@@ -116,7 +118,7 @@ defmodule EvoDashWeb.SettingsLive do
       </div>
 
       <%!-- Runtime Controls banner (moved to bottom: after the settings editor) --%>
-      <div class="mt-8 bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group">
+      <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group">
         <div class="absolute inset-0 bg-gradient-to-r from-base-200/30 to-transparent pointer-events-none"></div>
         <div class="relative p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 transition-all duration-300">
           <div class="flex items-center gap-5">
@@ -157,7 +159,7 @@ defmodule EvoDashWeb.SettingsLive do
       </div>
 
       <%!-- System Control section (destructive actions) --%>
-      <div class="mt-8 bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-sm">
+      <div class="bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-sm">
         <div class="flex items-start gap-4">
           <div class="p-3 bg-error/15 text-error rounded-2xl shrink-0">
             <.icon name="hero-power" class="size-6" />
@@ -167,18 +169,28 @@ defmodule EvoDashWeb.SettingsLive do
               {gettext("System Control")}
             </h2>
             <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
-              {gettext("Gracefully restart the Erlang VM. All applications are torn down and restarted — in-memory runtime state will be lost.")}
+              {gettext("Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases.")}
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          phx-click="request_restart"
-          class="btn btn-lg rounded-2xl bg-error/15 hover:bg-error/25 text-error font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none shrink-0 gap-2"
-        >
-          <.icon name="hero-arrow-path" class="size-5" />
-          {gettext("Restart System")}
-        </button>
+        <div class="flex flex-col sm:flex-row gap-3 shrink-0">
+          <button
+            type="button"
+            phx-click="request_restart"
+            class="btn btn-lg rounded-2xl bg-error/15 hover:bg-error/25 text-error font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none gap-2"
+          >
+            <.icon name="hero-arrow-path" class="size-5" />
+            {gettext("Restart System")}
+          </button>
+          <button
+            type="button"
+            phx-click="request_stop"
+            class="btn btn-lg rounded-2xl bg-error/15 hover:bg-error/25 text-error font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none gap-2"
+          >
+            <.icon name="hero-stop-circle" class="size-5" />
+            {gettext("Stop System")}
+          </button>
+        </div>
       </div>
 
       <%!-- Restart confirmation modal --%>
@@ -212,6 +224,39 @@ defmodule EvoDashWeb.SettingsLive do
           </div>
         </div>
       <% end %>
+
+      <%!-- Stop confirmation modal --%>
+      <%= if @show_stop_confirm do %>
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_stop"></div>
+          <div class="relative bg-base-100 rounded-3xl shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="flex items-center justify-center size-10 rounded-2xl bg-error/15">
+                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
+              </div>
+              <h3 class="text-lg font-bold">{gettext("Stop System?")}</h3>
+            </div>
+
+            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+              {gettext("This will gracefully shut down the Erlang VM. All applications will be stopped in order.")}
+            </p>
+            <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
+              {gettext("The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone.")}
+            </p>
+
+            <div class="flex justify-end gap-3 pt-2">
+              <button type="button" class="btn btn-ghost rounded-full px-6" phx-click="cancel_stop">
+                {gettext("Cancel")}
+              </button>
+              <button type="button" class="btn btn-error rounded-full px-6 gap-2" phx-click="confirm_stop">
+                <.icon name="hero-stop-circle" class="size-4.5" />
+                {gettext("Stop System")}
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
+      </div>
     </EvoDashWeb.Layouts.app>
     """
   end
@@ -246,6 +291,7 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:selected_variant_id, nil)
       |> assign(:llm_test_status, :idle)
       |> assign(:show_restart_confirm, false)
+      |> assign(:show_stop_confirm, false)
 
     {:ok, socket}
   end
@@ -578,12 +624,12 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("confirm_restart", _params, socket) do
     # Spawn a short-lived process so this LiveView can finish replying (and the
-    # browser can close the modal) before the VM tears down. :init.restart/0
+    # browser can close the modal) before the VM tears down. System.restart/0
     # gracefully restarts the BEAM runtime — all applications are stopped and
     # started again. It does NOT shut down the host OS.
     spawn(fn ->
       Process.sleep(150)
-      :init.restart()
+      System.restart()
     end)
 
     {:noreply,
@@ -592,6 +638,37 @@ defmodule EvoDashWeb.SettingsLive do
      |> put_flash(
        :info,
        gettext("System is restarting. Please wait while the Erlang VM comes back up.")
+     )}
+  end
+
+  @impl true
+  def handle_event("request_stop", _params, socket) do
+    {:noreply, assign(socket, :show_stop_confirm, true)}
+  end
+
+  @impl true
+  def handle_event("cancel_stop", _params, socket) do
+    {:noreply, assign(socket, :show_stop_confirm, false)}
+  end
+
+  @impl true
+  def handle_event("confirm_stop", _params, socket) do
+    # Spawn a short-lived process so this LiveView can finish replying (and the
+    # browser can close the modal) before the VM shuts down. System.stop/0
+    # gracefully shuts down the BEAM runtime — all applications are stopped in
+    # order and the VM exits. It does NOT affect the host OS, but the VM will
+    # need to be started again manually.
+    spawn(fn ->
+      Process.sleep(150)
+      System.stop()
+    end)
+
+    {:noreply,
+     socket
+     |> assign(:show_stop_confirm, false)
+     |> put_flash(
+       :info,
+       gettext("System is stopping. The Erlang VM will shut down and must be started again manually.")
      )}
   end
 
