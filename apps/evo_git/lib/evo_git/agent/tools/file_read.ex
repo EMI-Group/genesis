@@ -138,9 +138,12 @@ defmodule EvoGit.Agent.Tools.FileRead do
       total_lines = length(lines)
 
       start_index = max(0, offset - 1)
-      end_index = if limit, do: min(start_index + limit, total_lines), else: total_lines
+      start_index = min(start_index, total_lines)
 
-      selected_lines = Enum.slice(lines, start_index, end_index - start_index)
+      amount = if limit, do: min(limit, total_lines - start_index), else: total_lines - start_index
+      amount = max(0, amount)
+
+      selected_lines = Enum.slice(lines, start_index, amount)
 
       {:ok,
        %{
