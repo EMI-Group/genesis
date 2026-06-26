@@ -43,27 +43,26 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 
 ## Task Storage & Persistence Architecture
 
-### Dual-Layer Storage (ETS + DETS)
-- **Primary (in-memory)**: Named ETS table `:evo_dash_tasks` (`:set` type, `:public`) holds all live tasks for fast read access.
-- **Persistence (disk)**: DETS table `:evo_dash_tasks_dets` stores the most recent 10 finished tasks + all running tasks to `<platform_data_dir>/tasks.dets`.
-- **Similar pattern for Recent Projects**: ETS `:evo_dash_recent_projects` + DETS `:evo_dash_projects_dets` → `recent_projects.dets`, capped at 10 entries.
+### DETS-Only Single Source of Truth
+- **Primary storage (disk)**: DETS table `:evo_dash_tasks_dets` (`:set` type) is the single source of truth for all tasks. Every read and write goes directly to DETS, eliminating the ETS↔DETS dual-storage and sync pattern.
+- **Recent Projects**: DETS table `:evo_dash_projects_dets` → `recent_projects.dets`, capped at 10 entries.
+- **Runtime-only refs**: The `%Task{}` reference from `Task.Supervisor.async_nolink` is kept in an in-memory `task_refs` map in GenServer state (`%{task_id => %Task{}}`). These are never persisted to DETS (always stored as `ref: nil`).
 
 ### Task Lifecycle
-1. **Creation** (`start_task/2`): Generates random 16-char hex ID, spawns `Task.Supervisor.async_nolink` task, inserts `TaskInfo` struct into ETS, persists to DETS.
-2. **Running**: Status updates via `cast` (`update_task_status/3`), log appends via `cast` (`update_task_log/2`). Logs stored as prepend list (newest first) in `TaskInfo.logs`.
-3. **Completion/Failure**: On terminal status (`:completed`/`:failed`/`:cancelled`), `finished_at` is set and DETS is synced. The `TaskInfo.ref` field (non-serializable `%Task{}`) is nulled before persistence.
-4. **Crash recovery**: On startup, tasks loaded from DETS that were `:running`/`:pending` are reset to `:failed` with a crash detail message.
-5. **Deletion**: `delete_task/1` removes from ETS and re-persists to DETS. `clear_finished_tasks/0` removes all non-running/non-pending tasks from ETS and re-persists.
+1. **Creation** (`start_task/2`): Generates random 16-char hex ID, spawns `Task.Supervisor.async_nolink` task, inserts `TaskInfo` struct into DETS (with `ref: nil`), stores the ref in `task_refs`.
+2. **Running**: Status updates via `cast` (`update_task_status/3`), log appends via `cast` (`update_task_log/2`). Logs stored as prepend list (newest first) in `TaskInfo.logs`. All writes go directly to DETS.
+3. **Completion/Failure**: On terminal status (`:completed`/`:failed`/`:cancelled`), `finished_at` is set, the task is removed from `task_refs`, and `cleanup_expired_tasks/1` runs.
+4. **Crash recovery**: On startup, DETS entries that were `:running`/`:pending` are reset to `:failed` with a crash detail message (`normalize_tasks_in_dets/1` runs in-place).
+5. **Deletion**: `delete_task/1` removes from DETS. `clear_finished_tasks/0` removes all non-running/non-pending tasks from DETS.
 
 ### Retention & Eviction
-- **No automatic expiry/TTL/sweep**: There is no background timer, cron, or automatic cleanup process.
-- **Cap-based eviction**: `persist_tasks_to_dets/0` keeps ALL running tasks + the 10 most recent finished tasks (sorted by `started_at` descending). Older finished tasks are simply not written to DETS — they survive in ETS only until server restart or manual `clear_finished_tasks`.
-- **Manual cleanup only**: UI exposes "Clear Task History" button → `clear_finished_tasks()` which removes finished tasks from ETS + DETS. Individual task delete also available.
-- **Recent projects**: Capped at 10 entries via `trim_recent_projects/0` (sorted by `last_opened_at`, oldest evicted).
+- **Cap-based eviction**: `cleanup_expired_tasks/1` runs on most state mutations and removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100) on finished tasks.
+- **Manual cleanup**: UI exposes "Clear Task History" button → `clear_finished_tasks()` which removes finished tasks from DETS. Individual task delete also available.
+- **Recent projects**: Capped at 10 entries via `trim_recent_projects/1` (sorted by `last_opened_at`, oldest evicted).
 
 ### DETS Corruption Recovery
 - `open_or_reset_dets/2`: If DETS file fails to open, it is deleted and recreated.
-- `load_tasks_from_dets/1` / `load_recent_projects_from_dets/1`: On load errors, the DETS table is reset (deleted and recreated).
+- `normalize_tasks_in_dets/1`: On load errors, the DETS table is reset (deleted and recreated).
 
 ## Constraints
 - `TaskRegistry` is a singleton (registered under its module name); do not start multiple instances.
