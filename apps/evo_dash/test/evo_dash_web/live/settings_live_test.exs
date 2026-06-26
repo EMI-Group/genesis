@@ -55,9 +55,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
   end
 
   # NOTE: The "confirm_restart" event handler is intentionally NOT unit-tested.
-  # It calls :init.restart/0, which tears down the entire BEAM VM and would
-  # crash the ExUnit test run (killing all other tests along with it). We only
-  # test the surrounding modal open/cancel flow, which is safe.
+  # It calls System.restart/0, which tears down and restarts the entire BEAM VM
+  # and would crash the ExUnit test run (killing all other tests along with it).
+  # Likewise, "confirm_stop" calls System.stop/0 which shuts down the VM and is
+  # also not unit-tested. We only test the surrounding modal open/cancel flows,
+  # which are safe.
   describe "system control restart" do
     test "scheduler control appears after the settings editor (page ordering)", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/settings")
@@ -98,6 +100,35 @@ defmodule EvoDashWeb.SettingsLiveTest do
       html = render_click(view, "cancel_restart")
 
       refute html =~ "Restart System?"
+    end
+
+    test "System Control section renders with the Stop System button", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/settings")
+
+      assert html =~ "Stop System"
+      assert html =~ ~s(phx-click="request_stop")
+    end
+
+    test "request_stop opens the confirmation modal", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/settings")
+
+      # The modal is not visible on initial render
+      refute html =~ "Stop System?"
+
+      html = render_click(view, "request_stop")
+
+      assert html =~ "Stop System?"
+    end
+
+    test "cancel_stop closes the confirmation modal", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      # Open the modal first
+      _html = render_click(view, "request_stop")
+
+      html = render_click(view, "cancel_stop")
+
+      refute html =~ "Stop System?"
     end
   end
 end
