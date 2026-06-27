@@ -140,22 +140,64 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert result =~ "Read-write agents cannot be spawned"
     end
 
-    test "path_ignored error mentions ignored folder" do
+    test "path_ignored error mentions ignored folder and gitignore hint" do
       result = SubagentProcessing.format_subagent_result({:error, :path_ignored})
 
-      assert result =~ "ignored folder"
+      assert result =~ "Cannot spawn subagent in an ignored folder"
+      assert result =~ "gitignore"
     end
 
-    test "path_not_exist error mentions does not exist" do
+    test "path_not_exist error mentions does not exist and tool hints" do
       result = SubagentProcessing.format_subagent_result({:error, :path_not_exist})
 
       assert result =~ "does not exist"
+      assert result =~ "make_dir"
+      assert result =~ "create_files"
     end
 
-    test "generic error includes Subagent failed" do
+    test "generic error includes unexpected error and retry suggestion" do
       result = SubagentProcessing.format_subagent_result({:error, :some_other_reason})
 
-      assert result =~ "Subagent failed"
+      assert result =~ "unexpected error"
+      assert result =~ "retry"
+    end
+
+    test "spatial_contract_violation error returns the custom message exactly" do
+      msg = "some rich remediation message"
+
+      result =
+        SubagentProcessing.format_subagent_result({:error, {:spatial_contract_violation, msg}})
+
+      assert result == "Error: some rich remediation message"
+      refute result =~ "{:spatial"
+      refute result =~ "spatial_contract_violation"
+    end
+
+    test "max_depth_exceeded error mentions recursion depth and a suggestion" do
+      result = SubagentProcessing.format_subagent_result({:error, :max_depth_exceeded})
+
+      assert result =~ "recursion depth"
+      assert result =~ "current level"
+    end
+
+    test "worktree_creation_failed error mentions retry and report" do
+      result = SubagentProcessing.format_subagent_result({:error, :worktree_creation_failed})
+
+      assert result =~ "retry"
+      assert result =~ "report"
+    end
+
+    test "agent_max_retries_exceeded error mentions retry and report" do
+      result = SubagentProcessing.format_subagent_result({:error, :agent_max_retries_exceeded})
+
+      assert result =~ "retry"
+      assert result =~ "report"
+    end
+
+    test "unknown_error mentions retry" do
+      result = SubagentProcessing.format_subagent_result({:error, :unknown_error})
+
+      assert result =~ "retry"
     end
 
     test "ok result with commit_sha includes result text and commit info" do
@@ -192,7 +234,11 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
   describe "format_subagent_result/1 with repo_id" do
     test "ok result with repo_id formats the same as without repo_id" do
-      agent_result = %Result{result: "Foreign investigation done", commit_sha: "abc123", repo_id: :original}
+      agent_result = %Result{
+        result: "Foreign investigation done",
+        commit_sha: "abc123",
+        repo_id: :original
+      }
 
       result = SubagentProcessing.format_subagent_result({:ok, agent_result})
 
