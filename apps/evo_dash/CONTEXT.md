@@ -41,7 +41,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 
-- `DashboardLive` — Main dashboard: project tabs, task form, task cards with logs, inline project settings (evogit.toml, foreign repos). Completed tasks with branches show a "Review" button linking to the review page.
+- `DashboardLive` — Main dashboard: project tabs, task form, task cards with logs, inline project settings (genesis.toml, foreign repos). Completed tasks with branches show a "Review" button linking to the review page.
 - `ReviewLive` — Code review page (similar to GitHub PR view): shows PR title, agent summary, commit list (GitHub-style), files changed with diff stats, full syntax-highlighted diff (Lumis), and action buttons (Merge, Reject, Continue, Create GitHub PR). Three tabs: Conversation, Commits, Files Changed.
 - `AgentsLive` — Agent tree visualization reading directly from ETS tables (`evogit_agent_state`, `evogit_sched_meta`)
 - `SettingsLive` — Configuration File tab (GUI editor for config.toml with collapsible sections for LLM, User, Scheduler, Sandbox, Evolution, Truncation, Task History)
