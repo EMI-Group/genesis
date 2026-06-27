@@ -1,6 +1,6 @@
 [package]
 name = "evogit-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "EvoGit desktop shell — native Tauri window for the Phoenix dashboard"
 edition = "2021"
 
