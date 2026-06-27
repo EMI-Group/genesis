@@ -8,7 +8,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @config_reference """
   # Genesis Configuration Reference
-  # Save this as: ~/.config/evogit/config.toml
+  # Save this as: ~/.config/genesis/config.toml
 
   [scheduler]
   # Maximum concurrent LLM calls
@@ -63,7 +63,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @credentials_reference """
   # Genesis Credentials Reference
-  # Save this as: ~/.config/evogit/credentials.toml
+  # Save this as: ~/.config/genesis/credentials.toml
   # 
   # API keys are stored separately from config.toml for security.
   # Only ONE key is required — choose the provider matching your LLM model.
@@ -118,11 +118,11 @@ defmodule EvoDashWeb.SystemLive do
   @faq_content [
     {gettext("How do I set my API key?"),
      gettext(
-       "Create a credentials.toml file at ~/.config/evogit/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
+       "Create a credentials.toml file at ~/.config/genesis/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
      )},
     {gettext("How do I change the LLM model?"),
      gettext(
-       "Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
+       "Edit your config.toml file at ~/.config/genesis/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
      )},
     {gettext("What is sandbox mode?"),
      gettext(
