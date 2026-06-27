@@ -5,9 +5,6 @@ defmodule EvoDashWeb.ReviewLiveTest do
   alias EvoDash.TaskRegistry
   alias EvoDash.TaskRegistry.TaskInfo
 
-  # DETS table used by the production TaskRegistry.
-  @dets_tasks :evo_dash_tasks_dets
-
   describe "review for non-existent task" do
     test "shows error for non-existent task id", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/review/nonexistent-task-id")
@@ -53,7 +50,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      :dets.insert(@dets_tasks, {task_id, task})
+      CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)

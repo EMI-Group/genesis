@@ -6,35 +6,33 @@ defmodule EvoDashWeb.TasksLiveTest do
   alias EvoDash.TaskRegistry.TaskInfo
 
   setup do
-    # Terminate the production registry to prevent automatic restarts and
-    # to use an isolated DETS table for the test.
-    case Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry) do
-      :ok -> :ok
-      {:error, :not_found} -> :ok
-    end
+    # Terminate production children to prevent auto-restarts and use isolated stores.
+    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
+    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskStore)
 
     unique = System.unique_integer([:positive])
-    data_dir = Path.join(System.tmp_dir!(), "evogit_test_tasks_live_#{unique}")
-    File.mkdir_p!(data_dir)
+    root = Path.join(System.tmp_dir!(), "evogit_test_tasks_live_#{unique}")
+    File.mkdir_p!(root)
+    cubdb_path = Path.join(root, "tasks.cubdb")
 
-    {:ok, _pid} =
-      start_supervised(
-        {TaskRegistry,
-         name: EvoDash.TaskRegistry,
-         dets_tasks: :test_tasks_live_dets,
-         dets_projects: :test_tasks_live_projects_dets,
-         data_dir: data_dir}
-      )
+    start_supervised({EvoDash.TaskStore, data_dir: cubdb_path})
+    start_supervised(
+      {TaskRegistry,
+       task_store: EvoDash.TaskStore,
+       data_dir: root,
+       name: EvoDash.TaskRegistry}
+    )
 
     on_exit(fn ->
-      File.rm_rf(data_dir)
+      File.rm_rf(root)
+      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskStore)
       Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
     end)
 
     :ok
   end
 
-  # Inserts a task directly into the registry's DETS table (bypasses the async
+  # Inserts a task directly into the CubDB store (bypasses the async
   # task spawn that `start_task/2` triggers). This lets us create deterministic
   # fixture tasks for search/filter assertions.
   defp insert_fixture!(overrides) do
@@ -53,7 +51,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     }
     |> Map.merge(Enum.into(overrides, %{}))
 
-    :dets.insert(:test_tasks_live_dets, {id, task})
+    CubDB.put(EvoDash.TaskStore, {:task, id}, task)
     id
   end
 
