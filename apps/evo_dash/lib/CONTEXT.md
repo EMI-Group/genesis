@@ -18,8 +18,9 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 
 | Module | Purpose |
 |--------|---------|
-| `EvoDash.Application` | OTP supervisor tree (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskRegistry → Endpoint) |
-| `EvoDash.TaskRegistry` | ETS+DETS GenServer for task tracking; spawns `EvoGit.Runtime.*` processes |
+| `EvoDash.Application` | OTP supervisor tree (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskStore → TaskRegistry → Endpoint) |
+| `EvoDash.TaskStore` | CubDB-backed persistent store (single instance, `auto_file_sync: true`); namespaced keys `{:task, id}` / `{:project, path}` |
+| `EvoDash.TaskRegistry` | CubDB-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes |
 
 ### Web Modules (`./evo_dash_web/`)
 
