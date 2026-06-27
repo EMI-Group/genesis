@@ -451,7 +451,7 @@ defmodule EvoDash.TaskRegistryTest do
     # is corrupted mid-read (e.g. not properly closed on unclean shutdown).
     @corrupt_reason {{:bad_object, :read_buckets}, ~c"/tmp/fake/tasks.dets"}
 
-    # Flush any {:recover_dets, _} messages that from_dets/3 sends to self().
+    # Flush any {:recover_dets, _} messages that safe_insert/safe_delete send to self().
     defp flush_received_messages do
       receive do
         {:recover_dets, _} -> flush_received_messages()
@@ -463,13 +463,14 @@ defmodule EvoDash.TaskRegistryTest do
     test "from_dets/3 returns [] on the exact {:error, _} tuple from the crash report" do
       result = TaskRegistry.from_dets(:some_table, {:error, @corrupt_reason}, "match_object")
       assert result == []
-      # The error branch now triggers runtime recovery via a message to self().
-      assert_received {:recover_dets, :some_table}
+      # Read errors no longer trigger recovery (only write/open failures do).
+      refute_received {:recover_dets, _}
     end
 
     test "from_dets/3 returns [] for any {:error, reason} without raising" do
       assert TaskRegistry.from_dets(:t, {:error, :some_other_reason}, "lookup(\"k\")") == []
-      assert_received {:recover_dets, :t}
+      # Read errors no longer trigger recovery (only write/open failures do).
+      refute_received {:recover_dets, :t}
     end
 
     test "from_dets/3 passes the success list through unchanged" do
