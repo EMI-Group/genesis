@@ -363,6 +363,18 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
+  def handle_event("ignore", _params, socket) do
+    task_id = socket.assigns.task_id
+
+    TaskRegistry.set_review_status(task_id, :ignored)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, gettext("Review ignored and dismissed."))
+     |> push_navigate(to: ~p"/")}
+  end
+
+  @impl true
   def handle_event("create_pr", _params, socket) do
     %{repo_path: repo_path, branch_name: branch_name, objective: objective, agent_summary: result} =
       socket.assigns

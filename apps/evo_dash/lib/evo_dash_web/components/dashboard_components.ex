@@ -723,6 +723,7 @@ defmodule EvoDashWeb.DashboardComponents do
   defp task_accent_color(%{status: :completed, review_status: :merged}), do: "bg-success"
   defp task_accent_color(%{status: :completed, review_status: :rejected}), do: "bg-error"
   defp task_accent_color(%{status: :completed, review_status: :continued}), do: "bg-info"
+  defp task_accent_color(%{status: :completed, review_status: :ignored}), do: "bg-base-300"
   defp task_accent_color(%{status: status}), do: status_accent_color(status)
 
   defp task_card_tint(%{status: :running}), do: "bg-success/5 shadow-success/10 border-success/20"
@@ -736,6 +737,9 @@ defmodule EvoDashWeb.DashboardComponents do
   defp task_card_tint(%{status: :completed, review_status: :continued}),
     do: "bg-info/5 shadow-info/10 border-info/20"
 
+  defp task_card_tint(%{status: :completed, review_status: :ignored}),
+    do: "bg-base-200/40 shadow-base-300/10 border-base-300/20"
+
   defp task_card_tint(%{status: :completed}), do: "bg-info/5 shadow-info/10 border-info/20"
 
   defp task_card_tint(%{status: :finalizing}),
@@ -747,16 +751,19 @@ defmodule EvoDashWeb.DashboardComponents do
   defp review_status_badge(:merged), do: "bg-success/10 text-success"
   defp review_status_badge(:rejected), do: "bg-error/10 text-error"
   defp review_status_badge(:continued), do: "bg-info/10 text-info"
+  defp review_status_badge(:ignored), do: "bg-base-200 text-base-content/70"
   defp review_status_badge(_), do: "bg-base-200 text-base-content/70"
 
   defp review_status_icon(:merged), do: "hero-check-circle"
   defp review_status_icon(:rejected), do: "hero-x-circle"
   defp review_status_icon(:continued), do: "hero-arrow-path"
+  defp review_status_icon(:ignored), do: "hero-eye-slash"
   defp review_status_icon(_), do: "hero-question-mark-circle"
 
   defp review_status_label(:merged), do: "Merged"
   defp review_status_label(:rejected), do: "Rejected"
   defp review_status_label(:continued), do: "Continued"
+  defp review_status_label(:ignored), do: "Ignored"
   defp review_status_label(_), do: "Unknown"
 
   # ---------------------------------------------------------------------------

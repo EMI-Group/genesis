@@ -99,12 +99,12 @@ msgstr ""
 msgid "Add Foreign Repo"
 msgstr ""
 
-#: lib/evo_dash_web/components/dashboard_components.ex:846
-#: lib/evo_dash_web/components/dashboard_components.ex:846
-#: lib/evo_dash_web/components/dashboard_components.ex:875
-#: lib/evo_dash_web/components/dashboard_components.ex:875
-#: lib/evo_dash_web/components/dashboard_components.ex:1013
-#: lib/evo_dash_web/components/dashboard_components.ex:1013
+#: lib/evo_dash_web/components/dashboard_components.ex:853
+#: lib/evo_dash_web/components/dashboard_components.ex:853
+#: lib/evo_dash_web/components/dashboard_components.ex:882
+#: lib/evo_dash_web/components/dashboard_components.ex:882
+#: lib/evo_dash_web/components/dashboard_components.ex:1020
+#: lib/evo_dash_web/components/dashboard_components.ex:1020
 #, elixir-autogen, elixir-format
 msgid "Agent Message"
 msgstr ""
@@ -201,8 +201,8 @@ msgstr ""
 #: lib/evo_dash_web/components/dashboard_components.ex:415
 #: lib/evo_dash_web/components/dashboard_components.ex:528
 #: lib/evo_dash_web/components/dashboard_components.ex:528
-#: lib/evo_dash_web/components/review_components.ex:345
-#: lib/evo_dash_web/components/review_components.ex:345
+#: lib/evo_dash_web/components/review_components.ex:354
+#: lib/evo_dash_web/components/review_components.ex:354
 #: lib/evo_dash_web/live/system_live.ex:424
 #: lib/evo_dash_web/live/system_live.ex:424
 #: lib/evo_dash_web/live/system_live.ex:456
@@ -291,10 +291,10 @@ msgstr ""
 msgid "Context Path"
 msgstr ""
 
-#: lib/evo_dash_web/components/dashboard_components.ex:832
-#: lib/evo_dash_web/components/dashboard_components.ex:832
-#: lib/evo_dash_web/components/dashboard_components.ex:993
-#: lib/evo_dash_web/components/dashboard_components.ex:993
+#: lib/evo_dash_web/components/dashboard_components.ex:839
+#: lib/evo_dash_web/components/dashboard_components.ex:839
+#: lib/evo_dash_web/components/dashboard_components.ex:1000
+#: lib/evo_dash_web/components/dashboard_components.ex:1000
 #, elixir-autogen, elixir-format
 msgid "Crashed"
 msgstr ""
@@ -349,10 +349,10 @@ msgstr ""
 msgid "Empty directory detected — New Codebase mode selected"
 msgstr ""
 
-#: lib/evo_dash_web/components/dashboard_components.ex:819
-#: lib/evo_dash_web/components/dashboard_components.ex:819
-#: lib/evo_dash_web/components/dashboard_components.ex:980
-#: lib/evo_dash_web/components/dashboard_components.ex:980
+#: lib/evo_dash_web/components/dashboard_components.ex:826
+#: lib/evo_dash_web/components/dashboard_components.ex:826
+#: lib/evo_dash_web/components/dashboard_components.ex:987
+#: lib/evo_dash_web/components/dashboard_components.ex:987
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr ""
@@ -387,8 +387,8 @@ msgstr ""
 
 #: lib/evo_dash_web/live/dashboard_live.ex:554
 #: lib/evo_dash_web/live/dashboard_live.ex:554
-#: lib/evo_dash_web/live/tasks_live.ex:417
-#: lib/evo_dash_web/live/tasks_live.ex:417
+#: lib/evo_dash_web/live/tasks_live.ex:436
+#: lib/evo_dash_web/live/tasks_live.ex:436
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr ""
@@ -497,12 +497,12 @@ msgstr ""
 msgid "No CONTEXT.md found — Existing Codebase mode selected"
 msgstr ""
 
-#: lib/evo_dash_web/components/dashboard_components.ex:854
-#: lib/evo_dash_web/components/dashboard_components.ex:854
-#: lib/evo_dash_web/components/dashboard_components.ex:1007
-#: lib/evo_dash_web/components/dashboard_components.ex:1007
-#: lib/evo_dash_web/components/review_components.ex:712
-#: lib/evo_dash_web/components/review_components.ex:712
+#: lib/evo_dash_web/components/dashboard_components.ex:861
+#: lib/evo_dash_web/components/dashboard_components.ex:861
+#: lib/evo_dash_web/components/dashboard_components.ex:1014
+#: lib/evo_dash_web/components/dashboard_components.ex:1014
+#: lib/evo_dash_web/components/review_components.ex:724
+#: lib/evo_dash_web/components/review_components.ex:724
 #, elixir-autogen, elixir-format
 msgid "No Changes"
 msgstr ""
@@ -555,10 +555,10 @@ msgstr ""
 
 #: lib/evo_dash_web/components/dashboard_components.ex:212
 #: lib/evo_dash_web/components/dashboard_components.ex:212
-#: lib/evo_dash_web/components/dashboard_components.ex:781
-#: lib/evo_dash_web/components/dashboard_components.ex:781
-#: lib/evo_dash_web/components/dashboard_components.ex:942
-#: lib/evo_dash_web/components/dashboard_components.ex:942
+#: lib/evo_dash_web/components/dashboard_components.ex:788
+#: lib/evo_dash_web/components/dashboard_components.ex:788
+#: lib/evo_dash_web/components/dashboard_components.ex:949
+#: lib/evo_dash_web/components/dashboard_components.ex:949
 #: lib/evo_dash_web/live/agents_live.html.heex:111
 #: lib/evo_dash_web/live/agents_live.html.heex:111
 #, elixir-autogen, elixir-format
@@ -567,8 +567,8 @@ msgstr ""
 
 #: lib/evo_dash_web/components/dashboard_components.ex:117
 #: lib/evo_dash_web/components/dashboard_components.ex:117
-#: lib/evo_dash_web/components/review_components.ex:709
-#: lib/evo_dash_web/components/review_components.ex:709
+#: lib/evo_dash_web/components/review_components.ex:720
+#: lib/evo_dash_web/components/review_components.ex:720
 #, elixir-autogen, elixir-format
 msgid "Open"
 msgstr ""
@@ -867,10 +867,10 @@ msgstr ""
 msgid "Tasks will appear here once you start them from the dashboard."
 msgstr ""
 
-#: lib/evo_dash_web/components/dashboard_components.ex:856
-#: lib/evo_dash_web/components/dashboard_components.ex:856
-#: lib/evo_dash_web/components/dashboard_components.ex:1009
-#: lib/evo_dash_web/components/dashboard_components.ex:1009
+#: lib/evo_dash_web/components/dashboard_components.ex:863
+#: lib/evo_dash_web/components/dashboard_components.ex:863
+#: lib/evo_dash_web/components/dashboard_components.ex:1016
+#: lib/evo_dash_web/components/dashboard_components.ex:1016
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any changes to the codebase."
 msgstr ""
@@ -915,8 +915,8 @@ msgstr ""
 msgid "Turn %{turn}"
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:713
-#: lib/evo_dash_web/components/review_components.ex:713
+#: lib/evo_dash_web/components/review_components.ex:725
+#: lib/evo_dash_web/components/review_components.ex:725
 #: lib/evo_dash_web/helpers.ex:267
 #: lib/evo_dash_web/helpers.ex:267
 #, elixir-autogen, elixir-format
@@ -953,10 +953,10 @@ msgstr ""
 msgid "View Full Task History"
 msgstr ""
 
-#: lib/evo_dash_web/components/dashboard_components.ex:907
-#: lib/evo_dash_web/components/dashboard_components.ex:907
-#: lib/evo_dash_web/components/dashboard_components.ex:1059
-#: lib/evo_dash_web/components/dashboard_components.ex:1059
+#: lib/evo_dash_web/components/dashboard_components.ex:914
+#: lib/evo_dash_web/components/dashboard_components.ex:914
+#: lib/evo_dash_web/components/dashboard_components.ex:1066
+#: lib/evo_dash_web/components/dashboard_components.ex:1066
 #, elixir-autogen, elixir-format
 msgid "View PR"
 msgstr ""
@@ -1047,8 +1047,8 @@ msgid_plural "%{count} commits"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/evo_dash_web/components/review_components.ex:397
-#: lib/evo_dash_web/components/review_components.ex:397
+#: lib/evo_dash_web/components/review_components.ex:406
+#: lib/evo_dash_web/components/review_components.ex:406
 #, elixir-autogen, elixir-format, fuzzy
 msgid "%{count} file"
 msgid_plural "%{count} files"
@@ -1221,8 +1221,8 @@ msgstr ""
 msgid "Change language"
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:371
-#: lib/evo_dash_web/components/review_components.ex:371
+#: lib/evo_dash_web/components/review_components.ex:380
+#: lib/evo_dash_web/components/review_components.ex:380
 #, elixir-autogen, elixir-format
 msgid "Changed Files"
 msgstr ""
@@ -1499,16 +1499,16 @@ msgstr ""
 msgid "Execution Logs"
 msgstr ""
 
-#: lib/evo_dash_web/live/review_live.ex:390
-#: lib/evo_dash_web/live/review_live.ex:390
+#: lib/evo_dash_web/live/review_live.ex:402
+#: lib/evo_dash_web/live/review_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr ""
 
-#: lib/evo_dash_web/live/review_live.ex:619
-#: lib/evo_dash_web/live/review_live.ex:619
-#: lib/evo_dash_web/live/review_live.ex:646
-#: lib/evo_dash_web/live/review_live.ex:646
+#: lib/evo_dash_web/live/review_live.ex:631
+#: lib/evo_dash_web/live/review_live.ex:631
+#: lib/evo_dash_web/live/review_live.ex:658
+#: lib/evo_dash_web/live/review_live.ex:658
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr ""
@@ -1643,8 +1643,8 @@ msgstr ""
 msgid "Light theme"
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:555
-#: lib/evo_dash_web/components/review_components.ex:555
+#: lib/evo_dash_web/components/review_components.ex:564
+#: lib/evo_dash_web/components/review_components.ex:564
 #, elixir-autogen, elixir-format
 msgid "Loading diff..."
 msgstr ""
@@ -1691,8 +1691,8 @@ msgstr ""
 msgid "Merge these changes into the current branch?"
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:710
-#: lib/evo_dash_web/components/review_components.ex:710
+#: lib/evo_dash_web/components/review_components.ex:721
+#: lib/evo_dash_web/components/review_components.ex:721
 #: lib/evo_dash_web/live/tasks_live.ex:76
 #: lib/evo_dash_web/live/tasks_live.ex:76
 #, elixir-autogen, elixir-format
@@ -1799,8 +1799,8 @@ msgstr ""
 msgid "Prompt"
 msgstr ""
 
-#: lib/evo_dash_web/live/review_live.ex:381
-#: lib/evo_dash_web/live/review_live.ex:381
+#: lib/evo_dash_web/live/review_live.ex:393
+#: lib/evo_dash_web/live/review_live.ex:393
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr ""
@@ -1847,8 +1847,8 @@ msgstr ""
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:711
-#: lib/evo_dash_web/components/review_components.ex:711
+#: lib/evo_dash_web/components/review_components.ex:722
+#: lib/evo_dash_web/components/review_components.ex:722
 #: lib/evo_dash_web/live/tasks_live.ex:77
 #: lib/evo_dash_web/live/tasks_live.ex:77
 #, elixir-autogen, elixir-format
@@ -1909,8 +1909,8 @@ msgstr ""
 msgid "Review"
 msgstr ""
 
-#: lib/evo_dash_web/live/review_live.ex:505
-#: lib/evo_dash_web/live/review_live.ex:505
+#: lib/evo_dash_web/live/review_live.ex:517
+#: lib/evo_dash_web/live/review_live.ex:517
 #, elixir-autogen, elixir-format
 msgid "Review Changes"
 msgstr ""
@@ -2027,8 +2027,8 @@ msgstr ""
 msgid "System theme"
 msgstr ""
 
-#: lib/evo_dash_web/live/review_live.ex:479
-#: lib/evo_dash_web/live/review_live.ex:479
+#: lib/evo_dash_web/live/review_live.ex:491
+#: lib/evo_dash_web/live/review_live.ex:491
 #, elixir-autogen, elixir-format
 msgid "Task not found. It may have been deleted."
 msgstr ""
@@ -2049,12 +2049,6 @@ msgstr ""
 #: lib/evo_dash_web/components/dashboard_components.ex:177
 #, elixir-autogen, elixir-format
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
-msgstr ""
-
-#: lib/evo_dash_web/components/review_components.ex:294
-#: lib/evo_dash_web/components/review_components.ex:294
-#, elixir-autogen, elixir-format
-msgid "This branch no longer exists. No actions available."
 msgstr ""
 
 #: lib/evo_dash_web/components/settings_components.ex:684
@@ -2311,48 +2305,48 @@ msgstr ""
 msgid "Agents Spawned"
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:323
-#: lib/evo_dash_web/components/review_components.ex:323
+#: lib/evo_dash_web/components/review_components.ex:332
+#: lib/evo_dash_web/components/review_components.ex:332
 #, elixir-autogen, elixir-format
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr ""
 
 #: lib/evo_dash_web/components/review_components.ex:287
 #: lib/evo_dash_web/components/review_components.ex:287
-#: lib/evo_dash_web/components/review_components.ex:319
-#: lib/evo_dash_web/components/review_components.ex:319
-#: lib/evo_dash_web/components/review_components.ex:349
-#: lib/evo_dash_web/components/review_components.ex:349
+#: lib/evo_dash_web/components/review_components.ex:328
+#: lib/evo_dash_web/components/review_components.ex:328
+#: lib/evo_dash_web/components/review_components.ex:358
+#: lib/evo_dash_web/components/review_components.ex:358
 #, elixir-autogen, elixir-format
 msgid "Extract Skills"
 msgstr ""
 
-#: lib/evo_dash_web/live/review_live.ex:452
-#: lib/evo_dash_web/live/review_live.ex:452
+#: lib/evo_dash_web/live/review_live.ex:464
+#: lib/evo_dash_web/live/review_live.ex:464
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Failed to start skill extraction: %{reason}"
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:330
-#: lib/evo_dash_web/components/review_components.ex:330
+#: lib/evo_dash_web/components/review_components.ex:339
+#: lib/evo_dash_web/components/review_components.ex:339
 #, elixir-autogen, elixir-format
 msgid "Optional: Note for the skill extraction agent"
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:339
-#: lib/evo_dash_web/components/review_components.ex:339
+#: lib/evo_dash_web/components/review_components.ex:348
+#: lib/evo_dash_web/components/review_components.ex:348
 #, elixir-autogen, elixir-format
 msgid "Provide specific instructions on what knowledge should be captured as skills."
 msgstr ""
 
-#: lib/evo_dash_web/live/review_live.ex:442
-#: lib/evo_dash_web/live/review_live.ex:442
+#: lib/evo_dash_web/live/review_live.ex:454
+#: lib/evo_dash_web/live/review_live.ex:454
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr ""
 
-#: lib/evo_dash_web/components/review_components.ex:336
-#: lib/evo_dash_web/components/review_components.ex:336
+#: lib/evo_dash_web/components/review_components.ex:345
+#: lib/evo_dash_web/components/review_components.ex:345
 #, elixir-autogen, elixir-format
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr ""
@@ -2369,8 +2363,8 @@ msgstr ""
 msgid "Back to Review"
 msgstr ""
 
-#: lib/evo_dash_web/live/review_live.ex:702
-#: lib/evo_dash_web/live/review_live.ex:702
+#: lib/evo_dash_web/live/review_live.ex:714
+#: lib/evo_dash_web/live/review_live.ex:714
 #, elixir-autogen, elixir-format
 msgid "Commit details"
 msgstr ""
@@ -2507,4 +2501,34 @@ msgstr ""
 #: lib/evo_dash_web/live/system_live.ex:448
 #, elixir-autogen, elixir-format
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
+msgstr ""
+
+#: lib/evo_dash_web/components/review_components.ex:305
+#: lib/evo_dash_web/components/review_components.ex:305
+#, elixir-autogen, elixir-format
+msgid "Ignore"
+msgstr ""
+
+#: lib/evo_dash_web/components/review_components.ex:301
+#: lib/evo_dash_web/components/review_components.ex:301
+#, elixir-autogen, elixir-format
+msgid "Ignore this review? It will be dismissed from pending reviews."
+msgstr ""
+
+#: lib/evo_dash_web/components/review_components.ex:723
+#: lib/evo_dash_web/components/review_components.ex:723
+#, elixir-autogen, elixir-format
+msgid "Ignored"
+msgstr ""
+
+#: lib/evo_dash_web/live/review_live.ex:373
+#: lib/evo_dash_web/live/review_live.ex:373
+#, elixir-autogen, elixir-format
+msgid "Review ignored and dismissed."
+msgstr ""
+
+#: lib/evo_dash_web/components/review_components.ex:294
+#: lib/evo_dash_web/components/review_components.ex:294
+#, elixir-autogen, elixir-format, fuzzy
+msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr ""

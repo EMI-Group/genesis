@@ -291,10 +291,19 @@ defmodule EvoDashWeb.ReviewComponents do
           <div class="bg-warning/10 border border-warning/20 rounded-2xl p-5 w-full">
             <div class="flex items-center gap-3">
               <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
-              <span class="text-sm text-warning font-medium">{gettext("This branch no longer exists. No actions available.")}</span>
+              <span class="text-sm text-warning font-medium">{gettext("This branch no longer exists. You can dismiss it with Ignore.")}</span>
             </div>
           </div>
         <% end %>
+        <button
+          class="btn btn-ghost btn-sm rounded-full px-6 gap-2 text-base-content/60"
+          phx-click="ignore"
+          phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
+          disabled={@loading}
+        >
+          <.icon name="hero-eye-slash" class="size-4.5" />
+          {gettext("Ignore")}
+        </button>
       </div>
     </div>
     """
@@ -697,18 +706,21 @@ defmodule EvoDashWeb.ReviewComponents do
   defp review_status_badge(:open), do: "badge-warning"
   defp review_status_badge(:merged), do: "badge-success"
   defp review_status_badge(:rejected), do: "badge-error"
+  defp review_status_badge(:ignored), do: "badge-ghost"
   defp review_status_badge(:no_changes), do: "badge-ghost"
   defp review_status_badge(_), do: "badge-ghost"
 
   defp review_status_icon(:open), do: "hero-clock"
   defp review_status_icon(:merged), do: "hero-check-circle"
   defp review_status_icon(:rejected), do: "hero-x-circle"
+  defp review_status_icon(:ignored), do: "hero-eye-slash"
   defp review_status_icon(:no_changes), do: "hero-information-circle"
   defp review_status_icon(_), do: "hero-question-mark-circle"
 
   defp review_status_label(:open), do: gettext("Open")
   defp review_status_label(:merged), do: gettext("Merged")
   defp review_status_label(:rejected), do: gettext("Rejected")
+  defp review_status_label(:ignored), do: gettext("Ignored")
   defp review_status_label(:no_changes), do: gettext("No Changes")
   defp review_status_label(_), do: gettext("Unknown")
 
