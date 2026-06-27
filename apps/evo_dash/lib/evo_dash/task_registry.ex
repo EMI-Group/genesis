@@ -1,17 +1,17 @@
 defmodule EvoDash.TaskRegistry do
   @moduledoc """
   Registry for tracking running EvoGit tasks.
-  Tasks are identified by unique IDs and persisted to DETS (the single source of truth).
+  Tasks are identified by unique IDs and persisted to CubDB (the single source of truth)
+  under namespaced keys `{:task, task_id}`.
   Runtime-only task references (`%Task{}`) are kept in-memory in `task_refs`.
   Supports configurable persistence of finished tasks and
-  recently opened projects to DETS (platform data directory via EvoGit.Platform).
+  recently opened projects to CubDB (platform data directory via EvoGit.Platform),
+  using namespaced keys `{:project, path}`.
   """
   use GenServer
 
   require Logger
 
-  @dets_tasks :evo_dash_tasks_dets
-  @dets_projects :evo_dash_projects_dets
   @max_recent_projects 10
 
   defmodule TaskInfo do
@@ -141,29 +141,21 @@ defmodule EvoDash.TaskRegistry do
     data_dir = Keyword.get(opts, :data_dir, EvoGit.Platform.data_dir())
     File.mkdir_p!(data_dir)
 
-    # Allow table names to be overridden via opts (for test isolation)
-    dets_tasks = Keyword.get(opts, :dets_tasks, @dets_tasks)
-    dets_projects = Keyword.get(opts, :dets_projects, @dets_projects)
-
-    tasks_file = Path.join(data_dir, "tasks.dets")
-    projects_file = Path.join(data_dir, "recent_projects.dets")
-
-    # Open or create DETS tables (auto-recover from corruption)
-    log_open_result(open_or_reset_dets(dets_tasks, tasks_file), tasks_file)
-    log_open_result(open_or_reset_dets(dets_projects, projects_file), projects_file)
+    # The CubDB store is started by the supervisor; here just reference by name.
+    # Tests may pass their own task_store: name pointing to a test store.
+    task_store = Keyword.get(opts, :task_store, EvoDash.TaskStore)
 
     state = %{
       data_dir: data_dir,
-      dets_tasks: dets_tasks,
-      dets_projects: dets_projects,
-      dets_tasks_file: tasks_file,
-      dets_projects_file: projects_file,
-      task_refs: %{},
-      recovering: MapSet.new()
+      task_store: task_store,
+      task_refs: %{}
     }
 
-    # Normalize DETS entries in place (backfill fields, reset crashed tasks)
-    normalize_tasks_in_dets(state)
+    # One-time best-effort DETS→CubDB migration (before normalize).
+    maybe_migrate_from_dets(state)
+
+    # Normalize CubDB entries in place (backfill fields, reset crashed tasks)
+    normalize_tasks(state)
 
     # Cleanup expired tasks on startup
     cleanup_expired_tasks(state)
@@ -175,11 +167,7 @@ defmodule EvoDash.TaskRegistry do
   end
 
   @impl true
-  def terminate(_reason, state) do
-    :dets.close(state.dets_tasks)
-    :dets.close(state.dets_projects)
-    :ok
-  end
+  def terminate(_reason, _state), do: :ok
 
   @impl true
   def handle_call({:start_task, task_id, task_type, opts}, _from, state) do
@@ -203,8 +191,8 @@ defmodule EvoDash.TaskRegistry do
       result: nil
     }
 
-    # Persist to DETS with ref nulled (ref is runtime-only data)
-    safe_insert(state.dets_tasks, {task_id, %{task | ref: nil}})
+    # Persist to CubDB with ref nulled (ref is runtime-only data)
+    CubDB.put(state.task_store, {:task, task_id}, %{task | ref: nil})
 
     # Keep the runtime ref in-memory only
     state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
@@ -215,26 +203,21 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:get_task, task_id}, _from, state) do
-    task =
-      case safe_lookup(state.dets_tasks, task_id) do
-        [{^task_id, task_data}] -> task_data
-        [] -> nil
-      end
-
+    task = task_get(state, task_id)
     {:reply, task, state}
   end
 
   @impl true
   def handle_call(:list_tasks, _from, state) do
-    tasks = safe_match_object(state.dets_tasks) |> Enum.map(fn {_id, task} -> task end)
+    tasks = select_all_tasks(state) |> Enum.map(fn {_key, task} -> task end)
     {:reply, tasks, state}
   end
 
   @impl true
   def handle_call({:cancel_task, task_id}, _from, state) do
     {result, state} =
-      case safe_lookup(state.dets_tasks, task_id) do
-        [{^task_id, %TaskInfo{status: :running} = task}] ->
+      case task_get(state, task_id) do
+        %TaskInfo{status: :running} = task ->
           case Map.get(state.task_refs, task_id) do
             %Task{pid: pid} = task_ref ->
               if Process.alive?(pid) do
@@ -251,7 +234,7 @@ defmodule EvoDash.TaskRegistry do
 
                 Task.shutdown(task_ref, :brutal_kill)
                 updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
-                safe_insert(state.dets_tasks, {task_id, updated})
+                CubDB.put(state.task_store, {:task, task_id}, updated)
                 cleanup_expired_tasks(state)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
@@ -263,10 +246,10 @@ defmodule EvoDash.TaskRegistry do
               {{:error, :not_running}, state}
           end
 
-        [{^task_id, %TaskInfo{}}] ->
+        %TaskInfo{} ->
           {{:error, :not_running}, state}
 
-        [] ->
+        nil ->
           {{:error, :not_found}, state}
       end
 
@@ -279,11 +262,11 @@ defmodule EvoDash.TaskRegistry do
     expanded = Path.expand(path)
 
     tasks =
-      safe_match_object(state.dets_tasks)
-      |> Enum.filter(fn {_id, task} ->
+      select_all_tasks(state)
+      |> Enum.filter(fn {_key, task} ->
         task.opts[:path] && Path.expand(task.opts[:path]) == expanded
       end)
-      |> Enum.map(fn {_id, task} -> task end)
+      |> Enum.map(fn {_key, task} -> task end)
 
     {:reply, tasks, state}
   end
@@ -291,8 +274,8 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call(:get_unique_paths, _from, state) do
     paths =
-      safe_match_object(state.dets_tasks)
-      |> Enum.map(fn {_id, task} -> task.opts[:path] end)
+      select_all_tasks(state)
+      |> Enum.map(fn {_key, task} -> task.opts[:path] end)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
 
@@ -301,10 +284,10 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call(:clear_finished_tasks, _from, state) do
-    safe_match_object(state.dets_tasks)
-    |> Enum.each(fn {id, task} ->
+    select_all_tasks(state)
+    |> Enum.each(fn {{:task, id}, task} ->
       unless task.status in [:running, :pending] do
-        safe_delete(state.dets_tasks, id)
+        CubDB.delete(state.task_store, {:task, id})
       end
     end)
 
@@ -320,17 +303,11 @@ defmodule EvoDash.TaskRegistry do
     now = DateTime.utc_now()
 
     # Remove existing entry for this path (if any), then add updated entry
-    safe_delete(state.dets_projects, path)
-
-    safe_insert(
-      state.dets_projects,
-      {path, %{path: path, name: name, last_opened_at: now}}
-    )
+    CubDB.delete(state.task_store, {:project, path})
+    CubDB.put(state.task_store, {:project, path}, %{path: path, name: name, last_opened_at: now})
 
     # Enforce max limit
     trim_recent_projects(state)
-
-    sync_dets(state.dets_projects)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
@@ -339,8 +316,8 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call(:list_recent_projects, _from, state) do
     projects =
-      safe_match_object(state.dets_projects)
-      |> Enum.map(fn {_path, project} -> project end)
+      select_all_projects(state)
+      |> Enum.map(fn {_key, project} -> project end)
       |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
 
     {:reply, projects, state}
@@ -348,7 +325,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    safe_delete(state.dets_projects, path)
+    CubDB.delete(state.task_store, {:project, path})
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
@@ -360,8 +337,8 @@ defmodule EvoDash.TaskRegistry do
     commit_sha = Keyword.get(opts, :commit_sha)
 
     state =
-      case safe_lookup(state.dets_tasks, task_id) do
-        [{^task_id, %TaskInfo{} = task}] ->
+      case task_get(state, task_id) do
+        %TaskInfo{} = task ->
           finished_at =
             if status in [:completed, :failed, :cancelled],
               do: DateTime.utc_now(),
@@ -371,8 +348,7 @@ defmodule EvoDash.TaskRegistry do
           updated = if usage, do: %{updated | usage: usage}, else: updated
           updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
           updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
-          safe_insert(state.dets_tasks, {task_id, updated})
-          sync_dets(state.dets_tasks)
+          CubDB.put(state.task_store, {:task, task_id}, updated)
 
           if status in [:completed, :failed, :cancelled] do
             cleanup_expired_tasks(state)
@@ -381,7 +357,7 @@ defmodule EvoDash.TaskRegistry do
             state
           end
 
-        _ ->
+        nil ->
           state
       end
 
@@ -391,12 +367,12 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:append_log, task_id, log_entry}, state) do
-    case safe_lookup(state.dets_tasks, task_id) do
-      [{^task_id, %TaskInfo{logs: logs} = task}] ->
+    case task_get(state, task_id) do
+      %TaskInfo{logs: logs} = task ->
         updated = %{task | logs: [log_entry | logs]}
-        safe_insert(state.dets_tasks, {task_id, updated})
+        CubDB.put(state.task_store, {:task, task_id}, updated)
 
-      _ ->
+      nil ->
         :ok
     end
 
@@ -405,8 +381,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
-    safe_delete(state.dets_tasks, task_id)
-    sync_dets(state.dets_tasks)
+    CubDB.delete(state.task_store, {:task, task_id})
     cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -414,14 +389,14 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
-    case safe_lookup(state.dets_tasks, task_id) do
-      [{^task_id, %TaskInfo{} = task}] ->
+    case task_get(state, task_id) do
+      %TaskInfo{} = task ->
         updated = %{task | review_status: status}
-        safe_insert(state.dets_tasks, {task_id, updated})
+        CubDB.put(state.task_store, {:task, task_id}, updated)
         cleanup_expired_tasks(state)
         Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
-      _ ->
+      nil ->
         :ok
     end
 
@@ -430,14 +405,14 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
-    case safe_lookup(state.dets_tasks, task_id) do
-      [{^task_id, %TaskInfo{} = task}] ->
+    case task_get(state, task_id) do
+      %TaskInfo{} = task ->
         updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        safe_insert(state.dets_tasks, {task_id, updated})
+        CubDB.put(state.task_store, {:task, task_id}, updated)
         cleanup_expired_tasks(state)
         Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
-      _ ->
+      nil ->
         :ok
     end
 
@@ -496,315 +471,140 @@ defmodule EvoDash.TaskRegistry do
     :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
   end
 
-  # --- DETS Corruption Recovery ---
+  # --- CubDB Read Helpers ---
 
-  defp log_open_result(result, file_path) do
-    case result do
-      :ok ->
-        :ok
+  defp task_get(state, task_id) do
+    CubDB.get(state.task_store, {:task, task_id})
+  end
 
-      {:error, reason} ->
-        Logger.error(
-          "CRITICAL: DETS table for #{file_path} could not be opened/recovered: #{inspect(reason)}. " <>
-            "Proceeding with a stale table reference; future operations will trigger recovery messages."
-        )
+  defp select_all_tasks(state) do
+    CubDB.select(state.task_store)
+    |> Stream.filter(fn {{ns, _id}, _v} -> ns == :task end)
+    |> Enum.to_list()
+  end
 
-        :ok
+  defp select_all_projects(state) do
+    CubDB.select(state.task_store)
+    |> Stream.filter(fn {{ns, _path}, _v} -> ns == :project end)
+    |> Enum.to_list()
+  end
+
+  # --- One-time DETS→CubDB Migration (best-effort) ---
+
+  defp maybe_migrate_from_dets(state) do
+    if CubDB.size(state.task_store) == 0 do
+      migrate_dets_to_cubdb(state.data_dir, state.task_store)
     end
   end
 
-  defp open_or_reset_dets(table_name, file_path) do
-    case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
-      {:ok, _} ->
-        # Verify the table is actually readable (repair may have succeeded at open
-        # but corruption can surface during reads).
-        if dets_readable?(table_name) do
-          :ok
-        else
-          Logger.warning(
-            "DETS table #{inspect(table_name)} opened but reads fail (corruption). " <>
-              "Attempting recovery for #{file_path}."
-          )
-
-          recover_dets_table(table_name, file_path)
-        end
-
-      {:error, reason} ->
-        Logger.error(
-          "Failed to open DETS file #{file_path}: #{inspect(reason)}. " <>
-            "Attempting recovery."
-        )
-
-        recover_dets_table(table_name, file_path)
-    end
+  defp migrate_dets_to_cubdb(data_dir, task_store) do
+    migrate_tasks_dets(data_dir, task_store)
+    migrate_projects_dets(data_dir, task_store)
   end
 
-  defp dets_readable?(table_name) do
-    with n when is_integer(n) <- :dets.info(table_name, :size),
-         true <- dets_foldl_works?(table_name) do
-      true
-    else
-      _ -> false
-    end
-  end
+  defp migrate_tasks_dets(data_dir, task_store) do
+    path = Path.join(data_dir, "tasks.dets")
 
-  # Verify foldl actually works - catches :bad_object errors that :size alone misses
-  defp dets_foldl_works?(table_name) do
-    try do
-      :dets.foldl(fn _obj, acc -> acc + 1 end, 0, table_name)
-      true
-    rescue
-      _ -> false
-    catch
-      _, _ -> false
-    end
-  end
-
-  defp recover_dets_table(table_name, file_path) do
-    # Close the current (corrupt) handle first.
-    _ = :dets.close(table_name)
-
-    # Back up the original corrupt file BEFORE any repair, to preserve the evidence.
-    backup_path = corrupt_backup_path(file_path)
-    _ = File.cp(file_path, backup_path)
-    Logger.warning("Backed up corrupt DETS file to #{backup_path}")
-
-    # Primary path: reopen with repair: :force which repairs the file IN-PLACE
-    # (does NOT delete it), preserving as much data as possible.
-    case :dets.open_file(table_name, type: :set, file: to_charlist(file_path), repair: :force) do
-      {:ok, _} ->
-        # Count records to verify; the repair: :force already wrote fixes in-place.
-        size = :dets.info(table_name, :size)
-
-        Logger.info(
-          "Recovered DETS table #{inspect(table_name)} in-place via repair: force " <>
-            "(#{size} record(s)). Backup at #{backup_path}."
-        )
-
-        :ok
-
-      {:error, reason} ->
-        # repair: :force failed — fall back to salvage approach, writing to the SAME file.
-        Logger.error(
-          "repair: force failed for #{file_path}: #{inspect(reason)}. Falling back to salvage."
-        )
-
-        salvaged = salvage_dets_objects(table_name, file_path)
-        _ = :dets.close(table_name)
-        _ = File.rm(file_path)
-
-        case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
-          {:ok, _} ->
-            for obj <- salvaged, do: :dets.insert(table_name, obj)
-            count = length(salvaged)
-
-            if count > 0 do
-              Logger.info(
-                "Salvaged #{count} record(s) into DETS table #{inspect(table_name)}. " <>
-                  "Backup at #{backup_path}."
+    if File.exists?(path) do
+      try do
+        case :dets.open_file(:evo_dash_tasks_dets, type: :set, file: to_charlist(path), repair: true) do
+          {:ok, table} ->
+            records =
+              :dets.foldl(
+                fn {_id, %TaskInfo{} = task} = _obj, acc ->
+                  CubDB.put(task_store, {:task, task.id}, task)
+                  acc + 1
+                end,
+                0,
+                table
               )
-            else
-              Logger.error(
-                "No records could be salvaged from corrupt DETS file #{file_path}. " <>
-                  "Starting empty. Backup preserved at #{backup_path}."
-              )
-            end
 
-            :ok
+            _ = :dets.close(table)
 
-          {:error, reason2} ->
-            Logger.error(
-              "CRITICAL: Could not recreate DETS file #{file_path}: #{inspect(reason2)}. " <>
-                "Backup at #{backup_path}."
+            Logger.info(
+              "DETS→CubDB migration: migrated #{records} task(s) from #{path}."
             )
 
-            {:error, reason2}
+          {:error, reason} ->
+            Logger.warning(
+              "DETS→CubDB migration: could not open tasks DETS file #{path}: " <>
+                "#{inspect(reason)}. Starting fresh."
+            )
         end
-    end
-  end
-
-  # Close the current handle, reopen with explicit repair, and salvage as many
-  # records as possible. Closes the repaired table before returning so the caller
-  # can delete the file and reopen fresh.
-  defp salvage_dets_objects(table_name, file_path) do
-    _ = :dets.close(table_name)
-
-    salvaged =
-      case :dets.open_file(table_name, type: :set, file: to_charlist(file_path), repair: true) do
-        {:ok, _} ->
-          try_match_object(table_name)
-
-        {:error, reason} ->
-          Logger.warning("Could not reopen for repair: #{inspect(reason)}")
-          []
-      end
-
-    _ = :dets.close(table_name)
-    salvaged
-  end
-
-  # Attempt a full match_object; on failure fall back to per-object foldl iteration.
-  defp try_match_object(table_name) do
-    case safe_match_object_attempt(table_name) do
-      {:ok, objects} -> objects
-      {:error, _} -> salvage_via_foldl(table_name)
-    end
-  end
-
-  defp safe_match_object_attempt(table_name) do
-    try do
-      {:ok, :dets.foldl(fn obj, acc -> [obj | acc] end, [], table_name)}
-    rescue
-      _ -> {:error, :rescued}
-    catch
-      _, _ -> {:error, :caught}
-    end
-  end
-
-  defp salvage_via_foldl(table_name) do
-    try do
-      :dets.foldl(fn obj, acc -> [obj | acc] end, [], table_name)
-    rescue
-      _ -> []
-    end
-  end
-
-  defp corrupt_backup_path(file_path) do
-    timestamp =
-      DateTime.utc_now()
-      |> Calendar.strftime("%Y%m%d-%H%M%S")
-
-    "#{file_path}.corrupt.#{timestamp}"
-  end
-
-  def safe_match_object(table_name) do
-    # Use foldl to iterate all objects safely - :dets.match_object with {:_, :_} pattern
-    # creates invalid tuple of atoms, not a pattern wildcard, and raises ArgumentError.
-    # If we encounter :bad_object errors, trigger recovery and retry.
-    case try_foldl(table_name) do
-      {:ok, objects} -> objects
-      {:error, reason} ->
-        # Check if this is a bad_object error (corruption) or other read failure
-        if bad_object_error?(reason) do
-          Logger.error(
-            "DETS match_object encountered corrupted object in #{inspect(table_name)}: #{inspect(reason)}. " <>
-            "Triggering recovery."
-          )
-          send(self(), {:recover_dets, table_name})
-        else
+      catch
+        kind, reason ->
           Logger.warning(
-            "DETS match_object read failed for #{inspect(table_name)}: #{inspect(reason)}. Returning empty."
+            "DETS→CubDB migration: failed to read tasks DETS file #{path}: " <>
+              "#{kind}: #{inspect(reason)}. Starting fresh."
           )
+      after
+        # Rename the old DETS file so we don't retry every launch.
+        rename_migrated_file(path)
+      end
+    end
+  end
+
+  defp migrate_projects_dets(data_dir, task_store) do
+    path = Path.join(data_dir, "recent_projects.dets")
+
+    if File.exists?(path) do
+      try do
+        case :dets.open_file(:evo_dash_projects_dets, type: :set, file: to_charlist(path), repair: true) do
+          {:ok, table} ->
+            records =
+              :dets.foldl(
+                fn {proj_path, project}, acc ->
+                  CubDB.put(task_store, {:project, proj_path}, project)
+                  acc + 1
+                end,
+                0,
+                table
+              )
+
+            _ = :dets.close(table)
+
+            Logger.info(
+              "DETS→CubDB migration: migrated #{records} project(s) from #{path}."
+            )
+
+          {:error, reason} ->
+            Logger.warning(
+              "DETS→CubDB migration: could not open projects DETS file #{path}: " <>
+                "#{inspect(reason)}. Starting fresh."
+            )
         end
-        []
-    end
-  end
-
-  defp bad_object_error?({:bad_object, _}), do: true
-  defp bad_object_error?(_), do: false
-
-  defp try_foldl(table_name) do
-    try do
-      result = :dets.foldl(fn obj, acc -> [obj | acc] end, [], table_name)
-      case result do
-        {:error, _} = error -> error
-        objects when is_list(objects) -> {:ok, objects}
-      end
-    rescue
-      e -> {:error, {:rescued, e}}
-    catch
-      kind, reason -> {:error, {kind, reason}}
-    end
-  end
-
-  def safe_lookup(table_name, key) do
-    from_dets(table_name, :dets.lookup(table_name, key), "lookup(#{inspect(key)})")
-  end
-
-  defp safe_insert(table_name, object) do
-    result =
-      try do
-        :dets.insert(table_name, object)
-      rescue
-        e -> {:error, {:rescued, e}}
       catch
-        kind, reason -> {:error, {kind, reason}}
+        kind, reason ->
+          Logger.warning(
+            "DETS→CubDB migration: failed to read projects DETS file #{path}: " <>
+              "#{kind}: #{inspect(reason)}. Starting fresh."
+          )
+      after
+        # Rename the old DETS file so we don't retry every launch.
+        rename_migrated_file(path)
       end
+    end
+  end
 
-    case result do
+  defp rename_migrated_file(path) do
+    migrated_path = path <> ".migrated"
+
+    case File.rename(path, migrated_path) do
       :ok ->
-        :ok
+        Logger.info("DETS→CubDB migration: renamed #{path} → #{migrated_path}.")
 
       {:error, reason} ->
-        Logger.error(
-          "DETS insert failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
-            "Triggering runtime recovery."
+        Logger.warning(
+          "DETS→CubDB migration: could not rename #{path} to #{migrated_path}: " <>
+            "#{inspect(reason)}. The file will be retried on next launch."
         )
-
-        send(self(), {:recover_dets, table_name})
-        {:error, reason}
     end
   end
 
-  defp safe_delete(table_name, key) do
-    result =
-      try do
-        :dets.delete(table_name, key)
-      rescue
-        e -> {:error, {:rescued, e}}
-      catch
-        kind, reason -> {:error, {kind, reason}}
-      end
+  # --- Task Normalization ---
 
-    case result do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.error(
-          "DETS delete failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
-            "Triggering runtime recovery."
-        )
-
-        send(self(), {:recover_dets, table_name})
-        {:error, reason}
-    end
-  end
-
-  defp sync_dets(table_name) do
-    case :dets.sync(table_name) do
-      :ok -> :ok
-      {:error, _} = e ->
-        Logger.warning("DETS sync failed for table #{inspect(table_name)}: #{inspect(e)}")
-        e
-    end
-  end
-
-  # Pure dispatcher over a :dets read result. Public + documented as internal so the
-  # error branch (a `{:error, {:bad_object, ...}}` return from mid-read corruption) can
-  # be unit-tested deterministically — that tuple cannot be reliably reproduced against a
-  # real open table (OTP's in-memory cache usually masks it) and closed/never-opened
-  # tables raise `:badarg` rather than returning `{:error, _}`.
-  @doc false
-  def from_dets(table_name, {:error, reason}, op) do
-    Logger.error(
-      "DETS #{op} failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
-        "Returning empty result to avoid crash. (Read errors do not trigger recovery; " <>
-        "only write/open failures do.)"
-    )
-
-    []
-  end
-
-  @doc false
-  def from_dets(_table_name, objects, _op) when is_list(objects) do
-    objects
-  end
-
-  # --- Task Normalization (DETS in-place) ---
-
-  defp normalize_tasks_in_dets(state) do
-    objects = safe_match_object(state.dets_tasks)
+  defp normalize_tasks(state) do
+    objects = select_all_tasks(state)
 
     try do
       for {_key, %TaskInfo{} = task} <- objects do
@@ -813,14 +613,14 @@ defmodule EvoDash.TaskRegistry do
         # Reset non-persistable fields
         task = %{task | ref: nil, status: maybe_reset_status(task.status)}
         task = set_crash_details(task)
-        safe_insert(state.dets_tasks, {task.id, task})
+        CubDB.put(state.task_store, {:task, task.id}, task)
       end
 
       :ok
     rescue
       error ->
         Logger.error(
-          "Failed to normalize tasks in DETS: #{inspect(error)}. " <>
+          "Failed to normalize tasks in CubDB: #{inspect(error)}. " <>
             "Skipping normalization — existing records preserved."
         )
 
@@ -851,16 +651,16 @@ defmodule EvoDash.TaskRegistry do
     cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
 
     # Delete tasks older than cutoff (only finished tasks)
-    all_tasks = safe_match_object(state.dets_tasks) |> Enum.map(&elem(&1, 1))
+    all_tasks = select_all_tasks(state) |> Enum.map(fn {_key, task} -> task end)
 
     for task <- all_tasks,
         task.finished_at != nil,
         DateTime.compare(task.finished_at, cutoff) == :lt do
-      safe_delete(state.dets_tasks, task.id)
+      CubDB.delete(state.task_store, {:task, task.id})
     end
 
     # Enforce max_tasks limit (keep newest finished tasks)
-    remaining = safe_match_object(state.dets_tasks) |> Enum.map(&elem(&1, 1))
+    remaining = select_all_tasks(state) |> Enum.map(fn {_key, task} -> task end)
 
     finished =
       remaining
@@ -869,7 +669,7 @@ defmodule EvoDash.TaskRegistry do
 
     if length(finished) > max_tasks do
       to_delete = Enum.drop(finished, max_tasks)
-      for task <- to_delete, do: safe_delete(state.dets_tasks, task.id)
+      for task <- to_delete, do: CubDB.delete(state.task_store, {:task, task.id})
     end
 
     :ok
@@ -879,8 +679,8 @@ defmodule EvoDash.TaskRegistry do
 
   defp trim_recent_projects(state) do
     projects =
-      safe_match_object(state.dets_projects)
-      |> Enum.map(fn {_path, project} -> project end)
+      select_all_projects(state)
+      |> Enum.map(fn {_key, project} -> project end)
       |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
 
     case Enum.split(projects, @max_recent_projects) do
@@ -889,7 +689,7 @@ defmodule EvoDash.TaskRegistry do
 
       {_kept, to_remove} ->
         for project <- to_remove do
-          safe_delete(state.dets_projects, project.path)
+          CubDB.delete(state.task_store, {:project, project.path})
         end
     end
   end
@@ -942,16 +742,15 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_info({:task_status, task_id, status}, state) do
     state =
-      case safe_lookup(state.dets_tasks, task_id) do
-        [{^task_id, %TaskInfo{} = task}] ->
+      case task_get(state, task_id) do
+        %TaskInfo{} = task ->
           finished_at =
             if status in [:completed, :failed, :cancelled],
               do: DateTime.utc_now(),
               else: task.finished_at
 
           updated = %{task | status: status, finished_at: finished_at}
-          safe_insert(state.dets_tasks, {task_id, updated})
-          sync_dets(state.dets_tasks)
+          CubDB.put(state.task_store, {:task, task_id}, updated)
 
           if status in [:completed, :failed, :cancelled] do
             cleanup_expired_tasks(state)
@@ -960,7 +759,7 @@ defmodule EvoDash.TaskRegistry do
             state
           end
 
-        _ ->
+        nil ->
           state
       end
 
@@ -1017,55 +816,6 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
     {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({:recover_dets, table_name}, state) do
-    file_path =
-      cond do
-        MapSet.member?(state.recovering, table_name) ->
-          nil
-
-        table_name == state.dets_tasks ->
-          state.dets_tasks_file
-
-        table_name == state.dets_projects ->
-          state.dets_projects_file
-
-        true ->
-          Logger.warning(
-            "Received recovery request for unknown DETS table #{inspect(table_name)}; skipping."
-          )
-
-          nil
-      end
-
-    if file_path do
-      # Check if the table is actually still corrupt. A previous recovery in the
-      # queue may have already repaired it — in that case skip to avoid creating
-      # spurious backup files of a now-healthy table.
-      if dets_readable?(table_name) do
-        Logger.info(
-          "DETS table #{inspect(table_name)} is already readable; skipping redundant recovery."
-        )
-
-        {:noreply, state}
-      else
-        # Guard the table so concurrent recovery signals are skipped.
-        recovering = MapSet.put(state.recovering, table_name)
-        result = recover_dets_table(table_name, file_path)
-
-        # The table name atom stays the same after reopen, so the state references
-        # remain valid — only the recovering guard is cleared.
-        if result != :ok do
-          Logger.error("Runtime DETS recovery for #{inspect(table_name)} did not fully succeed.")
-        end
-
-        {:noreply, %{state | recovering: MapSet.delete(recovering, table_name)}}
-      end
-    else
-      {:noreply, state}
-    end
   end
 
   @impl true

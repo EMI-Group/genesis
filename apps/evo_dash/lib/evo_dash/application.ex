@@ -11,6 +11,7 @@ defmodule EvoDash.Application do
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
+      {EvoDash.TaskStore, data_dir: Path.join(EvoGit.Platform.data_dir(), "tasks.cubdb")},
       EvoDash.TaskRegistry,
       EvoDashWeb.Endpoint
     ]
