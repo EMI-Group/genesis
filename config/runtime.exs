@@ -20,6 +20,27 @@ if System.get_env("PHX_SERVER") do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
 
+# ── ReqLLM HTTP Connection Pool ─────────────────────────────────────
+# Dynamically size the ReqLLM Finch streaming pool based on the user's
+# configured LLM concurrency (config.toml → [scheduler] max_concurrency).
+# This runs before :req_llm starts its Finch pool, so the pool is sized
+# correctly at boot.
+#
+# ReqLLM defaults to stream_pool_count: 8 with HTTP/1-only pools. When
+# max_concurrency exceeds that, the default pool becomes a bottleneck:
+# concurrent stream_text/3 calls queue waiting for a free connection.
+# We size the pool to match the configured concurrency plus a small buffer
+# for auxiliary (non-slot-gated) LLM calls (context compression, evolution
+# synthesis, etc.).
+max_concurrency = EvoGit.Config.resolve([:scheduler, :max_concurrency])
+stream_pool_count = max(max_concurrency + 2, 8)
+
+config :req_llm,
+  stream_pool_count: stream_pool_count,
+  stream_pool_size: 1,
+  stream_pool_protocols: [:http1],
+  stream_pool_timeout: 120_000
+
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
