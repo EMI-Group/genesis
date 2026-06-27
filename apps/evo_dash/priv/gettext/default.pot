@@ -1370,7 +1370,7 @@ msgstr ""
 #: lib/evo_dash_web/live/system_live.ex:120
 #: lib/evo_dash_web/live/system_live.ex:120
 #, elixir-autogen, elixir-format
-msgid "Create a credentials.toml file at ~/.config/evogit/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
+msgid "Create a credentials.toml file at ~/.config/genesis/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
 msgstr ""
 
 #: lib/evo_dash_web/helpers.ex:471
@@ -1430,7 +1430,7 @@ msgstr ""
 #: lib/evo_dash_web/live/system_live.ex:124
 #: lib/evo_dash_web/live/system_live.ex:124
 #, elixir-autogen, elixir-format
-msgid "Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
+msgid "Edit your config.toml file at ~/.config/genesis/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
 msgstr ""
 
 #: lib/evo_dash_web/live/system_live.ex:297
@@ -1714,7 +1714,7 @@ msgstr ""
 #: lib/evo_dash_web/components/dashboard_components.ex:297
 #: lib/evo_dash_web/components/dashboard_components.ex:297
 #, elixir-autogen, elixir-format
-msgid "No evogit.toml — using global defaults"
+msgid "No genesis.toml — using global defaults"
 msgstr ""
 
 #: lib/evo_dash_web/components/dashboard_components.ex:341
@@ -2132,13 +2132,13 @@ msgstr ""
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #, elixir-autogen, elixir-format
-msgid "evogit.toml"
+msgid "genesis.toml"
 msgstr ""
 
 #: lib/evo_dash_web/components/dashboard_components.ex:293
 #: lib/evo_dash_web/components/dashboard_components.ex:293
 #, elixir-autogen, elixir-format
-msgid "evogit.toml found — using project settings"
+msgid "genesis.toml found — using project settings"
 msgstr ""
 
 #: lib/evo_dash_web/live/dashboard_live.ex:209

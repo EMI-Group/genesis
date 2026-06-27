@@ -1365,8 +1365,8 @@ msgstr "Создать новую кодовую базу"
 #: lib/evo_dash_web/live/system_live.ex:120
 #: lib/evo_dash_web/live/system_live.ex:120
 #, elixir-autogen, elixir-format
-msgid "Create a credentials.toml file at ~/.config/evogit/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
-msgstr "Создайте файл credentials.toml по пути ~/.config/evogit/credentials.toml с вашим API-ключом. Требуется только один ключ — укажите тот, который соответствует вашему LLM-провайдеру (например, GOOGLE_API_KEY для Google Gemini). Кроме того, вы можете задать API-ключи напрямую как переменные окружения (например, export GOOGLE_API_KEY=AIza...)."
+msgid "Create a credentials.toml file at ~/.config/genesis/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
+msgstr "Создайте файл credentials.toml по пути ~/.config/genesis/credentials.toml с вашим API-ключом. Требуется только один ключ — укажите тот, который соответствует вашему LLM-провайдеру (например, GOOGLE_API_KEY для Google Gemini). Кроме того, вы можете задать API-ключи напрямую как переменные окружения (например, export GOOGLE_API_KEY=AIza...)."
 
 #: lib/evo_dash_web/helpers.ex:471
 #: lib/evo_dash_web/helpers.ex:471
@@ -1425,8 +1425,8 @@ msgstr "Отключено"
 #: lib/evo_dash_web/live/system_live.ex:124
 #: lib/evo_dash_web/live/system_live.ex:124
 #, elixir-autogen, elixir-format
-msgid "Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
-msgstr "Отредактируйте файл config.toml по пути ~/.config/evogit/config.toml и укажите поле model в секции [llm] (например, model = \"anthropic:claude-sonnet-4-20250514\"). Вы также можете временно изменить модель на странице Settings в панели управления."
+msgid "Edit your config.toml file at ~/.config/genesis/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
+msgstr "Отредактируйте файл config.toml по пути ~/.config/genesis/config.toml и укажите поле model в секции [llm] (например, model = \"anthropic:claude-sonnet-4-20250514\"). Вы также можете временно изменить модель на странице Settings в панели управления."
 
 #: lib/evo_dash_web/live/system_live.ex:297
 #: lib/evo_dash_web/live/system_live.ex:297
@@ -1709,8 +1709,8 @@ msgstr "Данные diff для этого ревью недоступны."
 #: lib/evo_dash_web/components/dashboard_components.ex:297
 #: lib/evo_dash_web/components/dashboard_components.ex:297
 #, elixir-autogen, elixir-format
-msgid "No evogit.toml — using global defaults"
-msgstr "Нет evogit.toml — используются глобальные настройки по умолчанию"
+msgid "No genesis.toml — using global defaults"
+msgstr "Нет genesis.toml — используются глобальные настройки по умолчанию"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:341
 #: lib/evo_dash_web/components/dashboard_components.ex:341
@@ -2127,14 +2127,14 @@ msgstr "не задано"
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #, elixir-autogen, elixir-format
-msgid "evogit.toml"
-msgstr "evogit.toml"
+msgid "genesis.toml"
+msgstr "genesis.toml"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:293
 #: lib/evo_dash_web/components/dashboard_components.ex:293
 #, elixir-autogen, elixir-format
-msgid "evogit.toml found — using project settings"
-msgstr "evogit.toml найден — используются настройки проекта"
+msgid "genesis.toml found — using project settings"
+msgstr "genesis.toml найден — используются настройки проекта"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:209
 #: lib/evo_dash_web/live/dashboard_live.ex:209

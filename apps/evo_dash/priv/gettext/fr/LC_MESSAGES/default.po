@@ -1360,8 +1360,8 @@ msgstr "Créer une nouvelle base de code"
 #: lib/evo_dash_web/live/system_live.ex:120
 #: lib/evo_dash_web/live/system_live.ex:120
 #, elixir-autogen, elixir-format
-msgid "Create a credentials.toml file at ~/.config/evogit/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
-msgstr "Créez un fichier credentials.toml dans ~/.config/evogit/credentials.toml avec votre clé API. Une seule clé est nécessaire — définissez celle correspondant à votre fournisseur LLM (ex. GOOGLE_API_KEY pour Google Gemini). Vous pouvez aussi définir les clés API directement comme variables d'environnement (ex. export GOOGLE_API_KEY=AIza...)."
+msgid "Create a credentials.toml file at ~/.config/genesis/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
+msgstr "Créez un fichier credentials.toml dans ~/.config/genesis/credentials.toml avec votre clé API. Une seule clé est nécessaire — définissez celle correspondant à votre fournisseur LLM (ex. GOOGLE_API_KEY pour Google Gemini). Vous pouvez aussi définir les clés API directement comme variables d'environnement (ex. export GOOGLE_API_KEY=AIza...)."
 
 #: lib/evo_dash_web/helpers.ex:471
 #: lib/evo_dash_web/helpers.ex:471
@@ -1420,8 +1420,8 @@ msgstr "Désactivé"
 #: lib/evo_dash_web/live/system_live.ex:124
 #: lib/evo_dash_web/live/system_live.ex:124
 #, elixir-autogen, elixir-format
-msgid "Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
-msgstr "Modifiez votre fichier config.toml dans ~/.config/evogit/config.toml et définissez le champ model sous [llm] (ex. model = \"anthropic:claude-sonnet-4-20250514\"). Vous pouvez aussi ajuster le modèle temporairement depuis la page Paramètres du tableau de bord."
+msgid "Edit your config.toml file at ~/.config/genesis/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
+msgstr "Modifiez votre fichier config.toml dans ~/.config/genesis/config.toml et définissez le champ model sous [llm] (ex. model = \"anthropic:claude-sonnet-4-20250514\"). Vous pouvez aussi ajuster le modèle temporairement depuis la page Paramètres du tableau de bord."
 
 #: lib/evo_dash_web/live/system_live.ex:297
 #: lib/evo_dash_web/live/system_live.ex:297
@@ -1704,8 +1704,8 @@ msgstr "Aucune donnée de diff disponible pour cette revue."
 #: lib/evo_dash_web/components/dashboard_components.ex:297
 #: lib/evo_dash_web/components/dashboard_components.ex:297
 #, elixir-autogen, elixir-format
-msgid "No evogit.toml — using global defaults"
-msgstr "Aucun evogit.toml — utilisation des valeurs globales par défaut"
+msgid "No genesis.toml — using global defaults"
+msgstr "Aucun genesis.toml — utilisation des valeurs globales par défaut"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:341
 #: lib/evo_dash_web/components/dashboard_components.ex:341
@@ -2122,14 +2122,14 @@ msgstr "vide"
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #, elixir-autogen, elixir-format
-msgid "evogit.toml"
-msgstr "evogit.toml"
+msgid "genesis.toml"
+msgstr "genesis.toml"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:293
 #: lib/evo_dash_web/components/dashboard_components.ex:293
 #, elixir-autogen, elixir-format
-msgid "evogit.toml found — using project settings"
-msgstr "evogit.toml trouvé — utilisation des paramètres du projet"
+msgid "genesis.toml found — using project settings"
+msgstr "genesis.toml trouvé — utilisation des paramètres du projet"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:209
 #: lib/evo_dash_web/live/dashboard_live.ex:209

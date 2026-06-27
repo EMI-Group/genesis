@@ -1360,8 +1360,8 @@ msgstr "Criar Novo Codebase"
 #: lib/evo_dash_web/live/system_live.ex:120
 #: lib/evo_dash_web/live/system_live.ex:120
 #, elixir-autogen, elixir-format
-msgid "Create a credentials.toml file at ~/.config/evogit/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
-msgstr "Crie um arquivo credentials.toml em ~/.config/evogit/credentials.toml com sua chave de API. Apenas uma chave é necessária — defina a que corresponde ao seu provedor LLM (ex.: GOOGLE_API_KEY para Google Gemini). Alternativamente, você pode definir chaves de API diretamente como variáveis de ambiente (ex.: export GOOGLE_API_KEY=AIza...)."
+msgid "Create a credentials.toml file at ~/.config/genesis/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
+msgstr "Crie um arquivo credentials.toml em ~/.config/genesis/credentials.toml com sua chave de API. Apenas uma chave é necessária — defina a que corresponde ao seu provedor LLM (ex.: GOOGLE_API_KEY para Google Gemini). Alternativamente, você pode definir chaves de API diretamente como variáveis de ambiente (ex.: export GOOGLE_API_KEY=AIza...)."
 
 #: lib/evo_dash_web/helpers.ex:471
 #: lib/evo_dash_web/helpers.ex:471
@@ -1420,8 +1420,8 @@ msgstr "Desativado"
 #: lib/evo_dash_web/live/system_live.ex:124
 #: lib/evo_dash_web/live/system_live.ex:124
 #, elixir-autogen, elixir-format
-msgid "Edit your config.toml file at ~/.config/evogit/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
-msgstr "Edite seu arquivo config.toml em ~/.config/evogit/config.toml e defina o campo model em [llm] (ex.: model = \"anthropic:claude-sonnet-4-20250514\"). Você também pode ajustar o modelo temporariamente pela página de Configurações no painel."
+msgid "Edit your config.toml file at ~/.config/genesis/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
+msgstr "Edite seu arquivo config.toml em ~/.config/genesis/config.toml e defina o campo model em [llm] (ex.: model = \"anthropic:claude-sonnet-4-20250514\"). Você também pode ajustar o modelo temporariamente pela página de Configurações no painel."
 
 #: lib/evo_dash_web/live/system_live.ex:297
 #: lib/evo_dash_web/live/system_live.ex:297
@@ -1704,8 +1704,8 @@ msgstr "Nenhum dado de diff disponível para esta revisão."
 #: lib/evo_dash_web/components/dashboard_components.ex:297
 #: lib/evo_dash_web/components/dashboard_components.ex:297
 #, elixir-autogen, elixir-format
-msgid "No evogit.toml — using global defaults"
-msgstr "Sem evogit.toml — usando padrões globais"
+msgid "No genesis.toml — using global defaults"
+msgstr "Sem genesis.toml — usando padrões globais"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:341
 #: lib/evo_dash_web/components/dashboard_components.ex:341
@@ -2122,14 +2122,14 @@ msgstr "vazio"
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #, elixir-autogen, elixir-format
-msgid "evogit.toml"
-msgstr "evogit.toml"
+msgid "genesis.toml"
+msgstr "genesis.toml"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:293
 #: lib/evo_dash_web/components/dashboard_components.ex:293
 #, elixir-autogen, elixir-format
-msgid "evogit.toml found — using project settings"
-msgstr "evogit.toml encontrado — usando configurações do projeto"
+msgid "genesis.toml found — using project settings"
+msgstr "genesis.toml encontrado — usando configurações do projeto"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:209
 #: lib/evo_dash_web/live/dashboard_live.ex:209
