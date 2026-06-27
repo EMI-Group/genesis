@@ -73,7 +73,7 @@ When AgentScheduler processes these, it broadcasts `{:scheduler_config_updated}`
 
 #### 3. Foreign Repository Management (DashboardLive — in-memory per-project)
 
-Foreign repos are loaded from `evogit.toml` via `EvoGit.ProjectConfig.foreign_repos/1` when a project is opened. Add/remove operations modify the in-memory list in LiveView socket assigns. When a task is started, foreign repos are passed as `foreign_repos` in opts to `TaskRegistry.start_task/2`.
+Foreign repos are loaded from `genesis.toml` via `EvoGit.ProjectConfig.foreign_repos/1` when a project is opened. Add/remove operations modify the in-memory list in LiveView socket assigns. When a task is started, foreign repos are passed as `foreign_repos` in opts to `TaskRegistry.start_task/2`.
 
 #### 4. Configuration File Management (SettingsLive → EvoGit.Config)
 
