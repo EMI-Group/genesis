@@ -540,9 +540,23 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp dets_readable?(table_name) do
-    case :dets.info(table_name, :size) do
-      n when is_integer(n) -> true
+    with n when is_integer(n) <- :dets.info(table_name, :size),
+         true <- dets_foldl_works?(table_name) do
+      true
+    else
       _ -> false
+    end
+  end
+
+  # Verify foldl actually works - catches :bad_object errors that :size alone misses
+  defp dets_foldl_works?(table_name) do
+    try do
+      :dets.foldl(fn _obj, acc -> acc + 1 end, 0, table_name)
+      true
+    rescue
+      _ -> false
+    catch
+      _, _ -> false
     end
   end
 
@@ -639,7 +653,7 @@ defmodule EvoDash.TaskRegistry do
 
   defp safe_match_object_attempt(table_name) do
     try do
-      {:ok, :dets.match_object(table_name, {:_, :_})}
+      {:ok, :dets.foldl(fn obj, acc -> [obj | acc] end, [], table_name)}
     rescue
       _ -> {:error, :rescued}
     catch
@@ -664,7 +678,43 @@ defmodule EvoDash.TaskRegistry do
   end
 
   def safe_match_object(table_name) do
-    from_dets(table_name, :dets.match_object(table_name, {:_, :_}), "match_object")
+    # Use foldl to iterate all objects safely - :dets.match_object with {:_, :_} pattern
+    # creates invalid tuple of atoms, not a pattern wildcard, and raises ArgumentError.
+    # If we encounter :bad_object errors, trigger recovery and retry.
+    case try_foldl(table_name) do
+      {:ok, objects} -> objects
+      {:error, reason} ->
+        # Check if this is a bad_object error (corruption) or other read failure
+        if bad_object_error?(reason) do
+          Logger.error(
+            "DETS match_object encountered corrupted object in #{inspect(table_name)}: #{inspect(reason)}. " <>
+            "Triggering recovery."
+          )
+          send(self(), {:recover_dets, table_name})
+        else
+          Logger.warning(
+            "DETS match_object read failed for #{inspect(table_name)}: #{inspect(reason)}. Returning empty."
+          )
+        end
+        []
+    end
+  end
+
+  defp bad_object_error?({:bad_object, _}), do: true
+  defp bad_object_error?(_), do: false
+
+  defp try_foldl(table_name) do
+    try do
+      result = :dets.foldl(fn obj, acc -> [obj | acc] end, [], table_name)
+      case result do
+        {:error, _} = error -> error
+        objects when is_list(objects) -> {:ok, objects}
+      end
+    rescue
+      e -> {:error, {:rescued, e}}
+    catch
+      kind, reason -> {:error, {kind, reason}}
+    end
   end
 
   def safe_lookup(table_name, key) do
