@@ -330,6 +330,8 @@ defmodule EvoDash.TaskRegistry do
     # Enforce max limit
     trim_recent_projects(state)
 
+    sync_dets(state.dets_projects)
+
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
@@ -370,6 +372,7 @@ defmodule EvoDash.TaskRegistry do
           updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
           updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
           safe_insert(state.dets_tasks, {task_id, updated})
+          sync_dets(state.dets_tasks)
 
           if status in [:completed, :failed, :cancelled] do
             cleanup_expired_tasks(state)
@@ -403,6 +406,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
     safe_delete(state.dets_tasks, task_id)
+    sync_dets(state.dets_tasks)
     cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -535,13 +539,10 @@ defmodule EvoDash.TaskRegistry do
     end
   end
 
-  # Probe whether the table can be read without errors.
   defp dets_readable?(table_name) do
-    # safe_match_object returns [] on error, but we need to distinguish "genuinely
-    # empty" from "corrupt". Use a raw :dets.match_object and check the return type.
-    case :dets.match_object(table_name, {:_, :_}) do
-      objects when is_list(objects) -> true
-      {:error, _reason} -> false
+    case :dets.info(table_name, :size) do
+      n when is_integer(n) -> true
+      _ -> false
     end
   end
 
@@ -554,36 +555,57 @@ defmodule EvoDash.TaskRegistry do
     _ = File.cp(file_path, backup_path)
     Logger.warning("Backed up corrupt DETS file to #{backup_path}")
 
-    # Salvage via repair + reopen (operates on a fresh read of the file).
-    salvaged = salvage_dets_objects(table_name, file_path)
-    _ = :dets.close(table_name)
-
-    # Delete the corrupt file and recreate a fresh table.
-    _ = File.rm(file_path)
-
-    case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
+    # Primary path: reopen with repair: :force which repairs the file IN-PLACE
+    # (does NOT delete it), preserving as much data as possible.
+    case :dets.open_file(table_name, type: :set, file: to_charlist(file_path), repair: :force) do
       {:ok, _} ->
-        count = length(salvaged)
+        # Count records to verify; the repair: :force already wrote fixes in-place.
+        size = :dets.info(table_name, :size)
 
-        if count > 0 do
-          for obj <- salvaged, do: :dets.insert(table_name, obj)
-          Logger.info("Recovered #{count} record(s) into fresh DETS table #{inspect(table_name)}")
-        else
-          Logger.error(
-            "No records could be salvaged from corrupt DETS file #{file_path}. " <>
-              "Starting with an empty table. Backup preserved at #{backup_path}."
-          )
-        end
+        Logger.info(
+          "Recovered DETS table #{inspect(table_name)} in-place via repair: force " <>
+            "(#{size} record(s)). Backup at #{backup_path}."
+        )
 
         :ok
 
       {:error, reason} ->
+        # repair: :force failed — fall back to salvage approach, writing to the SAME file.
         Logger.error(
-          "CRITICAL: Could not recreate DETS file #{file_path}: #{inspect(reason)}. " <>
-            "Backup preserved at #{backup_path}."
+          "repair: force failed for #{file_path}: #{inspect(reason)}. Falling back to salvage."
         )
 
-        {:error, reason}
+        salvaged = salvage_dets_objects(table_name, file_path)
+        _ = :dets.close(table_name)
+        _ = File.rm(file_path)
+
+        case :dets.open_file(table_name, type: :set, file: to_charlist(file_path)) do
+          {:ok, _} ->
+            for obj <- salvaged, do: :dets.insert(table_name, obj)
+            count = length(salvaged)
+
+            if count > 0 do
+              Logger.info(
+                "Salvaged #{count} record(s) into DETS table #{inspect(table_name)}. " <>
+                  "Backup at #{backup_path}."
+              )
+            else
+              Logger.error(
+                "No records could be salvaged from corrupt DETS file #{file_path}. " <>
+                  "Starting empty. Backup preserved at #{backup_path}."
+              )
+            end
+
+            :ok
+
+          {:error, reason2} ->
+            Logger.error(
+              "CRITICAL: Could not recreate DETS file #{file_path}: #{inspect(reason2)}. " <>
+                "Backup at #{backup_path}."
+            )
+
+            {:error, reason2}
+        end
     end
   end
 
@@ -699,6 +721,15 @@ defmodule EvoDash.TaskRegistry do
     end
   end
 
+  defp sync_dets(table_name) do
+    case :dets.sync(table_name) do
+      :ok -> :ok
+      {:error, _} = e ->
+        Logger.warning("DETS sync failed for table #{inspect(table_name)}: #{inspect(e)}")
+        e
+    end
+  end
+
   # Pure dispatcher over a :dets read result. Public + documented as internal so the
   # error branch (a `{:error, {:bad_object, ...}}` return from mid-read corruption) can
   # be unit-tested deterministically — that tuple cannot be reliably reproduced against a
@@ -708,11 +739,9 @@ defmodule EvoDash.TaskRegistry do
   def from_dets(table_name, {:error, reason}, op) do
     Logger.error(
       "DETS #{op} failed for table #{inspect(table_name)}: #{inspect(reason)}. " <>
-        "Returning empty result to avoid crash. Triggering runtime recovery."
+        "Returning empty result to avoid crash. (Read errors do not trigger recovery; " <>
+        "only write/open failures do.)"
     )
-
-    # Trigger immediate runtime recovery instead of waiting for a restart.
-    send(self(), {:recover_dets, table_name})
 
     []
   end
@@ -872,6 +901,7 @@ defmodule EvoDash.TaskRegistry do
 
           updated = %{task | status: status, finished_at: finished_at}
           safe_insert(state.dets_tasks, {task_id, updated})
+          sync_dets(state.dets_tasks)
 
           if status in [:completed, :failed, :cancelled] do
             cleanup_expired_tasks(state)
