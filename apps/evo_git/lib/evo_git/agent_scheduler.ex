@@ -380,7 +380,7 @@ defmodule EvoGit.AgentScheduler do
       AgentScheduler: LLM model not configured. Agent execution will be unavailable until configured.
       Please set llm.model in your config file:
 
-      ~/.config/evogit/config.toml:
+      ~/.config/genesis/config.toml:
 
           [llm]
           model = "provider:model_name"

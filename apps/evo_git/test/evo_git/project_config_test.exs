@@ -21,7 +21,36 @@ defmodule EvoGit.ProjectConfigTest do
       assert ProjectConfig.read(tmp_dir) == nil
     end
 
-    test "returns parsed map for valid evogit.toml", %{tmp_dir: tmp_dir} do
+    test "returns parsed map for valid genesis.toml", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      script = "scripts/setup_worktree.sh"
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
+
+      assert %{"worktree" => %{"script" => "scripts/setup_worktree.sh"}} =
+               ProjectConfig.read(tmp_dir)
+    end
+
+    test "returns empty map for empty genesis.toml", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "genesis.toml"), "")
+
+      assert ProjectConfig.read(tmp_dir) == %{}
+    end
+
+    test "returns nil and logs warning for invalid TOML", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "genesis.toml"), "[invalid = missing_value")
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert ProjectConfig.read(tmp_dir) == nil
+        end)
+
+      assert log =~ "Failed to parse"
+    end
+
+    test "falls back to legacy evogit.toml when genesis.toml is absent", %{tmp_dir: tmp_dir} do
       toml_content = """
       [worktree]
       script = "scripts/setup_worktree.sh"
@@ -33,21 +62,12 @@ defmodule EvoGit.ProjectConfigTest do
                ProjectConfig.read(tmp_dir)
     end
 
-    test "returns empty map for empty evogit.toml", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "evogit.toml"), "")
+    test "prefers genesis.toml over legacy evogit.toml when both exist", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "genesis.toml"), "[commands]\ndev = \"mix test\"\n")
+      File.write!(Path.join(tmp_dir, "evogit.toml"), "[commands]\ndev = \"npm run dev\"\n")
 
-      assert ProjectConfig.read(tmp_dir) == %{}
-    end
-
-    test "returns nil and logs warning for invalid TOML", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "evogit.toml"), "[invalid = missing_value")
-
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          assert ProjectConfig.read(tmp_dir) == nil
-        end)
-
-      assert log =~ "Failed to parse"
+      config = ProjectConfig.read(tmp_dir)
+      assert config["commands"]["dev"] == "mix test"
     end
   end
 
@@ -62,7 +82,7 @@ defmodule EvoGit.ProjectConfigTest do
       script = "scripts/setup_worktree.sh"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       assert ProjectConfig.worktree_script(tmp_dir) == "scripts/setup_worktree.sh"
     end
@@ -73,7 +93,7 @@ defmodule EvoGit.ProjectConfigTest do
       timeout = 30
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       assert ProjectConfig.worktree_script(tmp_dir) == nil
     end
@@ -84,7 +104,7 @@ defmodule EvoGit.ProjectConfigTest do
       key = "value"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       assert ProjectConfig.worktree_script(tmp_dir) == nil
     end
@@ -101,7 +121,7 @@ defmodule EvoGit.ProjectConfigTest do
       script = "scripts/setup_worktree.sh"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       assert ProjectConfig.foreign_repos(tmp_dir) == []
     end
@@ -115,7 +135,7 @@ defmodule EvoGit.ProjectConfigTest do
       path = "/Source/rust-rewrite-proj"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       repos = ProjectConfig.foreign_repos(tmp_dir)
 
@@ -138,7 +158,7 @@ defmodule EvoGit.ProjectConfigTest do
       path = "/Source/rust-rewrite-proj"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       repos = ProjectConfig.foreign_repos(tmp_dir)
 
@@ -159,7 +179,7 @@ defmodule EvoGit.ProjectConfigTest do
       missing_path = "oops"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
@@ -178,7 +198,7 @@ defmodule EvoGit.ProjectConfigTest do
       script.macos = "scripts/setup_macos.sh"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       assert ProjectConfig.worktree_script(tmp_dir, :linux) == "scripts/setup_linux.sh"
       assert ProjectConfig.worktree_script(tmp_dir, :macos) == "scripts/setup_macos.sh"
@@ -190,7 +210,7 @@ defmodule EvoGit.ProjectConfigTest do
       script.linux = "scripts/setup_linux.sh"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       assert ProjectConfig.worktree_script(tmp_dir, :macos) == nil
       assert ProjectConfig.worktree_script(tmp_dir, :windows) == nil
@@ -202,7 +222,7 @@ defmodule EvoGit.ProjectConfigTest do
       script = "scripts/setup.sh"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       # String script is returned regardless of OS queried
       assert ProjectConfig.worktree_script(tmp_dir, :linux) == "scripts/setup.sh"
@@ -220,7 +240,7 @@ defmodule EvoGit.ProjectConfigTest do
       timeout = 30
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       assert ProjectConfig.worktree_script(tmp_dir, :linux) == nil
     end
@@ -239,7 +259,7 @@ defmodule EvoGit.ProjectConfigTest do
       script.linux = "scripts/setup_linux.sh"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       # No macos variant in the map → nil
       assert ProjectConfig.worktree_script(tmp_dir, :macos) == nil
@@ -257,7 +277,7 @@ defmodule EvoGit.ProjectConfigTest do
       build = "mix compile"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       commands = ProjectConfig.commands(tmp_dir)
 
@@ -274,7 +294,7 @@ defmodule EvoGit.ProjectConfigTest do
       script = "scripts/setup.sh"
       """
 
-      File.write!(Path.join(tmp_dir, "evogit.toml"), toml_content)
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
       assert ProjectConfig.commands(tmp_dir) == %{}
     end

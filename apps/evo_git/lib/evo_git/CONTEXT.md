@@ -1,7 +1,7 @@
 # EvoGit Core Library — `lib/evo_git/`
 
 ## Intent
-Core source of the `:evo_git` OTP application: the Agent system (LLM-powered tool-calling loops), AgentScheduler (GenServer for worktree pools, ETS state, slot management), Core domain types (ContextNode, PhyloGraphNode, ForeignRepo), Git adapter, and Runtime phases (Genesis, Evolution). Supports multi-repo operation — foreign repos configured via `evogit.toml` or CLI flags enable cross-repo subagent spawning into isolated worktrees.
+Core source of the `:evo_git` OTP application: the Agent system (LLM-powered tool-calling loops), AgentScheduler (GenServer for worktree pools, ETS state, slot management), Core domain types (ContextNode, PhyloGraphNode, ForeignRepo), Git adapter, and Runtime phases (Genesis, Evolution). Supports multi-repo operation — foreign repos configured via `genesis.toml` or CLI flags enable cross-repo subagent spawning into isolated worktrees.
 
 ## Routing Table
 - `./agent/` → Agent behaviour, tool library, context compression, subagent processing
@@ -23,7 +23,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 | `EvoGit.AgentScheduler` | GenServer — worktree pool, agent lifecycle, subagent spawning, ETS state, foreign repo registry |
 | `EvoGit.Task` | High-level orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
 | `EvoGit.Runtime` | Top-level coordinator: Genesis and Evolution phases |
-| `EvoGit.ProjectConfig` | Reads `evogit.toml` from repo root |
+| `EvoGit.ProjectConfig` | Reads `genesis.toml` from repo root |
 | `EvoGit.Config` | Unified 3-level configuration resolver (defaults → user TOML → runtime overrides) |
 | `EvoGit.Review` | Code review context — diff loading (`--numstat` for accurate counts), commit listing, SHA-based review (post-merge), expandable context diffs, single-commit inspection, branch merge/reject, GitHub PR creation |
 | `EvoGit.Platform` | Cross-platform OS detection, config/data directory resolution |

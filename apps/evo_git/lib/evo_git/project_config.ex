@@ -1,6 +1,6 @@
 defmodule EvoGit.ProjectConfig do
   @moduledoc """
-  Reads and parses the `evogit.toml` project configuration file from the repo root.
+  Reads and parses the `genesis.toml` project configuration file from the repo root.
 
   Currently supports:
 
@@ -41,10 +41,12 @@ defmodule EvoGit.ProjectConfig do
 
   alias EvoGit.Core.ForeignRepo
 
-  @config_filename "evogit.toml"
+  @config_filename "genesis.toml"
+  @legacy_config_filename "evogit.toml"
 
   @doc """
-  Reads and parses the evogit.toml from the given repo root.
+  Reads and parses `genesis.toml` from the given repo root.
+  Falls back to the legacy `evogit.toml` if `genesis.toml` is not found.
   Returns a map of the parsed config, or nil if no config file exists.
   Logs a warning if the file exists but cannot be parsed.
   """
@@ -53,16 +55,26 @@ defmodule EvoGit.ProjectConfig do
     path = Path.join(repo_root, @config_filename)
 
     if File.exists?(path) do
-      case File.read(path) do
-        {:ok, contents} ->
-          parse_toml(contents, path)
-
-        {:error, reason} ->
-          Logger.warning("Failed to read #{path}: #{inspect(reason)}")
-          nil
-      end
+      read_config_file(path)
     else
-      nil
+      legacy_path = Path.join(repo_root, @legacy_config_filename)
+
+      if File.exists?(legacy_path) do
+        read_config_file(legacy_path)
+      else
+        nil
+      end
+    end
+  end
+
+  defp read_config_file(path) do
+    case File.read(path) do
+      {:ok, contents} ->
+        parse_toml(contents, path)
+
+      {:error, reason} ->
+        Logger.warning("Failed to read #{path}: #{inspect(reason)}")
+        nil
     end
   end
 
@@ -96,7 +108,7 @@ defmodule EvoGit.ProjectConfig do
   end
 
   @doc """
-  Reads foreign repo configurations from evogit.toml.
+  Reads foreign repo configurations from genesis.toml.
 
   Returns a list of `EvoGit.Core.ForeignRepo` structs, or an empty list if none configured.
   Each entry under `[foreign_repos]` is a table with:
@@ -120,12 +132,12 @@ defmodule EvoGit.ProjectConfig do
     end
   rescue
     e ->
-      Logger.warning("Failed to parse foreign_repos from evogit.toml: #{inspect(e)}")
+      Logger.warning("Failed to parse foreign_repos from genesis.toml: #{inspect(e)}")
       []
   end
 
   @doc """
-  Reads user-defined command shortcuts from the `[commands]` section of evogit.toml.
+  Reads user-defined command shortcuts from the `[commands]` section of genesis.toml.
 
   Returns a map of `%{name => command_string}`, or an empty map if no commands
   section exists or no config file is present.

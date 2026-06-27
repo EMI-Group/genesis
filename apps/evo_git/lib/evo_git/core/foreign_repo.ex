@@ -7,7 +7,7 @@ defmodule EvoGit.Core.ForeignRepo do
 
   ## Usage
 
-  Foreign repos are configured in `evogit.toml` under the `[foreign_repos]` section:
+  Foreign repos are configured in `genesis.toml` under the `[foreign_repos]` section:
 
       [foreign_repos.original]
       path = "/Source/original-proj"

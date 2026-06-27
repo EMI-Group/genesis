@@ -19,7 +19,7 @@ defmodule EvoGit.Runtime.SkillExtraction do
       objective = build_objective(opts)
       phylo_node = PhyloGraphNode.new(repo_path, current_sha)
       context_node = ContextNode.load("./", repo_path)
-      # Load foreign repos: evogit.toml defaults merged with CLI-provided repos (CLI takes precedence)
+      # Load foreign repos: genesis.toml defaults merged with CLI-provided repos (CLI takes precedence)
       toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
       cli_repos = Keyword.get(opts, :foreign_repos, [])
       foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)

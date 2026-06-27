@@ -21,7 +21,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `repo_id` — atom identifying which repo this agent belongs to (`:primary` for main, or a foreign repo id)
   - `repo_root` — absolute filesystem path to the repo root (for display/grouping). Set from scheduler state at registration.
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
-  - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or evogit.toml)
+  - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
   - `usage` — cumulative token and cost usage for this agent (`nil` until the first LLM call completes)
   - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `LoopState.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
   """

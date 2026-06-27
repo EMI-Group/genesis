@@ -1,7 +1,7 @@
 # Config — Unified Configuration Resolver
 
 ## Intent
-Contains `EvoGit.Config`, the single source of truth for non-project configuration. Merges application defaults with user config (`~/.config/evogit/config.toml`), loads API keys from credentials into env vars, and provides write capability for persisting user config changes plus a diagnostic function for configuration completeness.
+Contains `EvoGit.Config`, the single source of truth for non-project configuration. Merges application defaults with user config (`~/.config/genesis/config.toml`), loads API keys from credentials into env vars, and provides write capability for persisting user config changes plus a diagnostic function for configuration completeness.
 
 ## API Surface
 
@@ -43,16 +43,16 @@ Delegates all calls to `EvoGit.Config.resolve/1`. Functions: `max_concurrency`, 
 | `shell_args/1` | Returns `["-c", cmd]` or `["-Command", cmd]` |
 | `systemd_available?/0` | Returns true on Linux with systemd |
 
-### `EvoGit.ProjectConfig` (per-repo evogit.toml)
+### `EvoGit.ProjectConfig` (per-repo genesis.toml)
 | Function | Description |
 |----------|-------------|
-| `read/1` | Parses `evogit.toml` from repo root |
+| `read/1` | Parses `genesis.toml` from repo root (falls back to legacy `evogit.toml`) |
 | `worktree_script/1` | Returns worktree init script for current OS (backward-compat wrapper) |
 | `worktree_script/2` | Returns worktree init script for given OS, with variant resolution |
 | `commands/1` | Returns map of user-defined dev command shortcuts from `[commands]` section |
 | `foreign_repos/1` | Returns list of `ForeignRepo` structs |
 
-### evogit.toml Structure
+### genesis.toml Structure
 ```toml
 [worktree]
 # Single fallback script (any OS):
@@ -81,7 +81,7 @@ name = "Legacy Project"
 
 ### Configuration Levels (priority: low → high)
 1. **Application defaults** — Hardcoded in `defaults/0` (no model, no username)
-2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant), parsed with `TomlElixir.decode/1`
+2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant), parsed with `TomlElixir.decode/1`
 3. **Runtime overrides** — Session-level, stored in `AgentScheduler` GenServer state via `handle_call({:update_config, opts})`. Applied via CLI flags (`-c`, `-m`, `--retries`, etc.) or dashboard settings panel.
 
 ### config.toml Structure

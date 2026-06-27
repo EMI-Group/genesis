@@ -5,11 +5,11 @@ defmodule EvoGit.Config do
   Merges three levels of configuration with increasing priority:
 
   1. **Application defaults** — Built-in sensible defaults (no model, no username)
-  2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant)
+  2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant)
   3. **Runtime overrides** — Dynamic session-level settings via AgentScheduler
 
   User credentials (API keys) are stored separately in
-  `~/.config/evogit/credentials.toml` for security.
+  `~/.config/genesis/credentials.toml` for security.
 
   ## Config File Format (config.toml)
 
@@ -165,30 +165,42 @@ defmodule EvoGit.Config do
   @doc """
   Reads and returns the parsed user config TOML file.
 
-  Returns `%{}` if the file is not found or cannot be parsed.
+  Checks the primary ("genesis") config path first. If `config.toml` is not
+  found there, falls back to the legacy ("evogit") config directory for
+  backwards compatibility with existing users.
+
+  Returns `%{}` if the file is not found or cannot be parsed in either location.
   """
   @spec user_config() :: map()
   def user_config do
     path = config_path()
 
-    if File.exists?(path) do
-      case File.read(path) do
-        {:ok, contents} ->
-          case TomlElixir.decode(contents) do
-            {:ok, config} ->
-              Map.delete(config, "evolution")
+    cond do
+      File.exists?(path) ->
+        read_config_file(path)
 
-            {:error, reason} ->
-              Logger.warning("Failed to parse config at #{path}: #{inspect(reason)}")
-              %{}
-          end
+      true ->
+        legacy_path = Path.join(legacy_config_dir(), @config_filename)
 
-        {:error, reason} ->
-          Logger.warning("Failed to read config at #{path}: #{inspect(reason)}")
-          %{}
-      end
-    else
-      %{}
+        if File.exists?(legacy_path), do: read_config_file(legacy_path), else: %{}
+    end
+  end
+
+  defp read_config_file(path) do
+    case File.read(path) do
+      {:ok, contents} ->
+        case TomlElixir.decode(contents) do
+          {:ok, config} ->
+            Map.delete(config, "evolution")
+
+          {:error, reason} ->
+            Logger.warning("Failed to parse config at #{path}: #{inspect(reason)}")
+            %{}
+        end
+
+      {:error, reason} ->
+        Logger.warning("Failed to read config at #{path}: #{inspect(reason)}")
+        %{}
     end
   end
 
@@ -291,34 +303,48 @@ defmodule EvoGit.Config do
   @doc """
   Reads and returns the parsed credentials TOML file.
 
-  Returns `%{}` if the file is not found or cannot be parsed.
+  Checks the primary ("genesis") credentials path first. If `credentials.toml`
+  is not found there, falls back to the legacy ("evogit") config directory for
+  backwards compatibility with existing users.
+
+  Returns `%{}` if the file is not found or cannot be parsed in either location.
   """
   @spec credentials() :: map()
   def credentials do
     path = credentials_path()
+    legacy_path = Path.join(legacy_config_dir(), @credentials_filename)
 
-    if File.exists?(path) do
-      case File.read(path) do
-        {:ok, contents} ->
-          case TomlElixir.decode(contents) do
-            {:ok, creds} ->
-              Enum.each(creds, fn {key, value} ->
-                if is_binary(value), do: System.put_env(key, value)
-              end)
+    cond do
+      File.exists?(path) ->
+        read_credentials_file(path)
 
-              creds
+      File.exists?(legacy_path) ->
+        read_credentials_file(legacy_path)
 
-            {:error, reason} ->
-              Logger.warning("Failed to parse credentials at #{path}: #{inspect(reason)}")
-              %{}
-          end
+      true ->
+        %{}
+    end
+  end
 
-        {:error, reason} ->
-          Logger.warning("Failed to read credentials at #{path}: #{inspect(reason)}")
-          %{}
-      end
-    else
-      %{}
+  defp read_credentials_file(path) do
+    case File.read(path) do
+      {:ok, contents} ->
+        case TomlElixir.decode(contents) do
+          {:ok, creds} ->
+            Enum.each(creds, fn {key, value} ->
+              if is_binary(value), do: System.put_env(key, value)
+            end)
+
+            creds
+
+          {:error, reason} ->
+            Logger.warning("Failed to parse credentials at #{path}: #{inspect(reason)}")
+            %{}
+        end
+
+      {:error, reason} ->
+        Logger.warning("Failed to read credentials at #{path}: #{inspect(reason)}")
+        %{}
     end
   end
 
@@ -388,12 +414,36 @@ defmodule EvoGit.Config do
   Returns the platform config directory path.
 
   Follows XDG conventions:
-  - **Linux**: `$XDG_CONFIG_HOME/evogit` (defaults to `~/.config/evogit`)
-  - **macOS**: `~/Library/Application Support/evogit`
-  - **Windows**: `%APPDATA%/evogit` (defaults to `~/evogit`)
+  - **Linux**: `$XDG_CONFIG_HOME/genesis` (defaults to `~/.config/genesis`)
+  - **macOS**: `~/Library/Application Support/genesis`
+  - **Windows**: `%APPDATA%/genesis` (defaults to `~/genesis`)
   """
   @spec config_dir() :: String.t()
   def config_dir do
+    case EvoGit.Platform.os() do
+      os when os in [:linux, :unknown] ->
+        xdg = System.get_env("XDG_CONFIG_HOME")
+        base = if xdg && xdg != "", do: xdg, else: Path.join(System.user_home!(), ".config")
+        Path.join(base, "genesis")
+
+      :macos ->
+        Path.join([System.user_home!(), "Library", "Application Support", "genesis"])
+
+      :windows ->
+        appdata = System.get_env("APPDATA")
+        base = if appdata && appdata != "", do: appdata, else: System.user_home!()
+        Path.join(base, "genesis")
+    end
+  end
+
+  @doc """
+  Returns the legacy config directory path (using the old "evogit" segment).
+
+  Used as a fallback when the new "genesis" config directory does not contain a
+  `config.toml`, preserving backwards compatibility for existing users.
+  """
+  @spec legacy_config_dir() :: String.t()
+  def legacy_config_dir do
     case EvoGit.Platform.os() do
       os when os in [:linux, :unknown] ->
         xdg = System.get_env("XDG_CONFIG_HOME")

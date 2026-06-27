@@ -503,9 +503,9 @@ defmodule EvoGit.CLI do
 
       Manual setup:
         Step 1: Create the config directory
-          Linux:   mkdir -p ~/.config/evogit
-          macOS:   mkdir -p ~/Library/Application\\ Support/evogit
-          Windows: mkdir %APPDATA%\\evogit
+          Linux:   mkdir -p ~/.config/genesis
+          macOS:   mkdir -p ~/Library/Application\\ Support/genesis
+          Windows: mkdir %APPDATA%\\genesis
 
         Step 2: Create credentials.toml with your API key(s)
           echo 'GOOGLE_API_KEY = "YOUR_API_KEY_HERE"' > credentials.toml
@@ -521,12 +521,12 @@ defmodule EvoGit.CLI do
 
     Configuration:
       Genesis requires API keys to communicate with LLM providers. Keys are stored
-      in a credentials file (NOT in evogit.toml or environment variables alone).
+      in a credentials file (NOT in genesis.toml or environment variables alone).
 
       Credentials file location (by platform):
-        Linux:   ~/.config/evogit/credentials.toml
-        macOS:   ~/Library/Application Support/evogit/credentials.toml
-        Windows: %APPDATA%\\evogit\\credentials.toml
+        Linux:   ~/.config/genesis/credentials.toml
+        macOS:   ~/Library/Application Support/genesis/credentials.toml
+        Windows: %APPDATA%\\genesis\\credentials.toml
 
       credentials.toml format:
         GOOGLE_API_KEY = "AIza..."
@@ -548,9 +548,9 @@ defmodule EvoGit.CLI do
 
       Additional settings (scheduler, LLM model, user preferences) can be
       configured in the user config file:
-        Linux:   ~/.config/evogit/config.toml
-        macOS:   ~/Library/Application Support/evogit/config.toml
-        Windows: %APPDATA%\\evogit\\config.toml
+        Linux:   ~/.config/genesis/config.toml
+        macOS:   ~/Library/Application Support/genesis/config.toml
+        Windows: %APPDATA%\\genesis\\config.toml
 
     Examples:
       evogit genesis "Create a snake game in Python" --mode new
