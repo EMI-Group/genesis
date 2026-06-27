@@ -18,8 +18,9 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 ### Core Modules
 
-- `EvoDash.Application` — OTP supervisor (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskRegistry → Endpoint)
-- `EvoDash.TaskRegistry` — DETS-backed GenServer tracking tasks; spawns `EvoGit.Runtime.*` processes
+- `EvoDash.Application` — OTP supervisor (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskStore → TaskRegistry → Endpoint)
+- `EvoDash.TaskStore` — CubDB-backed persistent store (single instance, namespaced keys `{:task, id}` / `{:project, path}`) for task history and recent projects; started under supervision before TaskRegistry
+- `EvoDash.TaskRegistry` — CubDB-backed GenServer tracking tasks; spawns `EvoGit.Runtime.*` processes
 - `EvoDashWeb.Endpoint` — Phoenix endpoint (LiveView socket, static files, Plug pipeline)
 - `EvoDashWeb.Router` — Routes to LiveViews and Phoenix LiveDashboard
 - `EvoDashWeb.Helpers` — Shared UI utilities (status badges, datetime formatting, icons, modals)
@@ -96,7 +97,7 @@ EvoDash uses **Gettext** for internationalization. All user-facing strings in Li
 - Depends on `:evo_git` at compile and runtime
 - Runs on port 4100 in development, uses Bandit adapter
 - Tailwind CSS 4 + DaisyUI (no Node.js toolchain)
-- No database — task state persisted via DETS; project state in LiveView socket assigns
+- No database — task state and recent projects persisted via CubDB (pure-Elixir key-value store); no database server
 - Single-node (DNSCluster configured but no distributed clustering)
 - Naming conventions: domain modules in `./lib/evo_dash/`, web modules in `./lib/evo_dash_web/`
 - Build: `mix assets.build` (esbuild + tailwind), `mix assets.deploy` (minified + digested)
