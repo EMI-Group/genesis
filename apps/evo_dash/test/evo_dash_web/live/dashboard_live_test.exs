@@ -48,8 +48,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "Project Settings"
       # When collapsed (no project), the details element does not have the open attribute
       # but the content is still rendered in the HTML. We can check that project-specific
-      # content like "evogit.toml found" is NOT shown (it requires @project_config to be truthy)
-      refute html =~ "evogit.toml found"
+      # content like "genesis.toml found" is NOT shown (it requires @project_config to be truthy)
+      refute html =~ "genesis.toml found"
     end
 
     test "task form is disabled when no project is active", %{conn: conn} do
@@ -122,8 +122,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       html = render(view)
 
-      # Empty directory has no evogit.toml — shows defaults message
-      assert html =~ "No evogit.toml" or html =~ "using global defaults"
+      # Empty directory has no genesis.toml — shows defaults message
+      assert html =~ "No genesis.toml" or html =~ "using global defaults"
     end
 
     test "project settings shows worktree init script status", %{conn: conn, tmp_dir: tmp_dir} do

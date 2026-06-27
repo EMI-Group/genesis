@@ -268,7 +268,7 @@ defmodule EvoDashWeb.DashboardComponents do
         <!-- Config status indicator -->
         <%= if @project_config do %>
           <span class="badge badge-success badge-sm gap-1">
-            <.icon name="hero-check-circle" class="size-3" /> {gettext("evogit.toml")}
+            <.icon name="hero-check-circle" class="size-3" /> {gettext("genesis.toml")}
           </span>
         <% else %>
           <span class="badge badge-ghost badge-sm gap-1">
@@ -290,11 +290,11 @@ defmodule EvoDashWeb.DashboardComponents do
             <p class="text-sm mt-1">
               <%= if @project_config do %>
                 <span class="text-success flex items-center gap-1">
-                  <.icon name="hero-check-circle" class="size-4" /> {gettext("evogit.toml found — using project settings")}
+                  <.icon name="hero-check-circle" class="size-4" /> {gettext("genesis.toml found — using project settings")}
                 </span>
               <% else %>
                 <span class="text-base-content/50 flex items-center gap-1">
-                  <.icon name="hero-information-circle" class="size-4" /> {gettext("No evogit.toml — using global defaults")}
+                  <.icon name="hero-information-circle" class="size-4" /> {gettext("No genesis.toml — using global defaults")}
                 </span>
               <% end %>
             </p>
