@@ -14,11 +14,21 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
   1. `EvoDashWeb.Telemetry`
   2. `DNSCluster`
   3. `Phoenix.PubSub` (registered as `EvoDash.PubSub`)
-  4. `EvoDash.TaskRegistry`
-  5. `EvoDashWeb.Endpoint`
+  4. `EvoDash.TaskStore` (CubDB store — started BEFORE TaskRegistry, which depends on it at init)
+  5. `EvoDash.TaskRegistry`
+  6. `EvoDashWeb.Endpoint`
+
+### `EvoDash.TaskStore` (`task_store.ex`)
+- Thin wrapper around a single CubDB instance (CubDB does not provide its own `child_spec/1`).
+- Started under supervision with `data_dir:` (a filesystem path) and optional `name:` (defaults to `EvoDash.TaskStore`).
+- CubDB is started with `auto_file_sync: true` for durable writes (data-loss protection).
+- Keys are namespaced tuples:
+  - `{:task, task_id}` → `%TaskInfo{}` (stored directly as the value)
+  - `{:project, path}` → `%{path:, name:, last_opened_at:}` map
+- Pure Elixir, zero NIF — append-only B+tree design makes DETS-style corruption (`{:bad_object, :read_buckets}`) structurally impossible.
 
 ### `EvoDash.TaskRegistry` (`task_registry.ex`)
-- Singleton `GenServer` backed by DETS (single source of truth).
+- Singleton `GenServer` backed by CubDB via `EvoDash.TaskStore` (single source of truth).
 - Tracks EvoGit tasks (`:genesis` / `:evolve`) with id, type, status, opts, pid, timestamps, logs, and result.
 - Runtime-only task references (`%Task{}`) are kept in an in-memory `task_refs` map (`%{task_id => %Task{}}`), not persisted.
 
