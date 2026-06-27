@@ -70,7 +70,7 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 - Every directory must have a CONTEXT.md as its spatial contract
 - Agents commit before delegating subagents (auto-commit fallback enforced)
 - LLM-generated code runs under platform-appropriate sandboxing (systemd-run on Linux, sandbox-exec on macOS, direct on Windows)
-- No hardcoded model or username — users configure via `~/.config/evogit/config.toml`
+- No hardcoded model or username — users configure via `~/.config/genesis/config.toml`
 - User config follows XDG conventions
 
 ## Development Notes

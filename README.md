@@ -31,7 +31,7 @@ Genesis is a decentralized, evolutionary software development framework powered 
     ```bash
     mix run -e 'EvoGit.CLI.main(System.argv())' -- setup
     ```
-    This runs a guided wizard that writes your LLM provider, model, and API key to `~/.config/evogit/config.toml`.
+    This runs a guided wizard that writes your LLM provider, model, and API key to `~/.config/genesis/config.toml`.
 
 ## Usage
 

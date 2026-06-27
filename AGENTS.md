@@ -174,10 +174,10 @@ The system supports referencing external repositories ("foreign repos") via abso
 
 A three-level configuration system:
 1. **Application defaults** — built-in defaults (no model or username hardcoded).
-2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant), defining LLM model, scheduler settings, sandbox mode, etc.
+2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant), defining LLM model, scheduler settings, sandbox mode, etc.
 3. **Runtime overrides** — session-level overrides via CLI flags or dashboard settings.
 
-Per-project configuration (`evogit.toml`) supports worktree initialization scripts, custom development commands, and foreign repo definitions.
+Per-project configuration (`genesis.toml`) supports worktree initialization scripts, custom development commands, and foreign repo definitions.
 
 ---
 
