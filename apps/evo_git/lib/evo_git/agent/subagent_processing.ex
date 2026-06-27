@@ -77,7 +77,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # Separate same-repo and cross-repo results
     # Cross-repo subagents commit to their own repo, no merge needed into parent
     {same_repo_shas, cross_repo_details} =
-      Enum.reduce(Enum.zip(subagent_specs, results), {[], []}, fn {spec, result}, {shas, details} ->
+      Enum.reduce(Enum.zip(subagent_specs, results), {[], []}, fn {spec, result},
+                                                                  {shas, details} ->
         case result do
           {:ok, %Result{commit_sha: sha}} when is_binary(sha) ->
             if spec.repo_id == :primary do
@@ -285,7 +286,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
               msg =
                 "Absolute path '#{raw_path}' is not within the primary repo (#{primary_root})" <>
                   " or any configured foreign repo" <>
-                  if(available != "", do: " (#{available})", else: "")
+                  if(available != "", do: " (#{available})", else: "") <>
+                  " Hint: verify the path is correct, or use the `-R <id:>path` flag to register foreign repos."
 
               {:error, msg}
           end
@@ -331,7 +333,6 @@ defmodule EvoGit.Agent.SubagentProcessing do
           state :: LoopState.t()
         ) :: {non_neg_integer(), String.t(), String.t(), String.t()}
   def process_subagent_result(call, index, result, _state) do
-
     output = format_subagent_result(result)
 
     tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
@@ -343,10 +344,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
   """
   @spec format_subagent_result(term()) :: String.t()
   def format_subagent_result({:error, :path_ignored}) do
-    "Error: Cannot spawn subagent in an ignored folder. The current working directory is ignored by git."
+    "Error: Cannot spawn subagent in an ignored folder. The current working directory is ignored by git. Hint: the path must not be gitignored — if the folder is needed, ensure it is tracked by git (not listed in .gitignore)."
   end
 
   def format_subagent_result({:error, {:foreign_repo_read_only, msg}}) do
+    "Error: #{msg}"
+  end
+
+  def format_subagent_result({:error, {:spatial_contract_violation, msg}}) do
     "Error: #{msg}"
   end
 
@@ -356,12 +361,25 @@ defmodule EvoGit.Agent.SubagentProcessing do
     Please verify that the path is correct and is in the repository.
     Note: git does not track empty directories,
     - If the path is a directory, ensure that the path contains at least one tracked file (empty CONTEXT.md or .gitkeep is a common choice), you can use the `make_dir` tool to create a directory and auto create a tracked file within and commit it.
-    - If the path is a file, ensure that the file is tracked by git. You can use the `touch` tool to create an empty file and auto commit it.
+    - If the path is a file, ensure that the file is tracked by git. You can use the `create_files` tool to create the file and commit it.
     """
   end
 
+  def format_subagent_result({:error, :max_depth_exceeded}) do
+    "Error: Maximum subagent recursion depth reached. Hint: complete the work at the current level instead of spawning further subagents, or report back to the parent agent."
+  end
+
+  def format_subagent_result({:error, reason})
+      when reason in [:worktree_creation_failed, :agent_max_retries_exceeded] do
+    "Error: Subagent failed due to an infrastructure/runtime issue (#{reason}). Hint: this may be a transient system error — retry the spawn once, and if it persists report the issue to the user."
+  end
+
+  def format_subagent_result({:error, :unknown_error}) do
+    "Error: An unexpected error occurred while running the subagent. Hint: please retry the spawn once, and if it persists report the issue to the user."
+  end
+
   def format_subagent_result({:error, reason}) do
-    "Error: Subagent failed: #{inspect(reason)}"
+    "Error: Subagent failed due to an unexpected error (#{inspect(reason)}). Please retry the spawn or report this issue to the user if it persists."
   end
 
   def format_subagent_result({:ok, %Result{result: result, commit_sha: commit_sha}}) do
@@ -383,12 +401,16 @@ defmodule EvoGit.Agent.SubagentProcessing do
   # Separates indexed subagent calls into valid (have a path) and invalid (missing path).
   # Invalid calls get immediate error results to feed back to the LLM.
   defp split_valid_subagent_calls(indexed_calls) do
-    Enum.reduce(indexed_calls, {[], []}, fn {call, index} = indexed_call, {valid_acc, invalid_acc} ->
+    Enum.reduce(indexed_calls, {[], []}, fn {call, index} = indexed_call,
+                                            {valid_acc, invalid_acc} ->
       raw_path = Map.get(call.arguments, "path")
 
       if is_nil(raw_path) or raw_path == "" do
         tool_call_id = Map.get(call, :id) || call.name || "unknown"
-        error_msg = "Error: Missing required 'path' argument for subagent tool '#{call.name}'. Please specify a relative or absolute path for the subagent to operate in."
+
+        error_msg =
+          "Error: Missing required 'path' argument for subagent tool '#{call.name}'. Please specify a relative or absolute path for the subagent to operate in."
+
         {valid_acc, [{index, tool_call_id, call.name, error_msg} | invalid_acc]}
       else
         {[indexed_call | valid_acc], invalid_acc}
