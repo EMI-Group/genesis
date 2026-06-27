@@ -34,5 +34,5 @@ Holds all test files for the EvoDash application. Provides the ExUnit test runne
 - All connection-based tests must `use EvoDashWeb.ConnCase`.
 - Support modules live in `support/` and are compiled automatically by Mix.
 - Test file naming: `*_test.exs`.
-- No LiveView tests exist yet; add them under `evo_dash_web/live/` when needed.
-- The suite is minimal and currently covers only the page controller and error modules.
+- Tests requiring an isolated TaskRegistry/TaskStore terminate the production children from `EvoDash.Supervisor` and restart them via `Supervisor.restart_child/2` in `on_exit` to avoid breaking other suites.
+- All task persistence in tests goes through `CubDB` (namespaced `{:task, id}` keys) via `EvoDash.TaskStore` — no DETS is used.
