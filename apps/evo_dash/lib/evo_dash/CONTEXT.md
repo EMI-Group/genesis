@@ -53,31 +53,32 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 
 ## Task Storage & Persistence Architecture
 
-### DETS-Only Single Source of Truth
-- **Primary storage (disk)**: DETS table `:evo_dash_tasks_dets` (`:set` type) is the single source of truth for all tasks. Every read and write goes directly to DETS, eliminating the ETS↔DETS dual-storage and sync pattern.
-- **Recent Projects**: DETS table `:evo_dash_projects_dets` → `recent_projects.dets`, capped at 10 entries.
-- **Runtime-only refs**: The `%Task{}` reference from `Task.Supervisor.async_nolink` is kept in an in-memory `task_refs` map in GenServer state (`%{task_id => %Task{}}`). These are never persisted to DETS (always stored as `ref: nil`).
+### CubDB Single Source of Truth
+- **Primary storage (disk)**: A single CubDB instance (`EvoDash.TaskStore`) is the single source of truth for all tasks and recent projects. CubDB is a pure-Elixir, zero-NIF, append-only B+tree key-value store — its append-only design makes DETS-style corruption structurally impossible.
+- **Namespaced keys**: Tasks are stored under key `{:task, task_id}` → `%TaskInfo{}` (struct stored directly as the value). Recent projects under key `{:project, path}` → `%{path:, name:, last_opened_at:}` map. Both live in the ONE store.
+- **Durability**: CubDB started with `auto_file_sync: true` — every write is durable on return.
+- **Runtime-only refs**: The `%Task{}` reference from `Task.Supervisor.async_nolink` is kept in an in-memory `task_refs` map in GenServer state (`%{task_id => %Task{}}`). These are never persisted (tasks always stored with `ref: nil`).
 
 ### Task Lifecycle
-1. **Creation** (`start_task/2`): Generates random 16-char hex ID, spawns `Task.Supervisor.async_nolink` task, inserts `TaskInfo` struct into DETS (with `ref: nil`), stores the ref in `task_refs`.
-2. **Running**: Status updates via `cast` (`update_task_status/3`), log appends via `cast` (`update_task_log/2`). Logs stored as prepend list (newest first) in `TaskInfo.logs`. All writes go directly to DETS.
+1. **Creation** (`start_task/2`): Generates random 16-char hex ID, spawns `Task.Supervisor.async_nolink` task, writes `TaskInfo` struct to CubDB under `{:task, id}` (with `ref: nil`), stores the ref in `task_refs`.
+2. **Running**: Status updates via `cast` (`update_task_status/3`), log appends via `cast` (`update_task_log/2`). Logs stored as prepend list (newest first) in `TaskInfo.logs`. All writes go directly to CubDB.
 3. **Completion/Failure**: On terminal status (`:completed`/`:failed`/`:cancelled`), `finished_at` is set, the task is removed from `task_refs`, and `cleanup_expired_tasks/1` runs.
-4. **Crash recovery**: On startup, DETS entries that were `:running`/`:pending` are reset to `:failed` with a crash detail message (`normalize_tasks_in_dets/1` runs in-place).
-5. **Deletion**: `delete_task/1` removes from DETS. `clear_finished_tasks/0` removes all non-running/non-pending tasks from DETS.
+4. **Crash recovery**: On startup, CubDB entries that were `:running`/`:pending` are reset to `:failed` with a crash detail message (`normalize_tasks/1` runs in-place).
+5. **Deletion**: `delete_task/1` removes from CubDB. `clear_finished_tasks/0` removes all non-running/non-pending tasks from CubDB.
 
 ### Retention & Eviction
 - **Cap-based eviction**: `cleanup_expired_tasks/1` runs on most state mutations and removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100) on finished tasks.
-- **Manual cleanup**: UI exposes "Clear Task History" button → `clear_finished_tasks()` which removes finished tasks from DETS. Individual task delete also available.
+- **Manual cleanup**: UI exposes "Clear Task History" button → `clear_finished_tasks()` which removes finished tasks from CubDB. Individual task delete also available.
 - **Recent projects**: Capped at 10 entries via `trim_recent_projects/1` (sorted by `last_opened_at`, oldest evicted).
 
-### DETS Corruption Recovery
-- `open_or_reset_dets/2`: If DETS file fails to open, it is deleted and recreated.
-- `normalize_tasks_in_dets/1`: On load errors, the DETS table is reset (deleted and recreated).
+### One-time DETS→CubDB Migration
+- `maybe_migrate_from_dets/1` runs once at init: if the CubDB store is empty AND old DETS files (`tasks.dets`, `recent_projects.dets`) exist in the data dir, it opens them (best-effort, `repair: true`), foldls the records into CubDB under the namespaced-key scheme, then renames the old `.dets` file to `.dets.migrated` so the migration is not retried on every launch.
+- The entire migration is wrapped in try/catch — if DETS is corrupt (the corruption that motivated this migration), reads fail and the store starts fresh. This is the ONLY place `:dets` is referenced in lib (for reading legacy data).
 
 ## Constraints
 - `TaskRegistry` is a singleton (registered under its module name); do not start multiple instances.
-- DETS is the single source of truth — all reads and writes go directly to DETS through the GenServer API.
-- Runtime task refs (`%Task{}`) are kept in-memory only (`task_refs` map); DETS entries always have `ref: nil`.
+- `EvoDash.TaskStore` (CubDB) is the single source of truth — all reads and writes go through CubDB via the GenServer API. `:dets` is used ONLY inside the one-time migration function `maybe_migrate_from_dets/1` and its helpers.
+- Runtime task refs (`%Task{}`) are kept in-memory only (`task_refs` map); persisted tasks always have `ref: nil`.
 - Task log list is stored in reverse chronological order (newest first).
 - All task types must be either `:genesis` or `:evolve`; new types require extending `execute_task/4`.
 - This module depends on `evo_git` application (`EvoGit.Runtime.*`, `EvoGit.AgentScheduler`); it must be available at runtime.
