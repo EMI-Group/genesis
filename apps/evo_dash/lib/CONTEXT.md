@@ -8,7 +8,7 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 
 ## Routing Table
 
-- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `TaskRegistry` (ETS+DETS GenServer)
+- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `TaskStore` (CubDB persistence), `TaskRegistry` (CubDB-backed GenServer)
 - `./evo_dash_web/` → Web interface: LiveViews, components, router, endpoint, helpers
 - `./evo_dash_web.ex` → Web module macro (`use EvoDashWeb, :live_view` / `:html` / `:controller` etc.)
 
