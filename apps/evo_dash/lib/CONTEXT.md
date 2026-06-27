@@ -106,6 +106,6 @@ No `Application.put_env` calls to `:evo_git` exist in EvoDash. All config change
 
 - Domain modules in `./evo_dash/`, web modules in `./evo_dash_web/`
 - All LiveViews use `EvoDashWeb.Gettext` for i18n
-- No database — state in ETS/DETS and socket assigns
+- No database — task state and recent projects persisted via CubDB; project state also in socket assigns
 - All EvoGit.PubSub subscriptions are conditional on `connected?(socket)` in LiveViews
 - EvoGit.PubSub is owned by the evo_git application; EvoDash subscribes as a consumer
