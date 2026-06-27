@@ -160,7 +160,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @doc """
   Runs the worktree initialization script if one is configured.
 
-  The script is read from `evogit.toml` under the `[worktree]` section.
+  The script is read from `genesis.toml` under the `[worktree]` section.
   Shell detection is done via shebang line, defaulting to the platform shell.
   Environment variables `SOURCE_REPO_PATH`, `SOURCE_WORKTREE_PATH`, and
   `TARGET_WORKTREE_PATH` are set.

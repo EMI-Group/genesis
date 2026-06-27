@@ -99,12 +99,12 @@ defmodule EvoGit.Platform do
   @doc """
   Returns the platform-appropriate data directory for EvoGit.
 
-  - **Linux**: `$XDG_DATA_HOME/evogit` (defaults to `~/.local/share/evogit`)
-  - **macOS**: `~/Library/Application Support/evogit`
-  - **Windows**: `%APPDATA%/evogit` (defaults to `~/evogit` if APPDATA not set)
+  - **Linux**: `$XDG_DATA_HOME/genesis` (defaults to `~/.local/share/genesis`)
+  - **macOS**: `~/Library/Application Support/genesis`
+  - **Windows**: `%APPDATA%/genesis` (defaults to `~/genesis` if APPDATA not set)
   """
   @spec data_dir() :: String.t()
-  def data_dir, do: data_dir("evogit")
+  def data_dir, do: data_dir("genesis")
 
   @doc """
   Returns the platform-appropriate data directory for the given application name.
@@ -134,12 +134,12 @@ defmodule EvoGit.Platform do
   @doc """
   Returns the platform-appropriate config directory for EvoGit.
 
-  - **Linux**: `$XDG_CONFIG_HOME/evogit` (defaults to `~/.config/evogit`)
-  - **macOS**: `~/Library/Application Support/evogit`
-  - **Windows**: `%APPDATA%/evogit` (defaults to `~/evogit` if APPDATA not set)
+  - **Linux**: `$XDG_CONFIG_HOME/genesis` (defaults to `~/.config/genesis`)
+  - **macOS**: `~/Library/Application Support/genesis`
+  - **Windows**: `%APPDATA%/genesis` (defaults to `~/genesis` if APPDATA not set)
   """
   @spec config_dir() :: String.t()
-  def config_dir, do: config_dir("evogit")
+  def config_dir, do: config_dir("genesis")
 
   @doc """
   Returns the platform-appropriate config directory for the given application name.

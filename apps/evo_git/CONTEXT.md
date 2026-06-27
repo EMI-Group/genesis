@@ -24,7 +24,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `EvoGit.Task` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
 | `EvoGit.Runtime` | Top-level coordinator: Genesis and Evolution phases |
 | `EvoGit.Runtime.Helpers` | Shared helper functions for runtime phases (merge_and_report, notify_finalizing, generate_branch_name, new_codebase?, validate_node_path, resolve_starting_commit) |
-| `EvoGit.ProjectConfig` | Reads and parses `evogit.toml` from repo root |
+| `EvoGit.ProjectConfig` | Reads and parses `genesis.toml` from repo root |
 | `EvoGit.Review` | Code review operations: load diff data, merge/reject branches, manual GitHub PR creation |
 | `EvoGit.Config` | Unified 3-level configuration resolver (defaults → user TOML → runtime overrides) |
 | `EvoGit.Defaults` | Backward-compatibility shim delegating to `EvoGit.Config` |
@@ -48,7 +48,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 - Agents are transient modules using `EvoGit.Agent` behaviour; the framework manages state via ETS.
 - Agent execution happens in **isolated git worktrees** managed by `AgentScheduler` — never on the main working copy.
 - Subdirectories follow Elixir convention: `./lib/evo_git/<subdir>/` maps to `EvoGit.<Subdir>` namespace.
-- **Three-level configuration**: `EvoGit.Config` merges built-in defaults → user config (`~/.config/evogit/config.toml`) → runtime overrides. No default model or username is hardcoded.
+- **Three-level configuration**: `EvoGit.Config` merges built-in defaults → user config (`~/.config/genesis/config.toml`) → runtime overrides. No default model or username is hardcoded.
 - **Slot discipline**: All LLM calls must acquire/release slots via `AgentScheduler`; rate-limit errors trigger a 60-second global backoff. Tool executions are independently throttled via `max_tool_concurrency`.
 - **Task-scoped naming**: Worktree directories use `worker_T<task_id>_A<task_local_id>`, branches use `evogit-agent-T<task_id>-A<task_local_id>`. Each top-level run gets a unique `task_id` inherited by all subagents.
 - `EvoGit.Defaults` is a backward-compatibility shim. New code should use `EvoGit.Config` directly.

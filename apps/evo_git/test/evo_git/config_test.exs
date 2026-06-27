@@ -109,7 +109,7 @@ defmodule EvoGit.ConfigTest do
     test "returns a string path" do
       dir = Config.config_dir()
       assert is_binary(dir)
-      assert String.contains?(dir, "evogit")
+      assert String.contains?(dir, "genesis")
     end
   end
 
