@@ -1,11 +1,11 @@
 defmodule EvoDash.TaskRegistry do
   @moduledoc """
   Registry for tracking running EvoGit tasks.
-  Tasks are identified by unique IDs and persisted to CubDB (the single source of truth)
+  Tasks are identified by unique IDs and persisted to SQLite (the single source of truth)
   under namespaced keys `{:task, task_id}`.
   Runtime-only task references (`%Task{}`) are kept in-memory in `task_refs`.
   Supports configurable persistence of finished tasks and
-  recently opened projects to CubDB (platform data directory via EvoGit.Platform),
+  recently opened projects to SQLite (platform data directory via EvoGit.Platform),
   using namespaced keys `{:project, path}`.
   """
   use GenServer
@@ -141,7 +141,7 @@ defmodule EvoDash.TaskRegistry do
     data_dir = Keyword.get(opts, :data_dir, EvoGit.Platform.data_dir())
     File.mkdir_p!(data_dir)
 
-    # The CubDB store is started by the supervisor; here just reference by name.
+    # The TaskStore is started by the supervisor; here just reference by name.
     # Tests may pass their own task_store: name pointing to a test store.
     task_store = Keyword.get(opts, :task_store, EvoDash.TaskStore)
 
@@ -160,10 +160,16 @@ defmodule EvoDash.TaskRegistry do
         Logger.warning("TaskRegistry init: integrity check failed: #{inspect(error)}")
     end
 
-    # One-time best-effort DETS→CubDB migration (before normalize).
+    # One-time best-effort DETS→SQLite migration (before normalize).
     maybe_migrate_from_dets(state)
 
-    # Normalize CubDB entries in place (backfill fields, reset crashed tasks)
+    # NOTE: CubDB→SQLite migration is intentionally skipped. CubDB is no longer
+    # a dependency, so we cannot read old CubDB files at runtime. Old task
+    # history stored under a legacy "tasks.cubdb" directory is orphaned but
+    # harmless (it is non-critical, auto-expiring data). We only log a note.
+    maybe_note_legacy_cubdb()
+
+    # Normalize SQLite entries in place (backfill fields, reset crashed tasks)
     normalize_tasks(state)
 
     # Cleanup expired tasks on startup
@@ -200,8 +206,8 @@ defmodule EvoDash.TaskRegistry do
       result: nil
     }
 
-    # Persist to CubDB with ref nulled (ref is runtime-only data)
-    CubDB.put(state.task_store, {:task, task_id}, %{task | ref: nil})
+    # Persist to SQLite with ref nulled (ref is runtime-only data)
+    EvoDash.TaskStore.put(state.task_store, {:task, task_id}, %{task | ref: nil})
 
     # Keep the runtime ref in-memory only
     state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
@@ -243,7 +249,7 @@ defmodule EvoDash.TaskRegistry do
 
                 Task.shutdown(task_ref, :brutal_kill)
                 updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
-                CubDB.put(state.task_store, {:task, task_id}, updated)
+                EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
                 cleanup_expired_tasks(state)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
@@ -298,7 +304,7 @@ defmodule EvoDash.TaskRegistry do
       |> Enum.filter(fn {{:task, _id}, task} -> task.status not in [:running, :pending] end)
       |> Enum.map(fn {{:task, id}, _task} -> {:task, id} end)
 
-    CubDB.delete_multi(state.task_store, keys)
+    EvoDash.TaskStore.delete_multi(state.task_store, keys)
 
     cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -311,7 +317,7 @@ defmodule EvoDash.TaskRegistry do
   def handle_call({:add_recent_project, path, name}, _from, state) do
     now = DateTime.utc_now()
 
-    CubDB.put(state.task_store, {:project, path}, %{path: path, name: name, last_opened_at: now})
+    EvoDash.TaskStore.put(state.task_store, {:project, path}, %{path: path, name: name, last_opened_at: now})
 
     # Enforce max limit
     trim_recent_projects(state)
@@ -332,7 +338,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    CubDB.delete(state.task_store, {:project, path})
+    EvoDash.TaskStore.delete(state.task_store, {:project, path})
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
@@ -483,7 +489,7 @@ defmodule EvoDash.TaskRegistry do
     :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
   end
 
-  # --- CubDB Read Helpers ---
+  # --- TaskStore Read Helpers ---
 
   defp task_get(state, task_id) do
     EvoDash.TaskStore.safe_get(state.task_store, {:task, task_id})
@@ -528,7 +534,7 @@ defmodule EvoDash.TaskRegistry do
         updated = if usage, do: %{updated | usage: usage}, else: updated
         updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
         updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
-        CubDB.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
 
         if status in [:completed, :failed, :cancelled] do
           cleanup_expired_tasks(state)
@@ -546,7 +552,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{logs: logs} = task ->
         updated = %{task | logs: [log_entry | logs]}
-        CubDB.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
 
       nil ->
         :ok
@@ -556,7 +562,7 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp do_delete_task(state, task_id) do
-    CubDB.delete(state.task_store, {:task, task_id})
+    EvoDash.TaskStore.delete(state.task_store, {:task, task_id})
     state
   end
 
@@ -564,7 +570,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{} = task ->
         updated = %{task | review_status: status}
-        CubDB.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
 
       nil ->
         :ok
@@ -577,7 +583,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{} = task ->
         updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        CubDB.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
 
       nil ->
         :ok
@@ -595,7 +601,7 @@ defmodule EvoDash.TaskRegistry do
             else: task.finished_at
 
         updated = %{task | status: status, finished_at: finished_at}
-        CubDB.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
 
         if status in [:completed, :failed, :cancelled] do
           cleanup_expired_tasks(state)
@@ -609,17 +615,33 @@ defmodule EvoDash.TaskRegistry do
     end
   end
 
-  # --- One-time DETS→CubDB Migration (best-effort) ---
+  # --- One-time DETS→SQLite Migration (best-effort) ---
 
   defp maybe_migrate_from_dets(state) do
-    if CubDB.size(state.task_store) == 0 do
-      migrate_dets_to_cubdb(state.data_dir, state.task_store)
+    if EvoDash.TaskStore.size(state.task_store) == 0 do
+      migrate_dets_to_store(state.data_dir, state.task_store)
     end
   end
 
-  defp migrate_dets_to_cubdb(data_dir, task_store) do
+  defp migrate_dets_to_store(data_dir, task_store) do
     migrate_tasks_dets(data_dir, task_store)
     migrate_projects_dets(data_dir, task_store)
+  end
+
+  # NOTE: There is NO CubDB→SQLite migration. CubDB is no longer a dependency,
+  # so we cannot read old CubDB data files at runtime. This helper merely logs
+  # an informational note if a legacy CubDB directory is detected, so users
+  # know why their old task history is not carried over. Old CubDB directories
+  # are orphaned but harmless (they contain non-critical, auto-expiring data).
+  defp maybe_note_legacy_cubdb do
+    old_cubdb_path = Path.join(EvoGit.Platform.data_dir(), "tasks.cubdb")
+
+    if File.dir?(old_cubdb_path) do
+      Logger.info(
+        "Detected legacy CubDB directory at #{old_cubdb_path}. " <>
+          "Old CubDB task history is not migrated to SQLite and will be ignored."
+      )
+    end
   end
 
   defp migrate_tasks_dets(data_dir, task_store) do
@@ -636,7 +658,7 @@ defmodule EvoDash.TaskRegistry do
             records =
               :dets.foldl(
                 fn {_id, %TaskInfo{} = task} = _obj, acc ->
-                  CubDB.put(task_store, {:task, task.id}, task)
+                  EvoDash.TaskStore.put(task_store, {:task, task.id}, task)
                   acc + 1
                 end,
                 0,
@@ -645,18 +667,18 @@ defmodule EvoDash.TaskRegistry do
 
             _ = :dets.close(table)
 
-            Logger.info("DETS→CubDB migration: migrated #{records} task(s) from #{path}.")
+            Logger.info("DETS→SQLite migration: migrated #{records} task(s) from #{path}.")
 
           {:error, reason} ->
             Logger.warning(
-              "DETS→CubDB migration: could not open tasks DETS file #{path}: " <>
+              "DETS→SQLite migration: could not open tasks DETS file #{path}: " <>
                 "#{inspect(reason)}. Starting fresh."
             )
         end
       catch
         kind, reason ->
           Logger.warning(
-            "DETS→CubDB migration: failed to read tasks DETS file #{path}: " <>
+            "DETS→SQLite migration: failed to read tasks DETS file #{path}: " <>
               "#{kind}: #{inspect(reason)}. Starting fresh."
           )
       after
@@ -680,7 +702,7 @@ defmodule EvoDash.TaskRegistry do
             records =
               :dets.foldl(
                 fn {proj_path, project}, acc ->
-                  CubDB.put(task_store, {:project, proj_path}, project)
+                  EvoDash.TaskStore.put(task_store, {:project, proj_path}, project)
                   acc + 1
                 end,
                 0,
@@ -689,18 +711,18 @@ defmodule EvoDash.TaskRegistry do
 
             _ = :dets.close(table)
 
-            Logger.info("DETS→CubDB migration: migrated #{records} project(s) from #{path}.")
+            Logger.info("DETS→SQLite migration: migrated #{records} project(s) from #{path}.")
 
           {:error, reason} ->
             Logger.warning(
-              "DETS→CubDB migration: could not open projects DETS file #{path}: " <>
+              "DETS→SQLite migration: could not open projects DETS file #{path}: " <>
                 "#{inspect(reason)}. Starting fresh."
             )
         end
       catch
         kind, reason ->
           Logger.warning(
-            "DETS→CubDB migration: failed to read projects DETS file #{path}: " <>
+            "DETS→SQLite migration: failed to read projects DETS file #{path}: " <>
               "#{kind}: #{inspect(reason)}. Starting fresh."
           )
       after
@@ -715,11 +737,11 @@ defmodule EvoDash.TaskRegistry do
 
     case File.rename(path, migrated_path) do
       :ok ->
-        Logger.info("DETS→CubDB migration: renamed #{path} → #{migrated_path}.")
+        Logger.info("DETS→SQLite migration: renamed #{path} → #{migrated_path}.")
 
       {:error, reason} ->
         Logger.warning(
-          "DETS→CubDB migration: could not rename #{path} to #{migrated_path}: " <>
+          "DETS→SQLite migration: could not rename #{path} to #{migrated_path}: " <>
             "#{inspect(reason)}. The file will be retried on next launch."
         )
     end
@@ -735,7 +757,7 @@ defmodule EvoDash.TaskRegistry do
         task = Map.merge(%TaskInfo{}, task)
         task = %{task | ref: nil, status: maybe_reset_status(task.status)}
         task = set_crash_details(task)
-        CubDB.put(state.task_store, {:task, task.id}, task)
+        EvoDash.TaskStore.put(state.task_store, {:task, task.id}, task)
       rescue
         error ->
           Logger.warning(
@@ -800,7 +822,7 @@ defmodule EvoDash.TaskRegistry do
     all_keys = age_expired_keys ++ over_limit_keys
 
     if all_keys != [] do
-      CubDB.delete_multi(state.task_store, all_keys)
+      EvoDash.TaskStore.delete_multi(state.task_store, all_keys)
     end
 
     :ok
@@ -820,7 +842,7 @@ defmodule EvoDash.TaskRegistry do
 
       {_kept, to_remove} ->
         keys = Enum.map(to_remove, fn project -> {:project, project.path} end)
-        CubDB.delete_multi(state.task_store, keys)
+        EvoDash.TaskStore.delete_multi(state.task_store, keys)
         :ok
     end
   end

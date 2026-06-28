@@ -1,26 +1,28 @@
 defmodule EvoDash.TaskStore do
   @moduledoc """
-  CubDB-backed persistent store for EvoDash tasks and recent projects.
+  SQLite-backed persistent store for EvoDash tasks and recent projects.
 
-  A single CubDB instance (started under supervision before `EvoDash.TaskRegistry`)
-  holds both data sets under namespaced keys:
+  A single GenServer wrapping one xqlite (SQLite) connection (started under
+  supervision before `EvoDash.TaskRegistry`) holds both data sets under
+  namespaced keys:
 
     * `{:task, task_id}`  → `%EvoDash.TaskRegistry.TaskInfo{}`
     * `{:project, path}`  → `%{path:, name:, last_opened_at:}`
 
-  CubDB is started with `auto_file_sync: true` for durable writes.
+  Internally the data lives in two SQLite tables — `tasks` (keyed by task id)
+  and `projects` (keyed by project path) — with values stored as
+  `:erlang.term_to_binary/1` BLOBs.
 
-  This module also provides crash-safe read/recovery helpers that survive corrupt
-  (un-deserializable) entries in the underlying CubDB btree.
+  This module also provides crash-safe read/recovery helpers that survive
+  corrupt (un-deserializable) entries in the underlying SQLite database.
   """
+
+  use GenServer
 
   require Logger
 
-  @doc """
-  Child spec for the supervisor.
+  ## Child spec & start
 
-  CubDB does not provide its own `child_spec/1`, so this wrapper defines one.
-  """
   def child_spec(opts) do
     %{
       id: __MODULE__,
@@ -29,127 +31,375 @@ defmodule EvoDash.TaskStore do
   end
 
   @doc """
-  Starts the CubDB store.
+  Starts the SQLite store GenServer.
 
   ## Options
 
-    * `:data_dir` — (required) filesystem path for the CubDB data directory.
+    * `:data_dir` — (required) filesystem path for the SQLite database FILE.
     * `:name` — (optional) registration name, defaults to `__MODULE__`.
   """
   def start_link(opts) do
     data_dir = Keyword.fetch!(opts, :data_dir)
     name = Keyword.get(opts, :name, __MODULE__)
 
-    File.mkdir_p!(data_dir)
+    GenServer.start_link(__MODULE__, %{data_dir: data_dir, name: name}, name: name)
+  end
 
-    CubDB.start_link(data_dir: data_dir, name: name, auto_file_sync: true)
+  ## Public key-value API
+
+  @doc """
+  Reads a key, returning the stored value or `nil` if not found.
+
+  `key` is a tuple: `{:task, id}` or `{:project, path}`.
+  """
+  def get(store \\ __MODULE__, key) do
+    GenServer.call(store, {:get, key})
   end
 
   @doc """
-  Safely reads a key, returning nil on error (including corrupt values).
+  Writes a key/value pair. `key` is `{:task, id}` or `{:project, path}`.
+  The value is serialized via `:erlang.term_to_binary/1` and stored as a BLOB.
+  Returns `:ok`.
+  """
+  def put(store \\ __MODULE__, key, value) do
+    GenServer.call(store, {:put, key, value})
+  end
 
-  `CubDB.get/2` deserializes the stored value via `:erlang.binary_to_term/1`.
-  If the value bytes are corrupt, the call raises. This helper rescues any error
-  and returns `nil` instead so callers never crash.
+  @doc """
+  Deletes a single key. Returns `:ok`.
+  """
+  def delete(store \\ __MODULE__, key) do
+    GenServer.call(store, {:delete, key})
+  end
+
+  @doc """
+  Deletes multiple keys in one call. `keys` is a list of tuples.
+  Returns `:ok`.
+  """
+  def delete_multi(store \\ __MODULE__, keys) do
+    GenServer.call(store, {:delete_multi, keys})
+  end
+
+  @doc """
+  Returns all entries from both tables as a list of `{{:task, id}, value}` and
+  `{{:project, path}, value}` tuples. Each BLOB is decoded via
+  `:erlang.binary_to_term/1`.
+  """
+  def select_all(store \\ __MODULE__) do
+    GenServer.call(store, :select_all)
+  end
+
+  @doc """
+  Returns the total number of rows across both tables.
+  """
+  def size(store \\ __MODULE__) do
+    GenServer.call(store, :size)
+  end
+
+  @doc """
+  Deletes all rows from both tables. Returns `:ok`.
+  Used by `integrity_check/1` during a rebuild.
+  """
+  def clear(store \\ __MODULE__) do
+    GenServer.call(store, :clear)
+  end
+
+  ## Crash-safe helpers
+
+  @doc """
+  Safely reads a key, returning `nil` on any error (including corrupt blobs).
   """
   def safe_get(store \\ __MODULE__, key) do
     try do
-      CubDB.get(store, key)
+      get(store, key)
     rescue
       _ -> nil
     end
   end
 
   @doc """
-  Enumerates all entries, collecting partial results even if some values
-  are corrupt. Returns a list of {key, value} tuples.
-
-  CubDB's `select/2` loads each leaf's value nodes eagerly during reduction.
-  A single corrupt value raises mid-reduction, losing the entire accumulated
-  list. To salvage partial results, we use an `Agent` as a side-effect
-  accumulator fed by `Stream.each/2`. When the stream raises, the Agent still
-  retains all entries from leaves read *before* the corrupt leaf.
+  Enumerates all entries, skipping rows whose blobs fail to decode.
+  Never raises. Returns a list of `{key, value}` tuples.
   """
   def safe_select_all(store \\ __MODULE__) do
-    try_collect_partial(store, [])
+    GenServer.call(store, :safe_select_all)
   end
 
   @doc """
-  Returns the store size without deserializing any values.
-
-  CubDB stores the entry count in the btree struct metadata, so `CubDB.size/1`
-  works even when individual values are corrupt.
+  Returns the store size, rescuing any error to `0`.
   """
   def safe_size(store \\ __MODULE__) do
     try do
-      CubDB.size(store)
+      size(store)
     rescue
       _ -> 0
     end
   end
 
   @doc """
-  Checks store integrity and repairs corruption. If unreadable entries are
-  detected, salvages all readable entries, clears the store, and rewrites
-  salvaged data — healing the database without losing intact data.
+  Checks store integrity and repairs corruption.
 
-  Returns `:ok` if no corruption, or `{:repaired, lost_count}` if entries
-  were quarantined.
+  1. Runs `PRAGMA integrity_check` to verify SQLite structural health.
+  2. Scans all rows in both tables, decoding each blob. Rows that fail to
+     decode are deleted individually.
+
+  Returns:
+    * `:ok` — store is healthy.
+    * `{:repaired, lost_count}` — some undecodable rows were removed.
+    * `{:error, reason}` — SQLite-level corruption detected.
   """
   def integrity_check(store \\ __MODULE__) do
-    declared_size = safe_size(store)
-    salvaged = safe_select_all(store)
-    salvaged_count = length(salvaged)
+    GenServer.call(store, :integrity_check)
+  end
 
-    if salvaged_count < declared_size do
-      lost = declared_size - salvaged_count
+  ## GenServer callbacks
 
-      Logger.warning(
-        "CubDB integrity check: #{lost} of #{declared_size} entries are " <>
-          "corrupt/unreadable. Salvaging #{salvaged_count} valid entries and rebuilding store."
-      )
+  @impl true
+  def init(%{data_dir: data_dir}) do
+    dir = Path.dirname(data_dir)
+    File.mkdir_p!(dir)
 
-      try do
-        CubDB.clear(store)
-        CubDB.put_multi(store, salvaged)
-        {:repaired, lost}
-      rescue
-        error ->
-          Logger.error("CubDB rebuild failed during integrity check: #{inspect(error)}")
-          {:error, error}
-      end
-    else
-      :ok
+    case Xqlite.open(data_dir) do
+      {:ok, conn} ->
+        create_tables(conn)
+
+        {:ok, %{conn: conn, data_dir: data_dir}}
+
+      {:error, reason} ->
+        {:stop, {:failed_to_open_sqlite, reason}}
     end
   end
 
-  # The key recovery function. Reads entries via `CubDB.select/2` while
-  # accumulating them into an Agent side-effect. On corruption-induced
-  # exceptions, returns whatever was salvaged before the failure.
-  defp try_collect_partial(store, opts) do
-    {:ok, agent} = Agent.start_link(fn -> [] end)
+  defp create_tables(conn) do
+    {:ok, _} =
+      XqliteNIF.execute(
+        conn,
+        "CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data BLOB)",
+        []
+      )
 
+    {:ok, _} =
+      XqliteNIF.execute(
+        conn,
+        "CREATE TABLE IF NOT EXISTS projects (path TEXT PRIMARY KEY, data BLOB)",
+        []
+      )
+
+    :ok
+  end
+
+  @impl true
+  def handle_call({:get, key}, _from, state) do
+    {table, value_key} = resolve_key(key)
+    reply = do_get(state.conn, table, value_key)
+    {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_call({:put, key, value}, _from, state) do
+    {table, value_key} = resolve_key(key)
+    blob = :erlang.term_to_binary(value)
+
+    {:ok, _} =
+      XqliteNIF.execute(
+        state.conn,
+        "INSERT OR REPLACE INTO #{table} (id, data) VALUES (?1, ?2)",
+        [value_key, blob]
+      )
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:delete, key}, _from, state) do
+    {table, value_key} = resolve_key(key)
+
+    {:ok, _} =
+      XqliteNIF.execute(
+        state.conn,
+        "DELETE FROM #{table} WHERE id = ?1",
+        [value_key]
+      )
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:delete_multi, keys}, _from, state) do
+    for key <- keys do
+      {table, value_key} = resolve_key(key)
+
+      {:ok, _} =
+        XqliteNIF.execute(
+          state.conn,
+          "DELETE FROM #{table} WHERE id = ?1",
+          [value_key]
+        )
+    end
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:select_all, _from, state) do
+    tasks = read_all_table(state.conn, "tasks", :task)
+    projects = read_all_table(state.conn, "projects", :project)
+    {:reply, tasks ++ projects, state}
+  end
+
+  @impl true
+  def handle_call(:size, _from, state) do
+    count = count_table(state.conn, "tasks") + count_table(state.conn, "projects")
+    {:reply, count, state}
+  end
+
+  @impl true
+  def handle_call(:clear, _from, state) do
+    {:ok, _} = XqliteNIF.execute(state.conn, "DELETE FROM tasks", [])
+    {:ok, _} = XqliteNIF.execute(state.conn, "DELETE FROM projects", [])
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:safe_select_all, _from, state) do
+    tasks = safe_read_all_table(state.conn, "tasks", :task)
+    projects = safe_read_all_table(state.conn, "projects", :project)
+    {:reply, tasks ++ projects, state}
+  end
+
+  @impl true
+  def handle_call(:integrity_check, _from, state) do
+    result = do_integrity_check(state.conn)
+    {:reply, result, state}
+  end
+
+  ## Private helpers — key resolution
+
+  # Maps the public tuple key convention to {table, value_key}.
+  defp resolve_key({:task, id}), do: {"tasks", id}
+  defp resolve_key({:project, path}), do: {"projects", path}
+
+  ## Private helpers — read/write
+
+  defp do_get(conn, table, value_key) do
+    case XqliteNIF.query(conn, "SELECT data FROM #{table} WHERE id = ?1", [value_key]) do
+      {:ok, %{rows: [[blob | _] | _]}} ->
+        :erlang.binary_to_term(blob)
+
+      {:ok, %{rows: []}} ->
+        nil
+
+      {:ok, %{rows: rows}} when is_list(rows) ->
+        # Fallback for unexpected row shapes
+        case List.first(rows) do
+          [blob] -> :erlang.binary_to_term(blob)
+          _ -> nil
+        end
+    end
+  end
+
+  defp count_table(conn, table) do
+    {:ok, %{rows: [[count]]}} = XqliteNIF.query(conn, "SELECT COUNT(*) FROM #{table}", [])
+    count
+  end
+
+  defp read_all_table(conn, table, ns) do
+    {:ok, %{rows: rows}} = XqliteNIF.query(conn, "SELECT id, data FROM #{table}", [])
+
+    Enum.map(rows, fn [id, blob] ->
+      {{ns, id}, :erlang.binary_to_term(blob)}
+    end)
+  end
+
+  defp safe_read_all_table(conn, table, ns) do
+    {:ok, %{rows: rows}} = XqliteNIF.query(conn, "SELECT id, data FROM #{table}", [])
+
+    Enum.flat_map(rows, fn [id, blob] ->
+      try do
+        [{{ns, id}, :erlang.binary_to_term(blob)}]
+      rescue
+        _ ->
+          # Skip rows whose blob fails to decode — don't let one bad row
+          # poison the entire read.
+          []
+      end
+    end)
+  end
+
+  ## Private helpers — integrity check
+
+  defp do_integrity_check(conn) do
     try do
-      CubDB.select(store, opts)
-      |> Stream.each(fn entry ->
-        Agent.update(agent, fn acc -> [entry | acc] end)
-      end)
-      |> Enum.to_list()
+      # 1. SQLite structural integrity check via PRAGMA
+      case XqliteNIF.query(conn, "PRAGMA integrity_check", []) do
+        {:ok, %{rows: [["ok"]]}} ->
+          :ok
 
-      # Full success
-      Agent.get(agent, fn acc -> Enum.reverse(acc) end)
+        {:ok, %{rows: rows}} ->
+          reason = inspect(rows)
+          Logger.error("SQLite integrity_check reports problems: #{reason}")
+          {:error, reason}
+
+        {:error, reason} ->
+          Logger.error("SQLite integrity_check query failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+      |> then(fn pragma_result ->
+        # 2. Scan all rows for undecodable blobs regardless of PRAGMA result,
+        #    but only salvage/repair if the PRAGMA was healthy.
+        case pragma_result do
+          :ok ->
+            corrupt = scan_and_repair_corrupt_rows(conn)
+            if corrupt > 0 do
+              {:repaired, corrupt}
+            else
+              :ok
+            end
+
+          other ->
+            other
+        end
+      end)
     rescue
       error ->
-        partial = Agent.get(agent, fn acc -> Enum.reverse(acc) end)
-
-        Logger.warning(
-          "CubDB select (opts: #{inspect(opts)}) failed after #{length(partial)} " <>
-            "readable entries; salvaged partial results. Error: #{Exception.message(error)}"
-        )
-
-        partial
-    after
-      Agent.stop(agent)
+        Logger.error("integrity_check failed: #{inspect(error)}")
+        {:error, error}
     end
+  end
+
+  # Scans both tables for rows whose blobs fail to decode, deletes them,
+  # and returns the count of removed rows.
+  defp scan_and_repair_corrupt_rows(conn) do
+    scan_table_for_corrupt(conn, "tasks") + scan_table_for_corrupt(conn, "projects")
+  end
+
+  defp scan_table_for_corrupt(conn, table) do
+    {:ok, %{rows: rows}} = XqliteNIF.query(conn, "SELECT id, data FROM #{table}", [])
+
+    Enum.reduce(rows, 0, fn [id, blob], acc ->
+      case try_decode(blob) do
+        :ok ->
+          acc
+
+        :error ->
+          # Delete the corrupt row
+          {:ok, _} =
+            XqliteNIF.execute(conn, "DELETE FROM #{table} WHERE id = ?1", [id])
+
+          Logger.warning(
+            "TaskStore integrity check: removed undecodable row " <>
+              "(table=#{table}, id=#{inspect(id)})."
+          )
+
+          acc + 1
+      end
+    end)
+  end
+
+  defp try_decode(blob) do
+    :erlang.binary_to_term(blob)
+    :ok
+  rescue
+    _ -> :error
   end
 end
