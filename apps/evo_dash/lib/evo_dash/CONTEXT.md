@@ -56,7 +56,7 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 
 ### SQLite Single Source of Truth
 - **Primary storage (disk)**: A single SQLite database file (`EvoDash.TaskStore`, backed by the xqlite NIF) is the single source of truth for all tasks and recent projects.
-- **Schema**: Two tables — `tasks (id TEXT PRIMARY KEY, data BLOB)` and `projects (path TEXT PRIMARY KEY, data BLOB)`. Values are serialized via `:erlang.term_to_binary/1` into BLOBs and decoded via `:erlang.binary_to_term/1`.
+- **Schema**: Two tables — `tasks (id TEXT PRIMARY KEY, data BLOB)` and `projects (id TEXT PRIMARY KEY, data BLOB)`. Values are serialized via `:erlang.term_to_binary/1` into BLOBs and decoded via `:erlang.binary_to_term/1`.
 - **Key-tuple convention**: Callers pass `{:task, task_id}` or `{:project, path}`; the TaskStore GenServer routes to the correct table.
 - **Runtime-only refs**: The `%Task{}` reference from `Task.Supervisor.async_nolink` is kept in an in-memory `task_refs` map in GenServer state (`%{task_id => %Task{}}`). These are never persisted (tasks always stored with `ref: nil`).
 

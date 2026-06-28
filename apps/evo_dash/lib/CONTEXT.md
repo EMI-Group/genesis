@@ -8,7 +8,7 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 
 ## Routing Table
 
-- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `TaskStore` (CubDB persistence), `TaskRegistry` (CubDB-backed GenServer)
+- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `TaskStore` (SQLite persistence via xqlite), `TaskRegistry` (SQLite-backed GenServer)
 - `./evo_dash_web/` → Web interface: LiveViews, components, router, endpoint, helpers
 - `./evo_dash_web.ex` → Web module macro (`use EvoDashWeb, :live_view` / `:html` / `:controller` etc.)
 
@@ -19,8 +19,8 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 | Module | Purpose |
 |--------|---------|
 | `EvoDash.Application` | OTP supervisor tree (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskStore → TaskRegistry → Endpoint) |
-| `EvoDash.TaskStore` | CubDB-backed persistent store (single instance, `auto_file_sync: true`); namespaced keys `{:task, id}` / `{:project, path}` |
-| `EvoDash.TaskRegistry` | CubDB-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes |
+| `EvoDash.TaskStore` | SQLite-backed persistent store (single GenServer holding one xqlite connection; `tasks`/`projects` tables); namespaced keys `{:task, id}` / `{:project, path}` |
+| `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes |
 
 ### Web Modules (`./evo_dash_web/`)
 
@@ -106,6 +106,6 @@ No `Application.put_env` calls to `:evo_git` exist in EvoDash. All config change
 
 - Domain modules in `./evo_dash/`, web modules in `./evo_dash_web/`
 - All LiveViews use `EvoDashWeb.Gettext` for i18n
-- No database — task state and recent projects persisted via CubDB; project state also in socket assigns
+- Task state and recent projects persisted via SQLite (xqlite — Rust-based panic-free NIF bindings with precompiled binaries for Windows, macOS, and Linux); no external database server; project state also in socket assigns
 - All EvoGit.PubSub subscriptions are conditional on `connected?(socket)` in LiveViews
 - EvoGit.PubSub is owned by the evo_git application; EvoDash subscribes as a consumer
