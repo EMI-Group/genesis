@@ -194,14 +194,17 @@ const StatePersistence = {
       debounceTimer = setTimeout(() => {
         const project = this.el.dataset.project || '';
         const taskMode = this.el.dataset.taskMode || '';
-        const state = {
+        // Merge with existing state to preserve server-managed fields (e.g. foreign_repos)
+        let existing = {};
+        try { existing = JSON.parse(sessionStorage.getItem('dashboard_state') || '{}'); } catch (e) {}
+        const state = Object.assign({}, existing, {
           project: project,
           task_mode: taskMode,
           task_prompt: this.el.querySelector('[name="prompt"]')?.value || '',
           task_node_path: this.el.querySelector('[name="node_path"]')?.value || '',
           task_seeds: this.el.querySelector('[name="seeds"]')?.value || '',
           task_starting_commit: this.el.querySelector('[name="starting_commit"]')?.value || '',
-        };
+        });
         // Also capture project settings toggle state
         const detailsEl = this.el.querySelector('details');
         if (detailsEl) {

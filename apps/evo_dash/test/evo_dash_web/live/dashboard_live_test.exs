@@ -27,6 +27,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       for project <- EvoDash.TaskRegistry.list_recent_projects() do
         EvoDash.TaskRegistry.remove_recent_project(project.path)
       end
+
       :ok
     end
 
@@ -60,7 +61,6 @@ defmodule EvoDashWeb.DashboardLiveTest do
       # The execute button should be disabled
       assert html =~ "disabled"
     end
-
   end
 
   describe "opening a project" do
@@ -175,6 +175,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       for project <- EvoDash.TaskRegistry.list_recent_projects() do
         EvoDash.TaskRegistry.remove_recent_project(project.path)
       end
+
       :ok
     end
 
@@ -205,6 +206,55 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       refute html =~ "Project Settings"
       refute html =~ "Foreign Repos"
+    end
+  end
+
+  describe "restore_state restores foreign repositories from saved session" do
+    setup do
+      for project <- EvoDash.TaskRegistry.list_recent_projects() do
+        EvoDash.TaskRegistry.remove_recent_project(project.path)
+      end
+
+      :ok
+    end
+
+    test "foreign repos round-trip via restore_state event", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Simulate session restore with foreign repos (as they'd arrive from sessionStorage JSON).
+      # The project must be a real directory so activate_project runs.
+      html =
+        render_hook(view, "restore_state", %{
+          "project" => tmp_dir,
+          "foreign_repos" => [
+            %{
+              "id" => "original",
+              "path" => "/Source/original-proj",
+              "description" => "The original"
+            },
+            %{"id" => "reference", "path" => "/Source/ref", "description" => nil}
+          ]
+        })
+
+      # Foreign repos should be restored and visible in the project settings.
+      # The component renders repo.id and repo.root for each foreign repo.
+      assert html =~ "original"
+      assert html =~ "/Source/original-proj"
+      assert html =~ "reference"
+      assert html =~ "/Source/ref"
+    end
+
+    test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html =
+        render_hook(view, "restore_state", %{
+          "project" => tmp_dir,
+          "foreign_repos" => []
+        })
+
+      # No repos restored — shows the empty state message
+      assert html =~ "No foreign repositories registered"
     end
   end
 end

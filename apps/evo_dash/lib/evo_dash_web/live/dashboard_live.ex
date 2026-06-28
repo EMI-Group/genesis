@@ -244,18 +244,20 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign(:show_project_settings, false)
       |> assign(:project_config, nil)
       |> assign(:worktree_script, nil)
-    |> assign(:commands, %{})
+      |> assign(:commands, %{})
       |> assign(:foreign_repos, [])
       |> assign(:show_add_foreign_repo_form, false)
       |> assign(:new_repo_id, "")
       |> assign(:new_repo_path, "")
       |> assign(:new_repo_description, "")
       |> assign(:tasks, [])
-      |> assign(:notified_task_ids,
-          TaskRegistry.list_tasks()
-          |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
-          |> Enum.map(& &1.id)
-          |> MapSet.new())
+      |> assign(
+        :notified_task_ids,
+        TaskRegistry.list_tasks()
+        |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+        |> Enum.map(& &1.id)
+        |> MapSet.new()
+      )
       |> assign_form_defaults()
       |> assign_running_and_pending_tasks()
       |> assign(:config_status, config_status)
@@ -282,7 +284,10 @@ defmodule EvoDashWeb.DashboardLive do
           |> assign(:active_project, nil)
           |> assign(:active_project_path, nil)
           |> assign(:tasks, tasks)
-          |> assign(:notified_task_ids, build_notified_task_ids(tasks, socket.assigns.notified_task_ids))
+          |> assign(
+            :notified_task_ids,
+            build_notified_task_ids(tasks, socket.assigns.notified_task_ids)
+          )
           |> assign_running_and_pending_tasks()
         end
       else
@@ -298,7 +303,10 @@ defmodule EvoDashWeb.DashboardLive do
 
                   socket
                   |> assign(:tasks, all_tasks)
-                  |> assign(:notified_task_ids, build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids))
+                  |> assign(
+                    :notified_task_ids,
+                    build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+                  )
                   |> assign_running_and_pending_tasks()
                 end
 
@@ -307,7 +315,10 @@ defmodule EvoDashWeb.DashboardLive do
 
                 socket
                 |> assign(:tasks, all_tasks)
-                |> assign(:notified_task_ids, build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids))
+                |> assign(
+                  :notified_task_ids,
+                  build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+                )
                 |> assign_running_and_pending_tasks()
             end
           else
@@ -429,7 +440,8 @@ defmodule EvoDashWeb.DashboardLive do
     # active — otherwise the auto-detected values from detect_mode/1 should win.
     socket =
       if is_nil(socket.assigns.active_project) do
-        socket = socket
+        socket =
+          socket
           |> maybe_restore_assign(:task_mode, params["task_mode"])
           |> maybe_restore_assign(:task_node_path, params["task_node_path"])
 
@@ -443,6 +455,11 @@ defmodule EvoDashWeb.DashboardLive do
       else
         socket
       end
+
+    # Restore foreign repos from session AFTER activate_project, which loads
+    # repos from genesis.toml. The session-restored repos are the authoritative
+    # snapshot from before navigation/reload.
+    socket = maybe_restore_foreign_repos(socket, params["foreign_repos"])
 
     {:noreply, socket}
   end
@@ -503,7 +520,9 @@ defmodule EvoDashWeb.DashboardLive do
 
       # Include foreign repos from project settings for this task
       foreign_repos = socket.assigns[:foreign_repos] || []
-      opts = if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
+
+      opts =
+        if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
 
       case TaskRegistry.start_task(task_type, opts) do
         {:ok, task} ->
@@ -642,8 +661,7 @@ defmodule EvoDashWeb.DashboardLive do
         {:noreply, put_flash(socket, :error, gettext("Path cannot be empty."))}
 
       not String.starts_with?(path, "/") ->
-        {:noreply,
-         put_flash(socket, :error, gettext("Path must be absolute (start with /)."))}
+        {:noreply, put_flash(socket, :error, gettext("Path must be absolute (start with /)."))}
 
       true ->
         repo_id = String.to_atom(repo_id_str)
@@ -678,6 +696,7 @@ defmodule EvoDashWeb.DashboardLive do
            |> assign(:new_repo_id, "")
            |> assign(:new_repo_path, "")
            |> assign(:new_repo_description, "")
+           |> maybe_persist_state()
            |> put_flash(
              :info,
              gettext("Foreign repo '%{repo_id}' registered successfully.",
@@ -699,12 +718,12 @@ defmodule EvoDashWeb.DashboardLive do
       updated_repos = Enum.reject(current_repos, &(&1.id == repo_id))
 
       if length(updated_repos) == length(current_repos) do
-        {:noreply,
-         put_flash(socket, :error, gettext("Repo '%{id}' not found.", id: repo_id))}
+        {:noreply, put_flash(socket, :error, gettext("Repo '%{id}' not found.", id: repo_id))}
       else
         {:noreply,
          socket
          |> assign(:foreign_repos, updated_repos)
+         |> maybe_persist_state()
          |> put_flash(
            :info,
            gettext("Foreign repo '%{repo_id}' removed successfully.", repo_id: repo_id_str)
@@ -733,7 +752,8 @@ defmodule EvoDashWeb.DashboardLive do
 
     case Map.get(commands, command) do
       nil ->
-        {:noreply, put_flash(socket, :error, gettext("Command not found: %{command}", command: command))}
+        {:noreply,
+         put_flash(socket, :error, gettext("Command not found: %{command}", command: command))}
 
       cmd_string ->
         try do
@@ -756,15 +776,32 @@ defmodule EvoDashWeb.DashboardLive do
 
           if exit_code == 0 do
             flash_type = :info
-            msg = gettext("Command '%{command}' completed:\n%{output}", command: command, output: truncate_output(output))
+
+            msg =
+              gettext("Command '%{command}' completed:\n%{output}",
+                command: command,
+                output: truncate_output(output)
+              )
+
             {:noreply, put_flash(socket, flash_type, msg)}
           else
-            msg = gettext("Command '%{command}' failed (exit %{code}):\n%{output}", command: command, code: exit_code, output: truncate_output(output))
+            msg =
+              gettext("Command '%{command}' failed (exit %{code}):\n%{output}",
+                command: command,
+                code: exit_code,
+                output: truncate_output(output)
+              )
+
             {:noreply, put_flash(socket, :error, msg)}
           end
         rescue
           e ->
-            msg = gettext("Error running '%{command}': %{error}", command: command, error: Exception.message(e))
+            msg =
+              gettext("Error running '%{command}': %{error}",
+                command: command,
+                error: Exception.message(e)
+              )
+
             {:noreply, put_flash(socket, :error, msg)}
         end
     end
@@ -862,7 +899,10 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:active_project, %{path: path, name: name})
     |> assign(:active_project_path, path)
     |> assign(:tasks, tasks)
-    |> assign(:notified_task_ids, build_notified_task_ids(tasks, socket.assigns.notified_task_ids))
+    |> assign(
+      :notified_task_ids,
+      build_notified_task_ids(tasks, socket.assigns.notified_task_ids)
+    )
     |> assign(:task_mode, mode)
     |> assign(:task_mode_info, mode_info)
     |> assign(:show_open_project_form, false)
@@ -915,15 +955,18 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:pending_tasks, pending_tasks)
   end
 
-  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}}) when is_binary(branch) and branch != "", do: true
+  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
+       when is_binary(branch) and branch != "", do: true
+
   defp show_review_button?(_), do: false
 
   defp assign_form_defaults(socket) do
-    mode = if socket.assigns[:active_project_path] do
-      detect_mode(socket.assigns.active_project_path)
-    else
-      "genesis_new"
-    end
+    mode =
+      if socket.assigns[:active_project_path] do
+        detect_mode(socket.assigns.active_project_path)
+      else
+        "genesis_new"
+      end
 
     socket
     |> assign(:task_prompt, "")
@@ -1066,8 +1109,18 @@ defmodule EvoDashWeb.DashboardLive do
       task_node_path: socket.assigns.task_node_path,
       task_seeds: socket.assigns.task_seeds,
       task_starting_commit: socket.assigns.task_starting_commit,
+      foreign_repos: serialize_foreign_repos(socket.assigns[:foreign_repos])
     }
+
     push_event(socket, "persist_state", state)
+  end
+
+  defp serialize_foreign_repos(nil), do: []
+
+  defp serialize_foreign_repos(repos) do
+    Enum.map(repos, fn repo ->
+      %{"id" => Atom.to_string(repo.id), "path" => repo.root, "description" => repo.description}
+    end)
   end
 
   defp maybe_restore_assign(socket, _key, nil), do: socket
@@ -1077,7 +1130,41 @@ defmodule EvoDashWeb.DashboardLive do
     assign(socket, key, value)
   end
 
-  defp maybe_restore_show_project_settings(socket, "true"), do: assign(socket, :show_project_settings, true)
-  defp maybe_restore_show_project_settings(socket, "false"), do: assign(socket, :show_project_settings, false)
+  defp maybe_restore_show_project_settings(socket, "true"),
+    do: assign(socket, :show_project_settings, true)
+
+  defp maybe_restore_show_project_settings(socket, "false"),
+    do: assign(socket, :show_project_settings, false)
+
   defp maybe_restore_show_project_settings(socket, _), do: socket
+
+  defp maybe_restore_foreign_repos(socket, nil), do: socket
+  defp maybe_restore_foreign_repos(socket, repos) when is_list(repos) and repos == [], do: socket
+
+  defp maybe_restore_foreign_repos(socket, repos) when is_list(repos) do
+    restored =
+      repos
+      |> Enum.filter(fn r -> is_map(r) and is_binary(r["path"]) and r["path"] != "" end)
+      |> Enum.map(fn r ->
+        id = if is_binary(r["id"]) and r["id"] != "", do: String.to_atom(r["id"]), else: :primary
+
+        opts =
+          if is_binary(r["description"]) and r["description"] != "",
+            do: [description: r["description"]],
+            else: []
+
+        ForeignRepo.new(id, r["path"], opts)
+      end)
+
+    if restored != [] do
+      sorted =
+        Enum.sort_by(restored, fn repo ->
+          {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
+        end)
+
+      assign(socket, :foreign_repos, sorted)
+    else
+      socket
+    end
+  end
 end
