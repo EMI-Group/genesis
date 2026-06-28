@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g., v0.1.0)'
+        description: "Release tag (e.g., v0.1.0)"
         required: false
         type: string
 
@@ -212,15 +212,6 @@ jobs:
           - arch: x86_64
             runner: windows-2022
             rust_target: x86_64-pc-windows-msvc
-          - arch: arm64
-            runner: windows-11-arm
-            rust_target: aarch64-pc-windows-msvc
-            # The GitHub-hosted ARM partner runner reports ImageOS as
-            # 'win11-arm64', which erlef/setup-beam does not recognize.
-            # Map it to 'win22' (Windows Server 2022) so setup-beam resolves
-            # the correct OTP build (Windows OTP is x86_64-only, runs via
-            # emulation on ARM64).
-            beam_image_os: win22
     runs-on: ${{ matrix.runner }}
     env:
       # Both Windows targets use the x64 Burrito release because Erlang/OTP has
