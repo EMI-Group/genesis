@@ -717,7 +717,7 @@ defmodule EvoDash.TaskRegistryTest do
   # corrupt marker, so the store has a multi-node btree (required: with only a
   # few entries the marker shares a structural btree node and corruption breaks
   # the whole tree rather than just a value node).
-  defp inject_corrupt_binary!(data_dir, store_name, key, good_entries \\ []) do
+  defp inject_corrupt_binary!(data_dir, store_name, key, good_entries) do
     # Seed good entries first to build a multi-node btree.
     for {k, v} <- good_entries, do: CubDB.put(store_name, k, v)
 
