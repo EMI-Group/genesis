@@ -50,7 +50,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
