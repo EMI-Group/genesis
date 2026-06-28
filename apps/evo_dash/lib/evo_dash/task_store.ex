@@ -181,7 +181,7 @@ defmodule EvoDash.TaskStore do
     {:ok, _} =
       XqliteNIF.execute(
         conn,
-        "CREATE TABLE IF NOT EXISTS projects (path TEXT PRIMARY KEY, data BLOB)",
+        "CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, data BLOB)",
         []
       )
 
