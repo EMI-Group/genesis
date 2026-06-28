@@ -19,7 +19,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 ### Core Modules
 
 - `EvoDash.Application` — OTP supervisor (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskStore → TaskRegistry → Endpoint)
-- `EvoDash.TaskStore` — CubDB-backed persistent store (single instance, namespaced keys `{:task, id}` / `{:project, path}`) for task history and recent projects; started under supervision before TaskRegistry
+- `EvoDash.TaskStore` — CubDB-backed persistent store (single instance, namespaced keys `{:task, id}` / `{:project, path}`) for task history and recent projects; started under supervision before TaskRegistry. Provides crash-safe read/recovery helpers (`safe_get/2`, `safe_select_all/1`, `safe_size/1`, `integrity_check/1`) that survive corrupt (un-deserializable) CubDB entries — `integrity_check/1` salvages readable entries, clears the store, and rebuilds. `integrity_check` is called by TaskRegistry on init.
 - `EvoDash.TaskRegistry` — CubDB-backed GenServer tracking tasks; spawns `EvoGit.Runtime.*` processes
 - `EvoDashWeb.Endpoint` — Phoenix endpoint (LiveView socket, static files, Plug pipeline)
 - `EvoDashWeb.Router` — Routes to LiveViews and Phoenix LiveDashboard
