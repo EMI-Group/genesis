@@ -183,18 +183,10 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   def detect_cd_warnings(command, repo_path, repo_root) do
     worktree_base = Path.join([repo_root, ".evogit", "workers"])
 
-    ~r/\bcd\s+["']?(\/[^\s"'&|;]+)/
-    |> Regex.scan(command, capture: :all_but_first)
-    |> List.flatten()
-    |> Enum.uniq()
+    command
+    |> cd_targets()
     |> Enum.reduce([], fn target, acc ->
       cond do
-        target == repo_path ->
-          [
-            "⚠️ You don't need to `cd` into your worktree — your working directory is already set to it (`#{repo_path}`). Just run commands directly without changing directory."
-            | acc
-          ]
-
         String.starts_with?(target, worktree_base <> "/") ->
           [
             "⚠️ You are trying to `cd` into another agent's worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
@@ -217,5 +209,28 @@ defmodule EvoGit.Agent.Tools.ShellTool do
       [] -> nil
       warnings -> Enum.join(warnings, "\n")
     end
+  end
+
+  @doc """
+  Returns true if the command contains a `cd` into the agent's own worktree
+  (`repo_path`), which is redundant since the working directory is already set.
+  """
+  def redundant_cd?(command, repo_path, _repo_root) do
+    cd_targets(command)
+    |> Enum.any?(&(&1 == repo_path))
+  end
+
+  @doc """
+  Returns the redundant-cd warning message for the given worktree path.
+  """
+  def redundant_cd_warning(repo_path) do
+    "⚠️ You don't need to `cd` into your worktree — your working directory is already set to it (`#{repo_path}`). Just run commands directly without changing directory."
+  end
+
+  defp cd_targets(command) do
+    ~r/\bcd\s+["']?(\/[^\s"'&|;]+)/
+    |> Regex.scan(command, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
   end
 end

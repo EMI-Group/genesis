@@ -13,14 +13,6 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert ShellTool.detect_cd_warnings("mix test", @repo_path, @repo_root) == nil
     end
 
-    test "returns warning when cd to own worktree" do
-      result =
-        ShellTool.detect_cd_warnings("cd #{@repo_path} && mix test", @repo_path, @repo_root)
-
-      assert result =~ "You don't need to `cd` into your worktree"
-      assert result =~ @repo_path
-    end
-
     test "returns warning when cd to another agent's worktree" do
       other = "/home/user/my-project/.evogit/workers/worker_T2_A3"
 
@@ -83,6 +75,26 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert result =~ "repository root"
       occurrences = :binary.matches(result, "repository root")
       assert length(occurrences) == 1
+    end
+  end
+
+  describe "redundant_cd?/3" do
+    test "returns true when cd to own worktree" do
+      assert ShellTool.redundant_cd?("cd #{@repo_path} && mix test", @repo_path, @repo_root) == true
+    end
+
+    test "returns false for other commands" do
+      assert ShellTool.redundant_cd?("ls -la", @repo_path, @repo_root) == false
+      assert ShellTool.redundant_cd?("cd #{@repo_root}", @repo_path, @repo_root) == false
+      assert ShellTool.redundant_cd?("cd /tmp", @repo_path, @repo_root) == false
+    end
+  end
+
+  describe "redundant_cd_warning/1" do
+    test "returns the warning text with the path" do
+      result = ShellTool.redundant_cd_warning(@repo_path)
+      assert result =~ "You don't need to `cd` into your worktree"
+      assert result =~ @repo_path
     end
   end
 end

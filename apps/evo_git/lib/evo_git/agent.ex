@@ -708,6 +708,8 @@ defmodule EvoGit.Agent do
                 end
               end)
 
+            output = maybe_append_redundant_cd_warning(output, call, repo_path, repo_root)
+
             # Track delegation hints for write tools (skip during conflict resolution)
             {output, hints} =
               if threshold > 0 do
@@ -746,6 +748,27 @@ defmodule EvoGit.Agent do
         Process.put(:read_delegation_hints, read_final_hints)
 
         results
+      end
+
+      # --- Redundant CD Warning ---
+      # The "you don't need to cd into your worktree" warning fires only once
+      # per agent run (tracked via the process dictionary), unlike the
+      # wrong-path cd warnings which fire every time.
+
+      defp maybe_append_redundant_cd_warning(output, call, repo_path, repo_root) do
+        if call.name in ["run_bash", "run_powershell"] do
+          command = Map.get(call.arguments, "command", "")
+
+          if EvoGit.Agent.Tools.ShellTool.redundant_cd?(command, repo_path, repo_root) and
+               not Process.get(:redundant_cd_warned, false) do
+            Process.put(:redundant_cd_warned, true)
+            output <> "\n\n" <> EvoGit.Agent.Tools.ShellTool.redundant_cd_warning(repo_path)
+          else
+            output
+          end
+        else
+          output
+        end
       end
 
       # --- Delegation Hinting ---
