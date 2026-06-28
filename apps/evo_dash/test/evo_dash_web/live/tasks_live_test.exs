@@ -13,9 +13,9 @@ defmodule EvoDashWeb.TasksLiveTest do
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_tasks_live_#{unique}")
     File.mkdir_p!(root)
-    cubdb_path = Path.join(root, "tasks.cubdb")
+    sqlite_path = Path.join(root, "tasks.sqlite")
 
-    start_supervised({EvoDash.TaskStore, data_dir: cubdb_path})
+    start_supervised({EvoDash.TaskStore, data_dir: sqlite_path})
     start_supervised(
       {TaskRegistry,
        task_store: EvoDash.TaskStore,
@@ -32,7 +32,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     :ok
   end
 
-  # Inserts a task directly into the CubDB store (bypasses the async
+  # Inserts a task directly into the SQLite store (bypasses the async
   # task spawn that `start_task/2` triggers). This lets us create deterministic
   # fixture tasks for search/filter assertions.
   defp insert_fixture!(overrides) do
@@ -51,7 +51,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     }
     |> Map.merge(Enum.into(overrides, %{}))
 
-    CubDB.put(EvoDash.TaskStore, {:task, id}, task)
+    EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, id}, task)
     id
   end
 

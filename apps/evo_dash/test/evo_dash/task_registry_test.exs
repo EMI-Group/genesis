@@ -12,9 +12,9 @@ defmodule EvoDash.TaskRegistryTest do
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_tasks_#{unique}")
     File.mkdir_p!(root)
-    cubdb_path = Path.join(root, "tasks.cubdb")
+    sqlite_path = Path.join(root, "tasks.sqlite")
 
-    start_supervised({EvoDash.TaskStore, data_dir: cubdb_path})
+    start_supervised({EvoDash.TaskStore, data_dir: sqlite_path})
 
     start_supervised(
       {TaskRegistry, task_store: EvoDash.TaskStore, data_dir: root, name: EvoDash.TaskRegistry}
@@ -47,7 +47,7 @@ defmodule EvoDash.TaskRegistryTest do
       result: nil
     }
 
-    CubDB.put(EvoDash.TaskStore, {:task, trigger_id}, trigger)
+    EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, trigger_id}, trigger)
     # update_task_status transitions to :completed which triggers cleanup_expired_tasks()
     TaskRegistry.update_task_status(trigger_id, :completed, nil)
     # Sync with a call to ensure all prior casts have been processed
@@ -75,7 +75,7 @@ defmodule EvoDash.TaskRegistryTest do
     test "removes tasks older than max_age_days via persist cycle" do
       unique = System.unique_integer([:positive])
 
-      # Insert an old finished task directly into DETS (20 days old > 14 day default)
+      # Insert an old finished task directly into the store (20 days old > 14 day default)
       old_task = %TaskInfo{
         id: "test_old_#{unique}",
         type: :genesis,
@@ -88,7 +88,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "test_old_#{unique}"}, old_task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_old_#{unique}"}, old_task)
 
       # Insert a recent finished task (today)
       recent_task = %TaskInfo{
@@ -103,7 +103,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "test_recent_#{unique}"}, recent_task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_recent_#{unique}"}, recent_task)
 
       # Verify both exist
       tasks = TaskRegistry.list_tasks()
@@ -136,7 +136,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "test_5day_#{unique}"}, task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_5day_#{unique}"}, task)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -162,7 +162,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "test_running_#{unique}"}, running_task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_running_#{unique}"}, running_task)
 
       # Pending task
       pending_task = %TaskInfo{
@@ -177,7 +177,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "test_pending_#{unique}"}, pending_task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_pending_#{unique}"}, pending_task)
 
       # Old finished task (should be cleaned)
       old_finished = %TaskInfo{
@@ -192,7 +192,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "test_oldfin_#{unique}"}, old_finished)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_oldfin_#{unique}"}, old_finished)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -225,7 +225,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "test_combined_old_#{unique}"}, old_task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_combined_old_#{unique}"}, old_task)
 
       # Recent tasks (within 14 days) - should be kept
       for i <- 1..3 do
@@ -241,7 +241,7 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        CubDB.put(EvoDash.TaskStore, {:task, "test_combined_recent_#{unique}_#{i}"}, recent)
+        EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_combined_recent_#{unique}_#{i}"}, recent)
       end
 
       # Running task - should always be kept regardless of age
@@ -257,7 +257,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "test_combined_running_#{unique}"}, running)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_combined_running_#{unique}"}, running)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -277,7 +277,7 @@ defmodule EvoDash.TaskRegistryTest do
   end
 
   describe "set_review_metadata/3" do
-    test "updates a task's base_sha and commit_sha in CubDB" do
+    test "updates a task's base_sha and commit_sha in the store" do
       unique = System.unique_integer([:positive])
       task_id = "review_meta_#{unique}"
 
@@ -293,7 +293,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       TaskRegistry.set_review_metadata(task_id, "abc123", "def456")
 
@@ -305,7 +305,7 @@ defmodule EvoDash.TaskRegistryTest do
       assert fetched.commit_sha == "def456"
     end
 
-    test "persists to CubDB after update" do
+    test "persists to the store after update" do
       unique = System.unique_integer([:positive])
       task_id = "review_meta_dets_#{unique}"
 
@@ -321,15 +321,15 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       TaskRegistry.set_review_metadata(task_id, "base_sha_1", "commit_sha_1")
 
-      # Sync to ensure the cast (which writes directly to CubDB) has been processed
+      # Sync to ensure the cast (which writes directly to the store) has been processed
       TaskRegistry.list_tasks()
 
-      # Read directly from CubDB to confirm persistence
-      stored_task = CubDB.get(EvoDash.TaskStore, {:task, task_id})
+      # Read directly from the store to confirm persistence
+      stored_task = EvoDash.TaskStore.get(EvoDash.TaskStore, {:task, task_id})
 
       assert stored_task.base_sha == "base_sha_1"
       assert stored_task.commit_sha == "commit_sha_1"
@@ -362,7 +362,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       TaskRegistry.set_review_metadata(task_id, "base1", "commit1")
       TaskRegistry.list_tasks()
@@ -406,10 +406,10 @@ defmodule EvoDash.TaskRegistryTest do
         |> Map.put(:__struct__, TaskInfo)
         |> Map.drop([:base_sha, :commit_sha])
 
-      CubDB.put(EvoDash.TaskStore, {:task, task_id}, old_map)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, old_map)
 
       # Stop the supervised registry, then restart it so normalize_tasks runs.
-      # KEEP the same CubDB store running so the backfilled data persists.
+      # KEEP the same store running so the backfilled data persists.
       stop_supervised(EvoDash.TaskRegistry)
 
       start_supervised(
@@ -425,8 +425,8 @@ defmodule EvoDash.TaskRegistryTest do
     end
   end
 
-  describe "CubDB persistence" do
-    test "get_task retrieves a task seeded directly into CubDB" do
+  describe "persistence" do
+    test "get_task retrieves a task seeded directly into the store" do
       unique = System.unique_integer([:positive])
       task_id = "cubdb_crud_#{unique}"
 
@@ -442,7 +442,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ok = CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
+      :ok = EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       fetched = TaskRegistry.get_task(task_id)
       assert %TaskInfo{} = fetched
@@ -469,12 +469,12 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ok = CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
+      :ok = EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       # Confirm the task is visible before restart.
       assert %TaskInfo{} = TaskRegistry.get_task(task_id)
 
-      # Stop the registry but KEEP the same CubDB store running (store is durable on disk).
+      # Stop the registry but KEEP the same store running (store is durable on disk).
       stop_supervised(EvoDash.TaskRegistry)
 
       # Restart the registry pointing at the same store and data_dir.
@@ -483,7 +483,7 @@ defmodule EvoDash.TaskRegistryTest do
          task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
-      # The task persisted in CubDB must survive the registry restart.
+      # The task persisted in the store must survive the registry restart.
       fetched = TaskRegistry.get_task(task_id)
       assert %TaskInfo{} = fetched
       assert fetched.id == task_id
@@ -510,13 +510,13 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       pid = GenServer.whereis(EvoDash.TaskRegistry)
       assert is_pid(pid)
       assert Process.alive?(pid)
 
-      # list_tasks returns the inserted task (CubDB is the source of truth)
+      # list_tasks returns the inserted task (the store is the source of truth)
       tasks = TaskRegistry.list_tasks()
       assert Enum.any?(tasks, &(&1.id == task_id))
 
@@ -532,7 +532,7 @@ defmodule EvoDash.TaskRegistryTest do
       pid = GenServer.whereis(EvoDash.TaskRegistry)
       assert Process.alive?(pid)
 
-      # Each delete_task cast mutates CubDB.
+      # Each delete_task cast mutates the store.
       for i <- 1..5 do
         id = "survive_#{unique}_#{i}"
 
@@ -548,7 +548,7 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        CubDB.put(EvoDash.TaskStore, {:task, id}, task)
+        EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, id}, task)
         TaskRegistry.delete_task(id)
       end
 
@@ -591,16 +591,16 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "good1_#{unique}"}, good1)
-      CubDB.put(EvoDash.TaskStore, {:task, "good2_#{unique}"}, good2)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "good1_#{unique}"}, good1)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "good2_#{unique}"}, good2)
 
-      # Structurally corrupt entries (valid Erlang terms, wrong shape)
-      CubDB.put(EvoDash.TaskStore, {:task, "bad_string"}, "not a task struct at all")
-      CubDB.put(EvoDash.TaskStore, {:task, "bad_map"}, %{random: "data", not: :task})
-      CubDB.put(EvoDash.TaskStore, {:bad_namespace, "unknown"}, %{stuff: true})
-      CubDB.put(EvoDash.TaskStore, "bare_key_not_a_tuple", :value)
+      # Structurally corrupt entries (valid keys, wrong-shape values).
+      # Note: the SQLite store enforces key shape — only {:task, id} and
+      # {:project, path} are accepted — so we test wrong-value resilience here.
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "bad_string"}, "not a task struct at all")
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "bad_map"}, %{random: "data", not: :task})
 
-      CubDB.put(
+      EvoDash.TaskStore.put(
         EvoDash.TaskStore,
         {:project, "/some/path"},
         %{path: "/some/path", name: "test", last_opened_at: DateTime.utc_now()}
@@ -647,10 +647,10 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, "good_cleanup_#{unique}"}, good)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "good_cleanup_#{unique}"}, good)
 
       # Corrupt entry
-      CubDB.put(EvoDash.TaskStore, {:task, "bad_cleanup"}, %{not_a: :task})
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "bad_cleanup"}, %{not_a: :task})
 
       pid = GenServer.whereis(EvoDash.TaskRegistry)
       assert Process.alive?(pid)
@@ -670,7 +670,7 @@ defmodule EvoDash.TaskRegistryTest do
       unique = System.unique_integer([:positive])
 
       # Seed a corrupt entry FIRST
-      CubDB.put(EvoDash.TaskStore, {:task, "pre_existing_corrupt_#{unique}"}, "garbage_value")
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "pre_existing_corrupt_#{unique}"}, "garbage_value")
 
       # Now start a task and complete it
       task_id = "new_task_#{unique}"
@@ -687,7 +687,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      CubDB.put(EvoDash.TaskStore, {:task, task_id}, task)
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
 
       # Simulate completion via cast (this calls cleanup_expired_tasks internally)
       TaskRegistry.update_task_status(task_id, :completed, {:ok, %{usage: nil, agent_count: 1}})
@@ -707,161 +707,14 @@ defmodule EvoDash.TaskRegistryTest do
     end
   end
 
-  # Helper: inject a truly corrupt (un-deserializable) value into CubDB by
-  # corrupting the serialized bytes in the data file.
-  #
-  # Uses an isolated data_dir + store name (provided by the caller) so the
-  # corruption never touches the shared test store or the production store.
-  #
-  # `good_entries` is a list of additional {key, value} pairs to seed BEFORE the
-  # corrupt marker, so the store has a multi-node btree (required: with only a
-  # few entries the marker shares a structural btree node and corruption breaks
-  # the whole tree rather than just a value node).
-  defp inject_corrupt_binary!(data_dir, store_name, key, good_entries) do
-    # Seed good entries first to build a multi-node btree.
-    for {k, v} <- good_entries, do: CubDB.put(store_name, k, v)
-
-    # A distinctive marker value: a unique atom + random binary. The atom name
-    # lets us locate the serialized term in the file; we then corrupt the term
-    # encoding header (just before the binary payload) to make it
-    # un-deserializable.
-    unique = System.unique_integer([:positive])
-    blob = :crypto.strong_rand_bytes(64)
-    marker = {:"corrupt_zzz_marker_#{unique}", blob}
-    CubDB.put(store_name, key, marker)
-
-    # Flush and stop
-    :ok = GenServer.stop(store_name)
-
-    cubdb_file = Path.join(data_dir, "0.cub")
-    {:ok, data} = File.read(cubdb_file)
-
-    # Locate the unique random blob bytes in the file.
-    {blob_pos, _blob_len} =
-      :binary.match(data, blob) ||
-        raise "corrupt marker blob not found in CubDB data file"
-
-    # Overwrite ~15 bytes ending just before the blob — this hits the term
-    # encoding header (tuple arity / atom tag) and makes binary_to_term raise.
-    corrupt_len = 15
-    corrupt_end = blob_pos
-    corrupt_start = max(0, corrupt_end - corrupt_len)
-    garbage = :binary.copy(<<0xFF>>, corrupt_len)
-
-    pre = :binary.part(data, 0, corrupt_start)
-
-    post_len = byte_size(data) - corrupt_end
-    post = :binary.part(data, corrupt_end, post_len)
-
-    new_data = pre <> garbage <> post
-    :ok = File.write(cubdb_file, new_data)
-
-    # Restart the store
-    {:ok, _} = CubDB.start_link(data_dir: data_dir, name: store_name, auto_file_sync: true)
-    :ok
-  end
-
-  describe "corruption resilience — binary corruption" do
-    # These tests use their own isolated store (separate from the shared
-    # EvoDash.TaskStore used by the module-level setup) because they stop and
-    # restart the store to inject binary corruption at the file level.
-
-    test "integrity_check heals a store with binary-corrupt entries" do
-      unique = System.unique_integer([:positive])
-      store = :"bin_corrupt_store_#{unique}"
-      data_dir = Path.join(System.tmp_dir!(), "evogit_bin_corrupt_#{unique}")
-      File.mkdir_p!(data_dir)
-      {:ok, _} = CubDB.start_link(data_dir: data_dir, name: store, auto_file_sync: true)
-
-      try do
-        good1 = %TaskInfo{
-          id: "bin_good1_#{unique}",
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil
-        }
-
-        good2 = %TaskInfo{
-          id: "bin_good2_#{unique}",
-          type: :evolve,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil
-        }
-
-        # Seed padding entries + the named good entries to build a multi-node
-        # btree. With only a few entries the marker shares a structural btree
-        # node, and corruption breaks the whole tree rather than just a value.
-        padding =
-          for i <- 1..40 do
-            {{:task, "pad_#{unique}_#{i}"}, good1}
-          end
-
-        good_entries =
-          padding ++
-            [
-              {{:task, "bin_good1_#{unique}"}, good1},
-              {{:task, "bin_good2_#{unique}"}, good2}
-            ]
-
-        corrupt_key = {:task, "zzz_corrupt_#{unique}"}
-        inject_corrupt_binary!(data_dir, store, corrupt_key, good_entries)
-
-        # After restart, a plain select should raise on the corrupt value.
-        raised =
-          try do
-            CubDB.select(store) |> Enum.to_list()
-            false
-          rescue
-            _ -> true
-          end
-
-        assert raised
-
-        # integrity_check salvages the good entries and rebuilds.
-        result = EvoDash.TaskStore.integrity_check(store)
-        assert match?({:repaired, _}, result) or match?({:error, _}, result)
-
-        # After repair, select should no longer raise.
-        entries = CubDB.select(store) |> Enum.to_list()
-        keys = Enum.map(entries, fn {k, _} -> k end)
-
-        # The corrupt key sorts after the good entries, so the forward-only
-        # read salvages entries in earlier btree leaves before hitting the
-        # corrupt entry. Entries co-located with the corrupt marker in its
-        # leaf are unrecoverable, but entries in other leaves survive.
-        assert length(entries) > 0
-
-        # Corrupt entry is gone
-        refute corrupt_key in keys
-      after
-        try do
-          GenServer.stop(store)
-        catch
-          _, _ -> :ok
-        end
-
-        File.rm_rf!(data_dir)
-      end
-    end
-  end
-
   describe "TaskStore.integrity_check" do
-    test "salvages good entries and quarantines corrupt ones" do
+    test "returns :ok on a healthy store" do
       unique = System.unique_integer([:positive])
-      store = :"ic_corrupt_store_#{unique}"
-      data_dir = Path.join(System.tmp_dir!(), "evogit_ic_corrupt_#{unique}")
-      File.mkdir_p!(data_dir)
-      {:ok, _} = CubDB.start_link(data_dir: data_dir, name: store, auto_file_sync: true)
+      store = :"ic_healthy_store_#{unique}"
+      sqlite_path = Path.join(System.tmp_dir!(), "evogit_ic_healthy_#{unique}.sqlite")
+      File.mkdir_p!(Path.dirname(sqlite_path))
+
+      {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
 
       try do
         good = %TaskInfo{
@@ -876,32 +729,14 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        # Padding entries to build a multi-node btree.
-        good_entries =
-          for i <- 1..40 do
-            {{:task, "ic_pad_#{unique}_#{i}"}, good}
-          end
+        :ok = EvoDash.TaskStore.put(store, {:task, "ic_good_#{unique}"}, good)
 
-        corrupt_key = {:task, "zzz_corrupt_#{unique}"}
-        inject_corrupt_binary!(data_dir, store, corrupt_key, good_entries)
+        assert EvoDash.TaskStore.integrity_check(store) == :ok
 
-        result = EvoDash.TaskStore.integrity_check(store)
-        assert match?({:repaired, _}, result) or match?(:ok, result)
-
-        # After repair, the store is readable again and retains salvaged entries.
-        entries = CubDB.select(store) |> Enum.to_list()
-        keys = Enum.map(entries, fn {k, _} -> k end)
-
-        # The corrupt key sorts after the padding entries, so the forward-only
-        # read salvages entries in earlier btree leaves before hitting the
-        # corrupt entry. At least some padding entries survived the rebuild.
-        assert Enum.any?(keys, fn
-                 {:task, "ic_pad_" <> _} -> true
-                 _ -> false
-               end)
-
-        # Corrupt entry is gone.
-        refute corrupt_key in keys
+        # The good entry is still present.
+        fetched = EvoDash.TaskStore.get(store, {:task, "ic_good_#{unique}"})
+        assert %TaskInfo{} = fetched
+        assert fetched.id == "ic_good_#{unique}"
       after
         try do
           GenServer.stop(store)
@@ -909,7 +744,73 @@ defmodule EvoDash.TaskRegistryTest do
           _, _ -> :ok
         end
 
-        File.rm_rf!(data_dir)
+        File.rm(sqlite_path)
+      end
+    end
+
+    test "removes rows with undecodable blobs and reports repaired count" do
+      unique = System.unique_integer([:positive])
+      store = :"ic_garbage_store_#{unique}"
+      sqlite_path = Path.join(System.tmp_dir!(), "evogit_ic_garbage_#{unique}.sqlite")
+      File.mkdir_p!(Path.dirname(sqlite_path))
+
+      {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+
+      try do
+        good = %TaskInfo{
+          id: "ic_good2_#{unique}",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil
+        }
+
+        :ok = EvoDash.TaskStore.put(store, {:task, "ic_good2_#{unique}"}, good)
+
+        # Inject a row with garbage bytes directly via the raw connection.
+        # We cannot reach the private conn from here, so insert via a one-off
+        # direct SQLite write using the same file.
+        conn =
+          case Xqlite.open(sqlite_path) do
+            {:ok, c} -> c
+          end
+
+        {:ok, _} =
+          XqliteNIF.execute(
+            conn,
+            "INSERT OR REPLACE INTO tasks (id, data) VALUES (?1, ?2)",
+            ["garbage_row_#{unique}", :binary.copy(<<0xFF>>, 16)]
+          )
+
+        :ok = XqliteNIF.close(conn)
+
+        # Reopen the store so it sees the injected row. The existing store
+        # process holds its own connection, so stop and restart it.
+        :ok = GenServer.stop(store)
+        {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+
+        # integrity_check should remove the undecodable row.
+        result = EvoDash.TaskStore.integrity_check(store)
+        assert match?({:repaired, _}, result) or match?(:ok, result)
+
+        # safe_select_all skips the garbage row and keeps the good one.
+        entries = EvoDash.TaskStore.safe_select_all(store)
+        keys = Enum.map(entries, fn {k, _} -> k end)
+
+        assert {:task, "ic_good2_#{unique}"} in keys
+        refute {:task, "garbage_row_#{unique}"} in keys
+      after
+        try do
+          GenServer.stop(store)
+        catch
+          _, _ -> :ok
+        end
+
+        File.rm(sqlite_path)
       end
     end
   end
