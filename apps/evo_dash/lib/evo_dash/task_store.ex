@@ -62,23 +62,16 @@ defmodule EvoDash.TaskStore do
 
   @doc """
   Enumerates all entries, collecting partial results even if some values
-  are corrupt. Combines forward and reverse reads to maximize recovery.
-  Returns a deduplicated list of {key, value} tuples.
+  are corrupt. Returns a list of {key, value} tuples.
 
   CubDB's `select/2` loads each leaf's value nodes eagerly during reduction.
   A single corrupt value raises mid-reduction, losing the entire accumulated
   list. To salvage partial results, we use an `Agent` as a side-effect
   accumulator fed by `Stream.each/2`. When the stream raises, the Agent still
-  retains all entries from leaves read *before* the corrupt leaf. Combining
-  forward (`select([])`) and reverse (`select(reverse: true)`) reads recovers
-  every entry except those co-located in the corrupt leaf itself.
+  retains all entries from leaves read *before* the corrupt leaf.
   """
   def safe_select_all(store \\ __MODULE__) do
-    forward = try_collect_partial(store, [])
-    reverse = try_collect_partial(store, reverse: true)
-
-    (forward ++ reverse)
-    |> Enum.uniq_by(fn {key, _} -> key end)
+    try_collect_partial(store, [])
   end
 
   @doc """
@@ -118,8 +111,7 @@ defmodule EvoDash.TaskStore do
 
       try do
         CubDB.clear(store)
-
-        for {key, value} <- salvaged, do: CubDB.put(store, key, value)
+        CubDB.put_multi(store, salvaged)
         {:repaired, lost}
       rescue
         error ->

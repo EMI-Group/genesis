@@ -293,12 +293,12 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call(:clear_finished_tasks, _from, state) do
-    select_all_tasks(state)
-    |> Enum.each(fn {{:task, id}, task} ->
-      unless task.status in [:running, :pending] do
-        CubDB.delete(state.task_store, {:task, id})
-      end
-    end)
+    keys =
+      select_all_tasks(state)
+      |> Enum.filter(fn {{:task, _id}, task} -> task.status not in [:running, :pending] end)
+      |> Enum.map(fn {{:task, id}, _task} -> {:task, id} end)
+
+    CubDB.delete_multi(state.task_store, keys)
 
     cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -311,8 +311,6 @@ defmodule EvoDash.TaskRegistry do
   def handle_call({:add_recent_project, path, name}, _from, state) do
     now = DateTime.utc_now()
 
-    # Remove existing entry for this path (if any), then add updated entry
-    CubDB.delete(state.task_store, {:project, path})
     CubDB.put(state.task_store, {:project, path}, %{path: path, name: name, last_opened_at: now})
 
     # Enforce max limit
@@ -346,7 +344,7 @@ defmodule EvoDash.TaskRegistry do
         do_handle_update_status(state, task_id, status, result, opts)
       rescue
         error ->
-          Logger.warning(
+          Logger.error(
             "TaskRegistry: update_status failed for task #{inspect(task_id)}: " <>
               "#{Exception.message(error)}"
           )
@@ -365,7 +363,11 @@ defmodule EvoDash.TaskRegistry do
         do_append_log(state, task_id, log_entry)
       rescue
         error ->
-          Logger.warning("append_log failed: #{inspect(error)}")
+          Logger.error(
+            "TaskRegistry: append_log failed for task #{inspect(task_id)}: " <>
+              "#{Exception.message(error)}"
+          )
+
           state
       end
 
@@ -379,7 +381,11 @@ defmodule EvoDash.TaskRegistry do
         do_delete_task(state, task_id)
       rescue
         error ->
-          Logger.warning("delete_task failed: #{inspect(error)}")
+          Logger.error(
+            "TaskRegistry: delete_task failed for task #{inspect(task_id)}: " <>
+              "#{Exception.message(error)}"
+          )
+
           state
       end
 
@@ -394,7 +400,11 @@ defmodule EvoDash.TaskRegistry do
         do_set_review_status(state, task_id, status)
       rescue
         error ->
-          Logger.warning("set_review_status failed: #{inspect(error)}")
+          Logger.error(
+            "TaskRegistry: set_review_status failed for task #{inspect(task_id)}: " <>
+              "#{Exception.message(error)}"
+          )
+
           state
       end
 
@@ -409,7 +419,11 @@ defmodule EvoDash.TaskRegistry do
         do_set_review_metadata(state, task_id, base_sha, commit_sha)
       rescue
         error ->
-          Logger.warning("set_review_metadata failed: #{inspect(error)}")
+          Logger.error(
+            "TaskRegistry: set_review_metadata failed for task #{inspect(task_id)}: " <>
+              "#{Exception.message(error)}"
+          )
+
           state
       end
 
@@ -543,7 +557,6 @@ defmodule EvoDash.TaskRegistry do
 
   defp do_delete_task(state, task_id) do
     CubDB.delete(state.task_store, {:task, task_id})
-    cleanup_expired_tasks(state)
     state
   end
 
@@ -552,7 +565,6 @@ defmodule EvoDash.TaskRegistry do
       %TaskInfo{} = task ->
         updated = %{task | review_status: status}
         CubDB.put(state.task_store, {:task, task_id}, updated)
-        cleanup_expired_tasks(state)
 
       nil ->
         :ok
@@ -566,7 +578,6 @@ defmodule EvoDash.TaskRegistry do
       %TaskInfo{} = task ->
         updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
         CubDB.put(state.task_store, {:task, task_id}, updated)
-        cleanup_expired_tasks(state)
 
       nil ->
         :ok
@@ -768,26 +779,28 @@ defmodule EvoDash.TaskRegistry do
     max_tasks = config.max_tasks
     cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
 
-    # Delete tasks older than cutoff (only finished tasks)
     all_tasks = select_all_tasks(state) |> Enum.map(fn {_key, task} -> task end)
 
-    for task <- all_tasks,
-        task.finished_at != nil,
-        DateTime.compare(task.finished_at, cutoff) == :lt do
-      CubDB.delete(state.task_store, {:task, task.id})
-    end
+    # Partition: age-expired finished tasks vs everything else
+    {age_expired, remaining} =
+      Enum.split_with(all_tasks, fn task ->
+        task.finished_at != nil and DateTime.compare(task.finished_at, cutoff) == :lt
+      end)
 
-    # Enforce max_tasks limit (keep newest finished tasks)
-    remaining = select_all_tasks(state) |> Enum.map(fn {_key, task} -> task end)
+    age_expired_keys = Enum.map(age_expired, fn task -> {:task, task.id} end)
 
-    finished =
+    # From remaining finished tasks, enforce max_tasks limit (keep newest)
+    over_limit_keys =
       remaining
       |> Enum.filter(&(&1.finished_at != nil))
       |> Enum.sort_by(& &1.finished_at, {:desc, DateTime})
+      |> Enum.drop(max_tasks)
+      |> Enum.map(fn task -> {:task, task.id} end)
 
-    if length(finished) > max_tasks do
-      to_delete = Enum.drop(finished, max_tasks)
-      for task <- to_delete, do: CubDB.delete(state.task_store, {:task, task.id})
+    all_keys = age_expired_keys ++ over_limit_keys
+
+    if all_keys != [] do
+      CubDB.delete_multi(state.task_store, all_keys)
     end
 
     :ok
@@ -806,9 +819,9 @@ defmodule EvoDash.TaskRegistry do
         :ok
 
       {_kept, to_remove} ->
-        for project <- to_remove do
-          CubDB.delete(state.task_store, {:project, project.path})
-        end
+        keys = Enum.map(to_remove, fn project -> {:project, project.path} end)
+        CubDB.delete_multi(state.task_store, keys)
+        :ok
     end
   end
 
@@ -864,7 +877,11 @@ defmodule EvoDash.TaskRegistry do
         do_handle_task_status(state, task_id, status)
       rescue
         error ->
-          Logger.warning("task_status handler failed: #{inspect(error)}")
+          Logger.error(
+            "TaskRegistry: task_status handler failed for task #{inspect(task_id)}: " <>
+              "#{Exception.message(error)}"
+          )
+
           state
       end
 

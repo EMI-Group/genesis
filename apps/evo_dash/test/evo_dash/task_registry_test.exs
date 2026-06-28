@@ -29,26 +29,27 @@ defmodule EvoDash.TaskRegistryTest do
     {:ok, %{data_dir: root}}
   end
 
-  # Helper: trigger cleanup_expired_tasks (which runs on mutations) by inserting
-  # a dummy task and deleting it via cast, then synchronizing with a synchronous call.
+  # Helper: trigger cleanup_expired_tasks by inserting a task in :running state
+  # and transitioning it to :completed (which calls cleanup_expired_tasks()),
+  # then synchronizing with a synchronous call.
   defp trigger_cleanup! do
     trigger_id = "cleanup_trigger_#{System.unique_integer([:positive])}"
 
     trigger = %TaskInfo{
       id: trigger_id,
       type: :genesis,
-      status: :completed,
+      status: :running,
       opts: [path: "/tmp/test"],
       ref: nil,
       started_at: DateTime.utc_now(),
-      finished_at: DateTime.utc_now(),
+      finished_at: nil,
       logs: [],
       result: nil
     }
 
     CubDB.put(EvoDash.TaskStore, {:task, trigger_id}, trigger)
-    # delete_task is a cast that calls cleanup_expired_tasks()
-    TaskRegistry.delete_task(trigger_id)
+    # update_task_status transitions to :completed which triggers cleanup_expired_tasks()
+    TaskRegistry.update_task_status(trigger_id, :completed, nil)
     # Sync with a call to ensure all prior casts have been processed
     TaskRegistry.list_tasks()
     :ok
@@ -526,13 +527,12 @@ defmodule EvoDash.TaskRegistryTest do
       assert Process.alive?(pid)
     end
 
-    test "registry survives mutation operations that trigger cleanup_expired_tasks" do
+    test "registry survives mutation operations" do
       unique = System.unique_integer([:positive])
       pid = GenServer.whereis(EvoDash.TaskRegistry)
       assert Process.alive?(pid)
 
-      # Each delete_task cast triggers cleanup_expired_tasks internally.
-      # Before the fix, a DETS read error during cleanup crashed the GenServer.
+      # Each delete_task cast mutates CubDB.
       for i <- 1..5 do
         id = "survive_#{unique}_#{i}"
 
@@ -813,7 +813,7 @@ defmodule EvoDash.TaskRegistryTest do
               {{:task, "bin_good2_#{unique}"}, good2}
             ]
 
-        corrupt_key = {:task, "bin_corrupt_#{unique}"}
+        corrupt_key = {:task, "zzz_corrupt_#{unique}"}
         inject_corrupt_binary!(data_dir, store, corrupt_key, good_entries)
 
         # After restart, a plain select should raise on the corrupt value.
@@ -835,9 +835,10 @@ defmodule EvoDash.TaskRegistryTest do
         entries = CubDB.select(store) |> Enum.to_list()
         keys = Enum.map(entries, fn {k, _} -> k end)
 
-        # The integrity check salvaged readable entries (those in other btree
-        # leaves). Entries co-located with the corrupt marker in its leaf are
-        # unrecoverable (~32 per leaf), but entries in other leaves survive.
+        # The corrupt key sorts after the good entries, so the forward-only
+        # read salvages entries in earlier btree leaves before hitting the
+        # corrupt entry. Entries co-located with the corrupt marker in its
+        # leaf are unrecoverable, but entries in other leaves survive.
         assert length(entries) > 0
 
         # Corrupt entry is gone
@@ -881,7 +882,7 @@ defmodule EvoDash.TaskRegistryTest do
             {{:task, "ic_pad_#{unique}_#{i}"}, good}
           end
 
-        corrupt_key = {:task, "ic_corrupt_#{unique}"}
+        corrupt_key = {:task, "zzz_corrupt_#{unique}"}
         inject_corrupt_binary!(data_dir, store, corrupt_key, good_entries)
 
         result = EvoDash.TaskStore.integrity_check(store)
@@ -891,7 +892,9 @@ defmodule EvoDash.TaskRegistryTest do
         entries = CubDB.select(store) |> Enum.to_list()
         keys = Enum.map(entries, fn {k, _} -> k end)
 
-        # At least some padding entries survived the rebuild.
+        # The corrupt key sorts after the padding entries, so the forward-only
+        # read salvages entries in earlier btree leaves before hitting the
+        # corrupt entry. At least some padding entries survived the rebuild.
         assert Enum.any?(keys, fn
                  {:task, "ic_pad_" <> _} -> true
                  _ -> false
