@@ -18,7 +18,16 @@ defmodule EvoDash.Application do
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: EvoDash.Supervisor]
+    # Use :one_for_one so Endpoint survives a TaskRegistry restart.
+    # Tune max_restarts to tolerate repeated transient crashes without
+    # shutting down the whole application.
+    opts = [
+      strategy: :one_for_one,
+      max_restarts: 10,
+      max_seconds: 60,
+      name: EvoDash.Supervisor
+    ]
+
     Supervisor.start_link(children, opts)
   end
 

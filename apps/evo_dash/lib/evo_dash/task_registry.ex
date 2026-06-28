@@ -151,6 +151,15 @@ defmodule EvoDash.TaskRegistry do
       task_refs: %{}
     }
 
+    # Repair the store from any corrupt (un-deserializable) entries before we
+    # read or normalize anything. Best-effort: never let this crash init.
+    try do
+      EvoDash.TaskStore.integrity_check(task_store)
+    rescue
+      error ->
+        Logger.warning("TaskRegistry init: integrity check failed: #{inspect(error)}")
+    end
+
     # One-time best-effort DETS→CubDB migration (before normalize).
     maybe_migrate_from_dets(state)
 
@@ -332,32 +341,16 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:update_status, task_id, status, result, opts}, state) do
-    usage = Keyword.get(opts, :usage)
-    agent_count = Keyword.get(opts, :agent_count)
-    commit_sha = Keyword.get(opts, :commit_sha)
-
     state =
-      case task_get(state, task_id) do
-        %TaskInfo{} = task ->
-          finished_at =
-            if status in [:completed, :failed, :cancelled],
-              do: DateTime.utc_now(),
-              else: task.finished_at
+      try do
+        do_handle_update_status(state, task_id, status, result, opts)
+      rescue
+        error ->
+          Logger.warning(
+            "TaskRegistry: update_status failed for task #{inspect(task_id)}: " <>
+              "#{Exception.message(error)}"
+          )
 
-          updated = %{task | status: status, result: result, finished_at: finished_at}
-          updated = if usage, do: %{updated | usage: usage}, else: updated
-          updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
-          updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
-          CubDB.put(state.task_store, {:task, task_id}, updated)
-
-          if status in [:completed, :failed, :cancelled] do
-            cleanup_expired_tasks(state)
-            %{state | task_refs: Map.delete(state.task_refs, task_id)}
-          else
-            state
-          end
-
-        nil ->
           state
       end
 
@@ -367,55 +360,60 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:append_log, task_id, log_entry}, state) do
-    case task_get(state, task_id) do
-      %TaskInfo{logs: logs} = task ->
-        updated = %{task | logs: [log_entry | logs]}
-        CubDB.put(state.task_store, {:task, task_id}, updated)
-
-      nil ->
-        :ok
-    end
+    state =
+      try do
+        do_append_log(state, task_id, log_entry)
+      rescue
+        error ->
+          Logger.warning("append_log failed: #{inspect(error)}")
+          state
+      end
 
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
-    CubDB.delete(state.task_store, {:task, task_id})
-    cleanup_expired_tasks(state)
+    state =
+      try do
+        do_delete_task(state, task_id)
+      rescue
+        error ->
+          Logger.warning("delete_task failed: #{inspect(error)}")
+          state
+      end
+
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
-    case task_get(state, task_id) do
-      %TaskInfo{} = task ->
-        updated = %{task | review_status: status}
-        CubDB.put(state.task_store, {:task, task_id}, updated)
-        cleanup_expired_tasks(state)
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    state =
+      try do
+        do_set_review_status(state, task_id, status)
+      rescue
+        error ->
+          Logger.warning("set_review_status failed: #{inspect(error)}")
+          state
+      end
 
-      nil ->
-        :ok
-    end
-
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
-    case task_get(state, task_id) do
-      %TaskInfo{} = task ->
-        updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        CubDB.put(state.task_store, {:task, task_id}, updated)
-        cleanup_expired_tasks(state)
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    state =
+      try do
+        do_set_review_metadata(state, task_id, base_sha, commit_sha)
+      rescue
+        error ->
+          Logger.warning("set_review_metadata failed: #{inspect(error)}")
+          state
+      end
 
-      nil ->
-        :ok
-    end
-
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
   end
 
@@ -474,19 +472,130 @@ defmodule EvoDash.TaskRegistry do
   # --- CubDB Read Helpers ---
 
   defp task_get(state, task_id) do
-    CubDB.get(state.task_store, {:task, task_id})
+    EvoDash.TaskStore.safe_get(state.task_store, {:task, task_id})
   end
 
   defp select_all_tasks(state) do
-    CubDB.select(state.task_store)
-    |> Stream.filter(fn {{ns, _id}, _v} -> ns == :task end)
-    |> Enum.to_list()
+    state.task_store
+    |> EvoDash.TaskStore.safe_select_all()
+    |> Enum.filter(fn
+      {{:task, _id}, %TaskInfo{}} -> true
+      _ -> false
+    end)
   end
 
   defp select_all_projects(state) do
-    CubDB.select(state.task_store)
-    |> Stream.filter(fn {{ns, _path}, _v} -> ns == :project end)
-    |> Enum.to_list()
+    state.task_store
+    |> EvoDash.TaskStore.safe_select_all()
+    |> Enum.filter(fn
+      {{:project, _path}, %{path: _, name: _, last_opened_at: _}} -> true
+      _ -> false
+    end)
+  end
+
+  # --- Crash-safe callback bodies ---
+  # These private helpers contain the logic extracted from the handle_cast /
+  # handle_info callbacks above, so the callbacks can wrap them in try/rescue
+  # without crashing the GenServer.
+
+  defp do_handle_update_status(state, task_id, status, result, opts) do
+    usage = Keyword.get(opts, :usage)
+    agent_count = Keyword.get(opts, :agent_count)
+    commit_sha = Keyword.get(opts, :commit_sha)
+
+    case task_get(state, task_id) do
+      %TaskInfo{} = task ->
+        finished_at =
+          if status in [:completed, :failed, :cancelled],
+            do: DateTime.utc_now(),
+            else: task.finished_at
+
+        updated = %{task | status: status, result: result, finished_at: finished_at}
+        updated = if usage, do: %{updated | usage: usage}, else: updated
+        updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
+        updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
+        CubDB.put(state.task_store, {:task, task_id}, updated)
+
+        if status in [:completed, :failed, :cancelled] do
+          cleanup_expired_tasks(state)
+          %{state | task_refs: Map.delete(state.task_refs, task_id)}
+        else
+          state
+        end
+
+      nil ->
+        state
+    end
+  end
+
+  defp do_append_log(state, task_id, log_entry) do
+    case task_get(state, task_id) do
+      %TaskInfo{logs: logs} = task ->
+        updated = %{task | logs: [log_entry | logs]}
+        CubDB.put(state.task_store, {:task, task_id}, updated)
+
+      nil ->
+        :ok
+    end
+
+    state
+  end
+
+  defp do_delete_task(state, task_id) do
+    CubDB.delete(state.task_store, {:task, task_id})
+    cleanup_expired_tasks(state)
+    state
+  end
+
+  defp do_set_review_status(state, task_id, status) do
+    case task_get(state, task_id) do
+      %TaskInfo{} = task ->
+        updated = %{task | review_status: status}
+        CubDB.put(state.task_store, {:task, task_id}, updated)
+        cleanup_expired_tasks(state)
+
+      nil ->
+        :ok
+    end
+
+    state
+  end
+
+  defp do_set_review_metadata(state, task_id, base_sha, commit_sha) do
+    case task_get(state, task_id) do
+      %TaskInfo{} = task ->
+        updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
+        CubDB.put(state.task_store, {:task, task_id}, updated)
+        cleanup_expired_tasks(state)
+
+      nil ->
+        :ok
+    end
+
+    state
+  end
+
+  defp do_handle_task_status(state, task_id, status) do
+    case task_get(state, task_id) do
+      %TaskInfo{} = task ->
+        finished_at =
+          if status in [:completed, :failed, :cancelled],
+            do: DateTime.utc_now(),
+            else: task.finished_at
+
+        updated = %{task | status: status, finished_at: finished_at}
+        CubDB.put(state.task_store, {:task, task_id}, updated)
+
+        if status in [:completed, :failed, :cancelled] do
+          cleanup_expired_tasks(state)
+          %{state | task_refs: Map.delete(state.task_refs, task_id)}
+        else
+          state
+        end
+
+      nil ->
+        state
+    end
   end
 
   # --- One-time DETS→CubDB Migration (best-effort) ---
@@ -507,7 +616,11 @@ defmodule EvoDash.TaskRegistry do
 
     if File.exists?(path) do
       try do
-        case :dets.open_file(:evo_dash_tasks_dets, type: :set, file: to_charlist(path), repair: true) do
+        case :dets.open_file(:evo_dash_tasks_dets,
+               type: :set,
+               file: to_charlist(path),
+               repair: true
+             ) do
           {:ok, table} ->
             records =
               :dets.foldl(
@@ -521,9 +634,7 @@ defmodule EvoDash.TaskRegistry do
 
             _ = :dets.close(table)
 
-            Logger.info(
-              "DETS→CubDB migration: migrated #{records} task(s) from #{path}."
-            )
+            Logger.info("DETS→CubDB migration: migrated #{records} task(s) from #{path}.")
 
           {:error, reason} ->
             Logger.warning(
@@ -549,7 +660,11 @@ defmodule EvoDash.TaskRegistry do
 
     if File.exists?(path) do
       try do
-        case :dets.open_file(:evo_dash_projects_dets, type: :set, file: to_charlist(path), repair: true) do
+        case :dets.open_file(:evo_dash_projects_dets,
+               type: :set,
+               file: to_charlist(path),
+               repair: true
+             ) do
           {:ok, table} ->
             records =
               :dets.foldl(
@@ -563,9 +678,7 @@ defmodule EvoDash.TaskRegistry do
 
             _ = :dets.close(table)
 
-            Logger.info(
-              "DETS→CubDB migration: migrated #{records} project(s) from #{path}."
-            )
+            Logger.info("DETS→CubDB migration: migrated #{records} project(s) from #{path}.")
 
           {:error, reason} ->
             Logger.warning(
@@ -606,26 +719,21 @@ defmodule EvoDash.TaskRegistry do
   defp normalize_tasks(state) do
     objects = select_all_tasks(state)
 
-    try do
-      for {_key, %TaskInfo{} = task} <- objects do
-        # Backfill any missing struct fields (e.g. review_status added after initial persist)
+    for {_key, %TaskInfo{} = task} <- objects do
+      try do
         task = Map.merge(%TaskInfo{}, task)
-        # Reset non-persistable fields
         task = %{task | ref: nil, status: maybe_reset_status(task.status)}
         task = set_crash_details(task)
         CubDB.put(state.task_store, {:task, task.id}, task)
+      rescue
+        error ->
+          Logger.warning(
+            "normalize_tasks: failed to normalize task #{inspect(task.id)}: #{inspect(error)}"
+          )
       end
-
-      :ok
-    rescue
-      error ->
-        Logger.error(
-          "Failed to normalize tasks in CubDB: #{inspect(error)}. " <>
-            "Skipping normalization — existing records preserved."
-        )
-
-        :ok
     end
+
+    :ok
   end
 
   defp maybe_reset_status(:running), do: :failed
@@ -645,6 +753,16 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp cleanup_expired_tasks(state) do
+    try do
+      do_cleanup_expired_tasks(state)
+    rescue
+      error ->
+        Logger.warning("cleanup_expired_tasks failed (non-fatal): #{inspect(error)}")
+        :ok
+    end
+  end
+
+  defp do_cleanup_expired_tasks(state) do
     config = task_history_config()
     max_age_days = config.max_age_days
     max_tasks = config.max_tasks
@@ -742,24 +860,11 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_info({:task_status, task_id, status}, state) do
     state =
-      case task_get(state, task_id) do
-        %TaskInfo{} = task ->
-          finished_at =
-            if status in [:completed, :failed, :cancelled],
-              do: DateTime.utc_now(),
-              else: task.finished_at
-
-          updated = %{task | status: status, finished_at: finished_at}
-          CubDB.put(state.task_store, {:task, task_id}, updated)
-
-          if status in [:completed, :failed, :cancelled] do
-            cleanup_expired_tasks(state)
-            %{state | task_refs: Map.delete(state.task_refs, task_id)}
-          else
-            state
-          end
-
-        nil ->
+      try do
+        do_handle_task_status(state, task_id, status)
+      rescue
+        error ->
+          Logger.warning("task_status handler failed: #{inspect(error)}")
           state
       end
 
