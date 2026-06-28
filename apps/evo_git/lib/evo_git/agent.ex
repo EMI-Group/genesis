@@ -637,7 +637,7 @@ defmodule EvoGit.Agent do
         repo_root =
           Process.get(:evogit_repo_root) || raise "evogit_repo_root not in process dictionary"
 
-        indexed_results = batch_execute_tools(indexed_calls, @max_tool_timeout, repo_root)
+        indexed_results = batch_execute_tools(indexed_calls, max_tool_timeout(), repo_root)
 
         # Sync current_commit after tool execution for dashboard visibility
         sync_current_commit_after_tools(state)
@@ -674,7 +674,7 @@ defmodule EvoGit.Agent do
                                                                                   read_hints} ->
             tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
 
-            tool_timeout = Map.get(call.arguments, "timeout", @default_tool_timeout)
+            tool_timeout = Map.get(call.arguments, "timeout", default_tool_timeout())
             tool_timeout = min(tool_timeout, max_timeout)
 
             output =
@@ -781,6 +781,16 @@ defmodule EvoGit.Agent do
         # Allow config to override the compile-time default
         EvoGit.Config.resolve([:scheduler, :delegation_hint_threshold]) ||
           @delegation_hint_threshold
+      end
+
+      defp max_tool_timeout do
+        EvoGit.Config.resolve([:scheduler, :max_tool_timeout]) ||
+          @max_tool_timeout
+      end
+
+      defp default_tool_timeout do
+        EvoGit.Config.resolve([:scheduler, :default_tool_timeout]) ||
+          @default_tool_timeout
       end
 
       @doc false

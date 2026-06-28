@@ -176,6 +176,26 @@ defmodule EvoGit.Config.Schema do
           "When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output " <>
           "suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
     },
+    %{
+      key_path: [:scheduler, :max_tool_timeout],
+      type: :pos_integer,
+      default: 1_800_000,
+      validation: [min: 1],
+      category: :scheduler,
+      sub_category: nil,
+      description:
+        "Maximum tool execution timeout in milliseconds (hard cap). Any tool timeout requested by an agent is capped at this value to prevent runaway executions."
+    },
+    %{
+      key_path: [:scheduler, :default_tool_timeout],
+      type: :pos_integer,
+      default: 10_000,
+      validation: [min: 1],
+      category: :scheduler,
+      sub_category: nil,
+      description:
+        "Default tool execution timeout in milliseconds (used when the agent omits the timeout argument). Normally applies to simple tools that should respond quickly."
+    },
     # ── LLM ────────────────────────────────────────────────────────────
     %{
       key_path: [:llm, :model],
