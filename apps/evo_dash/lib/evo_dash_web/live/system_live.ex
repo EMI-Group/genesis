@@ -8,7 +8,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @config_reference """
   # Genesis Configuration Reference
-  # Save this as: ~/.config/genesis/config.toml
+  # Save this as: __CONFIG_PATH__
 
   [scheduler]
   # Maximum concurrent LLM calls
@@ -63,7 +63,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @credentials_reference """
   # Genesis Credentials Reference
-  # Save this as: ~/.config/genesis/credentials.toml
+  # Save this as: __CREDENTIALS_PATH__
   # 
   # API keys are stored separately from config.toml for security.
   # Only ONE key is required — choose the provider matching your LLM model.
@@ -114,33 +114,6 @@ defmodule EvoDashWeb.SystemLive do
   #   -R <id:>path         Foreign repository (repeatable)
   #   -C, --concepts        Concept expansion seeds (repeatable, complex mode)
   """
-
-  @faq_content [
-    {gettext("How do I set my API key?"),
-     gettext(
-       "Create a credentials.toml file at ~/.config/genesis/credentials.toml with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
-     )},
-    {gettext("How do I change the LLM model?"),
-     gettext(
-       "Edit your config.toml file at ~/.config/genesis/config.toml and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
-     )},
-    {gettext("What is sandbox mode?"),
-     gettext(
-       "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
-     )},
-    {gettext("How does the context tree work?"),
-     gettext(
-       "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
-     )},
-    {gettext("What happens if my config is missing?"),
-     gettext(
-       "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
-     )},
-    {gettext("How do I configure sandbox resources?"),
-     gettext(
-       "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
-     )}
-  ]
 
   @impl true
   def render(assigns) do
@@ -475,6 +448,10 @@ defmodule EvoDashWeb.SystemLive do
 
     system_checks = safe_system_checks()
 
+    config_dir = EvoGit.Platform.config_dir()
+    config_path = Path.join(config_dir, "config.toml")
+    credentials_path = Path.join(config_dir, "credentials.toml")
+
     socket =
       socket
       |> assign(:scheduler_paused, load_paused_state())
@@ -484,10 +461,19 @@ defmodule EvoDashWeb.SystemLive do
       |> assign(:tool_check, system_checks.tools)
       |> assign(:sandbox_check, system_checks.sandbox)
       |> assign(:supervisor_check, system_checks.supervisor)
-      |> assign(:config_reference, @config_reference)
-      |> assign(:credentials_reference, @credentials_reference)
+      |> assign(:config_dir, config_dir)
+      |> assign(:config_path, config_path)
+      |> assign(:credentials_path, credentials_path)
+      |> assign(
+        :config_reference,
+        String.replace(@config_reference, "__CONFIG_PATH__", config_path)
+      )
+      |> assign(
+        :credentials_reference,
+        String.replace(@credentials_reference, "__CREDENTIALS_PATH__", credentials_path)
+      )
       |> assign(:usage_reference, @usage_reference)
-      |> assign(:faq_content, @faq_content)
+      |> assign(:faq_content, faq_content(config_path, credentials_path))
 
     {:ok, socket}
   end
@@ -682,6 +668,39 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   # --- Private Helper Functions ---
+
+  # Build FAQ content at runtime so the platform-specific config/credentials paths
+  # can be interpolated into the gettext strings.
+  defp faq_content(config_path, credentials_path) do
+    [
+      {gettext("How do I set my API key?"),
+       gettext(
+         "Create a credentials.toml file at %{path} with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...).",
+         path: credentials_path
+       )},
+      {gettext("How do I change the LLM model?"),
+       gettext(
+         "Edit your config.toml file at %{path} and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard.",
+         path: config_path
+       )},
+      {gettext("What is sandbox mode?"),
+       gettext(
+         "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
+       )},
+      {gettext("How does the context tree work?"),
+       gettext(
+         "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
+       )},
+      {gettext("What happens if my config is missing?"),
+       gettext(
+         "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
+       )},
+      {gettext("How do I configure sandbox resources?"),
+       gettext(
+         "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
+       )}
+    ]
+  end
 
   # Status background colors for system_check_row
   defp status_bg(:ok), do: "bg-success/10"
