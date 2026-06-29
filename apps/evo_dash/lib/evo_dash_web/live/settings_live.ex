@@ -410,7 +410,7 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("select_llm_model_shortcut", %{"model_string" => model_string}, socket) do
     file_config = put_in(socket.assigns.file_config, [:llm, :model], model_string)
-    {:noreply, assign(socket, :file_config, file_config)}
+    persist_file_config(file_config, socket, gettext("Model selected and saved."))
   end
 
   @impl true
@@ -423,31 +423,37 @@ defmodule EvoDashWeb.SettingsLive do
       provider_id = String.to_existing_atom(provider_id_str)
       provider = Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == provider_id))
 
-      cond do
-        is_nil(provider) ->
-          {:noreply, put_flash(socket, :error, gettext("Unknown provider."))}
+      result =
+        cond do
+          is_nil(provider) ->
+            {:error, gettext("Unknown provider.")}
 
-        String.trim(model_name || "") == "" ->
-          {:noreply, put_flash(socket, :error, gettext("Model name cannot be empty."))}
+          String.trim(model_name || "") == "" ->
+            {:error, gettext("Model name cannot be empty.")}
 
-        provider[:requires_base_url] == true ->
-          if String.trim(base_url || "") == "" do
-            {:noreply, put_flash(socket, :error, gettext("Base URL cannot be empty."))}
-          else
-            model_value = %{
-              provider: :openai,
-              id: String.trim(model_name),
-              base_url: String.trim(base_url)
-            }
+          provider[:requires_base_url] == true ->
+            if String.trim(base_url || "") == "" do
+              {:error, gettext("Base URL cannot be empty.")}
+            else
+              {:ok,
+               %{
+                 provider: :openai,
+                 id: String.trim(model_name),
+                 base_url: String.trim(base_url)
+               }}
+            end
 
-            file_config = put_in(socket.assigns.file_config, [:llm, :model], model_value)
-            {:noreply, assign(socket, :file_config, file_config)}
-          end
+          true ->
+            {:ok, "openrouter:#{String.trim(model_name)}"}
+        end
 
-        true ->
-          model_value = "openrouter:#{String.trim(model_name)}"
+      case result do
+        {:error, msg} ->
+          {:noreply, put_flash(socket, :error, msg)}
+
+        {:ok, model_value} ->
           file_config = put_in(socket.assigns.file_config, [:llm, :model], model_value)
-          {:noreply, assign(socket, :file_config, file_config)}
+          persist_file_config(file_config, socket, gettext("Custom model saved."))
       end
     rescue
       ArgumentError ->
@@ -493,6 +499,37 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: Config persistence
+  # ───────────────────────────────────────────────────────────────────────────
+
+  defp persist_file_config(file_config, socket, success_msg) do
+    case EvoGit.Config.save_user_config(file_config) do
+      :ok ->
+        file_config = load_file_config()
+        config_status = safe_config_status()
+        config_file_exists = File.exists?(socket.assigns.config_path)
+
+        socket =
+          socket
+          |> assign(:file_config, file_config)
+          |> assign(:config_status, config_status)
+          |> assign(:config_file_exists, config_file_exists)
+          |> assign(:per_category_errors, %{})
+          |> put_flash(:info, success_msg)
+
+        {:noreply, update_runtime_from_file_config(file_config, socket)}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
+         )}
+    end
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config loading
   # ───────────────────────────────────────────────────────────────────────────
 
@@ -535,35 +572,42 @@ defmodule EvoDashWeb.SettingsLive do
 
   defp params_to_category_config(params, _category, schemas) do
     Enum.reduce(schemas, {%{}, []}, fn schema, {config_acc, emptied_acc} ->
-      value = Map.get(params, Enum.join(schema.key_path, "."))
+      # :model_spec schemas are read-only display values managed by the
+      # Quick Setup UI — they are never submitted as form params and
+      # should never be treated as "explicitly empty" / deleted.
+      if schema.type == :model_spec do
+        {config_acc, emptied_acc}
+      else
+        value = Map.get(params, Enum.join(schema.key_path, "."))
 
-      parsed =
+        parsed =
+          cond do
+            is_nil(value) or value == "" ->
+              :explicitly_empty
+
+            schema.type in [:pos_integer, :non_neg_integer, :integer] ->
+              parse_int(value)
+
+            schema.type == :float ->
+              parse_float(value)
+
+            schema.type == :string ->
+              value
+
+            schema.type == :atom ->
+              parse_atom(value)
+          end
+
         cond do
-          is_nil(value) or value == "" ->
-            :explicitly_empty
+          parsed == :explicitly_empty ->
+            {config_acc, [schema.key_path | emptied_acc]}
 
-          schema.type in [:pos_integer, :non_neg_integer, :integer] ->
-            parse_int(value)
+          is_nil(parsed) ->
+            {config_acc, emptied_acc}
 
-          schema.type == :float ->
-            parse_float(value)
-
-          schema.type == :string ->
-            value
-
-          schema.type == :atom ->
-            parse_atom(value)
+          true ->
+            {deep_put(config_acc, schema.key_path, parsed), emptied_acc}
         end
-
-      cond do
-        parsed == :explicitly_empty ->
-          {config_acc, [schema.key_path | emptied_acc]}
-
-        is_nil(parsed) ->
-          {config_acc, emptied_acc}
-
-        true ->
-          {deep_put(config_acc, schema.key_path, parsed), emptied_acc}
       end
     end)
   end
