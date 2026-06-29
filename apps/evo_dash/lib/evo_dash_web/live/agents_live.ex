@@ -162,6 +162,16 @@ defmodule EvoDashWeb.AgentsLive do
     end
   end
 
+  defp shorten_sha(sha) when is_binary(sha) do
+    if String.length(sha) > 8 do
+      String.slice(sha, 0, 8) <> "…"
+    else
+      sha
+    end
+  end
+
+  defp shorten_sha(other), do: other
+
   defp build_path_tree(agents) do
     tree =
       Enum.reduce(agents, %{}, fn agent, acc ->

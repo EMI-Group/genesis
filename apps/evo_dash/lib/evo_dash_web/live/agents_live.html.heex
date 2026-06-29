@@ -97,13 +97,24 @@
               
 <!-- Details -->
               <div class="space-y-4">
-                <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                    <%= gettext("Agent Module") %>
-                  </h4>
-                  <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
-                    {inspect(agent.agent_module)}
-                  </code>
+                <!-- Agent Module + Context Path on a single row -->
+                <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+                  <div class="shrink-0 min-w-[130px]">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                      <%= gettext("Agent Module") %>
+                    </h4>
+                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                      {inspect(agent.agent_module)}
+                    </code>
+                  </div>
+                  <div class="flex-1 min-w-[150px]">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                      <%= gettext("Context Path") %>
+                    </h4>
+                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                      {agent.context_path || gettext("N/A")}
+                    </code>
+                  </div>
                 </div>
 
                 <div>
@@ -128,15 +139,6 @@
 
                 <div>
                   <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                    <%= gettext("Context Path") %>
-                  </h4>
-                  <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
-                    {agent.context_path || gettext("N/A")}
-                  </code>
-                </div>
-
-                <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                     <%= gettext("Worktree") %>
                   </h4>
                   <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
@@ -144,48 +146,47 @@
                   </code>
                 </div>
 
-                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  <div>
+                <!-- Task ID, Depth, Retries (compact) + Base/Current Commit (wide) on a single row -->
+                <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+                  <div class="shrink-0">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Task ID") %>
                     </h4>
                     <span class="text-sm">#<%= agent.task_id %></span>
                   </div>
 
-                  <div>
+                  <div class="shrink-0">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Depth") %>
                     </h4>
                     <span class="text-sm">{agent.depth}</span>
                   </div>
 
-                  <div>
+                  <div class="shrink-0">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Retries") %>
                     </h4>
                     <span class="text-sm">{agent.retries}</span>
                   </div>
-                </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <%= if agent.base_commit do %>
-                    <div>
+                    <div class="flex-1 min-w-[130px]">
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                         <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Base Commit") %>
                       </h4>
                       <code class="text-xs font-mono bg-base-200 px-3 py-1.5 rounded block truncate" title={agent.base_commit}>
-                        {agent.base_commit}
+                        {shorten_sha(agent.base_commit)}
                       </code>
                     </div>
                   <% end %>
 
                   <%= if agent.current_commit do %>
-                    <div>
+                    <div class="flex-1 min-w-[130px]">
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                         <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Current Commit") %>
                       </h4>
                       <code class={"text-xs font-mono px-3 py-1.5 rounded block truncate " <> commit_bg_class(agent)} title={agent.current_commit}>
-                        {agent.current_commit}
+                        {shorten_sha(agent.current_commit)}
                       </code>
                     </div>
                   <% end %>
@@ -235,7 +236,7 @@
               </div>
 
                 <%= if agent.usage do %>
-                <details class="group/usage">
+                <details class="group/usage mt-4">
                   <summary class="cursor-pointer text-xs font-semibold uppercase text-base-content/60 mb-2 flex items-center gap-1.5 select-none outline-none hover:text-base-content/80 transition-colors">
                     <.icon name="hero-currency-dollar" class="size-3.5" />
                     <%= gettext("Token & Cost Usage") %>
