@@ -276,14 +276,11 @@ defmodule EvoDashWeb.Layouts do
   end
 
   @doc """
-  Provides a language/locale selector dropdown with globe icon button.
+  Returns the list of supported languages as `{code, name}` tuples.
+  Shared between `language_selector/1` and the welcome modal language switcher.
   """
-  attr(:drop_up, :boolean, default: false)
-
-  def language_selector(assigns) do
-    locale = Gettext.get_locale(EvoDashWeb.Gettext)
-
-    languages = [
+  def supported_languages do
+    [
       {"en", "English"},
       {"ar", "العربية"},
       {"de", "Deutsch"},
@@ -300,6 +297,16 @@ defmodule EvoDashWeb.Layouts do
       {"fr", "Français"},
       {"it", "Italiano"}
     ]
+  end
+
+  @doc """
+  Provides a language/locale selector dropdown with globe icon button.
+  """
+  attr(:drop_up, :boolean, default: false)
+
+  def language_selector(assigns) do
+    locale = Gettext.get_locale(EvoDashWeb.Gettext)
+    languages = supported_languages()
 
     assigns = assign(assigns, :locale, locale)
     assigns = assign(assigns, :languages, languages)

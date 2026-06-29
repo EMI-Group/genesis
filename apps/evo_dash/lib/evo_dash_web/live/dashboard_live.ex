@@ -200,6 +200,37 @@ defmodule EvoDashWeb.DashboardLive do
             <p class="text-sm text-base-content/70 leading-relaxed mb-6">
               {gettext("EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?")}
             </p>
+            <div class="mb-4">
+              <div class="text-xs font-medium text-base-content/50 mb-1.5">{gettext("Language")}</div>
+              <details class="dropdown">
+                <summary class="btn btn-sm btn-outline gap-2 w-full justify-between">
+                  <span class="flex items-center gap-2">
+                    <.icon name="hero-language" class="size-4" />
+                    {Enum.find_value(EvoDashWeb.Layouts.supported_languages(), "English", fn {code, name} ->
+                      if code == @welcome_locale, do: name
+                    end)}
+                  </span>
+                  <.icon name="hero-chevron-down" class="size-4 opacity-60" />
+                </summary>
+                <div class="dropdown-content mt-1 z-50 w-full rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
+                  <div class="max-h-48 overflow-y-auto flex flex-col gap-0.5">
+                    <button
+                      :for={{code, name} <- EvoDashWeb.Layouts.supported_languages()}
+                      class={[
+                        "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                        @welcome_locale == code && "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
+                        @welcome_locale != code && "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                      ]}
+                      phx-click="set_welcome_language"
+                      phx-value-locale={code}
+                    >
+                      <span class="flex-1 text-left">{name}</span>
+                      <.icon :if={@welcome_locale == code} name="hero-check-solid" class="size-4 text-indigo-500 shrink-0" />
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </div>
             <div class="modal-action">
               <button class="btn btn-ghost" phx-click="dismiss_welcome">
                 {gettext("Skip")}
@@ -262,6 +293,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> assign_running_and_pending_tasks()
       |> assign(:config_status, config_status)
       |> assign(:show_welcome, false)
+      |> assign(:welcome_locale, Gettext.get_locale(EvoDashWeb.Gettext))
 
     {:ok, socket}
   end
@@ -358,6 +390,16 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event("welcome_configure_llm", _params, socket) do
     socket = socket |> push_event("welcome_dismissed", %{})
     {:noreply, push_navigate(socket, to: "/settings?category=llm")}
+  end
+
+  @impl true
+  def handle_event("set_welcome_language", %{"locale" => code}, socket) do
+    Gettext.put_locale(EvoDashWeb.Gettext, code)
+
+    {:noreply,
+     socket
+     |> assign(:welcome_locale, code)
+     |> push_event("persist_locale", %{locale: code})}
   end
 
   # --- Project Management Events ---

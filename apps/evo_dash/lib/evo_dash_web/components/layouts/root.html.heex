@@ -93,6 +93,15 @@
           window.location.reload();
         });
 
+        window.addEventListener("phx:persist-locale", (e) => {
+          const locale = e.detail.locale;
+          localStorage.setItem("phx:locale", locale);
+          document.cookie = "locale=" + locale + ";path=/;SameSite=Lax";
+          const rtlLocales = ['ar', 'he', 'fa', 'ur'];
+          document.documentElement.dir = rtlLocales.includes(locale) ? 'rtl' : 'ltr';
+          document.documentElement.lang = locale;
+        });
+
         window.addEventListener("storage", (e) => {
           if (e.key === "phx:locale") {
             document.cookie = "locale=" + (e.newValue || "en") + ";path=/;SameSite=Lax";
