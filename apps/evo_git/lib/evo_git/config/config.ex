@@ -121,9 +121,40 @@ defmodule EvoGit.Config do
         new_mode = atomize_if_string(mode, [:auto, :enabled, :disabled])
         put_in(acc, [:sandbox, :mode], new_mode)
 
+      # LLM model: if the model is a map, ensure its :provider value is an atom.
+      # After TOML decode + atomize_keys, keys are atoms but the provider VALUE
+      # may still be a string (e.g. "openai"). req_llm requires an atom provider.
+      {:llm, llm_config}, acc when is_map(llm_config) ->
+        case Map.get(llm_config, :model) do
+          model when is_map(model) ->
+            normalized = normalize_model_map(model)
+            put_in(acc, [:llm, :model], normalized)
+
+          _ ->
+            acc
+        end
+
       _, acc ->
         acc
     end)
+  end
+
+  # Normalizes a model map so that keys are atoms and the :provider value is
+  # an atom. req_llm's ReqLLM.model/1 expects the provider to be an atom.
+  defp normalize_model_map(model) when is_map(model) do
+    # Ensure atom keys (atomize_keys may have left string keys if the atom
+    # didn't exist yet — e.g. "base_url").
+    atomized =
+      Map.new(model, fn
+        {key, value} when is_binary(key) -> {String.to_atom(key), value}
+        {key, value} -> {key, value}
+      end)
+
+    # Convert the provider VALUE to an atom if it's a string.
+    case Map.get(atomized, :provider) do
+      provider when is_binary(provider) -> Map.put(atomized, :provider, String.to_atom(provider))
+      _ -> atomized
+    end
   end
 
   defp atomize_if_string(value, valid_atoms) when is_binary(value) do
@@ -277,7 +308,7 @@ defmodule EvoGit.Config do
         end
       end},
       {:api_key, "No API key found. Add keys to credentials.toml or set environment variables.", fn ->
-        providers = ["GOOGLE_API_KEY", "ZAI_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+        providers = EvoGit.Config.LLMCatalog.known_env_vars()
         Enum.all?(providers, fn p -> System.get_env(p) == nil end)
       end},
       {:github_username, "GitHub username is not configured. Set [user] github_username in config.toml.", fn ->
@@ -370,17 +401,19 @@ defmodule EvoGit.Config do
     merged =
       Map.merge(existing, new_creds, fn _key, _existing_val, new_val -> new_val end)
 
+    # Set each new key-value pair in the environment FIRST, unconditionally.
+    # This guarantees the keys are usable in the current session even if
+    # persistence to disk fails (e.g., Windows path issues).
+    Enum.each(new_creds, fn {key, value} ->
+      if is_binary(value), do: System.put_env(key, value)
+    end)
+
     with :ok <- File.mkdir_p(dir),
          # Ensure all keys are strings for TOML serialization
          string_creds = stringify_credential_keys(merged),
          {:ok, toml} <- TomlElixir.encode(string_creds),
          {:ok, contents} <- ensure_trailing_newline(toml),
          :ok <- File.write(path, contents) do
-      # Set each new key-value pair in the environment
-      Enum.each(new_creds, fn {key, value} ->
-        if is_binary(value), do: System.put_env(key, value)
-      end)
-
       :ok
     else
       {:error, reason} -> {:error, reason}

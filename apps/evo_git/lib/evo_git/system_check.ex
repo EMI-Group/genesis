@@ -230,6 +230,12 @@ defmodule EvoGit.SystemCheck do
   defp classify_pid(_other), do: {:error, nil}
 
   defp do_llm_test(model) do
+    # Ensure API keys from credentials.toml are loaded into env vars before
+    # the test request. This is a defensive measure so the test connection
+    # is self-sufficient (doesn't rely on AgentScheduler.init having
+    # previously loaded credentials).
+    EvoGit.Config.credentials()
+
     context = ReqLLM.Context.new([ReqLLM.Context.user("Say hello in one word.")])
 
     with {:ok, stream_response} <- ReqLLM.stream_text(model, context, max_tokens: 10),

@@ -19,7 +19,9 @@ defmodule EvoGit.Config.LLMCatalog do
           provider_atoms: [atom()],
           env_var: String.t(),
           models: [model_entry()],
-          variants: [variant_entry()] | nil
+          variants: [variant_entry()] | nil,
+          custom_model: boolean() | nil,
+          requires_base_url: boolean() | nil
         }
 
   @type model_entry :: %{
@@ -104,19 +106,33 @@ defmodule EvoGit.Config.LLMCatalog do
     %{
       id: :minimax,
       display_name: "MiniMax",
-      provider_atoms: [:minimax, :minimax_cn, :minimax_coding_plan, :minimax_cn_coding_plan],
+      provider_atoms: [:minimax],
       env_var: "MINIMAX_API_KEY",
-      variants: [
-        %{id: :normal, display_name: "Normal API (Global)", provider_atom: :minimax},
-        %{id: :normal_cn, display_name: "Normal API (CN)", provider_atom: :minimax_cn},
-        %{id: :coding_plan, display_name: "Coding Plan (Global)", provider_atom: :minimax_coding_plan},
-        %{id: :coding_plan_cn, display_name: "Coding Plan (CN)", provider_atom: :minimax_cn_coding_plan}
-      ],
+      variants: nil,
       models: [
         %{id: "MiniMax-M2.7", display_name: "MiniMax-M2.7"},
         %{id: "MiniMax-M2.7-highspeed", display_name: "MiniMax-M2.7 Highspeed"},
         %{id: "MiniMax-M3", display_name: "MiniMax-M3"}
       ]
+    },
+    %{
+      id: :openrouter,
+      display_name: "OpenRouter",
+      provider_atoms: [:openrouter],
+      env_var: "OPENROUTER_API_KEY",
+      variants: nil,
+      models: [],
+      custom_model: true
+    },
+    %{
+      id: :openai_compatible,
+      display_name: "OpenAI-Compatible API",
+      provider_atoms: [:openai],
+      env_var: "OPENAI_API_KEY",
+      variants: nil,
+      models: [],
+      custom_model: true,
+      requires_base_url: true
     }
   ]
 

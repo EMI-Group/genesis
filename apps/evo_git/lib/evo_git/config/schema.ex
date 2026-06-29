@@ -41,7 +41,7 @@ defmodule EvoGit.Config.Schema do
   @type sub_category :: :resources | :process | nil
 
   @typedoc "Supported config value types"
-  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :float | :atom
+  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :float | :atom | :model_spec
 
   @typedoc "A single config key's full schema metadata"
   @type schema_map :: %{
@@ -199,13 +199,13 @@ defmodule EvoGit.Config.Schema do
     # ── LLM ────────────────────────────────────────────────────────────
     %{
       key_path: [:llm, :model],
-      type: :string,
+      type: :model_spec,
       default: nil,
       validation: [],
       category: :llm,
       sub_category: nil,
       description:
-        "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function."
+        "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function. Alternatively, a map may be used for OpenAI-compatible providers: {provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}."
     },
     %{
       key_path: [:llm, :compression_threshold_tokens],
@@ -591,6 +591,33 @@ defmodule EvoGit.Config.Schema do
       []
     else
       [error(key_path, "must be a string, got #{inspect(value)}", value, :string)]
+    end
+  end
+
+  defp type_errors(key_path, :model_spec, value) do
+    cond do
+      is_binary(value) ->
+        []
+
+      is_map(value) ->
+        # Accept map model specs (e.g. %{provider: :openai, id: "...", base_url: "..."})
+        # Must have at least :id and :provider keys.
+        has_provider = Map.has_key?(value, :provider) or Map.has_key?(value, "provider")
+        has_id = Map.has_key?(value, :id) or Map.has_key?(value, "id")
+
+        cond do
+          not has_provider ->
+            [error(key_path, "model map must have a 'provider' key, got #{inspect(value)}", value, :model_spec)]
+
+          not has_id ->
+            [error(key_path, "model map must have an 'id' key, got #{inspect(value)}", value, :model_spec)]
+
+          true ->
+            []
+        end
+
+      true ->
+        [error(key_path, "must be a string (e.g. \"provider:model\") or a map (e.g. %{provider: :openai, id: \"...\", base_url: \"...\"}), got #{inspect(value)}", value, :model_spec)]
     end
   end
 
