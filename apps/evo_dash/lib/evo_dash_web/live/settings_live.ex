@@ -414,6 +414,48 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_event("save_custom_model", params, socket) do
+    model_name = params["model_name"]
+    base_url = params["base_url"]
+    provider_id_str = params["provider_id"]
+
+    try do
+      provider_id = String.to_existing_atom(provider_id_str)
+      provider = EvoGit.Config.LLMCatalog.find_provider(provider_id)
+
+      cond do
+        is_nil(provider) ->
+          {:noreply, put_flash(socket, :error, gettext("Unknown provider."))}
+
+        String.trim(model_name || "") == "" ->
+          {:noreply, put_flash(socket, :error, gettext("Model name cannot be empty."))}
+
+        provider[:requires_base_url] == true ->
+          if String.trim(base_url || "") == "" do
+            {:noreply, put_flash(socket, :error, gettext("Base URL cannot be empty."))}
+          else
+            model_value = %{
+              provider: :openai,
+              id: String.trim(model_name),
+              base_url: String.trim(base_url)
+            }
+
+            file_config = put_in(socket.assigns.file_config, [:llm, :model], model_value)
+            {:noreply, assign(socket, :file_config, file_config)}
+          end
+
+        true ->
+          model_value = "openrouter:#{String.trim(model_name)}"
+          file_config = put_in(socket.assigns.file_config, [:llm, :model], model_value)
+          {:noreply, assign(socket, :file_config, file_config)}
+      end
+    rescue
+      ArgumentError ->
+        {:noreply, put_flash(socket, :error, gettext("Unknown provider."))}
+    end
+  end
+
+  @impl true
   def handle_event("save_api_key", %{"env_var" => env_var, "api_key" => api_key}, socket) do
     if String.trim(api_key) == "" do
       {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
