@@ -575,42 +575,35 @@ defmodule EvoDashWeb.SettingsLive do
 
   defp params_to_category_config(params, _category, schemas) do
     Enum.reduce(schemas, {%{}, []}, fn schema, {config_acc, emptied_acc} ->
-      # :model_spec schemas are read-only display values managed by the
-      # Quick Setup UI — they are never submitted as form params and
-      # should never be treated as "explicitly empty" / deleted.
-      if schema.type == :model_spec do
-        {config_acc, emptied_acc}
-      else
-        value = Map.get(params, Enum.join(schema.key_path, "."))
+      value = Map.get(params, Enum.join(schema.key_path, "."))
 
-        parsed =
-          cond do
-            is_nil(value) or value == "" ->
-              :explicitly_empty
-
-            schema.type in [:pos_integer, :non_neg_integer, :integer] ->
-              parse_int(value)
-
-            schema.type == :float ->
-              parse_float(value)
-
-            schema.type == :string ->
-              value
-
-            schema.type == :atom ->
-              parse_atom(value)
-          end
-
+      parsed =
         cond do
-          parsed == :explicitly_empty ->
-            {config_acc, [schema.key_path | emptied_acc]}
+          is_nil(value) or value == "" ->
+            :explicitly_empty
 
-          is_nil(parsed) ->
-            {config_acc, emptied_acc}
+          schema.type in [:pos_integer, :non_neg_integer, :integer] ->
+            parse_int(value)
 
-          true ->
-            {deep_put(config_acc, schema.key_path, parsed), emptied_acc}
+          schema.type == :float ->
+            parse_float(value)
+
+          schema.type in [:string, :model_spec] ->
+            value
+
+          schema.type == :atom ->
+            parse_atom(value)
         end
+
+      cond do
+        parsed == :explicitly_empty ->
+          {config_acc, [schema.key_path | emptied_acc]}
+
+        is_nil(parsed) ->
+          {config_acc, emptied_acc}
+
+        true ->
+          {deep_put(config_acc, schema.key_path, parsed), emptied_acc}
       end
     end)
   end

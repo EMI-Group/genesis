@@ -111,16 +111,16 @@ defmodule EvoDashWeb.SettingsComponents do
                 </div>
               </div>
             <% :model_spec -> %>
-              <%!-- Read-only display: the model is configured via Quick Setup above --%>
+              <%!-- Editable model field: can be typed manually or set via Quick Setup above --%>
               <div class="w-full">
                 <input
                   type="text"
-                  disabled
+                  name={Enum.join(@schema.key_path, ".")}
                   value={model_display(@value)}
-                  placeholder={gettext("Not configured — select a provider above")}
-                  class="input input-bordered w-full font-mono shadow-sm rounded-xl bg-base-200/50 text-base-content/60 cursor-not-allowed"
+                  placeholder={gettext("e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5")}
+                  class="input input-bordered w-full font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
                 />
-                <p class="text-[11px] text-base-content/40 mt-1.5">{gettext("Configured via provider setup above")}</p>
+                <p class="text-[11px] text-base-content/40 mt-1.5">{gettext("Type a model string or use Quick Setup above")}</p>
               </div>
           <% end %>
         </div>
