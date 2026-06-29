@@ -93,13 +93,14 @@
           window.location.reload();
         });
 
-        window.addEventListener("phx:persist-locale", (e) => {
+        // Instant (no-reload) locale persistence — used by the welcome modal's
+        // server-side language switcher. push_event/3 dispatches a window event
+        // named `phx:<event>` verbatim, so the name must match exactly.
+        window.addEventListener("phx:persist_locale", (e) => {
           const locale = e.detail.locale;
           localStorage.setItem("phx:locale", locale);
           document.cookie = "locale=" + locale + ";path=/;SameSite=Lax";
-          const rtlLocales = ['ar', 'he', 'fa', 'ur'];
-          document.documentElement.dir = rtlLocales.includes(locale) ? 'rtl' : 'ltr';
-          document.documentElement.lang = locale;
+          setDirection(locale);
         });
 
         window.addEventListener("storage", (e) => {
