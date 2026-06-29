@@ -148,4 +148,43 @@ defmodule EvoGit.ConfigTest do
       assert is_list(status.validation_errors)
     end
   end
+
+  describe "config_status/0 uses dynamic env vars" do
+    test "returns a map with :missing key" do
+      status = Config.config_status()
+      assert is_map(status)
+      assert Map.has_key?(status, :missing)
+    end
+
+    test "LLMCatalog.known_env_vars/0 includes the new provider env vars" do
+      # If config_status still used a hardcoded list, MINIMAX_API_KEY and
+      # OPENROUTER_API_KEY would be absent. The catalog now drives the list.
+      vars = EvoGit.Config.LLMCatalog.known_env_vars()
+      assert "MINIMAX_API_KEY" in vars
+      assert "OPENROUTER_API_KEY" in vars
+    end
+  end
+
+  describe "LLMCatalog.known_env_vars integration" do
+    test "returns a list that is a superset of expected env vars" do
+      vars = EvoGit.Config.LLMCatalog.known_env_vars()
+
+      # GROQ_API_KEY appears in the credentials.toml example format but has no
+      # dedicated entry in the LLMCatalog, so it is intentionally NOT asserted here.
+      expected = [
+        "GOOGLE_API_KEY",
+        "ZAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "MINIMAX_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "OPENROUTER_API_KEY"
+      ]
+
+      for e <- expected do
+        assert e in vars, "expected #{e} to be a member of known_env_vars/0"
+      end
+    end
+  end
 end

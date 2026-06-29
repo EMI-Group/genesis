@@ -288,4 +288,60 @@ defmodule EvoGit.Config.SchemaTest do
       assert is_atom(error.rule) or is_tuple(error.rule)
     end
   end
+
+  describe "model_spec type for [:llm, :model]" do
+    test "the schema entry for [:llm, :model] has type: :model_spec" do
+      entry =
+        Enum.find(Schema.all_schemas(), &(&1.key_path == [:llm, :model]))
+
+      assert entry != nil
+      assert entry.type == :model_spec
+    end
+
+    test "accepts a string model spec" do
+      config = put_in(Schema.defaults(), [:llm, :model], "anthropic:claude-sonnet-4")
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts an atom-keyed map model spec" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model], %{
+          provider: :openai,
+          id: "my-model",
+          base_url: "https://x"
+        })
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts a string-keyed map model spec" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model], %{
+          "provider" => "openai",
+          "id" => "my-model"
+        })
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "rejects a map missing the provider key" do
+      config = put_in(Schema.defaults(), [:llm, :model], %{id: "no-provider"})
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "rejects a map missing the id key" do
+      config = put_in(Schema.defaults(), [:llm, :model], %{provider: :openai})
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "rejects a non-string/non-map value" do
+      config = put_in(Schema.defaults(), [:llm, :model], 12345)
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "nil is still accepted" do
+      config = put_in(Schema.defaults(), [:llm, :model], nil)
+      assert {:ok, _} = Schema.validate(config)
+    end
+  end
 end
