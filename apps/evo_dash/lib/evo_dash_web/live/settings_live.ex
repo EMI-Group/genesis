@@ -421,7 +421,7 @@ defmodule EvoDashWeb.SettingsLive do
 
     try do
       provider_id = String.to_existing_atom(provider_id_str)
-      provider = EvoGit.Config.LLMCatalog.find_provider(provider_id)
+      provider = Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == provider_id))
 
       cond do
         is_nil(provider) ->

@@ -110,6 +110,18 @@ defmodule EvoDashWeb.SettingsComponents do
                   <.icon name="hero-chevron-down" class="size-4" />
                 </div>
               </div>
+            <% :model_spec -> %>
+              <%!-- Read-only display: the model is configured via Quick Setup above --%>
+              <div class="w-full">
+                <input
+                  type="text"
+                  disabled
+                  value={model_display(@value)}
+                  placeholder={gettext("Not configured — select a provider above")}
+                  class="input input-bordered w-full font-mono shadow-sm rounded-xl bg-base-200/50 text-base-content/60 cursor-not-allowed"
+                />
+                <p class="text-[11px] text-base-content/40 mt-1.5">{gettext("Configured via provider setup above")}</p>
+              </div>
           <% end %>
         </div>
 
@@ -191,7 +203,7 @@ defmodule EvoDashWeb.SettingsComponents do
 
               <%!-- Variant and model shortcuts when provider is selected --%>
               <%= if @selected_provider_id != nil do %>
-                <% provider = EvoGit.Config.LLMCatalog.find_provider(@selected_provider_id) %>
+                <% provider = Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == @selected_provider_id)) %>
                 <% variants = provider[:variants] %>
                 <% has_variants = is_list(variants) and length(variants) > 0 %>
                 <% show_models = not has_variants or (@selected_variant_id != nil) %>
@@ -756,6 +768,26 @@ defmodule EvoDashWeb.SettingsComponents do
 
   defp input_value(nil), do: ""
   defp input_value(value), do: to_string(value)
+
+  def model_display(nil), do: ""
+  def model_display(value) when is_binary(value), do: value
+  def model_display(value) when is_map(value) do
+    provider = to_string(value[:provider] || value["provider"] || "")
+    id = to_string(value[:id] || value["id"] || "")
+    base_url = value[:base_url] || value["base_url"]
+
+    cond do
+      id != "" and base_url not in [nil, ""] ->
+        if provider != "", do: "#{provider}:#{id} @ #{base_url}", else: "#{id} @ #{base_url}"
+      id != "" and provider != "" ->
+        "#{provider}:#{id}"
+      id != "" ->
+        id
+      true ->
+        inspect(value)
+    end
+  end
+  def model_display(value), do: to_string(value)
 
   defp default_label(nil), do: gettext("empty")
   defp default_label(value) when is_atom(value), do: to_string(value)
