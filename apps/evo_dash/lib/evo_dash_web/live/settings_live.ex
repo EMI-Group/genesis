@@ -503,6 +503,9 @@ defmodule EvoDashWeb.SettingsLive do
   # ───────────────────────────────────────────────────────────────────────────
 
   defp persist_file_config(file_config, socket, success_msg) do
+    # Always update in-memory state so the UI reflects the change immediately
+    socket = assign(socket, :file_config, file_config)
+
     case EvoGit.Config.save_user_config(file_config) do
       :ok ->
         file_config = load_file_config()
@@ -521,8 +524,8 @@ defmodule EvoDashWeb.SettingsLive do
 
       {:error, reason} ->
         {:noreply,
-         put_flash(
-           socket,
+         socket
+         |> put_flash(
            :error,
            gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
          )}
