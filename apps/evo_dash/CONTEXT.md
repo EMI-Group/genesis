@@ -41,6 +41,16 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | `GET /system` | `SystemLive` | System page: scheduler controls (pause/resume), system controls (restart/stop the Erlang VM), system self-check, plus usage guides and references (example config, CLI usage, FAQ, credentials) |
 | `/dashboard` | Phoenix.LiveDashboard | Built-in metrics/telemetry dashboard |
 
+### Task Archive Feature
+
+When a task is started with the **archive** option enabled (checkbox in the task form), the core runtime collects per-agent metadata (`archive_records`) and EvoDash stores it in `TaskInfo.archive_metadata`. Archived tasks display the agent parent-child tree, per-agent details (objective, return message, start/end commits, token usage, archive refs), and provide JSON export.
+
+- **Opt-in**: When archive is not enabled, the UI is identical to current (no archive sections shown).
+- **`TaskInfo.archive_metadata`**: `[map()] | nil` — list of per-agent records (backfill-safe via `Map.merge(%TaskInfo{}, task)` in `normalize_tasks/1`).
+- **Threading**: `:archive` opt → `build_common_runtime_opts/2` → runtime opts → core runtime. On completion, `archive_records` extracted from result map → `update_task_status/4` → `do_handle_update_status/5` → persisted.
+- **JSON export**: `GET /tasks/:task_id/export` → `TaskExportController` normalizes structs to plain maps and serves a downloadable JSON file.
+- **i18n**: All archive UI strings use gettext.
+
 ### LiveView Pages (`./lib/evo_dash_web/live/`)
 
 - `DashboardLive` — Main dashboard: project tabs, task form, task cards with logs, inline project settings (genesis.toml, foreign repos). Completed tasks with branches show a "Review" button linking to the review page.
