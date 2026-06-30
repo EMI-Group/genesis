@@ -26,7 +26,7 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
   - `{:task, task_id}` → operates on the `tasks` table
   - `{:project, path}` → operates on the `projects` table
 - Crash-safe helpers (`safe_get/2`, `safe_select_all/1`, `safe_size/1`, `integrity_check/1`) rescue decode errors per-row so corrupt blobs never crash callers.
-- `integrity_check/1` runs `PRAGMA integrity_check` (SQLite structural health) and scans all rows for undecodable blobs, deleting corrupt rows and returning `:ok` / `{:repaired, lost}` / `{:error, reason}`.
+- `integrity_check/1` runs `PRAGMA integrity_check` (SQLite structural health) and scans all rows for undecodable blobs. Undecodable `tasks` rows are **hard-deleted** (lower-value, auto-expiring); undecodable `projects` rows are **quarantined** — the raw BLOB is moved into a `projects_quarantine` table (preserved for recovery/diagnosis), never destroyed. Returns `:ok` / `{:repaired, lost}` / `{:error, reason}`.
 
 ### `EvoDash.TaskRegistry` (`task_registry.ex`)
 - Singleton `GenServer` backed by SQLite via `EvoDash.TaskStore` (single source of truth).
