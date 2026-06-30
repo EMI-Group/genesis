@@ -191,4 +191,14 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 - No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
 - PR creation is best-effort and never fails the overall phase — all PR errors are logged and return `nil`.
 - `node_path` validation in Evolution requires a `CONTEXT.md` at the target directory (except root).
+
+### Task Status & Event Emission (Dashboard Contract)
+The dashboard (`EvoDash.TaskRegistry`) tracks task status via TWO mechanisms:
+1. **PubSub** on topic `"tasks"`: the ONLY emitter is `Helpers.notify_finalizing/1` (`helpers.ex:68`), broadcasting `{:task_status, task_id, :finalizing}`. No `:failed` or `:running` is ever broadcast on `"tasks"` from the runtime. (`AgentScheduler.PubSub` broadcasts on *different* topics — `@agent_topic`/`@config_topic` — with different message shapes.)
+2. **Task monitor exit** (`Task.Supervisor.async_nolink` in EvoDash): when the runtime process exits, ANY non-`{:ok, _}` result (including `{:error, _}`) is mapped to `:failed` by the dashboard.
+
+**Critical implication**: Every runtime entry point (`Genesis.run/2`, `Evolution.run/2`, `SkillExtraction.run/1`) returns whatever `AgentScheduler.run_agent/1` returns on the `error` arm — propagating `{:error, _}` to the dashboard, which marks the task `:failed`. The scheduler replies `{:error, _}` to the top-level caller in two cases:
+- Top-level agent permanently failed (crashed `agent_max_retries` times) → `{:error, :agent_max_retries_exceeded}` (lifecycle.ex:238).
+- Top-level agent cancelled → `{:error, :cancelled}` (lifecycle.ex:72).
+A graceful agent return of `{:error, :recovery_failed}` / `{:error, :path_not_exist}` also flows through and is mapped to `:failed` (these exit the Task `:normal` but are non-`{:ok, _}`). See `agent_scheduler/lifecycle.ex` and the `:DOWN` handler (`agent_scheduler.ex:813`) for the full crash→retry→permanent-failure cascade.
 - Foreign repos are registered with `AgentScheduler` at the start of each phase if provided.
