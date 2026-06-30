@@ -55,6 +55,13 @@ defmodule EvoDash.TaskRegistryTest do
     :ok
   end
 
+  # Helper: cleanly terminate a spawned test process so it doesn't linger.
+  defp cleanup_process(pid) when is_pid(pid) do
+    if Process.alive?(pid) do
+      Process.exit(pid, :kill)
+    end
+  end
+
   describe "task_history_config/0 defaults" do
     test "returns default max_tasks and max_age_days when no config set" do
       config = EvoGit.Config.resolve()
@@ -914,6 +921,227 @@ defmodule EvoDash.TaskRegistryTest do
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.status == :completed
       assert fetched.archive_metadata == archive_records
+    end
+  end
+
+  describe "restart reconciliation (normalize_tasks liveness check)" do
+    # These tests verify that when the TaskRegistry GenServer restarts, running
+    # tasks whose processes are still alive (under the sibling TaskSupervisor)
+    # are NOT marked failed — they are re-monitored. Dead/nil-pid tasks are
+    # marked failed as before.
+
+    test "a running task with a live PID survives a registry restart (stays :running)",
+         %{data_dir: data_dir} do
+      task_id = "restart_live_#{System.unique_integer([:positive])}"
+
+      # Spawn a long-running process that stays alive (simulating a task worker
+      # that outlives the registry restart).
+      {:ok, agent_pid} =
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          Process.sleep(:infinity)
+        end)
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: agent_pid,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+
+      # Confirm the process is alive before restart.
+      assert Process.alive?(agent_pid)
+
+      # Restart the registry so normalize_tasks re-runs.
+      stop_supervised(EvoDash.TaskRegistry)
+
+      start_supervised(
+        {TaskRegistry,
+         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+      )
+
+      # The task should STILL be running (not failed) and re-monitored.
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.status == :running
+
+      cleanup_process(agent_pid)
+    end
+
+    test "a running task with a dead PID is marked :failed on restart",
+         %{data_dir: data_dir} do
+      task_id = "restart_dead_#{System.unique_integer([:positive])}"
+
+      # Spawn and immediately kill a process so the PID is dead.
+      {:ok, agent_pid} =
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          :ok
+        end)
+
+      # Wait for the process to exit (it returns immediately).
+      ref = Process.monitor(agent_pid)
+
+      receive do
+        {:DOWN, ^ref, :process, ^agent_pid, _} -> :ok
+      after
+        1_000 -> flunk("process did not exit")
+      end
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: agent_pid,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+
+      refute Process.alive?(agent_pid)
+
+      stop_supervised(EvoDash.TaskRegistry)
+
+      start_supervised(
+        {TaskRegistry,
+         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+      )
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.status == :failed
+    end
+
+    test "a running task with a nil PID is marked :failed on restart",
+         %{data_dir: data_dir} do
+      task_id = "restart_nilpid_#{System.unique_integer([:positive])}"
+
+      # pid is nil (e.g. written before the pid field existed, or never started).
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+
+      stop_supervised(EvoDash.TaskRegistry)
+
+      start_supervised(
+        {TaskRegistry,
+         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+      )
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.status == :failed
+    end
+
+    test "DOWN handler marks a re-monitored task as :completed when it exits :normal",
+         %{data_dir: data_dir} do
+      task_id = "restart_down_normal_#{System.unique_integer([:positive])}"
+
+      # Spawn a process that will complete normally after a short delay.
+      {:ok, agent_pid} =
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          Process.sleep(50)
+          :ok
+        end)
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: agent_pid,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+
+      stop_supervised(EvoDash.TaskRegistry)
+
+      start_supervised(
+        {TaskRegistry,
+         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+      )
+
+      # Wait for the process to exit and the DOWN handler to fire.
+      # Sync with a call to flush the update_status cast.
+      TaskRegistry.list_tasks()
+
+      # Give the process time to exit and DOWN to be processed.
+      Process.sleep(300)
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.status == :completed
+    end
+
+    test "DOWN handler marks a crashed task as :failed", %{data_dir: data_dir} do
+      task_id = "restart_down_crash_#{System.unique_integer([:positive])}"
+
+      # Spawn a process that will crash (exit abnormally) after a short delay.
+      {:ok, agent_pid} =
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          Process.sleep(50)
+          exit(:boom)
+        end)
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: agent_pid,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+
+      stop_supervised(EvoDash.TaskRegistry)
+
+      start_supervised(
+        {TaskRegistry,
+         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+      )
+
+      TaskRegistry.list_tasks()
+
+      # Wait for the process to crash and the DOWN handler to process.
+      Process.sleep(300)
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.status == :failed
     end
   end
 

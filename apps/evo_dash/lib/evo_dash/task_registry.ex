@@ -23,6 +23,7 @@ defmodule EvoDash.TaskRegistry do
       :type,
       :opts,
       :ref,
+      :pid,
       :started_at,
       :finished_at,
       status: :pending,
@@ -42,6 +43,7 @@ defmodule EvoDash.TaskRegistry do
             status: :pending | :running | :finalizing | :completed | :failed | :cancelled,
             opts: keyword() | nil,
             ref: Task.t() | nil,
+            pid: pid() | nil,
             started_at: DateTime.t() | nil,
             finished_at: DateTime.t() | nil,
             logs: [String.t()],
@@ -171,8 +173,10 @@ defmodule EvoDash.TaskRegistry do
     # harmless (it is non-critical, auto-expiring data). We only log a note.
     maybe_note_legacy_cubdb()
 
-    # Normalize SQLite entries in place (backfill fields, reset crashed tasks)
-    normalize_tasks(state)
+    # Normalize SQLite entries in place (backfill fields, reset crashed tasks,
+    # and re-monitor any tasks whose processes are still alive under the sibling
+    # TaskSupervisor).
+    state = normalize_tasks(state)
 
     # Cleanup expired tasks on startup
     cleanup_expired_tasks(state)
@@ -202,6 +206,7 @@ defmodule EvoDash.TaskRegistry do
       status: :running,
       opts: opts,
       ref: task_ref,
+      pid: task_ref.pid,
       started_at: DateTime.utc_now(),
       finished_at: nil,
       logs: [],
@@ -811,26 +816,52 @@ defmodule EvoDash.TaskRegistry do
   defp normalize_tasks(state) do
     objects = select_all_tasks(state)
 
-    for {_key, %TaskInfo{} = task} <- objects do
+    Enum.reduce(objects, state, fn {_key, %TaskInfo{} = task}, acc ->
       try do
         task = Map.merge(%TaskInfo{}, task)
-        task = %{task | ref: nil, status: maybe_reset_status(task.status)}
-        task = set_crash_details(task)
-        EvoDash.TaskStore.put(state.task_store, {:task, task.id}, task)
+        {task, acc} = reconcile_task_status(task, acc)
+        # Persist with ref nulled (ref is runtime-only data)
+        EvoDash.TaskStore.put(state.task_store, {:task, task.id}, %{task | ref: nil})
+        acc
       rescue
         error ->
           Logger.warning(
             "normalize_tasks: failed to normalize task #{inspect(task.id)}: #{inspect(error)}"
           )
-      end
-    end
 
-    :ok
+          acc
+      end
+    end)
   end
 
-  defp maybe_reset_status(:running), do: :failed
-  defp maybe_reset_status(:pending), do: :failed
-  defp maybe_reset_status(status), do: status
+  # Reconcile a task's status after a registry restart.
+  # Running/pending tasks that are still alive (pid exists and Process.alive?/1)
+  # are kept as :running and re-monitored. Dead or pid-less tasks are marked
+  # :failed (they crashed or were orphaned by a VM restart). Other statuses
+  # are left unchanged.
+  defp reconcile_task_status(%TaskInfo{status: status} = task, state)
+       when status in [:running, :pending] do
+    if task.pid != nil and Process.alive?(task.pid) do
+      # Task process is still alive under the sibling TaskSupervisor.
+      ref = Process.monitor(task.pid)
+      # Construct a %Task{} matching the shape of a Task.Supervisor task ref so
+      # that the existing pattern matches (%Task{pid:, ref:, owner:}) keep
+      # working. :mfa is required by the struct but unused for re-monitors.
+      task_ref = %Task{pid: task.pid, ref: ref, owner: self(), mfa: nil}
+
+      Logger.warning("TaskRegistry: re-monitoring still-running task #{task.id} after restart")
+
+      {%{task | status: :running, ref: nil},
+       %{state | task_refs: Map.put(state.task_refs, task.id, task_ref)}}
+    else
+      # Pid is nil or dead — actual crash / orphan. Mark as failed.
+      {%{task | status: :failed, ref: nil} |> set_crash_details(), state}
+    end
+  end
+
+  defp reconcile_task_status(%TaskInfo{} = task, state) do
+    {%{task | ref: nil}, state}
+  end
 
   defp set_crash_details(%{status: :failed, finished_at: nil} = task) do
     %{task | finished_at: DateTime.utc_now(), result: "Process crashed while task was running"}
@@ -1031,7 +1062,18 @@ defmodule EvoDash.TaskRegistry do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    task_id =
+      Enum.find_value(state.task_refs, fn {id, %Task{ref: task_ref}} ->
+        if task_ref == ref, do: id
+      end)
+
+    if task_id do
+      status = if reason == :normal, do: :completed, else: :failed
+      result = if reason == :normal, do: nil, else: "Task process exited: #{inspect(reason)}"
+      update_task_status(task_id, status, result)
+    end
+
     {:noreply, state}
   end
 

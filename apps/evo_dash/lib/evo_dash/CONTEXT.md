@@ -64,8 +64,9 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 1. **Creation** (`start_task/2`): Generates random 16-char hex ID, spawns `Task.Supervisor.async_nolink` task, writes `TaskInfo` struct to SQLite under `{:task, id}` (with `ref: nil`), stores the ref in `task_refs`.
 2. **Running**: Status updates via `cast` (`update_task_status/3`), log appends via `cast` (`update_task_log/2`). Logs stored as prepend list (newest first) in `TaskInfo.logs`. All writes go through `EvoDash.TaskStore.put/3`.
 3. **Completion/Failure**: On terminal status (`:completed`/`:failed`/`:cancelled`), `finished_at` is set, the task is removed from `task_refs`, and `cleanup_expired_tasks/1` runs.
-4. **Crash recovery**: On startup, SQLite entries that were `:running`/`:pending` are reset to `:failed` with a crash detail message (`normalize_tasks/1` runs in-place).
-5. **Deletion**: `delete_task/1` removes from SQLite. `clear_finished_tasks/0` removes all non-running/non-pending tasks from SQLite.
+4. **Crash recovery**: On startup, `normalize_tasks/1` reconciles tasks that were `:running`/`:pending`. If a task's persisted `pid` is still alive (still running under the sibling `TaskSupervisor` — which survives a `TaskRegistry` restart due to `:one_for_one` supervision), it is kept as `:running` and **re-monitored** via `Process.monitor/1` (populating `task_refs`). If the `pid` is dead or absent (actual crash / VM restart), it is marked `:failed` with a crash detail message. This prevents the prior bug where a registry restart incorrectly marked live tasks as `:failed`.
+5. **DOWN handling**: `handle_info({:DOWN, ref, :process, _pid, reason})` reconciles task termination — `reason == :normal` → `:completed`, abnormal → `:failed`. This handles both re-monitored tasks completing after a restart and tasks that crash without sending `{ref, result}`.
+6. **Deletion**: `delete_task/1` removes from SQLite. `clear_finished_tasks/0` removes all non-running/non-pending tasks from SQLite.
 
 ### Retention & Eviction
 - **Cap-based eviction**: `cleanup_expired_tasks/1` runs on most state mutations and removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100) on finished tasks.
