@@ -140,6 +140,21 @@ defmodule EvoGit.Adapters.Git do
     run(["rev-parse", rev], path)
   end
 
+  @doc """
+  Updates or creates a git ref to point at a specific commit SHA.
+  Used for creating archive refs that protect commits from garbage collection.
+  """
+  def update_ref(repo_path, ref_name, sha) do
+    run(["update-ref", ref_name, sha], repo_path)
+  end
+
+  @doc """
+  Deletes a git ref.
+  """
+  def delete_ref(repo_path, ref_name) do
+    run(["update-ref", "-d", ref_name], repo_path)
+  end
+
   def check_ignore(path, files) when is_list(files) do
     # git check-ignore returns 0 if any matches, 1 if none.
     # We want the list of ignored files.

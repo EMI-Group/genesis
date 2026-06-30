@@ -26,6 +26,7 @@ defmodule EvoDashWeb.Router do
     live("/system", SystemLive, :index)
     live("/review/:task_id", ReviewLive, :show)
     live("/review/:task_id/commit/:commit_sha", ReviewLive, :commit)
+    get("/tasks/:task_id/export", TaskExportController, :export)
     live("/dashboard", DashboardLive, :system_dashboard)
     live_dashboard("/phoenix/dashboard")
   end

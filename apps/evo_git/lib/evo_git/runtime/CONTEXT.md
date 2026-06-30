@@ -70,8 +70,8 @@ AgentSpec.new(context_node, phylo_node, agent_module, objective, opts)
 ```
 
 The scheduler (`AgentScheduler`):
-1. Assigns a unique `task_id` and `agent_id` (format: `T<task_id>_A<task_local_id>`).
-2. Allocates an isolated git worktree (directory: `worker_T<task_id>_A<task_local_id>`).
+1. Assigns a unique `task_id` (GUID) and `task_number` (short integer), and `agent_id` (format: `T<task_number>_A<task_local_id>`).
+2. Allocates an isolated git worktree (directory: `worker_T<task_number>_A<task_local_id>`).
 3. Prepares the worktree (`git clean` + `git checkout`).
 4. Stores initial state in two ETS tables: `:evogit_agent_state` (agent-owned) and `:evogit_sched_meta` (scheduler-owned).
 5. Spawns a Task process that runs the agent loop.

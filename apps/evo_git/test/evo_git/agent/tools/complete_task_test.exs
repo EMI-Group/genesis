@@ -217,7 +217,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.put(:repo_path, tmp_dir)
 
       # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_123", %{task_id: 1}})
+      :ets.insert(:evogit_sched_meta, {"agent_123", %{task_id: "1", task_number: 1}})
       :ets.insert(:evogit_agent_state, {"agent_123", %{task_local_id: 1}})
 
       result =
@@ -285,7 +285,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.put(:repo_path, tmp_dir)
 
       # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_ret", %{task_id: 2}})
+      :ets.insert(:evogit_sched_meta, {"agent_ret", %{task_id: "2", task_number: 2}})
       :ets.insert(:evogit_agent_state, {"agent_ret", %{task_local_id: 3}})
 
       result =
@@ -335,7 +335,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.put(:repo_path, tmp_dir)
 
       # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_defaults", %{task_id: 5}})
+      :ets.insert(:evogit_sched_meta, {"agent_defaults", %{task_id: "5", task_number: 5}})
       :ets.insert(:evogit_agent_state, {"agent_defaults", %{task_local_id: 7}})
 
       result = CompleteTask.complete("agent_defaults", "Simple result", base_commit)
@@ -414,6 +414,220 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
 
     test "returns error for a commit that doesn't exist" do
       assert :error = CompleteTask.get_agent_metadata("/nonexistent/path", "abc123")
+    end
+  end
+
+  describe "archive functionality" do
+    setup do
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "complete_task_archive_test_" <> to_string(System.unique_integer())
+        )
+
+      File.mkdir_p!(tmp_dir)
+      Git.init(tmp_dir)
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
+
+      # Create an initial commit
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+      {:ok, base_commit} = Git.rev_parse(tmp_dir, "HEAD")
+
+      # Make a second commit so we have a distinct final commit
+      File.write!(Path.join(tmp_dir, "test.txt"), "updated content")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Updated commit")
+      {:ok, final_commit} = Git.rev_parse(tmp_dir, "HEAD")
+
+      # Ensure ETS tables exist for task-scoped naming lookups
+      unless :ets.whereis(:evogit_sched_meta) != :undefined do
+        :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
+      end
+
+      unless :ets.whereis(:evogit_agent_state) != :undefined do
+        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      end
+
+      # Create the archive records ETS table (duplicate_bag for multiple records per task)
+      if :ets.whereis(:evogit_archive_records) != :undefined do
+        :ets.delete(:evogit_archive_records)
+      end
+
+      :ets.new(:evogit_archive_records, [:named_table, :public, :duplicate_bag])
+
+      on_exit(fn ->
+        File.rm_rf!(tmp_dir)
+        # Clean up the archive table if it still exists
+        if :ets.whereis(:evogit_archive_records) != :undefined do
+          :ets.delete(:evogit_archive_records)
+        end
+      end)
+
+      {:ok, %{tmp_dir: tmp_dir, base_commit: base_commit, final_commit: final_commit}}
+    end
+
+    test "creates archive refs when archive is enabled", %{
+      tmp_dir: tmp_dir,
+      base_commit: base_commit,
+      final_commit: final_commit
+    } do
+      Process.put(:repo_path, tmp_dir)
+
+      :ets.insert(:evogit_sched_meta, {"agent_arc1", %{task_id: "1", task_number: 1}})
+      :ets.insert(:evogit_agent_state, {"agent_arc1", %{task_local_id: 1}})
+
+      CompleteTask.complete("agent_arc1", "Archive result", final_commit,
+        base_commit: base_commit,
+        archive: true,
+        objective: "Test archive",
+        parent_id: nil,
+        depth: 0
+      )
+
+      ref_start = "refs/genesis/archive/T1-A1-start"
+      ref_final = "refs/genesis/archive/T1-A1-final"
+
+      assert {:ok, ^base_commit} = Git.rev_parse(tmp_dir, ref_start)
+      assert {:ok, ^final_commit} = Git.rev_parse(tmp_dir, ref_final)
+
+      # Verify the archive record was written to ETS
+      records = :ets.lookup(:evogit_archive_records, "1")
+      assert length(records) == 1
+
+      {_task_id, record} = hd(records)
+      assert record.agent_id == "agent_arc1"
+      assert record.base_commit == base_commit
+      assert record.final_commit == final_commit
+
+      :ets.delete(:evogit_sched_meta, "agent_arc1")
+      :ets.delete(:evogit_agent_state, "agent_arc1")
+      Process.delete(:repo_path)
+    end
+
+    test "does NOT create archive refs when archive is disabled (default)", %{
+      tmp_dir: tmp_dir,
+      base_commit: base_commit,
+      final_commit: final_commit
+    } do
+      Process.put(:repo_path, tmp_dir)
+
+      :ets.insert(:evogit_sched_meta, {"agent_arc2", %{task_id: "2", task_number: 2}})
+      :ets.insert(:evogit_agent_state, {"agent_arc2", %{task_local_id: 2}})
+
+      # No archive: true
+      CompleteTask.complete("agent_arc2", "No archive result", final_commit,
+        base_commit: base_commit
+      )
+
+      ref_start = "refs/genesis/archive/T2-A2-start"
+      ref_final = "refs/genesis/archive/T2-A2-final"
+
+      # These refs should not exist
+      assert {:error, _, _} = Git.rev_parse(tmp_dir, ref_start)
+      assert {:error, _, _} = Git.rev_parse(tmp_dir, ref_final)
+
+      # No archive records should be written
+      assert :ets.lookup(:evogit_archive_records, "2") == []
+
+      :ets.delete(:evogit_sched_meta, "agent_arc2")
+      :ets.delete(:evogit_agent_state, "agent_arc2")
+      Process.delete(:repo_path)
+    end
+
+    test "includes usage in git note metadata", %{
+      tmp_dir: tmp_dir,
+      base_commit: base_commit,
+      final_commit: final_commit
+    } do
+      Process.put(:repo_path, tmp_dir)
+
+      :ets.insert(:evogit_sched_meta, {"agent_arc3", %{task_id: "3", task_number: 3}})
+      :ets.insert(:evogit_agent_state, {"agent_arc3", %{task_local_id: 3}})
+
+      usage = %EvoGit.Agent.Usage{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        total_cost: 0.015
+      }
+
+      CompleteTask.complete("agent_arc3", "Usage result", final_commit,
+        base_commit: base_commit,
+        usage: usage
+      )
+
+      # Read back the note
+      assert {:ok, metadata} = Git.get_note(tmp_dir, final_commit, ["--ref=evogit"])
+
+      assert metadata["usage"] != nil
+      assert metadata["usage"]["input_tokens"] == 100
+      assert metadata["usage"]["output_tokens"] == 50
+      assert metadata["usage"]["total_tokens"] == 150
+      assert metadata["usage"]["cost"] == 0.015
+
+      :ets.delete(:evogit_sched_meta, "agent_arc3")
+      :ets.delete(:evogit_agent_state, "agent_arc3")
+      Process.delete(:repo_path)
+    end
+
+    test "archive record has all required keys", %{
+      tmp_dir: tmp_dir,
+      base_commit: base_commit,
+      final_commit: final_commit
+    } do
+      Process.put(:repo_path, tmp_dir)
+      Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
+
+      :ets.insert(:evogit_sched_meta, {"agent_arc4", %{task_id: "4", task_number: 4}})
+      :ets.insert(:evogit_agent_state, {"agent_arc4", %{task_local_id: 4}})
+
+      CompleteTask.complete("agent_arc4", "Full record test", final_commit,
+        base_commit: base_commit,
+        archive: true,
+        objective: "Test record shape",
+        parent_id: "parent_99",
+        depth: 3
+      )
+
+      records = :ets.lookup(:evogit_archive_records, "4")
+      assert length(records) == 1
+
+      {_task_id, record} = hd(records)
+
+      # Verify all required keys are present
+      assert Map.has_key?(record, :agent_id)
+      assert Map.has_key?(record, :parent_id)
+      assert Map.has_key?(record, :depth)
+      assert Map.has_key?(record, :objective)
+      assert Map.has_key?(record, :result)
+      assert Map.has_key?(record, :base_commit)
+      assert Map.has_key?(record, :final_commit)
+      assert Map.has_key?(record, :archive_ref_start)
+      assert Map.has_key?(record, :archive_ref_final)
+      assert Map.has_key?(record, :branch_name)
+      assert Map.has_key?(record, :usage)
+      assert Map.has_key?(record, :completed_at)
+
+      # Verify values
+      assert record.agent_id == "agent_arc4"
+      assert record.parent_id == "parent_99"
+      assert record.depth == 3
+      assert record.objective == "Test record shape"
+      assert record.result == "Full record test"
+      assert record.base_commit == base_commit
+      assert record.final_commit == final_commit
+      assert record.archive_ref_start == "refs/genesis/archive/T4-A4-start"
+      assert record.archive_ref_final == "refs/genesis/archive/T4-A4-final"
+      assert record.branch_name == "evogit-agent-T4-A4"
+      assert record.completed_at != nil
+
+      :ets.delete(:evogit_sched_meta, "agent_arc4")
+      :ets.delete(:evogit_agent_state, "agent_arc4")
+      Process.delete(:repo_path)
+      Process.delete(:evogit_started_at)
     end
   end
 end

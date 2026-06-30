@@ -71,6 +71,8 @@ defmodule EvoDashWeb.ReviewLive do
                     active_tab={@review_tab}
                     files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
                     commits_count={length(@commits)}
+                    show_archive={@archive_metadata not in [nil, []]}
+                    agents_count={if @archive_metadata, do: length(@archive_metadata), else: 0}
                   />
                 </div>
 
@@ -101,6 +103,11 @@ defmodule EvoDashWeb.ReviewLive do
                           pr_url={@pr_url}
                           loading={@action_loading}
                         />
+                        <%= if @archive_metadata not in [nil, []] do %>
+                          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-full gap-2" download>
+                            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext("Export JSON")}
+                          </.link>
+                        <% end %>
                         <EvoDashWeb.ReviewComponents.extract_skills_modal
                           show={@show_extract_modal}
                         />
@@ -121,6 +128,21 @@ defmodule EvoDashWeb.ReviewLive do
                         <div class="p-8 text-center">
                           <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
                           <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
+                        </div>
+                      <% end %>
+
+                    <% @review_tab == :archive -> %>
+                      <%= if @archive_metadata not in [nil, []] do %>
+                        <div class="p-4 sm:p-6 lg:p-8">
+                          <EvoDashWeb.ReviewComponents.archive_review_section
+                            archive_metadata={@archive_metadata}
+                            task_id={@task_id}
+                          />
+                        </div>
+                      <% else %>
+                        <div class="p-8 text-center">
+                          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/30 mx-auto mb-3" />
+                          <p class="text-sm text-base-content/50">{gettext("No archived agent data available for this task.")}</p>
                         </div>
                       <% end %>
                   <% end %>
@@ -177,6 +199,7 @@ defmodule EvoDashWeb.ReviewLive do
       |> assign(:inspect_commit_sha, params["commit_sha"])
       |> assign(:commit_data, nil)
       |> assign(:commit_header, nil)
+      |> assign(:archive_metadata, nil)
       |> load_task_data(task_id)
 
     {:ok, socket}
@@ -204,6 +227,10 @@ defmodule EvoDashWeb.ReviewLive do
 
   def handle_event("switch_tab", %{"tab" => "commits"}, socket) do
     {:noreply, assign(socket, :review_tab, :commits)}
+  end
+
+  def handle_event("switch_tab", %{"tab" => "archive"}, socket) do
+    {:noreply, assign(socket, :review_tab, :archive)}
   end
 
   def handle_event("switch_tab", _params, socket) do
@@ -591,6 +618,7 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:repo_path, repo_path)
         |> assign(:objective, objective)
         |> assign(:commits, commits)
+        |> assign(:archive_metadata, Map.get(task, :archive_metadata))
     end
   end
 

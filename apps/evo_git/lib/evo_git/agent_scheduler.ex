@@ -352,6 +352,7 @@ defmodule EvoGit.AgentScheduler do
   def init(opts) do
     :ets.new(@agent_table, [:named_table, :public, :set, read_concurrency: true])
     :ets.new(@sched_table, [:named_table, :public, :set, read_concurrency: true])
+    :ets.new(:evogit_archive_records, [:named_table, :public, :duplicate_bag, read_concurrency: true])
 
     config = EvoGit.Config.resolve()
 
@@ -424,7 +425,6 @@ defmodule EvoGit.AgentScheduler do
        llm_backoff_until: nil,
        tool_waiting: :queue.new(),
        max_tool_concurrency: max_tool_concurrency,
-       next_task_id: 1,
        sandbox_mode: sandbox_mode,
        sandbox_resources: sandbox_resources,
        sandbox_process_resources: sandbox_process_resources
@@ -446,13 +446,19 @@ defmodule EvoGit.AgentScheduler do
     # Extract repo_path from the spec's phylo_node
     repo_path = spec.phylo_node.repo
     state = Worktrees.ensure_initialized(state, repo_path)
-    task_id = state.next_task_id
+
+    task_id =
+      spec.opts[:task_id] || (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
+
+    repo_root = Dispatch.resolve_agent_repo_root(spec, state)
+    task_number = Dispatch.next_task_number(repo_root)
 
     {agent_id, state} =
-      Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
+      Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id, task_number)
 
-    state = %{state | next_task_id: task_id + 1}
-    Logger.info("AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id})")
+    Logger.info(
+      "AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id}, number #{task_number})"
+    )
 
     if state.paused do
       # Queue the agent for dispatch when resumed
@@ -777,6 +783,11 @@ defmodule EvoGit.AgentScheduler do
             else
               agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
               result = inject_agent_count(result, agent_count)
+
+              # Collect archive records for this task and inject into result
+              archive_records = collect_archive_records(meta.task_id)
+              result = inject_archive_records(result, archive_records)
+
               GenServer.reply(meta.from, result)
 
               state = %{
@@ -887,6 +898,23 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp inject_agent_count(result, _agent_count), do: result
+
+  defp collect_archive_records(task_id) do
+    case :ets.whereis(:evogit_archive_records) do
+      :undefined ->
+        []
+
+      _tid ->
+        :ets.lookup(:evogit_archive_records, task_id)
+        |> Enum.map(fn {_task_id, record} -> record end)
+    end
+  end
+
+  defp inject_archive_records({:ok, %EvoGit.Agent.Result{} = res}, records) when is_list(records) do
+    {:ok, %{res | archive_records: records}}
+  end
+
+  defp inject_archive_records(result, _records), do: result
 
   # --- ETS Helpers (Agent History Table) ---
 

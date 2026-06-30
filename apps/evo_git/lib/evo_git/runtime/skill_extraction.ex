@@ -25,7 +25,9 @@ defmodule EvoGit.Runtime.SkillExtraction do
       foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
 
       case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.SkillExtractor, objective,
-             foreign_repos: foreign_repos
+             foreign_repos: foreign_repos,
+             archive: Keyword.get(opts, :archive, false),
+             task_id: Keyword.get(opts, :task_id)
            )
            |> AgentScheduler.run_agent() do
         {:ok, %Result{} = agent_output} ->

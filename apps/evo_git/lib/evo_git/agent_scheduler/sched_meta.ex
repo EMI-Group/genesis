@@ -20,7 +20,8 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   - `task_ref` — the `%Task{}` struct (for `Task.shutdown/2`), or `nil`
   - `from` — the `GenServer.reply/2` destination for top-level agents
   - `parent_id` — the parent agent's ID, or `nil` for top-level agents
-  - `task_id` — the task ID for grouping agents belonging to the same top-level run_agent call
+  - `task_id` — the string task ID for grouping agents belonging to the same top-level run_agent call
+  - `task_number` — the short integer task number for worktree/branch naming
   - `spec` — the original `%AgentSpec{}` used to spawn this agent
   - `retries` — number of crash-retry attempts so far
   - `result_sent` — whether the Task has already delivered a result
@@ -41,6 +42,7 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
     :from,
     :parent_id,
     :task_id,
+    :task_number,
     :spec,
     status: :pending,
     worktree: nil,
@@ -63,7 +65,8 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
           task_ref: %Task{} | nil,
           from: GenServer.from() | nil,
           parent_id: pos_integer() | nil,
-          task_id: pos_integer() | nil,
+          task_id: String.t() | nil,
+          task_number: pos_integer() | nil,
           spec: AgentSpec.t(),
           retries: non_neg_integer(),
           result_sent: boolean(),

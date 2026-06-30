@@ -128,12 +128,13 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     parent_id = Keyword.get(opts, :parent_id)
     depth = Keyword.get(opts, :depth, 0)
     objective = Keyword.get(opts, :objective)
+    archive = Keyword.get(opts, :archive, false)
     repo_path = Process.get(:repo_path)
 
-    # Derive branch name using task-scoped naming: evogit-agent-T<task_id>-A<task_local_id>
-    # Look up task_id from SchedMeta and task_local_id from AgentState via ETS
-    {task_id, task_local_id} = lookup_task_ids(agent_id)
-    branch_name = "evogit-agent-T#{task_id}-A#{task_local_id}"
+    # Derive branch name using task-scoped naming: evogit-agent-T<task_number>-A<task_local_id>
+    # Look up task_id/task_number from SchedMeta and task_local_id from AgentState via ETS
+    {task_id, task_number, task_local_id} = lookup_task_info(agent_id)
+    branch_name = "evogit-agent-T#{task_number}-A#{task_local_id}"
 
     # Add metadata as git note (if we have the base commit)
     if base_commit do
@@ -145,7 +146,20 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         depth: depth,
         objective: objective,
         result: result,
+        usage: format_usage_for_note(Keyword.get(opts, :usage)),
         completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+    end
+
+    if archive and base_commit do
+      write_archive_refs(repo_path, task_id, task_local_id, agent_id, base_commit, commit_sha, %{
+        objective: objective,
+        result: result,
+        parent_id: parent_id,
+        depth: depth,
+        branch_name: branch_name,
+        usage: Keyword.get(opts, :usage),
+        completed_at: DateTime.utc_now()
       })
     end
 
@@ -158,11 +172,18 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     }
   end
 
-  defp lookup_task_ids(agent_id) do
-    task_id =
+  defp lookup_task_info(agent_id) do
+    {task_id, task_number} =
       case :ets.lookup(:evogit_sched_meta, agent_id) do
-        [{^agent_id, %{task_id: tid}}] when is_integer(tid) -> tid
-        _ -> 0
+        [{^agent_id, %{task_id: tid, task_number: tn}}] ->
+          {tid, tn}
+
+        [{^agent_id, %{task_id: tid}}] ->
+          # Backward compat: task_number may be nil in older entries
+          {tid, nil}
+
+        _ ->
+          {0, nil}
       end
 
     task_local_id =
@@ -171,7 +192,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         _ -> 0
       end
 
-    {task_id, task_local_id}
+    {task_id, task_number, task_local_id}
   end
 
   defp add_metadata_note(repo_path, commit_sha, metadata) do
@@ -226,5 +247,58 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   """
   def get_agent_metadata(repo_path, commit_sha) do
     Git.get_note(repo_path, commit_sha, ["--ref=evogit"])
+  end
+
+  defp format_usage_for_note(nil), do: nil
+
+  defp format_usage_for_note(%EvoGit.Agent.Usage{} = usage) do
+    %{
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      total_tokens: usage.total_tokens,
+      cost: usage.total_cost
+    }
+  end
+
+  defp write_archive_refs(repo_path, task_id, task_local_id, agent_id, base_commit, final_commit, data) do
+    ref_start = "refs/genesis/archive/T#{task_id}-A#{task_local_id}-start"
+    ref_final = "refs/genesis/archive/T#{task_id}-A#{task_local_id}-final"
+
+    # Write refs to protect commits from gc
+    Git.update_ref(repo_path, ref_start, base_commit)
+    Git.update_ref(repo_path, ref_final, final_commit)
+
+    record = %{
+      agent_id: agent_id,
+      parent_id: data[:parent_id],
+      depth: data[:depth] || 0,
+      objective: data[:objective],
+      result: data[:result],
+      base_commit: base_commit,
+      final_commit: final_commit,
+      archive_ref_start: ref_start,
+      archive_ref_final: ref_final,
+      branch_name: data[:branch_name],
+      usage: format_usage_for_note(data[:usage]),
+      started_at: parse_started_at(Process.get(:evogit_started_at)),
+      completed_at: data[:completed_at]
+    }
+
+    # Write to the archive records ETS table (if it exists)
+    case :ets.whereis(:evogit_archive_records) do
+      :undefined -> :ok
+      _tid -> :ets.insert(:evogit_archive_records, {task_id, record})
+    end
+
+    Logger.info("Archive: Wrote refs #{ref_start} and #{ref_final} for agent #{agent_id}")
+  end
+
+  defp parse_started_at(nil), do: nil
+
+  defp parse_started_at(iso_string) when is_binary(iso_string) do
+    case DateTime.from_iso8601(iso_string) do
+      {:ok, dt, _offset} -> dt
+      _ -> nil
+    end
   end
 end

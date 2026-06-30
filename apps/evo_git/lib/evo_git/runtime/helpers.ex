@@ -39,7 +39,8 @@ defmodule EvoGit.Runtime.Helpers do
          pr_url: pr_url,
          pr_title: pr_title,
          usage: agent_output.usage,
-         agent_count: agent_output.agent_count
+         agent_count: agent_output.agent_count,
+         archive_records: agent_output.archive_records
        }}
     else
       Logger.info(
@@ -56,7 +57,8 @@ defmodule EvoGit.Runtime.Helpers do
          pr_title: nil,
          no_changes: true,
          usage: agent_output.usage,
-         agent_count: agent_output.agent_count
+         agent_count: agent_output.agent_count,
+         archive_records: agent_output.archive_records
        }}
     end
   end

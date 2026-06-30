@@ -229,7 +229,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
           AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
             repo_id: target_repo_id,
-            foreign_repos: foreign_repos
+            foreign_repos: foreign_repos,
+            archive: parent_state.archive
           )
 
         {:error, error_msg} ->

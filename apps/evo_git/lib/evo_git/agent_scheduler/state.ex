@@ -24,9 +24,8 @@ defmodule EvoGit.AgentScheduler.State do
 
   ### Agent Lifecycle
   - `next_agent_id` — monotonically increasing agent ID counter
-  - `next_task_id` — monotonically increasing task ID counter (groups subagents)
-  - `task_local_counters` — map of `task_id => next_local_id` for per-task agent numbering
-  - `task_agent_counts` — map of `task_id => total agents spawned` (for stats reporting)
+  - `task_local_counters` — map of `task_id (string) => next_local_id` for per-task agent numbering
+  - `task_agent_counts` — map of `task_id (string) => total agents spawned` (for stats reporting)
   - `ref_to_agent` — maps `Task` monitor references to agent IDs
   - `queue` — FIFO queue of agent IDs waiting for a worktree
 
@@ -65,7 +64,6 @@ defmodule EvoGit.AgentScheduler.State do
             tool_holders: MapSet.new(),
             tool_waiting: :queue.new(),
             max_tool_concurrency: 2,
-            next_task_id: 1,
             task_local_counters: %{},
             task_agent_counts: %{},
             paused: false,
@@ -94,9 +92,8 @@ defmodule EvoGit.AgentScheduler.State do
           tool_holders: MapSet.t(pos_integer()),
           tool_waiting: :queue.queue(term()),
           max_tool_concurrency: pos_integer(),
-          next_task_id: pos_integer(),
-          task_local_counters: %{optional(pos_integer()) => pos_integer()},
-          task_agent_counts: %{optional(pos_integer()) => pos_integer()},
+          task_local_counters: %{optional(String.t()) => pos_integer()},
+          task_agent_counts: %{optional(String.t()) => pos_integer()},
           paused: boolean(),
           sandbox_mode: :auto | :enabled | :disabled | nil,
           sandbox_resources: map() | nil,
