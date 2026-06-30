@@ -187,7 +187,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     |> cd_targets()
     |> Enum.reduce([], fn target, acc ->
       cond do
-        String.starts_with?(target, worktree_base <> "/") ->
+        target != repo_path and String.starts_with?(target, worktree_base <> "/") ->
           [
             "⚠️ You are trying to `cd` into another agent's worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
             | acc

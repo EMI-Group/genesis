@@ -23,6 +23,13 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert result =~ @repo_path
     end
 
+    test "returns nil when cd to own worktree" do
+      result =
+        ShellTool.detect_cd_warnings("cd #{@repo_path} && mix test", @repo_path, @repo_root)
+
+      assert result == nil
+    end
+
     test "returns warning when cd to repo root" do
       result =
         ShellTool.detect_cd_warnings("cd #{@repo_root}", @repo_path, @repo_root)
