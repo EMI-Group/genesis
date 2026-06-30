@@ -24,6 +24,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 - `EvoDashWeb.Endpoint` — Phoenix endpoint (LiveView socket, static files, Plug pipeline)
 - `EvoDashWeb.Router` — Routes to LiveViews and Phoenix LiveDashboard
 - `EvoDashWeb.Helpers` — Shared UI utilities (status badges, datetime formatting, icons, modals)
+- `EvoDashWeb.TaskExportController` — JSON download endpoint for a task's `archive_metadata` (`GET /tasks/:task_id/export`); normalizes structs/DateTimes to plain JSON-safe maps before encoding with Jason
 
 ### Mix Tasks
 
