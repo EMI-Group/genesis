@@ -107,11 +107,11 @@
                       {inspect(agent.agent_module)}
                     </code>
                   </div>
-                  <div class="shrink-0 min-w-[150px] max-w-full">
+                  <div class="flex-1 min-w-[150px]">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Context Path") %>
                     </h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all w-full">
                       {agent.context_path || gettext("N/A")}
                     </code>
                   </div>
@@ -152,7 +152,7 @@
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Task ID") %>
                     </h4>
-                    <span class="text-sm">#<%= agent.task_id %></span>
+                    <span class="text-sm">#<%= agent.task_number || agent.task_id %></span>
                   </div>
 
                   <div class="shrink-0">
@@ -170,22 +170,22 @@
                   </div>
 
                   <%= if agent.base_commit do %>
-                    <div class="shrink-0">
+                    <div class="flex-1 min-w-0">
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                         <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Base Commit") %>
                       </h4>
-                      <code class="text-xs font-mono bg-base-200 px-3 py-1.5 rounded block truncate" title={agent.base_commit}>
+                      <code class="text-xs font-mono bg-base-200 px-3 py-1.5 rounded block truncate w-full" title={agent.base_commit}>
                         {shorten_sha(agent.base_commit)}
                       </code>
                     </div>
                   <% end %>
 
                   <%= if agent.current_commit do %>
-                    <div class="shrink-0">
+                    <div class="flex-1 min-w-0">
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                         <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Current Commit") %>
                       </h4>
-                      <code class={"text-xs font-mono px-3 py-1.5 rounded block truncate " <> commit_bg_class(agent)} title={agent.current_commit}>
+                      <code class={"text-xs font-mono px-3 py-1.5 rounded block truncate w-full " <> commit_bg_class(agent)} title={agent.current_commit}>
                         {shorten_sha(agent.current_commit)}
                       </code>
                     </div>
@@ -230,68 +230,80 @@
                       <span class="text-sm text-base-content/50"><%= gettext("None") %></span>
                     <% end %>
                   </div>
+
+                  <%= if agent.usage do %>
+                    <div class="shrink-0">
+                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">&nbsp;</h4>
+                      <button
+                        class="cursor-pointer text-xs font-semibold uppercase text-base-content/60 flex items-center gap-1.5 select-none outline-none hover:text-base-content/80 transition-colors"
+                        phx-click="toggle_usage"
+                      >
+                        <.icon name="hero-currency-dollar" class="size-3.5" />
+                        <%= gettext("Token & Cost Usage") %>
+                        <.icon
+                          name="hero-chevron-down"
+                          class={"size-3 opacity-50 transition-transform #{if @show_usage, do: "rotate-180"}"}
+                        />
+                      </button>
+                    </div>
+                  <% end %>
                 </div>
 
 
               </div>
 
-                <%= if agent.usage do %>
-                <details class="group/usage mt-4">
-                  <summary class="cursor-pointer text-xs font-semibold uppercase text-base-content/60 mb-2 flex items-center gap-1.5 select-none outline-none hover:text-base-content/80 transition-colors">
-                    <.icon name="hero-currency-dollar" class="size-3.5" />
-                    <%= gettext("Token & Cost Usage") %>
-                    <.icon name="hero-chevron-down" class="size-3 opacity-50 group-open/usage:rotate-180 transition-transform" />
-                  </summary>
-                  <div class="grid grid-cols-3 gap-2 mt-2">
-                    <div class="bg-base-200 rounded-lg p-2.5">
-                      <div class="text-xs text-base-content/50"><%= gettext("Input Tokens") %></div>
-                      <div class="text-sm font-semibold"><%= format_number(agent.usage.input_tokens) %></div>
+                <%= if agent.usage && @show_usage do %>
+                  <div class="mt-2">
+                    <div class="grid grid-cols-3 gap-2 mt-2">
+                      <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="text-xs text-base-content/50"><%= gettext("Input Tokens") %></div>
+                        <div class="text-sm font-semibold"><%= format_number(agent.usage.input_tokens) %></div>
+                      </div>
+                      <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="text-xs text-base-content/50"><%= gettext("Output Tokens") %></div>
+                        <div class="text-sm font-semibold"><%= format_number(agent.usage.output_tokens) %></div>
+                      </div>
+                      <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="text-xs text-base-content/50"><%= gettext("Total Tokens") %></div>
+                        <div class="text-sm font-semibold"><%= format_number(agent.usage.total_tokens) %></div>
+                      </div>
                     </div>
-                    <div class="bg-base-200 rounded-lg p-2.5">
-                      <div class="text-xs text-base-content/50"><%= gettext("Output Tokens") %></div>
-                      <div class="text-sm font-semibold"><%= format_number(agent.usage.output_tokens) %></div>
-                    </div>
-                    <div class="bg-base-200 rounded-lg p-2.5">
-                      <div class="text-xs text-base-content/50"><%= gettext("Total Tokens") %></div>
-                      <div class="text-sm font-semibold"><%= format_number(agent.usage.total_tokens) %></div>
-                    </div>
-                  </div>
-                  <%= if Map.get(agent.usage, :cached_tokens, 0) > 0 or Map.get(agent.usage, :cache_creation_tokens, 0) > 0 do %>
+                    <%= if Map.get(agent.usage, :cached_tokens, 0) > 0 or Map.get(agent.usage, :cache_creation_tokens, 0) > 0 do %>
+                      <div class="mt-4 pt-4 border-t border-base-200">
+                        <div class="grid grid-cols-3 gap-2 mt-2">
+                          <div class="bg-base-200 rounded-lg p-2.5">
+                            <div class="text-xs text-base-content/50"><%= gettext("Cached Tokens") %></div>
+                            <div class="text-sm font-semibold"><%= format_number(Map.get(agent.usage, :cached_tokens, 0)) %></div>
+                          </div>
+                          <div class="bg-base-200 rounded-lg p-2.5">
+                            <div class="text-xs text-base-content/50"><%= gettext("Cache Creation") %></div>
+                            <div class="text-sm font-semibold"><%= format_number(Map.get(agent.usage, :cache_creation_tokens, 0)) %></div>
+                          </div>
+                          <div class="bg-base-200 rounded-lg p-2.5">
+                            <div class="text-xs text-base-content/50"><%= gettext("Cache Hit Rate") %></div>
+                            <div class="text-sm font-semibold text-success"><%= format_cache_hit_rate(agent.usage) %></div>
+                            <progress class="progress progress-success w-full mt-1" value={if agent.usage.input_tokens > 0, do: min(round(Map.get(agent.usage, :cached_tokens, 0) / agent.usage.input_tokens * 100), 100), else: 0} max="100"></progress>
+                          </div>
+                        </div>
+                      </div>
+                    <% end %>
                     <div class="mt-4 pt-4 border-t border-base-200">
                       <div class="grid grid-cols-3 gap-2 mt-2">
                         <div class="bg-base-200 rounded-lg p-2.5">
-                          <div class="text-xs text-base-content/50"><%= gettext("Cached Tokens") %></div>
-                          <div class="text-sm font-semibold"><%= format_number(Map.get(agent.usage, :cached_tokens, 0)) %></div>
+                          <div class="text-xs text-base-content/50"><%= gettext("Input Cost") %></div>
+                          <div class="text-sm font-semibold">$<%= format_cost(agent.usage.input_cost) %></div>
                         </div>
                         <div class="bg-base-200 rounded-lg p-2.5">
-                          <div class="text-xs text-base-content/50"><%= gettext("Cache Creation") %></div>
-                          <div class="text-sm font-semibold"><%= format_number(Map.get(agent.usage, :cache_creation_tokens, 0)) %></div>
+                          <div class="text-xs text-base-content/50"><%= gettext("Output Cost") %></div>
+                          <div class="text-sm font-semibold">$<%= format_cost(agent.usage.output_cost) %></div>
                         </div>
                         <div class="bg-base-200 rounded-lg p-2.5">
-                          <div class="text-xs text-base-content/50"><%= gettext("Cache Hit Rate") %></div>
-                          <div class="text-sm font-semibold text-success"><%= format_cache_hit_rate(agent.usage) %></div>
-                          <progress class="progress progress-success w-full mt-1" value={if agent.usage.input_tokens > 0, do: min(round(Map.get(agent.usage, :cached_tokens, 0) / agent.usage.input_tokens * 100), 100), else: 0} max="100"></progress>
+                          <div class="text-xs text-base-content/50"><%= gettext("Total Cost") %></div>
+                          <div class="text-sm font-semibold text-primary">$<%= format_cost(agent.usage.total_cost) %></div>
                         </div>
-                      </div>
-                    </div>
-                  <% end %>
-                  <div class="mt-4 pt-4 border-t border-base-200">
-                    <div class="grid grid-cols-3 gap-2 mt-2">
-                      <div class="bg-base-200 rounded-lg p-2.5">
-                        <div class="text-xs text-base-content/50"><%= gettext("Input Cost") %></div>
-                        <div class="text-sm font-semibold">$<%= format_cost(agent.usage.input_cost) %></div>
-                      </div>
-                      <div class="bg-base-200 rounded-lg p-2.5">
-                        <div class="text-xs text-base-content/50"><%= gettext("Output Cost") %></div>
-                        <div class="text-sm font-semibold">$<%= format_cost(agent.usage.output_cost) %></div>
-                      </div>
-                      <div class="bg-base-200 rounded-lg p-2.5">
-                        <div class="text-xs text-base-content/50"><%= gettext("Total Cost") %></div>
-                        <div class="text-sm font-semibold text-primary">$<%= format_cost(agent.usage.total_cost) %></div>
                       </div>
                     </div>
                   </div>
-                </details>
                 <% end %>
 
                 <!-- Chat History -->
