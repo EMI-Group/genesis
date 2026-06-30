@@ -32,7 +32,8 @@ defmodule EvoDash.TaskRegistry do
       usage: nil,
       agent_count: nil,
       base_sha: nil,
-      commit_sha: nil
+      commit_sha: nil,
+      archive_metadata: nil
     ]
 
     @type t :: %__MODULE__{
@@ -49,7 +50,8 @@ defmodule EvoDash.TaskRegistry do
             usage: EvoGit.Agent.Usage.t() | nil,
             agent_count: pos_integer() | nil,
             base_sha: String.t() | nil,
-            commit_sha: String.t() | nil
+            commit_sha: String.t() | nil,
+            archive_metadata: [map()] | nil
           }
   end
 
@@ -317,7 +319,11 @@ defmodule EvoDash.TaskRegistry do
   def handle_call({:add_recent_project, path, name}, _from, state) do
     now = DateTime.utc_now()
 
-    EvoDash.TaskStore.put(state.task_store, {:project, path}, %{path: path, name: name, last_opened_at: now})
+    EvoDash.TaskStore.put(state.task_store, {:project, path}, %{
+      path: path,
+      name: name,
+      last_opened_at: now
+    })
 
     # Enforce max limit
     trim_recent_projects(state)
@@ -522,6 +528,7 @@ defmodule EvoDash.TaskRegistry do
     usage = Keyword.get(opts, :usage)
     agent_count = Keyword.get(opts, :agent_count)
     commit_sha = Keyword.get(opts, :commit_sha)
+    archive_records = Keyword.get(opts, :archive_records)
 
     case task_get(state, task_id) do
       %TaskInfo{} = task ->
@@ -534,6 +541,10 @@ defmodule EvoDash.TaskRegistry do
         updated = if usage, do: %{updated | usage: usage}, else: updated
         updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
         updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
+
+        updated =
+          if archive_records, do: %{updated | archive_metadata: archive_records}, else: updated
+
         EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
 
         if status in [:completed, :failed, :cancelled] do
@@ -887,6 +898,13 @@ defmodule EvoDash.TaskRegistry do
         do: Keyword.put(runtime_opts, :foreign_repos, foreign_repos),
         else: runtime_opts
 
+    archive = Keyword.get(opts, :archive)
+
+    runtime_opts =
+      if archive,
+        do: Keyword.put(runtime_opts, :archive, archive),
+        else: runtime_opts
+
     {nil, runtime_opts}
   end
 
@@ -945,10 +963,17 @@ defmodule EvoDash.TaskRegistry do
           _ -> nil
         end
 
+      task_archive_records =
+        case result do
+          {:ok, %{archive_records: records}} when is_list(records) -> records
+          _ -> nil
+        end
+
       update_task_status(task_id, status, result,
         usage: task_usage,
         agent_count: task_agent_count,
-        commit_sha: task_commit_sha
+        commit_sha: task_commit_sha,
+        archive_records: task_archive_records
       )
     end
 
