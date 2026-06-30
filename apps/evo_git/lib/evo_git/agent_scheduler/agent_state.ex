@@ -24,6 +24,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
   - `usage` — cumulative token and cost usage for this agent (`nil` until the first LLM call completes)
   - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `LoopState.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
+  - `archive` — whether task archiving is enabled for this agent (writes git refs + ETS records on completion)
   """
 
   alias EvoGit.Agent.Usage
@@ -44,6 +45,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
     :objective,
     :task_local_id,
     :turn,
+    archive: false,
     usage: nil,
     llm_generation_params: [],
     repo_id: :primary,
@@ -67,6 +69,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           task_local_id: pos_integer() | nil,
           usage: Usage.t() | nil,
           turn: non_neg_integer() | nil,
+          archive: boolean(),
           foreign_repos: [ForeignRepo.t()]
         }
 end

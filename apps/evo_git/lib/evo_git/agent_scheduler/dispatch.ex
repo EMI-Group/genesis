@@ -69,6 +69,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       repo_id: spec.repo_id,
       repo_root: agent_repo_root,
       task_local_id: task_local_id,
+      archive: Keyword.get(spec.opts, :archive, false),
       foreign_repos: spec.foreign_repos
     })
 
@@ -170,6 +171,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
         Process.put(:evogit_agent_depth, meta.depth)
+        Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
 
         Process.put(:evogit_repo_root, agent_repo_root)
         Process.put(:evogit_repo_id, spec.repo_id)

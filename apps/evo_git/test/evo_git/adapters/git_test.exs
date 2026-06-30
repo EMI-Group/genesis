@@ -180,4 +180,65 @@ defmodule EvoGit.Adapters.GitTest do
       assert :error = Git.get_note(tmp_dir, commit_sha)
     end
   end
+
+  describe "update_ref/3 and delete_ref/2" do
+    test "creates a ref pointing to a specific commit", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      ref_name = "refs/genesis/archive/test-create"
+
+      assert {:ok, _} = Git.update_ref(tmp_dir, ref_name, commit_sha)
+
+      # Verify the ref resolves to the right SHA
+      assert {:ok, ^commit_sha} = Git.rev_parse(tmp_dir, ref_name)
+    end
+
+    test "deletes an existing ref", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      ref_name = "refs/genesis/archive/test-delete"
+
+      assert {:ok, _} = Git.update_ref(tmp_dir, ref_name, commit_sha)
+      assert {:ok, ^commit_sha} = Git.rev_parse(tmp_dir, ref_name)
+
+      # Delete the ref
+      assert {:ok, _} = Git.delete_ref(tmp_dir, ref_name)
+
+      # Verify it no longer resolves
+      assert {:error, _, _} = Git.rev_parse(tmp_dir, ref_name)
+    end
+
+    test "updates an existing ref to a new SHA", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "first\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "First commit")
+
+      {:ok, first_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      ref_name = "refs/genesis/archive/test-update"
+
+      # Create ref at first commit
+      assert {:ok, _} = Git.update_ref(tmp_dir, ref_name, first_sha)
+      assert {:ok, ^first_sha} = Git.rev_parse(tmp_dir, ref_name)
+
+      # Make a new commit
+      File.write!(Path.join(tmp_dir, "test.txt"), "second\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Second commit")
+
+      {:ok, second_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      # Update ref to the new commit
+      assert {:ok, _} = Git.update_ref(tmp_dir, ref_name, second_sha)
+      assert {:ok, ^second_sha} = Git.rev_parse(tmp_dir, ref_name)
+    end
+  end
 end

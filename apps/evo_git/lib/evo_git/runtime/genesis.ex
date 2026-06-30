@@ -42,7 +42,8 @@ defmodule EvoGit.Runtime.Genesis do
     foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
 
     case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective,
-           foreign_repos: foreign_repos
+           foreign_repos: foreign_repos,
+           archive: Keyword.get(opts, :archive, false)
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
@@ -67,7 +68,8 @@ defmodule EvoGit.Runtime.Genesis do
     foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
 
     case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective,
-           foreign_repos: foreign_repos
+           foreign_repos: foreign_repos,
+           archive: Keyword.get(opts, :archive, false)
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->

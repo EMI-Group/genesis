@@ -352,6 +352,7 @@ defmodule EvoGit.AgentScheduler do
   def init(opts) do
     :ets.new(@agent_table, [:named_table, :public, :set, read_concurrency: true])
     :ets.new(@sched_table, [:named_table, :public, :set, read_concurrency: true])
+    :ets.new(:evogit_archive_records, [:named_table, :public, :duplicate_bag, read_concurrency: true])
 
     config = EvoGit.Config.resolve()
 
@@ -777,6 +778,11 @@ defmodule EvoGit.AgentScheduler do
             else
               agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
               result = inject_agent_count(result, agent_count)
+
+              # Collect archive records for this task and inject into result
+              archive_records = collect_archive_records(meta.task_id)
+              result = inject_archive_records(result, archive_records)
+
               GenServer.reply(meta.from, result)
 
               state = %{
@@ -887,6 +893,23 @@ defmodule EvoGit.AgentScheduler do
   end
 
   defp inject_agent_count(result, _agent_count), do: result
+
+  defp collect_archive_records(task_id) do
+    case :ets.whereis(:evogit_archive_records) do
+      :undefined ->
+        []
+
+      _tid ->
+        :ets.lookup(:evogit_archive_records, task_id)
+        |> Enum.map(fn {_task_id, record} -> record end)
+    end
+  end
+
+  defp inject_archive_records({:ok, %EvoGit.Agent.Result{} = res}, records) when is_list(records) do
+    {:ok, %{res | archive_records: records}}
+  end
+
+  defp inject_archive_records(result, _records), do: result
 
   # --- ETS Helpers (Agent History Table) ---
 

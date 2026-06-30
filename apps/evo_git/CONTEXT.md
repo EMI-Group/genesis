@@ -17,8 +17,8 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `EvoGit.CLI` | Command-line interface entry point |
 | `EvoGit.Agent` | Behaviour module for agents; injects agent loop, tool dispatch, subagent management |
 | `EvoGit.Agent.Usage` | Cumulative token and cost usage tracking (`Usage` struct with `add/2`, `from_response_usage/1`, `zero/0`) |
-| `EvoGit.AgentSpec` | Structured specification for spawning agents |
-| `EvoGit.AgentScheduler` | GenServer managing agent lifecycles, worktree pool, ETS state, slot management |
+| `EvoGit.AgentSpec` | Structured specification for spawning agents; `opts` keyword list carries `:archive` and other runtime flags |
+| `EvoGit.AgentScheduler` | GenServer managing agent lifecycles, worktree pool, ETS state (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`), slot management |
 | `EvoGit.Sandbox` | Multi-platform sandbox dispatch (selects Linux/macOS/None backend based on platform) |
 | `EvoGit.SandboxSlice` | GenServer managing the `evogit.slice` systemd user slice (Linux only) |
 | `EvoGit.Task` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
@@ -52,3 +52,4 @@ The `:evo_git` OTP application implements an evolutionary software development r
 - **Slot discipline**: All LLM calls must acquire/release slots via `AgentScheduler`; rate-limit errors trigger a 60-second global backoff. Tool executions are independently throttled via `max_tool_concurrency`.
 - **Task-scoped naming**: Worktree directories use `worker_T<task_id>_A<task_local_id>`, branches use `evogit-agent-T<task_id>-A<task_local_id>`. Each top-level run gets a unique `task_id` inherited by all subagents.
 - `EvoGit.Defaults` is a backward-compatibility shim. New code should use `EvoGit.Config` directly.
+- **Task Archive (opt-in)**: When `:archive` is enabled (`--archive` CLI flag → `runtime_opts` → `AgentSpec.opts` → `AgentState.archive`), each agent's completion (`CompleteTask.complete/4`) writes `refs/genesis/archive/T{task_id}-A{agent_id}-start` and `-final` git refs (protecting commits from gc), adds per-agent `usage` to the git note metadata, and writes an archive record to the `:evogit_archive_records` ETS table. At root-agent completion, the scheduler collects all records for the task and injects them into the `Result.archive_records` field, which flows through `merge_and_report/3` to the final result map. When archive is disabled (default), behavior is identical to pre-feature.
