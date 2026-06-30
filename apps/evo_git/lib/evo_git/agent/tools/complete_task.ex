@@ -23,7 +23,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     ReqLLM.tool(
       name: "complete_task",
       description:
-        "Call this tool to report your findings and results. This is the ONLY way to finish.",
+        "Call this tool to report your findings and results. This is the ONLY way to finish. " <>
+          "Your result MUST summarize the status of the ORIGINAL objective as a whole, not just the most recent sub-task you worked on.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -260,7 +261,15 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     }
   end
 
-  defp write_archive_refs(repo_path, task_id, task_local_id, agent_id, base_commit, final_commit, data) do
+  defp write_archive_refs(
+         repo_path,
+         task_id,
+         task_local_id,
+         agent_id,
+         base_commit,
+         final_commit,
+         data
+       ) do
     ref_start = "refs/genesis/archive/T#{task_id}-A#{task_local_id}-start"
     ref_final = "refs/genesis/archive/T#{task_id}-A#{task_local_id}-final"
 

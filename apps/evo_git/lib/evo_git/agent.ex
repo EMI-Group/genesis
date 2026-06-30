@@ -316,11 +316,36 @@ defmodule EvoGit.Agent do
       end
 
       defp trigger_recovery(state, reason) do
-        warning_msg = """
-        You have exceeded the execution limit (#{reason}).
-        You MUST call `#{@complete_tool}` immediately with your best answer explaining the situation.
-        Do not call any other tools.
-        """
+        objective =
+          case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
+            {:ok, agent_state}
+            when is_binary(agent_state.objective) and
+                   agent_state.objective != "" ->
+              agent_state.objective
+
+            _ ->
+              nil
+          end
+
+        warning_msg =
+          if objective do
+            """
+            You have exceeded the execution limit (#{reason}).
+            You MUST call `#{@complete_tool}` immediately with your best answer.
+
+            Your original objective was:
+            #{objective}
+
+            Your report MUST summarize the status of this ENTIRE objective, not just your most recent sub-task.
+            Do not call any other tools.
+            """
+          else
+            """
+            You have exceeded the execution limit (#{reason}).
+            You MUST call `#{@complete_tool}` immediately with your best answer explaining the situation.
+            Do not call any other tools.
+            """
+          end
 
         recovery_msg = tag_message_turn(user(warning_msg), state.turn)
         new_context = ReqLLM.Context.append(state.context, recovery_msg)
@@ -436,7 +461,10 @@ defmodule EvoGit.Agent do
               # Pick up updated delegation hints from tool execution
               updated_hints = Process.get(:delegation_hints, state.delegation_hints)
               Process.delete(:delegation_hints)
-              updated_read_hints = Process.get(:read_delegation_hints, state.read_delegation_hints)
+
+              updated_read_hints =
+                Process.get(:read_delegation_hints, state.read_delegation_hints)
+
               Process.delete(:read_delegation_hints)
 
               # Detect subagent calls to reset the middle-warning counter
