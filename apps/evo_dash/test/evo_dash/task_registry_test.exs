@@ -493,6 +493,97 @@ defmodule EvoDash.TaskRegistryTest do
     end
   end
 
+  describe "projects table schema migration" do
+    test "self-heals a stale projects table with path column as PK" do
+      unique = System.unique_integer([:positive])
+      root = Path.join(System.tmp_dir!(), "evogit_test_schema_migrate_#{unique}")
+      File.mkdir_p!(root)
+      sqlite_path = Path.join(root, "tasks.sqlite")
+
+      # Seed a STALE schema: the `projects` table uses `path` as the PK column
+      # (historical bug from commit 0989e6f9) instead of `id`. Both tables are
+      # created as an older version of the app would have written them.
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      {:ok, _} =
+        XqliteNIF.execute(conn, "CREATE TABLE tasks (id TEXT PRIMARY KEY, data BLOB)", [])
+
+      {:ok, _} =
+        XqliteNIF.execute(conn, "CREATE TABLE projects (path TEXT PRIMARY KEY, data BLOB)", [])
+
+      proj1 = %{path: "/tmp/proj1", name: "Project One", last_opened_at: DateTime.utc_now()}
+      proj2 = %{path: "/tmp/proj2", name: "Project Two", last_opened_at: DateTime.utc_now()}
+
+      {:ok, _} =
+        XqliteNIF.execute(conn, "INSERT INTO projects (path, data) VALUES (?1, ?2)", [
+          "/tmp/proj1",
+          :erlang.term_to_binary(proj1)
+        ])
+
+      {:ok, _} =
+        XqliteNIF.execute(conn, "INSERT INTO projects (path, data) VALUES (?1, ?2)", [
+          "/tmp/proj2",
+          :erlang.term_to_binary(proj2)
+        ])
+
+      :ok = XqliteNIF.close(conn)
+
+      on_exit(fn -> File.rm_rf(root) end)
+
+      # Stop the default supervised store + registry (from the module setup),
+      # then start fresh ones pointing at the stale DB. TaskStore.init will call
+      # create_tables/repair_projects_table, which should self-heal the schema.
+      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoDash.TaskStore)
+
+      start_supervised({EvoDash.TaskStore, data_dir: sqlite_path})
+
+      start_supervised(
+        {TaskRegistry, task_store: EvoDash.TaskStore, data_dir: root, name: EvoDash.TaskRegistry}
+      )
+
+      # The repair mapped `path` → `id`, so list_recent_projects should return
+      # the 2 migrated projects with correct data.
+      projects = TaskRegistry.list_recent_projects()
+      assert length(projects) == 2
+
+      paths = Enum.map(projects, & &1.path) |> Enum.sort()
+      assert paths == ["/tmp/proj1", "/tmp/proj2"]
+
+      names = Enum.map(projects, & &1.name) |> Enum.sort()
+      assert names == ["Project One", "Project Two"]
+    end
+  end
+
+  describe "recent projects persistence" do
+    test "recent project persists across a registry restart with the same store",
+         %{data_dir: data_dir} do
+      path = "/some/path"
+      name = "My Project"
+
+      :ok = TaskRegistry.add_recent_project(path, name)
+
+      # Confirm the project is listed before the restart.
+      projects_before = TaskRegistry.list_recent_projects()
+      assert Enum.any?(projects_before, &(&1.path == path and &1.name == name))
+
+      # Stop the registry but KEEP the same store running (store is durable on disk).
+      stop_supervised(EvoDash.TaskRegistry)
+
+      # Restart the registry pointing at the same store and data_dir.
+      start_supervised(
+        {TaskRegistry,
+         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+      )
+
+      # The project must survive the registry restart.
+      projects_after = TaskRegistry.list_recent_projects()
+      matching = Enum.filter(projects_after, &(&1.path == path))
+      assert length(matching) == 1
+      assert hd(matching).name == name
+    end
+  end
+
   describe "GenServer resilience and state preservation" do
     test "registry stays alive and returns inserted tasks" do
       unique = System.unique_integer([:positive])
