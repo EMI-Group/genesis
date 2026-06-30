@@ -66,51 +66,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
       case messages do
         [system_msg, initial_user_msg | _rest] ->
-          compression_instruction = """
-          <context_compression>
-          Review the conversation above and create a dense, comprehensive summary that preserves all information needed to continue the work without loss.
-
-          PRESERVE THESE EXACTLY (never paraphrase):
-          - File paths, module names, function names, variable names
-          - Error messages and stack traces
-          - Configuration values and settings
-          - Architectural decisions and their reasoning
-
-          SUMMARIZE THESE:
-          - Tool call results (preserve conclusions, drop raw output)
-          - Code explorations (preserve findings, drop search syntax)
-          - Multi-step reasoning (preserve conclusions, drop intermediate steps)
-          - Conversational exchanges (preserve decisions, drop pleasantries)
-
-          DISCARD COMPLETELY:
-          - Acknowledgments, greetings, filler phrases
-          - Repeated or redundant information
-          - Raw tool syntax/JSON that isn't essential
-
-          First, silently identify the most critical information. Then output a structured summary using EXACTLY this format:
-
-          ## Objective
-          [1-2 sentences: the current goal being worked on]
-
-          ## Completed
-          [Bulleted list of what has been done. Include exact file paths for all files created/modified/deleted.]
-
-          ## Key Findings
-          [Important discoveries, constraints, dependencies found. Include exact names and paths.]
-
-          ## Decisions Made
-          [Architectural or design decisions with their rationale.]
-
-          ## SubAgents Dispatched
-          [Each subagent: type, objective, node path, result status.]
-
-          ## Errors Encountered
-          [Failed approaches, bugs found, blockers. Include exact error messages and what was tried.]
-
-          ## Next Steps
-          [Precise, actionable next steps. Reference specific files and functions.]
-          </context_compression>
-          """
+          compression_instruction = compression_instruction()
 
           compression_context =
             state.context
@@ -148,6 +104,61 @@ defmodule EvoGit.Agent.ContextCompression do
     else
       state
     end
+  end
+
+  @doc false
+  @spec compression_instruction() :: String.t()
+  def compression_instruction do
+    """
+    <context_compression>
+    Review the conversation above and create a dense, comprehensive summary that preserves all information needed to continue the work without loss.
+
+    PRESERVE THESE EXACTLY (never paraphrase):
+    - File paths, module names, function names, variable names
+    - Error messages and stack traces
+    - Configuration values and settings
+    - Architectural decisions and their reasoning
+
+    SUMMARIZE THESE:
+    - Tool call results (preserve conclusions, drop raw output)
+    - Code explorations (preserve findings, drop search syntax)
+    - Multi-step reasoning (preserve conclusions, drop intermediate steps)
+    - Conversational exchanges (preserve decisions, drop pleasantries)
+
+    DISCARD COMPLETELY:
+    - Acknowledgments, greetings, filler phrases
+    - Repeated or redundant information
+    - Raw tool syntax/JSON that isn't essential
+
+    First, silently identify the most critical information. Then output a structured summary using EXACTLY this format:
+
+    ## Original Objective
+    [The COMPLETE original objective/task from the user, reproduced as close to verbatim as possible. NEVER abbreviate or replace this with a sub-task — this is the ground truth for the entire task.]
+
+    ## Overall Progress
+    [Cumulative high-level status of the ORIGINAL objective. Which major milestones/parts are complete? What remains? This MUST reflect ALL work done across the entire session — not just recent work. Update this each time compression occurs.]
+
+    ## Completed
+    [Bulleted list of what has been done. Include exact file paths for all files created/modified/deleted.]
+
+    ## Key Findings
+    [Important discoveries, constraints, dependencies found. Include exact names and paths.]
+
+    ## Decisions Made
+    [Architectural or design decisions with their rationale.]
+
+    ## SubAgents Dispatched
+    [Each subagent: type, objective, node path, result status.]
+
+    ## Errors Encountered
+    [Failed approaches, bugs found, blockers. Include exact error messages and what was tried.]
+
+    ## Next Steps
+    [Precise, actionable next steps. Reference specific files and functions.]
+
+    IMPORTANT: When you eventually call complete_task, your final report MUST summarize the status of the ORIGINAL objective as a whole (refer to "Original Objective" and "Overall Progress" above) — NOT just the most recent sub-task you worked on.
+    </context_compression>
+    """
   end
 
   @doc """
