@@ -35,6 +35,7 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 | `GET /agents` | `AgentsLive` | Agent tree inspector with real-time hierarchy |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration |
 | `GET /system` | `SystemLive` | Scheduler controls, system controls (restart/stop), system self-check, and usage guides/references |
+| `GET /tasks/:task_id/export` | `TaskExportController` (`:export`) | Downloads a task's `archive_metadata` as a JSON file (`archive-<task_id>.json`). Returns 404 when the task or archive data is missing. |
 
 ## Constraints
 - All web modules use `use EvoDashWeb, <role>` as their entrypoint — do not bypass the shared `__using__` macro.
