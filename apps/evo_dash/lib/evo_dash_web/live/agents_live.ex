@@ -274,9 +274,22 @@ defmodule EvoDashWeb.AgentsLive do
         result_sent: meta.result_sent,
         history: history,
         usage: (agent_state && agent_state.usage) || EvoGit.Agent.Usage.zero(),
+        total_tokens: agent_state && Map.get(agent_state, :total_tokens, 0),
+        compression_count: agent_state && Map.get(agent_state, :compression_count, 0),
+        compression_threshold: safe_compression_threshold()
       }
     end)
     |> Enum.sort_by(&{&1.depth, &1.id})
+  end
+
+  defp safe_compression_threshold do
+    try do
+      EvoGit.Config.resolve([:llm, :compression_threshold_tokens]) || 100_000
+    rescue
+      _ -> 100_000
+    catch
+      _, _ -> 100_000
+    end
   end
 
   defp load_agent_history(agent_id) do

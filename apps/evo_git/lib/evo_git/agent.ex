@@ -304,6 +304,7 @@ defmodule EvoGit.Agent do
         # Sync context to ETS after any updates (compression, warnings)
         if context_before != state.context do
           sync_context_to_ets(state.agent_id, state.context)
+          sync_total_tokens_to_ets(state.agent_id, state.total_tokens)
         end
 
         cond do
@@ -445,6 +446,7 @@ defmodule EvoGit.Agent do
         sync_context_to_ets(state.agent_id, state.context)
         sync_turn_to_ets(state.agent_id, state.turn)
         sync_usage_to_ets(state.agent_id, state.usage)
+        sync_total_tokens_to_ets(state.agent_id, state.total_tokens)
 
         # Initialize delegation hints in process dictionary for this turn
         Process.put(:delegation_hints, state.delegation_hints)
@@ -1208,6 +1210,10 @@ defmodule EvoGit.Agent do
 
       defp sync_turn_to_ets(agent_id, turn) do
         EvoGit.AgentScheduler.update_agent_turn(agent_id, turn)
+      end
+
+      defp sync_total_tokens_to_ets(agent_id, total_tokens) do
+        EvoGit.AgentScheduler.update_total_tokens(agent_id, total_tokens)
       end
 
       # Tags a single message struct with the given turn number via its metadata.
