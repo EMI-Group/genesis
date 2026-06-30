@@ -119,69 +119,53 @@ defmodule EvoDashWeb.SystemLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status}>
-      <div class="flex items-center gap-5 mb-8 animate-fade-in-up mt-2">
-        <div class="relative flex items-center justify-center size-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-primary/10">
-          <.icon name="hero-server-stack" class="size-8" />
-          <div class="absolute inset-0 rounded-2xl bg-primary/10 blur-xl -z-10"></div>
-        </div>
-        <div>
-          <h1 class="text-3xl font-extrabold tracking-tight text-base-content">{gettext("System")}</h1>
-          <p class="text-sm text-base-content/60 mt-1 font-medium">{gettext("Scheduler controls, system health, and usage guides")}</p>
-        </div>
+      <div class="mb-6 mt-2">
+        <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("System")}</h1>
+        <p class="text-sm text-base-content/60 mt-0.5">{gettext("Scheduler controls, system health, and usage guides")}</p>
       </div>
 
       <!-- Scheduler Control banner -->
-      <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-100 relative group mb-8">
-        <div class="absolute inset-0 bg-gradient-to-r from-base-200/30 to-transparent pointer-events-none"></div>
-        <div class="relative p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 transition-all duration-300">
-          <div class="flex items-center gap-5">
-            <div class={[
-              "p-4 rounded-2xl flex items-center justify-center transition-colors duration-500",
-              if(@scheduler_paused, do: "bg-warning/15 text-warning shadow-[0_0_20px_rgba(251,189,35,0.15)]", else: "bg-success/15 text-success shadow-[0_0_20px_rgba(54,211,153,0.15)]")
-            ]}>
-              <.icon
-                name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
-                class={"size-8" <> if(!@scheduler_paused, do: " animate-pulse", else: "")}
-              />
-            </div>
-            <div>
-              <h2 class="text-xl font-bold tracking-tight mb-1">
-                {if @scheduler_paused, do: gettext("Scheduler Paused"), else: gettext("Scheduler Active")}
-              </h2>
-              <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
-                <%= if @scheduler_paused do %>
-                  {gettext("Running agents continue. No new slots or agents will be granted until resumed.")}
-                <% else %>
-                  {gettext("Agents and slots are being granted normally.")}
-                <% end %>
-              </p>
-            </div>
+      <div class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <.icon
+            name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
+            class={"size-5 " <> if(@scheduler_paused, do: "text-warning", else: "text-success")}
+          />
+          <div>
+            <h2 class="text-base font-bold tracking-tight">
+              {if @scheduler_paused, do: gettext("Scheduler Paused"), else: gettext("Scheduler Active")}
+            </h2>
+            <p class="text-sm text-base-content/60 mt-0.5 max-w-lg">
+              <%= if @scheduler_paused do %>
+                {gettext("Running agents continue. No new slots or agents will be granted until resumed.")}
+              <% else %>
+                {gettext("Agents and slots are being granted normally.")}
+              <% end %>
+            </p>
           </div>
-          <button
-            type="button"
-            phx-click="toggle_pause"
-            class={[
-              "btn btn-lg rounded-2xl font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none shrink-0",
-              if(@scheduler_paused, do: "bg-success/20 hover:bg-success/30 text-success-content", else: "bg-warning/20 hover:bg-warning/30 text-warning-content")
-            ]}
-          >
-            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
-            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")}
-          </button>
         </div>
+        <button
+          type="button"
+          phx-click="toggle_pause"
+          class={[
+            "btn rounded-md font-medium shrink-0",
+            if(@scheduler_paused, do: "bg-success/20 hover:bg-success/30 text-success-content", else: "bg-warning/20 hover:bg-warning/30 text-warning-content")
+          ]}
+        >
+          <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
+          {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")}
+        </button>
       </div>
 
       <!-- System Control section (destructive actions) -->
-      <div class="bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-sm mb-8">
-        <div class="flex items-start gap-4">
-          <div class="p-3 bg-error/15 text-error rounded-2xl shrink-0">
-            <.icon name="hero-power" class="size-6" />
-          </div>
+      <div class="rounded-lg border border-error/30 bg-error/5 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div class="flex items-start gap-3">
+          <.icon name="hero-power" class="size-5 text-error shrink-0" />
           <div>
-            <h2 class="text-xl font-bold tracking-tight text-error mb-1">
+            <h2 class="text-base font-bold tracking-tight text-error mb-0.5">
               {gettext("System Control")}
             </h2>
-            <p class="text-sm text-base-content/60 font-medium leading-relaxed max-w-lg">
+            <p class="text-sm text-base-content/60 max-w-lg">
               {gettext("Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases.")}
             </p>
           </div>
@@ -190,7 +174,7 @@ defmodule EvoDashWeb.SystemLive do
           <button
             type="button"
             phx-click="request_restart"
-            class="btn btn-lg rounded-2xl bg-error/15 hover:bg-error/25 text-error font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none gap-2"
+            class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
           >
             <.icon name="hero-arrow-path" class="size-5" />
             {gettext("Restart System")}
@@ -198,7 +182,7 @@ defmodule EvoDashWeb.SystemLive do
           <button
             type="button"
             phx-click="request_stop"
-            class="btn btn-lg rounded-2xl bg-error/15 hover:bg-error/25 text-error font-bold tracking-wide shadow-sm hover:shadow-md transition-all duration-300 border-none gap-2"
+            class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
           >
             <.icon name="hero-power" class="size-5" />
             {gettext("Stop System")}
@@ -207,15 +191,13 @@ defmodule EvoDashWeb.SystemLive do
       </div>
 
       <!-- System Self-Check -->
-      <div class="animate-fade-in-up animation-delay-150">
-        <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 p-5 md:p-6">
+      <div>
+        <div class="rounded-lg border border-base-200 bg-base-100 p-4">
           <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-3">
-              <div class="bg-success/15 text-success p-3 rounded-2xl">
-                <.icon name="hero-shield-check" class="size-5" />
-              </div>
+              <.icon name="hero-shield-check" class="size-5 text-success" />
               <div>
-                <h2 class="font-bold text-lg">{gettext("System Self-Check")}</h2>
+                <h2 class="font-bold text-base">{gettext("System Self-Check")}</h2>
                 <p class="text-sm text-base-content/60">{gettext("System status and health overview")}</p>
               </div>
             </div>
@@ -306,13 +288,11 @@ defmodule EvoDashWeb.SystemLive do
       </div>
 
       <!-- System Dashboard -->
-      <div class="mt-4 animate-fade-in-up animation-delay-150">
+      <div class="mt-4">
         <.link navigate={~p"/dashboard"} class="block">
-          <div class="bg-base-100 rounded-3xl shadow-sm border border-base-200/60 hover:border-primary/40 hover:shadow-md transition-all duration-200 p-5 md:p-6">
-            <div class="flex items-center gap-4">
-              <div class="bg-info/15 text-info p-3.5 rounded-2xl">
-                <.icon name="hero-chart-bar" class="size-5" />
-              </div>
+          <div class="rounded-lg border border-base-200 bg-base-100 p-4 hover:border-base-300 transition-colors">
+            <div class="flex items-center gap-3">
+              <.icon name="hero-chart-bar" class="size-5 text-info shrink-0" />
               <div class="flex-1">
                 <h3 class="font-semibold text-base">{gettext("System Dashboard")}</h3>
                 <p class="text-sm text-base-content/60 mt-0.5">{gettext("View system metrics, processes, and application telemetry")}</p>
@@ -324,30 +304,30 @@ defmodule EvoDashWeb.SystemLive do
       </div>
 
       <!-- Example Configuration -->
-      <div class="mt-6 animate-fade-in-up animation-delay-200">
+      <div class="mt-6">
         <.collapsible_card id="config-reference" title={gettext("Example Configuration")} icon="hero-book-open" color={:info}>
-          <pre class="text-sm font-mono bg-base-200/40 rounded-2xl p-5 border border-base-200/60 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
+          <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
         </.collapsible_card>
       </div>
 
       <!-- Example Usage -->
-      <div class="mt-6 animate-fade-in-up animation-delay-300">
+      <div class="mt-6">
         <.collapsible_card id="usage-reference" title={gettext("Example Usage")} icon="hero-command-line" color={:success}>
-          <pre class="text-sm font-mono bg-base-200/40 rounded-2xl p-5 border border-base-200/60 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
+          <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
         </.collapsible_card>
       </div>
 
       <!-- FAQ -->
-      <div class="mt-6 animate-fade-in-up animation-delay-400">
+      <div class="mt-6">
         <.collapsible_card id="faq" title={gettext("Frequently Asked Questions")} icon="hero-question-mark-circle" color={:accent}>
           <div class="space-y-4">
             <%= for {{question, answer}, idx} <- Enum.with_index(@faq_content) do %>
-              <details class={"group rounded-2xl border border-base-200/60 overflow-hidden bg-base-100/50"}>
-                <summary class="flex items-center gap-3 px-5 py-4 cursor-pointer select-none hover:bg-base-200/50 transition-colors list-none">
+              <details class={"group rounded-lg border border-base-200 overflow-hidden bg-base-100/50"}>
+                <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none hover:bg-base-200/50 transition-colors list-none">
                   <.icon name="hero-chevron-down" class="size-4.5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
                   <span class="font-semibold text-sm">{question}</span>
                 </summary>
-                <div class="px-5 py-4 text-sm text-base-content/70 leading-relaxed border-t border-base-200/60">
+                <div class="px-4 py-3 text-sm text-base-content/70 leading-relaxed border-t border-base-200">
                   <p id={"faq-answer-#{idx}"}>{answer}</p>
                 </div>
               </details>
@@ -357,9 +337,9 @@ defmodule EvoDashWeb.SystemLive do
       </div>
 
       <!-- Credentials Reference -->
-      <div class="mt-6 animate-fade-in-up animation-delay-500">
+      <div class="mt-6">
         <.collapsible_card id="credentials-reference" title={gettext("Credentials Reference")} icon="hero-key" color={:accent}>
-          <pre class="text-sm font-mono bg-base-200/40 rounded-2xl p-5 border border-base-200/60 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
+          <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
           <div class="mt-4 space-y-2">
             <p class="text-sm text-base-content/60 flex items-start gap-2.5">
               <.icon name="hero-arrows-right-left" class="size-4.5 shrink-0 mt-0.5" />
@@ -377,11 +357,9 @@ defmodule EvoDashWeb.SystemLive do
       <%= if @show_restart_confirm do %>
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_restart"></div>
-          <div class="relative bg-base-100 rounded-3xl shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
             <div class="flex items-center gap-3 mb-4">
-              <div class="flex items-center justify-center size-10 rounded-2xl bg-error/15">
-                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-              </div>
+              <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
               <h3 class="text-lg font-bold">{gettext("Restart System?")}</h3>
             </div>
 
@@ -393,10 +371,10 @@ defmodule EvoDashWeb.SystemLive do
             </p>
 
             <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-full px-6" phx-click="cancel_restart">
+              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_restart">
                 {gettext("Cancel")}
               </button>
-              <button type="button" class="btn btn-error rounded-full px-6 gap-2" phx-click="confirm_restart">
+              <button type="button" class="btn btn-error rounded-md px-6 gap-2" phx-click="confirm_restart">
                 <.icon name="hero-arrow-path" class="size-4.5" />
                 {gettext("Restart System")}
               </button>
@@ -409,11 +387,9 @@ defmodule EvoDashWeb.SystemLive do
       <%= if @show_stop_confirm do %>
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_stop"></div>
-          <div class="relative bg-base-100 rounded-3xl shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
             <div class="flex items-center gap-3 mb-4">
-              <div class="flex items-center justify-center size-10 rounded-2xl bg-error/15">
-                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-              </div>
+              <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
               <h3 class="text-lg font-bold">{gettext("Stop System?")}</h3>
             </div>
 
@@ -425,10 +401,10 @@ defmodule EvoDashWeb.SystemLive do
             </p>
 
             <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-full px-6" phx-click="cancel_stop">
+              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_stop">
                 {gettext("Cancel")}
               </button>
-              <button type="button" class="btn btn-error rounded-full px-6 gap-2" phx-click="confirm_stop">
+              <button type="button" class="btn btn-error rounded-md px-6 gap-2" phx-click="confirm_stop">
                 <.icon name="hero-power" class="size-4.5" />
                 {gettext("Stop System")}
               </button>
@@ -606,7 +582,7 @@ defmodule EvoDashWeb.SystemLive do
   defp system_check_row(assigns) do
     ~H"""
     <div class="flex items-start gap-3 py-3 border-b border-base-200/40 last:border-0">
-      <div class={"p-2 rounded-xl #{status_bg(@status)}"}>
+      <div class={"p-2 rounded-md #{status_bg(@status)}"}>
         <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
       </div>
       <div class="flex-1 min-w-0">
