@@ -26,7 +26,7 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
   - `{:task, task_id}` → operates on the `tasks` table
   - `{:project, path}` → operates on the `projects` table
 - Crash-safe helpers (`safe_get/2`, `safe_select_all/1`, `safe_size/1`, `integrity_check/1`) rescue decode errors per-row so corrupt blobs never crash callers.
-- `integrity_check/1` runs `PRAGMA integrity_check` (SQLite structural health) and scans all rows for undecodable blobs, deleting corrupt rows and returning `:ok` / `{:repaired, lost}` / `{:error, reason}`.
+- `integrity_check/1` runs `PRAGMA integrity_check` (SQLite structural health) and scans all rows for undecodable blobs. Undecodable `tasks` rows are **hard-deleted** (lower-value, auto-expiring); undecodable `projects` rows are **quarantined** — the raw BLOB is moved into a `projects_quarantine` table (preserved for recovery/diagnosis), never destroyed. Returns `:ok` / `{:repaired, lost}` / `{:error, reason}`.
 
 ### `EvoDash.TaskRegistry` (`task_registry.ex`)
 - Singleton `GenServer` backed by SQLite via `EvoDash.TaskStore` (single source of truth).
@@ -75,7 +75,8 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 
 ### Crash Safety & Integrity
 - `TaskStore` provides crash-safe helpers (`safe_get/2`, `safe_select_all/1`, `safe_size/1`) that rescue per-row decode errors so corrupt blobs never crash callers. `safe_select_all/1` skips rows whose blobs fail to decode.
-- `integrity_check/1` runs `PRAGMA integrity_check` for SQLite-level structural health and scans all rows for undecodable blobs, deleting corrupt rows and returning `:ok` / `{:repaired, lost}` / `{:error, reason}`. Called by TaskRegistry on init.
+- `integrity_check/1` runs `PRAGMA integrity_check` for SQLite-level structural health and scans all rows for undecodable blobs. Undecodable `tasks` rows are **hard-deleted**; undecodable `projects` rows are **quarantined** into `projects_quarantine` (raw BLOB preserved, never destroyed) so a transient decode failure can't silently erase a recently-opened project. If a quarantine INSERT itself fails, the row is left in place rather than destroyed. Returns `:ok` / `{:repaired, lost}` / `{:error, reason}`. Called by TaskRegistry on init.
+- All BLOB decoding uses `:erlang.binary_to_term(blob, [:safe])` (every call site) to avoid spurious decode errors.
 - All store-touching `handle_*` callbacks in TaskRegistry are wrapped in `try/rescue` (bodies extracted to `do_*` privates) — write-failure rescues log at `Logger.error`, read/cleanup rescues at `Logger.warning`.
 
 ### One-time DETS→SQLite Migration
@@ -83,11 +84,13 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 - The entire migration is wrapped in try/catch — if DETS is corrupt, reads fail and the store starts fresh. This is the ONLY place `:dets` is referenced in lib (for reading legacy data).
 - **No CubDB→SQLite migration**: CubDB is no longer a dependency, so old CubDB data files cannot be read at runtime. `maybe_note_legacy_cubdb/0` logs an informational note if a legacy `tasks.cubdb` directory is detected. Old CubDB directories are orphaned but harmless (non-critical, auto-expiring data).
 
-### ⚠️ Schema Migration Gap (known fragility)
-- Tables are created via `CREATE TABLE IF NOT EXISTS` in `TaskStore.init` (`create_tables/1`). This is a **no-op on an already-existing table** — there is **no schema versioning** (`PRAGMA user_version`), no `ALTER TABLE`, no `table_info` introspection, and no migration runner. If the table DDL ever changes, existing DB files are NOT migrated; they keep their old column layout indefinitely.
-- **Historical incident**: commit `0989e6f9` (first SQLite swap) created the `projects` table with a `path` column: `projects (path TEXT PRIMARY KEY, data BLOB)`, while all SQL (INSERT/SELECT/DELETE) referenced an `id` column. Commit `14cd056b` "fixed projects table column name (path -> id)" — but ONLY for fresh DBs. Any `tasks.sqlite` created during the `0989e6f9` window permanently retains the `path` column, causing every projects read/write to fail (`{:ok,_}=` match crash) while the `tasks` table (always created with `id`) keeps working. This is the root cause of "recent projects lost on restart but task history survives." The `tasks` table was always correct; only `projects` had the column-name bug.
-- **Asymmetric crash protection compounds it**: the task `handle_*` callbacks are wrapped in `try/rescue` (write failures are caught, logged, and the GenServer survives), but the recent-projects callbacks (`add_recent_project`, `list_recent_projects`, `remove_recent_project`) are NOT wrapped — so a projects-table write/read failure crashes the TaskRegistry GenServer outright.
-- **Fix direction**: add schema introspection (`PRAGMA table_info`) + an idempotent `ALTER TABLE`/rebuild step in `create_tables/1` (or a one-time migration on init), and/or wrap the recent-projects callbacks in `try/rescue` for parity with the task callbacks.
+### Schema Migration Gap & Quarantine (mitigated)
+
+> The two issues below were historically fragile; both are now **mitigated**.
+
+- **Schema auto-repair (mitigated)**: Tables are created via `CREATE TABLE IF NOT EXISTS` in `TaskStore.init` (`create_tables/1`). This is a **no-op on an already-existing table**, so there is no schema versioning / `ALTER TABLE`. The historical `path`→`id` column-name bug (commit `0989e6f9` created `projects (path TEXT PRIMARY KEY, data BLOB)` while all SQL referenced `id`) is now **auto-repaired on every init** by `repair_projects_table/1`, which introspects via `PRAGMA table_info(projects)`, detects a non-`id` PK column, and rebuilds the table with the correct `id` column while preserving all data BLOBs. Wrapped in `try/rescue` so a repair hiccup never blocks startup.
+- **Recent-projects callbacks are wrapped (mitigated)**: The recent-projects callbacks (`add_recent_project`, `list_recent_projects`, `remove_recent_project`) ARE wrapped in `try/rescue` (bodies in `do_*` privates), at parity with the task callbacks — a projects-table write/read failure no longer crashes the TaskRegistry GenServer outright.
+- **Projects quarantine on integrity repair**: Because undecodable `projects` rows are high-value (≤10 recently-opened project paths) and a transient `binary_to_term` failure could erase one, `integrity_check` does NOT hard-delete them. Instead it **quarantines** the raw BLOB into `projects_quarantine` (INSERT raw blob, then DELETE from `projects`) and logs a warning. `tasks` rows remain hard-deletable (lower-value, auto-expiring). If a quarantine INSERT itself fails, the row is left in place — never silently destroyed. This prevents the reported "randomly lose data of recently opened projects" symptom.
 
 ## Constraints
 - `TaskRegistry` is a singleton (registered under its module name); do not start multiple instances.
