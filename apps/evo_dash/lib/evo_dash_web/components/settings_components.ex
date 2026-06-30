@@ -17,33 +17,31 @@ defmodule EvoDashWeb.SettingsComponents do
   def setting_card(assigns) do
     ~H"""
     <div class={[
-      "relative bg-base-100 rounded-[1.5rem] border border-base-200 shadow-sm hover:shadow-md transition-all duration-300 p-6 flex flex-col group min-w-[320px] flex-1",
-      @disabled && "opacity-60 pointer-events-none grayscale-[20%]"
+      "relative flex items-start gap-4 px-4 py-3 border-b border-base-200/60 last:border-b-0 group hover:bg-base-200/30 transition-colors",
+      @disabled && "opacity-60 pointer-events-none"
     ]}>
-      <div class="flex-1">
-        <div class="flex items-start justify-between gap-4 mb-4">
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 rounded-full bg-primary/40 group-hover:bg-primary transition-colors duration-300"></div>
-            <span class="font-mono text-xs font-bold tracking-wider text-base-content/80">
-              {Enum.join(@schema.key_path, ".")}
-            </span>
-          </div>
+      <div class="min-w-0 flex-1 pt-1">
+        <div class="flex items-center gap-2">
+          <code class="font-mono text-xs font-medium text-base-content/70">{Enum.join(@schema.key_path, ".")}</code>
           <button
             type="button"
             phx-click="reset_key"
             phx-value-key_path={Enum.join(@schema.key_path, ".")}
-            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-circle btn-sm text-base-content/40 hover:text-primary hover:bg-primary/10 transition-all duration-200 -mt-1 -mr-1"
+            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-xs text-base-content/40 hover:text-primary transition-opacity"
             title={gettext("Reset to default")}
           >
-            <.icon name="hero-arrow-path" class="size-4" />
+            <.icon name="hero-arrow-path" class="size-3.5" />
           </button>
         </div>
-        
-        <p class="text-sm text-base-content/60 mb-6 leading-relaxed font-medium">{Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}</p>
+        <p class="text-xs text-base-content/50 truncate mt-0.5" title={Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}>{Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}</p>
+        <p class="text-[11px] text-base-content/40 mt-0.5">
+          <span class="uppercase tracking-wider">{gettext("Default")}</span>
+          <span class="font-mono">{default_label(@schema.default)}</span>
+        </p>
       </div>
 
-      <div class="mt-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div class="form-control flex-1 w-full">
+      <div class="shrink-0 w-full sm:w-auto">
+        <div class="form-control w-full">
           <%= case @schema.type do %>
             <% :pos_integer -> %>
               <input
@@ -53,7 +51,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 min={@schema.validation[:min] || 1}
                 max={@schema.validation[:max]}
                 placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+                class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
               />
             <% :non_neg_integer -> %>
               <input
@@ -63,7 +61,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 min={@schema.validation[:min] || 0}
                 max={@schema.validation[:max]}
                 placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+                class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
               />
             <% :integer -> %>
               <input
@@ -73,7 +71,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 min={@schema.validation[:min]}
                 max={@schema.validation[:max]}
                 placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+                class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
               />
             <% :float -> %>
               <input
@@ -84,7 +82,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 min={@schema.validation[:min]}
                 max={@schema.validation[:max]}
                 placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered w-full sm:max-w-[180px] font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+                class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
               />
             <% :string -> %>
               <input
@@ -92,13 +90,13 @@ defmodule EvoDashWeb.SettingsComponents do
                 name={Enum.join(@schema.key_path, ".")}
                 value={@value || ""}
                 placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered w-full font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+                class="input input-bordered input-sm rounded-md w-full font-mono text-base"
               />
             <% :atom -> %>
-              <div class="relative w-full sm:max-w-[220px]">
+              <div class="relative w-full sm:w-52">
                 <select
                   name={Enum.join(@schema.key_path, ".")}
-                  class="select select-bordered w-full font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 appearance-none pr-10 text-base"
+                  class="select select-bordered select-sm rounded-md w-full font-mono text-base appearance-none pr-8"
                 >
                   <%= for opt <- @schema.validation[:in] || [] do %>
                     <option value={to_string(opt)} selected={to_string(@value) == to_string(opt)}>
@@ -106,7 +104,7 @@ defmodule EvoDashWeb.SettingsComponents do
                     </option>
                   <% end %>
                 </select>
-                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-base-content/50">
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/50">
                   <.icon name="hero-chevron-down" class="size-4" />
                 </div>
               </div>
@@ -118,27 +116,19 @@ defmodule EvoDashWeb.SettingsComponents do
                   name={Enum.join(@schema.key_path, ".")}
                   value={model_display(@value)}
                   placeholder={gettext("e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5")}
-                  class="input input-bordered w-full font-mono shadow-sm hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl bg-base-50 text-base"
+                  class="input input-bordered input-sm rounded-md w-full font-mono text-base"
                 />
-                <p class="text-[11px] text-base-content/40 mt-1.5">{gettext("Type a model string or use Quick Setup above")}</p>
+                <p class="text-[11px] text-base-content/40 mt-1">{gettext("Type a model string or use Quick Setup above")}</p>
               </div>
           <% end %>
         </div>
-
-        <div class="sm:text-right shrink-0 mt-2 sm:mt-0">
-          <p class="text-[11px] font-semibold text-base-content/40 flex items-center sm:justify-end gap-2">
-            <span class="uppercase tracking-wider opacity-80">{gettext("Default")}</span>
-            <span class="badge badge-sm badge-ghost font-mono opacity-90 px-2 py-2">{default_label(@schema.default)}</span>
+        <%= if @error do %>
+          <p class="text-xs text-error font-medium mt-1.5 flex items-center gap-1">
+            <.icon name="hero-exclamation-circle" class="size-3.5 shrink-0" />
+            {@error.message}
           </p>
-        </div>
+        <% end %>
       </div>
-
-      <%= if @error do %>
-        <div class="mt-4 p-3 bg-error/10 text-error text-sm rounded-xl flex items-start gap-2.5 border border-error/20">
-          <.icon name="hero-exclamation-circle" class="size-5 shrink-0 mt-0.5" />
-          <p class="font-semibold">{@error.message}</p>
-        </div>
-      <% end %>
     </div>
     """
   end
@@ -165,13 +155,13 @@ defmodule EvoDashWeb.SettingsComponents do
     <div class="flex-1 flex flex-col h-full bg-base-100/50" id={"category-#{@category}"}>
       <%!-- Sticky Header --%>
       <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
-        <div class="flex items-center gap-4 mb-2">
-          <div class="p-2.5 bg-gradient-to-br from-primary/20 to-primary/5 text-primary rounded-xl shadow-sm border border-primary/10">
-            <.icon name={category_icon(@category)} class="size-6" />
+        <div class="flex items-center gap-3 mb-1">
+          <div class="text-primary/60">
+            <.icon name={category_icon(@category)} class="size-5" />
           </div>
-          <h2 class="text-2xl font-extrabold tracking-tight text-base-content">{category_display_name(@category)}</h2>
+          <h2 class="text-lg font-bold tracking-tight text-base-content">{category_display_name(@category)}</h2>
         </div>
-        <p class="text-sm font-medium text-base-content/60 ml-1.5">{category_description(@category)}</p>
+        <p class="text-sm font-medium text-base-content/60">{category_description(@category)}</p>
       </div>
 
       <%!-- Scrollable Content --%>
@@ -179,7 +169,7 @@ defmodule EvoDashWeb.SettingsComponents do
         <div class="">
           <%= if @category == :llm do %>
             <%!-- LLM Provider Quick Setup --%>
-            <div class="mb-8 bg-gradient-to-br from-primary/5 to-primary/0 rounded-3xl border border-primary/10 p-6">
+            <div class="mb-8 rounded-lg border border-base-200 bg-base-100 p-5">
               <h3 class="text-lg font-bold text-base-content mb-1">{gettext("Quick Setup")}</h3>
               <p class="text-sm text-base-content/60 mb-5">{gettext("Select a provider to quickly configure your model and API key.")}</p>
 
@@ -387,9 +377,9 @@ defmodule EvoDashWeb.SettingsComponents do
             </div>
 
             <%!-- LLM Connection Test --%>
-            <div class="mb-6 bg-base-100 rounded-2xl border border-base-200/60 p-5">
+            <div class="mb-6 bg-base-100 rounded-lg border border-base-200 p-4">
               <div class="flex items-center gap-3 mb-3">
-                <div class="bg-info/15 text-info p-2 rounded-xl">
+                <div class="text-info/60">
                   <.icon name="hero-signal" class="size-5" />
                 </div>
                 <div>
@@ -429,14 +419,14 @@ defmodule EvoDashWeb.SettingsComponents do
             </div>
 
             <%!-- Help text for other providers --%>
-            <div class="mb-6 bg-base-200/30 rounded-2xl p-4 border border-base-200/50">
+            <div class="mb-6 bg-base-200/30 rounded-lg p-4 border border-base-200">
               <p class="text-xs text-base-content/50 leading-relaxed">
                 {raw(gettext("<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."))}
               </p>
             </div>
 
             <%!-- Render the regular setting cards for LLM --%>
-            <div class="flex flex-wrap gap-6 items-stretch">
+            <div class="rounded-lg border border-base-200 overflow-hidden">
               <%= for schema <- @schemas do %>
                 <.setting_card
                   schema={schema}
@@ -449,12 +439,11 @@ defmodule EvoDashWeb.SettingsComponents do
           <% else %>
             <%= if @category == :sandbox do %>
               <%!-- Sandbox backend banner --%>
-              <div class="mb-8 relative overflow-hidden rounded-3xl">
-                <div class="absolute inset-0 bg-gradient-to-br opacity-10 pointer-events-none"></div>
+              <div class="mb-8 rounded-lg border border-base-200 overflow-hidden">
                 <%= case @sandbox_backend do %>
                   <% :systemd_run -> %>
                     <div class="flex items-start gap-4 p-5 bg-success/5 border-success/20">
-                      <div class="p-2 bg-success/20 text-success rounded-xl mt-0.5 shadow-sm">
+                      <div class="text-success mt-0.5">
                         <.icon name="hero-check-badge" class="size-5" />
                       </div>
                       <div>
@@ -469,7 +458,7 @@ defmodule EvoDashWeb.SettingsComponents do
                     </div>
                   <% :sandbox_exec -> %>
                     <div class="flex items-start gap-4 p-5 bg-warning/5 border-warning/20">
-                      <div class="p-2 bg-warning/20 text-warning rounded-xl mt-0.5 shadow-sm">
+                      <div class="text-warning mt-0.5">
                         <.icon name="hero-shield-exclamation" class="size-5" />
                       </div>
                       <div>
@@ -484,7 +473,7 @@ defmodule EvoDashWeb.SettingsComponents do
                     </div>
                   <% _ -> %>
                     <div class="flex items-start gap-4 p-5 bg-error/5 border-error/20">
-                      <div class="p-2 bg-error/20 text-error rounded-xl mt-0.5 shadow-sm">
+                      <div class="text-error mt-0.5">
                         <.icon name="hero-x-circle" class="size-5" />
                       </div>
                       <div>
@@ -522,7 +511,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 </div>
 
                 <%= if @sandbox_backend != :systemd_run do %>
-                  <div class="bg-info/5 border border-info/20 rounded-2xl p-4 mb-6 flex items-start gap-3">
+                  <div class="bg-info/5 border border-info/20 rounded-lg p-4 mb-6 flex items-start gap-3">
                     <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
                     <p class="text-sm font-medium text-info/90 leading-relaxed">
                       {gettext("Resource limits are only available on Linux with systemd-run.")}
@@ -530,7 +519,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <div class="flex flex-wrap gap-6 mb-8 items-stretch">
+                <div class="rounded-lg border border-base-200 overflow-hidden mb-8">
                   <%= for schema <- resources_schemas do %>
                     <.setting_card
                       schema={schema}
@@ -552,7 +541,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 </div>
 
                 <%= if @sandbox_backend != :systemd_run do %>
-                  <div class="bg-info/5 border border-info/20 rounded-2xl p-4 mb-6 flex items-start gap-3">
+                  <div class="bg-info/5 border border-info/20 rounded-lg p-4 mb-6 flex items-start gap-3">
                     <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
                     <p class="text-sm font-medium text-info/90 leading-relaxed">
                       {gettext("Process limits are only available on Linux with systemd-run.")}
@@ -560,7 +549,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <div class="flex flex-wrap gap-6 mb-8 items-stretch">
+                <div class="rounded-lg border border-base-200 overflow-hidden mb-8">
                   <%= for schema <- process_schemas do %>
                     <.setting_card
                       schema={schema}
@@ -573,7 +562,7 @@ defmodule EvoDashWeb.SettingsComponents do
               <% end %>
             <% else %>
               <%!-- Other categories: just list all setting cards --%>
-              <div class="flex flex-wrap gap-6 items-stretch">
+              <div class="rounded-lg border border-base-200 overflow-hidden">
                 <%= for schema <- @schemas do %>
                   <.setting_card
                     schema={schema}
@@ -589,9 +578,9 @@ defmodule EvoDashWeb.SettingsComponents do
       </div>
 
       <%!-- Sticky Footer --%>
-      <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-6 flex justify-end">
-        <button type="submit" class="btn btn-primary rounded-2xl shadow-[0_8px_20px_-6px_rgba(6,81,237,0.4)] hover:shadow-[0_12px_25px_-6px_rgba(6,81,237,0.5)] hover:-translate-y-0.5 transition-all duration-300 min-w-[240px] font-bold tracking-wide text-[15px] h-14">
-          <.icon name="hero-document-check" class="size-5 mr-2" />
+      <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-4 flex justify-end">
+        <button type="submit" class="btn btn-primary rounded-md min-w-[200px] font-bold">
+          <.icon name="hero-document-check" class="size-5 mr-1.5" />
           {gettext("Save %{category} Settings", category: category_display_name(@category))}
         </button>
       </div>
@@ -620,13 +609,13 @@ defmodule EvoDashWeb.SettingsComponents do
     <div class="flex-1 flex flex-col h-full bg-base-100/50" id="search-results">
       <%!-- Sticky Header --%>
       <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
-        <div class="flex items-center gap-4 mb-2">
-          <div class="p-2.5 bg-gradient-to-br from-primary/20 to-primary/5 text-primary rounded-xl shadow-sm border border-primary/10">
-            <.icon name="hero-magnifying-glass" class="size-6" />
+        <div class="flex items-center gap-3 mb-1">
+          <div class="text-primary/60">
+            <.icon name="hero-magnifying-glass" class="size-5" />
           </div>
-          <h2 class="text-2xl font-extrabold tracking-tight text-base-content">{gettext("Search Results")}</h2>
+          <h2 class="text-lg font-bold tracking-tight text-base-content">{gettext("Search Results")}</h2>
         </div>
-        <p class="text-sm font-medium text-base-content/60 ml-1.5">
+        <p class="text-sm font-medium text-base-content/60">
           <%= if @total_matches == 0 do %>
             {gettext("No settings found matching \"%{query}\"", query: @search_text)}
           <% else %>
@@ -639,8 +628,8 @@ defmodule EvoDashWeb.SettingsComponents do
       <div class="flex-1 overflow-y-auto px-8 py-8">
         <%= if @total_matches == 0 do %>
           <div class="flex flex-col items-center justify-center py-20 text-center">
-            <div class="p-4 bg-base-200/50 rounded-3xl mb-4">
-              <.icon name="hero-magnifying-glass" class="size-10 text-base-content/30" />
+            <div class="text-base-content/30 mb-4">
+              <.icon name="hero-magnifying-glass" class="size-10" />
             </div>
             <p class="text-base-content/50 font-medium">{gettext("Try a different search term.")}</p>
           </div>
@@ -657,7 +646,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   <span class="text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg bg-base-300/50 text-base-content/40">{length(matching)}</span>
                   <div class="h-px bg-base-200 flex-1"></div>
                 </div>
-                <div class="flex flex-wrap gap-6 items-stretch">
+                <div class="rounded-lg border border-base-200 overflow-hidden">
                   <%= for schema <- matching do %>
                     <.setting_card
                       schema={schema}
@@ -673,9 +662,9 @@ defmodule EvoDashWeb.SettingsComponents do
       </div>
 
       <%!-- Sticky Footer --%>
-      <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-6 flex justify-end">
-        <button type="submit" class="btn btn-primary rounded-2xl shadow-[0_8px_20px_-6px_rgba(6,81,237,0.4)] hover:shadow-[0_12px_25px_-6px_rgba(6,81,237,0.5)] hover:-translate-y-0.5 transition-all duration-300 min-w-[240px] font-bold tracking-wide text-[15px] h-14">
-          <.icon name="hero-document-check" class="size-5 mr-2" />
+      <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-4 flex justify-end">
+        <button type="submit" class="btn btn-primary rounded-md min-w-[200px] font-bold">
+          <.icon name="hero-document-check" class="size-5 mr-1.5" />
           {gettext("Save Changes")}
         </button>
       </div>
@@ -706,7 +695,7 @@ defmodule EvoDashWeb.SettingsComponents do
               value={@search_text}
               placeholder={gettext("Filter settings...")}
               phx-change="search"
-              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 focus:border-primary/30 focus:ring-2 focus:ring-primary/20 transition-all duration-300 rounded-2xl font-medium text-sm h-12"
+              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 focus:border-primary/30 focus:ring-2 focus:ring-primary/20 transition-all duration-200 rounded-md font-medium text-sm h-10"
             />
           </form>
           <%= if @search_text != "" do %>
@@ -731,8 +720,8 @@ defmodule EvoDashWeb.SettingsComponents do
             phx-click="select_category"
             phx-value-category={to_string(category)}
             class={[
-              "w-full text-left px-4 py-3.5 rounded-2xl flex items-center gap-3.5 transition-all duration-300 text-[15px] font-semibold group relative overflow-hidden",
-              category == @active_category && "bg-primary text-primary-content shadow-[0_4px_15px_-3px_rgba(6,81,237,0.3)]",
+              "w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all duration-200 text-sm font-semibold group relative overflow-hidden",
+              category == @active_category && "bg-primary text-primary-content",
               category != @active_category && "hover:bg-base-200/70 text-base-content/70 hover:text-base-content",
               @search_text != "" and match_count == 0 && "opacity-30"
             ]}
