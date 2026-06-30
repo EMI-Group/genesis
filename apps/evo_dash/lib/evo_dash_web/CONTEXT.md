@@ -14,7 +14,7 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 | Module | File | Purpose |
 |--------|------|---------|
 | `EvoDashWeb.Endpoint` | `endpoint.ex` | Phoenix endpoint with LiveView socket, static files, and Plug pipeline. |
-| `EvoDashWeb.Router` | `router.ex` | Browser-pipeline routes to all LiveView pages. |
+| `EvoDashWeb.Router` | `router.ex` | Browser-pipeline routes to all LiveView pages, plus a classic controller route for JSON export. |
 | `EvoDashWeb.Telemetry` | `telemetry.ex` | Supervisor with TelemetryPoller for endpoint/channel/VM metrics. |
 | `EvoDashWeb.Helpers` | `helpers.ex` | Shared utilities for status badges, formatting, and icon helpers. |
 | `EvoDashWeb.Gettext` | `gettext.ex` | Gettext backend for i18n (`use Gettext, otp_app: :evo_dash`). Imported via `html_helpers/0` into all LiveViews/components. |
