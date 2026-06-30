@@ -541,7 +541,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         context_node,
         phylo_node,
         EvoGit.Agents.Manager,
-        agent_objective
+        agent_objective,
+        archive: Keyword.get(state.opts, :archive, false)
       )
 
     case AgentScheduler.run_agent(spec) do

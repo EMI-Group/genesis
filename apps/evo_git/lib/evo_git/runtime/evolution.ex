@@ -48,7 +48,10 @@ defmodule EvoGit.Runtime.Evolution do
     cli_repos = Keyword.get(opts, :foreign_repos, [])
     foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
 
-    case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective, foreign_repos: foreign_repos)
+    case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective,
+           foreign_repos: foreign_repos,
+           archive: Keyword.get(opts, :archive, false)
+         )
          |> AgentScheduler.run_agent() do
       {:ok, %Result{} = agent_output} ->
         Helpers.notify_finalizing(opts)

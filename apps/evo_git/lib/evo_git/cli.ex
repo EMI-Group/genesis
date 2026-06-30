@@ -29,7 +29,8 @@ defmodule EvoGit.CLI do
           mutation_rate: :float,
           seeds: [:string, :keep],
           concepts: [:string, :keep],
-          starting_commit: :string
+          starting_commit: :string,
+          archive: :boolean
         ],
         aliases: [
           h: :help,
@@ -104,7 +105,8 @@ defmodule EvoGit.CLI do
         if proceed? do
           runtime_opts = [
             repo_path: repo_path,
-            mode: String.to_atom(mode)
+            mode: String.to_atom(mode),
+            archive: opts[:archive] == true
           ]
 
           foreign_repos = parse_foreign_repos(opts)
@@ -143,7 +145,8 @@ defmodule EvoGit.CLI do
         runtime_opts = if seeds, do: Keyword.put(runtime_opts, :seeds, seeds), else: runtime_opts
         concepts = parse_concepts(opts)
         runtime_opts = if concepts, do: Keyword.put(runtime_opts, :concepts, concepts), else: runtime_opts
-        runtime_opts = maybe_put(runtime_opts, :starting_commit, opts[:starting_commit])
+        runtime_opts = Keyword.put(runtime_opts, :starting_commit, opts[:starting_commit])
+        runtime_opts = Keyword.put(runtime_opts, :archive, opts[:archive] == true)
 
         Evolution.run(objective, runtime_opts)
       else
