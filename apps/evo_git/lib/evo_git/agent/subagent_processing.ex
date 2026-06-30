@@ -81,7 +81,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
                                                                   {shas, details} ->
         case result do
           {:ok, %Result{commit_sha: sha}} when is_binary(sha) ->
-            if spec.repo_id == :primary do
+            if spec.repo_id == "primary" do
               {[sha | shas], details}
             else
               {shas, [{spec.repo_id, sha} | details]}
@@ -125,7 +125,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     same_repo_branches =
       Enum.zip(subagent_specs, results)
       |> Enum.filter(fn {spec, result} ->
-        spec.repo_id == :primary and match?({:ok, %Result{branch: _}}, result)
+        spec.repo_id == "primary" and match?({:ok, %Result{branch: _}}, result)
       end)
       |> Enum.map(fn {_, {:ok, %Result{branch: branch}}} -> branch end)
 
@@ -159,7 +159,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
   @spec build_subagent_specs(
           indexed_calls :: [{map(), non_neg_integer()}],
           state :: LoopState.t(),
-          foreign_repo_commits :: %{atom() => String.t()}
+          foreign_repo_commits :: %{String.t() => String.t()}
         ) :: [AgentSpec.t() | {:error, {map(), non_neg_integer(), String.t()}}]
   def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{}) do
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -188,7 +188,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
           # Load context node with the target repo_id
           sub_context_node =
-            if target_repo_id == :primary do
+            if target_repo_id == "primary" do
               ContextNode.load(path, parent_state.phylo_node.repo)
             else
               # For foreign repos, use the foreign repo root as the base
@@ -198,7 +198,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
           # For foreign repo subagents, we need the foreign repo's HEAD commit (the primary
           # repo's commit SHA doesn't exist in the foreign repo's git database).
           sub_phylo_node =
-            if target_repo_id == :primary do
+            if target_repo_id == "primary" do
               # Same-repo subagent: inherit parent's commit chain
               base_commit = commit_id || parent_state.phylo_node.current_commit
 
@@ -256,7 +256,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
           raw_path :: String.t() | nil,
           parent_state :: map(),
           foreign_repos :: [ForeignRepo.t()]
-        ) :: {:ok, atom(), String.t(), String.t()} | {:error, String.t()}
+        ) :: {:ok, String.t(), String.t(), String.t()} | {:error, String.t()}
   def resolve_subagent_path(raw_path, parent_state, foreign_repos) do
     if ForeignRepo.absolute_path?(raw_path) do
       # Absolute path — resolve to the correct foreign repo, falling back to primary
@@ -276,7 +276,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
                 "Agent: Absolute path '#{raw_path}' resolved in primary repo as '#{rel_path}'"
               )
 
-              {:ok, :primary, primary_root, rel_path}
+              {:ok, "primary", primary_root, rel_path}
 
             :not_in_repo ->
               available =
@@ -296,7 +296,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     else
       # Relative path — same repo as parent
       normalized = ContextNode.normalize_relpath(raw_path)
-      {:ok, :primary, parent_state.phylo_node.repo, normalized}
+      {:ok, "primary", parent_state.phylo_node.repo, normalized}
     end
   end
 

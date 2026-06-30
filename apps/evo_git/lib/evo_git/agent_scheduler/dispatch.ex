@@ -184,7 +184,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
     # Run worktree init script on first creation only, and only for the primary repo
     # (foreign repos are independent and should not inherit the primary repo's init script)
-    if newly_created and spec.repo_id == :primary do
+    if newly_created and spec.repo_id == "primary" do
       # Resolve parent worktree path for SOURCE_WORKTREE_PATH env var
       parent_worktree =
         if meta.parent_id do
@@ -319,7 +319,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   """
   @spec resolve_agent_repo_root(AgentSpec.t(), State.t()) :: String.t() | nil
   def resolve_agent_repo_root(spec, _state) do
-    if spec.repo_id == :primary do
+    if spec.repo_id == "primary" do
       # spec.phylo_node.repo is either:
       # - A repo root (e.g., "/home/bill/Source/evoclass") for top-level agents
       # - A worktree path (e.g., ".../.evogit/workers/worker_T1_A1") for subagents

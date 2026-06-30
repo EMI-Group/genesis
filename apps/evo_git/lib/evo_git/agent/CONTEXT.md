@@ -19,7 +19,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 | Struct | Purpose |
 |---|---|
 | `EvoGit.Agent.LoopState` | Agent loop state (enforced keys: `agent_id`, `agent_module`, `depth`, `node_path`, `context`; remaining fields have defaults). Threaded through every turn. |
-| `EvoGit.Agent.Result` | Structured result of a completed run (`result`, `commit_sha`; optional `tag`, `branch`, `base_commit`, `repo_id`). The `repo_id` field identifies which repo the result belongs to (`:primary` or a foreign repo atom), automatically populated from the process dictionary. Produced by `CompleteTask`. |
+| `EvoGit.Agent.Result` | Structured result of a completed run (`result`, `commit_sha`; optional `tag`, `branch`, `base_commit`, `repo_id`). The `repo_id` field identifies which repo the result belongs to (`"primary"` or a foreign repo string), automatically populated from the process dictionary. Produced by `CompleteTask`. |
 
 ### Helper Modules
 | Module | Purpose |

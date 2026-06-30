@@ -18,7 +18,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `max_turns` — maximum turns per agent loop
   - `parent_id` — the parent agent ID (if this is a subagent), or `nil`
   - `objective` — the objective/task the agent was given
-  - `repo_id` — atom identifying which repo this agent belongs to (`:primary` for main, or a foreign repo id)
+  - `repo_id` — string identifying which repo this agent belongs to (`"primary"` for main, or a foreign repo id)
   - `repo_root` — absolute filesystem path to the repo root (for display/grouping). Set from scheduler state at registration.
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
@@ -52,7 +52,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
     compression_count: 0,
     total_tokens: 0,
     llm_generation_params: [],
-    repo_id: :primary,
+    repo_id: "primary",
     repo_root: nil,
     foreign_repos: []
   ]
@@ -68,7 +68,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           max_turns: pos_integer(),
           parent_id: pos_integer() | nil,
           objective: String.t() | nil,
-          repo_id: atom(),
+          repo_id: String.t(),
           repo_root: String.t() | nil,
           task_local_id: pos_integer() | nil,
           usage: Usage.t() | nil,

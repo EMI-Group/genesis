@@ -8,9 +8,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   describe "resolve_subagent_path/3" do
     setup do
       foreign_repos = [
-        ForeignRepo.new(:primary, "/home/user/primary-repo"),
-        ForeignRepo.new(:original, "/home/user/original-proj"),
-        ForeignRepo.new(:reference, "/home/user/reference-proj")
+        ForeignRepo.new("primary", "/home/user/primary-repo"),
+        ForeignRepo.new("original", "/home/user/original-proj"),
+        ForeignRepo.new("reference", "/home/user/reference-proj")
       ]
 
       parent_state = %{phylo_node: %{repo: "/home/user/primary-repo"}}
@@ -20,7 +20,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "absolute path matching a foreign repo returns that repo's id, root, and relative path",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      assert {:ok, :original, "/home/user/original-proj", "./src/main.py"} =
+      assert {:ok, "original", "/home/user/original-proj", "./src/main.py"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/original-proj/src/main.py",
                  parent_state,
@@ -28,9 +28,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
                )
     end
 
-    test "absolute path matching the primary repo returns :primary with relative path",
+    test "absolute path matching the primary repo returns \"primary\" with relative path",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      assert {:ok, :primary, "/home/user/primary-repo", "./lib/app.ex"} =
+      assert {:ok, "primary", "/home/user/primary-repo", "./lib/app.ex"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/primary-repo/lib/app.ex",
                  parent_state,
@@ -54,7 +54,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "absolute path not in any repo with empty foreign_repos still matches primary repo",
          %{parent_state: parent_state} do
-      assert {:ok, :primary, "/home/user/primary-repo", "./lib/app.ex"} =
+      assert {:ok, "primary", "/home/user/primary-repo", "./lib/app.ex"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/primary-repo/lib/app.ex",
                  parent_state,
@@ -62,9 +62,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
                )
     end
 
-    test "relative path stays in primary repo as :primary",
+    test "relative path stays in primary repo as \"primary\"",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      assert {:ok, :primary, "/home/user/primary-repo", "./src/lib"} =
+      assert {:ok, "primary", "/home/user/primary-repo", "./src/lib"} =
                SubagentProcessing.resolve_subagent_path(
                  "src/lib",
                  parent_state,
@@ -81,7 +81,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "dot-slash relative path stays in primary repo, normalized",
          %{foreign_repos: foreign_repos, parent_state: parent_state} do
-      assert {:ok, :primary, "/home/user/primary-repo", "./src/lib"} =
+      assert {:ok, "primary", "/home/user/primary-repo", "./src/lib"} =
                SubagentProcessing.resolve_subagent_path(
                  "./src/lib",
                  parent_state,
@@ -91,14 +91,14 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "multiple foreign repos, path matches the correct one" do
       foreign_repos = [
-        ForeignRepo.new(:primary, "/home/user/primary-repo"),
-        ForeignRepo.new(:original, "/home/user/original-proj"),
-        ForeignRepo.new(:reference, "/home/user/reference-proj")
+        ForeignRepo.new("primary", "/home/user/primary-repo"),
+        ForeignRepo.new("original", "/home/user/original-proj"),
+        ForeignRepo.new("reference", "/home/user/reference-proj")
       ]
 
       parent_state = %{phylo_node: %{repo: "/home/user/primary-repo"}}
 
-      assert {:ok, :reference, "/home/user/reference-proj", "./docs/README.md"} =
+      assert {:ok, "reference", "/home/user/reference-proj", "./docs/README.md"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/reference-proj/docs/README.md",
                  parent_state,
@@ -108,13 +108,13 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "absolute path exactly at repo root returns relative path ./" do
       foreign_repos = [
-        ForeignRepo.new(:primary, "/home/user/primary-repo"),
-        ForeignRepo.new(:original, "/home/user/original-proj")
+        ForeignRepo.new("primary", "/home/user/primary-repo"),
+        ForeignRepo.new("original", "/home/user/original-proj")
       ]
 
       parent_state = %{phylo_node: %{repo: "/home/user/primary-repo"}}
 
-      assert {:ok, :original, "/home/user/original-proj", "./"} =
+      assert {:ok, "original", "/home/user/original-proj", "./"} =
                SubagentProcessing.resolve_subagent_path(
                  "/home/user/original-proj",
                  parent_state,
@@ -237,7 +237,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       agent_result = %Result{
         result: "Foreign investigation done",
         commit_sha: "abc123",
-        repo_id: :original
+        repo_id: "original"
       }
 
       result = SubagentProcessing.format_subagent_result({:ok, agent_result})

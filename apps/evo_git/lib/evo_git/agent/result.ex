@@ -5,7 +5,7 @@ defmodule EvoGit.Agent.Result do
   When an agent finishes its work (via the `complete_task` tool), it produces
   a `%Result{}` struct capturing the outcome — including the human-readable
   result string, the commit SHA of any changes made, and optional metadata
-  such as tag, branch, base commit, `repo_id` (atom identifying which
+  such as tag, branch, base commit, `repo_id` (string identifying which
   repo this result belongs to, `nil` for backward compat), cumulative
   `usage` (token and cost tracking, `nil` for backward compat), and
   `agent_count` (total agents spawned including subagents, `nil` for
@@ -24,7 +24,7 @@ defmodule EvoGit.Agent.Result do
           tag: String.t() | nil,
           branch: String.t() | nil,
           base_commit: String.t() | nil,
-          repo_id: atom() | nil,
+          repo_id: String.t() | nil,
           usage: Usage.t() | nil,
           agent_count: pos_integer() | nil,
           archive_records: [map()] | nil

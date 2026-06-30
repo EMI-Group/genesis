@@ -8,19 +8,19 @@ defmodule EvoGit.Core.ContextNode do
   ## Multi-repo support
 
   The `repo_id` field identifies which repository this node belongs to in a
-  multi-repo setup.  It defaults to `:primary` for single-repo usage and is
+  multi-repo setup.  It defaults to `"primary"` for single-repo usage and is
   threaded through `load/3` and `hierarchy_nodes/3` when working with foreign
   repositories.
   """
   @enforce_keys [:path, :repo]
-  defstruct [:path, :repo, repo_id: :primary]
+  defstruct [:path, :repo, repo_id: "primary"]
 
   alias EvoGit.Adapters.Git
 
   @type t :: %__MODULE__{
           path: String.t(),
           repo: String.t(),
-          repo_id: atom()
+          repo_id: String.t()
         }
 
   @doc """
@@ -100,13 +100,13 @@ defmodule EvoGit.Core.ContextNode do
   """
   @spec load(String.t(), String.t()) :: t()
   def load(relative_path, repo_path) do
-    load(relative_path, repo_path, :primary)
+    load(relative_path, repo_path, "primary")
   end
 
   @doc """
   Loads a ContextNode with an explicit `repo_id` for multi-repo support.
   """
-  @spec load(String.t(), String.t(), atom()) :: t()
+  @spec load(String.t(), String.t(), String.t()) :: t()
   def load(relative_path, repo_path, repo_id) do
     %__MODULE__{
       path: normalize_relpath(relative_path),
@@ -123,16 +123,16 @@ defmodule EvoGit.Core.ContextNode do
   """
   @spec hierarchy_nodes(String.t(), String.t()) :: {:ok, [t()]} | {:error, term()}
   def hierarchy_nodes(relative_path, repo_path) do
-    hierarchy_nodes(relative_path, repo_path, :primary)
+    hierarchy_nodes(relative_path, repo_path, "primary")
   end
 
   @doc """
   Retrieves the full hierarchy of ContextNodes from the project root down to the given relative path,
   with an explicit `repo_id` for multi-repo support.
   """
-  @spec hierarchy_nodes(String.t(), String.t(), atom()) :: {:ok, [t()]} | {:error, term()}
+  @spec hierarchy_nodes(String.t(), String.t(), String.t()) :: {:ok, [t()]} | {:error, term()}
   def hierarchy_nodes(relative_path, repo_path, repo_id)
-      when is_binary(relative_path) and is_binary(repo_path) and is_atom(repo_id) do
+      when is_binary(relative_path) and is_binary(repo_path) and is_binary(repo_id) do
     if Path.type(relative_path) == :relative and not String.starts_with?(relative_path, "..") do
       paths =
         if relative_path in [".", "./"] do
