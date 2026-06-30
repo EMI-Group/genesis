@@ -273,7 +273,7 @@ defmodule EvoDashWeb.AgentsLive do
         task_ref: meta.task_ref,
         result_sent: meta.result_sent,
         history: history,
-        usage: agent_state && agent_state.usage,
+        usage: (agent_state && agent_state.usage) || EvoGit.Agent.Usage.zero(),
       }
     end)
     |> Enum.sort_by(&{&1.depth, &1.id})

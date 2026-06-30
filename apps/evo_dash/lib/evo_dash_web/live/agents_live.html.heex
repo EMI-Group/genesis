@@ -231,7 +231,6 @@
                     <% end %>
                   </div>
 
-                  <%= if agent.usage do %>
                     <div class="shrink-0">
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">&nbsp;</h4>
                       <button
@@ -246,13 +245,12 @@
                         />
                       </button>
                     </div>
-                  <% end %>
                 </div>
 
 
               </div>
 
-                <%= if agent.usage && @show_usage do %>
+                <%= if @show_usage do %>
                   <div class="mt-2">
                     <div class="grid grid-cols-3 gap-2 mt-2">
                       <div class="bg-base-200 rounded-lg p-2.5">
