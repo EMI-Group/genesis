@@ -483,7 +483,7 @@ defmodule EvoDashWeb.ReviewComponents do
           </div>
         <% end %>
         <button
-          class="btn btn-ghost btn-sm rounded-full px-6 gap-2 text-base-content/60"
+          class="btn btn-outline btn-warning rounded-full px-6 gap-2"
           phx-click="ignore"
           phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
           disabled={@loading}
