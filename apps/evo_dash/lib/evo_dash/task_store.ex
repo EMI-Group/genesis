@@ -140,12 +140,16 @@ defmodule EvoDash.TaskStore do
   Checks store integrity and repairs corruption.
 
   1. Runs `PRAGMA integrity_check` to verify SQLite structural health.
-  2. Scans all rows in both tables, decoding each blob. Rows that fail to
-     decode are deleted individually.
+  2. Scans all rows in both tables, decoding each blob.
+     * Undecodable **`tasks`** rows are hard-deleted (lower-value, auto-expiring).
+     * Undecodable **`projects`** rows are **QUARANTINED** — the raw blob is
+       moved to the `projects_quarantine` table (preserved for recovery), never
+       destroyed, since a lost project path silently erases a recently-opened
+       project.
 
   Returns:
     * `:ok` — store is healthy.
-    * `{:repaired, lost_count}` — some undecodable rows were removed.
+    * `{:repaired, lost_count}` — some undecodable rows were removed/quarantined.
     * `{:error, reason}` — SQLite-level corruption detected.
   """
   def integrity_check(store \\ __MODULE__) do
@@ -182,6 +186,20 @@ defmodule EvoDash.TaskStore do
       XqliteNIF.execute(
         conn,
         "CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, data BLOB)",
+        []
+      )
+
+    # Quarantine table: when integrity_check finds an undecodable `projects`
+    # row, the raw blob is moved here (INSERT then DELETE) instead of being
+    # hard-deleted. This preserves the data for later recovery/diagnosis.
+    # `projects` is small (≤10 rows) and high-value (a recently-opened project
+    # path), so destroying it on a transient decode failure would silently
+    # erase a user's project. Tasks remain hard-deletable (lower-value,
+    # auto-expiring).
+    {:ok, _} =
+      XqliteNIF.execute(
+        conn,
+        "CREATE TABLE IF NOT EXISTS projects_quarantine (id TEXT PRIMARY KEY, data BLOB)",
         []
       )
 
@@ -367,7 +385,7 @@ defmodule EvoDash.TaskStore do
   defp do_get(conn, table, value_key) do
     case XqliteNIF.query(conn, "SELECT data FROM #{table} WHERE id = ?1", [value_key]) do
       {:ok, %{rows: [[blob | _] | _]}} ->
-        :erlang.binary_to_term(blob)
+        :erlang.binary_to_term(blob, [:safe])
 
       {:ok, %{rows: []}} ->
         nil
@@ -375,7 +393,7 @@ defmodule EvoDash.TaskStore do
       {:ok, %{rows: rows}} when is_list(rows) ->
         # Fallback for unexpected row shapes
         case List.first(rows) do
-          [blob] -> :erlang.binary_to_term(blob)
+          [blob] -> :erlang.binary_to_term(blob, [:safe])
           _ -> nil
         end
     end
@@ -390,7 +408,7 @@ defmodule EvoDash.TaskStore do
     {:ok, %{rows: rows}} = XqliteNIF.query(conn, "SELECT id, data FROM #{table}", [])
 
     Enum.map(rows, fn [id, blob] ->
-      {{ns, id}, :erlang.binary_to_term(blob)}
+      {{ns, id}, :erlang.binary_to_term(blob, [:safe])}
     end)
   end
 
@@ -399,7 +417,7 @@ defmodule EvoDash.TaskStore do
 
     Enum.flat_map(rows, fn [id, blob] ->
       try do
-        [{{ns, id}, :erlang.binary_to_term(blob)}]
+        [{{ns, id}, :erlang.binary_to_term(blob, [:safe])}]
       rescue
         _ ->
           # Skip rows whose blob fails to decode — don't let one bad row
@@ -450,13 +468,19 @@ defmodule EvoDash.TaskStore do
     end
   end
 
-  # Scans both tables for rows whose blobs fail to decode, deletes them,
-  # and returns the count of removed rows.
+  # Scans both tables for rows whose blobs fail to decode. Tasks are deleted
+  # (lower-value, auto-expiring); projects are QUARANTINED — the raw blob is
+  # preserved in `projects_quarantine` for recovery/diagnosis. Returns the
+  # total count of removed-from-live-table rows.
   defp scan_and_repair_corrupt_rows(conn) do
-    scan_table_for_corrupt(conn, "tasks") + scan_table_for_corrupt(conn, "projects")
+    scan_table_for_corrupt(conn, "tasks", :delete) +
+      scan_table_for_corrupt(conn, "projects", :quarantine)
   end
 
-  defp scan_table_for_corrupt(conn, table) do
+  # `mode` is :delete (hard-delete the row) or :quarantine (move the raw blob
+  # into `<table>_quarantine`, preserving it). Quarantine failures are logged
+  # but the row is left in place rather than destroyed.
+  defp scan_table_for_corrupt(conn, table, mode) do
     {:ok, %{rows: rows}} = XqliteNIF.query(conn, "SELECT id, data FROM #{table}", [])
 
     Enum.reduce(rows, 0, fn [id, blob], acc ->
@@ -465,22 +489,65 @@ defmodule EvoDash.TaskStore do
           acc
 
         :error ->
-          # Delete the corrupt row
-          {:ok, _} =
-            XqliteNIF.execute(conn, "DELETE FROM #{table} WHERE id = ?1", [id])
+          case mode do
+            :delete ->
+              {:ok, _} =
+                XqliteNIF.execute(conn, "DELETE FROM #{table} WHERE id = ?1", [id])
 
-          Logger.warning(
-            "TaskStore integrity check: removed undecodable row " <>
-              "(table=#{table}, id=#{inspect(id)})."
-          )
+            :quarantine ->
+              quarantine_corrupt_row(conn, table, id, blob)
+          end
 
           acc + 1
       end
     end)
   end
 
+  # Moves an undecodable row into the quarantine table (INSERT raw blob then
+  # DELETE from the live table). If the quarantine INSERT itself fails, we log
+  # an error and LEAVE THE ROW IN PLACE — never silently destroy data. The raw
+  # blob is stored as-is (it can't be decoded, but is recoverable for later
+  # diagnosis).
+  defp quarantine_corrupt_row(conn, table, id, blob) do
+    quarantine_table = "#{table}_quarantine"
+
+    insert_result =
+      try do
+        XqliteNIF.execute(
+          conn,
+          "INSERT OR REPLACE INTO #{quarantine_table} (id, data) VALUES (?1, ?2)",
+          [id, blob]
+        )
+      rescue
+        error ->
+          Logger.error(
+            "TaskStore integrity check: failed to quarantine undecodable row " <>
+              "(table=#{table}, id=#{inspect(id)}): #{Exception.message(error)}. " <>
+              "Leaving row in place — data NOT destroyed."
+          )
+
+          :error
+      end
+
+    case insert_result do
+      {:ok, _} ->
+        # Quarantine succeeded — now safe to remove from the live table.
+        {:ok, _} =
+          XqliteNIF.execute(conn, "DELETE FROM #{table} WHERE id = ?1", [id])
+
+        Logger.warning(
+          "TaskStore integrity check: quarantined undecodable row " <>
+            "(table=#{table}, id=#{inspect(id)}) → #{quarantine_table}. " <>
+            "Raw blob preserved for recovery."
+        )
+
+      :error ->
+        :ok
+    end
+  end
+
   defp try_decode(blob) do
-    :erlang.binary_to_term(blob)
+    :erlang.binary_to_term(blob, [:safe])
     :ok
   rescue
     _ -> :error
