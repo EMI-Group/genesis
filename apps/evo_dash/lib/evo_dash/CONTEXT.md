@@ -75,7 +75,8 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 
 ### Crash Safety & Integrity
 - `TaskStore` provides crash-safe helpers (`safe_get/2`, `safe_select_all/1`, `safe_size/1`) that rescue per-row decode errors so corrupt blobs never crash callers. `safe_select_all/1` skips rows whose blobs fail to decode.
-- `integrity_check/1` runs `PRAGMA integrity_check` for SQLite-level structural health and scans all rows for undecodable blobs, deleting corrupt rows and returning `:ok` / `{:repaired, lost}` / `{:error, reason}`. Called by TaskRegistry on init.
+- `integrity_check/1` runs `PRAGMA integrity_check` for SQLite-level structural health and scans all rows for undecodable blobs. Undecodable `tasks` rows are **hard-deleted**; undecodable `projects` rows are **quarantined** into `projects_quarantine` (raw BLOB preserved, never destroyed) so a transient decode failure can't silently erase a recently-opened project. If a quarantine INSERT itself fails, the row is left in place rather than destroyed. Returns `:ok` / `{:repaired, lost}` / `{:error, reason}`. Called by TaskRegistry on init.
+- All BLOB decoding uses `:erlang.binary_to_term(blob, [:safe])` (every call site) to avoid spurious decode errors.
 - All store-touching `handle_*` callbacks in TaskRegistry are wrapped in `try/rescue` (bodies extracted to `do_*` privates) — write-failure rescues log at `Logger.error`, read/cleanup rescues at `Logger.warning`.
 
 ### One-time DETS→SQLite Migration
