@@ -711,7 +711,7 @@ defmodule EvoDashWeb.DashboardLive do
         {:noreply, put_flash(socket, :error, gettext("Path must be absolute (start with /)."))}
 
       true ->
-        repo_id = String.to_atom(repo_id_str)
+        repo_id = repo_id_str
 
         # Check if already exists in the current list
         current_repos = socket.assigns.foreign_repos
@@ -756,9 +756,9 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("remove_foreign_repo", %{"repo_id" => repo_id_str}, socket) do
-    repo_id = String.to_atom(repo_id_str)
+    repo_id = repo_id_str
 
-    if repo_id == :primary do
+    if repo_id == "primary" do
       {:noreply, put_flash(socket, :error, gettext("Cannot remove the primary repository."))}
     else
       current_repos = socket.assigns.foreign_repos
@@ -1168,7 +1168,7 @@ defmodule EvoDashWeb.DashboardLive do
 
   defp serialize_foreign_repos(repos) do
     Enum.map(repos, fn repo ->
-      %{"id" => Atom.to_string(repo.id), "path" => repo.root, "description" => repo.description}
+      %{"id" => repo.id, "path" => repo.root, "description" => repo.description}
     end)
   end
 
@@ -1199,7 +1199,7 @@ defmodule EvoDashWeb.DashboardLive do
       repos
       |> Enum.filter(fn r -> is_map(r) and is_binary(r["path"]) and r["path"] != "" end)
       |> Enum.map(fn r ->
-        id = if is_binary(r["id"]) and r["id"] != "", do: String.to_atom(r["id"]), else: :primary
+        id = if is_binary(r["id"]) and r["id"] != "", do: r["id"], else: "primary"
 
         opts =
           if is_binary(r["description"]) and r["description"] != "",

@@ -683,7 +683,9 @@ defmodule EvoDashWeb.SettingsLive do
   defp parse_float(_), do: nil
 
   defp parse_atom(value) when is_binary(value) and value != "" do
-    String.to_atom(value)
+    String.to_existing_atom(value)
+  rescue
+    ArgumentError -> value
   end
 
   defp parse_atom(_), do: nil
