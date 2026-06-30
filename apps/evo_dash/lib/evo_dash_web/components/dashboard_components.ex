@@ -734,7 +734,7 @@ defmodule EvoDashWeb.DashboardComponents do
             <.icon name="hero-archive-box" class="size-4.5 text-primary" /> {gettext("Archived Agent Details")}
           </h4>
           <%= if @task_id do %>
-            <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-full">
+            <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-full" download>
               <.icon name="hero-arrow-down-tray" class="size-4 mr-1" /> {gettext("Export JSON")}
             </.link>
           <% end %>

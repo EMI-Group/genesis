@@ -48,5 +48,15 @@ defmodule EvoDashWeb.TaskExportController do
     Enum.map(list, &normalize_for_json/1)
   end
 
+  # Tuples -> list (Jason cannot encode tuples directly)
+  defp normalize_for_json(tuple) when is_tuple(tuple) do
+    tuple |> Tuple.to_list() |> normalize_for_json()
+  end
+
+  # Un-serializable terms (PIDs, references, ports, functions) -> string fallback
+  defp normalize_for_json(value) when is_pid(value) or is_reference(value) or is_port(value) or is_function(value) do
+    inspect(value)
+  end
+
   defp normalize_for_json(value), do: value
 end

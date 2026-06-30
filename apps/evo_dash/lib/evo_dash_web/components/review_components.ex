@@ -125,7 +125,7 @@ defmodule EvoDashWeb.ReviewComponents do
           <h3 class="font-semibold text-base">{gettext("Archived Agent Details")}</h3>
         </div>
         <%= if @task_id do %>
-          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-full gap-2">
+          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-full gap-2" download>
             <.icon name="hero-arrow-down-tray" class="size-4" />
             {gettext("Export JSON")}
           </.link>
