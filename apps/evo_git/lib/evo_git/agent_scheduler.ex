@@ -425,7 +425,6 @@ defmodule EvoGit.AgentScheduler do
        llm_backoff_until: nil,
        tool_waiting: :queue.new(),
        max_tool_concurrency: max_tool_concurrency,
-       next_task_id: 1,
        sandbox_mode: sandbox_mode,
        sandbox_resources: sandbox_resources,
        sandbox_process_resources: sandbox_process_resources
@@ -447,12 +446,13 @@ defmodule EvoGit.AgentScheduler do
     # Extract repo_path from the spec's phylo_node
     repo_path = spec.phylo_node.repo
     state = Worktrees.ensure_initialized(state, repo_path)
-    task_id = state.next_task_id
+
+    task_id =
+      spec.opts[:task_id] || (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
 
     {agent_id, state} =
       Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
 
-    state = %{state | next_task_id: task_id + 1}
     Logger.info("AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id})")
 
     if state.paused do

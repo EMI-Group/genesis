@@ -175,7 +175,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   defp lookup_task_ids(agent_id) do
     task_id =
       case :ets.lookup(:evogit_sched_meta, agent_id) do
-        [{^agent_id, %{task_id: tid}}] when is_integer(tid) -> tid
+        [{^agent_id, %{task_id: tid}}] when is_binary(tid) -> tid
         _ -> 0
       end
 

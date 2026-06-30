@@ -253,7 +253,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     test "filters cancelled agents from the dispatch queue without crashing" do
       caller_pid = self()
       caller_ref = make_ref()
-      task_id = 42
+      task_id = "42"
 
       # Spawn real long-running tasks for each agent that will be cancelled.
       # Lifecycle.cancel_agent/2 calls Task.shutdown/2 on the stored task_ref.
@@ -309,7 +309,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           depth: 0,
           spec: agent_spec(),
           retries: 0,
-          task_id: 99,
+          task_id: "99",
           from: {dummy_caller, make_ref()},
           task_ref: nil
         }

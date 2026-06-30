@@ -43,7 +43,8 @@ defmodule EvoGit.Runtime.Genesis do
 
     case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective,
            foreign_repos: foreign_repos,
-           archive: Keyword.get(opts, :archive, false)
+           archive: Keyword.get(opts, :archive, false),
+           task_id: Keyword.get(opts, :task_id)
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
@@ -69,7 +70,8 @@ defmodule EvoGit.Runtime.Genesis do
 
     case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective,
            foreign_repos: foreign_repos,
-           archive: Keyword.get(opts, :archive, false)
+           archive: Keyword.get(opts, :archive, false),
+           task_id: Keyword.get(opts, :task_id)
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->

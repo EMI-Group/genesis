@@ -50,7 +50,8 @@ defmodule EvoGit.Runtime.Evolution do
 
     case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective,
            foreign_repos: foreign_repos,
-           archive: Keyword.get(opts, :archive, false)
+           archive: Keyword.get(opts, :archive, false),
+           task_id: Keyword.get(opts, :task_id)
          )
          |> AgentScheduler.run_agent() do
       {:ok, %Result{} = agent_output} ->
