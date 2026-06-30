@@ -580,7 +580,8 @@ defmodule EvoGit.Agent do
             parent_id: agent_state.parent_id,
             depth: depth,
             objective: agent_state.objective,
-            usage: state.usage
+            usage: state.usage,
+            archive: agent_state.archive
           )
 
         {:complete, final_result}
