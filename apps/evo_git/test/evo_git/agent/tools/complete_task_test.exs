@@ -551,12 +551,17 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         input_tokens: 100,
         output_tokens: 50,
         total_tokens: 150,
-        total_cost: 0.015
+        input_cost: 0.005,
+        output_cost: 0.010,
+        total_cost: 0.015,
+        cached_tokens: 40,
+        cache_creation_tokens: 20
       }
 
       CompleteTask.complete("agent_arc3", "Usage result", final_commit,
         base_commit: base_commit,
-        usage: usage
+        usage: usage,
+        archive: true
       )
 
       # Read back the note
@@ -568,8 +573,29 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert metadata["usage"]["total_tokens"] == 150
       assert metadata["usage"]["cost"] == 0.015
 
+      # The note should use the concise format — new fields should NOT be present
+      refute Map.has_key?(metadata["usage"], "cached_tokens")
+      refute Map.has_key?(metadata["usage"], "input_cost")
+
+      # Verify the archive record has the richer usage format
+      records = :ets.lookup(:evogit_archive_records, "3")
+      assert length(records) == 1
+      {_task_id, arc_record} = hd(records)
+      arc_usage = arc_record.usage
+      assert arc_usage != nil
+      assert arc_usage.input_tokens == 100
+      assert arc_usage.output_tokens == 50
+      assert arc_usage.total_tokens == 150
+      assert arc_usage.input_cost == 0.005
+      assert arc_usage.output_cost == 0.010
+      assert arc_usage.total_cost == 0.015
+      assert arc_usage.cached_tokens == 40
+      assert arc_usage.cache_creation_tokens == 20
+      assert arc_usage.cache_hit_rate == 40.0
+
       :ets.delete(:evogit_sched_meta, "agent_arc3")
       :ets.delete(:evogit_agent_state, "agent_arc3")
+      :ets.delete(:evogit_archive_records, "3")
       Process.delete(:repo_path)
     end
 
@@ -610,6 +636,10 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert Map.has_key?(record, :branch_name)
       assert Map.has_key?(record, :usage)
       assert Map.has_key?(record, :completed_at)
+      assert Map.has_key?(record, :compression_count)
+      assert Map.has_key?(record, :repo_path)
+      assert Map.has_key?(record, :repo_id)
+      assert Map.has_key?(record, :repo_root)
 
       # Verify values
       assert record.agent_id == "agent_arc4"
@@ -623,6 +653,8 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert record.archive_ref_final == "refs/genesis/archive/T4-A4-final"
       assert record.branch_name == "evogit-agent-T4-A4"
       assert record.completed_at != nil
+      assert record.compression_count == 0
+      assert record.repo_path == tmp_dir
 
       :ets.delete(:evogit_sched_meta, "agent_arc4")
       :ets.delete(:evogit_agent_state, "agent_arc4")

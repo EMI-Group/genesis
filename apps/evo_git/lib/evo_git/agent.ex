@@ -611,7 +611,10 @@ defmodule EvoGit.Agent do
             depth: depth,
             objective: agent_state.objective,
             usage: state.usage,
-            archive: agent_state.archive
+            archive: agent_state.archive,
+            compression_count: agent_state.compression_count,
+            repo_id: agent_state.repo_id,
+            repo_root: agent_state.repo_root
           )
 
         {:complete, final_result}

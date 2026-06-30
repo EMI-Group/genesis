@@ -160,6 +160,9 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         depth: depth,
         branch_name: branch_name,
         usage: Keyword.get(opts, :usage),
+        compression_count: Keyword.get(opts, :compression_count, 0),
+        repo_id: Keyword.get(opts, :repo_id),
+        repo_root: Keyword.get(opts, :repo_root),
         completed_at: DateTime.utc_now()
       })
     end
@@ -261,6 +264,22 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     }
   end
 
+  defp format_usage_for_archive(nil), do: nil
+
+  defp format_usage_for_archive(%EvoGit.Agent.Usage{} = usage) do
+    %{
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      total_tokens: usage.total_tokens,
+      input_cost: usage.input_cost,
+      output_cost: usage.output_cost,
+      total_cost: usage.total_cost,
+      cached_tokens: usage.cached_tokens,
+      cache_creation_tokens: usage.cache_creation_tokens,
+      cache_hit_rate: EvoGit.Agent.Usage.cache_hit_rate(usage)
+    }
+  end
+
   defp write_archive_refs(
          repo_path,
          task_id,
@@ -288,7 +307,11 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       archive_ref_start: ref_start,
       archive_ref_final: ref_final,
       branch_name: data[:branch_name],
-      usage: format_usage_for_note(data[:usage]),
+      usage: format_usage_for_archive(data[:usage]),
+      compression_count: data[:compression_count] || 0,
+      repo_path: repo_path,
+      repo_id: data[:repo_id],
+      repo_root: data[:repo_root],
       started_at: parse_started_at(Process.get(:evogit_started_at)),
       completed_at: data[:completed_at]
     }
