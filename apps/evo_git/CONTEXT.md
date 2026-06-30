@@ -17,8 +17,8 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `EvoGit.CLI` | Command-line interface entry point |
 | `EvoGit.Agent` | Behaviour module for agents; injects agent loop, tool dispatch, subagent management |
 | `EvoGit.Agent.Usage` | Cumulative token and cost usage tracking (`Usage` struct with `add/2`, `from_response_usage/1`, `zero/0`) |
-| `EvoGit.AgentSpec` | Structured specification for spawning agents |
-| `EvoGit.AgentScheduler` | GenServer managing agent lifecycles, worktree pool, ETS state, slot management |
+| `EvoGit.AgentSpec` | Structured specification for spawning agents; `opts` keyword list carries `:archive` and other runtime flags |
+| `EvoGit.AgentScheduler` | GenServer managing agent lifecycles, worktree pool, ETS state (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`), slot management |
 | `EvoGit.Sandbox` | Multi-platform sandbox dispatch (selects Linux/macOS/None backend based on platform) |
 | `EvoGit.SandboxSlice` | GenServer managing the `evogit.slice` systemd user slice (Linux only) |
 | `EvoGit.Task` | Agent orchestration: `mutate/3`, `diagnose/3`, `resolve_conflict/3` |
