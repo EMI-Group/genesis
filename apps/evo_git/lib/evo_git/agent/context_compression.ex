@@ -114,9 +114,9 @@ defmodule EvoGit.Agent.ContextCompression do
     Review the conversation above and create a dense, comprehensive summary that preserves all information needed to continue the work without loss.
 
     PRESERVE THESE EXACTLY (never paraphrase):
-    - File paths, module names, function names, variable names
-    - Error messages and stack traces
-    - Configuration values and settings
+    - Necessary File paths, module names, function names, variable names
+    - Necessary Configuration values and settings
+    - Critical Error messages and stack traces at hand
     - Architectural decisions and their reasoning
 
     SUMMARIZE THESE:
@@ -139,16 +139,13 @@ defmodule EvoGit.Agent.ContextCompression do
     [Cumulative high-level status of the ORIGINAL objective. Which major milestones/parts are complete? What remains? This MUST reflect ALL work done across the entire session — not just recent work. Update this each time compression occurs.]
 
     ## Completed
-    [Bulleted list of what has been done. Include exact file paths for all files created/modified/deleted.]
+    [Bulleted list of what has been done. If possible, include the node paths or file paths where work was completed.]
 
     ## Key Findings
     [Important discoveries, constraints, dependencies found. Include exact names and paths.]
 
     ## Decisions Made
     [Architectural or design decisions with their rationale.]
-
-    ## SubAgents Dispatched
-    [Each subagent: type, objective, node path, result status.]
 
     ## Errors Encountered
     [Failed approaches, bugs found, blockers. Include exact error messages and what was tried.]
