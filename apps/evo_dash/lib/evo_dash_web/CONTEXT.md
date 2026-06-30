@@ -24,7 +24,7 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 |-----------|---------|
 | `live/` | Phoenix LiveView pages: Dashboard, Agents, Settings, System. |
 | `components/` | Reusable HEEx components: CoreComponents, DashboardComponents, AgentsComponents, Layouts. |
-| `controllers/` | Classic HTTP controllers and error handlers. |
+| `controllers/` | Classic HTTP controllers and error handlers. Includes `TaskExportController` (JSON export of archived task metadata). |
 
 ### LiveView Routes
 | Route | LiveView | Purpose |
