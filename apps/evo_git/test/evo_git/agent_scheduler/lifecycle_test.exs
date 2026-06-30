@@ -351,6 +351,77 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         Process.exit(dummy_caller, :kill)
       end
     end
+
+    test "releases LLM/tool slots held by cancelled agents" do
+      caller_pid = self()
+      caller_ref = make_ref()
+      task_id = "42"
+
+      # Spawn real long-running tasks for each agent that will be cancelled.
+      tasks =
+        Enum.map(1..2, fn _ -> Task.async(fn -> Process.sleep(:infinity) end) end)
+
+      try do
+        [task1, task2] = tasks
+
+        # Agent 1: top-level (depth: 0) whose `from` contains caller_pid.
+        meta1 = %SchedMeta{
+          id: 1,
+          depth: 0,
+          spec: agent_spec(),
+          retries: 0,
+          task_id: task_id,
+          from: {caller_pid, caller_ref},
+          task_ref: task1
+        }
+
+        # Agent 2: subagent (depth: 1) sharing the same task_id.
+        meta2 = %SchedMeta{
+          id: 2,
+          depth: 1,
+          spec: agent_spec(),
+          retries: 0,
+          task_id: task_id,
+          parent_id: 1,
+          task_ref: task2
+        }
+
+        put_sched_meta(1, meta1)
+        put_sched_meta(2, meta2)
+
+        # Simulate both agents holding LLM and tool slots at the time of
+        # cancellation.
+        state =
+          base_state(
+            llm_holders: MapSet.new([1, 2]),
+            tool_holders: MapSet.new([1, 2]),
+            llm_last_granted: %{1 => 1_000, 2 => 2_000}
+          )
+
+        from = {self(), make_ref()}
+
+        assert {:reply, :ok, new_state} =
+                 AgentScheduler.handle_call({:cancel_task_agents, caller_pid}, from, state)
+
+        # The cancelled agents must be removed from both holder sets so that
+        # the slots are returned to the pool (no permanent leak).
+        refute MapSet.member?(new_state.llm_holders, 1)
+        refute MapSet.member?(new_state.llm_holders, 2)
+        refute MapSet.member?(new_state.tool_holders, 1)
+        refute MapSet.member?(new_state.tool_holders, 2)
+
+        # llm_last_granted entries for cancelled agents are also cleaned up.
+        refute Map.has_key?(new_state.llm_last_granted, 1)
+        refute Map.has_key?(new_state.llm_last_granted, 2)
+
+        assert new_state.llm_holders == MapSet.new()
+        assert new_state.tool_holders == MapSet.new()
+      after
+        Enum.each(tasks, fn task ->
+          Task.shutdown(task, :brutal_kill)
+        end)
+      end
+    end
   end
 
   describe "increment_compression_count/1" do

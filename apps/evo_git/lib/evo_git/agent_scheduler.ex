@@ -520,6 +520,19 @@ defmodule EvoGit.AgentScheduler do
         # 5. Purge from slot waiting queues (replies {:error, :cancelled} to blocked callers)
         {state, _status_updates} = Slots.purge_agents_from_queues(state, cancel_set)
 
+        # 5.5 Release LLM/tool slots held by cancelled agents.
+        #     Step 3 made the :DOWN handler a no-op for these agents, so the normal
+        #     slot release path (Slots.release_agent_slots in handle_info :DOWN) is
+        #     bypassed. We must release held slots here to avoid permanent leaks.
+        #     Waiting queues were already purged in step 5, so grant_pending only
+        #     affects non-cancelled agents.
+        state =
+          Enum.reduce(cancel_set, state, fn agent_id, acc_state ->
+            {acc_state, slot_status} = Slots.release_agent_slots(acc_state, agent_id)
+            apply_status_updates(slot_status)
+            acc_state
+          end)
+
         # 6. Cancel agents in reverse depth order (leaf subagents first, then parents)
         #    Sort by depth descending so deepest agents are cancelled first
         sorted_agents =
