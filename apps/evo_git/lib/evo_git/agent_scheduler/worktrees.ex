@@ -140,9 +140,9 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     commit_sha = spec.phylo_node.current_commit
 
     Git.clean(wt)
-    task_id = meta.task_id
+    task_number = meta.task_number
     task_local_id = agent_state.task_local_id
-    branch_name = "evogit-agent-T#{task_id}-A#{task_local_id}"
+    branch_name = "evogit-agent-T#{task_number}-A#{task_local_id}"
     Git.checkout(wt, branch_name)
 
     # Build the worktree-bound phylo_node (repo points to worktree)

@@ -217,7 +217,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.put(:repo_path, tmp_dir)
 
       # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_123", %{task_id: "1"}})
+      :ets.insert(:evogit_sched_meta, {"agent_123", %{task_id: "1", task_number: 1}})
       :ets.insert(:evogit_agent_state, {"agent_123", %{task_local_id: 1}})
 
       result =
@@ -285,7 +285,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.put(:repo_path, tmp_dir)
 
       # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_ret", %{task_id: "2"}})
+      :ets.insert(:evogit_sched_meta, {"agent_ret", %{task_id: "2", task_number: 2}})
       :ets.insert(:evogit_agent_state, {"agent_ret", %{task_local_id: 3}})
 
       result =
@@ -335,7 +335,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.put(:repo_path, tmp_dir)
 
       # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_defaults", %{task_id: "5"}})
+      :ets.insert(:evogit_sched_meta, {"agent_defaults", %{task_id: "5", task_number: 5}})
       :ets.insert(:evogit_agent_state, {"agent_defaults", %{task_local_id: 7}})
 
       result = CompleteTask.complete("agent_defaults", "Simple result", base_commit)
@@ -476,7 +476,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      :ets.insert(:evogit_sched_meta, {"agent_arc1", %{task_id: "1"}})
+      :ets.insert(:evogit_sched_meta, {"agent_arc1", %{task_id: "1", task_number: 1}})
       :ets.insert(:evogit_agent_state, {"agent_arc1", %{task_local_id: 1}})
 
       CompleteTask.complete("agent_arc1", "Archive result", final_commit,
@@ -514,7 +514,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      :ets.insert(:evogit_sched_meta, {"agent_arc2", %{task_id: "2"}})
+      :ets.insert(:evogit_sched_meta, {"agent_arc2", %{task_id: "2", task_number: 2}})
       :ets.insert(:evogit_agent_state, {"agent_arc2", %{task_local_id: 2}})
 
       # No archive: true
@@ -544,7 +544,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      :ets.insert(:evogit_sched_meta, {"agent_arc3", %{task_id: "3"}})
+      :ets.insert(:evogit_sched_meta, {"agent_arc3", %{task_id: "3", task_number: 3}})
       :ets.insert(:evogit_agent_state, {"agent_arc3", %{task_local_id: 3}})
 
       usage = %EvoGit.Agent.Usage{
@@ -581,7 +581,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.put(:repo_path, tmp_dir)
       Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
 
-      :ets.insert(:evogit_sched_meta, {"agent_arc4", %{task_id: "4"}})
+      :ets.insert(:evogit_sched_meta, {"agent_arc4", %{task_id: "4", task_number: 4}})
       :ets.insert(:evogit_agent_state, {"agent_arc4", %{task_local_id: 4}})
 
       CompleteTask.complete("agent_arc4", "Full record test", final_commit,

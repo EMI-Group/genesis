@@ -131,10 +131,10 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     archive = Keyword.get(opts, :archive, false)
     repo_path = Process.get(:repo_path)
 
-    # Derive branch name using task-scoped naming: evogit-agent-T<task_id>-A<task_local_id>
-    # Look up task_id from SchedMeta and task_local_id from AgentState via ETS
-    {task_id, task_local_id} = lookup_task_ids(agent_id)
-    branch_name = "evogit-agent-T#{task_id}-A#{task_local_id}"
+    # Derive branch name using task-scoped naming: evogit-agent-T<task_number>-A<task_local_id>
+    # Look up task_id/task_number from SchedMeta and task_local_id from AgentState via ETS
+    {task_id, task_number, task_local_id} = lookup_task_info(agent_id)
+    branch_name = "evogit-agent-T#{task_number}-A#{task_local_id}"
 
     # Add metadata as git note (if we have the base commit)
     if base_commit do
@@ -172,11 +172,18 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     }
   end
 
-  defp lookup_task_ids(agent_id) do
-    task_id =
+  defp lookup_task_info(agent_id) do
+    {task_id, task_number} =
       case :ets.lookup(:evogit_sched_meta, agent_id) do
-        [{^agent_id, %{task_id: tid}}] when is_binary(tid) -> tid
-        _ -> 0
+        [{^agent_id, %{task_id: tid, task_number: tn}}] ->
+          {tid, tn}
+
+        [{^agent_id, %{task_id: tid}}] ->
+          # Backward compat: task_number may be nil in older entries
+          {tid, nil}
+
+        _ ->
+          {0, nil}
       end
 
     task_local_id =
@@ -185,7 +192,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         _ -> 0
       end
 
-    {task_id, task_local_id}
+    {task_id, task_number, task_local_id}
   end
 
   defp add_metadata_note(repo_path, commit_sha, metadata) do

@@ -450,10 +450,15 @@ defmodule EvoGit.AgentScheduler do
     task_id =
       spec.opts[:task_id] || (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
 
-    {agent_id, state} =
-      Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id)
+    repo_root = Dispatch.resolve_agent_repo_root(spec, state)
+    task_number = Dispatch.next_task_number(repo_root)
 
-    Logger.info("AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id})")
+    {agent_id, state} =
+      Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id, task_number)
+
+    Logger.info(
+      "AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id}, number #{task_number})"
+    )
 
     if state.paused do
       # Queue the agent for dispatch when resumed

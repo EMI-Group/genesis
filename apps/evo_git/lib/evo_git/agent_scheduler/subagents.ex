@@ -76,7 +76,8 @@ defmodule EvoGit.AgentScheduler.Subagents do
             _from = nil,
             parent_id,
             parent.depth + 1,
-            parent.task_id
+            parent.task_id,
+            parent.task_number
           )
 
         {{idx, sub_id}, acc}

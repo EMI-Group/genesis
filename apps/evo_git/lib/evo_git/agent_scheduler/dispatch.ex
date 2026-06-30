@@ -32,10 +32,11 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           GenServer.from() | nil,
           pos_integer() | nil,
           non_neg_integer(),
-          pos_integer()
+          String.t() | nil,
+          pos_integer() | nil
         ) ::
           {pos_integer(), State.t()}
-  def register_agent(state, spec, from, parent_id, depth, task_id) do
+  def register_agent(state, spec, from, parent_id, depth, task_id, task_number) do
     id = state.next_agent_id
 
     # Compute per-task local agent ID (display/branch naming only)
@@ -81,12 +82,45 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       from: from,
       parent_id: parent_id,
       task_id: task_id,
+      task_number: task_number,
       spec: spec
     })
 
     state = %{state | next_agent_id: id + 1}
     {id, state}
   end
+
+  @doc """
+  Computes the next task number by scanning the `.evogit/workers/` directory.
+  Returns max+1 of existing `worker_T<n>_a<m>` entries, or 1 if none/empty.
+  """
+  @spec next_task_number(String.t()) :: pos_integer()
+  def next_task_number(repo_root) do
+    workers_dir = Path.join(repo_root, ".evogit/workers")
+
+    case File.ls(workers_dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.map(&parse_task_number/1)
+        |> Enum.filter(&(&1))
+        |> Enum.max(fn -> 0 end)
+        |> Kernel.+(1)
+
+      {:error, _} ->
+        1
+    end
+  end
+
+  defp parse_task_number("worker_T" <> rest) do
+    rest
+    |> String.split("_", parts: 2)
+    |> List.first()
+    |> String.to_integer()
+  rescue
+    _ -> nil
+  end
+
+  defp parse_task_number(_), do: nil
 
   # --- Dispatch ---
 
@@ -114,26 +148,26 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   defp do_try_dispatch(state, agent_id, meta, agent_state) do
     retries = meta.retries
     spec = meta.spec
-    task_id = meta.task_id
+    task_number = meta.task_number
     task_local_id = agent_state.task_local_id
 
-    # Create a persistent worktree for this agent: worker_T<task_id>_A<task_local_id>
+    # Create a persistent worktree for this agent: worker_T<task_number>_A<task_local_id>
     # Determine repo root from the agent's spec data, with repos map as fallback
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
     worktree_path =
-      Path.join([agent_repo_root, ".evogit/workers", "worker_T#{task_id}_A#{task_local_id}"])
+      Path.join([agent_repo_root, ".evogit/workers", "worker_T#{task_number}_A#{task_local_id}"])
 
     # Create the worktree if it doesn't exist (e.g., on first dispatch)
     newly_created =
       unless File.exists?(worktree_path) do
         commit_sha = spec.phylo_node.current_commit
-        branch_name = "evogit-agent-T#{task_id}-A#{task_local_id}"
+        branch_name = "evogit-agent-T#{task_number}-A#{task_local_id}"
 
         case Git.add_worktree(agent_repo_root, worktree_path, commit_sha, branch_name) do
           {:ok, _} ->
             Logger.info(
-              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_id}-A#{task_local_id}) on branch #{branch_name}"
+              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_number}-A#{task_local_id}) on branch #{branch_name}"
             )
 
           {:error, _, msg} ->
