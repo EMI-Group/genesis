@@ -1186,7 +1186,7 @@ defmodule EvoDash.TaskRegistryTest do
       end
     end
 
-    test "removes rows with undecodable blobs and reports repaired count" do
+    test "removes undecodable TASKS rows (hard-delete) and reports repaired count" do
       unique = System.unique_integer([:positive])
       store = :"ic_garbage_store_#{unique}"
       sqlite_path = Path.join(System.tmp_dir!(), "evogit_ic_garbage_#{unique}.sqlite")
@@ -1241,6 +1241,79 @@ defmodule EvoDash.TaskRegistryTest do
 
         assert {:task, "ic_good2_#{unique}"} in keys
         refute {:task, "garbage_row_#{unique}"} in keys
+      after
+        try do
+          GenServer.stop(store)
+        catch
+          _, _ -> :ok
+        end
+
+        File.rm(sqlite_path)
+      end
+    end
+
+    test "quarantines undecodable PROJECTS rows (preserves raw blob, not destroyed)" do
+      unique = System.unique_integer([:positive])
+      store = :"ic_proj_quarantine_store_#{unique}"
+      sqlite_path = Path.join(System.tmp_dir!(), "evogit_ic_proj_quarantine_#{unique}.sqlite")
+      File.mkdir_p!(Path.dirname(sqlite_path))
+
+      {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+
+      try do
+        good_proj = %{path: "/tmp/good_proj_#{unique}", name: "good", last_opened_at: DateTime.utc_now()}
+
+        :ok = EvoDash.TaskStore.put(store, {:project, "/tmp/good_proj_#{unique}"}, good_proj)
+        garbage_blob = :binary.copy(<<0xFF>>, 16)
+        garbage_id = "garbage_proj_#{unique}"
+
+        # Inject garbage into the projects table via raw connection.
+        conn =
+          case Xqlite.open(sqlite_path) do
+            {:ok, c} -> c
+          end
+
+        {:ok, _} =
+          XqliteNIF.execute(
+            conn,
+            "INSERT OR REPLACE INTO projects (id, data) VALUES (?1, ?2)",
+            [garbage_id, garbage_blob]
+          )
+
+        :ok = XqliteNIF.close(conn)
+
+        # Reopen so the store sees the injected row.
+        :ok = GenServer.stop(store)
+        {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+
+        result = EvoDash.TaskStore.integrity_check(store)
+        assert match?({:repaired, _}, result) or match?(:ok, result)
+
+        # The garbage row is repaired out of the live table.
+        entries = EvoDash.TaskStore.safe_select_all(store)
+        keys = Enum.map(entries, fn {k, _} -> k end)
+        refute {:project, garbage_id} in keys
+        # The good project is still present.
+        assert {:project, "/tmp/good_proj_#{unique}"} in keys
+
+        # CRITICAL: the raw blob is preserved in projects_quarantine, not destroyed.
+        conn2 =
+          case Xqlite.open(sqlite_path) do
+            {:ok, c} -> c
+          end
+
+        {:ok, %{rows: [[count]]}} =
+          XqliteNIF.query(conn2, "SELECT COUNT(*) FROM projects_quarantine", [])
+
+        assert count >= 1
+
+        {:ok, %{rows: rows}} =
+          XqliteNIF.query(conn2, "SELECT data FROM projects_quarantine WHERE id = ?1", [garbage_id])
+
+        [recovered_blob | _] = List.first(rows)
+        assert recovered_blob == garbage_blob
+
+        :ok = XqliteNIF.close(conn2)
       after
         try do
           GenServer.stop(store)
