@@ -14,11 +14,11 @@ defmodule EvoDashWeb.ReviewLive do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status}>
       <%= if @error do %>
-        <div class="bg-error/10 border border-error/20 rounded-3xl p-8 text-center">
-          <.icon name="hero-exclamation-triangle" class="size-12 text-error mx-auto mb-4" />
+        <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
+          <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
           <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
           <p class="text-sm text-base-content/60 mb-4">{@error}</p>
-          <.link navigate={~p"/"} class="btn btn-primary rounded-full px-6 gap-2">
+          <.link navigate={~p"/"} class="btn btn-primary rounded-md px-6 gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
           </.link>
         </div>
@@ -61,6 +61,15 @@ defmodule EvoDashWeb.ReviewLive do
                 branch_name={@branch_name}
                 commit_sha={@commit_sha}
                 status={@review_status}
+              />
+
+              <EvoDashWeb.ReviewComponents.task_summary
+                usage={@task_usage}
+                agent_count={@agent_count}
+                task_type={@task_type}
+                status={@task_status}
+                started_at={@started_at}
+                finished_at={@finished_at}
               />
 
               <!-- Unified review card: tab bar + content -->
@@ -150,8 +159,8 @@ defmodule EvoDashWeb.ReviewLive do
               </div>
 
               <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
-                <div class="bg-warning/10 border border-warning/20 rounded-3xl p-6 text-center">
-                  <.icon name="hero-exclamation-triangle" class="size-8 text-warning mx-auto mb-3" />
+                <div class="rounded-lg border border-warning/30 bg-warning/5 p-4 text-center">
+                  <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
                   <p class="text-sm text-warning">{gettext("Could not load diff data. The branch may have been modified externally.")}</p>
                 </div>
               <% end %>
@@ -200,6 +209,11 @@ defmodule EvoDashWeb.ReviewLive do
       |> assign(:commit_data, nil)
       |> assign(:commit_header, nil)
       |> assign(:archive_metadata, nil)
+      |> assign(:task_usage, nil)
+      |> assign(:agent_count, nil)
+      |> assign(:task_status, nil)
+      |> assign(:started_at, nil)
+      |> assign(:finished_at, nil)
       |> load_task_data(task_id)
 
     {:ok, socket}
@@ -518,6 +532,11 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:error, gettext("Task not found. It may have been deleted."))
         |> assign(:repo_path, nil)
         |> assign(:objective, nil)
+        |> assign(:task_usage, nil)
+        |> assign(:agent_count, nil)
+        |> assign(:task_status, nil)
+        |> assign(:started_at, nil)
+        |> assign(:finished_at, nil)
 
       task ->
         result = task.result
@@ -619,6 +638,11 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:objective, objective)
         |> assign(:commits, commits)
         |> assign(:archive_metadata, Map.get(task, :archive_metadata))
+        |> assign(:task_usage, Map.get(task, :usage))
+        |> assign(:agent_count, Map.get(task, :agent_count))
+        |> assign(:task_status, task.status)
+        |> assign(:started_at, Map.get(task, :started_at))
+        |> assign(:finished_at, Map.get(task, :finished_at))
     end
   end
 

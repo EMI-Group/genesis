@@ -511,29 +511,14 @@ defmodule EvoDashWeb.CoreComponents do
   slot(:inner_block, required: true)
 
   def collapsible_card(assigns) do
-    gradient_colors = %{
-      primary: "from-primary/10 via-primary/5 to-transparent",
-      secondary: "from-secondary/10 via-secondary/5 to-transparent",
-      accent: "from-accent/10 via-accent/5 to-transparent",
-      info: "from-info/10 via-info/5 to-transparent",
-      success: "from-success/10 via-success/5 to-transparent",
-      warning: "from-warning/10 via-warning/5 to-transparent",
-      error: "from-error/10 via-error/5 to-transparent"
-    }
-
-    assigns =
-      assign(assigns,
-        gradient: Map.get(gradient_colors, assigns.color, gradient_colors[:primary])
-      )
-
     ~H"""
-    <details id={@id} open={@open} class="card bg-base-100 shadow-lg border border-base-200 overflow-hidden group">
-      <summary class="bg-gradient-to-br {assigns.gradient} px-6 py-4 cursor-pointer select-none flex items-center gap-3 list-none">
+    <details id={@id} open={@open} class="rounded-lg bg-base-100 border border-base-200 overflow-hidden group">
+      <summary class="bg-base-200/40 px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none">
         <.icon :if={@icon} name={@icon} class="size-5 shrink-0" />
         <span class="font-semibold flex-1">{@title}</span>
         <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
       </summary>
-      <div class="p-4 sm:p-6 pt-2">
+      <div class="p-4">
         {render_slot(@inner_block)}
       </div>
     </details>

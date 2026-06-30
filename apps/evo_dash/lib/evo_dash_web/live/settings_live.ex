@@ -11,25 +11,30 @@ defmodule EvoDashWeb.SettingsLive do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status}>
       <%!-- Header --%>
-      <div class="flex items-center gap-5 mb-8 animate-fade-in-up mt-2">
-        <div class="relative flex items-center justify-center size-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-primary/10">
-          <.icon name="hero-cog-8-tooth" class="size-8" />
-          <div class="absolute inset-0 rounded-2xl bg-primary/10 blur-xl -z-10"></div>
-        </div>
-        <div>
-          <h1 class="text-3xl font-extrabold tracking-tight text-base-content">{gettext("Settings")}</h1>
-          <p class="text-sm text-base-content/60 mt-1 font-medium">{gettext("Runtime configuration and file settings")}</p>
-        </div>
+      <div class="mb-6 mt-2">
+        <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("Settings")}</h1>
+        <p class="text-sm text-base-content/60 mt-0.5">{gettext("Runtime configuration and file settings")}</p>
       </div>
+
+      <%!-- Config file path display --%>
+      <div class="mb-4 rounded-lg border border-base-200 bg-base-100 p-3 flex items-center gap-3">
+        <.icon name="hero-document-text" class="size-4 text-base-content/40 shrink-0" />
+        <span class="text-xs font-medium text-base-content/50 shrink-0">{gettext("Configuration file")}</span>
+        <code class="font-mono text-sm text-base-content/80 flex-1 truncate">{@config_path}</code>
+        <button id="settings-config-path-copy" phx-hook="ClipboardCopy" data-content={@config_path} class="btn btn-ghost btn-sm btn-square" title={gettext("Copy path")}>
+          <.icon name="hero-clipboard-document" class="size-4" />
+        </button>
+      </div>
+      <%= if not @config_file_exists do %>
+        <p class="mb-4 text-xs text-base-content/50">{gettext("File does not exist yet")}</p>
+      <% end %>
 
       <%!-- Config Status Warning --%>
       <%= if not @config_status.ok? do %>
-        <div class="mb-8 bg-warning/5 border border-warning/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex gap-4 items-start shadow-sm">
-          <div class="p-3 bg-warning/20 text-warning rounded-2xl shrink-0 mt-0.5">
-            <.icon name="hero-exclamation-triangle" class="size-6" />
-          </div>
+        <div class="mb-4 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
+          <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
           <div>
-            <h3 class="font-bold text-lg text-warning mb-2">{gettext("Missing Configuration")}</h3>
+            <h3 class="font-bold text-sm text-warning mb-2">{gettext("Missing Configuration")}</h3>
             <ul class="space-y-1.5 mb-3">
               <%= for warning <- @config_status.warnings do %>
                 <li class="text-sm font-medium text-warning/80 flex items-start gap-2">
@@ -47,19 +52,17 @@ defmodule EvoDashWeb.SettingsLive do
 
       <%!-- No LLM Model Warning --%>
       <%= if is_nil(get_in(@file_config, [:llm, :model])) do %>
-        <div class="mb-8 bg-error/5 border border-error/20 rounded-3xl p-6 animate-fade-in-up animation-delay-100 flex gap-4 items-start shadow-sm">
-          <div class="p-3 bg-error/20 text-error rounded-2xl shrink-0 mt-0.5">
-            <.icon name="hero-exclamation-triangle" class="size-6" />
-          </div>
+        <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
+          <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div>
-            <h3 class="font-bold text-lg text-error mb-2">{gettext("No LLM Model Configured")}</h3>
-            <p class="text-sm font-medium text-error/80 mb-4 leading-relaxed max-w-3xl">
+            <h3 class="font-bold text-sm text-error mb-2">{gettext("No LLM Model Configured")}</h3>
+            <p class="text-sm font-medium text-error/80 mb-3 leading-relaxed max-w-3xl">
               {gettext("Agents cannot run until you set a model. Go to the LLM category and fill in the Model field.")}
             </p>
             <div class="flex items-center gap-3 flex-wrap">
               <span class="text-xs font-bold uppercase tracking-wider text-base-content/50">{gettext("Example model names:")}</span>
-              <span class="badge badge-ghost font-mono text-xs px-3 py-3 rounded-xl bg-base-200 border-base-300">anthropic:claude-opus-4-7</span>
-              <span class="badge badge-ghost font-mono text-xs px-3 py-3 rounded-xl bg-base-200 border-base-300">openai:gpt-5.5</span>
+              <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">anthropic:claude-opus-4-7</span>
+              <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">openai:gpt-5.5</span>
             </div>
           </div>
         </div>
@@ -77,7 +80,7 @@ defmodule EvoDashWeb.SettingsLive do
            `mix assets.deploy` (prod) so the new utilities are emitted. --%>
       <div class="flex flex-col gap-8">
         <%!-- Two-column sidebar + content layout --%>
-        <div class="flex flex-col md:flex-row bg-base-100 rounded-[2rem] shadow-sm hover:shadow-md border border-base-200/70 overflow-hidden animate-fade-in-up animation-delay-200 md:min-h-[75vh] md:max-h-[80vh] transition-all duration-500">
+        <div class="flex flex-col md:flex-row bg-base-100 rounded-lg border border-base-200 shadow-sm overflow-hidden">
         <%!-- Sidebar --%>
         <EvoDashWeb.SettingsComponents.settings_sidebar
           categories={@schemas_by_category}

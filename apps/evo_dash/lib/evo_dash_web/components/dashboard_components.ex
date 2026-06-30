@@ -443,15 +443,15 @@ defmodule EvoDashWeb.DashboardComponents do
   def task_card(assigns) do
     ~H"""
     <div class={[
-      "bg-base-100 rounded-3xl shadow-sm hover:shadow-md transition-all duration-300 border border-base-200/60 overflow-visible relative group",
+      "bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-base-200/60 overflow-hidden relative group",
       task_card_tint(@task)
     ]}>
       <!-- Accent Top Border — clipped by inner wrapper so it respects rounded corners -->
-      <div class="absolute inset-0 rounded-3xl overflow-hidden pointer-events-none">
+      <div class="absolute inset-0 rounded-lg overflow-hidden pointer-events-none">
         <div class={["absolute top-0 left-0 right-0 h-1 opacity-80", task_accent_color(@task)]}></div>
       </div>
 
-      <div class="p-5 md:p-6 flex flex-col gap-5">
+      <div class="p-4 flex flex-col gap-5">
         <!-- Top row: Metatags & Status -->
         <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div class="flex flex-wrap items-center gap-2.5 mt-1">
@@ -464,12 +464,12 @@ defmodule EvoDashWeb.DashboardComponents do
           
           <div class="flex items-center gap-2 shrink-0">
             <%= if Map.get(@task, :review_status) do %>
-              <span class={["badge border-0 font-medium px-3 py-3 shadow-sm", review_status_badge(Map.get(@task, :review_status))]}>
+              <span class={["badge border-0 font-medium px-2.5 py-2 rounded-md", review_status_badge(Map.get(@task, :review_status))]}>
                 <.icon name={review_status_icon(Map.get(@task, :review_status))} class="size-4 mr-1.5" />
                 {review_status_label(Map.get(@task, :review_status))}
               </span>
             <% end %>
-            <span class={[task_status_badge(@task.status), "font-medium border-0 px-3 py-3 shadow-sm"]}>
+            <span class={[task_status_badge(@task.status), "font-medium border-0 px-2.5 py-2 rounded-md"]}>
               <%= if @task.status == :running do %>
                 <span class="relative flex h-2.5 w-2.5 mr-2">
                   <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" style="animation-duration: 2s"></span>
@@ -525,7 +525,7 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="flex items-center gap-2 sm:gap-3">
             <%= if @task.status in [:running, :finalizing] do %>
               <button
-                class="btn btn-sm btn-outline btn-error border-error/30 hover:border-error hover:bg-error/10 hover:text-error rounded-full px-4"
+                class="btn btn-sm btn-outline btn-error border-error/30 hover:border-error hover:bg-error/10 hover:text-error rounded-md px-4"
                 phx-click="cancel_task"
                 phx-value-task_id={@task.id}
                 phx-confirm={gettext("Are you sure you want to cancel this task?")}
@@ -537,14 +537,14 @@ defmodule EvoDashWeb.DashboardComponents do
             <%= if show_review_button?(@task) do %>
               <.link
                 navigate={~p"/review/#{@task.id}"}
-                class="btn btn-sm btn-primary rounded-full px-5 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"
+                class="btn btn-sm btn-primary rounded-md px-5 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"
               >
                 <.icon name="hero-eye" class="size-4 mr-1" /> {gettext("Review")}
               </.link>
             <% end %>
             
             <button
-              class={["btn btn-sm rounded-full px-4 font-medium transition-all", @show_details && "btn-neutral shadow-sm" || "btn-ghost bg-base-200/50 hover:bg-base-200"]}
+              class={["btn btn-sm rounded-md px-4 font-medium transition-all", @show_details && "btn-neutral shadow-sm" || "btn-ghost bg-base-200/50 hover:bg-base-200"]}
               phx-click="toggle_task_details"
               phx-value-task_id={@task.id}
             >
@@ -556,12 +556,12 @@ defmodule EvoDashWeb.DashboardComponents do
             </button>
             
             <details class="dropdown dropdown-end dropdown-top sm:dropdown-bottom">
-              <summary class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-base-200">
+              <summary class="btn btn-sm btn-ghost btn-circle rounded-md hover:bg-base-200">
                 <.icon name="hero-ellipsis-vertical" class="size-4" />
               </summary>
-              <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-2xl w-40 border border-base-200">
+              <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-lg w-40 border border-base-200">
                 <li>
-                  <button class="text-error hover:bg-error/10 hover:text-error rounded-xl" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm={gettext("Delete this task?")}>
+                  <button class="text-error hover:bg-error/10 hover:text-error rounded-md" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm={gettext("Delete this task?")}>
                     <.icon name="hero-trash" class="size-4 mr-2" /> {gettext("Delete")}
                   </button>
                 </li>
@@ -574,24 +574,24 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="border-t border-base-200 pt-3 mt-1">
             <div class="space-y-4">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
+                <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <div class="flex items-center justify-between mb-4">
                     <h4 class="text-sm font-bold flex items-center gap-2">
                       <.icon name="hero-cog-8-tooth" class="size-4.5 text-primary" /> {gettext("Options")}
                     </h4>
-                    <button class="btn btn-xs btn-ghost rounded-full" phx-click="view_full_options" phx-value-task_id={@task.id}>
+                    <button class="btn btn-xs btn-ghost rounded-md" phx-click="view_full_options" phx-value-task_id={@task.id}>
                       <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext("Full")}
                     </button>
                   </div>
                   {render_options(@task.opts)}
                 </div>
                 <%= if Map.get(@task, :result) do %>
-                  <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
+                  <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                     <div class="flex items-center justify-between mb-4">
                       <h4 class="text-sm font-bold flex items-center gap-2">
                         <.icon name="hero-check-badge" class="size-4.5 text-success" /> {gettext("Result")}
                       </h4>
-                      <button class="btn btn-xs btn-ghost rounded-full" phx-click="view_full_result" phx-value-task_id={@task.id}>
+                      <button class="btn btn-xs btn-ghost rounded-md" phx-click="view_full_result" phx-value-task_id={@task.id}>
                         <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext("Full")}
                       </button>
                     </div>
@@ -601,7 +601,7 @@ defmodule EvoDashWeb.DashboardComponents do
               </div>
 
               <%= if Map.get(@task, :usage) do %>
-              <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
+              <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                 <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
                   <.icon name="hero-currency-dollar" class="size-4.5 text-primary" /> {gettext("Token & Cost Usage")}
                 </h4>
@@ -658,7 +658,7 @@ defmodule EvoDashWeb.DashboardComponents do
               <% end %>
 
               <%= if Map.get(@task, :agent_count) do %>
-              <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
+              <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                 <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
                   <.icon name="hero-user-group" class="size-4.5 text-primary" /> {gettext("Agents Spawned")}
                 </h4>
@@ -671,15 +671,15 @@ defmodule EvoDashWeb.DashboardComponents do
               
               <%= if @task.logs != [] do %>
                 <% log_count = length(@task.logs) %>
-                <details class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors group/logs">
+                <details class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs">
                   <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
                     <.icon name="hero-command-line" class="size-4.5 text-base-content/70 group-hover/logs:text-primary transition-colors" />
-                    {gettext("Execution Logs")} 
-                    <span class="text-xs font-medium text-base-content/50 bg-base-300 px-2 py-0.5 rounded-full ml-2">
+                    {gettext("Execution Logs")}
+                    <span class="text-xs font-medium text-base-content/50 bg-base-300 px-2 py-0.5 rounded-md ml-2">
                       <%= if log_count > 20, do: gettext("last 20 of %{count}", count: log_count), else: gettext("%{count}", count: log_count) %>
                     </span>
                   </summary>
-                  <div class="bg-neutral text-neutral-content p-4 rounded-xl max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
+                  <div class="bg-neutral text-neutral-content p-4 rounded-md max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
                     <%= for {log, idx} <- Enum.with_index(Enum.reverse(@task.logs)) do %>
                       <div class={[
                         "flex items-start gap-3 p-1.5 rounded transition-colors",

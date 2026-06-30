@@ -43,3 +43,4 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 - Subdirectory naming conventions: `<name>_live.ex` for LiveViews, `<name>_components.ex` for component modules, `<name>_controller.ex` for controllers.
 - Static assets served from `priv/static` under paths defined in `EvoDashWeb.static_paths/0`.
 - Styling is Tailwind CSS + daisyUI throughout.
+- **Professional design language** (Settings, Tasks, Review, System pages): compact, dense, "power-tool" aesthetic inspired by VS Code / GitHub — `rounded-lg`/`rounded-md` radii (no `rounded-3xl`/`rounded-2xl` large cards), subtle borders, restrained color, no gradient hero boxes or decorative blurs. Settings uses one-config-value-per-full-width-row layout; the config file path is shown at the top with a copy-to-clipboard button (`ClipboardCopy` hook).
