@@ -82,6 +82,7 @@ defmodule EvoGit.Agent.ContextCompression do
                      summary_msg <- ReqLLM.Context.user("Summary of previous events:\n" <> text),
                      new_context <-
                        ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
+                  AgentScheduler.increment_compression_count(agent_id)
                   {:ok, %{state | context: new_context, total_tokens: 0}}
                 else
                   _error -> {:error, state}

@@ -352,4 +352,30 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       end
     end
   end
+
+  describe "increment_compression_count/1" do
+    test "increments compression_count in the agent state table" do
+      agent_id = 1
+      put_agent_state(agent_id, agent_state())
+
+      AgentScheduler.increment_compression_count(agent_id)
+
+      {:ok, updated_state} = get_agent_state(agent_id)
+      assert updated_state.compression_count == 1
+
+      AgentScheduler.increment_compression_count(agent_id)
+
+      {:ok, updated_state} = get_agent_state(agent_id)
+      assert updated_state.compression_count == 2
+    end
+
+    test "defaults to 0 on a freshly constructed AgentState" do
+      assert agent_state().compression_count == 0
+    end
+
+    test "no-op when the agent state is missing" do
+      # Should not raise even when there is no ETS entry for the agent.
+      assert :ok == AgentScheduler.increment_compression_count(999_999)
+    end
+  end
 end

@@ -980,4 +980,28 @@ defmodule EvoGit.AgentScheduler do
         :ok
     end
   end
+
+  @doc """
+  Increments the compression count for an agent in the agent state table.
+
+  Called once per successful context-compression event to track how many times
+  an agent's context has been compressed.
+  """
+  @spec increment_compression_count(pos_integer()) :: :ok
+  def increment_compression_count(agent_id) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        updated_state = %{
+          agent_state
+          | compression_count: agent_state.compression_count + 1
+        }
+
+        put_agent_state(agent_id, updated_state)
+
+        :ok
+
+      :error ->
+        :ok
+    end
+  end
 end
