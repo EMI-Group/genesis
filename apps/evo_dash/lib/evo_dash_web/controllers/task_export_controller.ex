@@ -19,7 +19,19 @@ defmodule EvoDashWeb.TaskExportController do
           |> send_resp(404, gettext("No archive data available for this task"))
           |> halt()
         else
-          data = normalize_for_json(archive_metadata)
+          envelope = %{
+            task_id: task.id,
+            task_type: task.type,
+            repo_path: task.opts[:path],
+            status: task.status,
+            started_at: task.started_at,
+            finished_at: task.finished_at,
+            agent_count: task.agent_count,
+            usage: task.usage,
+            archive_records: archive_metadata
+          }
+
+          data = normalize_for_json(envelope)
           json_binary = Jason.encode!(data)
 
           send_download(conn, {:binary, json_binary},

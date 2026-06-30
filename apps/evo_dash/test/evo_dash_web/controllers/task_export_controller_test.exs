@@ -63,15 +63,30 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert content_type =~ "application/json"
 
       decoded = Jason.decode!(body)
-      assert is_list(decoded)
-      assert length(decoded) == 2
+      assert is_map(decoded)
 
-      first = Enum.find(decoded, fn record -> record["agent_id"] == "T1_A1" end)
+      assert MapSet.new(Map.keys(decoded)) ==
+               MapSet.new(~w(task_id task_type repo_path status started_at finished_at agent_count usage archive_records))
+
+      assert decoded["task_id"] == task_id
+      assert decoded["task_type"] == "genesis"
+      assert decoded["repo_path"] == "/tmp/test"
+      assert decoded["status"] == "completed"
+      assert decoded["started_at"] != nil
+      assert decoded["finished_at"] != nil
+      assert decoded["agent_count"] == 3
+      assert decoded["usage"] == nil
+
+      records = decoded["archive_records"]
+      assert is_list(records)
+      assert length(records) == 2
+
+      first = Enum.find(records, fn record -> record["agent_id"] == "T1_A1" end)
       assert first["objective"] == "Build the feature"
       assert first["role"] == "manager"
       assert first["parent_id"] == nil
 
-      second = Enum.find(decoded, fn record -> record["agent_id"] == "T2_A1" end)
+      second = Enum.find(records, fn record -> record["agent_id"] == "T2_A1" end)
       assert second["parent_id"] == "T1_A1"
       assert second["objective"] == "Implement module X"
 
@@ -94,6 +109,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       finished_at: DateTime.utc_now(),
       logs: [],
       result: nil,
+      agent_count: 3,
       archive_metadata: archive_metadata
     }
 
