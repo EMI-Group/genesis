@@ -241,7 +241,11 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_combined_recent_#{unique}_#{i}"}, recent)
+        EvoDash.TaskStore.put(
+          EvoDash.TaskStore,
+          {:task, "test_combined_recent_#{unique}_#{i}"},
+          recent
+        )
       end
 
       # Running task - should always be kept regardless of age
@@ -257,7 +261,11 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "test_combined_running_#{unique}"}, running)
+      EvoDash.TaskStore.put(
+        EvoDash.TaskStore,
+        {:task, "test_combined_running_#{unique}"},
+        running
+      )
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -670,7 +678,11 @@ defmodule EvoDash.TaskRegistryTest do
       unique = System.unique_integer([:positive])
 
       # Seed a corrupt entry FIRST
-      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, "pre_existing_corrupt_#{unique}"}, "garbage_value")
+      EvoDash.TaskStore.put(
+        EvoDash.TaskStore,
+        {:task, "pre_existing_corrupt_#{unique}"},
+        "garbage_value"
+      )
 
       # Now start a task and complete it
       task_id = "new_task_#{unique}"
@@ -704,6 +716,113 @@ defmodule EvoDash.TaskRegistryTest do
       # Registry is alive
       pid = GenServer.whereis(EvoDash.TaskRegistry)
       assert Process.alive?(pid)
+    end
+  end
+
+  describe "archive_metadata" do
+    test "TaskInfo struct has archive_metadata field defaulting to nil" do
+      assert %TaskInfo{}.archive_metadata == nil
+    end
+
+    test "archive_metadata is stored and retrieved correctly via get_task" do
+      task_id = "archive_store_#{System.unique_integer([:positive])}"
+
+      archive = [
+        %{agent_id: "T1_A1", parent_id: nil, objective: "Genesis", role: :manager}
+      ]
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil,
+        archive_metadata: archive
+      }
+
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert %TaskInfo{} = fetched
+      assert fetched.archive_metadata == archive
+    end
+
+    test "normalize_tasks backfills archive_metadata to nil for older structs", %{
+      data_dir: data_dir
+    } do
+      task_id = "archive_backfill_#{System.unique_integer([:positive])}"
+
+      # Simulate a struct persisted before archive_metadata existed: build a
+      # complete TaskInfo then strip the field so the stored value mimics a
+      # deserialized older struct that lacks the key entirely.
+      stripped =
+        %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil
+        }
+        |> Map.delete(:archive_metadata)
+
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, stripped)
+
+      # Restart the registry to trigger normalize_tasks on init. normalize_tasks
+      # runs Map.merge(%TaskInfo{}, task), backfilling the missing field to its
+      # default (nil).
+      stop_supervised(TaskRegistry)
+
+      start_supervised!(
+        {TaskRegistry,
+         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+      )
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert %TaskInfo{} = fetched
+      assert Map.has_key?(fetched, :archive_metadata)
+      assert fetched.archive_metadata == nil
+    end
+
+    test "update_task_status captures archive_records into archive_metadata" do
+      task_id = "archive_capture_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+
+      archive_records = [
+        %{agent_id: "T1_A1", parent_id: nil, objective: "Genesis", role: :manager},
+        %{agent_id: "T2_A1", parent_id: "T1_A1", objective: "Implement", role: :executor}
+      ]
+
+      # update_task_status is a cast; list_tasks() syncs to ensure it's processed.
+      TaskRegistry.update_task_status(task_id, :completed, {:ok, %{}},
+        archive_records: archive_records
+      )
+
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :completed
+      assert fetched.archive_metadata == archive_records
     end
   end
 
