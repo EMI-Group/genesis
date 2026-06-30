@@ -8,7 +8,7 @@ defmodule EvoGit.CLITest do
 
       assert length(repos) == 1
       repo = hd(repos)
-      assert repo.id == :original
+      assert repo.id == "original"
       assert repo.root == Path.expand("/Source/original-proj")
       assert repo.description == nil
     end
@@ -19,7 +19,7 @@ defmodule EvoGit.CLITest do
 
       assert length(repos) == 1
       repo = hd(repos)
-      assert repo.id == :"my-project"
+      assert repo.id == "my-project"
       assert repo.root == Path.expand("/Source/my-project")
     end
 
@@ -29,7 +29,7 @@ defmodule EvoGit.CLITest do
 
       assert length(repos) == 2
       ids = Enum.map(repos, & &1.id) |> Enum.sort()
-      assert ids == [:original, :reference]
+      assert ids == ["original", "reference"]
     end
 
     test "returns empty list when no -R flags" do
@@ -43,7 +43,7 @@ defmodule EvoGit.CLITest do
       repos = EvoGit.CLI.do_parse_foreign_repos(opts)
 
       repo = hd(repos)
-      assert repo.id == :my_repo
+      assert repo.id == "my_repo"
     end
 
     test "handles path with nested directories" do
@@ -60,10 +60,10 @@ defmodule EvoGit.CLITest do
 
       assert length(repos) == 2
 
-      original = Enum.find(repos, &(&1.id == :original))
+      original = Enum.find(repos, &(&1.id == "original"))
       assert original.root == Path.expand("/Source/a")
 
-      basename = Enum.find(repos, &(&1.id == :"b-project"))
+      basename = Enum.find(repos, &(&1.id == "b-project"))
       assert basename.root == Path.expand("/Source/b-project")
     end
   end
