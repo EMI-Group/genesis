@@ -98,7 +98,7 @@
 <!-- Details -->
               <div class="space-y-4">
                 <!-- Agent Module + Context Path on a single row -->
-                <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+                <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
                   <div class="shrink-0 min-w-[130px]">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Agent Module") %>
@@ -107,7 +107,7 @@
                       {inspect(agent.agent_module)}
                     </code>
                   </div>
-                  <div class="flex-1 min-w-[150px]">
+                  <div class="shrink-0 min-w-[150px] max-w-full">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Context Path") %>
                     </h4>
@@ -147,7 +147,7 @@
                 </div>
 
                 <!-- Task ID, Depth, Retries (compact) + Base/Current Commit (wide) on a single row -->
-                <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+                <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
                   <div class="shrink-0">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Task ID") %>
@@ -170,7 +170,7 @@
                   </div>
 
                   <%= if agent.base_commit do %>
-                    <div class="flex-1 min-w-[130px]">
+                    <div class="shrink-0">
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                         <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Base Commit") %>
                       </h4>
@@ -181,7 +181,7 @@
                   <% end %>
 
                   <%= if agent.current_commit do %>
-                    <div class="flex-1 min-w-[130px]">
+                    <div class="shrink-0">
                       <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                         <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Current Commit") %>
                       </h4>
