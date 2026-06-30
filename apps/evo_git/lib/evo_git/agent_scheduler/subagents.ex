@@ -273,7 +273,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
     foreign_repo_commits =
       case result do
         {:ok, %EvoGit.Agent.Result{commit_sha: sha, repo_id: repo_id}}
-        when is_binary(sha) and not is_nil(repo_id) and repo_id != :primary ->
+        when is_binary(sha) and not is_nil(repo_id) and repo_id != "primary" ->
           Map.put(parent.foreign_repo_commits, repo_id, sha)
 
         _ ->
