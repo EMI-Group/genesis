@@ -28,6 +28,7 @@ defmodule EvoDashWeb.AgentsLive do
       |> assign(:selected_agent_id, nil)
       |> assign(:selected_history_entry, nil)
       |> assign(:selected_objective, nil)
+      |> assign(:show_usage, false)
       |> assign(:agents, agents)
       |> assign(:id_to_display, id_to_display)
       |> assign(:repo_trees, build_repo_trees(agents))
@@ -74,7 +75,7 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_event("select_agent", %{"id" => id}, socket) do
     agent_id = String.to_integer(id)
-    {:noreply, assign(socket, :selected_agent_id, agent_id)}
+    {:noreply, assign(socket, :selected_agent_id, agent_id) |> assign(:show_usage, false)}
   end
 
   @impl true
@@ -83,7 +84,13 @@ defmodule EvoDashWeb.AgentsLive do
      socket
      |> assign(:selected_agent_id, nil)
      |> assign(:selected_history_entry, nil)
-     |> assign(:selected_objective, nil)}
+     |> assign(:selected_objective, nil)
+     |> assign(:show_usage, false)}
+  end
+
+  @impl true
+  def handle_event("toggle_usage", _params, socket) do
+    {:noreply, assign(socket, :show_usage, !socket.assigns.show_usage)}
   end
 
   @impl true
@@ -247,6 +254,7 @@ defmodule EvoDashWeb.AgentsLive do
         repo_id: agent_state && agent_state.repo_id,
         repo_root: agent_state && agent_state.repo_root,
         task_id: meta.task_id,
+        task_number: meta.task_number,
         status: meta.status,
         depth: meta.depth,
         parent_id: meta.parent_id,
