@@ -13,20 +13,20 @@ defmodule EvoDashWeb.SettingsLive do
       <%!-- Header --%>
       <div class="mb-6 mt-2">
         <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("Settings")}</h1>
-        <p class="text-sm text-base-content/60 mt-0.5">{gettext("Runtime configuration and file settings")}</p>
+        <p class="text-sm text-base-content/80 mt-0.5">{gettext("Runtime configuration and file settings")}</p>
       </div>
 
       <%!-- Config file path display --%>
       <div class="mb-4 rounded-lg border border-base-200 bg-base-100 p-3 flex items-center gap-3">
-        <.icon name="hero-document-text" class="size-4 text-base-content/40 shrink-0" />
-        <span class="text-xs font-medium text-base-content/50 shrink-0">{gettext("Configuration file")}</span>
+        <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
+        <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext("Configuration file")}</span>
         <code class="font-mono text-sm text-base-content/80 flex-1 truncate">{@config_path}</code>
         <button id="settings-config-path-copy" phx-hook="ClipboardCopy" data-content={@config_path} class="btn btn-ghost btn-sm btn-square" title={gettext("Copy path")}>
           <.icon name="hero-clipboard-document" class="size-4" />
         </button>
       </div>
       <%= if not @config_file_exists do %>
-        <p class="mb-4 text-xs text-base-content/50">{gettext("File does not exist yet")}</p>
+        <p class="mb-4 text-xs text-base-content/70">{gettext("File does not exist yet")}</p>
       <% end %>
 
       <%!-- Config Status Warning --%>
@@ -43,7 +43,7 @@ defmodule EvoDashWeb.SettingsLive do
                 </li>
               <% end %>
             </ul>
-            <p class="text-sm font-semibold text-base-content/60">
+            <p class="text-sm font-semibold text-base-content/80">
               {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
             </p>
           </div>
@@ -60,7 +60,7 @@ defmodule EvoDashWeb.SettingsLive do
               {gettext("Agents cannot run until you set a model. Go to the LLM category and fill in the Model field.")}
             </p>
             <div class="flex items-center gap-3 flex-wrap">
-              <span class="text-xs font-bold uppercase tracking-wider text-base-content/50">{gettext("Example model names:")}</span>
+              <span class="text-xs font-bold uppercase tracking-wider text-base-content/70">{gettext("Example model names:")}</span>
               <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">anthropic:claude-opus-4-7</span>
               <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">openai:gpt-5.5</span>
             </div>
@@ -148,7 +148,7 @@ defmodule EvoDashWeb.SettingsLive do
     socket =
       socket
       |> assign(:schemas_by_category, schemas_by_category)
-      |> assign(:active_category, :scheduler)
+      |> assign(:active_category, :llm)
       |> assign(:search_text, "")
       |> assign(:per_category_errors, %{})
       |> assign(:scheduler_config, load_scheduler_config())

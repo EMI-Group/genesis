@@ -17,24 +17,24 @@ defmodule EvoDashWeb.SettingsComponents do
   def setting_card(assigns) do
     ~H"""
     <div class={[
-      "relative flex items-start gap-4 px-4 py-3 border-b border-base-200/60 last:border-b-0 group hover:bg-base-200/30 transition-colors",
+      "relative flex items-center gap-4 px-4 py-3 border-b border-base-200/60 last:border-b-0 group hover:bg-base-200/30 transition-colors",
       @disabled && "opacity-60 pointer-events-none"
     ]}>
-      <div class="min-w-0 flex-1 pt-1">
+      <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
-          <code class="font-mono text-xs font-medium text-base-content/70">{Enum.join(@schema.key_path, ".")}</code>
+          <code class="font-mono text-xs font-medium text-base-content/90">{Enum.join(@schema.key_path, ".")}</code>
           <button
             type="button"
             phx-click="reset_key"
             phx-value-key_path={Enum.join(@schema.key_path, ".")}
-            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-xs text-base-content/40 hover:text-primary transition-opacity"
+            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-xs text-base-content/70 hover:text-primary transition-opacity"
             title={gettext("Reset to default")}
           >
             <.icon name="hero-arrow-path" class="size-3.5" />
           </button>
         </div>
-        <p class="text-xs text-base-content/50 truncate mt-0.5" title={Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}>{Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}</p>
-        <p class="text-[11px] text-base-content/40 mt-0.5">
+        <p class="text-xs text-base-content/70 truncate mt-0.5" title={Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}>{Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}</p>
+        <p class="text-[11px] text-base-content/70 mt-0.5">
           <span class="uppercase tracking-wider">{gettext("Default")}</span>
           <span class="font-mono">{default_label(@schema.default)}</span>
         </p>
@@ -42,7 +42,28 @@ defmodule EvoDashWeb.SettingsComponents do
 
       <div class="shrink-0 w-full sm:w-auto">
         <div class="form-control w-full">
-          <%= case @schema.type do %>
+          <%= if @schema.key_path == [:llm, :reasoning_effort] do %>
+            <%!-- Special dropdown for llm.reasoning_effort (string type with constrained values) --%>
+            <div class="relative w-full sm:w-52">
+              <select
+                name={Enum.join(@schema.key_path, ".")}
+                class="select select-bordered select-sm rounded-md w-full font-mono text-base appearance-none pr-8"
+              >
+                <option value="" selected={is_nil(@value)}>
+                  {gettext("(provider default)")}
+                </option>
+                <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
+                  <option value={opt} selected={to_string(@value) == opt}>
+                    {opt}
+                  </option>
+                <% end %>
+              </select>
+              <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
+                <.icon name="hero-chevron-down" class="size-4" />
+              </div>
+            </div>
+          <% else %>
+            <%= case @schema.type do %>
             <% :pos_integer -> %>
               <input
                 type="number"
@@ -104,7 +125,7 @@ defmodule EvoDashWeb.SettingsComponents do
                     </option>
                   <% end %>
                 </select>
-                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/50">
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
                   <.icon name="hero-chevron-down" class="size-4" />
                 </div>
               </div>
@@ -118,8 +139,9 @@ defmodule EvoDashWeb.SettingsComponents do
                   placeholder={gettext("e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5")}
                   class="input input-bordered input-sm rounded-md w-full font-mono text-base"
                 />
-                <p class="text-[11px] text-base-content/40 mt-1">{gettext("Type a model string or use Quick Setup above")}</p>
+                <p class="text-[11px] text-base-content/70 mt-1">{gettext("Type a model string or use Quick Setup above")}</p>
               </div>
+          <% end %>
           <% end %>
         </div>
         <%= if @error do %>
@@ -161,7 +183,7 @@ defmodule EvoDashWeb.SettingsComponents do
           </div>
           <h2 class="text-lg font-bold tracking-tight text-base-content">{category_display_name(@category)}</h2>
         </div>
-        <p class="text-sm font-medium text-base-content/60">{category_description(@category)}</p>
+        <p class="text-sm font-medium text-base-content/80">{category_description(@category)}</p>
       </div>
 
       <%!-- Scrollable Content --%>
@@ -171,7 +193,7 @@ defmodule EvoDashWeb.SettingsComponents do
             <%!-- LLM Provider Quick Setup --%>
             <div class="mb-8 rounded-lg border border-base-200 bg-base-100 p-5">
               <h3 class="text-lg font-bold text-base-content mb-1">{gettext("Quick Setup")}</h3>
-              <p class="text-sm text-base-content/60 mb-5">{gettext("Select a provider to quickly configure your model and API key.")}</p>
+              <p class="text-sm text-base-content/80 mb-5">{gettext("Select a provider to quickly configure your model and API key.")}</p>
 
               <%!-- Provider buttons --%>
               <div class="flex flex-wrap gap-2 mb-5">
@@ -222,7 +244,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%!-- Variant selection (only if provider has variants) --%>
                 <%= if has_variants do %>
                   <div class="mb-5">
-                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/50 mb-3">{gettext("Select a variant:")}</p>
+                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">{gettext("Select a variant:")}</p>
                     <div class="flex flex-wrap gap-2">
                       <%= for variant <- variants do %>
                         <button
@@ -245,7 +267,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%!-- Model shortcuts (show only if no variants needed, or variant selected, and not a custom-model provider) --%>
                 <%= if show_model_buttons do %>
                   <div class="mb-5">
-                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/50 mb-3">{gettext("Quick-select a model:")}</p>
+                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">{gettext("Quick-select a model:")}</p>
                     <div class="flex flex-wrap gap-2">
                       <%= for model <- @selected_provider_models do %>
                         <% resolved_atom = EvoGit.Config.LLMCatalog.resolve_provider_atom(@selected_provider_id, @selected_variant_id) %>
@@ -321,7 +343,7 @@ defmodule EvoDashWeb.SettingsComponents do
                           class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
                         />
                       </div>
-                      <p class="text-xs text-base-content/50 leading-relaxed">
+                      <p class="text-xs text-base-content/70 leading-relaxed">
                         {gettext("The model will be saved as")} <code class="font-mono bg-base-200 px-1.5 py-0.5 rounded text-[11px]">{gettext("openrouter:<model-name>")}</code>.
                       </p>
                       <button type="submit" class="btn btn-primary btn-sm rounded-xl">
@@ -360,7 +382,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         ✓ {gettext("Your API key is configured and ready to use.")}
                       </p>
                     <% else %>
-                      <p class="text-[11px] text-base-content/40 mt-1.5">
+                      <p class="text-[11px] text-base-content/70 mt-1.5">
                         <%= if prefix = api_key_prefix_hint(provider.id) do %>
                           {gettext("Enter your API key. It should start with")} <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]"><%= prefix %></code>
                         <% else %>
@@ -384,25 +406,25 @@ defmodule EvoDashWeb.SettingsComponents do
                 </div>
                 <div>
                   <h4 class="font-semibold text-sm">{gettext("Connection Test")}</h4>
-                  <p class="text-xs text-base-content/50">{gettext("Verify your LLM configuration is working")}</p>
+                  <p class="text-xs text-base-content/70">{gettext("Verify your LLM configuration is working")}</p>
                 </div>
               </div>
               <div class="flex items-center gap-3">
                 <%= case @llm_test_status do %>
                   <% :idle -> %>
-                    <span class="text-sm text-base-content/60">{gettext("Not tested — click to verify LLM connectivity")}</span>
+                    <span class="text-sm text-base-content/80">{gettext("Not tested — click to verify LLM connectivity")}</span>
                     <button phx-click="test_llm" class="btn btn-primary btn-sm gap-2">
                       <.icon name="hero-signal" class="size-4" />
                       {gettext("Test Connection")}
                     </button>
                   <% :testing -> %>
                     <span class="loading loading-spinner loading-sm text-primary"></span>
-                    <span class="text-sm text-base-content/60">{gettext("Testing LLM connection...")}</span>
+                    <span class="text-sm text-base-content/80">{gettext("Testing LLM connection...")}</span>
                   <% {:ok, data} -> %>
                     <.icon name="hero-check-circle" class="size-5 text-success" />
                     <span class="text-sm text-success font-medium">{gettext("Connected")}</span>
-                    <span class="text-xs text-base-content/40">({data.model})</span>
-                    <span class="text-xs text-base-content/50 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(data.response, 50)}"</span>
+                    <span class="text-xs text-base-content/70">({data.model})</span>
+                    <span class="text-xs text-base-content/70 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(data.response, 50)}"</span>
                     <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
                       <.icon name="hero-arrow-path" class="size-3" />
                       {gettext("Retest")}
@@ -420,14 +442,15 @@ defmodule EvoDashWeb.SettingsComponents do
 
             <%!-- Help text for other providers --%>
             <div class="mb-6 bg-base-200/30 rounded-lg p-4 border border-base-200">
-              <p class="text-xs text-base-content/50 leading-relaxed">
+              <p class="text-xs text-base-content/70 leading-relaxed">
                 {raw(gettext("<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."))}
               </p>
             </div>
 
             <%!-- Render the regular setting cards for LLM --%>
             <div class="rounded-lg border border-base-200 overflow-hidden">
-              <%= for schema <- @schemas do %>
+              <% reordered = ordered_llm_schemas(@schemas) %>
+              <%= for schema <- reordered do %>
                 <.setting_card
                   schema={schema}
                   value={get_in(@file_config, schema.key_path)}
@@ -506,7 +529,7 @@ defmodule EvoDashWeb.SettingsComponents do
               <%= if resources_schemas != [] do %>
                 <div class="flex items-center gap-4 mb-6 mt-10">
                   <div class="h-px bg-base-200 flex-1"></div>
-                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/40">{gettext("Resources")}</h3>
+                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">{gettext("Resources")}</h3>
                   <div class="h-px bg-base-200 flex-1"></div>
                 </div>
 
@@ -536,7 +559,7 @@ defmodule EvoDashWeb.SettingsComponents do
               <%= if process_schemas != [] do %>
                 <div class="flex items-center gap-4 mb-6 mt-10">
                   <div class="h-px bg-base-200 flex-1"></div>
-                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/40">{gettext("Process Limits")}</h3>
+                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">{gettext("Process Limits")}</h3>
                   <div class="h-px bg-base-200 flex-1"></div>
                 </div>
 
@@ -615,7 +638,7 @@ defmodule EvoDashWeb.SettingsComponents do
           </div>
           <h2 class="text-lg font-bold tracking-tight text-base-content">{gettext("Search Results")}</h2>
         </div>
-        <p class="text-sm font-medium text-base-content/60">
+        <p class="text-sm font-medium text-base-content/80">
           <%= if @total_matches == 0 do %>
             {gettext("No settings found matching \"%{query}\"", query: @search_text)}
           <% else %>
@@ -631,7 +654,7 @@ defmodule EvoDashWeb.SettingsComponents do
             <div class="text-base-content/30 mb-4">
               <.icon name="hero-magnifying-glass" class="size-10" />
             </div>
-            <p class="text-base-content/50 font-medium">{gettext("Try a different search term.")}</p>
+            <p class="text-base-content/70 font-medium">{gettext("Try a different search term.")}</p>
           </div>
         <% else %>
           <%= for {category, schemas} <- sort_categories(@categories) do %>
@@ -643,7 +666,7 @@ defmodule EvoDashWeb.SettingsComponents do
                     <.icon name={category_icon(category)} class="size-5" />
                   </div>
                   <h3 class="text-lg font-bold tracking-tight text-base-content">{category_display_name(category)}</h3>
-                  <span class="text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg bg-base-300/50 text-base-content/40">{length(matching)}</span>
+                  <span class="text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg bg-base-300/50 text-base-content/70">{length(matching)}</span>
                   <div class="h-px bg-base-200 flex-1"></div>
                 </div>
                 <div class="rounded-lg border border-base-200 overflow-hidden">
@@ -686,7 +709,7 @@ defmodule EvoDashWeb.SettingsComponents do
       <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md pb-4 pt-2 -mx-4 px-4">
         <div class="relative group">
           <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
-            <.icon name="hero-magnifying-glass" class="size-4 text-base-content/40 group-focus-within:text-primary transition-colors" />
+            <.icon name="hero-magnifying-glass" class="size-4 text-base-content/70 group-focus-within:text-primary transition-colors" />
           </div>
           <form id="settings-search" class="contents" phx-submit="noop">
             <input
@@ -703,7 +726,7 @@ defmodule EvoDashWeb.SettingsComponents do
               type="button"
               phx-click="search"
               phx-value-value=""
-              class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/40 hover:text-base-content transition-colors"
+              class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/70 hover:text-base-content transition-colors"
             >
               <.icon name="hero-x-mark" class="size-4" />
             </button>
@@ -722,7 +745,7 @@ defmodule EvoDashWeb.SettingsComponents do
             class={[
               "w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all duration-200 text-sm font-semibold group relative overflow-hidden",
               category == @active_category && "bg-primary text-primary-content",
-              category != @active_category && "hover:bg-base-200/70 text-base-content/70 hover:text-base-content",
+              category != @active_category && "hover:bg-base-200/70 text-base-content/90 hover:text-base-content",
               @search_text != "" and match_count == 0 && "opacity-30"
             ]}
           >
@@ -741,7 +764,7 @@ defmodule EvoDashWeb.SettingsComponents do
               <span class={[
                 "text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg relative z-10 transition-colors",
                 category == @active_category && "bg-primary-content/20 text-primary-content",
-                category != @active_category && "bg-base-300/50 text-base-content/40 group-hover:bg-base-300"
+                category != @active_category && "bg-base-300/50 text-base-content/70 group-hover:bg-base-300"
               ]}>{total}</span>
             <% end %>
           </button>
@@ -755,11 +778,25 @@ defmodule EvoDashWeb.SettingsComponents do
   # Private Helpers
   # ───────────────────────────────────────────────────────────────────────────
 
+  defp ordered_llm_schemas(schemas) do
+    # reasoning_effort must appear 2nd (right after model) in the LLM section
+    model = Enum.find(schemas, &(&1.key_path == [:llm, :model]))
+    reasoning = Enum.find(schemas, &(&1.key_path == [:llm, :reasoning_effort]))
+    rest = Enum.reject(schemas, &(&1.key_path in [[:llm, :model], [:llm, :reasoning_effort]]))
+
+    if model && reasoning do
+      [model, reasoning | rest]
+    else
+      schemas
+    end
+  end
+
   defp input_value(nil), do: ""
   defp input_value(value), do: to_string(value)
 
   def model_display(nil), do: ""
   def model_display(value) when is_binary(value), do: value
+
   def model_display(value) when is_map(value) do
     provider = to_string(value[:provider] || value["provider"] || "")
     id = to_string(value[:id] || value["id"] || "")
@@ -768,14 +805,18 @@ defmodule EvoDashWeb.SettingsComponents do
     cond do
       id != "" and base_url not in [nil, ""] ->
         if provider != "", do: "#{provider}:#{id} @ #{base_url}", else: "#{id} @ #{base_url}"
+
       id != "" and provider != "" ->
         "#{provider}:#{id}"
+
       id != "" ->
         id
+
       true ->
         inspect(value)
     end
   end
+
   def model_display(value), do: to_string(value)
 
   defp default_label(nil), do: gettext("empty")
@@ -815,7 +856,7 @@ defmodule EvoDashWeb.SettingsComponents do
     do: gettext("Manage how many past tasks are retained and for how long.")
 
   defp sort_categories(categories) do
-    order = [:scheduler, :llm, :user, :sandbox, :truncation, :task_history]
+    order = [:llm, :scheduler, :user, :sandbox, :truncation, :task_history]
     Enum.sort_by(categories, fn {cat, _} -> Enum.find_index(order, &(&1 == cat)) || 99 end)
   end
 
