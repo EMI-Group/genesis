@@ -26,6 +26,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `LoopState.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
   - `archive` — whether task archiving is enabled for this agent (writes git refs + ETS records on completion)
   - `compression_count` — number of times context compression has fired for this agent
+  - `total_tokens` — cumulative token count across all LLM calls since the last compression (mirrors `LoopState.total_tokens`). Used by the dashboard to display context progress. Reset to 0 on each compression.
   """
 
   alias EvoGit.Agent.Usage
@@ -49,6 +50,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
     archive: false,
     usage: nil,
     compression_count: 0,
+    total_tokens: 0,
     llm_generation_params: [],
     repo_id: :primary,
     repo_root: nil,
@@ -73,6 +75,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           turn: non_neg_integer() | nil,
           archive: boolean(),
           compression_count: non_neg_integer(),
+          total_tokens: non_neg_integer(),
           foreign_repos: [ForeignRepo.t()]
         }
 end

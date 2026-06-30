@@ -982,6 +982,26 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Updates the cumulative token count for an agent in the agent state table.
+
+  This mirrors `LoopState.total_tokens` so the dashboard can display context
+  progress. Reset to 0 on each context compression.
+  """
+  @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
+  def update_total_tokens(agent_id, total_tokens) when is_integer(total_tokens) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        updated_state = %{agent_state | total_tokens: total_tokens}
+        put_agent_state(agent_id, updated_state)
+
+        :ok
+
+      :error ->
+        :ok
+    end
+  end
+
+  @doc """
   Increments the compression count for an agent in the agent state table.
 
   Called once per successful context-compression event to track how many times
