@@ -55,6 +55,7 @@ defmodule EvoDashWeb.DashboardLive do
             seeds={@task_seeds}
             starting_commit={@task_starting_commit}
             disabled={is_nil(@active_project)}
+            archive={@task_archive}
           />
         </div>
 
@@ -476,6 +477,7 @@ defmodule EvoDashWeb.DashboardLive do
       |> maybe_restore_assign(:task_prompt, params["task_prompt"])
       |> maybe_restore_assign(:task_seeds, params["task_seeds"])
       |> maybe_restore_show_project_settings(params["show_project_settings"])
+      |> maybe_restore_task_archive(params["task_archive"])
 
     # Restore project if we don't already have one active.
     # Only restore project-specific assigns (mode, node_path) when no project is
@@ -523,6 +525,7 @@ defmodule EvoDashWeb.DashboardLive do
         end
 
       node_path = params["node_path"]
+      archive = params["archive"] == "true"
 
       opts = [path: path, mode: mode]
 
@@ -565,6 +568,8 @@ defmodule EvoDashWeb.DashboardLive do
 
       opts =
         if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
+
+      opts = if archive, do: Keyword.put(opts, :archive, true), else: opts
 
       case TaskRegistry.start_task(task_type, opts) do
         {:ok, task} ->
@@ -1017,6 +1022,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:task_node_path, "")
     |> assign(:task_seeds, "")
     |> assign(:task_starting_commit, "")
+    |> assign(:task_archive, false)
   end
 
   defp current_tasks(socket) do
@@ -1151,6 +1157,7 @@ defmodule EvoDashWeb.DashboardLive do
       task_node_path: socket.assigns.task_node_path,
       task_seeds: socket.assigns.task_seeds,
       task_starting_commit: socket.assigns.task_starting_commit,
+      task_archive: socket.assigns.task_archive,
       foreign_repos: serialize_foreign_repos(socket.assigns[:foreign_repos])
     }
 
@@ -1179,6 +1186,10 @@ defmodule EvoDashWeb.DashboardLive do
     do: assign(socket, :show_project_settings, false)
 
   defp maybe_restore_show_project_settings(socket, _), do: socket
+
+  defp maybe_restore_task_archive(socket, "true"), do: assign(socket, :task_archive, true)
+  defp maybe_restore_task_archive(socket, true), do: assign(socket, :task_archive, true)
+  defp maybe_restore_task_archive(socket, _), do: assign(socket, :task_archive, false)
 
   defp maybe_restore_foreign_repos(socket, nil), do: socket
   defp maybe_restore_foreign_repos(socket, repos) when is_list(repos) and repos == [], do: socket
