@@ -185,7 +185,90 @@ defmodule EvoDash.TaskStore do
         []
       )
 
+    # Idempotent schema repair: some existing databases have the `projects`
+    # table created with a `path` primary-key column (from commit 0989e6f9)
+    # instead of `id`. Since `CREATE TABLE IF NOT EXISTS` is a no-op on an
+    # existing table, the wrong schema persists forever — every read/write
+    # referencing column `id` fails. Detect and rebuild.
+    repair_projects_table(conn)
+
     :ok
+  end
+
+  # Idempotent schema repair for the `projects` table.
+  #
+  # Historical bug (commit 0989e6f9): the `projects` table was created with a
+  # `path` column as the primary key instead of `id`. All SQL in this module
+  # references column `id`, so a stale-schema table causes every read/write to
+  # fail. This detects the old schema (via PRAGMA table_info) and rebuilds the
+  # table with the correct column name, preserving all data BLOBs.
+  #
+  # Wrapped in try/rescue so a migration hiccup NEVER blocks startup.
+  defp repair_projects_table(conn) do
+    try do
+      pk_column = projects_pk_column(conn)
+
+      if pk_column && pk_column != "id" do
+        # Stale schema detected — rebuild with the correct column name.
+        old_column = pk_column
+
+        # 1. Read all existing rows using the OLD column name.
+        {:ok, %{rows: rows}} =
+          XqliteNIF.query(conn, "SELECT #{old_column}, data FROM projects", [])
+
+        # 2. Drop and recreate with the correct schema.
+        {:ok, _} = XqliteNIF.execute(conn, "DROP TABLE projects", [])
+
+        {:ok, _} =
+          XqliteNIF.execute(
+            conn,
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, data BLOB)",
+            []
+          )
+
+        # 3. Re-insert rows, mapping old_column value → id column.
+        for [id_value, blob] <- rows do
+          {:ok, _} =
+            XqliteNIF.execute(
+              conn,
+              "INSERT INTO projects (id, data) VALUES (?1, ?2)",
+              [id_value, blob]
+            )
+        end
+
+        Logger.warning(
+          "TaskStore: repaired projects table schema (column " <>
+            "'#{old_column}' → 'id'), migrated #{length(rows)} row(s)."
+        )
+      end
+    rescue
+      error ->
+        Logger.error(
+          "TaskStore: projects table schema repair failed: " <>
+            "#{Exception.message(error)}"
+        )
+    end
+  end
+
+  # Returns the primary-key column name for the `projects` table, or nil if
+  # the table has no primary key or the query fails.
+  defp projects_pk_column(conn) do
+    case XqliteNIF.query(conn, "PRAGMA table_info(projects)", []) do
+      {:ok, %{rows: rows}} ->
+        # Each row: [cid, name, type, notnull, dflt_value, pk]
+        # pk is 0 for non-PK columns, a positive integer for PK columns.
+        Enum.find_value(rows, fn
+          [_cid, name, _type, _notnull, _dflt, pk]
+          when is_integer(pk) and pk > 0 ->
+            name
+
+          _ ->
+            nil
+        end)
+
+      _ ->
+        nil
+    end
   end
 
   @impl true

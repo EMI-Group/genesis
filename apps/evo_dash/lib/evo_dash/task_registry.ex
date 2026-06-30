@@ -315,32 +315,58 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:add_recent_project, path, name}, _from, state) do
-    now = DateTime.utc_now()
+    {reply, state} =
+      try do
+        do_add_recent_project(state, path, name)
+      rescue
+        error ->
+          Logger.error(
+            "TaskRegistry: add_recent_project failed for path #{inspect(path)}: " <>
+              "#{Exception.message(error)}"
+          )
 
-    EvoDash.TaskStore.put(state.task_store, {:project, path}, %{path: path, name: name, last_opened_at: now})
-
-    # Enforce max limit
-    trim_recent_projects(state)
+          {{:error, Exception.message(error)}, state}
+      end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
-    {:reply, :ok, state}
+    {:reply, reply, state}
   end
 
   @impl true
   def handle_call(:list_recent_projects, _from, state) do
-    projects =
-      select_all_projects(state)
-      |> Enum.map(fn {_key, project} -> project end)
-      |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
+    reply =
+      try do
+        do_list_recent_projects(state)
+      rescue
+        error ->
+          Logger.error(
+            "TaskRegistry: list_recent_projects failed: " <>
+              "#{Exception.message(error)}"
+          )
 
-    {:reply, projects, state}
+          []
+      end
+
+    {:reply, reply, state}
   end
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    EvoDash.TaskStore.delete(state.task_store, {:project, path})
+    {reply, state} =
+      try do
+        do_remove_recent_project(state, path)
+      rescue
+        error ->
+          Logger.error(
+            "TaskRegistry: remove_recent_project failed for path #{inspect(path)}: " <>
+              "#{Exception.message(error)}"
+          )
+
+          {{:error, Exception.message(error)}, state}
+      end
+
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
-    {:reply, :ok, state}
+    {:reply, reply, state}
   end
 
   @impl true
@@ -515,8 +541,34 @@ defmodule EvoDash.TaskRegistry do
 
   # --- Crash-safe callback bodies ---
   # These private helpers contain the logic extracted from the handle_cast /
-  # handle_info callbacks above, so the callbacks can wrap them in try/rescue
-  # without crashing the GenServer.
+  # handle_call / handle_info callbacks above, so the callbacks can wrap them
+  # in try/rescue without crashing the GenServer.
+
+  defp do_add_recent_project(state, path, name) do
+    now = DateTime.utc_now()
+
+    EvoDash.TaskStore.put(
+      state.task_store,
+      {:project, path},
+      %{path: path, name: name, last_opened_at: now}
+    )
+
+    # Enforce max limit
+    trim_recent_projects(state)
+
+    {:ok, state}
+  end
+
+  defp do_list_recent_projects(state) do
+    select_all_projects(state)
+    |> Enum.map(fn {_key, project} -> project end)
+    |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
+  end
+
+  defp do_remove_recent_project(state, path) do
+    EvoDash.TaskStore.delete(state.task_store, {:project, path})
+    {:ok, state}
+  end
 
   defp do_handle_update_status(state, task_id, status, result, opts) do
     usage = Keyword.get(opts, :usage)
