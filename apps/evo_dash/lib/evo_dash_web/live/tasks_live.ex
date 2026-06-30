@@ -11,15 +11,10 @@ defmodule EvoDashWeb.TasksLive do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:tasks} config_status={@config_status}>
       <!-- Page Header -->
-      <div class="flex items-center justify-between mb-6 animate-fade-in-up">
-        <div class="flex items-center gap-3">
-          <div class="bg-accent/15 text-accent p-3 rounded-xl">
-            <.icon name="hero-clipboard-document-list" class="size-6" />
-          </div>
-          <div>
-            <h1 class="text-xl font-bold">{gettext("Task History")}</h1>
-            <p class="text-sm text-base-content/60">{gettext("View and manage all tasks across projects")}</p>
-          </div>
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("Task History")}</h1>
+          <p class="text-sm text-base-content/60 mt-0.5">{gettext("View and manage all tasks across projects")}</p>
         </div>
         <div class="flex items-center gap-2">
           <.link navigate={~p"/"} class="btn btn-ghost gap-2">
@@ -29,14 +24,14 @@ defmodule EvoDashWeb.TasksLive do
       </div>
 
       <!-- Filter Bar -->
-      <div class="bg-base-100 rounded-2xl shadow-sm border border-base-200 p-4 sm:p-5 mb-6 animate-fade-in-up animation-delay-100">
+      <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
         <form id="task-filters" phx-submit="noop">
           <div class="flex flex-col sm:flex-row gap-3">
           <!-- Status Filter -->
           <div class="form-control">
             <select
               name="status_filter"
-              class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+              class="select select-bordered select-sm rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
               phx-change="filter_tasks"
             >
               <option value="all" selected={@status_filter == "all"}>{gettext("All Statuses")}</option>
@@ -52,7 +47,7 @@ defmodule EvoDashWeb.TasksLive do
           <div class="form-control">
             <select
               name="project_filter"
-              class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+              class="select select-bordered select-sm rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
               phx-change="filter_tasks"
             >
               <option value="all" selected={@project_filter == "all"}>{gettext("All Projects")}</option>
@@ -68,7 +63,7 @@ defmodule EvoDashWeb.TasksLive do
           <div class="form-control">
             <select
               name="review_filter"
-              class="select select-bordered select-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+              class="select select-bordered select-sm rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
               phx-change="filter_review"
             >
               <option value="all" selected={@review_status_filter == "all"}>{gettext("All Reviews")}</option>
@@ -85,7 +80,7 @@ defmodule EvoDashWeb.TasksLive do
               type="text"
               name="search_query"
               value={@search_query}
-              class="input input-bordered input-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+              class="input input-bordered input-sm rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
               placeholder={gettext("Search by task ID, prompt, or objective...")}
               phx-change="search_tasks"
               phx-debounce="200"
@@ -96,19 +91,11 @@ defmodule EvoDashWeb.TasksLive do
           <div class="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              class="btn btn-ghost"
+              class="btn btn-ghost btn-sm"
               phx-click="reset_filters"
               title={gettext("Reset all filters")}
             >
               <.icon name="hero-x-mark" class="size-4" /> {gettext("Reset")}
-            </button>
-            <button
-              type="button"
-              class="btn btn-outline btn-error"
-              phx-click="clear_task_history"
-              phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
-            >
-              <.icon name="hero-trash" class="size-4" /> {gettext("Clear History")}
             </button>
           </div>
           </div>
@@ -119,30 +106,30 @@ defmodule EvoDashWeb.TasksLive do
           <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
             <span class="text-xs text-base-content/50">{gettext("Active filters:")}</span>
             <%= if @status_filter != "all" do %>
-              <span class="badge badge-primary gap-1">
+              <span class="badge badge-primary gap-1 rounded-md">
                 {@status_filter}
                 <button phx-click="clear_filter" phx-value-filter="status" class="hover:opacity-70">×</button>
               </span>
             <% end %>
             <%= if @project_filter != "all" do %>
-              <span class="badge badge-secondary gap-1">
+              <span class="badge badge-secondary gap-1 rounded-md">
                 {Path.basename(@project_filter)}
                 <button phx-click="clear_filter" phx-value-filter="project" class="hover:opacity-70">×</button>
               </span>
             <% end %>
             <%= if @search_query != "" do %>
-              <span class="badge badge-accent gap-1">
+              <span class="badge badge-accent gap-1 rounded-md">
                 "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20, do: "..."}"
                 <button phx-click="clear_filter" phx-value-filter="search" class="hover:opacity-70">×</button>
               </span>
             <% end %>
             <%= if @review_status_filter != "all" do %>
-              <span class="badge badge-accent gap-1">
+              <span class="badge badge-accent gap-1 rounded-md">
                 <%= case @review_status_filter do %>
-                  <% "pending" -> %>Pending Review
-                  <% "merged" -> %>Merged
-                  <% "rejected" -> %>Rejected
-                  <% "continued" -> %>Continued
+                  <% "pending" -> %>{gettext("Pending Review")}
+                  <% "merged" -> %>{gettext("Merged")}
+                  <% "rejected" -> %>{gettext("Rejected")}
+                  <% "continued" -> %>{gettext("Continued")}
                   <% _ -> %>{@review_status_filter}
                 <% end %>
                 <button phx-click="clear_filter" phx-value-filter="review" class="hover:opacity-70">×</button>
@@ -162,10 +149,8 @@ defmodule EvoDashWeb.TasksLive do
       <!-- Task List -->
       <div class="space-y-4 lg:space-y-5">
         <%= if @filtered_tasks == [] do %>
-          <div class="text-center py-12 sm:py-16 text-base-content/50 animate-fade-in-up">
-            <div class="animate-float">
-              <.icon name="hero-inbox" class="size-16 mx-auto mb-4 opacity-50" />
-            </div>
+          <div class="text-center py-12 sm:py-16 text-base-content/50">
+            <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
             <p class="text-lg font-medium">{gettext("No tasks found")}</p>
             <p class="text-sm mt-1">
               <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
@@ -185,6 +170,13 @@ defmodule EvoDashWeb.TasksLive do
             </div>
           <% end %>
         <% end %>
+      </div>
+
+      <!-- Clear History (moved to bottom for safety) -->
+      <div class="mt-6 flex justify-center sm:justify-end">
+        <button type="button" class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1" phx-click="clear_task_history" phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}>
+          <.icon name="hero-trash" class="size-3.5" /> {gettext("Clear History")}
+        </button>
       </div>
 
       <!-- Full Result Modal -->
