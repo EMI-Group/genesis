@@ -146,13 +146,13 @@ defmodule EvoGit.Config do
     # didn't exist yet — e.g. "base_url").
     atomized =
       Map.new(model, fn
-        {key, value} when is_binary(key) -> {String.to_atom(key), value}
+        {key, value} when is_binary(key) -> {atomize_key(key), value}
         {key, value} -> {key, value}
       end)
 
     # Convert the provider VALUE to an atom if it's a string.
     case Map.get(atomized, :provider) do
-      provider when is_binary(provider) -> Map.put(atomized, :provider, String.to_atom(provider))
+      provider when is_binary(provider) -> Map.put(atomized, :provider, atomize_key(provider))
       _ -> atomized
     end
   end
@@ -165,6 +165,17 @@ defmodule EvoGit.Config do
   end
 
   defp atomize_if_string(value, _valid_atoms), do: value
+
+  # Safely converts a string to an existing atom, returning the original string
+  # if the atom does not exist. This avoids atom-table exhaustion from dynamic
+  # String.to_atom/1 calls on untrusted input.
+  defp atomize_key(key) when is_binary(key) do
+    try do
+      String.to_existing_atom(key)
+    rescue
+      ArgumentError -> key
+    end
+  end
 
   @doc """
   Returns the resolved value for a specific key path.

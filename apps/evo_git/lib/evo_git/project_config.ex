@@ -121,10 +121,9 @@ defmodule EvoGit.ProjectConfig do
     case read(repo_root) do
       %{"foreign_repos" => repos} when is_map(repos) ->
         Enum.map(repos, fn {id_str, config} ->
-          id = String.to_atom(id_str)
           path = Map.fetch!(config, "path")
           description = Map.get(config, "description")
-          ForeignRepo.new(id, path, description: description)
+          ForeignRepo.new(id_str, path, description: description)
         end)
 
       _ ->

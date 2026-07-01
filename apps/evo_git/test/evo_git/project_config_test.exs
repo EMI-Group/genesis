@@ -142,7 +142,7 @@ defmodule EvoGit.ProjectConfigTest do
       assert length(repos) == 2
 
       ids = Enum.map(repos, & &1.id) |> Enum.sort()
-      assert ids == [:original, :reference]
+      assert ids == ["original", "reference"]
 
       roots = Enum.map(repos, & &1.root) |> Enum.sort()
       assert roots == ["/Source/original-proj", "/Source/rust-rewrite-proj"]
@@ -162,8 +162,8 @@ defmodule EvoGit.ProjectConfigTest do
 
       repos = ProjectConfig.foreign_repos(tmp_dir)
 
-      original = Enum.find(repos, &(&1.id == :original))
-      reference = Enum.find(repos, &(&1.id == :reference))
+      original = Enum.find(repos, &(&1.id == "original"))
+      reference = Enum.find(repos, &(&1.id == "reference"))
 
       # Explicit description is used when provided
       assert original.description == "Legacy Project"

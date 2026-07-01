@@ -203,6 +203,18 @@ defmodule EvoDash.TaskStore do
         []
       )
 
+    # Quarantine table for tasks (mirrors projects_quarantine). When
+    # integrity_check finds an undecodable `tasks` row, the raw blob is moved
+    # here (INSERT then DELETE) instead of being hard-deleted. This preserves
+    # the data for later recovery/diagnosis. Both tables are now quarantined
+    # for defense-in-depth.
+    {:ok, _} =
+      XqliteNIF.execute(
+        conn,
+        "CREATE TABLE IF NOT EXISTS tasks_quarantine (id TEXT PRIMARY KEY, data BLOB)",
+        []
+      )
+
     # Idempotent schema repair: some existing databases have the `projects`
     # table created with a `path` primary-key column (from commit 0989e6f9)
     # instead of `id`. Since `CREATE TABLE IF NOT EXISTS` is a no-op on an
@@ -419,9 +431,10 @@ defmodule EvoDash.TaskStore do
       try do
         [{{ns, id}, :erlang.binary_to_term(blob, [:safe])}]
       rescue
-        _ ->
+        e ->
           # Skip rows whose blob fails to decode — don't let one bad row
           # poison the entire read.
+          Logger.warning("Skipping undecodable row in table #{table} (id: #{inspect(id)}): #{Exception.message(e)}")
           []
       end
     end)
@@ -468,12 +481,12 @@ defmodule EvoDash.TaskStore do
     end
   end
 
-  # Scans both tables for rows whose blobs fail to decode. Tasks are deleted
-  # (lower-value, auto-expiring); projects are QUARANTINED — the raw blob is
-  # preserved in `projects_quarantine` for recovery/diagnosis. Returns the
-  # total count of removed-from-live-table rows.
+  # Scans both tables for rows whose blobs fail to decode. BOTH tasks and
+  # projects are QUARANTINED for defense-in-depth — the raw blob is preserved
+  # in `<table>_quarantine` for recovery/diagnosis rather than being
+  # hard-deleted. Returns the total count of removed-from-live-table rows.
   defp scan_and_repair_corrupt_rows(conn) do
-    scan_table_for_corrupt(conn, "tasks", :delete) +
+    scan_table_for_corrupt(conn, "tasks", :quarantine) +
       scan_table_for_corrupt(conn, "projects", :quarantine)
   end
 

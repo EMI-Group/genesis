@@ -43,13 +43,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
   describe "validate_spatial_contract_for_spec/3 — cross-repo delegation" do
     test "allows read-only agent when repo ids differ" do
-      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: :primary)
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
 
       spec =
         spec(
           path: "./src",
           repo: "/home/user/original",
-          repo_id: :original,
+          repo_id: "original",
           agent_module: DummyReadOnlyAgent
         )
 
@@ -57,13 +57,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
     end
 
     test "rejects read-write agent when repo ids differ" do
-      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: :primary)
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
 
       spec =
         spec(
           path: "./src",
           repo: "/home/user/original",
-          repo_id: :original,
+          repo_id: "original",
           agent_module: DummyReadWriteAgent
         )
 
@@ -74,13 +74,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
     end
 
     test "error message mentions read-only alternatives" do
-      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: :primary)
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
 
       spec =
         spec(
           path: "./src",
           repo: "/home/user/original",
-          repo_id: :original,
+          repo_id: "original",
           agent_module: DummyReadWriteAgent
         )
 
@@ -93,13 +93,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
     test "cross-repo rules apply even between two different foreign repos" do
       # Parent is in :original, child targets :reference
-      parent = parent_state(path: "./", repo: "/home/user/original", repo_id: :original)
+      parent = parent_state(path: "./", repo: "/home/user/original", repo_id: "original")
 
       read_only_spec =
         spec(
           path: "./src",
           repo: "/home/user/reference",
-          repo_id: :reference,
+          repo_id: "reference",
           agent_module: DummyReadOnlyAgent
         )
 
@@ -107,7 +107,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
         spec(
           path: "./src",
           repo: "/home/user/reference",
-          repo_id: :reference,
+          repo_id: "reference",
           agent_module: DummyReadWriteAgent
         )
 
@@ -122,13 +122,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
   describe "validate_spatial_contract_for_spec/3 — same-repo delegation" do
     test "allows read-write child at descendant path" do
-      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: :primary)
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
 
       spec =
         spec(
           path: "./src",
           repo: "/home/user/primary",
-          repo_id: :primary,
+          repo_id: "primary",
           agent_module: DummyReadWriteAgent
         )
 
@@ -136,13 +136,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
     end
 
     test "rejects read-write child at sibling path" do
-      parent = parent_state(path: "./src", repo: "/home/user/primary", repo_id: :primary)
+      parent = parent_state(path: "./src", repo: "/home/user/primary", repo_id: "primary")
 
       spec =
         spec(
           path: "./lib",
           repo: "/home/user/primary",
-          repo_id: :primary,
+          repo_id: "primary",
           agent_module: DummyReadWriteAgent
         )
 
@@ -153,13 +153,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
     end
 
     test "allows read-only child at any path regardless of parent" do
-      parent = parent_state(path: "./src", repo: "/home/user/primary", repo_id: :primary)
+      parent = parent_state(path: "./src", repo: "/home/user/primary", repo_id: "primary")
 
       spec =
         spec(
           path: "./lib",
           repo: "/home/user/primary",
-          repo_id: :primary,
+          repo_id: "primary",
           agent_module: DummyReadOnlyAgent
         )
 
@@ -198,7 +198,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
           phylo_node: %PhyloGraphNode{repo: "/test", base_commit: "abc", current_commit: "abc"},
           agent_module: nil,
           objective: "test",
-          repo_id: :primary
+          repo_id: "primary"
         },
         sub_agent_indices: sub_indices,
         sub_agent_results: %{},
@@ -213,12 +213,12 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       parent_meta = base_sched_meta(parent_id, %{sub_id => 0})
       :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
 
-      result = {:ok, %Result{result: "done", commit_sha: "def456", repo_id: :original}}
+      result = {:ok, %Result{result: "done", commit_sha: "def456", repo_id: "original"}}
 
       Subagents.store_sub_result(parent_id, sub_id, result)
 
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
-      assert updated.foreign_repo_commits == %{original: "def456"}
+      assert updated.foreign_repo_commits == %{"original" => "def456"}
       assert updated.sub_agent_results == %{0 => result}
     end
 
@@ -228,14 +228,14 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       parent_meta = base_sched_meta(parent_id, %{10 => 0, 11 => 1})
       :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
 
-      result1 = {:ok, %Result{result: "done1", commit_sha: "sha1", repo_id: :original}}
-      result2 = {:ok, %Result{result: "done2", commit_sha: "sha2", repo_id: :reference}}
+      result1 = {:ok, %Result{result: "done1", commit_sha: "sha1", repo_id: "original"}}
+      result2 = {:ok, %Result{result: "done2", commit_sha: "sha2", repo_id: "reference"}}
 
       Subagents.store_sub_result(parent_id, 10, result1)
       Subagents.store_sub_result(parent_id, 11, result2)
 
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
-      assert updated.foreign_repo_commits == %{original: "sha1", reference: "sha2"}
+      assert updated.foreign_repo_commits == %{"original" => "sha1", "reference" => "sha2"}
     end
 
     test "does not track primary repo commits" do
@@ -245,7 +245,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       parent_meta = base_sched_meta(parent_id, %{sub_id => 0})
       :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
 
-      result = {:ok, %Result{result: "done", commit_sha: "abc123", repo_id: :primary}}
+      result = {:ok, %Result{result: "done", commit_sha: "abc123", repo_id: "primary"}}
 
       Subagents.store_sub_result(parent_id, sub_id, result)
 
@@ -259,7 +259,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       parent_meta = %SchedMeta{
         base_sched_meta(parent_id, %{sub_id => 0})
-        | foreign_repo_commits: %{original: "existing_sha"}
+        | foreign_repo_commits: %{"original" => "existing_sha"}
       }
 
       :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
@@ -268,7 +268,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       # Existing commits preserved, no new entry added
-      assert updated.foreign_repo_commits == %{original: "existing_sha"}
+      assert updated.foreign_repo_commits == %{"original" => "existing_sha"}
     end
 
     test "updates existing foreign repo commit to latest SHA" do
@@ -277,15 +277,15 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       parent_meta = base_sched_meta(parent_id, %{10 => 0, 11 => 1})
       :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
 
-      result1 = {:ok, %Result{result: "first", commit_sha: "sha_v1", repo_id: :original}}
-      result2 = {:ok, %Result{result: "second", commit_sha: "sha_v2", repo_id: :original}}
+      result1 = {:ok, %Result{result: "first", commit_sha: "sha_v1", repo_id: "original"}}
+      result2 = {:ok, %Result{result: "second", commit_sha: "sha_v2", repo_id: "original"}}
 
       Subagents.store_sub_result(parent_id, 10, result1)
       Subagents.store_sub_result(parent_id, 11, result2)
 
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       # Second result overwrites first for same repo
-      assert updated.foreign_repo_commits == %{original: "sha_v2"}
+      assert updated.foreign_repo_commits == %{"original" => "sha_v2"}
     end
   end
 end

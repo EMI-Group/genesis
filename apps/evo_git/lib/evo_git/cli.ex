@@ -105,7 +105,7 @@ defmodule EvoGit.CLI do
         if proceed? do
           runtime_opts = [
             repo_path: repo_path,
-            mode: String.to_atom(mode),
+            mode: genesis_mode_atom(mode),
             archive: opts[:archive] == true
           ]
 
@@ -132,7 +132,7 @@ defmodule EvoGit.CLI do
       if objective do
         runtime_opts = []
         runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
-        runtime_opts = Keyword.put(runtime_opts, :mode, String.to_atom(mode))
+        runtime_opts = Keyword.put(runtime_opts, :mode, evolution_mode_atom(mode))
 
         foreign_repos = parse_foreign_repos(opts)
         runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
@@ -423,6 +423,16 @@ defmodule EvoGit.CLI do
     end
   end
 
+  defp genesis_mode_atom("new"), do: :new
+  defp genesis_mode_atom("existing"), do: :existing
+  defp genesis_mode_atom(other),
+    do: raise(ArgumentError, "invalid genesis mode: #{inspect(other)}")
+
+  defp evolution_mode_atom("simple"), do: :simple
+  defp evolution_mode_atom("complex"), do: :complex
+  defp evolution_mode_atom(other),
+    do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
+
   defp parse_foreign_repos(opts) do
     case Keyword.get_values(opts, :foreign_repo) do
       [] -> []
@@ -431,11 +441,10 @@ defmodule EvoGit.CLI do
           case String.split(spec, ":", parts: 2) do
             [path] ->
               # No id specified, use directory basename
-              id = path |> Path.basename() |> String.to_atom()
+              id = path |> Path.basename()
               EvoGit.Core.ForeignRepo.new(id, path)
             [id_str, path] ->
-              id = String.to_atom(id_str)
-              EvoGit.Core.ForeignRepo.new(id, path)
+              EvoGit.Core.ForeignRepo.new(id_str, path)
           end
         end)
     end

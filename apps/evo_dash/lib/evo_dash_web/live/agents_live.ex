@@ -148,14 +148,20 @@ defmodule EvoDashWeb.AgentsLive do
     end)
   end
 
-  defp repo_display_name(key) when is_binary(key) do
-    # key is a repo root path; use the basename for display
-    Path.basename(key)
-  end
-
+  defp repo_display_name("primary"), do: gettext("Primary Repo")
   defp repo_display_name(:primary), do: gettext("Primary Repo")
   defp repo_display_name(nil), do: gettext("Primary Repo")
 
+  # A repo root path is a binary starting with "/" — use the basename.
+  defp repo_display_name(key) when is_binary(key) and binary_part(key, 0, 1) == "/" do
+    Path.basename(key)
+  end
+
+  # Any other binary is a string repo_id (e.g. "secondary").
+  defp repo_display_name(repo_id) when is_binary(repo_id),
+    do: gettext("Repo: %{repo_id}", repo_id: repo_id)
+
+  # Backward compat / defensive: atom repo_ids from older ETS data.
   defp repo_display_name(repo_id) when is_atom(repo_id),
     do: gettext("Repo: %{repo_id}", repo_id: Atom.to_string(repo_id))
 

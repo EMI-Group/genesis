@@ -948,7 +948,7 @@ defmodule EvoDash.TaskRegistry do
 
     runtime_opts = [
       repo_path: repo_path,
-      mode: String.to_atom(mode),
+      mode: evolution_mode_atom(mode),
       task_id: task_id
     ]
 
@@ -986,6 +986,10 @@ defmodule EvoDash.TaskRegistry do
 
     {nil, runtime_opts}
   end
+
+  defp evolution_mode_atom("simple"), do: :simple
+  defp evolution_mode_atom("complex"), do: :complex
+  defp evolution_mode_atom(other), do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
 
   ## GenServer Info Handlers
 

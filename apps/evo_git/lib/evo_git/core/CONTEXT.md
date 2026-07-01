@@ -8,7 +8,7 @@ Foundational domain models: **Spatial Dimension** (ContextNode — directory/fil
 
 ### `EvoGit.Core.ContextNode` (`context_node.ex`)
 
-Struct: `path`, `repo`, `repo_id` (defaults to `:primary`).
+Struct: `path`, `repo`, `repo_id` (defaults to `"primary"`).
 
 | Function | Description |
 |---|---|
@@ -37,12 +37,12 @@ Struct: `repo`, `base_commit`, `current_commit`.
 
 ### `EvoGit.Core.ForeignRepo` (`foreign_repo.ex`)
 
-Struct: `id` (atom), `root` (absolute path), `name` (optional string).
+Struct: `id` (string), `root` (absolute path), `name` (optional string).
 
 | Function | Description |
 |---|---|
 | `new/3` | Creates a ForeignRepo struct with expanded root path |
-| `primary_id/0` | Returns the primary repo identifier (`:primary`) |
+| `primary_id/0` | Returns the primary repo identifier (`"primary"`) |
 | `primary?/1` | Checks if a repo id is the primary repo |
 | `normalize_path/2` | Normalizes an absolute path to a relative path within this repo |
 | `resolve_path/2` | Determines which repo a path belongs to; returns repo id and relative path |

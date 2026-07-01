@@ -2,8 +2,8 @@ defmodule EvoGit.Core.ForeignRepo do
   @moduledoc """
   Represents a reference to a Git repository in the multi-repo system.
 
-  Each repo has a unique `id` (atom), an absolute `root` path, and an optional `description`.
-  The primary repo always has id `:primary`. Foreign repos have user-defined ids.
+  Each repo has a unique `id` (string), an absolute `root` path, and an optional `description`.
+  The primary repo always has id `"primary"`. Foreign repos have user-defined ids.
 
   ## Usage
 
@@ -21,7 +21,7 @@ defmodule EvoGit.Core.ForeignRepo do
   defstruct [:id, :root, :description]
 
   @type t :: %__MODULE__{
-          id: atom(),
+          id: String.t(),
           root: String.t(),
           description: String.t() | nil
         }
@@ -30,21 +30,21 @@ defmodule EvoGit.Core.ForeignRepo do
   Creates a new ForeignRepo struct.
 
   ## Parameters
-  - `id` - unique atom identifier (e.g., `:primary`, `:original`)
+  - `id` - unique string identifier (e.g., `"primary"`, `"original"`)
   - `root` - absolute path to the repository root
   - `opts` - keyword options:
     - `:description` - human-readable description of the repo (optional, defaults to nil)
 
   ## Examples
 
-      iex> ForeignRepo.new(:primary, "/Source/my-project")
-      %ForeignRepo{id: :primary, root: "/Source/my-project", description: nil}
+      iex> ForeignRepo.new("primary", "/Source/my-project")
+      %ForeignRepo{id: "primary", root: "/Source/my-project", description: nil}
 
-      iex> ForeignRepo.new(:original, "/Source/legacy-proj", description: "The legacy codebase")
-      %ForeignRepo{id: :original, root: "/Source/legacy-proj", description: "The legacy codebase"}
+      iex> ForeignRepo.new("original", "/Source/legacy-proj", description: "The legacy codebase")
+      %ForeignRepo{id: "original", root: "/Source/legacy-proj", description: "The legacy codebase"}
   """
-  @spec new(atom(), String.t(), keyword()) :: t()
-  def new(id, root, opts \\ []) when is_atom(id) and is_binary(root) do
+  @spec new(String.t(), String.t(), keyword()) :: t()
+  def new(id, root, opts \\ []) when is_binary(id) and is_binary(root) do
     root = Path.expand(root)
 
     %__MODULE__{
@@ -57,14 +57,14 @@ defmodule EvoGit.Core.ForeignRepo do
   @doc """
   Returns the primary repo identifier.
   """
-  @spec primary_id() :: :primary
-  def primary_id, do: :primary
+  @spec primary_id() :: String.t()
+  def primary_id, do: "primary"
 
   @doc """
   Checks if the given repo id is the primary repo.
   """
-  @spec primary?(atom()) :: boolean()
-  def primary?(id), do: id == :primary
+  @spec primary?(String.t()) :: boolean()
+  def primary?(id), do: id == "primary"
 
   @doc """
   Normalizes an absolute path to a relative path within this repo.
@@ -74,11 +74,11 @@ defmodule EvoGit.Core.ForeignRepo do
 
   ## Examples
 
-      iex> repo = ForeignRepo.new(:primary, "/Source/proj")
+      iex> repo = ForeignRepo.new("primary", "/Source/proj")
       iex> ForeignRepo.normalize_path(repo, "/Source/proj/src/lib.rs")
       {:ok, "./src/lib.rs"}
 
-      iex> repo = ForeignRepo.new(:primary, "/Source/proj")
+      iex> repo = ForeignRepo.new("primary", "/Source/proj")
       iex> ForeignRepo.normalize_path(repo, "/other/path")
       {:error, :not_in_repo}
   """
@@ -105,7 +105,7 @@ defmodule EvoGit.Core.ForeignRepo do
   The primary repo is checked last, so foreign repos take precedence if paths
   overlap (unlikely but possible).
   """
-  @spec resolve_path([t()], String.t()) :: {:ok, atom(), String.t()} | {:error, :not_in_any_repo}
+  @spec resolve_path([t()], String.t()) :: {:ok, String.t(), String.t()} | {:error, :not_in_any_repo}
   def resolve_path(repos, abs_path) when is_list(repos) and is_binary(abs_path) do
     abs_path = Path.expand(abs_path)
 

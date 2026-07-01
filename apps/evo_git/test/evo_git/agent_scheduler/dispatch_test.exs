@@ -22,7 +22,7 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :primary
+        repo_id: "primary"
       }
 
       state = %State{}
@@ -40,7 +40,7 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :primary
+        repo_id: "primary"
       }
 
       state = %State{}
@@ -58,7 +58,7 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :primary
+        repo_id: "primary"
       }
 
       state = %State{}
@@ -80,10 +80,10 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :original,
+        repo_id: "original",
         foreign_repos: [
-          ForeignRepo.new(:original, "/home/user/original-proj"),
-          ForeignRepo.new(:reference, "/home/user/reference-proj")
+          ForeignRepo.new("original", "/home/user/original-proj"),
+          ForeignRepo.new("reference", "/home/user/reference-proj")
         ]
       }
 
@@ -102,9 +102,9 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :unknown_repo,
+        repo_id: "unknown_repo",
         foreign_repos: [
-          ForeignRepo.new(:original, "/home/user/original-proj")
+          ForeignRepo.new("original", "/home/user/original-proj")
         ]
       }
 
@@ -123,7 +123,7 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :original,
+        repo_id: "original",
         foreign_repos: []
       }
 
@@ -144,10 +144,10 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         },
         agent_module: DummyAgent,
         objective: "test",
-        repo_id: :reference,
+        repo_id: "reference",
         foreign_repos: [
-          ForeignRepo.new(:original, "/home/user/original-proj"),
-          ForeignRepo.new(:reference, "/home/user/reference-proj")
+          ForeignRepo.new("original", "/home/user/original-proj"),
+          ForeignRepo.new("reference", "/home/user/reference-proj")
         ]
       }
 
