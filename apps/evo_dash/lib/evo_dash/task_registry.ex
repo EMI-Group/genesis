@@ -214,7 +214,7 @@ defmodule EvoDash.TaskRegistry do
     }
 
     # Persist to SQLite with ref nulled (ref is runtime-only data)
-    EvoDash.TaskStore.put(state.task_store, {:task, task_id}, %{task | ref: nil})
+    EvoDash.TaskStore.put_task(state.task_store, %{task | ref: nil})
 
     # Keep the runtime ref in-memory only
     state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
@@ -231,7 +231,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call(:list_tasks, _from, state) do
-    tasks = select_all_tasks(state) |> Enum.map(fn {_key, task} -> task end)
+    tasks = select_all_tasks(state)
     {:reply, tasks, state}
   end
 
@@ -256,7 +256,7 @@ defmodule EvoDash.TaskRegistry do
 
                 Task.shutdown(task_ref, :brutal_kill)
                 updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
-                EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
+                EvoDash.TaskStore.put_task(state.task_store, updated)
                 cleanup_expired_tasks(state)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
@@ -285,10 +285,9 @@ defmodule EvoDash.TaskRegistry do
 
     tasks =
       select_all_tasks(state)
-      |> Enum.filter(fn {_key, task} ->
+      |> Enum.filter(fn task ->
         task.opts[:path] && Path.expand(task.opts[:path]) == expanded
       end)
-      |> Enum.map(fn {_key, task} -> task end)
 
     {:reply, tasks, state}
   end
@@ -297,7 +296,7 @@ defmodule EvoDash.TaskRegistry do
   def handle_call(:get_unique_paths, _from, state) do
     paths =
       select_all_tasks(state)
-      |> Enum.map(fn {_key, task} -> task.opts[:path] end)
+      |> Enum.map(fn task -> task.opts[:path] end)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
 
@@ -306,12 +305,12 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call(:clear_finished_tasks, _from, state) do
-    keys =
+    task_ids =
       select_all_tasks(state)
-      |> Enum.filter(fn {{:task, _id}, task} -> task.status not in [:running, :pending] end)
-      |> Enum.map(fn {{:task, id}, _task} -> {:task, id} end)
+      |> Enum.filter(fn task -> task.status not in [:running, :pending] end)
+      |> Enum.map(fn task -> task.id end)
 
-    EvoDash.TaskStore.delete_multi(state.task_store, keys)
+    EvoDash.TaskStore.delete_tasks(state.task_store, task_ids)
 
     cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -525,25 +524,15 @@ defmodule EvoDash.TaskRegistry do
   # --- TaskStore Read Helpers ---
 
   defp task_get(state, task_id) do
-    EvoDash.TaskStore.safe_get(state.task_store, {:task, task_id})
+    EvoDash.TaskStore.safe_get_task(state.task_store, task_id)
   end
 
   defp select_all_tasks(state) do
-    state.task_store
-    |> EvoDash.TaskStore.safe_select_all()
-    |> Enum.filter(fn
-      {{:task, _id}, %TaskInfo{}} -> true
-      _ -> false
-    end)
+    EvoDash.TaskStore.safe_select_all_tasks(state.task_store)
   end
 
   defp select_all_projects(state) do
-    state.task_store
-    |> EvoDash.TaskStore.safe_select_all()
-    |> Enum.filter(fn
-      {{:project, _path}, %{path: _, name: _, last_opened_at: _}} -> true
-      _ -> false
-    end)
+    EvoDash.TaskStore.safe_select_all_projects(state.task_store)
   end
 
   # --- Crash-safe callback bodies ---
@@ -554,10 +543,9 @@ defmodule EvoDash.TaskRegistry do
   defp do_add_recent_project(state, path, name) do
     now = DateTime.utc_now()
 
-    EvoDash.TaskStore.put(
+    EvoDash.TaskStore.put_project(
       state.task_store,
-      {:project, path},
-      %{path: path, name: name, last_opened_at: now}
+      %EvoDash.RecentProject{path: path, name: name, last_opened_at: now}
     )
 
     # Enforce max limit
@@ -568,12 +556,11 @@ defmodule EvoDash.TaskRegistry do
 
   defp do_list_recent_projects(state) do
     select_all_projects(state)
-    |> Enum.map(fn {_key, project} -> project end)
     |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
   end
 
   defp do_remove_recent_project(state, path) do
-    EvoDash.TaskStore.delete(state.task_store, {:project, path})
+    EvoDash.TaskStore.delete_project(state.task_store, path)
     {:ok, state}
   end
 
@@ -598,7 +585,7 @@ defmodule EvoDash.TaskRegistry do
         updated =
           if archive_records, do: %{updated | archive_metadata: archive_records}, else: updated
 
-        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put_task(state.task_store, updated)
 
         if status in [:completed, :failed, :cancelled] do
           cleanup_expired_tasks(state)
@@ -616,7 +603,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{logs: logs} = task ->
         updated = %{task | logs: [log_entry | logs]}
-        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put_task(state.task_store, updated)
 
       nil ->
         :ok
@@ -626,7 +613,7 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp do_delete_task(state, task_id) do
-    EvoDash.TaskStore.delete(state.task_store, {:task, task_id})
+    EvoDash.TaskStore.delete_task(state.task_store, task_id)
     state
   end
 
@@ -634,7 +621,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{} = task ->
         updated = %{task | review_status: status}
-        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put_task(state.task_store, updated)
 
       nil ->
         :ok
@@ -647,7 +634,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{} = task ->
         updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put_task(state.task_store, updated)
 
       nil ->
         :ok
@@ -665,7 +652,7 @@ defmodule EvoDash.TaskRegistry do
             else: task.finished_at
 
         updated = %{task | status: status, finished_at: finished_at}
-        EvoDash.TaskStore.put(state.task_store, {:task, task_id}, updated)
+        EvoDash.TaskStore.put_task(state.task_store, updated)
 
         if status in [:completed, :failed, :cancelled] do
           cleanup_expired_tasks(state)
@@ -722,7 +709,7 @@ defmodule EvoDash.TaskRegistry do
             records =
               :dets.foldl(
                 fn {_id, %TaskInfo{} = task} = _obj, acc ->
-                  EvoDash.TaskStore.put(task_store, {:task, task.id}, task)
+                  EvoDash.TaskStore.put_task(task_store, task)
                   acc + 1
                 end,
                 0,
@@ -765,8 +752,16 @@ defmodule EvoDash.TaskRegistry do
           {:ok, table} ->
             records =
               :dets.foldl(
-                fn {proj_path, project}, acc ->
-                  EvoDash.TaskStore.put(task_store, {:project, proj_path}, project)
+                fn {_proj_path, project}, acc ->
+                  EvoDash.TaskStore.put_project(
+                    task_store,
+                    %EvoDash.RecentProject{
+                      path: project[:path] || project.path,
+                      name: project[:name] || project.name,
+                      last_opened_at: project[:last_opened_at] || project.last_opened_at
+                    }
+                  )
+
                   acc + 1
                 end,
                 0,
@@ -816,12 +811,12 @@ defmodule EvoDash.TaskRegistry do
   defp normalize_tasks(state) do
     objects = select_all_tasks(state)
 
-    Enum.reduce(objects, state, fn {_key, %TaskInfo{} = task}, acc ->
+    Enum.reduce(objects, state, fn %TaskInfo{} = task, acc ->
       try do
         task = Map.merge(%TaskInfo{}, task)
         {task, acc} = reconcile_task_status(task, acc)
         # Persist with ref nulled (ref is runtime-only data)
-        EvoDash.TaskStore.put(state.task_store, {:task, task.id}, %{task | ref: nil})
+        EvoDash.TaskStore.put_task(state.task_store, %{task | ref: nil})
         acc
       rescue
         error ->
@@ -891,7 +886,7 @@ defmodule EvoDash.TaskRegistry do
     max_tasks = config.max_tasks
     cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
 
-    all_tasks = select_all_tasks(state) |> Enum.map(fn {_key, task} -> task end)
+    all_tasks = select_all_tasks(state)
 
     # Partition: age-expired finished tasks vs everything else
     {age_expired, remaining} =
@@ -899,7 +894,7 @@ defmodule EvoDash.TaskRegistry do
         task.finished_at != nil and DateTime.compare(task.finished_at, cutoff) == :lt
       end)
 
-    age_expired_keys = Enum.map(age_expired, fn task -> {:task, task.id} end)
+    age_expired_keys = Enum.map(age_expired, fn task -> task.id end)
 
     # From remaining finished tasks, enforce max_tasks limit (keep newest)
     over_limit_keys =
@@ -907,12 +902,12 @@ defmodule EvoDash.TaskRegistry do
       |> Enum.filter(&(&1.finished_at != nil))
       |> Enum.sort_by(& &1.finished_at, {:desc, DateTime})
       |> Enum.drop(max_tasks)
-      |> Enum.map(fn task -> {:task, task.id} end)
+      |> Enum.map(fn task -> task.id end)
 
     all_keys = age_expired_keys ++ over_limit_keys
 
     if all_keys != [] do
-      EvoDash.TaskStore.delete_multi(state.task_store, all_keys)
+      EvoDash.TaskStore.delete_tasks(state.task_store, all_keys)
     end
 
     :ok
@@ -923,7 +918,6 @@ defmodule EvoDash.TaskRegistry do
   defp trim_recent_projects(state) do
     projects =
       select_all_projects(state)
-      |> Enum.map(fn {_key, project} -> project end)
       |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
 
     case Enum.split(projects, @max_recent_projects) do
@@ -931,8 +925,8 @@ defmodule EvoDash.TaskRegistry do
         :ok
 
       {_kept, to_remove} ->
-        keys = Enum.map(to_remove, fn project -> {:project, project.path} end)
-        EvoDash.TaskStore.delete_multi(state.task_store, keys)
+        paths = Enum.map(to_remove, fn project -> project.path end)
+        Enum.each(paths, &EvoDash.TaskStore.delete_project(state.task_store, &1))
         :ok
     end
   end
@@ -989,7 +983,9 @@ defmodule EvoDash.TaskRegistry do
 
   defp evolution_mode_atom("simple"), do: :simple
   defp evolution_mode_atom("complex"), do: :complex
-  defp evolution_mode_atom(other), do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
+
+  defp evolution_mode_atom(other),
+    do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
 
   ## GenServer Info Handlers
 
