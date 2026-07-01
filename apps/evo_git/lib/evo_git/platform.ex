@@ -197,16 +197,6 @@ defmodule EvoGit.Platform do
   end
 
   @doc """
-  Returns true if the `nix` binary is available on this platform.
-
-  Nix works on both Linux and macOS, so no OS guard is applied.
-  """
-  @spec nix_available?() :: boolean()
-  def nix_available? do
-    System.find_executable("nix") != nil
-  end
-
-  @doc """
   Returns the sandbox backend available on this platform.
 
   - `:systemd_run` — Linux with systemd
