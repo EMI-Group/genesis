@@ -146,6 +146,190 @@ defmodule EvoDash.TaskStoreTest do
       assert {:ok, %{commit_sha: "abc123def", branch_name: "evogit/test"}} = fetched.result
     end
 
+    test "result {:ok, map} with embedded Usage struct round-trips faithfully" do
+      usage = %EvoGit.Agent.Usage{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        input_cost: 0.01,
+        output_cost: 0.02,
+        total_cost: 0.03,
+        cached_tokens: 10,
+        cache_creation_tokens: 5
+      }
+
+      task = %TaskInfo{
+        id: "rt-result-usage",
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result:
+          {:ok,
+           %{
+             commit_sha: "deadbeef",
+             result: "All done",
+             tag: "v1.0",
+             branch_name: "evogit/feature",
+             pr_url: nil,
+             pr_title: nil,
+             usage: usage,
+             agent_count: 3,
+             archive_records: [%{"agent_id" => "T1_A1"}]
+           }}
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-result-usage")
+
+      assert {:ok, data} = fetched.result
+      assert data.commit_sha == "deadbeef"
+      assert data.result == "All done"
+      assert data.tag == "v1.0"
+      assert data.branch_name == "evogit/feature"
+      assert data.pr_url == nil
+      assert data.pr_title == nil
+      assert data.agent_count == 3
+      assert is_list(data.archive_records)
+
+      assert %EvoGit.Agent.Usage{} = data.usage
+      assert data.usage.input_tokens == 100
+      assert data.usage.output_tokens == 50
+      assert data.usage.total_tokens == 150
+      assert data.usage.total_cost == 0.03
+      assert data.usage.cached_tokens == 10
+      assert data.usage.cache_creation_tokens == 5
+    end
+
+    test "result {:ok, no_changes} round-trips" do
+      task = %TaskInfo{
+        id: "rt-result-nochanges",
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result:
+          {:ok,
+           %{
+             commit_sha: "x",
+             result: "Nothing to do",
+             branch_name: nil,
+             pr_url: nil,
+             pr_title: nil,
+             no_changes: true,
+             usage: %EvoGit.Agent.Usage{},
+             agent_count: 1,
+             archive_records: nil
+           }}
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-result-nochanges")
+
+      assert {:ok, data} = fetched.result
+      assert data.no_changes == true
+      assert data.branch_name == nil
+      assert data.result == "Nothing to do"
+      assert %EvoGit.Agent.Usage{} = data.usage
+    end
+
+    test "result {:error, string} round-trips" do
+      task = %TaskInfo{
+        id: "rt-result-error",
+        type: :evolve,
+        status: :failed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: {:error, "something went wrong"}
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-result-error")
+
+      assert fetched.result == {:error, "something went wrong"}
+    end
+
+    test "result {:exit, atom} round-trips" do
+      task = %TaskInfo{
+        id: "rt-result-exit",
+        type: :evolve,
+        status: :failed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: {:exit, :killed}
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-result-exit")
+
+      assert fetched.result == {:exit, :killed}
+    end
+
+    test "result plain string round-trips" do
+      task = %TaskInfo{
+        id: "rt-result-string",
+        type: :evolve,
+        status: :failed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: "Process crashed while task was running"
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-result-string")
+
+      assert fetched.result == "Process crashed while task was running"
+    end
+
+    test "result {:error, complex term} round-trips via inspect fallback" do
+      task = %TaskInfo{
+        id: "rt-result-complex-error",
+        type: :evolve,
+        status: :failed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: {:error, {:bad_match, [1, 2, 3]}}
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-result-complex-error")
+
+      # The complex tuple can't be JSON-encoded directly, so it falls back to
+      # inspect — but the tuple shape {:error, _} is preserved.
+      assert {:error, reason} = fetched.result
+      assert is_binary(reason)
+    end
+
+    test "result nil round-trips" do
+      task = %TaskInfo{
+        id: "rt-result-nil",
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-result-nil")
+
+      assert fetched.result == nil
+    end
+
     test "usage struct round-trips as EvoGit.Agent.Usage" do
       usage = %EvoGit.Agent.Usage{
         input_tokens: 100,
@@ -472,6 +656,76 @@ defmodule EvoDash.TaskStoreTest do
           _, _ -> :ok
         end
       end
+    end
+  end
+
+  describe "result backward compatibility" do
+    # Old databases stored the result column as base64-encoded term_to_binary.
+    # The decode path must still recover these legacy blobs so existing data
+    # isn't lost when the column-based schema carries them forward.
+
+    test "decodes old base64 term_to_binary {:ok, map} result", %{sqlite_path: sqlite_path} do
+      legacy_result =
+        {:ok, %{commit_sha: "abc"}}
+        |> :erlang.term_to_binary()
+        |> Base.encode64()
+
+      # Inject directly into the result column
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks (id, type, status, opts, result) VALUES (?1, ?2, ?3, ?4, ?5)",
+        ["legacy-ok", "evolve", "completed", "[]", legacy_result]
+      )
+
+      :ok = XqliteNIF.close(conn)
+
+      fetched = TaskStore.get_task(TaskStore, "legacy-ok")
+      assert %TaskInfo{} = fetched
+      assert {:ok, %{commit_sha: "abc"}} = fetched.result
+    end
+
+    test "decodes old base64 term_to_binary {:error, reason} result", %{sqlite_path: sqlite_path} do
+      legacy_result =
+        {:error, "old failure"}
+        |> :erlang.term_to_binary()
+        |> Base.encode64()
+
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks (id, type, status, opts, result) VALUES (?1, ?2, ?3, ?4, ?5)",
+        ["legacy-error", "evolve", "failed", "[]", legacy_result]
+      )
+
+      :ok = XqliteNIF.close(conn)
+
+      fetched = TaskStore.get_task(TaskStore, "legacy-error")
+      assert fetched.result == {:error, "old failure"}
+    end
+
+    test "decodes old base64 term_to_binary plain map result", %{sqlite_path: sqlite_path} do
+      # Use only atoms that exist at compile time (common built-in atoms)
+      legacy_result =
+        %{ok: true, error: false}
+        |> :erlang.term_to_binary()
+        |> Base.encode64()
+
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks (id, type, status, opts, result) VALUES (?1, ?2, ?3, ?4, ?5)",
+        ["legacy-map", "evolve", "completed", "[]", legacy_result]
+      )
+
+      :ok = XqliteNIF.close(conn)
+
+      fetched = TaskStore.get_task(TaskStore, "legacy-map")
+      # A bare map (no tuple wrapper) round-trips as a map.
+      assert %{ok: true, error: false} = fetched.result
     end
   end
 

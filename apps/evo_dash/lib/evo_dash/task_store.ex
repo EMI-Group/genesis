@@ -48,6 +48,10 @@ defmodule EvoDash.TaskStore do
     :cache_creation_tokens
   ]
 
+  # Known keys inside the {:ok, data} result map. Used for safe atom
+  # reconstruction during decode (via safe_string_to_atom/1).
+  @result_data_fields ~w(commit_sha result tag branch_name pr_url pr_title no_changes usage agent_count archive_records)a
+
   ## Child spec & start
 
   def child_spec(opts) do
@@ -734,25 +738,165 @@ defmodule EvoDash.TaskStore do
     end
   end
 
-  # --- result (arbitrary Elixir term) ---
-  # The `result` field contains opaque runtime return values like
-  # `{:ok, %{commit_sha: ..., branch_name: ..., result: "summary"}}` that the web
-  # layer pattern-matches on (tuples + atom keys). JSON cannot faithfully
-  # represent tuples (they become arrays) or atom keys (they become strings),
-  # so we use base64-encoded `term_to_binary` for this single field. This
-  # preserves full Elixir term semantics for the web layer. All other complex
-  # fields use JSON.
+  # --- result (runtime return tuples) ---
+  # The `result` field contains runtime return values like
+  # `{:ok, %{commit_sha: ..., branch_name: ..., usage: %EvoGit.Agent.Usage{}}}`
+  # that the web layer pattern-matches on (tuples + atom keys).
+  #
+  # We encode these as JSON with a `"__result_tag__"` discriminator field so the
+  # tuple shape (`{:ok, _}`, `{:error, _}`, `{:exit, _}`) can be faithfully
+  # reconstructed on decode. Atom keys in the success data map are converted to
+  # strings for JSON and restored via `safe_string_to_atom/1` on decode; the
+  # embedded `%EvoGit.Agent.Usage{}` struct is serialized the same way the
+  # dedicated `usage` column is.
+  #
+  # Plain strings (crash fallbacks) are stored as-is — they are NOT JSON-wrapped
+  # — so they round-trip without any decoding.
+  #
+  # **Backward compatibility**: rows written by older versions used
+  # base64-encoded `term_to_binary`. These are detected at decode time (the
+  # value does not start with `{` or `[`) and decoded via the legacy
+  # `Base.decode64` → `:erlang.binary_to_term(binary, [:safe])` path so old
+  # databases continue to load without data loss.
   defp encode_result(nil), do: nil
 
-  defp encode_result(result) do
-    result |> :erlang.term_to_binary() |> Base.encode64()
+  # Plain strings (crash fallbacks) are stored as-is, not JSON-wrapped.
+  defp encode_result(result) when is_binary(result) do
+    result
+  end
+
+  defp encode_result({:ok, data}) when is_map(data) do
+    json_data = encode_result_data(data)
+
+    try do
+      Jason.encode!(%{"__result_tag__" => "ok", "data" => json_data})
+    rescue
+      e ->
+        Logger.warning("TaskStore: failed to encode ok-result: #{Exception.message(e)}")
+
+        inspect({:ok, data})
+    end
+  end
+
+  defp encode_result({:error, reason}) do
+    try do
+      Jason.encode!(%{"__result_tag__" => "error", "reason" => reason})
+    rescue
+      _ ->
+        # reason may contain non-JSON-safe terms (tuples, pids, etc.)
+        Jason.encode!(%{"__result_tag__" => "error", "reason" => inspect(reason)})
+    end
+  end
+
+  defp encode_result({:exit, reason}) do
+    try do
+      Jason.encode!(%{"__result_tag__" => "exit", "reason" => reason})
+    rescue
+      _ ->
+        Jason.encode!(%{"__result_tag__" => "exit", "reason" => inspect(reason)})
+    end
+  end
+
+  defp encode_result(other) do
+    # Any other shape — fall back to inspect so we never crash on encode.
+    inspect(other)
+  end
+
+  # Converts the success data map into a string-keyed, JSON-safe map.
+  # The embedded `%EvoGit.Agent.Usage{}` is serialized via Map.from_struct/1
+  # (same pattern as encode_usage/1).
+  defp encode_result_data(data) do
+    data
+    |> Enum.reduce(%{}, fn
+      {:usage, %EvoGit.Agent.Usage{} = usage}, acc ->
+        Map.put(acc, "usage", Map.from_struct(usage))
+
+      {key, value}, acc ->
+        Map.put(acc, to_string(key), value)
+    end)
   end
 
   defp decode_result(nil), do: nil
 
   defp decode_result(str) when is_binary(str) do
-    # If the string starts with '{' or '[', it might be legacy JSON from an
-    # earlier version — try JSON decode as a fallback.
+    cond do
+      # JSON-encoded value (new format) — starts with object or array.
+      binary_part(str, 0, 1) in ["{", "["] ->
+        case Jason.decode(str) do
+          {:ok, %{"__result_tag__" => "ok", "data" => data}} when is_map(data) ->
+            {:ok, decode_result_data(data)}
+
+          {:ok, %{"__result_tag__" => "error", "reason" => reason}} ->
+            {:error, decode_reason(reason)}
+
+          {:ok, %{"__result_tag__" => "exit", "reason" => reason}} ->
+            {:exit, decode_reason(reason)}
+
+          {:ok, value} ->
+            # JSON without a discriminator — return as-is (legacy behavior).
+            value
+
+          {:error, _} ->
+            # Looked like JSON but failed to decode — try legacy blob fallback.
+            decode_legacy_result(str)
+        end
+
+      # Legacy base64-encoded term_to_binary blob (old format).
+      true ->
+        decode_legacy_result(str)
+    end
+  end
+
+  # Reconstructs atom keys for known result-data fields and rebuilds the
+  # embedded %EvoGit.Agent.Usage{} struct (same pattern as decode_usage/1).
+  # Unknown/extra keys are left as-is (string keys) — only KNOWN keys are
+  # atomized, avoiding blind atomization of arbitrary data.
+  defp decode_result_data(data) when is_map(data) do
+    known_fields = MapSet.new(@result_data_fields)
+
+    Enum.reduce(data, %{}, fn {key, value}, acc ->
+      atom_key =
+        case key do
+          key when is_atom(key) -> key
+          _ -> safe_string_to_atom(key)
+        end
+
+      reconstructed =
+        case {atom_key, value} do
+          {:usage, usage_map} when is_map(usage_map) and not is_struct(usage_map) ->
+            atom_usage =
+              Enum.reduce(@usage_fields, %{}, fn usage_field, uacc ->
+                uvalue =
+                  Map.get(usage_map, Atom.to_string(usage_field)) ||
+                    Map.get(usage_map, usage_field)
+
+                Map.put(uacc, usage_field, uvalue)
+              end)
+
+            struct(EvoGit.Agent.Usage, atom_usage)
+
+          _ ->
+            value
+        end
+
+      final_key = if MapSet.member?(known_fields, atom_key), do: atom_key, else: key
+      Map.put(acc, final_key, reconstructed)
+    end)
+  end
+
+  # Reason values for {:error, _} / {:exit, _} are usually strings but may
+  # originally have been atoms. Try to restore a pre-existing atom (safe,
+  # never creates new atoms) so values like {:exit, :killed} round-trip.
+  defp decode_reason(str) when is_binary(str) do
+    safe_string_to_atom(str)
+  end
+
+  defp decode_reason(other), do: other
+
+  # Legacy backward-compat path: base64-encoded term_to_binary from older
+  # versions. Keeps the [:safe] flag so deserialization of unknown atoms is
+  # rejected rather than created.
+  defp decode_legacy_result(str) do
     case Base.decode64(str) do
       {:ok, binary} ->
         try do
@@ -766,10 +910,13 @@ defmodule EvoDash.TaskStore do
     end
   end
 
+  # Tries to decode a string as JSON. If that fails, returns the raw string
+  # as-is — a plain string value (e.g. a crash fallback message) should
+  # round-trip untouched rather than becoming nil.
   defp try_json_result(str) do
     case Jason.decode(str) do
       {:ok, value} -> value
-      _ -> nil
+      {:error, _} -> str
     end
   end
 
