@@ -50,7 +50,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)

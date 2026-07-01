@@ -51,7 +51,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     }
     |> Map.merge(Enum.into(overrides, %{}))
 
-    EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, id}, task)
+    EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
     id
   end
 

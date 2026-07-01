@@ -75,8 +75,14 @@ defmodule EvoDash.TaskStore do
   ## Public API — Tasks
 
   @doc "Inserts or replaces a task. Validates that id (string) and status are present."
-  def put_task(store \\ __MODULE__, %TaskInfo{} = task) do
+  def put_task(store \\ __MODULE__, task)
+
+  def put_task(store, %TaskInfo{} = task) do
     GenServer.call(store, {:put_task, task})
+  end
+
+  def put_task(_store, _other) do
+    {:error, :invalid_task_struct}
   end
 
   @doc "Reads a single task by id, returning the struct or nil."
@@ -112,8 +118,14 @@ defmodule EvoDash.TaskStore do
   ## Public API — Projects
 
   @doc "Inserts or replaces a project. Validates that path is present."
-  def put_project(store \\ __MODULE__, %EvoDash.RecentProject{} = project) do
+  def put_project(store \\ __MODULE__, project)
+
+  def put_project(store, %EvoDash.RecentProject{} = project) do
     GenServer.call(store, {:put_project, project})
+  end
+
+  def put_project(_store, _other) do
+    {:error, :invalid_project_struct}
   end
 
   @doc "Reads a single project by path, returning the struct or nil."
@@ -551,10 +563,10 @@ defmodule EvoDash.TaskStore do
       encode_result(task.result),
       encode_atom(task.review_status),
       encode_usage(task.usage),
-      task.agent_count,
-      task.base_sha,
-      task.commit_sha,
-      encode_archive(task.archive_metadata)
+      Map.get(task, :agent_count),
+      Map.get(task, :base_sha),
+      Map.get(task, :commit_sha),
+      encode_archive(Map.get(task, :archive_metadata))
     ]
   end
 

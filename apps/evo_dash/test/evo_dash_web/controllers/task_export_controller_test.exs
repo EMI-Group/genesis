@@ -113,7 +113,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       archive_metadata: archive_metadata
     }
 
-    EvoDash.TaskStore.put(EvoDash.TaskStore, {:task, task_id}, task)
+    EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
 
     task_id
   end

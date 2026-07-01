@@ -3,11 +3,11 @@ defmodule EvoDash.TaskStoreTest do
 
   alias EvoDash.TaskStore
   alias EvoDash.TaskRegistry.TaskInfo
+  alias EvoDash.RecentProject
 
   # Terminate production children (TaskRegistry depends on TaskStore) and start
-  # an isolated TaskStore with a unique tmp SQLite path, mirroring the setup
-  # pattern in task_registry_test.exs. `async: false` because we mutate the
-  # shared production supervision tree.
+  # an isolated TaskStore with a unique tmp SQLite path. `async: false` because
+  # we mutate the shared production supervision tree.
   setup do
     Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
     Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskStore)
@@ -28,10 +28,42 @@ defmodule EvoDash.TaskStoreTest do
     {:ok, %{store: TaskStore, sqlite_path: sqlite_path, root: root}}
   end
 
-  describe "serialization round-trip of structs containing DateTimes" do
-    test "DateTime structs survive a put/get round-trip intact" do
+  describe "task put/get round-trip" do
+    test "all scalar fields survive a put/get round-trip" do
       task = %TaskInfo{
         id: "rt-1",
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test", mode: "simple"],
+        ref: nil,
+        pid: nil,
+        started_at: ~U[2026-06-26 07:19:44Z],
+        finished_at: ~U[2026-06-26 08:00:00Z],
+        logs: [],
+        result: nil,
+        review_status: :ignored,
+        agent_count: 5,
+        base_sha: "abc123",
+        commit_sha: "def456"
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-1")
+
+      assert %TaskInfo{} = fetched
+      assert fetched.id == "rt-1"
+      assert fetched.type == :genesis
+      assert fetched.status == :completed
+      assert fetched.review_status == :ignored
+      assert fetched.agent_count == 5
+      assert fetched.base_sha == "abc123"
+      assert fetched.commit_sha == "def456"
+      assert fetched.ref == nil
+    end
+
+    test "DateTime fields survive as proper DateTime structs" do
+      task = %TaskInfo{
+        id: "rt-dt",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
@@ -41,159 +73,423 @@ defmodule EvoDash.TaskStoreTest do
         result: nil
       }
 
-      :ok = TaskStore.put(TaskStore, {:task, "rt-1"}, task)
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-dt")
 
-      fetched = TaskStore.get(TaskStore, {:task, "rt-1"})
-
-      assert %TaskInfo{} = fetched
-      assert fetched.started_at.__struct__ == DateTime
-      # The calendar must be a real atom, NOT the stringified
-      # "Elixir.Calendar.ISO" that the legacy corruption produced.
-      assert fetched.started_at.calendar == Calendar.ISO
-      refute fetched.started_at.calendar == "Elixir.Calendar.ISO"
-
-      # The critical acceptance criterion: DateTime functions work without
-      # raising (they crash on stringified calendar atoms).
+      assert %DateTime{} = fetched.started_at
+      assert %DateTime{} = fetched.finished_at
       assert DateTime.compare(fetched.started_at, fetched.finished_at) == :lt
     end
-  end
 
-  describe "repair of corrupted (stringified module) data" do
-    # This simulates the legacy scrub_db corruption by writing a raw blob
-    # DIRECTLY into the SQLite `tasks` table (bypassing the store's clean
-    # term_to_binary), then reading it back through the store's normal API to
-    # confirm the decode_blob/1 chokepoint repairs the stringified atoms.
+    test "opts keyword list round-trips with atom keys" do
+      task = %TaskInfo{
+        id: "rt-opts",
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/tmp/proj", mode: "complex", prompt: "hello world"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
 
-    @corrupted_dt %{
-      __struct__: "Elixir.DateTime",
-      calendar: "Elixir.Calendar.ISO",
-      day: 26,
-      hour: 7,
-      microsecond: {0, 6},
-      minute: 19,
-      month: 6,
-      second: 44,
-      std_offset: 0,
-      time_zone: "Etc/UTC",
-      utc_offset: 0,
-      year: 2026,
-      zone_abbr: "UTC"
-    }
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-opts")
 
-    test "restores stringified calendar and __struct__ to real atoms on read",
-         %{sqlite_path: sqlite_path} do
-      corrupted_task = %TaskInfo{
-        id: "corrupt-1",
+      assert is_list(fetched.opts)
+      assert fetched.opts[:path] == "/tmp/proj"
+      assert fetched.opts[:mode] == "complex"
+      assert fetched.opts[:prompt] == "hello world"
+    end
+
+    test "logs list round-trips" do
+      task = %TaskInfo{
+        id: "rt-logs",
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: ["line 1", "line 2", "line 3"],
+        result: nil
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-logs")
+
+      assert fetched.logs == ["line 1", "line 2", "line 3"]
+    end
+
+    test "result opaque term (tuple with atom keys) round-trips" do
+      task = %TaskInfo{
+        id: "rt-result",
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result:
+          {:ok,
+           %{
+             commit_sha: "abc123def",
+             branch_name: "evogit/test",
+             result: "Agent summary",
+             pr_url: nil,
+             pr_title: nil
+           }}
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-result")
+
+      assert {:ok, %{commit_sha: "abc123def", branch_name: "evogit/test"}} = fetched.result
+    end
+
+    test "usage struct round-trips as EvoGit.Agent.Usage" do
+      usage = %EvoGit.Agent.Usage{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        input_cost: 0.01,
+        output_cost: 0.02,
+        total_cost: 0.03,
+        cached_tokens: 10,
+        cache_creation_tokens: 5
+      }
+
+      task = %TaskInfo{
+        id: "rt-usage",
         type: :genesis,
         status: :completed,
-        started_at: @corrupted_dt,
-        finished_at: nil,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
         logs: [],
-        result: nil
+        result: nil,
+        usage: usage
       }
 
-      # Serialize the corrupted term and write it DIRECTLY into the tasks table,
-      # bypassing TaskStore.put (which would write clean data). Use the same
-      # xqlite NIF the store itself uses, on a second connection to the same db.
-      blob = :erlang.term_to_binary(corrupted_task)
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-usage")
 
-      {:ok, conn} = Xqlite.open(sqlite_path)
-
-      {:ok, _} =
-        XqliteNIF.execute(conn, "INSERT INTO tasks (id, data) VALUES (?1, ?2)", [
-          "corrupt-1",
-          blob
-        ])
-
-      :ok = XqliteNIF.close(conn)
-
-      # Now read it back through the STORE's normal API — the decode_blob/1
-      # chokepoint must repair the stringified atoms.
-      task = TaskStore.get(TaskStore, {:task, "corrupt-1"})
-
-      assert %TaskInfo{} = task
-      assert %DateTime{} = task.started_at
-      assert task.started_at.__struct__ == DateTime
-      assert task.started_at.calendar == Calendar.ISO
-      refute task.started_at.calendar == "Elixir.Calendar.ISO"
-
-      # The critical acceptance criterion: DateTime functions no longer crash.
-      assert DateTime.compare(task.started_at, ~U[2026-06-26 07:19:44Z]) == :eq
+      assert %EvoGit.Agent.Usage{} = fetched.usage
+      assert fetched.usage.input_tokens == 100
+      assert fetched.usage.output_tokens == 50
+      assert fetched.usage.total_tokens == 150
+      assert fetched.usage.total_cost == 0.03
+      assert fetched.usage.cached_tokens == 10
     end
 
-    test "repaired task appears in safe_select_all with a proper DateTime",
-         %{sqlite_path: sqlite_path} do
-      corrupted_dt = %{
-        __struct__: "Elixir.DateTime",
-        calendar: "Elixir.Calendar.ISO",
-        day: 1,
-        hour: 0,
-        microsecond: {0, 0},
-        minute: 0,
-        month: 1,
-        second: 0,
-        std_offset: 0,
-        time_zone: "Etc/UTC",
-        utc_offset: 0,
-        year: 2026,
-        zone_abbr: "UTC"
+    test "archive_metadata round-trips as list of maps" do
+      archive = [
+        %{"agent_id" => "T1_A1", "role" => "manager", "objective" => "Genesis"}
+      ]
+
+      task = %TaskInfo{
+        id: "rt-archive",
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil,
+        archive_metadata: archive
       }
 
-      corrupted_task = %TaskInfo{
-        id: "corrupt-2",
-        type: :evolve,
-        status: :failed,
-        started_at: corrupted_dt,
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-archive")
+
+      assert is_list(fetched.archive_metadata)
+      assert length(fetched.archive_metadata) == 1
+    end
+
+    test "nil fields stay nil" do
+      task = %TaskInfo{
+        id: "rt-nil",
+        type: :genesis,
+        status: :pending,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        usage: nil,
+        archive_metadata: nil
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-nil")
+
+      assert fetched.finished_at == nil
+      assert fetched.result == nil
+      assert fetched.usage == nil
+      assert fetched.archive_metadata == nil
+    end
+
+    test "ref is always nulled before persistence" do
+      task = %TaskInfo{
+        id: "rt-ref",
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: make_ref(),
+        started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
         result: nil
       }
 
-      blob = :erlang.term_to_binary(corrupted_task)
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rt-ref")
 
-      {:ok, conn} = Xqlite.open(sqlite_path)
-
-      {:ok, _} =
-        XqliteNIF.execute(conn, "INSERT INTO tasks (id, data) VALUES (?1, ?2)", [
-          "corrupt-2",
-          blob
-        ])
-
-      :ok = XqliteNIF.close(conn)
-
-      entries = TaskStore.safe_select_all(TaskStore)
-
-      {{:task, "corrupt-2"}, repaired} =
-        Enum.find(entries, fn {key, _} -> key == {:task, "corrupt-2"} end)
-
-      assert %TaskInfo{} = repaired
-      assert %DateTime{} = repaired.started_at
-      assert repaired.started_at.calendar == Calendar.ISO
+      assert fetched.ref == nil
     end
   end
 
-  describe "security — no arbitrary atom creation" do
-    test "stringified non-existent module stays a string (no atom created)" do
-      # An "Elixir." string that is NOT a real loaded module must NOT be
-      # converted to an atom. String.to_existing_atom/1 raises ArgumentError,
-      # and the repair leaves the string untouched.
-      map_with_fake = %{some_key: "Elixir.Nonexistent.Module.Fake"}
-      :ok = TaskStore.put(TaskStore, {:task, "fake-1"}, map_with_fake)
+  describe "project put/get round-trip" do
+    test "RecentProject round-trips correctly" do
+      project = %RecentProject{
+        path: "/tmp/myproj",
+        name: "My Project",
+        last_opened_at: ~U[2026-06-26 07:19:44Z]
+      }
 
-      result = TaskStore.get(TaskStore, {:task, "fake-1"})
+      :ok = TaskStore.put_project(TaskStore, project)
+      fetched = TaskStore.get_project(TaskStore, "/tmp/myproj")
 
-      # Must remain a binary string — NOT converted to an atom.
-      assert result.some_key == "Elixir.Nonexistent.Module.Fake"
-      refute is_atom(result.some_key)
+      assert %RecentProject{} = fetched
+      assert fetched.path == "/tmp/myproj"
+      assert fetched.name == "My Project"
+      assert %DateTime{} = fetched.last_opened_at
+      assert DateTime.compare(fetched.last_opened_at, ~U[2026-06-26 07:19:44Z]) == :eq
+    end
+  end
+
+  describe "validation" do
+    test "put_task rejects non-struct input" do
+      result = TaskStore.put_task(TaskStore, "not a struct")
+      assert match?({:error, _}, result)
     end
 
-    test "non-Elixir-prefixed strings are never touched" do
-      :ok = TaskStore.put(TaskStore, {:task, "str-1"}, %{repo_id: "my_foreign_repo"})
+    test "put_task rejects nil id" do
+      result = TaskStore.put_task(TaskStore, %TaskInfo{id: nil, status: :pending})
+      assert result == {:error, :missing_task_id}
+    end
 
-      result = TaskStore.get(TaskStore, {:task, "str-1"})
+    test "put_task rejects nil status" do
+      result = TaskStore.put_task(TaskStore, %TaskInfo{id: "x", status: nil})
+      # status nil encoded via Atom.to_string would crash; validation catches it
+      assert match?({:error, _}, result)
+    end
 
-      assert result.repo_id == "my_foreign_repo"
-      refute is_atom(result.repo_id)
+    test "put_project rejects nil path" do
+      result = TaskStore.put_project(TaskStore, %RecentProject{path: nil, name: "x"})
+      assert result == {:error, :missing_project_path}
+    end
+  end
+
+  describe "delete operations" do
+    test "delete_task removes a single task" do
+      task = %TaskInfo{id: "del-1", type: :genesis, status: :completed, opts: [path: "/t"]}
+      :ok = TaskStore.put_task(TaskStore, task)
+      assert TaskStore.get_task(TaskStore, "del-1") != nil
+
+      :ok = TaskStore.delete_task(TaskStore, "del-1")
+      assert TaskStore.get_task(TaskStore, "del-1") == nil
+    end
+
+    test "delete_tasks removes multiple tasks in batch" do
+      for i <- 1..3 do
+        :ok =
+          TaskStore.put_task(TaskStore, %TaskInfo{
+            id: "batch-#{i}",
+            type: :genesis,
+            status: :completed,
+            opts: [path: "/t"]
+          })
+      end
+
+      :ok = TaskStore.delete_tasks(TaskStore, ["batch-1", "batch-2"])
+      assert TaskStore.get_task(TaskStore, "batch-1") == nil
+      assert TaskStore.get_task(TaskStore, "batch-2") == nil
+      assert TaskStore.get_task(TaskStore, "batch-3") != nil
+    end
+  end
+
+  describe "select and count" do
+    test "select_all_tasks returns all tasks" do
+      for i <- 1..3 do
+        :ok =
+          TaskStore.put_task(TaskStore, %TaskInfo{
+            id: "sel-#{i}",
+            type: :genesis,
+            status: :completed,
+            opts: [path: "/t"]
+          })
+      end
+
+      tasks = TaskStore.select_all_tasks(TaskStore)
+      ids = Enum.map(tasks, & &1.id)
+      assert "sel-1" in ids
+      assert "sel-2" in ids
+      assert "sel-3" in ids
+    end
+
+    test "select_all_projects returns all projects" do
+      :ok =
+        TaskStore.put_project(TaskStore, %RecentProject{path: "/p1", name: "P1"})
+
+      :ok =
+        TaskStore.put_project(TaskStore, %RecentProject{path: "/p2", name: "P2"})
+
+      projects = TaskStore.select_all_projects(TaskStore)
+      paths = Enum.map(projects, & &1.path)
+      assert "/p1" in paths
+      assert "/p2" in paths
+    end
+
+    test "count_tasks returns correct count" do
+      :ok =
+        TaskStore.put_task(TaskStore, %TaskInfo{
+          id: "cnt-1",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/t"]
+        })
+
+      assert TaskStore.count_tasks(TaskStore) >= 1
+    end
+
+    test "count_projects returns correct count" do
+      :ok =
+        TaskStore.put_project(TaskStore, %RecentProject{path: "/cnt-p1", name: "P1"})
+
+      assert TaskStore.count_projects(TaskStore) >= 1
+    end
+
+    test "size returns total across both tables" do
+      tasks_before = TaskStore.count_tasks(TaskStore)
+      projects_before = TaskStore.count_projects(TaskStore)
+
+      :ok =
+        TaskStore.put_task(TaskStore, %TaskInfo{
+          id: "size-1",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/t"]
+        })
+
+      :ok =
+        TaskStore.put_project(TaskStore, %RecentProject{path: "/size-p1", name: "P1"})
+
+      size = TaskStore.size(TaskStore)
+      assert size == tasks_before + projects_before + 2
+    end
+
+    test "clear_tasks removes all tasks" do
+      :ok =
+        TaskStore.put_task(TaskStore, %TaskInfo{
+          id: "clr-1",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/t"]
+        })
+
+      :ok = TaskStore.clear_tasks(TaskStore)
+      assert TaskStore.count_tasks(TaskStore) == 0
+    end
+  end
+
+  describe "integrity check" do
+    test "returns :ok on a healthy store" do
+      assert TaskStore.integrity_check(TaskStore) == :ok
+    end
+
+    test "safe_select_all_tasks never raises on bad data", %{sqlite_path: sqlite_path} do
+      # Inject a row with invalid JSON in opts via raw SQL
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)",
+        ["bad-1", "completed", "<<invalid json>>"]
+      )
+
+      :ok = XqliteNIF.close(conn)
+
+      # safe_select_all_tasks should not raise — it rescues bad rows
+      tasks = TaskStore.safe_select_all_tasks(TaskStore)
+      assert is_list(tasks)
+    end
+  end
+
+  describe "schema migration" do
+    test "detects old blob-based schema and recreates with column-based tables" do
+      unique = System.unique_integer([:positive])
+      sqlite_path = Path.join(System.tmp_dir!(), "evogit_schema_test_#{unique}.sqlite")
+      File.mkdir_p!(Path.dirname(sqlite_path))
+
+      # Seed old schema: (id TEXT PRIMARY KEY, data BLOB)
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      XqliteNIF.execute(conn, "CREATE TABLE tasks (id TEXT PRIMARY KEY, data BLOB)", [])
+      XqliteNIF.execute(conn, "CREATE TABLE projects (id TEXT PRIMARY KEY, data BLOB)", [])
+
+      XqliteNIF.execute(conn, "INSERT INTO tasks (id, data) VALUES (?1, ?2)", [
+        "old-task",
+        :erlang.term_to_binary(%{old: true})
+      ])
+
+      :ok = XqliteNIF.close(conn)
+
+      on_exit(fn -> File.rm(sqlite_path) end)
+
+      # Start a store — init should detect old schema and recreate
+      store = :"schema_test_#{unique}"
+      {:ok, _} = TaskStore.start_link(data_dir: sqlite_path, name: store)
+
+      try do
+        # Old data is lost (clean slate). New operations work.
+        assert TaskStore.count_tasks(store) == 0
+
+        :ok =
+          TaskStore.put_task(store, %TaskInfo{
+            id: "new-task",
+            type: :genesis,
+            status: :completed,
+            opts: [path: "/t"]
+          })
+
+        fetched = TaskStore.get_task(store, "new-task")
+        assert %TaskInfo{} = fetched
+        assert fetched.id == "new-task"
+      after
+        try do
+          GenServer.stop(store)
+        catch
+          _, _ -> :ok
+        end
+      end
+    end
+  end
+
+  describe "terminate" do
+    test "closes the connection gracefully on stop" do
+      unique = System.unique_integer([:positive])
+      sqlite_path = Path.join(System.tmp_dir!(), "evogit_term_#{unique}.sqlite")
+      store = :"term_test_#{unique}"
+
+      {:ok, _} = TaskStore.start_link(data_dir: sqlite_path, name: store)
+
+      # Stop should not raise — terminate/2 closes the connection
+      :ok = GenServer.stop(store)
+
+      # The DB file should be accessible (not locked)
+      {:ok, conn} = Xqlite.open(sqlite_path)
+      :ok = XqliteNIF.close(conn)
+      File.rm(sqlite_path)
     end
   end
 end
