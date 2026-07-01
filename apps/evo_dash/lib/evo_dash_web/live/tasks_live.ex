@@ -452,7 +452,15 @@ defmodule EvoDashWeb.TasksLive do
       |> filter_by_project(socket.assigns.project_filter)
       |> filter_by_review_status(socket.assigns.review_status_filter)
       |> filter_by_search(socket.assigns.search_query)
-      |> Enum.sort_by(& &1.started_at, {:desc, DateTime})
+      |> Enum.sort_by(
+        fn task ->
+          case task.started_at do
+            %DateTime{} = dt -> dt
+            _ -> ~U[0001-01-01T00:00:00Z]
+          end
+        end,
+        {:desc, DateTime}
+      )
 
     assign(socket, :filtered_tasks, filtered)
   end
