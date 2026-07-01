@@ -722,25 +722,39 @@ defmodule EvoDash.TaskStore do
     end
   end
 
-  # --- result (arbitrary term) ---
-  # Best-effort JSON encoding. If Jason can't encode the term (tuples, pids,
-  # deeply nested atoms), store nil and log a warning. Result is informational.
+  # --- result (arbitrary Elixir term) ---
+  # The `result` field contains opaque runtime return values like
+  # `{:ok, %{commit_sha: ..., branch_name: ..., result: "summary"}}` that the web
+  # layer pattern-matches on (tuples + atom keys). JSON cannot faithfully
+  # represent tuples (they become arrays) or atom keys (they become strings),
+  # so we use base64-encoded `term_to_binary` for this single field. This
+  # preserves full Elixir term semantics for the web layer. All other complex
+  # fields use JSON.
   defp encode_result(nil), do: nil
 
   defp encode_result(result) do
-    try do
-      Jason.encode!(result)
-    rescue
-      e ->
-        Logger.warning("TaskStore: failed to encode result, storing nil: #{Exception.message(e)}")
-
-        nil
-    end
+    result |> :erlang.term_to_binary() |> Base.encode64()
   end
 
   defp decode_result(nil), do: nil
 
   defp decode_result(str) when is_binary(str) do
+    # If the string starts with '{' or '[', it might be legacy JSON from an
+    # earlier version — try JSON decode as a fallback.
+    case Base.decode64(str) do
+      {:ok, binary} ->
+        try do
+          :erlang.binary_to_term(binary)
+        rescue
+          _ -> try_json_result(str)
+        end
+
+      :error ->
+        try_json_result(str)
+    end
+  end
+
+  defp try_json_result(str) do
     case Jason.decode(str) do
       {:ok, value} -> value
       _ -> nil
