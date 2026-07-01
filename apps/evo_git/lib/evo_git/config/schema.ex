@@ -35,13 +35,13 @@ defmodule EvoGit.Config.Schema do
   @type key_path :: [atom()]
 
   @typedoc "Top-level config category"
-  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history
+  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix
 
   @typedoc "Sub-category for sandbox keys; nil for all other categories"
   @type sub_category :: :resources | :process | nil
 
   @typedoc "Supported config value types"
-  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :float | :atom | :model_spec
+  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :float | :atom | :boolean | :model_spec
 
   @typedoc "A single config key's full schema metadata"
   @type schema_map :: %{
@@ -450,6 +450,27 @@ defmodule EvoGit.Config.Schema do
       sub_category: nil,
       description:
         "Maximum age in days for retained task history entries. Tasks older than this are automatically purged regardless of the max_tasks limit. Keeps the task history dashboard manageable."
+    },
+    # ── Nix ────────────────────────────────────────────────────────────
+    %{
+      key_path: [:nix, :enabled],
+      type: :boolean,
+      default: false,
+      validation: [],
+      category: :nix,
+      sub_category: nil,
+      description:
+        "When true, enables running all tool calls inside a Nix develop environment. Requires the `nix` binary to be available and a `flake.nix` to exist in the config directory (e.g. ~/.config/genesis/flake.nix). When nix or the flake is unavailable, commands run normally regardless of this setting."
+    },
+    %{
+      key_path: [:nix, :flake_output],
+      type: :string,
+      default: nil,
+      validation: [],
+      category: :nix,
+      sub_category: nil,
+      description:
+        "Optional flake output attribute to develop in (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\"."
     }
   ]
 
@@ -634,6 +655,14 @@ defmodule EvoGit.Config.Schema do
       []
     else
       [error(key_path, "must be an atom, got #{inspect(value)}", value, :atom)]
+    end
+  end
+
+  defp type_errors(key_path, :boolean, value) do
+    if is_boolean(value) do
+      []
+    else
+      [error(key_path, "must be a boolean, got #{inspect(value)}", value, :boolean)]
     end
   end
 

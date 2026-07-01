@@ -52,6 +52,10 @@ defmodule EvoGit.Config.SchemaTest do
       # Task History
       assert [:task_history, :max_tasks] in paths
       assert [:task_history, :max_age_days] in paths
+
+      # Nix
+      assert [:nix, :enabled] in paths
+      assert [:nix, :flake_output] in paths
     end
 
     test "every schema has required fields" do
@@ -68,8 +72,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 36 schemas" do
-      assert length(Schema.all_schemas()) == 36
+    test "has exactly 38 schemas" do
+      assert length(Schema.all_schemas()) == 38
     end
   end
 
@@ -118,6 +122,10 @@ defmodule EvoGit.Config.SchemaTest do
       # Task History
       assert defaults.task_history.max_tasks == 100
       assert defaults.task_history.max_age_days == 14
+
+      # Nix
+      assert defaults.nix.enabled == false
+      assert defaults.nix.flake_output == nil
     end
 
     test "llm model has nil default" do
@@ -142,6 +150,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(grouped, :sandbox)
       assert Map.has_key?(grouped, :truncation)
       assert Map.has_key?(grouped, :task_history)
+      assert Map.has_key?(grouped, :nix)
     end
 
     test "each category has expected count" do
@@ -152,6 +161,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:sandbox]) == 9
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
+      assert length(grouped[:nix]) == 2
     end
 
     test "sandbox schemas include sub_category metadata" do
