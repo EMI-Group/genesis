@@ -23,9 +23,9 @@ defmodule EvoDash.TaskStore do
     * Scalar fields → native SQLite types (TEXT / INTEGER).
     * DateTime → ISO8601 string.
     * Atoms (type, status, review_status) → stored as strings, restored via
-      `String.to_existing_atom/1` (never creates new atoms; unknown values
-      decode to nil). `encode_atom/1` also accepts strings to guarantee
-      round-trip safety.
+      a bounded whitelist + `String.to_atom/1`; unknown values decode to
+      nil. `encode_atom/1` also accepts strings to guarantee round-trip
+      safety.
     * Complex fields (opts, logs, result, usage, archive_metadata) → JSON via Jason.
     * result → JSON with a `"__result_tag__"` discriminator so runtime return
       tuples (`{:ok, _}`, `{:error, _}`, `{:exit, _}`) are faithfully rebuilt.
@@ -645,19 +645,32 @@ defmodule EvoDash.TaskStore do
   defp encode_atom(atom) when is_atom(atom), do: Atom.to_string(atom)
   defp encode_atom(str) when is_binary(str), do: str
 
-  # `to_existing_atom/1` is safe here: all valid atom values are defined as
-  # module attributes / literals used throughout the app, so they are already
-  # loaded into the atom table. If an unknown value somehow appears, we return
-  # nil rather than crashing (the value is already corrupt/invalid).
+  # The complete set of known atom values across the three atom fields:
+  #   * type — :genesis, :evolve, :extract_skills
+  #   * status — :pending, :running, :finalizing, :completed, :failed, :cancelled
+  #   * review_status — :open, :merged, :rejected, :continued, :ignored, :no_changes
+  #
+  # Using String.to_atom/1 is SAFE here because the set is closed, bounded, and
+  # application-controlled — not user input. This avoids the lazy-code-loading
+  # bug where String.to_existing_atom/1 fails for atoms whose defining modules
+  # haven't loaded yet (e.g. :merged/:rejected/:continued/:ignored before any
+  # code path that references them has run). Truly unknown/corrupt values fall
+  # outside the whitelist and decode to nil.
+  @known_atoms ~w(
+    genesis evolve extract_skills
+    pending running finalizing completed failed cancelled
+    open merged rejected continued ignored no_changes
+  )a
+  @known_atom_strings MapSet.new(@known_atoms, &Atom.to_string/1)
+
   defp decode_atom(nil), do: nil
 
   defp decode_atom(str) when is_binary(str) do
-    try do
-      String.to_existing_atom(str)
-    rescue
-      ArgumentError ->
-        Logger.warning("TaskStore: unknown atom value in DB: #{inspect(str)}, returning nil")
-        nil
+    if MapSet.member?(@known_atom_strings, str) do
+      String.to_atom(str)
+    else
+      Logger.warning("TaskStore: unknown atom value in DB: #{inspect(str)}, returning nil")
+      nil
     end
   end
 

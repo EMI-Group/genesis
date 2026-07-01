@@ -768,6 +768,27 @@ defmodule EvoDash.TaskStoreTest do
       end
     end
 
+    test "review_status field round-trips as atom for all known values" do
+      for review_status <- [:open, :merged, :rejected, :continued, :ignored, :no_changes] do
+        task = %TaskInfo{
+          id: "rs-#{review_status}",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil,
+          review_status: review_status
+        }
+
+        :ok = TaskStore.put_task(TaskStore, task)
+        fetched = TaskStore.get_task(TaskStore, "rs-#{review_status}")
+        assert is_atom(fetched.review_status)
+        assert fetched.review_status == review_status
+      end
+    end
+
     test "unknown atom value in DB decodes to nil (never crashes)", %{sqlite_path: sqlite_path} do
       # Simulate the bug: inject a raw string that is not a known atom.
       {:ok, conn} = Xqlite.open(sqlite_path)
