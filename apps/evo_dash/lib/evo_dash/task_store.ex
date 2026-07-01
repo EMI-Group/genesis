@@ -397,7 +397,7 @@ defmodule EvoDash.TaskStore do
   defp do_get(conn, table, value_key) do
     case XqliteNIF.query(conn, "SELECT data FROM #{table} WHERE id = ?1", [value_key]) do
       {:ok, %{rows: [[blob | _] | _]}} ->
-        :erlang.binary_to_term(blob, [:safe])
+        decode_blob(blob)
 
       {:ok, %{rows: []}} ->
         nil
@@ -405,7 +405,7 @@ defmodule EvoDash.TaskStore do
       {:ok, %{rows: rows}} when is_list(rows) ->
         # Fallback for unexpected row shapes
         case List.first(rows) do
-          [blob] -> :erlang.binary_to_term(blob, [:safe])
+          [blob] -> decode_blob(blob)
           _ -> nil
         end
     end
@@ -420,7 +420,7 @@ defmodule EvoDash.TaskStore do
     {:ok, %{rows: rows}} = XqliteNIF.query(conn, "SELECT id, data FROM #{table}", [])
 
     Enum.map(rows, fn [id, blob] ->
-      {{ns, id}, :erlang.binary_to_term(blob, [:safe])}
+      {{ns, id}, decode_blob(blob)}
     end)
   end
 
@@ -429,7 +429,7 @@ defmodule EvoDash.TaskStore do
 
     Enum.flat_map(rows, fn [id, blob] ->
       try do
-        [{{ns, id}, :erlang.binary_to_term(blob, [:safe])}]
+        [{{ns, id}, decode_blob(blob)}]
       rescue
         e ->
           # Skip rows whose blob fails to decode — don't let one bad row
@@ -565,4 +565,84 @@ defmodule EvoDash.TaskStore do
   rescue
     _ -> :error
   end
+
+  ## Private helpers — decode with atom repair
+
+  # Decodes an Erlang term binary BLOB and repairs any stringified module
+  # atoms introduced by the legacy scrub_db corruption. This is the single
+  # chokepoint for all values returned to callers (see do_get/3,
+  # read_all_table/3, safe_read_all_table/3). `try_decode/1` (used by
+  # integrity_check) is intentionally NOT routed through here — it only tests
+  # decode-ability and never returns a value to callers.
+  defp decode_blob(blob) do
+    blob
+    |> :erlang.binary_to_term([:safe])
+    |> repair_stringified_modules()
+  end
+
+  # Recursively repairs stringified module atoms in a decoded term.
+  #
+  # The legacy scrub_db corruption converted module atoms (e.g. `Calendar.ISO`
+  # inside DateTime structs, or the `__struct__` field itself) into binary
+  # strings like `"Elixir.Calendar.ISO"`. This walks the term and converts
+  # such strings back to atoms — but ONLY via `String.to_existing_atom/1`,
+  # which can never create a new atom. An `ArgumentError` leaves the string
+  # untouched, preserving the security intent of the original `String.to_atom`
+  # removal.
+  defp repair_stringified_modules(%{__struct__: struct_key} = map) do
+    # The __struct__ KEY is always a real atom — protect it. But the VALUE may
+    # itself be a stringified module (e.g. "Elixir.DateTime"); repair it so the
+    # map becomes a proper struct.
+    repaired_struct = repair_stringified_modules(struct_key)
+
+    map
+    |> Map.to_list()
+    |> Enum.map(fn {k, v} -> {k, repair_stringified_modules(v)} end)
+    |> Map.new()
+    |> Map.put(:__struct__, repaired_struct)
+  end
+
+  defp repair_stringified_modules(map) when is_map(map) do
+    map
+    |> Map.to_list()
+    |> Enum.map(fn {k, v} -> {repair_stringified_modules(k), repair_stringified_modules(v)} end)
+    |> Map.new()
+  end
+
+  # Keyword lists (list of {atom, value} tuples): atom keys are protected,
+  # repair values.
+  defp repair_stringified_modules([{key, _value} | _] = list) when is_atom(key) do
+    Enum.map(list, fn {k, v} -> {k, repair_stringified_modules(v)} end)
+  end
+
+  defp repair_stringified_modules(list) when is_list(list) do
+    Enum.map(list, &repair_stringified_modules/1)
+  end
+
+  defp repair_stringified_modules(tuple) when is_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> Enum.map(&repair_stringified_modules/1)
+    |> List.to_tuple()
+  end
+
+  # Binary strings matching "Elixir." <> _ are candidates for stringified
+  # module atoms. Attempt the safe conversion; on failure (not an existing
+  # atom) leave the string untouched. This NEVER creates a new atom.
+  defp repair_stringified_modules(str) when is_binary(str) do
+    case str do
+      "Elixir." <> _ ->
+        try do
+          String.to_existing_atom(str)
+        rescue
+          ArgumentError -> str
+        end
+
+      _ ->
+        str
+    end
+  end
+
+  # Everything else is left untouched — we do NOT convert arbitrary values.
+  defp repair_stringified_modules(other), do: other
 end
