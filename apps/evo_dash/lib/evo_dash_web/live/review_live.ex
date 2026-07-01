@@ -387,7 +387,7 @@ defmodule EvoDashWeb.ReviewLive do
 
     TaskRegistry.set_review_status(task_id, :continued)
 
-    query = [starting_commit: commit_sha]
+    query = [starting_commit: commit_sha, resume_from: task_id]
     # Include project query param so the dashboard re-opens the correct project
     query = if repo_path, do: Keyword.put(query, :project, repo_path), else: query
 

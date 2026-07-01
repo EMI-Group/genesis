@@ -54,6 +54,8 @@ defmodule EvoDashWeb.DashboardLive do
             node_path={@task_node_path}
             seeds={@task_seeds}
             starting_commit={@task_starting_commit}
+            resume_from={@task_resume_from}
+            show_advanced={@show_advanced}
             disabled={is_nil(@active_project)}
             archive={@task_archive}
           />
@@ -291,6 +293,8 @@ defmodule EvoDashWeb.DashboardLive do
         |> MapSet.new()
       )
       |> assign_form_defaults()
+      |> assign(:show_advanced, false)
+      |> assign(:task_resume_from, "")
       |> assign_running_and_pending_tasks()
       |> assign(:config_status, config_status)
       |> assign(:show_welcome, false)
@@ -372,6 +376,19 @@ defmodule EvoDashWeb.DashboardLive do
           socket
       end
 
+    # Preserve resume_from from URL query param (e.g. ?resume_from=task_id)
+    # and auto-expand the Advanced Options so the user sees it's filled in.
+    socket =
+      case params["resume_from"] do
+        task_id when is_binary(task_id) and task_id != "" ->
+          socket
+          |> assign(:task_resume_from, task_id)
+          |> assign(:show_advanced, true)
+
+        _ ->
+          socket
+      end
+
     {:noreply, socket}
   end
 
@@ -408,6 +425,11 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_event("toggle_open_project_form", _params, socket) do
     {:noreply, assign(socket, :show_open_project_form, !socket.assigns.show_open_project_form)}
+  end
+
+  @impl true
+  def handle_event("toggle_advanced", _params, socket) do
+    {:noreply, assign(socket, :show_advanced, !socket.assigns.show_advanced)}
   end
 
   @impl true
@@ -472,12 +494,22 @@ defmodule EvoDashWeb.DashboardLive do
         maybe_restore_assign(socket, :task_starting_commit, params["task_starting_commit"])
       end
 
+    # Don't let restore_state overwrite a resume_from that came from the URL
+    # (set in handle_params from ?resume_from=... query param)
+    socket =
+      if socket.assigns.task_resume_from != "" do
+        socket
+      else
+        maybe_restore_assign(socket, :task_resume_from, params["task_resume_from"])
+      end
+
     socket =
       socket
       |> maybe_restore_assign(:task_prompt, params["task_prompt"])
       |> maybe_restore_assign(:task_seeds, params["task_seeds"])
       |> maybe_restore_show_project_settings(params["show_project_settings"])
       |> maybe_restore_task_archive(params["task_archive"])
+      |> maybe_restore_show_advanced(params["show_advanced"])
 
     # Restore project if we don't already have one active.
     # Only restore project-specific assigns (mode, node_path) when no project is
@@ -570,6 +602,15 @@ defmodule EvoDashWeb.DashboardLive do
         if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
 
       opts = if archive, do: Keyword.put(opts, :archive, true), else: opts
+
+      resume_from = params["resume_from"]
+
+      opts =
+        if task_type == :evolve and is_binary(resume_from) and String.trim(resume_from) != "" do
+          Keyword.put(opts, :resume_from, String.trim(resume_from))
+        else
+          opts
+        end
 
       case TaskRegistry.start_task(task_type, opts) do
         {:ok, task} ->
@@ -1022,7 +1063,9 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(:task_node_path, "")
     |> assign(:task_seeds, "")
     |> assign(:task_starting_commit, "")
+    |> assign(:task_resume_from, "")
     |> assign(:task_archive, false)
+    |> assign(:show_advanced, false)
   end
 
   defp current_tasks(socket) do
@@ -1157,6 +1200,8 @@ defmodule EvoDashWeb.DashboardLive do
       task_node_path: socket.assigns.task_node_path,
       task_seeds: socket.assigns.task_seeds,
       task_starting_commit: socket.assigns.task_starting_commit,
+      task_resume_from: socket.assigns.task_resume_from,
+      show_advanced: socket.assigns.show_advanced,
       task_archive: socket.assigns.task_archive,
       foreign_repos: serialize_foreign_repos(socket.assigns[:foreign_repos])
     }
@@ -1190,6 +1235,10 @@ defmodule EvoDashWeb.DashboardLive do
   defp maybe_restore_task_archive(socket, "true"), do: assign(socket, :task_archive, true)
   defp maybe_restore_task_archive(socket, true), do: assign(socket, :task_archive, true)
   defp maybe_restore_task_archive(socket, _), do: assign(socket, :task_archive, false)
+
+  defp maybe_restore_show_advanced(socket, "true"), do: assign(socket, :show_advanced, true)
+  defp maybe_restore_show_advanced(socket, true), do: assign(socket, :show_advanced, true)
+  defp maybe_restore_show_advanced(socket, _), do: socket
 
   defp maybe_restore_foreign_repos(socket, nil), do: socket
   defp maybe_restore_foreign_repos(socket, repos) when is_list(repos) and repos == [], do: socket
