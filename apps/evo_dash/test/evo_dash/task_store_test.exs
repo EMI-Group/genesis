@@ -659,73 +659,157 @@ defmodule EvoDash.TaskStoreTest do
     end
   end
 
-  describe "result backward compatibility" do
-    # Old databases stored the result column as base64-encoded term_to_binary.
-    # The decode path must still recover these legacy blobs so existing data
-    # isn't lost when the column-based schema carries them forward.
+  describe "atom field round-trip safety (regression)" do
+    # Regression for the critical crash: encode_atom/1 only accepted nil and
+    # atoms, but decode_atom/1 could return a string. If a decoded value
+    # survived into a re-encode, encode_atom("merged") → FunctionClauseError.
 
-    test "decodes old base64 term_to_binary {:ok, map} result", %{sqlite_path: sqlite_path} do
-      legacy_result =
-        {:ok, %{commit_sha: "abc"}}
-        |> :erlang.term_to_binary()
-        |> Base.encode64()
+    test "review_status :merged survives put/get and re-put (the crash scenario)" do
+      task = %TaskInfo{
+        id: "rs-merged",
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil,
+        review_status: :merged
+      }
 
-      # Inject directly into the result column
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rs-merged")
+
+      # Consumer needs an atom for pattern matching.
+      assert fetched.review_status == :merged
+
+      # Re-put the fetched task — this is exactly the crash scenario.
+      assert :ok = TaskStore.put_task(TaskStore, fetched)
+      fetched2 = TaskStore.get_task(TaskStore, "rs-merged")
+      assert fetched2.review_status == :merged
+    end
+
+    test "all known review_status values round-trip as atoms" do
+      for status <- [:merged, :rejected, :continued, :ignored, :open, :no_changes] do
+        task = %TaskInfo{
+          id: "rs-#{status}",
+          type: :evolve,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil,
+          review_status: status
+        }
+
+        :ok = TaskStore.put_task(TaskStore, task)
+        fetched = TaskStore.get_task(TaskStore, "rs-#{status}")
+        assert is_atom(fetched.review_status), "review_status #{status} decoded as non-atom"
+        assert fetched.review_status == status
+      end
+    end
+
+    test "review_status nil round-trips" do
+      task = %TaskInfo{
+        id: "rs-nil",
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil,
+        review_status: nil
+      }
+
+      :ok = TaskStore.put_task(TaskStore, task)
+      fetched = TaskStore.get_task(TaskStore, "rs-nil")
+      assert fetched.review_status == nil
+    end
+
+    test "type field round-trips as atom for all known values" do
+      for type <- [:genesis, :evolve, :extract_skills] do
+        task = %TaskInfo{
+          id: "type-#{type}",
+          type: type,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil
+        }
+
+        :ok = TaskStore.put_task(TaskStore, task)
+        fetched = TaskStore.get_task(TaskStore, "type-#{type}")
+        assert is_atom(fetched.type)
+        assert fetched.type == type
+      end
+    end
+
+    test "status field round-trips as atom for all known values" do
+      for status <- [:pending, :running, :finalizing, :completed, :failed, :cancelled] do
+        task = %TaskInfo{
+          id: "status-#{status}",
+          type: :genesis,
+          status: status,
+          opts: [path: "/tmp/test"],
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil
+        }
+
+        :ok = TaskStore.put_task(TaskStore, task)
+        fetched = TaskStore.get_task(TaskStore, "status-#{status}")
+        assert is_atom(fetched.status)
+        assert fetched.status == status
+      end
+    end
+
+    test "unknown atom value in DB decodes to nil (never crashes)", %{sqlite_path: sqlite_path} do
+      # Simulate the bug: inject a raw string that is not a known atom.
       {:ok, conn} = Xqlite.open(sqlite_path)
 
       XqliteNIF.execute(
         conn,
-        "INSERT OR REPLACE INTO tasks (id, type, status, opts, result) VALUES (?1, ?2, ?3, ?4, ?5)",
-        ["legacy-ok", "evolve", "completed", "[]", legacy_result]
+        "INSERT OR REPLACE INTO tasks (id, type, status, opts, review_status) VALUES (?1, ?2, ?3, ?4, ?5)",
+        ["bad-rs", "evolve", "completed", "[]", "some_unknown_value"]
       )
 
       :ok = XqliteNIF.close(conn)
 
-      fetched = TaskStore.get_task(TaskStore, "legacy-ok")
+      fetched = TaskStore.get_task(TaskStore, "bad-rs")
       assert %TaskInfo{} = fetched
-      assert {:ok, %{commit_sha: "abc"}} = fetched.result
+      # Unknown value decodes to nil, not a crash.
+      assert fetched.review_status == nil
     end
 
-    test "decodes old base64 term_to_binary {:error, reason} result", %{sqlite_path: sqlite_path} do
-      legacy_result =
-        {:error, "old failure"}
-        |> :erlang.term_to_binary()
-        |> Base.encode64()
-
+    test "string value in atom field survives a full round-trip without crashing", %{
+      sqlite_path: sqlite_path
+    } do
+      # The ultimate regression: inject a string that IS a known atom name into
+      # the DB, read it (decode_atom returns the atom), then re-put the read
+      # task. This must not crash even if the in-memory value were somehow a
+      # string.
       {:ok, conn} = Xqlite.open(sqlite_path)
 
       XqliteNIF.execute(
         conn,
-        "INSERT OR REPLACE INTO tasks (id, type, status, opts, result) VALUES (?1, ?2, ?3, ?4, ?5)",
-        ["legacy-error", "evolve", "failed", "[]", legacy_result]
+        "INSERT OR REPLACE INTO tasks (id, type, status, opts, review_status) VALUES (?1, ?2, ?3, ?4, ?5)",
+        ["str-rs", "evolve", "completed", "[]", "merged"]
       )
 
       :ok = XqliteNIF.close(conn)
 
-      fetched = TaskStore.get_task(TaskStore, "legacy-error")
-      assert fetched.result == {:error, "old failure"}
-    end
+      fetched = TaskStore.get_task(TaskStore, "str-rs")
+      assert fetched.review_status == :merged
 
-    test "decodes old base64 term_to_binary plain map result", %{sqlite_path: sqlite_path} do
-      # Use only atoms that exist at compile time (common built-in atoms)
-      legacy_result =
-        %{ok: true, error: false}
-        |> :erlang.term_to_binary()
-        |> Base.encode64()
-
-      {:ok, conn} = Xqlite.open(sqlite_path)
-
-      XqliteNIF.execute(
-        conn,
-        "INSERT OR REPLACE INTO tasks (id, type, status, opts, result) VALUES (?1, ?2, ?3, ?4, ?5)",
-        ["legacy-map", "evolve", "completed", "[]", legacy_result]
-      )
-
-      :ok = XqliteNIF.close(conn)
-
-      fetched = TaskStore.get_task(TaskStore, "legacy-map")
-      # A bare map (no tuple wrapper) round-trips as a map.
-      assert %{ok: true, error: false} = fetched.result
+      # Re-put — must not crash (this was the original FunctionClauseError).
+      assert :ok = TaskStore.put_task(TaskStore, fetched)
+      fetched2 = TaskStore.get_task(TaskStore, "str-rs")
+      assert fetched2.review_status == :merged
     end
   end
 

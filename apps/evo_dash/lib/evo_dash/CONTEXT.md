@@ -50,10 +50,10 @@ CREATE TABLE projects_quarantine (id TEXT PRIMARY KEY, data TEXT);
 |------------|----------|-------|
 | Scalars (id, type, status, SHAs) | Native SQLite TEXT/INTEGER | Atoms → strings |
 | DateTime (started_at, finished_at, last_opened_at) | ISO8601 string | `DateTime.to_iso8601/1` / `DateTime.from_iso8601/1` |
-| Atoms (type, status, review_status) | `Atom.to_string/1` → string | Restored via `String.to_existing_atom/1` (never creates new atoms) |
-| opts (keyword list) | JSON array of `[key_string, value]` pairs | Jason encode/decode |
+| Atoms (type, status, review_status) | `encode_atom/1` → string | Stored as TEXT; `encode_atom/1` accepts nil, atoms, AND strings (round-trip safe). Decoded via `decode_atom/1` using `String.to_existing_atom/1` (returns nil for unknown values — never crashes) |
+| opts (keyword list) | JSON array of `[key_string, value]` pairs | Jason encode/decode. Known opt keys atomized via whitelist; unknown keys kept as strings |
 | logs (list of strings) | JSON array | Jason encode/decode |
-| **result** (opaque Elixir term) | **base64-encoded `term_to_binary`** | Preserves tuples + atom keys that the web layer pattern-matches on (`{:ok, %{commit_sha: ...}}`). JSON cannot represent these. |
+| **result** (opaque Elixir term) | **JSON with `"__result_tag__"` discriminator** | Tuple shape (`{:ok, _}`, `{:error, _}`, `{:exit, _}`) faithfully rebuilt. Atom keys in the success map atomized via `@result_data_fields` whitelist. Embedded `%EvoGit.Agent.Usage{}` rebuilt. Plain strings stored verbatim. |
 | usage (`EvoGit.Agent.Usage`) | JSON map (`Map.from_struct/1`) | Decoded back into `%EvoGit.Agent.Usage{}` struct |
 | archive_metadata (list of maps) | JSON array | Maps decode with string keys (web layer normalizes) |
 | pid | `:erlang.pid_to_list/1` → string | Restored via `:erlang.list_to_pid/1`; stale after VM restart |
