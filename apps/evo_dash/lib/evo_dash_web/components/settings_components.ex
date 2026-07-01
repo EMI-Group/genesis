@@ -829,6 +829,7 @@ defmodule EvoDashWeb.SettingsComponents do
   def category_display_name(:sandbox), do: gettext("Sandbox")
   def category_display_name(:truncation), do: gettext("Truncation")
   def category_display_name(:task_history), do: gettext("Task History")
+  def category_display_name(:nix), do: gettext("Nix")
 
   def category_icon(:scheduler), do: "hero-cog-6-tooth"
   def category_icon(:llm), do: "hero-sparkles"
@@ -836,6 +837,7 @@ defmodule EvoDashWeb.SettingsComponents do
   def category_icon(:sandbox), do: "hero-shield-check"
   def category_icon(:truncation), do: "hero-scissors"
   def category_icon(:task_history), do: "hero-clock"
+  def category_icon(:nix), do: "hero-snowflake"
 
   defp category_description(:scheduler),
     do: gettext("Control agent concurrency, retry behavior, and depth limits.")
@@ -855,8 +857,11 @@ defmodule EvoDashWeb.SettingsComponents do
   defp category_description(:task_history),
     do: gettext("Manage how many past tasks are retained and for how long.")
 
+  defp category_description(:nix),
+    do: gettext("Configure Nix develop environment integration for tool calls.")
+
   defp sort_categories(categories) do
-    order = [:llm, :scheduler, :user, :sandbox, :truncation, :task_history]
+    order = [:llm, :scheduler, :user, :sandbox, :truncation, :task_history, :nix]
     Enum.sort_by(categories, fn {cat, _} -> Enum.find_index(order, &(&1 == cat)) || 99 end)
   end
 

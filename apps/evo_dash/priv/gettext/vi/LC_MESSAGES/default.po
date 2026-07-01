@@ -2,12 +2,14 @@ msgid ""
 msgstr ""
 
 #: lib/evo_dash_web/components/agents_components.ex:94
+#: lib/evo_dash_web/components/agents_components.ex:94
 #, elixir-autogen, elixir-format
 msgid "%{count} child"
 msgid_plural "%{count} children"
 msgstr[0] "%{count} nhánh con"
 msgstr[1] "%{count} nhánh con"
 
+#: lib/evo_dash_web/live/tasks_live.ex:145
 #: lib/evo_dash_web/live/tasks_live.ex:145
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
@@ -16,275 +18,355 @@ msgstr[0] "Tìm thấy %{count} tác vụ"
 msgstr[1] "Tìm thấy %{count} tác vụ"
 
 #: lib/evo_dash_web/helpers.ex:156
+#: lib/evo_dash_web/helpers.ex:156
 #, elixir-autogen, elixir-format
 msgid "%{count}d ago"
 msgstr "%{count} ngày trước"
 
+#: lib/evo_dash_web/helpers.ex:155
 #: lib/evo_dash_web/helpers.ex:155
 #, elixir-autogen, elixir-format
 msgid "%{count}h ago"
 msgstr "%{count} giờ trước"
 
 #: lib/evo_dash_web/helpers.ex:154
+#: lib/evo_dash_web/helpers.ex:154
 #, elixir-autogen, elixir-format
 msgid "%{count}m ago"
 msgstr "%{count} phút trước"
 
+#: lib/evo_dash_web/helpers.ex:153
 #: lib/evo_dash_web/helpers.ex:153
 #, elixir-autogen, elixir-format
 msgid "%{count}s ago"
 msgstr "%{count} giây trước"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:580
+#: lib/evo_dash_web/live/dashboard_live.ex:580
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
 msgstr "Tác vụ %{type} đã bắt đầu với ID: %{id}"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:91
 #: lib/evo_dash_web/components/dashboard_components.ex:91
 #, elixir-autogen, elixir-format
 msgid "/path/to/your/repo"
 msgstr "/đường/dẫn/đến/kho/lưu/trữ/của/bạn"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:409
+#: lib/evo_dash_web/live/agents_live.html.heex:409
 #, elixir-autogen, elixir-format
 msgid "<empty message>"
 msgstr "<tin nhắn trống>"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:452
 #: lib/evo_dash_web/live/agents_live.html.heex:452
 #, elixir-autogen, elixir-format
 msgid "<empty result>"
 msgstr "<kết quả trống>"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:425
+#: lib/evo_dash_web/live/agents_live.html.heex:425
 #, elixir-autogen, elixir-format
 msgid "<no text content>"
 msgstr "<không có nội dung văn bản>"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:85
 #: lib/evo_dash_web/live/dashboard_live.ex:85
 #, elixir-autogen, elixir-format
 msgid "Active Tasks"
 msgstr "Tác vụ đang chạy"
 
 #: lib/evo_dash_web/live/tasks_live.ex:107
+#: lib/evo_dash_web/live/tasks_live.ex:107
 #, elixir-autogen, elixir-format
 msgid "Active filters:"
 msgstr "Bộ lọc đang áp dụng:"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:427
 #: lib/evo_dash_web/components/dashboard_components.ex:427
 #, elixir-autogen, elixir-format
 msgid "Add Foreign Repo"
 msgstr "Thêm kho lưu trữ ngoài"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1034
+#: lib/evo_dash_web/components/dashboard_components.ex:1034
 #: lib/evo_dash_web/components/dashboard_components.ex:1063
+#: lib/evo_dash_web/components/dashboard_components.ex:1063
+#: lib/evo_dash_web/components/dashboard_components.ex:1201
 #: lib/evo_dash_web/components/dashboard_components.ex:1201
 #, elixir-autogen, elixir-format
 msgid "Agent Message"
 msgstr "Tin nhắn từ Agent"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:104
+#: lib/evo_dash_web/live/agents_live.html.heex:104
 #, elixir-autogen, elixir-format
 msgid "Agent Module"
 msgstr "Module Agent"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:11
 #: lib/evo_dash_web/live/agents_live.html.heex:11
 #, elixir-autogen, elixir-format
 msgid "Agent Tree"
 msgstr "Cây Agent"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:470
+#: lib/evo_dash_web/live/agents_live.html.heex:470
 #, elixir-autogen, elixir-format
 msgid "Agent not found"
 msgstr "Không tìm thấy Agent"
 
 #: lib/evo_dash_web/components/layouts.ex:71
+#: lib/evo_dash_web/components/layouts.ex:71
 #: lib/evo_dash_web/components/layouts.ex:140
+#: lib/evo_dash_web/components/layouts.ex:140
+#: lib/evo_dash_web/components/review_components.ex:95
 #: lib/evo_dash_web/components/review_components.ex:95
 #, elixir-autogen, elixir-format
 msgid "Agents"
 msgstr "Tác nhân"
 
 #: lib/evo_dash_web/live/system_live.ex:142
+#: lib/evo_dash_web/live/system_live.ex:142
 #, elixir-autogen, elixir-format
 msgid "Agents and slots are being granted normally."
 msgstr "Các agent và slot đang được cấp phát bình thường."
 
+#: lib/evo_dash_web/live/tasks_live.ex:53
 #: lib/evo_dash_web/live/tasks_live.ex:53
 #, elixir-autogen, elixir-format
 msgid "All Projects"
 msgstr "Tất cả dự án"
 
 #: lib/evo_dash_web/live/tasks_live.ex:37
+#: lib/evo_dash_web/live/tasks_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "All Statuses"
 msgstr "Tất cả trạng thái"
 
 #: lib/evo_dash_web/helpers.ex:344
+#: lib/evo_dash_web/helpers.ex:344
+#: lib/evo_dash_web/live/system_live.ex:215
 #: lib/evo_dash_web/live/system_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "All configured"
 msgstr "Đã cấu hình đầy đủ"
 
 #: lib/evo_dash_web/helpers.ex:345
+#: lib/evo_dash_web/helpers.ex:345
 #, elixir-autogen, elixir-format
 msgid "All critical configuration values are set"
 msgstr "Tất cả giá trị cấu hình quan trọng đã được thiết lập"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:531
 #: lib/evo_dash_web/components/dashboard_components.ex:531
 #, elixir-autogen, elixir-format
 msgid "Are you sure you want to cancel this task?"
 msgstr "Bạn có chắc chắn muốn hủy tác vụ này?"
 
 #: lib/evo_dash_web/components/layouts.ex:295
+#: lib/evo_dash_web/components/layouts.ex:295
+#: lib/evo_dash_web/components/layouts.ex:307
 #: lib/evo_dash_web/components/layouts.ex:307
 #, elixir-autogen, elixir-format
 msgid "Attempting to reconnect"
 msgstr "Đang thử kết nối lại"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:175
+#: lib/evo_dash_web/live/agents_live.html.heex:175
 #, elixir-autogen, elixir-format
 msgid "Base Commit"
 msgstr "Commit Gốc"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:106
+#: lib/evo_dash_web/components/dashboard_components.ex:106
+#: lib/evo_dash_web/components/dashboard_components.ex:401
 #: lib/evo_dash_web/components/dashboard_components.ex:401
 #, elixir-autogen, elixir-format
 msgid "Browse for directory"
 msgstr "Duyệt thư mục"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:120
+#: lib/evo_dash_web/components/dashboard_components.ex:120
+#: lib/evo_dash_web/components/dashboard_components.ex:420
 #: lib/evo_dash_web/components/dashboard_components.ex:420
 #: lib/evo_dash_web/components/dashboard_components.ex:533
+#: lib/evo_dash_web/components/dashboard_components.ex:533
+#: lib/evo_dash_web/components/review_components.ex:609
 #: lib/evo_dash_web/components/review_components.ex:609
 #: lib/evo_dash_web/live/system_live.ex:375
+#: lib/evo_dash_web/live/system_live.ex:375
+#: lib/evo_dash_web/live/system_live.ex:405
 #: lib/evo_dash_web/live/system_live.ex:405
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "Hủy"
 
 #: lib/evo_dash_web/live/tasks_live.ex:42
+#: lib/evo_dash_web/live/tasks_live.ex:42
 #, elixir-autogen, elixir-format
 msgid "Cancelled"
 msgstr "Đã hủy"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:762
 #: lib/evo_dash_web/live/dashboard_live.ex:762
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "Không thể xóa kho lưu trữ chính."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:309
+#: lib/evo_dash_web/live/agents_live.html.heex:309
 #, elixir-autogen, elixir-format
 msgid "Chat History / Session Memory"
 msgstr "Lịch sử Trò chuyện / Bộ nhớ Phiên"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:215
 #: lib/evo_dash_web/live/agents_live.html.heex:215
 #, elixir-autogen, elixir-format
 msgid "Children"
 msgstr "Cấp con"
 
 #: lib/evo_dash_web/live/tasks_live.ex:178
+#: lib/evo_dash_web/live/tasks_live.ex:178
 #, elixir-autogen, elixir-format
 msgid "Clear History"
 msgstr "Xóa lịch sử"
 
+#: lib/evo_dash_web/live/tasks_live.ex:177
 #: lib/evo_dash_web/live/tasks_live.ex:177
 #, elixir-autogen, elixir-format
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "Xóa toàn bộ lịch sử tác vụ đã hoàn thành? Hành động này không thể hoàn tác."
 
 #: lib/evo_dash_web/helpers.ex:412
+#: lib/evo_dash_web/helpers.ex:412
+#: lib/evo_dash_web/live/agents_live.html.heex:564
 #: lib/evo_dash_web/live/agents_live.html.heex:564
 #: lib/evo_dash_web/live/agents_live.html.heex:588
+#: lib/evo_dash_web/live/agents_live.html.heex:588
+#: lib/evo_dash_web/live/dashboard_live.ex:161
 #: lib/evo_dash_web/live/dashboard_live.ex:161
 #: lib/evo_dash_web/live/dashboard_live.ex:182
+#: lib/evo_dash_web/live/dashboard_live.ex:182
 #: lib/evo_dash_web/live/tasks_live.ex:194
+#: lib/evo_dash_web/live/tasks_live.ex:194
+#: lib/evo_dash_web/live/tasks_live.ex:215
 #: lib/evo_dash_web/live/tasks_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr "Đóng"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:874
+#: lib/evo_dash_web/components/dashboard_components.ex:874
 #: lib/evo_dash_web/components/review_components.ex:330
+#: lib/evo_dash_web/components/review_components.ex:330
+#: lib/evo_dash_web/live/tasks_live.ex:40
 #: lib/evo_dash_web/live/tasks_live.ex:40
 #, elixir-autogen, elixir-format
 msgid "Completed"
 msgstr "Hoàn thành"
 
 #: lib/evo_dash_web/live/settings_live.ex:261
+#: lib/evo_dash_web/live/settings_live.ex:261
+#: lib/evo_dash_web/live/settings_live.ex:326
 #: lib/evo_dash_web/live/settings_live.ex:326
 #, elixir-autogen, elixir-format
 msgid "Configuration saved successfully."
 msgstr "Cấu hình đã được lưu thành công."
 
 #: lib/evo_dash_web/components/layouts.ex:185
+#: lib/evo_dash_web/components/layouts.ex:185
 #, elixir-autogen, elixir-format
 msgid "Configure now →"
 msgstr "Cấu hình ngay →"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:112
 #: lib/evo_dash_web/live/agents_live.html.heex:112
 #, elixir-autogen, elixir-format
 msgid "Context Path"
 msgstr "Đường dẫn Ngữ cảnh"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1020
+#: lib/evo_dash_web/components/dashboard_components.ex:1020
+#: lib/evo_dash_web/components/dashboard_components.ex:1181
 #: lib/evo_dash_web/components/dashboard_components.ex:1181
 #, elixir-autogen, elixir-format
 msgid "Crashed"
 msgstr "Đã gặp lỗi"
 
 #: lib/evo_dash_web/live/system_live.ex:341
+#: lib/evo_dash_web/live/system_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "Credentials Reference"
 msgstr "Tham khảo Thông tin Xác thực"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:186
 #: lib/evo_dash_web/live/agents_live.html.heex:186
 #, elixir-autogen, elixir-format
 msgid "Current Commit"
 msgstr "Commit Hiện tại"
 
 #: lib/evo_dash_web/live/tasks_live.ex:21
+#: lib/evo_dash_web/live/tasks_live.ex:21
 #, elixir-autogen, elixir-format
 msgid "Dashboard"
 msgstr "Bảng điều khiển"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:565
 #: lib/evo_dash_web/components/dashboard_components.ex:565
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr "Xóa"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:564
+#: lib/evo_dash_web/components/dashboard_components.ex:564
 #, elixir-autogen, elixir-format
 msgid "Delete this task?"
 msgstr "Xóa tác vụ này?"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:782
+#: lib/evo_dash_web/components/dashboard_components.ex:782
 #: lib/evo_dash_web/components/review_components.ex:224
+#: lib/evo_dash_web/components/review_components.ex:224
+#: lib/evo_dash_web/live/agents_live.html.heex:160
 #: lib/evo_dash_web/live/agents_live.html.heex:160
 #, elixir-autogen, elixir-format
 msgid "Depth"
 msgstr "Độ sâu"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:431
+#: lib/evo_dash_web/live/dashboard_live.ex:431
+#: lib/evo_dash_web/live/dashboard_live.ex:450
 #: lib/evo_dash_web/live/dashboard_live.ex:450
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
 msgstr "Thư mục không tồn tại: %{path}"
 
 #: lib/evo_dash_web/helpers.ex:292
+#: lib/evo_dash_web/helpers.ex:292
 #, elixir-autogen, elixir-format
 msgid "Empty directory detected — New Codebase mode selected"
 msgstr "Phát hiện thư mục trống — Đã chọn chế độ Codebase Mới"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1007
+#: lib/evo_dash_web/components/dashboard_components.ex:1007
+#: lib/evo_dash_web/components/dashboard_components.ex:1168
 #: lib/evo_dash_web/components/dashboard_components.ex:1168
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr "Lỗi"
 
 #: lib/evo_dash_web/components/layouts.ex:46
+#: lib/evo_dash_web/components/layouts.ex:46
+#: lib/evo_dash_web/components/layouts.ex:51
 #: lib/evo_dash_web/components/layouts.ex:51
 #: lib/evo_dash_web/components/layouts.ex:54
+#: lib/evo_dash_web/components/layouts.ex:54
 #: lib/evo_dash_web/components/layouts/root.html.heex:12
+#: lib/evo_dash_web/components/layouts/root.html.heex:12
+#: lib/evo_dash_web/components/layouts/root.html.heex:14
+#: lib/evo_dash_web/components/layouts/root.html.heex:14
 #: lib/evo_dash_web/components/layouts/root.html.heex:14
 #: lib/evo_dash_web/components/layouts/root.html.heex:14
 #, elixir-autogen, elixir-format
@@ -292,546 +374,692 @@ msgid "Genesis"
 msgstr "Genesis"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:243
+#: lib/evo_dash_web/components/dashboard_components.ex:243
 #, elixir-autogen, elixir-format
 msgid "Execute Task"
 msgstr "Thực thi tác vụ"
 
+#: lib/evo_dash_web/live/tasks_live.ex:41
 #: lib/evo_dash_web/live/tasks_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Failed"
 msgstr "Thất bại"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:620
+#: lib/evo_dash_web/live/dashboard_live.ex:620
+#: lib/evo_dash_web/live/tasks_live.ex:428
 #: lib/evo_dash_web/live/tasks_live.ex:428
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr "Không thể hủy tác vụ: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:278
+#: lib/evo_dash_web/live/settings_live.ex:278
 #: lib/evo_dash_web/live/settings_live.ex:346
+#: lib/evo_dash_web/live/settings_live.ex:346
+#: lib/evo_dash_web/live/settings_live.ex:533
 #: lib/evo_dash_web/live/settings_live.ex:533
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "Không thể lưu cấu hình: %{reason}"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:595
+#: lib/evo_dash_web/live/dashboard_live.ex:595
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "Không thể khởi chạy tác vụ: %{reason}"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:514
 #: lib/evo_dash_web/components/dashboard_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Finished"
 msgstr "Đã hoàn thành"
 
 #: lib/evo_dash_web/live/system_live.ex:350
+#: lib/evo_dash_web/live/system_live.ex:350
 #, elixir-autogen, elixir-format
 msgid "For security, credentials cannot be edited from this page. Edit the file directly on your system."
 msgstr "Vì lý do bảo mật, không thể chỉnh sửa thông tin xác thực từ trang này. Vui lòng chỉnh sửa trực tiếp tệp tin trên hệ thống của bạn."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:339
 #: lib/evo_dash_web/components/dashboard_components.ex:339
 #, elixir-autogen, elixir-format
 msgid "Foreign Repositories"
 msgstr "Kho lưu trữ ngoài"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:749
+#: lib/evo_dash_web/live/dashboard_live.ex:749
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "Kho ngoài '%{repo_id}' đã được đăng ký thành công."
 
+#: lib/evo_dash_web/live/dashboard_live.ex:776
 #: lib/evo_dash_web/live/dashboard_live.ex:776
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "Kho ngoài '%{repo_id}' đã được xóa thành công."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:580
+#: lib/evo_dash_web/live/agents_live.html.heex:580
 #: lib/evo_dash_web/live/dashboard_live.ex:176
+#: lib/evo_dash_web/live/dashboard_live.ex:176
+#: lib/evo_dash_web/live/tasks_live.ex:209
 #: lib/evo_dash_web/live/tasks_live.ex:209
 #, elixir-autogen, elixir-format
 msgid "Full Objective"
 msgstr "Mục tiêu Đầy đủ"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:552
+#: lib/evo_dash_web/components/dashboard_components.ex:552
 #, elixir-autogen, elixir-format
 msgid "Hide Details"
 msgstr "Ẩn chi tiết"
 
+#: lib/evo_dash_web/live/system_live.ex:346
 #: lib/evo_dash_web/live/system_live.ex:346
 #, elixir-autogen, elixir-format
 msgid "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
 msgstr "Các khóa từ credentials.toml được nạp dưới dạng biến môi trường khi khởi động. Bạn cũng có thể đặt khóa API trực tiếp qua biến môi trường (ví dụ: GOOGLE_API_KEY)."
 
 #: lib/evo_dash_web/helpers.ex:366
+#: lib/evo_dash_web/helpers.ex:366
+#: lib/evo_dash_web/live/system_live.ex:728
 #: lib/evo_dash_web/live/system_live.ex:728
 #, elixir-autogen, elixir-format
 msgid "LLM Model"
 msgstr "Mô hình LLM"
 
 #: lib/evo_dash_web/components/layouts.ex:176
+#: lib/evo_dash_web/components/layouts.ex:176
 #: lib/evo_dash_web/helpers.ex:351
+#: lib/evo_dash_web/helpers.ex:351
+#: lib/evo_dash_web/live/settings_live.ex:37
 #: lib/evo_dash_web/live/settings_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "Missing Configuration"
 msgstr "Thiếu cấu hình"
 
 #: lib/evo_dash_web/helpers.ex:274
+#: lib/evo_dash_web/helpers.ex:274
+#: lib/evo_dash_web/helpers.ex:280
 #: lib/evo_dash_web/helpers.ex:280
 #, elixir-autogen, elixir-format
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "Chế độ: %{mode} | %{prompt}"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:115
+#: lib/evo_dash_web/live/agents_live.html.heex:115
 #, elixir-autogen, elixir-format
 msgid "N/A"
 msgstr "N/A"
 
+#: lib/evo_dash_web/helpers.ex:295
 #: lib/evo_dash_web/helpers.ex:295
 #, elixir-autogen, elixir-format
 msgid "No CONTEXT.md found — Existing Codebase mode selected"
 msgstr "Không tìm thấy CONTEXT.md — Đã chọn chế độ Codebase Hiện có"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1042
+#: lib/evo_dash_web/components/dashboard_components.ex:1042
 #: lib/evo_dash_web/components/dashboard_components.ex:1195
+#: lib/evo_dash_web/components/dashboard_components.ex:1195
+#: lib/evo_dash_web/components/review_components.ex:1005
 #: lib/evo_dash_web/components/review_components.ex:1005
 #, elixir-autogen, elixir-format
 msgid "No Changes"
 msgstr "Không có thay đổi"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:17
+#: lib/evo_dash_web/live/agents_live.html.heex:17
 #, elixir-autogen, elixir-format
 msgid "No agents currently registered"
 msgstr "Chưa có agent nào được đăng ký"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:464
 #: lib/evo_dash_web/live/agents_live.html.heex:464
 #, elixir-autogen, elixir-format
 msgid "No history recorded yet"
 msgstr "Chưa có lịch sử nào"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:517
+#: lib/evo_dash_web/live/dashboard_live.ex:517
 #, elixir-autogen, elixir-format
 msgid "No project selected. Please open a project first."
 msgstr "Chưa chọn dự án. Vui lòng mở một dự án trước."
 
+#: lib/evo_dash_web/live/tasks_live.ex:154
 #: lib/evo_dash_web/live/tasks_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "No tasks found"
 msgstr "Không tìm thấy tác vụ nào"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:128
+#: lib/evo_dash_web/live/dashboard_live.ex:128
 #, elixir-autogen, elixir-format
 msgid "No tasks yet"
 msgstr "Chưa có tác vụ nào"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:209
+#: lib/evo_dash_web/live/agents_live.html.heex:209
 #: lib/evo_dash_web/live/agents_live.html.heex:230
+#: lib/evo_dash_web/live/agents_live.html.heex:230
+#: lib/evo_dash_web/live/system_live.ex:725
 #: lib/evo_dash_web/live/system_live.ex:725
 #, elixir-autogen, elixir-format
 msgid "None"
 msgstr "Không"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:145
+#: lib/evo_dash_web/live/agents_live.html.heex:145
 #, elixir-autogen, elixir-format
 msgid "Not assigned"
 msgstr "Chưa được gán"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:213
+#: lib/evo_dash_web/components/dashboard_components.ex:213
+#: lib/evo_dash_web/components/dashboard_components.ex:789
 #: lib/evo_dash_web/components/dashboard_components.ex:789
 #: lib/evo_dash_web/components/dashboard_components.ex:969
+#: lib/evo_dash_web/components/dashboard_components.ex:969
+#: lib/evo_dash_web/components/dashboard_components.ex:1130
 #: lib/evo_dash_web/components/dashboard_components.ex:1130
 #: lib/evo_dash_web/components/review_components.ex:238
+#: lib/evo_dash_web/components/review_components.ex:238
+#: lib/evo_dash_web/live/agents_live.html.heex:122
 #: lib/evo_dash_web/live/agents_live.html.heex:122
 #, elixir-autogen, elixir-format
 msgid "Objective"
 msgstr "Mục tiêu"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:117
+#: lib/evo_dash_web/components/dashboard_components.ex:117
+#: lib/evo_dash_web/components/review_components.ex:1001
 #: lib/evo_dash_web/components/review_components.ex:1001
 #, elixir-autogen, elixir-format
 msgid "Open"
 msgstr "Mở"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:74
+#: lib/evo_dash_web/components/dashboard_components.ex:74
 #, elixir-autogen, elixir-format
 msgid "Open Project"
 msgstr "Mở dự án"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:133
 #: lib/evo_dash_web/live/dashboard_live.ex:133
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started."
 msgstr "Mở một dự án để bắt đầu."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:580
+#: lib/evo_dash_web/components/dashboard_components.ex:580
 #, elixir-autogen, elixir-format
 msgid "Options"
 msgstr "Tùy chọn"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:198
 #: lib/evo_dash_web/live/agents_live.html.heex:198
 #, elixir-autogen, elixir-format
 msgid "Parent"
 msgstr "Cấp cha"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:389
+#: lib/evo_dash_web/components/dashboard_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Path"
 msgstr "Đường dẫn"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:708
 #: lib/evo_dash_web/live/dashboard_live.ex:708
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "Đường dẫn không được để trống."
 
 #: lib/evo_dash_web/live/dashboard_live.ex:711
+#: lib/evo_dash_web/live/dashboard_live.ex:711
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute (start with /)."
 msgstr "Đường dẫn phải là đường dẫn tuyệt đối (bắt đầu bằng /)."
 
+#: lib/evo_dash_web/live/system_live.ex:156
 #: lib/evo_dash_web/live/system_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Pause Scheduler"
 msgstr "Tạm dừng Bộ lập lịch"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:53
+#: lib/evo_dash_web/live/agents_live.html.heex:53
+#: lib/evo_dash_web/live/tasks_live.ex:39
 #: lib/evo_dash_web/live/tasks_live.ex:39
 #, elixir-autogen, elixir-format
 msgid "Pending"
 msgstr "Đang chờ"
 
 #: lib/evo_dash_web/live/agents_live.ex:151
+#: lib/evo_dash_web/live/agents_live.ex:151
 #: lib/evo_dash_web/live/agents_live.ex:152
+#: lib/evo_dash_web/live/agents_live.ex:152
+#: lib/evo_dash_web/live/agents_live.ex:153
 #: lib/evo_dash_web/live/agents_live.ex:153
 #, elixir-autogen, elixir-format
 msgid "Primary Repo"
 msgstr "Repo chính"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:290
+#: lib/evo_dash_web/components/dashboard_components.ex:290
 #, elixir-autogen, elixir-format
 msgid "Project Root"
 msgstr "Thư mục gốc dự án"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:271
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #, elixir-autogen, elixir-format
 msgid "Project Settings"
 msgstr "Cài đặt dự án"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:724
+#: lib/evo_dash_web/live/dashboard_live.ex:724
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "Kho '%{id}' đã được đăng ký."
 
+#: lib/evo_dash_web/live/dashboard_live.ex:768
 #: lib/evo_dash_web/live/dashboard_live.ex:768
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "Không tìm thấy kho '%{id}'."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:382
+#: lib/evo_dash_web/components/dashboard_components.ex:382
 #, elixir-autogen, elixir-format
 msgid "Repo ID"
 msgstr "ID kho lưu trữ"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:705
 #: lib/evo_dash_web/live/dashboard_live.ex:705
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "ID kho không được để trống."
 
 #: lib/evo_dash_web/live/agents_live.ex:162
+#: lib/evo_dash_web/live/agents_live.ex:162
+#: lib/evo_dash_web/live/agents_live.ex:166
 #: lib/evo_dash_web/live/agents_live.ex:166
 #, elixir-autogen, elixir-format
 msgid "Repo: %{repo_id}"
 msgstr "Repo: %{repo_id}"
 
 #: lib/evo_dash_web/live/tasks_live.ex:98
+#: lib/evo_dash_web/live/tasks_live.ex:98
 #, elixir-autogen, elixir-format
 msgid "Reset"
 msgstr "Đặt lại"
 
+#: lib/evo_dash_web/live/tasks_live.ex:96
 #: lib/evo_dash_web/live/tasks_live.ex:96
 #, elixir-autogen, elixir-format
 msgid "Reset all filters"
 msgstr "Đặt lại tất cả bộ lọc"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:533
+#: lib/evo_dash_web/live/agents_live.html.heex:533
 #, elixir-autogen, elixir-format
 msgid "Response"
 msgstr "Phản hồi"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:592
+#: lib/evo_dash_web/components/dashboard_components.ex:592
 #: lib/evo_dash_web/components/dashboard_components.ex:797
+#: lib/evo_dash_web/components/dashboard_components.ex:797
+#: lib/evo_dash_web/components/review_components.ex:248
 #: lib/evo_dash_web/components/review_components.ex:248
 #, elixir-autogen, elixir-format
 msgid "Result"
 msgstr "Kết quả"
 
 #: lib/evo_dash_web/live/system_live.ex:156
+#: lib/evo_dash_web/live/system_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Resume Scheduler"
 msgstr "Tiếp tục Bộ lập lịch"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:167
 #: lib/evo_dash_web/live/agents_live.html.heex:167
 #, elixir-autogen, elixir-format
 msgid "Retries"
 msgstr "Số lần thử lại"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:377
+#: lib/evo_dash_web/live/agents_live.html.heex:377
 #, elixir-autogen, elixir-format
 msgid "Retry #%{attempt} - Starting with %{backoff_seconds}s backoff"
 msgstr "Thử lại #%{attempt} - Bắt đầu với thời gian chờ %{backoff_seconds}s"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:368
+#: lib/evo_dash_web/live/agents_live.html.heex:368
+#: lib/evo_dash_web/live/agents_live.html.heex:514
 #: lib/evo_dash_web/live/agents_live.html.heex:514
 #, elixir-autogen, elixir-format
 msgid "Retry attempt %{attempt}"
 msgstr "Lần thử lại %{attempt}"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:57
+#: lib/evo_dash_web/live/agents_live.html.heex:57
+#: lib/evo_dash_web/live/tasks_live.ex:38
 #: lib/evo_dash_web/live/tasks_live.ex:38
 #, elixir-autogen, elixir-format
 msgid "Running"
 msgstr "Đang chạy"
 
 #: lib/evo_dash_web/live/system_live.ex:140
+#: lib/evo_dash_web/live/system_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "Running agents continue. No new slots or agents will be granted until resumed."
 msgstr "Các agent đang chạy vẫn tiếp tục. Sẽ không có slot hay agent mới nào được cấp cho đến khi tiếp tục."
 
+#: lib/evo_dash_web/live/system_live.ex:136
 #: lib/evo_dash_web/live/system_live.ex:136
 #, elixir-autogen, elixir-format
 msgid "Scheduler Active"
 msgstr "Bộ lập lịch đang hoạt động"
 
 #: lib/evo_dash_web/live/system_live.ex:136
+#: lib/evo_dash_web/live/system_live.ex:136
 #, elixir-autogen, elixir-format
 msgid "Scheduler Paused"
 msgstr "Bộ lập lịch đã tạm dừng"
 
+#: lib/evo_dash_web/live/system_live.ex:488
 #: lib/evo_dash_web/live/system_live.ex:488
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "Bộ lập lịch đã tạm dừng. Các agent đang chạy vẫn tiếp tục, nhưng sẽ không có slot hay agent mới nào được cấp."
 
 #: lib/evo_dash_web/live/system_live.ex:479
+#: lib/evo_dash_web/live/system_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "Bộ lập lịch đã tiếp tục. Các agent và slot mới đang được cấp phát."
 
+#: lib/evo_dash_web/live/tasks_live.ex:84
 #: lib/evo_dash_web/live/tasks_live.ex:84
 #, elixir-autogen, elixir-format
 msgid "Search by task ID, prompt, or objective..."
 msgstr "Tìm kiếm theo ID tác vụ, câu lệnh hoặc mục tiêu..."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:475
+#: lib/evo_dash_web/live/agents_live.html.heex:475
 #, elixir-autogen, elixir-format
 msgid "Select an agent to view details"
 msgstr "Chọn một agent để xem chi tiết"
 
 #: lib/evo_dash_web/components/layouts.ex:81
+#: lib/evo_dash_web/components/layouts.ex:81
 #: lib/evo_dash_web/components/layouts.ex:150
+#: lib/evo_dash_web/components/layouts.ex:150
+#: lib/evo_dash_web/live/settings_live.ex:15
 #: lib/evo_dash_web/live/settings_live.ex:15
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "Cài đặt"
 
 #: lib/evo_dash_web/components/layouts.ex:302
+#: lib/evo_dash_web/components/layouts.ex:302
 #, elixir-autogen, elixir-format
 msgid "Something went wrong!"
 msgstr "Đã xảy ra lỗi!"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:18
 #: lib/evo_dash_web/live/agents_live.html.heex:18
 #, elixir-autogen, elixir-format
 msgid "Start a task from the dashboard to see agents here."
 msgstr "Bắt đầu một tác vụ từ bảng điều khiển để xem agent tại đây."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:509
+#: lib/evo_dash_web/components/dashboard_components.ex:509
 #: lib/evo_dash_web/components/dashboard_components.ex:868
+#: lib/evo_dash_web/components/dashboard_components.ex:868
+#: lib/evo_dash_web/components/review_components.ex:324
 #: lib/evo_dash_web/components/review_components.ex:324
 #, elixir-autogen, elixir-format
 msgid "Started"
 msgstr "Đã bắt đầu"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:178
+#: lib/evo_dash_web/components/dashboard_components.ex:178
 #, elixir-autogen, elixir-format
 msgid "Starting Node"
 msgstr "Node khởi đầu"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:50
 #: lib/evo_dash_web/live/agents_live.html.heex:50
 #, elixir-autogen, elixir-format
 msgid "Status Legend"
 msgstr "Chú thích Trạng thái"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:188
+#: lib/evo_dash_web/components/dashboard_components.ex:188
 #, elixir-autogen, elixir-format
 msgid "Subdirectory to start evolution from (optional)"
 msgstr "Thư mục con để bắt đầu tiến hóa (không bắt buộc)"
 
 #: lib/evo_dash_web/components/settings_components.ex:831
+#: lib/evo_dash_web/components/settings_components.ex:831
+#: lib/evo_dash_web/live/tasks_live.ex:16
 #: lib/evo_dash_web/live/tasks_live.ex:16
 #, elixir-autogen, elixir-format
 msgid "Task History"
 msgstr "Lịch sử tác vụ"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:153
+#: lib/evo_dash_web/live/agents_live.html.heex:153
 #, elixir-autogen, elixir-format
 msgid "Task ID"
 msgstr "ID Tác vụ"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:156
 #: lib/evo_dash_web/components/dashboard_components.ex:156
 #, elixir-autogen, elixir-format
 msgid "Task Mode"
 msgstr "Chế độ tác vụ"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:155
+#: lib/evo_dash_web/live/dashboard_live.ex:155
+#: lib/evo_dash_web/live/tasks_live.ex:188
 #: lib/evo_dash_web/live/tasks_live.ex:188
 #, elixir-autogen, elixir-format
 msgid "Task Result"
 msgstr "Kết quả tác vụ"
 
 #: lib/evo_dash_web/components/layouts.ex:76
+#: lib/evo_dash_web/components/layouts.ex:76
+#: lib/evo_dash_web/components/layouts.ex:145
 #: lib/evo_dash_web/components/layouts.ex:145
 #, elixir-autogen, elixir-format
 msgid "Tasks"
 msgstr "Tác vụ"
 
 #: lib/evo_dash_web/live/tasks_live.ex:159
+#: lib/evo_dash_web/live/tasks_live.ex:159
 #, elixir-autogen, elixir-format
 msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "Tác vụ sẽ xuất hiện tại đây sau khi bạn khởi chạy từ bảng điều khiển."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1044
+#: lib/evo_dash_web/components/dashboard_components.ex:1044
+#: lib/evo_dash_web/components/dashboard_components.ex:1197
 #: lib/evo_dash_web/components/dashboard_components.ex:1197
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any changes to the codebase."
 msgstr "Agent đã hoàn thành mà không thực hiện thay đổi nào với mã nguồn."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:416
+#: lib/evo_dash_web/live/agents_live.html.heex:416
+#: lib/evo_dash_web/live/agents_live.html.heex:527
 #: lib/evo_dash_web/live/agents_live.html.heex:527
 #, elixir-autogen, elixir-format
 msgid "Thinking"
 msgstr "Đang suy luận"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:539
+#: lib/evo_dash_web/live/agents_live.html.heex:539
 #, elixir-autogen, elixir-format
 msgid "Tool Calls"
 msgstr "Lời gọi Công cụ"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:429
 #: lib/evo_dash_web/live/agents_live.html.heex:429
 #, elixir-autogen, elixir-format
 msgid "Tool Calls (%{count})"
 msgstr "Lời gọi Công cụ (%{count})"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:444
+#: lib/evo_dash_web/live/agents_live.html.heex:444
+#: lib/evo_dash_web/live/agents_live.html.heex:554
 #: lib/evo_dash_web/live/agents_live.html.heex:554
 #, elixir-autogen, elixir-format
 msgid "Tool Result: %{name}"
 msgstr "Kết quả Công cụ: %{name}"
 
 #: lib/evo_dash_web/live/tasks_live.ex:157
+#: lib/evo_dash_web/live/tasks_live.ex:157
 #, elixir-autogen, elixir-format
 msgid "Try adjusting your filters or search query."
 msgstr "Hãy thử điều chỉnh bộ lọc hoặc truy vấn tìm kiếm của bạn."
 
+#: lib/evo_dash_web/helpers.ex:116
 #: lib/evo_dash_web/helpers.ex:116
 #, elixir-autogen, elixir-format
 msgid "Turn %{turn}"
 msgstr "Lượt %{turn}"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:948
+#: lib/evo_dash_web/components/dashboard_components.ex:948
 #: lib/evo_dash_web/components/review_components.ex:1006
+#: lib/evo_dash_web/components/review_components.ex:1006
+#: lib/evo_dash_web/helpers.ex:267
 #: lib/evo_dash_web/helpers.ex:267
 #, elixir-autogen, elixir-format
 msgid "Unknown"
 msgstr "Không xác định"
 
 #: lib/evo_dash_web/live/agents_live.ex:168
+#: lib/evo_dash_web/live/agents_live.ex:168
 #, elixir-autogen, elixir-format
 msgid "Unknown Repo"
 msgstr "Repo không xác định"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:390
 #: lib/evo_dash_web/live/agents_live.html.heex:390
 #, elixir-autogen, elixir-format
 msgid "View Context (Turn %{turn})"
 msgstr "Xem Ngữ cảnh (Lượt %{turn})"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:331
+#: lib/evo_dash_web/live/agents_live.html.heex:331
 #, elixir-autogen, elixir-format
 msgid "View Full Message"
 msgstr "Xem Toàn bộ Tin nhắn"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:132
 #: lib/evo_dash_web/live/agents_live.html.heex:132
 #, elixir-autogen, elixir-format
 msgid "View Full Objective"
 msgstr "Xem Mục tiêu Đầy đủ"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:143
+#: lib/evo_dash_web/live/dashboard_live.ex:143
 #, elixir-autogen, elixir-format
 msgid "View Full Task History"
 msgstr "Xem toàn bộ lịch sử tác vụ"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1095
+#: lib/evo_dash_web/components/dashboard_components.ex:1095
+#: lib/evo_dash_web/components/dashboard_components.ex:1247
 #: lib/evo_dash_web/components/dashboard_components.ex:1247
 #, elixir-autogen, elixir-format
 msgid "View PR"
 msgstr "Xem PR"
 
 #: lib/evo_dash_web/live/tasks_live.ex:17
+#: lib/evo_dash_web/live/tasks_live.ex:17
 #, elixir-autogen, elixir-format
 msgid "View and manage all tasks across projects"
 msgstr "Xem và quản lý tất cả tác vụ trên các dự án"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:61
 #: lib/evo_dash_web/live/agents_live.html.heex:61
 #, elixir-autogen, elixir-format
 msgid "Waiting"
 msgstr "Đang đợi"
 
 #: lib/evo_dash_web/components/layouts.ex:290
+#: lib/evo_dash_web/components/layouts.ex:290
 #, elixir-autogen, elixir-format
 msgid "We can't find the internet"
 msgstr "Không tìm thấy kết nối Internet"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:142
 #: lib/evo_dash_web/live/agents_live.html.heex:142
 #, elixir-autogen, elixir-format
 msgid "Worktree"
 msgstr "Worktree"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:311
+#: lib/evo_dash_web/components/dashboard_components.ex:311
 #, elixir-autogen, elixir-format
 msgid "Worktree Init Script"
 msgstr "Script khởi tạo Worktree"
 
 #: lib/evo_dash_web/helpers.ex:418
+#: lib/evo_dash_web/helpers.ex:418
+#: lib/evo_dash_web/live/agents_live.html.heex:569
 #: lib/evo_dash_web/live/agents_live.html.heex:569
 #: lib/evo_dash_web/live/agents_live.html.heex:593
+#: lib/evo_dash_web/live/agents_live.html.heex:593
+#: lib/evo_dash_web/live/dashboard_live.ex:165
 #: lib/evo_dash_web/live/dashboard_live.ex:165
 #: lib/evo_dash_web/live/dashboard_live.ex:186
+#: lib/evo_dash_web/live/dashboard_live.ex:186
+#: lib/evo_dash_web/live/dashboard_live.ex:246
 #: lib/evo_dash_web/live/dashboard_live.ex:246
 #, elixir-autogen, elixir-format
 msgid "close"
 msgstr "đóng"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:28
+#: lib/evo_dash_web/live/agents_live.html.heex:28
 #, elixir-autogen, elixir-format
 msgid "directories"
 msgstr "thư mục"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:185
 #: lib/evo_dash_web/components/dashboard_components.ex:185
 #, elixir-autogen, elixir-format
 msgid "e.g., ./src/components"
 msgstr "ví dụ: ./src/components"
 
 #: lib/evo_dash_web/helpers.ex:152
+#: lib/evo_dash_web/helpers.ex:152
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "vừa xong"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:679
 #: lib/evo_dash_web/components/dashboard_components.ex:679
 #, elixir-autogen, elixir-format
 msgid "last 20 of %{count}"
 msgstr "20 cuối trong tổng số %{count}"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:679
+#: lib/evo_dash_web/components/dashboard_components.ex:679
 #, elixir-autogen, elixir-format
 msgid "%{count}"
 msgstr "%{count}"
 
 #: lib/evo_dash_web/components/review_components.ex:420
+#: lib/evo_dash_web/components/review_components.ex:420
+#: lib/evo_dash_web/components/review_components.ex:441
 #: lib/evo_dash_web/components/review_components.ex:441
 #, elixir-autogen, elixir-format
 msgid "%{count} commit"
@@ -840,6 +1068,7 @@ msgstr[0] "%{count} commit"
 msgstr[1] "%{count} commit"
 
 #: lib/evo_dash_web/components/review_components.ex:661
+#: lib/evo_dash_web/components/review_components.ex:661
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
@@ -847,10 +1076,12 @@ msgstr[0] "%{count} tệp"
 msgstr[1] "%{count} tệp"
 
 #: lib/evo_dash_web/components/review_components.ex:405
+#: lib/evo_dash_web/components/review_components.ex:405
 #, elixir-autogen, elixir-format
 msgid "%{count} files changed"
 msgstr "%{count} tệp đã thay đổi"
 
+#: lib/evo_dash_web/live/system_live.ex:228
 #: lib/evo_dash_web/live/system_live.ex:228
 #, elixir-autogen, elixir-format
 msgid "%{count} validation warning"
@@ -859,1423 +1090,1765 @@ msgstr[0] "%{count} cảnh báo xác thực"
 msgstr[1] "%{count} cảnh báo xác thực"
 
 #: lib/evo_dash_web/components/settings_components.ex:446
+#: lib/evo_dash_web/components/settings_components.ex:446
 #, elixir-autogen, elixir-format
 msgid "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
 msgstr "<strong>Không thấy nhà cung cấp của bạn?</strong> Bạn có thể nhập thủ công bất kỳ chuỗi model nào vào trường Model bên dưới theo định dạng <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Tra cứu model của bạn tại <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> hoặc xem <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">các nhà cung cấp được hỗ trợ</a>."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:193
 #: lib/evo_dash_web/components/dashboard_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
 msgstr "Một Git commit SHA, tên nhánh hoặc thẻ để dùng làm cơ sở. Mặc định là HEAD."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:382
+#: lib/evo_dash_web/components/dashboard_components.ex:382
 #, elixir-autogen, elixir-format
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "Một định danh duy nhất cho kho lưu trữ này (ví dụ: 'original', 'upstream')"
 
 #: lib/evo_dash_web/helpers.ex:367
+#: lib/evo_dash_web/helpers.ex:367
+#: lib/evo_dash_web/live/system_live.ex:729
 #: lib/evo_dash_web/live/system_live.ex:729
 #, elixir-autogen, elixir-format
 msgid "API Key"
 msgstr "Khóa API"
 
 #: lib/evo_dash_web/live/settings_live.ex:470
+#: lib/evo_dash_web/live/settings_live.ex:470
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "Khóa API không được để trống."
 
+#: lib/evo_dash_web/components/settings_components.ex:372
 #: lib/evo_dash_web/components/settings_components.ex:372
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "Khóa API đã được thiết lập"
 
 #: lib/evo_dash_web/live/settings_live.ex:479
+#: lib/evo_dash_web/live/settings_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "Khóa API đã được lưu thành công."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:389
 #: lib/evo_dash_web/components/dashboard_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Absolute path to the repository root on this machine"
 msgstr "Đường dẫn tuyệt đối đến thư mục gốc kho lưu trữ trên máy này"
 
 #: lib/evo_dash_web/components/review_components.ex:486
+#: lib/evo_dash_web/components/review_components.ex:486
 #, elixir-autogen, elixir-format
 msgid "Actions"
 msgstr "Thao tác"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:417
 #: lib/evo_dash_web/components/dashboard_components.ex:417
 #, elixir-autogen, elixir-format
 msgid "Add"
 msgstr "Thêm"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:347
+#: lib/evo_dash_web/components/dashboard_components.ex:347
 #, elixir-autogen, elixir-format
 msgid "Add repositories to allow agents to reference external code."
 msgstr "Thêm kho lưu trữ để agent có thể tham chiếu mã nguồn bên ngoài."
 
+#: lib/evo_dash_web/components/review_components.ex:365
 #: lib/evo_dash_web/components/review_components.ex:365
 #, elixir-autogen, elixir-format
 msgid "Agent Summary"
 msgstr "Tóm tắt từ Agent"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:55
+#: lib/evo_dash_web/live/agents_live.html.heex:55
 #, elixir-autogen, elixir-format
 msgid "Agent is actively executing its assigned task."
 msgstr "Agent đang tích cực thực thi tác vụ được giao."
 
+#: lib/evo_dash_web/live/agents_live.html.heex:63
 #: lib/evo_dash_web/live/agents_live.html.heex:63
 #, elixir-autogen, elixir-format
 msgid "Agent is blocked due to insufficient LLM or tool concurrency. Consider increasing concurrency in Settings."
 msgstr "Agent bị chặn do không đủ LLM hoặc đồng thời công cụ. Hãy cân nhắc tăng đồng thời trong Cài đặt."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:51
+#: lib/evo_dash_web/live/agents_live.html.heex:51
 #, elixir-autogen, elixir-format
 msgid "Agent is queued and waiting to be scheduled for execution."
 msgstr "Agent đang xếp hàng chờ được lên lịch thực thi."
 
+#: lib/evo_dash_web/live/agents_live.html.heex:59
 #: lib/evo_dash_web/live/agents_live.html.heex:59
 #, elixir-autogen, elixir-format
 msgid "Agent is waiting for subagents to finish. Nothing to do but wait."
 msgstr "Agent đang đợi các agent con hoàn thành. Không thể làm gì ngoài chờ đợi."
 
 #: lib/evo_dash_web/live/settings_live.ex:60
+#: lib/evo_dash_web/live/settings_live.ex:60
 #, elixir-autogen, elixir-format
 msgid "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
 msgstr "Agent không thể chạy cho đến khi bạn thiết lập mô hình. Vào mục LLM và điền vào trường Mô hình."
 
+#: lib/evo_dash_web/live/tasks_live.ex:69
 #: lib/evo_dash_web/live/tasks_live.ex:69
 #, elixir-autogen, elixir-format
 msgid "All Reviews"
 msgstr "Tất cả đánh giá"
 
 #: lib/evo_dash_web/live/system_live.ex:632
+#: lib/evo_dash_web/live/system_live.ex:632
 #, elixir-autogen, elixir-format
 msgid "All healthy"
 msgstr "Tất cả đều ổn"
 
+#: lib/evo_dash_web/helpers.ex:477
 #: lib/evo_dash_web/helpers.ex:477
 #, elixir-autogen, elixir-format
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "Phân tích mã nguồn hiện có và tạo các hợp đồng không gian CONTEXT.md cho mã nguồn đó."
 
 #: lib/evo_dash_web/live/review_live.ex:35
+#: lib/evo_dash_web/live/review_live.ex:35
 #, elixir-autogen, elixir-format
 msgid "Back"
 msgstr "Quay lại"
 
+#: lib/evo_dash_web/live/review_live.ex:22
 #: lib/evo_dash_web/live/review_live.ex:22
 #, elixir-autogen, elixir-format
 msgid "Back to Dashboard"
 msgstr "Về Bảng điều khiển"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:65
+#: lib/evo_dash_web/live/agents_live.html.heex:65
 #, elixir-autogen, elixir-format
 msgid "Blocked"
 msgstr "Bị chặn"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:72
 #: lib/evo_dash_web/components/dashboard_components.ex:72
 #, elixir-autogen, elixir-format
 msgid "Change"
 msgstr "Thay đổi"
 
 #: lib/evo_dash_web/components/layouts.ex:395
+#: lib/evo_dash_web/components/layouts.ex:395
 #, elixir-autogen, elixir-format
 msgid "Change language"
 msgstr "Đổi ngôn ngữ"
 
+#: lib/evo_dash_web/components/review_components.ex:635
 #: lib/evo_dash_web/components/review_components.ex:635
 #, elixir-autogen, elixir-format
 msgid "Changed Files"
 msgstr "Tệp đã thay đổi"
 
 #: lib/evo_dash_web/live/review_live.ex:332
+#: lib/evo_dash_web/live/review_live.ex:332
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "Đã hợp nhất thay đổi thành công! Nhánh %{branch} đã được xóa."
 
+#: lib/evo_dash_web/live/review_live.ex:367
 #: lib/evo_dash_web/live/review_live.ex:367
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "Đã từ chối thay đổi. Nhánh %{branch} đã được xóa."
 
 #: lib/evo_dash_web/live/dashboard_live.ex:828
+#: lib/evo_dash_web/live/dashboard_live.ex:828
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "Lệnh '%{command}' đã hoàn thành:\n%{output}"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:836
 #: lib/evo_dash_web/live/dashboard_live.ex:836
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "Lệnh '%{command}' thất bại (mã thoát %{code}):\n%{output}"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:803
+#: lib/evo_dash_web/live/dashboard_live.ex:803
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "Không tìm thấy lệnh: %{command}"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:203
 #: lib/evo_dash_web/components/dashboard_components.ex:203
 #, elixir-autogen, elixir-format
 msgid "Commit SHA or ref to start from (defaults to HEAD)"
 msgstr "Commit SHA hoặc tham chiếu để bắt đầu (mặc định là HEAD)"
 
 #: lib/evo_dash_web/components/review_components.ex:148
+#: lib/evo_dash_web/components/review_components.ex:148
 #, elixir-autogen, elixir-format
 msgid "Commits"
 msgstr "Commit"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:294
+#: lib/evo_dash_web/components/dashboard_components.ex:294
+#: lib/evo_dash_web/live/system_live.ex:212
 #: lib/evo_dash_web/live/system_live.ex:212
 #, elixir-autogen, elixir-format
 msgid "Configuration"
 msgstr "Cấu hình"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:131
+#: lib/evo_dash_web/live/dashboard_live.ex:131
 #, elixir-autogen, elixir-format
 msgid "Configure and execute a task above to get started."
 msgstr "Cấu hình và chạy một tác vụ ở trên để bắt đầu."
 
-#: lib/evo_dash_web/components/settings_components.ex:853
+#: lib/evo_dash_web/components/settings_components.ex:855
+#: lib/evo_dash_web/components/settings_components.ex:855
 #, elixir-autogen, elixir-format
 msgid "Configure output truncation limits for tool and context windows."
 msgstr "Cấu hình giới hạn cắt ngắn đầu ra cho cửa sổ công cụ và ngữ cảnh."
 
-#: lib/evo_dash_web/components/settings_components.ex:844
+#: lib/evo_dash_web/components/settings_components.ex:846
+#: lib/evo_dash_web/components/settings_components.ex:846
 #, elixir-autogen, elixir-format
 msgid "Configure the language model provider and token compression."
 msgstr "Cấu hình nhà cung cấp mô hình ngôn ngữ và nén token."
 
+#: lib/evo_dash_web/live/settings_live.ex:47
 #: lib/evo_dash_web/live/settings_live.ex:47
 #, elixir-autogen, elixir-format
 msgid "Configure your LLM model in the LLM category to resolve these issues."
 msgstr "Cấu hình mô hình LLM trong mục LLM để giải quyết các vấn đề này."
 
 #: lib/evo_dash_web/components/settings_components.ex:425
+#: lib/evo_dash_web/components/settings_components.ex:425
 #, elixir-autogen, elixir-format
 msgid "Connected"
 msgstr "Đã kết nối"
 
+#: lib/evo_dash_web/helpers.ex:298
 #: lib/evo_dash_web/helpers.ex:298
 #, elixir-autogen, elixir-format
 msgid "Context tree detected — Evolution mode selected"
 msgstr "Phát hiện cây ngữ cảnh — Đã chọn chế độ Tiến hóa"
 
 #: lib/evo_dash_web/components/review_components.ex:514
+#: lib/evo_dash_web/components/review_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Continue from Here"
 msgstr "Tiếp tục từ đây"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:946
+#: lib/evo_dash_web/components/dashboard_components.ex:946
 #: lib/evo_dash_web/live/tasks_live.ex:73
+#: lib/evo_dash_web/live/tasks_live.ex:73
+#: lib/evo_dash_web/live/tasks_live.ex:132
 #: lib/evo_dash_web/live/tasks_live.ex:132
 #, elixir-autogen, elixir-format
 msgid "Continued"
 msgstr "Tiếp tục"
 
 #: lib/evo_dash_web/live/review_live.ex:398
+#: lib/evo_dash_web/live/review_live.ex:398
 #, elixir-autogen, elixir-format
 msgid "Continuing from branch %{branch} at %{sha}"
 msgstr "Tiếp tục từ nhánh %{branch} tại %{sha}"
 
-#: lib/evo_dash_web/components/settings_components.ex:841
+#: lib/evo_dash_web/components/settings_components.ex:843
+#: lib/evo_dash_web/components/settings_components.ex:843
 #, elixir-autogen, elixir-format
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr "Kiểm soát đồng thời tác nhân, hành vi thử lại và giới hạn độ sâu."
 
+#: lib/evo_dash_web/components/review_components.ex:140
 #: lib/evo_dash_web/components/review_components.ex:140
 #, elixir-autogen, elixir-format
 msgid "Conversation"
 msgstr "Hội thoại"
 
 #: lib/evo_dash_web/components/review_components.ex:380
+#: lib/evo_dash_web/components/review_components.ex:380
 #, elixir-autogen, elixir-format
 msgid "Copy agent summary"
 msgstr "Sao chép tóm tắt từ agent"
 
+#: lib/evo_dash_web/live/review_live.ex:164
 #: lib/evo_dash_web/live/review_live.ex:164
 #, elixir-autogen, elixir-format
 msgid "Could not load diff data. The branch may have been modified externally."
 msgstr "Không thể tải dữ liệu diff. Nhánh này có thể đã bị sửa đổi từ bên ngoài."
 
 #: lib/evo_dash_web/components/review_components.ex:525
+#: lib/evo_dash_web/components/review_components.ex:525
 #, elixir-autogen, elixir-format
 msgid "Create GitHub PR"
 msgstr "Tạo GitHub PR"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:164
 #: lib/evo_dash_web/components/dashboard_components.ex:164
 #, elixir-autogen, elixir-format
 msgid "Create New Codebase"
 msgstr "Tạo mã nguồn mới"
 
 #: lib/evo_dash_web/helpers.ex:471
+#: lib/evo_dash_web/helpers.ex:471
 #, elixir-autogen, elixir-format
 msgid "Creates a brand new codebase from scratch in an empty directory using your prompt."
 msgstr "Tạo mã nguồn hoàn toàn mới từ đầu trong thư mục trống dựa trên mô tả của bạn."
 
+#: lib/evo_dash_web/components/layouts.ex:347
 #: lib/evo_dash_web/components/layouts.ex:347
 #, elixir-autogen, elixir-format
 msgid "Dark theme"
 msgstr "Giao diện tối"
 
 #: lib/evo_dash_web/components/settings_components.ex:38
+#: lib/evo_dash_web/components/settings_components.ex:38
 #, elixir-autogen, elixir-format
 msgid "Default"
 msgstr "Mặc định"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:280
 #: lib/evo_dash_web/components/dashboard_components.ex:280
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "Mặc định"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:226
+#: lib/evo_dash_web/components/dashboard_components.ex:226
 #, elixir-autogen, elixir-format
 msgid "Describe the codebase you want to create..."
 msgstr "Mô tả mã nguồn bạn muốn tạo..."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:224
 #: lib/evo_dash_web/components/dashboard_components.ex:224
 #, elixir-autogen, elixir-format
 msgid "Describe what you want to change or improve..."
 msgstr "Mô tả những gì bạn muốn thay đổi hoặc cải thiện..."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:554
+#: lib/evo_dash_web/components/dashboard_components.ex:554
 #, elixir-autogen, elixir-format
 msgid "Details"
 msgstr "Chi tiết"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:319
 #: lib/evo_dash_web/components/dashboard_components.ex:319
 #, elixir-autogen, elixir-format
 msgid "Dev Commands"
 msgstr "Lệnh Dev"
 
 #: lib/evo_dash_web/live/system_live.ex:252
+#: lib/evo_dash_web/live/system_live.ex:252
 #, elixir-autogen, elixir-format
 msgid "Disabled"
 msgstr "Đã tắt"
 
+#: lib/evo_dash_web/live/system_live.ex:252
 #: lib/evo_dash_web/live/system_live.ex:252
 #, elixir-autogen, elixir-format
 msgid "Enabled"
 msgstr "Đã bật"
 
 #: lib/evo_dash_web/components/settings_components.ex:373
+#: lib/evo_dash_web/components/settings_components.ex:373
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "Nhập khóa API của bạn"
 
+#: lib/evo_dash_web/components/settings_components.ex:389
 #: lib/evo_dash_web/components/settings_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Enter your API key."
 msgstr "Nhập khóa API của bạn."
 
 #: lib/evo_dash_web/components/settings_components.ex:387
+#: lib/evo_dash_web/components/settings_components.ex:387
 #, elixir-autogen, elixir-format
 msgid "Enter your API key. It should start with"
 msgstr "Nhập khóa API của bạn. Khóa phải bắt đầu bằng"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:847
 #: lib/evo_dash_web/live/dashboard_live.ex:847
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "Lỗi khi chạy '%{command}': %{error}"
 
 #: lib/evo_dash_web/live/system_live.ex:667
+#: lib/evo_dash_web/live/system_live.ex:667
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
 msgstr "EvoX Genesis mô hình hóa mã nguồn của bạn dưới dạng Cây Ngữ cảnh (Context Tree) phân cấp. Mỗi thư mục có một tệp CONTEXT.md hoạt động như một hợp đồng không gian — ghi lại mục đích, bề mặt API, các ràng buộc và định tuyến đến các thư mục con. Các tác nhân đọc các tệp này để hiểu cấu trúc mã nguồn và điều hướng công việc đến các thư mục con thích hợp."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:165
 #: lib/evo_dash_web/components/dashboard_components.ex:165
 #, elixir-autogen, elixir-format
 msgid "Evolution"
 msgstr "Tiến hóa"
 
 #: lib/evo_dash_web/live/system_live.ex:308
+#: lib/evo_dash_web/live/system_live.ex:308
 #, elixir-autogen, elixir-format
 msgid "Example Configuration"
 msgstr "Cấu hình Mẫu"
 
+#: lib/evo_dash_web/live/system_live.ex:315
 #: lib/evo_dash_web/live/system_live.ex:315
 #, elixir-autogen, elixir-format
 msgid "Example Usage"
 msgstr "Ví dụ Sử dụng"
 
 #: lib/evo_dash_web/live/settings_live.ex:63
+#: lib/evo_dash_web/live/settings_live.ex:63
 #, elixir-autogen, elixir-format
 msgid "Example model names:"
 msgstr "Tên mô hình ví dụ:"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:677
 #: lib/evo_dash_web/components/dashboard_components.ex:677
 #, elixir-autogen, elixir-format
 msgid "Execution Logs"
 msgstr "Nhật ký thực thi"
 
 #: lib/evo_dash_web/live/review_live.ex:443
+#: lib/evo_dash_web/live/review_live.ex:443
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "Không thể tạo pull request. Hãy đảm bảo CLI 'gh' đã được cài đặt và xác thực."
 
 #: lib/evo_dash_web/live/review_live.ex:683
+#: lib/evo_dash_web/live/review_live.ex:683
+#: lib/evo_dash_web/live/review_live.ex:710
 #: lib/evo_dash_web/live/review_live.ex:710
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "Không thể tải diff cho %{path}: %{reason}"
 
 #: lib/evo_dash_web/live/review_live.ex:376
+#: lib/evo_dash_web/live/review_live.ex:376
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes: %{reason}"
 msgstr "Không thể từ chối thay đổi: %{reason}"
 
+#: lib/evo_dash_web/live/settings_live.ex:388
 #: lib/evo_dash_web/live/settings_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "Failed to reset key: %{reason}"
 msgstr "Không thể đặt lại khóa: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:486
+#: lib/evo_dash_web/live/settings_live.ex:486
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "Không thể lưu khóa API: %{reason}"
 
+#: lib/evo_dash_web/components/review_components.ex:157
 #: lib/evo_dash_web/components/review_components.ex:157
 #, elixir-autogen, elixir-format
 msgid "Files Changed"
 msgstr "Tệp đã thay đổi"
 
 #: lib/evo_dash_web/live/system_live.ex:256
+#: lib/evo_dash_web/live/system_live.ex:256
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation"
 msgstr "Cô lập hệ thống tệp"
 
+#: lib/evo_dash_web/components/settings_components.ex:493
 #: lib/evo_dash_web/components/settings_components.ex:493
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation is active. Note: Resource limits are not available on macOS."
 msgstr "Cô lập hệ thống tệp đang hoạt động. Lưu ý: Giới hạn tài nguyên không khả dụng trên macOS."
 
 #: lib/evo_dash_web/components/settings_components.ex:719
+#: lib/evo_dash_web/components/settings_components.ex:719
 #, elixir-autogen, elixir-format
 msgid "Filter settings..."
 msgstr "Lọc cài đặt..."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:340
 #: lib/evo_dash_web/components/dashboard_components.ex:340
 #, elixir-autogen, elixir-format
 msgid "Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects."
 msgstr "Kho lưu trữ ngoài là các mã nguồn bổ sung mà agent có thể truy cập trong quá trình thực thi tác vụ. Hữu ích để tham chiếu mã gốc hoặc các dự án liên quan."
 
 #: lib/evo_dash_web/live/system_live.ex:322
+#: lib/evo_dash_web/live/system_live.ex:322
 #, elixir-autogen, elixir-format
 msgid "Frequently Asked Questions"
 msgstr "Câu hỏi Thường gặp"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:583
+#: lib/evo_dash_web/components/dashboard_components.ex:583
+#: lib/evo_dash_web/components/dashboard_components.ex:595
 #: lib/evo_dash_web/components/dashboard_components.ex:595
 #, elixir-autogen, elixir-format
 msgid "Full"
 msgstr "Đầy đủ"
 
 #: lib/evo_dash_web/components/settings_components.ex:478
+#: lib/evo_dash_web/components/settings_components.ex:478
 #, elixir-autogen, elixir-format
 msgid "Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active."
 msgstr "Sandbox đầy đủ đã được bật: cô lập hệ thống tệp, giới hạn tài nguyên và lọc syscall đang hoạt động."
 
+#: lib/evo_dash_web/live/system_live.ex:671
 #: lib/evo_dash_web/live/system_live.ex:671
 #, elixir-autogen, elixir-format
 msgid "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
 msgstr "Genesis sử dụng các giá trị mặc định có sẵn cho hầu hết các thiết lập, vì vậy tệp cấu hình không thực sự bắt buộc. Tuy nhiên, một mô hình LLM và khóa API tương ứng là cần thiết để chạy tác vụ. Chỉ báo trạng thái cấu hình ở đầu trang này cho biết tất cả các giá trị quan trọng đã được thiết lập hay chưa. Bạn cũng có thể kiểm tra từ trang Cài đặt."
 
 #: lib/evo_dash_web/helpers.ex:368
+#: lib/evo_dash_web/helpers.ex:368
+#: lib/evo_dash_web/live/system_live.ex:730
 #: lib/evo_dash_web/live/system_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "GitHub Username"
 msgstr "Tên người dùng GitHub"
 
 #: lib/evo_dash_web/live/system_live.ex:657
+#: lib/evo_dash_web/live/system_live.ex:657
 #, elixir-autogen, elixir-format
 msgid "How do I change the LLM model?"
 msgstr "Làm thế nào để thay đổi mô hình LLM?"
 
+#: lib/evo_dash_web/live/system_live.ex:674
 #: lib/evo_dash_web/live/system_live.ex:674
 #, elixir-autogen, elixir-format
 msgid "How do I configure sandbox resources?"
 msgstr "Làm thế nào để cấu hình tài nguyên sandbox?"
 
 #: lib/evo_dash_web/live/system_live.ex:652
+#: lib/evo_dash_web/live/system_live.ex:652
 #, elixir-autogen, elixir-format
 msgid "How do I set my API key?"
 msgstr "Làm thế nào để thiết lập khóa API?"
 
+#: lib/evo_dash_web/live/system_live.ex:666
 #: lib/evo_dash_web/live/system_live.ex:666
 #, elixir-autogen, elixir-format
 msgid "How does the context tree work?"
 msgstr "Cây ngữ cảnh hoạt động như thế nào?"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:163
+#: lib/evo_dash_web/components/dashboard_components.ex:163
 #, elixir-autogen, elixir-format
 msgid "Initialize Existing Codebase"
 msgstr "Khởi tạo mã nguồn hiện có"
 
+#: lib/evo_dash_web/components/settings_components.ex:827
 #: lib/evo_dash_web/components/settings_components.ex:827
 #, elixir-autogen, elixir-format
 msgid "LLM"
 msgstr "LLM"
 
 #: lib/evo_dash_web/live/system_live.ex:275
+#: lib/evo_dash_web/live/system_live.ex:275
 #, elixir-autogen, elixir-format
 msgid "LLM Connection"
 msgstr "Kết nối LLM"
 
+#: lib/evo_dash_web/components/layouts.ex:338
 #: lib/evo_dash_web/components/layouts.ex:338
 #, elixir-autogen, elixir-format
 msgid "Light theme"
 msgstr "Giao diện sáng"
 
 #: lib/evo_dash_web/components/review_components.ex:817
+#: lib/evo_dash_web/components/review_components.ex:817
 #, elixir-autogen, elixir-format
 msgid "Loading diff..."
 msgstr "Đang tải diff..."
 
 #: lib/evo_dash_web/live/review_live.ex:44
+#: lib/evo_dash_web/live/review_live.ex:44
 #, elixir-autogen, elixir-format
 msgid "Loading review data..."
 msgstr "Đang tải dữ liệu đánh giá..."
 
-#: lib/evo_dash_web/components/settings_components.ex:856
+#: lib/evo_dash_web/components/settings_components.ex:858
+#: lib/evo_dash_web/components/settings_components.ex:858
 #, elixir-autogen, elixir-format
 msgid "Manage how many past tasks are retained and for how long."
 msgstr "Quản lý số lượng tác vụ trước đó được lưu giữ và thời gian lưu giữ."
 
-#: lib/evo_dash_web/components/settings_components.ex:850
+#: lib/evo_dash_web/components/settings_components.ex:852
+#: lib/evo_dash_web/components/settings_components.ex:852
 #, elixir-autogen, elixir-format
 msgid "Manage sandbox isolation, resource limits, and process constraints."
 msgstr "Quản lý cô lập sandbox, giới hạn tài nguyên và ràng buộc tiến trình."
 
+#: lib/evo_dash_web/components/review_components.ex:497
 #: lib/evo_dash_web/components/review_components.ex:497
 #, elixir-autogen, elixir-format
 msgid "Merge Changes"
 msgstr "Hợp nhất thay đổi"
 
 #: lib/evo_dash_web/live/review_live.ex:343
+#: lib/evo_dash_web/live/review_live.ex:343
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
 msgstr "Xung đột hợp nhất! Vui lòng giải quyết thủ công. %{details}"
 
+#: lib/evo_dash_web/live/review_live.ex:351
 #: lib/evo_dash_web/live/review_live.ex:351
 #, elixir-autogen, elixir-format
 msgid "Merge failed: %{reason}"
 msgstr "Hợp nhất thất bại: %{reason}"
 
 #: lib/evo_dash_web/components/review_components.ex:493
+#: lib/evo_dash_web/components/review_components.ex:493
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into the current branch?"
 msgstr "Hợp nhất các thay đổi này vào nhánh hiện tại?"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:944
+#: lib/evo_dash_web/components/dashboard_components.ex:944
+#: lib/evo_dash_web/components/review_components.ex:1002
 #: lib/evo_dash_web/components/review_components.ex:1002
 #: lib/evo_dash_web/live/tasks_live.ex:71
+#: lib/evo_dash_web/live/tasks_live.ex:71
+#: lib/evo_dash_web/live/tasks_live.ex:130
 #: lib/evo_dash_web/live/tasks_live.ex:130
 #, elixir-autogen, elixir-format
 msgid "Merged"
 msgstr "Đã hợp nhất"
 
 #: lib/evo_dash_web/live/settings_live.ex:58
+#: lib/evo_dash_web/live/settings_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "No LLM Model Configured"
 msgstr "Chưa cấu hình Mô hình LLM"
 
+#: lib/evo_dash_web/live/review_live.ex:139
 #: lib/evo_dash_web/live/review_live.ex:139
 #, elixir-autogen, elixir-format
 msgid "No diff data available for this review."
 msgstr "Không có dữ liệu diff cho đánh giá này."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:302
+#: lib/evo_dash_web/components/dashboard_components.ex:302
 #, elixir-autogen, elixir-format
 msgid "No genesis.toml — using global defaults"
 msgstr "Không có genesis.toml — đang dùng mặc định toàn cục"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:346
+#: lib/evo_dash_web/components/dashboard_components.ex:346
 #, elixir-autogen, elixir-format
 msgid "No foreign repositories registered"
 msgstr "Chưa có kho lưu trữ ngoài nào được đăng ký"
 
-#: lib/evo_dash_web/components/settings_components.ex:881
+#: lib/evo_dash_web/components/settings_components.ex:886
+#: lib/evo_dash_web/components/settings_components.ex:886
 #, elixir-autogen, elixir-format
 msgid "No prefix (hexadecimal)"
 msgstr "Không có tiền tố (thập lục phân)"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:32
 #: lib/evo_dash_web/components/dashboard_components.ex:32
 #, elixir-autogen, elixir-format
 msgid "No project selected"
 msgstr "Chưa chọn dự án"
 
 #: lib/evo_dash_web/components/settings_components.ex:508
+#: lib/evo_dash_web/components/settings_components.ex:508
 #, elixir-autogen, elixir-format
 msgid "No sandbox support on this platform. Commands will run directly on the host."
 msgstr "Nền tảng này không hỗ trợ sandbox. Các lệnh sẽ chạy trực tiếp trên máy chủ."
 
+#: lib/evo_dash_web/components/settings_components.ex:504
 #: lib/evo_dash_web/components/settings_components.ex:504
 #, elixir-autogen, elixir-format
 msgid "Not Available"
 msgstr "Không khả dụng"
 
 #: lib/evo_dash_web/components/settings_components.ex:415
+#: lib/evo_dash_web/components/settings_components.ex:415
 #, elixir-autogen, elixir-format
 msgid "Not tested — click to verify LLM connectivity"
 msgstr "Chưa kiểm tra — nhấp để xác minh kết nối LLM"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:33
 #: lib/evo_dash_web/components/dashboard_components.ex:33
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started"
 msgstr "Mở một dự án để bắt đầu"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:108
+#: lib/evo_dash_web/live/dashboard_live.ex:108
 #: lib/evo_dash_web/live/tasks_live.ex:70
+#: lib/evo_dash_web/live/tasks_live.ex:70
+#: lib/evo_dash_web/live/tasks_live.ex:129
 #: lib/evo_dash_web/live/tasks_live.ex:129
 #, elixir-autogen, elixir-format
 msgid "Pending Review"
 msgstr "Chờ xem xét"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:24
+#: lib/evo_dash_web/live/dashboard_live.ex:24
 #, elixir-autogen, elixir-format
 msgid "Phoenix LiveDashboard — system metrics, processes, and application telemetry"
 msgstr "Phoenix LiveDashboard — số liệu hệ thống, tiến trình và đo lường ứng dụng"
 
+#: lib/evo_dash_web/components/settings_components.ex:562
 #: lib/evo_dash_web/components/settings_components.ex:562
 #, elixir-autogen, elixir-format
 msgid "Process Limits"
 msgstr "Giới hạn tiến trình"
 
 #: lib/evo_dash_web/components/settings_components.ex:570
+#: lib/evo_dash_web/components/settings_components.ex:570
 #, elixir-autogen, elixir-format
 msgid "Process limits are only available on Linux with systemd-run."
 msgstr "Giới hạn tiến trình chỉ khả dụng trên Linux với systemd-run."
 
 #: lib/evo_dash_web/components/layouts.ex:66
+#: lib/evo_dash_web/components/layouts.ex:66
+#: lib/evo_dash_web/components/layouts.ex:135
 #: lib/evo_dash_web/components/layouts.ex:135
 #, elixir-autogen, elixir-format
 msgid "Projects"
 msgstr "Dự án"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:215
+#: lib/evo_dash_web/components/dashboard_components.ex:215
 #, elixir-autogen, elixir-format
 msgid "Prompt"
 msgstr "Lời nhắc"
 
+#: lib/evo_dash_web/live/review_live.ex:434
 #: lib/evo_dash_web/live/review_live.ex:434
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "Đã tạo pull request: %{title}"
 
 #: lib/evo_dash_web/components/settings_components.ex:195
+#: lib/evo_dash_web/components/settings_components.ex:195
 #, elixir-autogen, elixir-format
 msgid "Quick Setup"
 msgstr "Thiết lập nhanh"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:320
 #: lib/evo_dash_web/components/dashboard_components.ex:320
 #, elixir-autogen, elixir-format
 msgid "Quick shortcuts for common development commands. Click Run to execute."
 msgstr "Phím tắt nhanh cho các lệnh phát triển thông dụng. Nhấn Run để thực thi."
 
 #: lib/evo_dash_web/components/settings_components.ex:270
+#: lib/evo_dash_web/components/settings_components.ex:270
 #, elixir-autogen, elixir-format
 msgid "Quick-select a model:"
 msgstr "Chọn nhanh một model:"
 
+#: lib/evo_dash_web/live/system_live.ex:206
 #: lib/evo_dash_web/live/system_live.ex:206
 #, elixir-autogen, elixir-format
 msgid "Re-check"
 msgstr "Kiểm tra lại"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:46
+#: lib/evo_dash_web/components/dashboard_components.ex:46
 #, elixir-autogen, elixir-format
 msgid "Recent"
 msgstr "Gần đây"
 
+#: lib/evo_dash_web/components/review_components.ex:506
 #: lib/evo_dash_web/components/review_components.ex:506
 #, elixir-autogen, elixir-format
 msgid "Reject Changes"
 msgstr "Từ chối thay đổi"
 
 #: lib/evo_dash_web/components/review_components.ex:502
+#: lib/evo_dash_web/components/review_components.ex:502
 #, elixir-autogen, elixir-format
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "Từ chối và xóa các thay đổi này? Hành động này không thể hoàn tác."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:945
+#: lib/evo_dash_web/components/dashboard_components.ex:945
+#: lib/evo_dash_web/components/review_components.ex:1003
 #: lib/evo_dash_web/components/review_components.ex:1003
 #: lib/evo_dash_web/live/tasks_live.ex:72
+#: lib/evo_dash_web/live/tasks_live.ex:72
+#: lib/evo_dash_web/live/tasks_live.ex:131
 #: lib/evo_dash_web/live/tasks_live.ex:131
 #, elixir-autogen, elixir-format
 msgid "Rejected"
 msgstr "Đã từ chối"
 
 #: lib/evo_dash_web/live/system_live.ex:235
+#: lib/evo_dash_web/live/system_live.ex:235
 #, elixir-autogen, elixir-format
 msgid "Required Tools"
 msgstr "Công cụ Bắt buộc"
 
+#: lib/evo_dash_web/live/settings_live.ex:383
 #: lib/evo_dash_web/live/settings_live.ex:383
 #, elixir-autogen, elixir-format
 msgid "Reset %{key} to default."
 msgstr "Đặt lại %{key} về mặc định."
 
 #: lib/evo_dash_web/components/settings_components.ex:31
+#: lib/evo_dash_web/components/settings_components.ex:31
 #, elixir-autogen, elixir-format
 msgid "Reset to default"
 msgstr "Đặt lại về mặc định"
 
+#: lib/evo_dash_web/live/system_live.ex:257
 #: lib/evo_dash_web/live/system_live.ex:257
 #, elixir-autogen, elixir-format
 msgid "Resource limits"
 msgstr "Giới hạn tài nguyên"
 
 #: lib/evo_dash_web/components/settings_components.ex:540
+#: lib/evo_dash_web/components/settings_components.ex:540
 #, elixir-autogen, elixir-format
 msgid "Resource limits are only available on Linux with systemd-run."
 msgstr "Giới hạn tài nguyên chỉ khả dụng trên Linux với systemd-run."
 
+#: lib/evo_dash_web/components/settings_components.ex:532
 #: lib/evo_dash_web/components/settings_components.ex:532
 #, elixir-autogen, elixir-format
 msgid "Resources"
 msgstr "Tài nguyên"
 
 #: lib/evo_dash_web/components/settings_components.ex:430
+#: lib/evo_dash_web/components/settings_components.ex:430
 #, elixir-autogen, elixir-format
 msgid "Retest"
 msgstr "Kiểm tra lại"
 
+#: lib/evo_dash_web/components/settings_components.ex:437
 #: lib/evo_dash_web/components/settings_components.ex:437
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr "Thử lại"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:542
+#: lib/evo_dash_web/components/dashboard_components.ex:542
 #, elixir-autogen, elixir-format
 msgid "Review"
 msgstr "Xem lại"
 
+#: lib/evo_dash_web/live/review_live.ex:563
 #: lib/evo_dash_web/live/review_live.ex:563
 #, elixir-autogen, elixir-format
 msgid "Review Changes"
 msgstr "Đánh giá thay đổi"
 
 #: lib/evo_dash_web/live/review_live.ex:19
+#: lib/evo_dash_web/live/review_live.ex:19
 #, elixir-autogen, elixir-format
 msgid "Review Not Available"
 msgstr "Không có đánh giá"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:328
 #: lib/evo_dash_web/components/dashboard_components.ex:328
 #, elixir-autogen, elixir-format
 msgid "Run"
 msgstr "Chạy"
 
 #: lib/evo_dash_web/live/settings_live.ex:16
+#: lib/evo_dash_web/live/settings_live.ex:16
 #, elixir-autogen, elixir-format
 msgid "Runtime configuration and file settings"
 msgstr "Cấu hình thời gian chạy và thiết lập tệp"
 
 #: lib/evo_dash_web/components/settings_components.ex:829
+#: lib/evo_dash_web/components/settings_components.ex:829
+#: lib/evo_dash_web/live/system_live.ex:245
 #: lib/evo_dash_web/live/system_live.ex:245
 #, elixir-autogen, elixir-format
 msgid "Sandbox"
 msgstr "Sandbox"
 
 #: lib/evo_dash_web/live/system_live.ex:663
+#: lib/evo_dash_web/live/system_live.ex:663
 #, elixir-autogen, elixir-format
 msgid "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
 msgstr "Chế độ sandbox kiểm soát cách EvoX Genesis cô lập mã do LLM tạo ra. Trên Linux, nó sử dụng systemd-run để sandbox đầy đủ (cô lập hệ thống tệp, giới hạn tài nguyên, lọc cuộc gọi hệ thống). Trên macOS, nó chỉ sử dụng sandbox-exec để cô lập hệ thống tệp. \"auto\" bật backend phù hợp cho nền tảng của bạn. \"enabled\" buộc bật sandbox. \"disabled\" tắt hoàn toàn — sử dụng thận trọng. Giới hạn tài nguyên (chỉ Linux) có thể được cấu hình trong config.toml tại mục [sandbox.resources] và [sandbox.process]."
 
+#: lib/evo_dash_web/live/system_live.ex:675
 #: lib/evo_dash_web/live/system_live.ex:675
 #, elixir-autogen, elixir-format
 msgid "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
 msgstr "Giới hạn tài nguyên sandbox có thể được thiết lập trong config.toml tại mục [sandbox.resources] (giới hạn tổng hợp) và [sandbox.process] (giới hạn trên mỗi tiến trình). Giới hạn tài nguyên chỉ khả dụng trên Linux với systemd-run. Trên macOS, sandbox-exec chỉ cung cấp tính năng cô lập hệ thống tệp. Bạn có thể điều chỉnh cài đặt từ trang Cài đặt trong bảng điều khiển."
 
 #: lib/evo_dash_web/components/settings_components.ex:607
+#: lib/evo_dash_web/components/settings_components.ex:607
 #, elixir-autogen, elixir-format
 msgid "Save %{category} Settings"
 msgstr "Lưu cài đặt %{category}"
 
+#: lib/evo_dash_web/components/settings_components.ex:395
 #: lib/evo_dash_web/components/settings_components.ex:395
 #, elixir-autogen, elixir-format
 msgid "Save Key"
 msgstr "Lưu khóa"
 
 #: lib/evo_dash_web/components/settings_components.ex:826
+#: lib/evo_dash_web/components/settings_components.ex:826
 #, elixir-autogen, elixir-format
 msgid "Scheduler"
 msgstr "Bộ lập lịch"
 
+#: lib/evo_dash_web/components/settings_components.ex:196
 #: lib/evo_dash_web/components/settings_components.ex:196
 #, elixir-autogen, elixir-format
 msgid "Select a provider to quickly configure your model and API key."
 msgstr "Chọn nhà cung cấp để cấu hình nhanh model và khóa API của bạn."
 
 #: lib/evo_dash_web/components/settings_components.ex:247
+#: lib/evo_dash_web/components/settings_components.ex:247
 #, elixir-autogen, elixir-format
 msgid "Select a variant:"
 msgstr "Chọn một biến thể:"
 
 #: lib/evo_dash_web/components/settings_components.ex:364
+#: lib/evo_dash_web/components/settings_components.ex:364
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "Đặt"
 
-#: lib/evo_dash_web/components/settings_components.ex:847
+#: lib/evo_dash_web/components/settings_components.ex:849
+#: lib/evo_dash_web/components/settings_components.ex:849
 #, elixir-autogen, elixir-format
 msgid "Set your user identity for Git commits and collaboration."
 msgstr "Thiết lập danh tính người dùng của bạn cho Git commits và cộng tác."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:193
 #: lib/evo_dash_web/components/dashboard_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "Starting Commit"
 msgstr "Commit khởi đầu"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:23
+#: lib/evo_dash_web/live/dashboard_live.ex:23
+#: lib/evo_dash_web/live/system_live.ex:297
 #: lib/evo_dash_web/live/system_live.ex:297
 #, elixir-autogen, elixir-format
 msgid "System Dashboard"
 msgstr "Bảng điều khiển hệ thống"
 
 #: lib/evo_dash_web/live/system_live.ex:200
+#: lib/evo_dash_web/live/system_live.ex:200
 #, elixir-autogen, elixir-format
 msgid "System Self-Check"
 msgstr "Tự kiểm tra Hệ thống"
 
+#: lib/evo_dash_web/live/system_live.ex:201
 #: lib/evo_dash_web/live/system_live.ex:201
 #, elixir-autogen, elixir-format
 msgid "System status and health overview"
 msgstr "Tổng quan trạng thái và tình trạng hệ thống"
 
 #: lib/evo_dash_web/components/layouts.ex:329
+#: lib/evo_dash_web/components/layouts.ex:329
 #, elixir-autogen, elixir-format
 msgid "System theme"
 msgstr "Giao diện hệ thống"
 
+#: lib/evo_dash_web/live/review_live.ex:532
 #: lib/evo_dash_web/live/review_live.ex:532
 #, elixir-autogen, elixir-format
 msgid "Task not found. It may have been deleted."
 msgstr "Không tìm thấy tác vụ. Có thể nó đã bị xóa."
 
 #: lib/evo_dash_web/components/settings_components.ex:418
+#: lib/evo_dash_web/components/settings_components.ex:418
 #, elixir-autogen, elixir-format
 msgid "Test Connection"
 msgstr "Kiểm tra Kết nối"
 
+#: lib/evo_dash_web/components/settings_components.ex:422
 #: lib/evo_dash_web/components/settings_components.ex:422
 #, elixir-autogen, elixir-format
 msgid "Testing LLM connection..."
 msgstr "Đang kiểm tra kết nối LLM..."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:178
+#: lib/evo_dash_web/components/dashboard_components.ex:178
 #, elixir-autogen, elixir-format
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "Thư mục con trong dự án để bắt đầu tiến hóa. Dùng './' cho thư mục gốc."
 
+#: lib/evo_dash_web/components/settings_components.ex:830
 #: lib/evo_dash_web/components/settings_components.ex:830
 #, elixir-autogen, elixir-format
 msgid "Truncation"
 msgstr "Cắt ngắn"
 
 #: lib/evo_dash_web/components/settings_components.ex:828
+#: lib/evo_dash_web/components/settings_components.ex:828
 #, elixir-autogen, elixir-format
 msgid "User"
 msgstr "Người dùng"
 
+#: lib/evo_dash_web/helpers.ex:480
 #: lib/evo_dash_web/helpers.ex:480
 #, elixir-autogen, elixir-format
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr "Sử dụng một tác tử từ trên xuống duy nhất để sửa đổi mã nguồn dựa trên mục tiêu của bạn."
 
 #: lib/evo_dash_web/live/settings_live.ex:291
+#: lib/evo_dash_web/live/settings_live.ex:291
+#: lib/evo_dash_web/live/settings_live.ex:361
 #: lib/evo_dash_web/live/settings_live.ex:361
 #, elixir-autogen, elixir-format
 msgid "Validation failed. Please fix the errors below."
 msgstr "Xác thực thất bại. Vui lòng sửa các lỗi bên dưới."
 
 #: lib/evo_dash_web/components/review_components.ex:531
+#: lib/evo_dash_web/components/review_components.ex:531
 #, elixir-autogen, elixir-format
 msgid "View GitHub PR"
 msgstr "Xem GitHub PR"
 
+#: lib/evo_dash_web/live/system_live.ex:298
 #: lib/evo_dash_web/live/system_live.ex:298
 #, elixir-autogen, elixir-format
 msgid "View system metrics, processes, and application telemetry"
 msgstr "Xem số liệu hệ thống, tiến trình và dữ liệu đo từ xa của ứng dụng"
 
 #: lib/evo_dash_web/live/system_live.ex:670
+#: lib/evo_dash_web/live/system_live.ex:670
 #, elixir-autogen, elixir-format
 msgid "What happens if my config is missing?"
 msgstr "Điều gì xảy ra nếu thiếu tệp cấu hình của tôi?"
 
+#: lib/evo_dash_web/live/system_live.ex:662
 #: lib/evo_dash_web/live/system_live.ex:662
 #, elixir-autogen, elixir-format
 msgid "What is sandbox mode?"
 msgstr "Chế độ sandbox là gì?"
 
 #: lib/evo_dash_web/components/settings_components.ex:382
+#: lib/evo_dash_web/components/settings_components.ex:382
 #, elixir-autogen, elixir-format
 msgid "Your API key is configured and ready to use."
 msgstr "Khóa API của bạn đã được cấu hình và sẵn sàng sử dụng."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:200
 #: lib/evo_dash_web/components/dashboard_components.ex:200
 #, elixir-autogen, elixir-format
 msgid "e.g., abc1234 or HEAD"
 msgstr "ví dụ: abc1234 hoặc HEAD"
 
 #: lib/evo_dash_web/components/settings_components.ex:74
+#: lib/evo_dash_web/components/settings_components.ex:74
+#: lib/evo_dash_web/components/settings_components.ex:84
 #: lib/evo_dash_web/components/settings_components.ex:84
 #: lib/evo_dash_web/components/settings_components.ex:94
+#: lib/evo_dash_web/components/settings_components.ex:94
+#: lib/evo_dash_web/components/settings_components.ex:105
 #: lib/evo_dash_web/components/settings_components.ex:105
 #: lib/evo_dash_web/components/settings_components.ex:113
+#: lib/evo_dash_web/components/settings_components.ex:113
+#: lib/evo_dash_web/components/settings_components.ex:822
 #: lib/evo_dash_web/components/settings_components.ex:822
 #, elixir-autogen, elixir-format
 msgid "empty"
 msgstr "trống"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:276
+#: lib/evo_dash_web/components/dashboard_components.ex:276
 #, elixir-autogen, elixir-format
 msgid "genesis.toml"
 msgstr "genesis.toml"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:298
 #: lib/evo_dash_web/components/dashboard_components.ex:298
 #, elixir-autogen, elixir-format
 msgid "genesis.toml found — using project settings"
 msgstr "Đã tìm thấy genesis.toml — đang dùng cài đặt dự án"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:241
+#: lib/evo_dash_web/live/dashboard_live.ex:241
 #, elixir-autogen, elixir-format
 msgid "Configure LLM"
 msgstr "Cấu hình LLM"
 
+#: lib/evo_dash_web/components/settings_components.ex:408
 #: lib/evo_dash_web/components/settings_components.ex:408
 #, elixir-autogen, elixir-format
 msgid "Connection Test"
 msgstr "Kiểm tra kết nối"
 
 #: lib/evo_dash_web/live/system_live.ex:269
+#: lib/evo_dash_web/live/system_live.ex:269
 #, elixir-autogen, elixir-format
 msgid "EvoDash"
 msgstr "EvoDash"
 
+#: lib/evo_dash_web/live/system_live.ex:268
 #: lib/evo_dash_web/live/system_live.ex:268
 #, elixir-autogen, elixir-format
 msgid "EvoGit"
 msgstr "EvoGit"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:202
+#: lib/evo_dash_web/live/dashboard_live.ex:202
 #, elixir-autogen, elixir-format
 msgid "EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?"
 msgstr "EvoGit sử dụng các tác nhân AI để xây dựng và phát triển mã nguồn. Để bắt đầu, bạn cần cấu hình một mô hình LLM và khóa API. Bạn có muốn thiết lập ngay bây giờ không?"
 
+#: lib/evo_dash_web/live/system_live.ex:265
 #: lib/evo_dash_web/live/system_live.ex:265
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis Process Tree"
 msgstr "Cây tiến trình Genesis của EvoX"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:644
+#: lib/evo_dash_web/components/dashboard_components.ex:644
+#: lib/evo_dash_web/live/agents_live.html.heex:290
 #: lib/evo_dash_web/live/agents_live.html.heex:290
 #, elixir-autogen, elixir-format
 msgid "Input Cost"
 msgstr "Chi phí Đầu vào"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:610
+#: lib/evo_dash_web/components/dashboard_components.ex:610
+#: lib/evo_dash_web/components/dashboard_components.ex:845
 #: lib/evo_dash_web/components/dashboard_components.ex:845
 #: lib/evo_dash_web/components/review_components.ex:300
+#: lib/evo_dash_web/components/review_components.ex:300
+#: lib/evo_dash_web/live/agents_live.html.heex:257
 #: lib/evo_dash_web/live/agents_live.html.heex:257
 #, elixir-autogen, elixir-format
 msgid "Input Tokens"
 msgstr "Token Đầu vào"
 
 #: lib/evo_dash_web/live/system_live.ex:278
+#: lib/evo_dash_web/live/system_live.ex:278
 #, elixir-autogen, elixir-format
 msgid "LLM connection testing is now available on the Settings page."
 msgstr "Tính năng kiểm tra kết nối LLM hiện có sẵn trên trang Cài đặt."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:648
+#: lib/evo_dash_web/components/dashboard_components.ex:648
+#: lib/evo_dash_web/live/agents_live.html.heex:294
 #: lib/evo_dash_web/live/agents_live.html.heex:294
 #, elixir-autogen, elixir-format
 msgid "Output Cost"
 msgstr "Chi phí Đầu ra"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:614
+#: lib/evo_dash_web/components/dashboard_components.ex:614
+#: lib/evo_dash_web/components/dashboard_components.ex:849
 #: lib/evo_dash_web/components/dashboard_components.ex:849
 #: lib/evo_dash_web/components/review_components.ex:304
+#: lib/evo_dash_web/components/review_components.ex:304
+#: lib/evo_dash_web/live/agents_live.html.heex:261
 #: lib/evo_dash_web/live/agents_live.html.heex:261
 #, elixir-autogen, elixir-format
 msgid "Output Tokens"
 msgstr "Token Đầu ra"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:237
+#: lib/evo_dash_web/live/dashboard_live.ex:237
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "Bỏ qua"
 
+#: lib/evo_dash_web/live/system_live.ex:281
 #: lib/evo_dash_web/live/system_live.ex:281
 #, elixir-autogen, elixir-format
 msgid "Test in Settings"
 msgstr "Kiểm tra trong Cài đặt"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:606
+#: lib/evo_dash_web/components/dashboard_components.ex:606
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
 msgstr "Sử dụng Token & Chi phí"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:652
+#: lib/evo_dash_web/components/dashboard_components.ex:652
 #: lib/evo_dash_web/components/review_components.ex:77
+#: lib/evo_dash_web/components/review_components.ex:77
+#: lib/evo_dash_web/live/agents_live.html.heex:298
 #: lib/evo_dash_web/live/agents_live.html.heex:298
 #, elixir-autogen, elixir-format
 msgid "Total Cost"
 msgstr "Tổng Chi phí"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:618
+#: lib/evo_dash_web/components/dashboard_components.ex:618
+#: lib/evo_dash_web/components/dashboard_components.ex:853
 #: lib/evo_dash_web/components/dashboard_components.ex:853
 #: lib/evo_dash_web/components/review_components.ex:69
+#: lib/evo_dash_web/components/review_components.ex:69
 #: lib/evo_dash_web/components/review_components.ex:308
+#: lib/evo_dash_web/components/review_components.ex:308
+#: lib/evo_dash_web/live/agents_live.html.heex:265
 #: lib/evo_dash_web/live/agents_live.html.heex:265
 #, elixir-autogen, elixir-format
 msgid "Total Tokens"
 msgstr "Tổng Token"
 
 #: lib/evo_dash_web/components/settings_components.ex:409
+#: lib/evo_dash_web/components/settings_components.ex:409
 #, elixir-autogen, elixir-format
 msgid "Verify your LLM configuration is working"
 msgstr "Xác minh cấu hình LLM của bạn đang hoạt động"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:199
 #: lib/evo_dash_web/live/dashboard_live.ex:199
 #, elixir-autogen, elixir-format
 msgid "Welcome to EvoGit!"
 msgstr "Chào mừng bạn đến với EvoGit!"
 
 #: lib/evo_dash_web/components/settings_components.ex:645
+#: lib/evo_dash_web/components/settings_components.ex:645
 #, elixir-autogen, elixir-format
 msgid "%{count} setting(s) matching \"%{query}\""
 msgstr "%{count} thiết lập phù hợp với \"%{query}\""
 
+#: lib/evo_dash_web/components/settings_components.ex:643
 #: lib/evo_dash_web/components/settings_components.ex:643
 #, elixir-autogen, elixir-format
 msgid "No settings found matching \"%{query}\""
 msgstr "Không tìm thấy thiết lập nào phù hợp với \"%{query}\""
 
 #: lib/evo_dash_web/components/settings_components.ex:691
+#: lib/evo_dash_web/components/settings_components.ex:691
 #, elixir-autogen, elixir-format
 msgid "Save Changes"
 msgstr "Lưu thay đổi"
 
+#: lib/evo_dash_web/components/settings_components.ex:639
 #: lib/evo_dash_web/components/settings_components.ex:639
 #, elixir-autogen, elixir-format
 msgid "Search Results"
 msgstr "Kết quả tìm kiếm"
 
 #: lib/evo_dash_web/components/settings_components.ex:657
+#: lib/evo_dash_web/components/settings_components.ex:657
 #, elixir-autogen, elixir-format
 msgid "Try a different search term."
 msgstr "Thử từ khóa tìm kiếm khác."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:520
 #: lib/evo_dash_web/components/dashboard_components.ex:520
 #, elixir-autogen, elixir-format
 msgid "%{count} Agents"
 msgstr "%{count} Tác nhân"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:663
+#: lib/evo_dash_web/components/dashboard_components.ex:663
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
 msgstr "Tác nhân đã sinh"
 
+#: lib/evo_dash_web/components/review_components.ex:587
 #: lib/evo_dash_web/components/review_components.ex:587
 #, elixir-autogen, elixir-format
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "Phân tích các thay đổi trong PR này và chắt lọc kiến thức có thể tái sử dụng thành các kỹ năng EvoGit. Agent sẽ xem xét diff, xác định các mẫu có giá trị và tạo các tệp kỹ năng trong .agents/skills/."
 
 #: lib/evo_dash_web/components/review_components.ex:542
+#: lib/evo_dash_web/components/review_components.ex:542
 #: lib/evo_dash_web/components/review_components.ex:583
+#: lib/evo_dash_web/components/review_components.ex:583
+#: lib/evo_dash_web/components/review_components.ex:613
 #: lib/evo_dash_web/components/review_components.ex:613
 #, elixir-autogen, elixir-format
 msgid "Extract Skills"
 msgstr "Trích xuất Kỹ năng"
 
 #: lib/evo_dash_web/live/review_live.ex:505
+#: lib/evo_dash_web/live/review_live.ex:505
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "Không thể khởi động trích xuất kỹ năng: %{reason}"
 
+#: lib/evo_dash_web/components/review_components.ex:594
 #: lib/evo_dash_web/components/review_components.ex:594
 #, elixir-autogen, elixir-format
 msgid "Optional: Note for the skill extraction agent"
 msgstr "Tùy chọn: Ghi chú cho agent trích xuất kỹ năng"
 
 #: lib/evo_dash_web/components/review_components.ex:603
+#: lib/evo_dash_web/components/review_components.ex:603
 #, elixir-autogen, elixir-format
 msgid "Provide specific instructions on what knowledge should be captured as skills."
 msgstr "Cung cấp hướng dẫn cụ thể về kiến thức nào nên được ghi lại dưới dạng kỹ năng."
 
+#: lib/evo_dash_web/live/review_live.ex:495
 #: lib/evo_dash_web/live/review_live.ex:495
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "Tác vụ trích xuất kỹ năng đã được khởi động. Bạn có thể theo dõi tiến trình trên bảng điều khiển."
 
 #: lib/evo_dash_web/components/review_components.ex:600
+#: lib/evo_dash_web/components/review_components.ex:600
 #, elixir-autogen, elixir-format
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "Ví dụ: Tập trung vào quy trình triển khai và các mẫu di chuyển cơ sở dữ liệu được phát hiện trong PR này."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:667
 #: lib/evo_dash_web/components/dashboard_components.ex:667
 #, elixir-autogen, elixir-format
 msgid "total agents (incl. subagents)"
 msgstr "tổng số tác nhân (bao gồm tác nhân phụ)"
 
 #: lib/evo_dash_web/live/review_live.ex:31
+#: lib/evo_dash_web/live/review_live.ex:31
 #, elixir-autogen, elixir-format
 msgid "Back to Review"
 msgstr "Quay lại Đánh giá"
 
+#: lib/evo_dash_web/live/review_live.ex:766
 #: lib/evo_dash_web/live/review_live.ex:766
 #, elixir-autogen, elixir-format
 msgid "Commit details"
 msgstr "Chi tiết commit"
 
 #: lib/evo_dash_web/live/review_live.ex:315
+#: lib/evo_dash_web/live/review_live.ex:315
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "Không thể mở rộng ngữ cảnh: %{reason}"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:409
 #: lib/evo_dash_web/components/dashboard_components.ex:409
 #, elixir-autogen, elixir-format
 msgid "Description (optional)"
 msgstr "Mô tả (không bắt buộc)"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:411
+#: lib/evo_dash_web/components/dashboard_components.ex:411
 #, elixir-autogen, elixir-format
 msgid "Short description of what this repo does"
 msgstr "Mô tả ngắn về chức năng của kho lưu trữ này"
 
+#: lib/evo_dash_web/live/system_live.ex:370
 #: lib/evo_dash_web/live/system_live.ex:370
 #, elixir-autogen, elixir-format
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "Tất cả trạng thái runtime trong bộ nhớ (tác vụ đang chạy, trạng thái scheduler, agent đang xử lý) sẽ bị mất. Hành động này không thể hoàn tác."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:630
+#: lib/evo_dash_web/components/dashboard_components.ex:630
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "Tạo Bộ Nhớ Đệm"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:634
+#: lib/evo_dash_web/components/dashboard_components.ex:634
 #: lib/evo_dash_web/components/review_components.ex:85
+#: lib/evo_dash_web/components/review_components.ex:85
+#: lib/evo_dash_web/live/agents_live.html.heex:276
 #: lib/evo_dash_web/live/agents_live.html.heex:276
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "Tỷ Lệ Truy Cập Bộ Nhớ Đệm"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:626
+#: lib/evo_dash_web/components/dashboard_components.ex:626
+#: lib/evo_dash_web/live/agents_live.html.heex:272
 #: lib/evo_dash_web/live/agents_live.html.heex:272
 #, elixir-autogen, elixir-format
 msgid "Cached Tokens"
 msgstr "Token Đã Lưu Trong Bộ Nhớ Đệm"
 
 #: lib/evo_dash_web/live/system_live.ex:180
+#: lib/evo_dash_web/live/system_live.ex:180
+#: lib/evo_dash_web/live/system_live.ex:379
 #: lib/evo_dash_web/live/system_live.ex:379
 #, elixir-autogen, elixir-format
 msgid "Restart System"
 msgstr "Khởi động lại Hệ thống"
 
 #: lib/evo_dash_web/live/system_live.ex:363
+#: lib/evo_dash_web/live/system_live.ex:363
 #, elixir-autogen, elixir-format
 msgid "Restart System?"
 msgstr "Khởi động lại Hệ thống?"
 
+#: lib/evo_dash_web/live/system_live.ex:166
 #: lib/evo_dash_web/live/system_live.ex:166
 #, elixir-autogen, elixir-format
 msgid "System Control"
 msgstr "Điều khiển Hệ thống"
 
 #: lib/evo_dash_web/live/system_live.ex:521
+#: lib/evo_dash_web/live/system_live.ex:521
 #, elixir-autogen, elixir-format
 msgid "System is restarting. Please wait while the Erlang VM comes back up."
 msgstr "Hệ thống đang khởi động lại. Vui lòng chờ Erlang VM khởi chạy lại."
 
+#: lib/evo_dash_web/live/system_live.ex:367
 #: lib/evo_dash_web/live/system_live.ex:367
 #, elixir-autogen, elixir-format
 msgid "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
 msgstr "Thao tác này sẽ khởi động lại Erlang VM một cách an toàn. Tất cả ứng dụng sẽ được dừng và khởi chạy lại."
 
 #: lib/evo_dash_web/live/system_live.ex:169
+#: lib/evo_dash_web/live/system_live.ex:169
 #, elixir-autogen, elixir-format
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "Khởi động lại hoặc dừng Erlang VM một cách an toàn. Khởi động lại sẽ dừng và chạy lại tất cả ứng dụng; dừng sẽ tắt VM và phải khởi động lại thủ công. Trạng thái runtime trong bộ nhớ sẽ bị mất trong cả hai trường hợp."
 
+#: lib/evo_dash_web/live/system_live.ex:124
 #: lib/evo_dash_web/live/system_live.ex:124
 #, elixir-autogen, elixir-format
 msgid "Scheduler controls, system health, and usage guides"
 msgstr "Điều khiển scheduler, tình trạng hệ thống và hướng dẫn sử dụng"
 
 #: lib/evo_dash_web/live/system_live.ex:188
+#: lib/evo_dash_web/live/system_live.ex:188
+#: lib/evo_dash_web/live/system_live.ex:409
 #: lib/evo_dash_web/live/system_live.ex:409
 #, elixir-autogen, elixir-format
 msgid "Stop System"
 msgstr "Dừng Hệ thống"
 
 #: lib/evo_dash_web/live/system_live.ex:393
+#: lib/evo_dash_web/live/system_live.ex:393
 #, elixir-autogen, elixir-format
 msgid "Stop System?"
 msgstr "Dừng Hệ thống?"
 
 #: lib/evo_dash_web/components/layouts.ex:86
+#: lib/evo_dash_web/components/layouts.ex:86
 #: lib/evo_dash_web/components/layouts.ex:155
+#: lib/evo_dash_web/components/layouts.ex:155
+#: lib/evo_dash_web/live/system_live.ex:123
 #: lib/evo_dash_web/live/system_live.ex:123
 #, elixir-autogen, elixir-format
 msgid "System"
 msgstr "Hệ thống"
 
 #: lib/evo_dash_web/live/system_live.ex:552
+#: lib/evo_dash_web/live/system_live.ex:552
 #, elixir-autogen, elixir-format
 msgid "System is stopping. The Erlang VM will shut down and must be started again manually."
 msgstr "Hệ thống đang dừng lại. Erlang VM sẽ tắt và phải được khởi động lại thủ công."
 
+#: lib/evo_dash_web/live/system_live.ex:400
 #: lib/evo_dash_web/live/system_live.ex:400
 #, elixir-autogen, elixir-format
 msgid "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "VM sẽ dừng và phải được khởi động lại thủ công. Tất cả trạng thái runtime trong bộ nhớ (tác vụ đang chạy, trạng thái scheduler, agent đang xử lý) sẽ bị mất. Hành động này không thể hoàn tác."
 
 #: lib/evo_dash_web/live/system_live.ex:397
+#: lib/evo_dash_web/live/system_live.ex:397
 #, elixir-autogen, elixir-format
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "Thao tác này sẽ tắt Erlang VM một cách an toàn. Tất cả ứng dụng sẽ được dừng theo thứ tự."
 
+#: lib/evo_dash_web/components/review_components.ex:560
 #: lib/evo_dash_web/components/review_components.ex:560
 #, elixir-autogen, elixir-format
 msgid "Ignore"
 msgstr "Bỏ qua"
 
 #: lib/evo_dash_web/components/review_components.ex:556
+#: lib/evo_dash_web/components/review_components.ex:556
 #, elixir-autogen, elixir-format
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "Bỏ qua đánh giá này? Nó sẽ bị xóa khỏi danh sách đang chờ."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:947
+#: lib/evo_dash_web/components/dashboard_components.ex:947
+#: lib/evo_dash_web/components/review_components.ex:1004
 #: lib/evo_dash_web/components/review_components.ex:1004
 #, elixir-autogen, elixir-format
 msgid "Ignored"
 msgstr "Đã bỏ qua"
 
 #: lib/evo_dash_web/live/review_live.ex:414
+#: lib/evo_dash_web/live/review_live.ex:414
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "Đã bỏ qua và hủy bỏ đánh giá."
 
+#: lib/evo_dash_web/components/review_components.ex:549
 #: lib/evo_dash_web/components/review_components.ex:549
 #, elixir-autogen, elixir-format
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "Nhánh này không còn tồn tại. Bạn có thể loại bỏ nó bằng cách nhấn Bỏ qua."
 
 #: lib/evo_dash_web/components/review_components.ex:167
+#: lib/evo_dash_web/components/review_components.ex:167
 #, elixir-autogen, elixir-format
 msgid "Archive"
 msgstr "Lưu trữ"
 
+#: lib/evo_dash_web/components/review_components.ex:287
 #: lib/evo_dash_web/components/review_components.ex:287
 #, elixir-autogen, elixir-format
 msgid "Archive End"
 msgstr "Kết thúc lưu trữ"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:828
+#: lib/evo_dash_web/components/dashboard_components.ex:828
 #, elixir-autogen, elixir-format
 msgid "Archive Final Ref"
 msgstr "Lưu Tham chiếu Cuối"
 
+#: lib/evo_dash_web/components/review_components.ex:279
 #: lib/evo_dash_web/components/review_components.ex:279
 #, elixir-autogen, elixir-format
 msgid "Archive Start"
 msgstr "Bắt đầu lưu trữ"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:822
+#: lib/evo_dash_web/components/dashboard_components.ex:822
 #, elixir-autogen, elixir-format
 msgid "Archive Start Ref"
 msgstr "Lưu Tham chiếu Đầu"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:236
 #: lib/evo_dash_web/components/dashboard_components.ex:236
 #, elixir-autogen, elixir-format
 msgid "Archive agent details"
 msgstr "Lưu chi tiết tác nhân"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:734
+#: lib/evo_dash_web/components/dashboard_components.ex:734
+#: lib/evo_dash_web/components/review_components.ex:193
 #: lib/evo_dash_web/components/review_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "Chi tiết tác nhân đã lưu"
 
 #: lib/evo_dash_web/components/settings_components.ex:311
+#: lib/evo_dash_web/components/settings_components.ex:311
 #, elixir-autogen, elixir-format
 msgid "Base URL"
 msgstr "URL Gốc"
 
+#: lib/evo_dash_web/live/settings_live.ex:439
 #: lib/evo_dash_web/live/settings_live.ex:439
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "URL gốc không được để trống."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:836
+#: lib/evo_dash_web/components/dashboard_components.ex:836
 #, elixir-autogen, elixir-format
 msgid "Branch"
 msgstr "Nhánh"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:281
 #: lib/evo_dash_web/live/agents_live.html.heex:281
 #, elixir-autogen, elixir-format
 msgid "Context"
 msgstr "Bối cảnh"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:857
+#: lib/evo_dash_web/components/dashboard_components.ex:857
+#: lib/evo_dash_web/components/review_components.ex:312
 #: lib/evo_dash_web/components/review_components.ex:312
 #, elixir-autogen, elixir-format
 msgid "Cost"
 msgstr "Chi phí"
 
 #: lib/evo_dash_web/live/system_live.ex:653
+#: lib/evo_dash_web/live/system_live.ex:653
 #, elixir-autogen, elixir-format
 msgid "Create a credentials.toml file at %{path} with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
 msgstr "Tạo tệp credentials.toml tại %{path} với khóa API của bạn. Chỉ cần một khóa duy nhất — hãy đặt khóa tương ứng với nhà cung cấp LLM của bạn (ví dụ: GOOGLE_API_KEY cho Google Gemini). Ngoài ra, bạn có thể đặt khóa API trực tiếp dưới dạng biến môi trường (ví dụ: export GOOGLE_API_KEY=AIza...)."
 
+#: lib/evo_dash_web/live/settings_live.ex:459
 #: lib/evo_dash_web/live/settings_live.ex:459
 #, elixir-autogen, elixir-format
 msgid "Custom model saved."
 msgstr "Mô hình tùy chỉnh đã được lưu."
 
 #: lib/evo_dash_web/live/system_live.ex:658
+#: lib/evo_dash_web/live/system_live.ex:658
 #, elixir-autogen, elixir-format
 msgid "Edit your config.toml file at %{path} and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
 msgstr "Chỉnh sửa tệp config.toml tại %{path} và đặt trường model trong mục [llm] (ví dụ: model = \"anthropic:claude-sonnet-4-20250514\"). Bạn cũng có thể điều chỉnh model tạm thời từ trang Cài đặt trong bảng điều khiển."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:812
+#: lib/evo_dash_web/components/dashboard_components.ex:812
+#: lib/evo_dash_web/components/review_components.ex:266
 #: lib/evo_dash_web/components/review_components.ex:266
 #, elixir-autogen, elixir-format
 msgid "End Commit"
 msgstr "Commit Kết thúc"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:738
+#: lib/evo_dash_web/components/dashboard_components.ex:738
 #: lib/evo_dash_web/components/review_components.ex:198
+#: lib/evo_dash_web/components/review_components.ex:198
+#: lib/evo_dash_web/live/review_live.ex:117
 #: lib/evo_dash_web/live/review_live.ex:117
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "Xuất JSON"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:205
+#: lib/evo_dash_web/live/dashboard_live.ex:205
 #, elixir-autogen, elixir-format
 msgid "Language"
 msgstr "Ngôn ngữ"
 
 #: lib/evo_dash_web/components/settings_components.ex:299
+#: lib/evo_dash_web/components/settings_components.ex:299
+#: lib/evo_dash_web/components/settings_components.ex:336
 #: lib/evo_dash_web/components/settings_components.ex:336
 #, elixir-autogen, elixir-format
 msgid "Model Name"
 msgstr "Tên Mô Hình"
 
 #: lib/evo_dash_web/live/settings_live.ex:435
+#: lib/evo_dash_web/live/settings_live.ex:435
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "Tên mô hình không được để trống."
 
+#: lib/evo_dash_web/live/settings_live.ex:416
 #: lib/evo_dash_web/live/settings_live.ex:416
 #, elixir-autogen, elixir-format
 msgid "Model selected and saved."
 msgstr "Mô hình đã được chọn và lưu."
 
 #: lib/evo_dash_web/controllers/task_export_controller.ex:19
+#: lib/evo_dash_web/controllers/task_export_controller.ex:19
 #, elixir-autogen, elixir-format
 msgid "No archive data available for this task"
 msgstr "Không có dữ liệu lưu trữ cho tác vụ này"
 
+#: lib/evo_dash_web/live/review_live.ex:154
 #: lib/evo_dash_web/live/review_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "Không có dữ liệu tác nhân nào được lưu trữ cho tác vụ này."
 
 #: lib/evo_dash_web/components/settings_components.ex:328
+#: lib/evo_dash_web/components/settings_components.ex:328
+#: lib/evo_dash_web/components/settings_components.ex:350
 #: lib/evo_dash_web/components/settings_components.ex:350
 #, elixir-autogen, elixir-format
 msgid "Set Model"
 msgstr "Đặt Mô Hình"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:806
+#: lib/evo_dash_web/components/dashboard_components.ex:806
+#: lib/evo_dash_web/components/review_components.ex:258
 #: lib/evo_dash_web/components/review_components.ex:258
 #, elixir-autogen, elixir-format
 msgid "Start Commit"
 msgstr "Commit Bắt đầu"
 
 #: lib/evo_dash_web/controllers/task_export_controller.ex:10
+#: lib/evo_dash_web/controllers/task_export_controller.ex:10
 #, elixir-autogen, elixir-format
 msgid "Task not found"
 msgstr "Không tìm thấy tác vụ"
 
+#: lib/evo_dash_web/components/settings_components.ex:347
 #: lib/evo_dash_web/components/settings_components.ex:347
 #, elixir-autogen, elixir-format
 msgid "The model will be saved as"
 msgstr "Mô hình sẽ được lưu với tên"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:241
+#: lib/evo_dash_web/live/agents_live.html.heex:241
 #, elixir-autogen, elixir-format
 msgid "Token and Cost"
 msgstr "Token và Chi phí"
 
+#: lib/evo_dash_web/components/settings_components.ex:142
 #: lib/evo_dash_web/components/settings_components.ex:142
 #, elixir-autogen, elixir-format
 msgid "Type a model string or use Quick Setup above"
 msgstr "Nhập chuỗi mô hình hoặc dùng Thiết lập Nhanh bên trên"
 
 #: lib/evo_dash_web/live/settings_live.ex:432
+#: lib/evo_dash_web/live/settings_live.ex:432
+#: lib/evo_dash_web/live/settings_live.ex:463
 #: lib/evo_dash_web/live/settings_live.ex:463
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "Nhà cung cấp không xác định."
 
 #: lib/evo_dash_web/components/settings_components.ex:324
+#: lib/evo_dash_web/components/settings_components.ex:324
 #, elixir-autogen, elixir-format
 msgid "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
 msgstr "Cảnh báo: Các API tương thích OpenAI có độ tương thích khác nhau. Một số tính năng (gọi công cụ, phát trực tuyến, đầu ra có cấu trúc) có thể không hoạt động tùy thuộc vào nhà cung cấp."
 
+#: lib/evo_dash_web/components/settings_components.ex:342
 #: lib/evo_dash_web/components/settings_components.ex:342
 #, elixir-autogen, elixir-format
 msgid "anthropic/claude-3.5-sonnet"
 msgstr "anthropic/claude-3.5-sonnet"
 
 #: lib/evo_dash_web/components/settings_components.ex:139
+#: lib/evo_dash_web/components/settings_components.ex:139
 #, elixir-autogen, elixir-format
 msgid "e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5"
 msgstr "vd. anthropic:claude-opus-4-7 hoặc openai:gpt-5.5"
 
+#: lib/evo_dash_web/components/settings_components.ex:305
 #: lib/evo_dash_web/components/settings_components.ex:305
 #, elixir-autogen, elixir-format
 msgid "e.g. gpt-4o or my-custom-model"
 msgstr "vd. gpt-4o hoặc mô-hình-tùy-chỉnh"
 
 #: lib/evo_dash_web/components/settings_components.ex:317
+#: lib/evo_dash_web/components/settings_components.ex:317
 #, elixir-autogen, elixir-format
 msgid "https://api.my-provider.com/v1"
 msgstr "https://api.my-provider.com/v1"
 
+#: lib/evo_dash_web/components/settings_components.ex:347
 #: lib/evo_dash_web/components/settings_components.ex:347
 #, elixir-autogen, elixir-format
 msgid "openrouter:<model-name>"
 msgstr "openrouter:<tên-mô-hình>"
 
 #: lib/evo_dash_web/live/settings_live.ex:22
+#: lib/evo_dash_web/live/settings_live.ex:22
 #, elixir-autogen, elixir-format
 msgid "Configuration file"
 msgstr "Tệp cấu hình"
 
+#: lib/evo_dash_web/live/settings_live.ex:24
 #: lib/evo_dash_web/live/settings_live.ex:24
 #, elixir-autogen, elixir-format
 msgid "Copy path"
 msgstr "Sao chép đường dẫn"
 
 #: lib/evo_dash_web/live/settings_live.ex:29
+#: lib/evo_dash_web/live/settings_live.ex:29
 #, elixir-autogen, elixir-format
 msgid "File does not exist yet"
 msgstr "Tệp chưa tồn tại"
 
+#: lib/evo_dash_web/components/review_components.ex:103
 #: lib/evo_dash_web/components/review_components.ex:103
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "Trạng thái"
 
 #: lib/evo_dash_web/components/review_components.ex:111
+#: lib/evo_dash_web/components/review_components.ex:111
 #, elixir-autogen, elixir-format
 msgid "Task Type"
 msgstr "Loại tác vụ"
 
 #: lib/evo_dash_web/components/settings_components.ex:53
+#: lib/evo_dash_web/components/settings_components.ex:53
 #, elixir-autogen, elixir-format
 msgid "(provider default)"
 msgstr "(mặc định nhà cung cấp)"
+
+#: lib/evo_dash_web/components/settings_components.ex:861
+#: lib/evo_dash_web/components/settings_components.ex:861
+#, elixir-autogen, elixir-format
+msgid "Configure Nix develop environment integration for tool calls."
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:832
+#: lib/evo_dash_web/components/settings_components.ex:832
+#, elixir-autogen, elixir-format
+msgid "Nix"
+msgstr ""
