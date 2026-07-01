@@ -103,6 +103,10 @@ github_username = "..."      # For PR creation
 
 [sandbox]
 mode = "auto"                # "auto" | "enabled" | "disabled"
+
+[nix]
+enabled = false              # Wrap tool calls in `nix develop` (requires flake.nix in config dir)
+flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
 ```
 
 ### credentials.toml Structure
