@@ -61,6 +61,15 @@ defmodule EvoGit.Config do
       max_tasks = 100        # max number of recent tasks to retain
       max_age_days = 14      # max age in days for retained tasks
 
+      [nix]
+      # When enabled, all tool calls run inside a Nix develop environment.
+      # Requires the `nix` binary in PATH and a `flake.nix` in the config
+      # directory (e.g. ~/.config/genesis/flake.nix).
+      enabled = false
+      # Optional flake output attribute (e.g. "devShells.x86_64-linux.default").
+      # When nil, uses the default devShell.
+      # flake_output = "devShells.x86_64-linux.default"
+
   ## Credentials File Format (credentials.toml)
 
       # API keys as environment variable names — they are set as env vars on load
