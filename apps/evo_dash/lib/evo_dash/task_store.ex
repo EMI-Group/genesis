@@ -23,9 +23,9 @@ defmodule EvoDash.TaskStore do
     * Scalar fields → native SQLite types (TEXT / INTEGER).
     * DateTime → ISO8601 string.
     * Atoms (type, status, review_status) → stored as strings, restored via
-      `String.to_atom/1`. These are closed, application-controlled value sets,
-      so this is safe and guarantees consumers always receive atoms.
-      `encode_atom/1` also accepts strings to guarantee round-trip safety.
+      `String.to_existing_atom/1` (never creates new atoms; unknown values
+      decode to nil). `encode_atom/1` also accepts strings to guarantee
+      round-trip safety.
     * Complex fields (opts, logs, result, usage, archive_metadata) → JSON via Jason.
     * result → JSON with a `"__result_tag__"` discriminator so runtime return
       tuples (`{:ok, _}`, `{:error, _}`, `{:exit, _}`) are faithfully rebuilt.
