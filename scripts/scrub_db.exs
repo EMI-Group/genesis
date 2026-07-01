@@ -95,7 +95,11 @@ defmodule ScrubDb do
                       # Common atoms in result data
                       :no_changes,
                       :pr_url,
-                      :branch_name
+                      :branch_name,
+                      # Calendar modules (used in DateTime/NaiveDateTime structs)
+                      # MUST be preserved as atoms — DateTime compares calendar modules
+                      :Calendar,
+                      Calendar.ISO
                     ])
 
   def run(opts) do
