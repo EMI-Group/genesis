@@ -21,12 +21,14 @@ defmodule EvoGit.Sandbox.LinuxTest do
 
   defp save_tmpdir do
     original = System.get_env("TMPDIR")
+
     on_exit(fn ->
       case original do
         nil -> System.delete_env("TMPDIR")
         value -> System.put_env("TMPDIR", value)
       end
     end)
+
     original
   end
 
@@ -54,7 +56,9 @@ defmodule EvoGit.Sandbox.LinuxTest do
       save_tmpdir()
 
       # Create a real temp dir under /tmp (System.tmp_dir!() returns /tmp on Linux).
-      sub = Path.join(System.tmp_dir!(), "evogit_linux_test_#{System.unique_integer([:positive])}")
+      sub =
+        Path.join(System.tmp_dir!(), "evogit_linux_test_#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(sub)
       on_exit(fn -> File.rm_rf!(sub) end)
 
@@ -67,7 +71,13 @@ defmodule EvoGit.Sandbox.LinuxTest do
       save_tmpdir()
 
       # A non-existent path not under /tmp or /var/tmp.
-      System.put_env("TMPDIR", Path.join(System.user_home!(), "evogit_does_not_exist_#{System.unique_integer([:positive])}"))
+      System.put_env(
+        "TMPDIR",
+        Path.join(
+          System.user_home!(),
+          "evogit_does_not_exist_#{System.unique_integer([:positive])}"
+        )
+      )
 
       assert tmpdir_value(build_args()) == hd(Platform.tmp_paths())
     end
@@ -123,6 +133,28 @@ defmodule EvoGit.Sandbox.LinuxTest do
 
       assert Enum.any?(args, &String.starts_with?(&1, "--setenv=PATH="))
       assert Enum.any?(args, &String.starts_with?(&1, "--setenv=HOME="))
+    end
+  end
+
+  describe "args/4 — Nix integration (nix disabled, default)" do
+    # When nix is not enabled (the default — no config, no binary, or no flake),
+    # the args should run the original executable directly without nix wrapping.
+
+    test "does not contain nix develop or --command when nix is disabled" do
+      args = build_args()
+
+      refute "develop" in args,
+             "expected no 'develop' arg when nix is disabled, got: #{inspect(args)}"
+
+      refute "--command" in args,
+             "expected no '--command' arg when nix is disabled, got: #{inspect(args)}"
+    end
+
+    test "still contains the original executable when nix is disabled" do
+      args = build_args()
+
+      assert "/usr/bin/env" in args,
+             "expected original executable in args when nix is disabled, got: #{inspect(args)}"
     end
   end
 end
