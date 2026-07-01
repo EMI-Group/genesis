@@ -756,7 +756,7 @@ defmodule EvoDash.TaskStore do
     case Base.decode64(str) do
       {:ok, binary} ->
         try do
-          :erlang.binary_to_term(binary)
+          :erlang.binary_to_term(binary, [:safe])
         rescue
           _ -> try_json_result(str)
         end
