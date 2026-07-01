@@ -62,5 +62,20 @@ defmodule EvoGit.Sandbox.MacOSTest do
 
       assert profile =~ ~s{(allow file-write* (subpath "/tmp"))}
     end
+
+    test "does not include nix store paths when nix is not enabled" do
+      profile = MacOS.generate_profile("/some/cwd", nil)
+
+      refute profile =~ "/nix/store"
+      refute profile =~ "/nix/var"
+    end
+
+    test "still generates a valid profile without nix rules" do
+      profile = MacOS.generate_profile("/some/cwd", nil)
+
+      assert profile =~ "(version 1)"
+      assert profile =~ "(deny default)"
+      assert profile =~ ~s{(allow file-write* (subpath "/some/cwd"))}
+    end
   end
 end

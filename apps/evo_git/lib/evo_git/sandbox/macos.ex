@@ -8,7 +8,7 @@ defmodule EvoGit.Sandbox.MacOS do
   sensitive directories like ~/.ssh, ~/.gnupg, etc.
   """
 
-  alias EvoGit.Platform
+  alias EvoGit.{Nix, Platform}
 
   @doc "Returns true when sandbox mode allows sandbox-exec on macOS."
   @spec enabled?() :: boolean()
@@ -32,8 +32,15 @@ defmodule EvoGit.Sandbox.MacOS do
       resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
       profile = generate_profile(cwd, repo_root)
 
+      {exec, exec_args} =
+        if Nix.enabled?() do
+          Nix.wrap_command(executable, args)
+        else
+          {executable, args}
+        end
+
       # sandbox-exec -p <profile> -- <executable> <args...>
-      System.cmd("sandbox-exec", ["-p", profile, "--", executable | args],
+      System.cmd("sandbox-exec", ["-p", profile, "--", exec | exec_args],
         cd: cwd,
         stderr_to_stdout: true,
         env: [{"TMPDIR", resolved_tmpdir}]
@@ -96,6 +103,19 @@ defmodule EvoGit.Sandbox.MacOS do
       end)
       |> Enum.join("\n    ")
 
+    nix_rw_rules =
+      if Nix.enabled?() do
+        nix_paths = ["/nix/store", "/nix/var"]
+
+        nix_paths
+        |> Enum.map(fn path ->
+          ~s{(allow file-write* (subpath "#{path}"))}
+        end)
+        |> Enum.join("\n    ")
+      else
+        ""
+      end
+
     # Tmp paths
     tmp_paths = Platform.tmp_paths()
 
@@ -122,6 +142,7 @@ defmodule EvoGit.Sandbox.MacOS do
     (allow file-write* (subpath "#{cwd}"))
     #{tmp_rules}
     #{cache_rw_rules}
+    #{nix_rw_rules}
     #{git_rule}
     (allow process-exec)
     (allow process-fork)
