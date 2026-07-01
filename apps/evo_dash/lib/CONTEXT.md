@@ -19,7 +19,7 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 | Module | Purpose |
 |--------|---------|
 | `EvoDash.Application` | OTP supervisor tree (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskStore → TaskRegistry → Endpoint) |
-| `EvoDash.TaskStore` | SQLite-backed persistent store (single GenServer holding one xqlite connection; `tasks`/`projects` tables); namespaced keys `{:task, id}` / `{:project, path}` |
+| `EvoDash.TaskStore` | SQLite-backed persistent store (single GenServer holding one xqlite connection; column-based `tasks`/`projects` tables with JSON encoding, explicit WAL+NORMAL durability PRAGMAs, graceful connection close in `terminate/2`); `EvoDash.RecentProject` struct also defined here |
 | `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes |
 
 ### Web Modules (`./evo_dash_web/`)
