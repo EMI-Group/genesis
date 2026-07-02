@@ -893,7 +893,7 @@ defmodule EvoDashWeb.DashboardComponents do
         <% end %>
 
         <!-- Timestamps -->
-        <%= if @agent[:started_at] or @agent[:completed_at] do %>
+        <%= if @agent[:started_at] || @agent[:completed_at] do %>
           <div class="flex flex-wrap gap-x-6 gap-y-1 pt-2 border-t border-base-200">
             <%= if @agent[:started_at] do %>
               <div>
@@ -1317,19 +1317,60 @@ defmodule EvoDashWeb.DashboardComponents do
   # ---------------------------------------------------------------------------
 
   defp build_archive_tree(agents) when is_list(agents) do
-    by_parent = Enum.group_by(agents, &Map.get(&1, :parent_id))
+    agents = Enum.map(agents, &normalize_agent_keys/1)
+    by_parent = Enum.group_by(agents, &agent_key(&1, :parent_id))
 
     by_parent
     |> Map.get(nil, [])
-    |> Enum.map(fn agent -> build_archive_node(agent, by_parent) end)
+    |> Enum.filter(&(agent_key(&1, :agent_id) not in [nil, ""]))
+    |> Enum.map(fn agent -> build_archive_node(agent, by_parent, MapSet.new()) end)
   end
 
-  defp build_archive_node(agent, by_parent) do
+  defp build_archive_node(agent, by_parent, visited) do
+    id = agent_key(agent, :agent_id)
+
     children =
-      by_parent
-      |> Map.get(agent[:agent_id], [])
-      |> Enum.map(fn child -> build_archive_node(child, by_parent) end)
+      if id in [nil, ""] do
+        []
+      else
+        new_visited = MapSet.put(visited, id)
+
+        by_parent
+        |> Map.get(id, [])
+        |> Enum.filter(fn child ->
+          child_id = agent_key(child, :agent_id)
+          child_id not in [nil, ""] and not MapSet.member?(new_visited, child_id)
+        end)
+        |> Enum.map(fn child -> build_archive_node(child, by_parent, new_visited) end)
+      end
 
     %{agent: agent, children: children}
   end
+
+  # Read a value from an agent map regardless of whether keys are atoms or strings.
+  defp agent_key(agent, key) when is_atom(key) do
+    case Map.fetch(agent, key) do
+      {:ok, v} -> v
+      :error -> Map.get(agent, Atom.to_string(key))
+    end
+  end
+
+  # Normalize an agent map's top-level string keys to atoms so that both
+  # tree-building and the HEEx renderers (which use atom-key access) work
+  # uniformly. Unknown string keys that have no existing atom are left as-is.
+  defp normalize_agent_keys(agent) when is_map(agent) do
+    Map.new(agent, fn
+      {key, value} when is_atom(key) ->
+        {key, value}
+
+      {key, value} when is_binary(key) ->
+        try do
+          {String.to_existing_atom(key), value}
+        rescue
+          ArgumentError -> {key, value}
+        end
+    end)
+  end
+
+  defp normalize_agent_keys(agent), do: agent
 end
