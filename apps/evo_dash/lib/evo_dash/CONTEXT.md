@@ -79,11 +79,8 @@ count_projects(store) :: non_neg_integer()
 # Safety / Integrity
 safe_select_all_tasks(store) :: [TaskInfo.t()]            # quarantines bad rows, never raises
 safe_select_all_projects(store) :: [RecentProject.t()]
-safe_get_task(store, task_id) :: TaskInfo.t() | nil       # returns nil on error
-safe_get_project(store, path) :: RecentProject.t() | nil
 integrity_check(store) :: :ok | {:repaired, count} | {:error, reason}
 size(store) :: non_neg_integer()                          # total across both tables
-safe_size(store) :: non_neg_integer()
 ```
 
 - `integrity_check/1`: Runs `PRAGMA integrity_check`, scans all rows, quarantines undecodable rows (INSERT raw JSON into quarantine table + DELETE from live). If quarantine INSERT fails, row is left in place (never destroyed). Returns `:ok` / `{:repaired, count}` / `{:error, reason}`. Called by TaskRegistry on init.
@@ -93,7 +90,7 @@ safe_size(store) :: non_neg_integer()
 - Singleton `GenServer` backed by SQLite via `EvoDash.Store` (single source of truth).
 - Tracks EvoGit tasks (`:genesis` / `:evolve` / `:extract_skills`) with id, type, status, opts, pid, timestamps, logs, result, review metadata, usage, archive_metadata.
 - Runtime-only task references (`%Task{}`) are kept in an in-memory `task_refs` map (`%{task_id => %Task{}}`), not persisted.
-- All store-touching `handle_*` callbacks are wrapped in `try/rescue` (bodies extracted to `do_*` privates).
+- All store-touching `handle_*` callbacks have NO try/rescue — if the Store is down, the GenServer crashes and the supervisor restarts it. This is correct process isolation and prevents silent data loss.
 
 **Client API:**
 | Function | Description |

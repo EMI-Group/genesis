@@ -467,7 +467,7 @@ defmodule EvoDash.TaskRegistry do
   # --- TaskStore Read Helpers ---
 
   defp task_get(state, task_id) do
-    EvoDash.Store.safe_get_task(state.task_store, task_id)
+    EvoDash.Store.get_task(state.task_store, task_id)
   end
 
   defp select_all_tasks(state) do
@@ -720,16 +720,6 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp cleanup_expired_tasks(state) do
-    try do
-      do_cleanup_expired_tasks(state)
-    rescue
-      error ->
-        Logger.warning("cleanup_expired_tasks failed (non-fatal): #{inspect(error)}")
-        :ok
-    end
-  end
-
-  defp do_cleanup_expired_tasks(state) do
     config = task_history_config()
     max_age_days = config.max_age_days
     max_tasks = config.max_tasks
@@ -791,12 +781,7 @@ defmodule EvoDash.TaskRegistry do
     # Strip :resume_from so it never leaks into the runtime opts.
     opts_without_resume = Keyword.delete(opts, :resume_from)
 
-    prev_task =
-      try do
-        get_task(resume_from_id)
-      rescue
-        _ -> nil
-      end
+    prev_task = get_task(resume_from_id)
 
     {objective, runtime_opts} =
       if is_nil(prev_task) do

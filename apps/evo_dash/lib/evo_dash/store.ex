@@ -153,24 +153,6 @@ defmodule EvoDash.Store do
     GenServer.call(store, :safe_select_all_projects)
   end
 
-  @doc "Safely reads a task, returning nil on any error."
-  def safe_get_task(store \\ __MODULE__, task_id) do
-    try do
-      get_task(store, task_id)
-    rescue
-      _ -> nil
-    end
-  end
-
-  @doc "Safely reads a project, returning nil on any error."
-  def safe_get_project(store \\ __MODULE__, path) do
-    try do
-      get_project(store, path)
-    rescue
-      _ -> nil
-    end
-  end
-
   @doc """
   Checks store integrity and repairs corruption.
 
@@ -192,15 +174,6 @@ defmodule EvoDash.Store do
   @doc "Returns the total number of rows across both tables."
   def size(store \\ __MODULE__) do
     GenServer.call(store, :size)
-  end
-
-  @doc "Returns the store size, rescuing any error to 0."
-  def safe_size(store \\ __MODULE__) do
-    try do
-      size(store)
-    rescue
-      _ -> 0
-    end
   end
 
   ## GenServer callbacks
