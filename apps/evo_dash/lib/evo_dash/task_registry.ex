@@ -106,7 +106,7 @@ defmodule EvoDash.TaskRegistry do
 
     # The TaskStore is started by the supervisor; here just reference by name.
     # Tests may pass their own task_store: name pointing to a test store.
-    task_store = Keyword.get(opts, :task_store, EvoDash.TaskStore)
+    task_store = Keyword.get(opts, :task_store, EvoDash.Store)
 
     state = %{
       data_dir: data_dir,
@@ -117,7 +117,7 @@ defmodule EvoDash.TaskRegistry do
     # Repair the store from any corrupt (un-deserializable) entries before we
     # read or normalize anything. Best-effort: never let this crash init.
     try do
-      EvoDash.TaskStore.integrity_check(task_store)
+      EvoDash.Store.integrity_check(task_store)
     rescue
       error ->
         Logger.warning("TaskRegistry init: integrity check failed: #{inspect(error)}")
@@ -173,7 +173,7 @@ defmodule EvoDash.TaskRegistry do
     }
 
     # Persist to SQLite with ref nulled (ref is runtime-only data)
-    EvoDash.TaskStore.put_task(state.task_store, %{task | ref: nil})
+    EvoDash.Store.put_task(state.task_store, %{task | ref: nil})
 
     # Keep the runtime ref in-memory only
     state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
@@ -215,7 +215,7 @@ defmodule EvoDash.TaskRegistry do
 
                 Task.shutdown(task_ref, :brutal_kill)
                 updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
-                EvoDash.TaskStore.put_task(state.task_store, updated)
+                EvoDash.Store.put_task(state.task_store, updated)
                 cleanup_expired_tasks(state)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
@@ -269,7 +269,7 @@ defmodule EvoDash.TaskRegistry do
       |> Enum.filter(fn task -> task.status not in [:running, :pending] end)
       |> Enum.map(fn task -> task.id end)
 
-    EvoDash.TaskStore.delete_tasks(state.task_store, task_ids)
+    EvoDash.Store.delete_tasks(state.task_store, task_ids)
 
     cleanup_expired_tasks(state)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -280,72 +280,70 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:add_recent_project, path, name}, _from, state) do
-    {reply, state} =
-      try do
-        do_add_recent_project(state, path, name)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: add_recent_project failed for path #{inspect(path)}: " <>
-              "#{Exception.message(error)}"
-          )
+    now = DateTime.utc_now()
 
-          {{:error, Exception.message(error)}, state}
-      end
+    EvoDash.Store.put_project(
+      state.task_store,
+      %EvoDash.RecentProject{path: path, name: name, last_opened_at: now}
+    )
+
+    # Enforce max limit
+    trim_recent_projects(state)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
-    {:reply, reply, state}
+    {:reply, {:ok, state}, state}
   end
 
   @impl true
   def handle_call(:list_recent_projects, _from, state) do
     reply =
-      try do
-        do_list_recent_projects(state)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: list_recent_projects failed: " <>
-              "#{Exception.message(error)}"
-          )
-
-          []
-      end
+      select_all_projects(state)
+      |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
 
     {:reply, reply, state}
   end
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    {reply, state} =
-      try do
-        do_remove_recent_project(state, path)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: remove_recent_project failed for path #{inspect(path)}: " <>
-              "#{Exception.message(error)}"
-          )
-
-          {{:error, Exception.message(error)}, state}
-      end
+    EvoDash.Store.delete_project(state.task_store, path)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
-    {:reply, reply, state}
+    {:reply, {:ok, state}, state}
   end
 
   @impl true
   def handle_cast({:update_status, task_id, status, result, opts}, state) do
-    state =
-      try do
-        do_handle_update_status(state, task_id, status, result, opts)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: update_status failed for task #{inspect(task_id)}: " <>
-              "#{Exception.message(error)}"
-          )
+    usage = Keyword.get(opts, :usage)
+    agent_count = Keyword.get(opts, :agent_count)
+    commit_sha = Keyword.get(opts, :commit_sha)
+    archive_records = Keyword.get(opts, :archive_records)
 
+    state =
+      case task_get(state, task_id) do
+        %TaskInfo{} = task ->
+          finished_at =
+            if status in [:completed, :failed, :cancelled],
+              do: DateTime.utc_now(),
+              else: task.finished_at
+
+          updated = %{task | status: status, result: result, finished_at: finished_at}
+          updated = if usage, do: %{updated | usage: usage}, else: updated
+          updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
+          updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
+
+          updated =
+            if archive_records, do: %{updated | archive_metadata: archive_records}, else: updated
+
+          EvoDash.Store.put_task(state.task_store, updated)
+
+          if status in [:completed, :failed, :cancelled] do
+            cleanup_expired_tasks(state)
+            %{state | task_refs: Map.delete(state.task_refs, task_id)}
+          else
+            state
+          end
+
+        nil ->
           state
       end
 
@@ -355,36 +353,21 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:append_log, task_id, log_entry}, state) do
-    state =
-      try do
-        do_append_log(state, task_id, log_entry)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: append_log failed for task #{inspect(task_id)}: " <>
-              "#{Exception.message(error)}"
-          )
+    case task_get(state, task_id) do
+      %TaskInfo{logs: logs} = task ->
+        updated = %{task | logs: [log_entry | logs]}
+        EvoDash.Store.put_task(state.task_store, updated)
 
-          state
-      end
+      nil ->
+        :ok
+    end
 
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
-    state =
-      try do
-        do_delete_task(state, task_id)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: delete_task failed for task #{inspect(task_id)}: " <>
-              "#{Exception.message(error)}"
-          )
-
-          state
-      end
+    EvoDash.Store.delete_task(state.task_store, task_id)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -392,18 +375,14 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
-    state =
-      try do
-        do_set_review_status(state, task_id, status)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: set_review_status failed for task #{inspect(task_id)}: " <>
-              "#{Exception.message(error)}"
-          )
+    case task_get(state, task_id) do
+      %TaskInfo{} = task ->
+        updated = %{task | review_status: status}
+        EvoDash.Store.put_task(state.task_store, updated)
 
-          state
-      end
+      nil ->
+        :ok
+    end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -411,18 +390,14 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
-    state =
-      try do
-        do_set_review_metadata(state, task_id, base_sha, commit_sha)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: set_review_metadata failed for task #{inspect(task_id)}: " <>
-              "#{Exception.message(error)}"
-          )
+    case task_get(state, task_id) do
+      %TaskInfo{} = task ->
+        updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
+        EvoDash.Store.put_task(state.task_store, updated)
 
-          state
-      end
+      nil ->
+        :ok
+    end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -492,152 +467,21 @@ defmodule EvoDash.TaskRegistry do
   # --- TaskStore Read Helpers ---
 
   defp task_get(state, task_id) do
-    EvoDash.TaskStore.safe_get_task(state.task_store, task_id)
+    EvoDash.Store.safe_get_task(state.task_store, task_id)
   end
 
   defp select_all_tasks(state) do
-    EvoDash.TaskStore.safe_select_all_tasks(state.task_store)
+    EvoDash.Store.safe_select_all_tasks(state.task_store)
   end
 
   defp select_all_projects(state) do
-    EvoDash.TaskStore.safe_select_all_projects(state.task_store)
-  end
-
-  # --- Crash-safe callback bodies ---
-  # These private helpers contain the logic extracted from the handle_cast /
-  # handle_call / handle_info callbacks above, so the callbacks can wrap them
-  # in try/rescue without crashing the GenServer.
-
-  defp do_add_recent_project(state, path, name) do
-    now = DateTime.utc_now()
-
-    EvoDash.TaskStore.put_project(
-      state.task_store,
-      %EvoDash.RecentProject{path: path, name: name, last_opened_at: now}
-    )
-
-    # Enforce max limit
-    trim_recent_projects(state)
-
-    {:ok, state}
-  end
-
-  defp do_list_recent_projects(state) do
-    select_all_projects(state)
-    |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
-  end
-
-  defp do_remove_recent_project(state, path) do
-    EvoDash.TaskStore.delete_project(state.task_store, path)
-    {:ok, state}
-  end
-
-  defp do_handle_update_status(state, task_id, status, result, opts) do
-    usage = Keyword.get(opts, :usage)
-    agent_count = Keyword.get(opts, :agent_count)
-    commit_sha = Keyword.get(opts, :commit_sha)
-    archive_records = Keyword.get(opts, :archive_records)
-
-    case task_get(state, task_id) do
-      %TaskInfo{} = task ->
-        finished_at =
-          if status in [:completed, :failed, :cancelled],
-            do: DateTime.utc_now(),
-            else: task.finished_at
-
-        updated = %{task | status: status, result: result, finished_at: finished_at}
-        updated = if usage, do: %{updated | usage: usage}, else: updated
-        updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
-        updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
-
-        updated =
-          if archive_records, do: %{updated | archive_metadata: archive_records}, else: updated
-
-        EvoDash.TaskStore.put_task(state.task_store, updated)
-
-        if status in [:completed, :failed, :cancelled] do
-          cleanup_expired_tasks(state)
-          %{state | task_refs: Map.delete(state.task_refs, task_id)}
-        else
-          state
-        end
-
-      nil ->
-        state
-    end
-  end
-
-  defp do_append_log(state, task_id, log_entry) do
-    case task_get(state, task_id) do
-      %TaskInfo{logs: logs} = task ->
-        updated = %{task | logs: [log_entry | logs]}
-        EvoDash.TaskStore.put_task(state.task_store, updated)
-
-      nil ->
-        :ok
-    end
-
-    state
-  end
-
-  defp do_delete_task(state, task_id) do
-    EvoDash.TaskStore.delete_task(state.task_store, task_id)
-    state
-  end
-
-  defp do_set_review_status(state, task_id, status) do
-    case task_get(state, task_id) do
-      %TaskInfo{} = task ->
-        updated = %{task | review_status: status}
-        EvoDash.TaskStore.put_task(state.task_store, updated)
-
-      nil ->
-        :ok
-    end
-
-    state
-  end
-
-  defp do_set_review_metadata(state, task_id, base_sha, commit_sha) do
-    case task_get(state, task_id) do
-      %TaskInfo{} = task ->
-        updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        EvoDash.TaskStore.put_task(state.task_store, updated)
-
-      nil ->
-        :ok
-    end
-
-    state
-  end
-
-  defp do_handle_task_status(state, task_id, status) do
-    case task_get(state, task_id) do
-      %TaskInfo{} = task ->
-        finished_at =
-          if status in [:completed, :failed, :cancelled],
-            do: DateTime.utc_now(),
-            else: task.finished_at
-
-        updated = %{task | status: status, finished_at: finished_at}
-        EvoDash.TaskStore.put_task(state.task_store, updated)
-
-        if status in [:completed, :failed, :cancelled] do
-          cleanup_expired_tasks(state)
-          %{state | task_refs: Map.delete(state.task_refs, task_id)}
-        else
-          state
-        end
-
-      nil ->
-        state
-    end
+    EvoDash.Store.safe_select_all_projects(state.task_store)
   end
 
   # --- One-time DETS→SQLite Migration (best-effort) ---
 
   defp maybe_migrate_from_dets(state) do
-    if EvoDash.TaskStore.size(state.task_store) == 0 do
+    if EvoDash.Store.size(state.task_store) == 0 do
       migrate_dets_to_store(state.data_dir, state.task_store)
     end
   end
@@ -677,7 +521,7 @@ defmodule EvoDash.TaskRegistry do
             records =
               :dets.foldl(
                 fn {_id, %TaskInfo{} = task} = _obj, acc ->
-                  EvoDash.TaskStore.put_task(task_store, task)
+                  EvoDash.Store.put_task(task_store, task)
                   acc + 1
                 end,
                 0,
@@ -721,7 +565,7 @@ defmodule EvoDash.TaskRegistry do
             records =
               :dets.foldl(
                 fn {_proj_path, project}, acc ->
-                  EvoDash.TaskStore.put_project(
+                  EvoDash.Store.put_project(
                     task_store,
                     %EvoDash.RecentProject{
                       path: project[:path] || project.path,
@@ -784,7 +628,7 @@ defmodule EvoDash.TaskRegistry do
         task = Map.merge(%TaskInfo{}, task)
         {task, acc} = reconcile_task_status(task, acc)
         # Persist with ref nulled (ref is runtime-only data)
-        EvoDash.TaskStore.put_task(state.task_store, %{task | ref: nil})
+        EvoDash.Store.put_task(state.task_store, %{task | ref: nil})
         acc
       rescue
         error ->
@@ -800,7 +644,9 @@ defmodule EvoDash.TaskRegistry do
   # Reconcile a task's status after a registry restart.
   # Running/pending tasks that are still alive (pid exists and Process.alive?/1)
   # are kept as :running and re-monitored. Dead or pid-less tasks are marked
-  # :failed (they crashed or were orphaned by a VM restart). Other statuses
+  # :failed (they crashed or were orphaned by a VM restart) — UNLESS the
+  # AgentScheduler still has active agents for this task_id, in which case the
+  # task is still genuinely running under a sibling process. Other statuses
   # are left unchanged.
   defp reconcile_task_status(%TaskInfo{status: status} = task, state)
        when status in [:running, :pending] do
@@ -817,13 +663,42 @@ defmodule EvoDash.TaskRegistry do
       {%{task | status: :running, ref: nil},
        %{state | task_refs: Map.put(state.task_refs, task.id, task_ref)}}
     else
-      # Pid is nil or dead — actual crash / orphan. Mark as failed.
-      {%{task | status: :failed, ref: nil} |> set_crash_details(), state}
+      # Pid is nil or dead. Check if AgentScheduler still has active agents.
+      if sched_meta_has_active_agents?(task.id) do
+        # TaskRegistry restarted but the EvoGit task is still running under
+        # AgentScheduler. Keep status as :running. We're already subscribed
+        # to the "tasks" PubSub topic from init, so status updates will arrive.
+        Logger.info(
+          "TaskRegistry: keeping task #{task.id} as :running — active agents found in AgentScheduler"
+        )
+
+        {%{task | status: :running, ref: nil}, state}
+      else
+        # No active agents — actual crash / orphan. Mark as failed.
+        {%{task | status: :failed, ref: nil} |> set_crash_details(), state}
+      end
     end
   end
 
   defp reconcile_task_status(%TaskInfo{} = task, state) do
     {%{task | ref: nil}, state}
+  end
+
+  # Checks the :evogit_sched_meta ETS table for active agents belonging to the
+  # given task_id. The table stores {id, %SchedMeta{task_id: ..., status: ...}}.
+  # Terminal agents are removed from the table, so ANY entry for this task_id
+  # means agents are still active. Returns false if the table doesn't exist.
+  defp sched_meta_has_active_agents?(task_id) do
+    try do
+      :ets.select(:evogit_sched_meta, [
+        {{"$1", "$2"},
+         [{:==, {:map_get, :task_id, :"$2"}, {:const, task_id}}],
+         ["$2"]}
+      ]) != []
+    rescue
+      # Table doesn't exist (e.g., AgentScheduler not started, or full VM restart)
+      ArgumentError -> false
+    end
   end
 
   defp set_crash_details(%{status: :failed, finished_at: nil} = task) do
@@ -875,7 +750,7 @@ defmodule EvoDash.TaskRegistry do
     all_keys = age_expired_keys ++ over_limit_keys
 
     if all_keys != [] do
-      EvoDash.TaskStore.delete_tasks(state.task_store, all_keys)
+      EvoDash.Store.delete_tasks(state.task_store, all_keys)
     end
 
     :ok
@@ -894,7 +769,7 @@ defmodule EvoDash.TaskRegistry do
 
       {_kept, to_remove} ->
         paths = Enum.map(to_remove, fn project -> project.path end)
-        Enum.each(paths, &EvoDash.TaskStore.delete_project(state.task_store, &1))
+        Enum.each(paths, &EvoDash.Store.delete_project(state.task_store, &1))
         :ok
     end
   end
@@ -1073,15 +948,24 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_info({:task_status, task_id, status}, state) do
     state =
-      try do
-        do_handle_task_status(state, task_id, status)
-      rescue
-        error ->
-          Logger.error(
-            "TaskRegistry: task_status handler failed for task #{inspect(task_id)}: " <>
-              "#{Exception.message(error)}"
-          )
+      case task_get(state, task_id) do
+        %TaskInfo{} = task ->
+          finished_at =
+            if status in [:completed, :failed, :cancelled],
+              do: DateTime.utc_now(),
+              else: task.finished_at
 
+          updated = %{task | status: status, finished_at: finished_at}
+          EvoDash.Store.put_task(state.task_store, updated)
+
+          if status in [:completed, :failed, :cancelled] do
+            cleanup_expired_tasks(state)
+            %{state | task_refs: Map.delete(state.task_refs, task_id)}
+          else
+            state
+          end
+
+        nil ->
           state
       end
 
