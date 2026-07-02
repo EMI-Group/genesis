@@ -1,9 +1,3 @@
-defmodule EvoDash.RecentProject do
-  @moduledoc "A recently opened project entry."
-  defstruct [:path, :name, :last_opened_at]
-  @type t :: %__MODULE__{path: String.t(), name: String.t(), last_opened_at: DateTime.t() | nil}
-end
-
 defmodule EvoDash.TaskStore do
   @moduledoc """
   SQLite-backed persistent store for EvoDash tasks and recent projects.
@@ -36,7 +30,7 @@ defmodule EvoDash.TaskStore do
 
   require Logger
 
-  alias EvoDash.TaskRegistry.TaskInfo
+  alias EvoDash.TaskInfo
 
   @task_columns ~w(id type status opts pid started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata)
   @project_columns ~w(path name last_opened_at)
