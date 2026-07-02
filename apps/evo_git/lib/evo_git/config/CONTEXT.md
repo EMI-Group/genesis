@@ -42,6 +42,7 @@ Delegates all calls to `EvoGit.Config.resolve/1`. Functions: `max_concurrency`, 
 | `shell/0` | Returns `"bash"` or `"powershell"` |
 | `shell_args/1` | Returns `["-c", cmd]` or `["-Command", cmd]` |
 | `systemd_available?/0` | Returns true on Linux with systemd |
+| `nix_available?/0` | Returns true when the `nix` binary is found in PATH (Linux and macOS) |
 
 ### `EvoGit.ProjectConfig` (per-repo genesis.toml)
 | Function | Description |
@@ -102,6 +103,10 @@ github_username = "..."      # For PR creation
 
 [sandbox]
 mode = "auto"                # "auto" | "enabled" | "disabled"
+
+[nix]
+enabled = false              # Wrap tool calls in `nix develop` (requires flake.nix in config dir)
+flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
 ```
 
 ### credentials.toml Structure

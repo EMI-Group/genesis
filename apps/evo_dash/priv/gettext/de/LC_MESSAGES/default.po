@@ -2,12 +2,14 @@ msgid ""
 msgstr ""
 
 #: lib/evo_dash_web/components/agents_components.ex:94
+#: lib/evo_dash_web/components/agents_components.ex:94
 #, elixir-autogen, elixir-format
 msgid "%{count} child"
 msgid_plural "%{count} children"
 msgstr[0] "%{count} Kind"
 msgstr[1] "%{count} Kind"
 
+#: lib/evo_dash_web/live/tasks_live.ex:145
 #: lib/evo_dash_web/live/tasks_live.ex:145
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
@@ -16,275 +18,355 @@ msgstr[0] "%{count} Aufgabe gefunden"
 msgstr[1] "%{count} Aufgabe gefunden"
 
 #: lib/evo_dash_web/helpers.ex:156
+#: lib/evo_dash_web/helpers.ex:156
 #, elixir-autogen, elixir-format
 msgid "%{count}d ago"
 msgstr "vor %{count} Tagen"
 
+#: lib/evo_dash_web/helpers.ex:155
 #: lib/evo_dash_web/helpers.ex:155
 #, elixir-autogen, elixir-format
 msgid "%{count}h ago"
 msgstr "vor %{count} Std."
 
 #: lib/evo_dash_web/helpers.ex:154
+#: lib/evo_dash_web/helpers.ex:154
 #, elixir-autogen, elixir-format
 msgid "%{count}m ago"
 msgstr "vor %{count} Min."
 
+#: lib/evo_dash_web/helpers.ex:153
 #: lib/evo_dash_web/helpers.ex:153
 #, elixir-autogen, elixir-format
 msgid "%{count}s ago"
 msgstr "vor %{count} Sek."
 
 #: lib/evo_dash_web/live/dashboard_live.ex:580
+#: lib/evo_dash_web/live/dashboard_live.ex:580
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
 msgstr "%{type}-Aufgabe mit ID: %{id} gestartet"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:91
 #: lib/evo_dash_web/components/dashboard_components.ex:91
 #, elixir-autogen, elixir-format
 msgid "/path/to/your/repo"
 msgstr "/pfad/zu/ihrem/repo"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:409
+#: lib/evo_dash_web/live/agents_live.html.heex:409
 #, elixir-autogen, elixir-format
 msgid "<empty message>"
 msgstr "<leere Nachricht>"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:452
 #: lib/evo_dash_web/live/agents_live.html.heex:452
 #, elixir-autogen, elixir-format
 msgid "<empty result>"
 msgstr "<leeres Ergebnis>"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:425
+#: lib/evo_dash_web/live/agents_live.html.heex:425
 #, elixir-autogen, elixir-format
 msgid "<no text content>"
 msgstr "<kein Textinhalt>"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:85
 #: lib/evo_dash_web/live/dashboard_live.ex:85
 #, elixir-autogen, elixir-format
 msgid "Active Tasks"
 msgstr "Aktive Aufgaben"
 
 #: lib/evo_dash_web/live/tasks_live.ex:107
+#: lib/evo_dash_web/live/tasks_live.ex:107
 #, elixir-autogen, elixir-format
 msgid "Active filters:"
 msgstr "Aktive Filter:"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:427
 #: lib/evo_dash_web/components/dashboard_components.ex:427
 #, elixir-autogen, elixir-format
 msgid "Add Foreign Repo"
 msgstr "Fremd-Repository hinzufügen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1034
+#: lib/evo_dash_web/components/dashboard_components.ex:1034
 #: lib/evo_dash_web/components/dashboard_components.ex:1063
+#: lib/evo_dash_web/components/dashboard_components.ex:1063
+#: lib/evo_dash_web/components/dashboard_components.ex:1201
 #: lib/evo_dash_web/components/dashboard_components.ex:1201
 #, elixir-autogen, elixir-format
 msgid "Agent Message"
 msgstr "Agent-Nachricht"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:104
+#: lib/evo_dash_web/live/agents_live.html.heex:104
 #, elixir-autogen, elixir-format
 msgid "Agent Module"
 msgstr "Agent-Modul"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:11
 #: lib/evo_dash_web/live/agents_live.html.heex:11
 #, elixir-autogen, elixir-format
 msgid "Agent Tree"
 msgstr "Agentenbaum"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:470
+#: lib/evo_dash_web/live/agents_live.html.heex:470
 #, elixir-autogen, elixir-format
 msgid "Agent not found"
 msgstr "Agent nicht gefunden"
 
 #: lib/evo_dash_web/components/layouts.ex:71
+#: lib/evo_dash_web/components/layouts.ex:71
 #: lib/evo_dash_web/components/layouts.ex:140
+#: lib/evo_dash_web/components/layouts.ex:140
+#: lib/evo_dash_web/components/review_components.ex:95
 #: lib/evo_dash_web/components/review_components.ex:95
 #, elixir-autogen, elixir-format
 msgid "Agents"
 msgstr "Agenten"
 
 #: lib/evo_dash_web/live/system_live.ex:142
+#: lib/evo_dash_web/live/system_live.ex:142
 #, elixir-autogen, elixir-format
 msgid "Agents and slots are being granted normally."
 msgstr "Agenten und Slots werden normal vergeben."
 
+#: lib/evo_dash_web/live/tasks_live.ex:53
 #: lib/evo_dash_web/live/tasks_live.ex:53
 #, elixir-autogen, elixir-format
 msgid "All Projects"
 msgstr "Alle Projekte"
 
 #: lib/evo_dash_web/live/tasks_live.ex:37
+#: lib/evo_dash_web/live/tasks_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "All Statuses"
 msgstr "Alle Status"
 
 #: lib/evo_dash_web/helpers.ex:344
+#: lib/evo_dash_web/helpers.ex:344
+#: lib/evo_dash_web/live/system_live.ex:215
 #: lib/evo_dash_web/live/system_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "All configured"
 msgstr "Alles konfiguriert"
 
 #: lib/evo_dash_web/helpers.ex:345
+#: lib/evo_dash_web/helpers.ex:345
 #, elixir-autogen, elixir-format
 msgid "All critical configuration values are set"
 msgstr "Alle wichtigen Konfigurationswerte sind gesetzt"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:531
 #: lib/evo_dash_web/components/dashboard_components.ex:531
 #, elixir-autogen, elixir-format
 msgid "Are you sure you want to cancel this task?"
 msgstr "Sind Sie sicher, dass Sie diese Aufgabe abbrechen möchten?"
 
 #: lib/evo_dash_web/components/layouts.ex:295
+#: lib/evo_dash_web/components/layouts.ex:295
+#: lib/evo_dash_web/components/layouts.ex:307
 #: lib/evo_dash_web/components/layouts.ex:307
 #, elixir-autogen, elixir-format
 msgid "Attempting to reconnect"
 msgstr "Verbindungsversuch läuft"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:175
+#: lib/evo_dash_web/live/agents_live.html.heex:175
 #, elixir-autogen, elixir-format
 msgid "Base Commit"
 msgstr "Basis-Commit"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:106
+#: lib/evo_dash_web/components/dashboard_components.ex:106
+#: lib/evo_dash_web/components/dashboard_components.ex:401
 #: lib/evo_dash_web/components/dashboard_components.ex:401
 #, elixir-autogen, elixir-format
 msgid "Browse for directory"
 msgstr "Verzeichnis auswählen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:120
+#: lib/evo_dash_web/components/dashboard_components.ex:120
+#: lib/evo_dash_web/components/dashboard_components.ex:420
 #: lib/evo_dash_web/components/dashboard_components.ex:420
 #: lib/evo_dash_web/components/dashboard_components.ex:533
+#: lib/evo_dash_web/components/dashboard_components.ex:533
+#: lib/evo_dash_web/components/review_components.ex:609
 #: lib/evo_dash_web/components/review_components.ex:609
 #: lib/evo_dash_web/live/system_live.ex:375
+#: lib/evo_dash_web/live/system_live.ex:375
+#: lib/evo_dash_web/live/system_live.ex:405
 #: lib/evo_dash_web/live/system_live.ex:405
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "Abbrechen"
 
 #: lib/evo_dash_web/live/tasks_live.ex:42
+#: lib/evo_dash_web/live/tasks_live.ex:42
 #, elixir-autogen, elixir-format
 msgid "Cancelled"
 msgstr "Abgebrochen"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:762
 #: lib/evo_dash_web/live/dashboard_live.ex:762
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "Das primäre Repository kann nicht entfernt werden."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:309
+#: lib/evo_dash_web/live/agents_live.html.heex:309
 #, elixir-autogen, elixir-format
 msgid "Chat History / Session Memory"
 msgstr "Chat-Verlauf / Sitzungsspeicher"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:215
 #: lib/evo_dash_web/live/agents_live.html.heex:215
 #, elixir-autogen, elixir-format
 msgid "Children"
 msgstr "Untergeordnete"
 
 #: lib/evo_dash_web/live/tasks_live.ex:178
+#: lib/evo_dash_web/live/tasks_live.ex:178
 #, elixir-autogen, elixir-format
 msgid "Clear History"
 msgstr "Verlauf löschen"
 
+#: lib/evo_dash_web/live/tasks_live.ex:177
 #: lib/evo_dash_web/live/tasks_live.ex:177
 #, elixir-autogen, elixir-format
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "Alle abgeschlossenen Aufgaben löschen? Dies kann nicht rückgängig gemacht werden."
 
 #: lib/evo_dash_web/helpers.ex:412
+#: lib/evo_dash_web/helpers.ex:412
+#: lib/evo_dash_web/live/agents_live.html.heex:564
 #: lib/evo_dash_web/live/agents_live.html.heex:564
 #: lib/evo_dash_web/live/agents_live.html.heex:588
+#: lib/evo_dash_web/live/agents_live.html.heex:588
+#: lib/evo_dash_web/live/dashboard_live.ex:161
 #: lib/evo_dash_web/live/dashboard_live.ex:161
 #: lib/evo_dash_web/live/dashboard_live.ex:182
+#: lib/evo_dash_web/live/dashboard_live.ex:182
 #: lib/evo_dash_web/live/tasks_live.ex:194
+#: lib/evo_dash_web/live/tasks_live.ex:194
+#: lib/evo_dash_web/live/tasks_live.ex:215
 #: lib/evo_dash_web/live/tasks_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr "Schließen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:874
+#: lib/evo_dash_web/components/dashboard_components.ex:874
 #: lib/evo_dash_web/components/review_components.ex:330
+#: lib/evo_dash_web/components/review_components.ex:330
+#: lib/evo_dash_web/live/tasks_live.ex:40
 #: lib/evo_dash_web/live/tasks_live.ex:40
 #, elixir-autogen, elixir-format
 msgid "Completed"
 msgstr "Abgeschlossen"
 
 #: lib/evo_dash_web/live/settings_live.ex:261
+#: lib/evo_dash_web/live/settings_live.ex:261
+#: lib/evo_dash_web/live/settings_live.ex:326
 #: lib/evo_dash_web/live/settings_live.ex:326
 #, elixir-autogen, elixir-format
 msgid "Configuration saved successfully."
 msgstr "Konfiguration erfolgreich gespeichert."
 
 #: lib/evo_dash_web/components/layouts.ex:185
+#: lib/evo_dash_web/components/layouts.ex:185
 #, elixir-autogen, elixir-format
 msgid "Configure now →"
 msgstr "Jetzt konfigurieren →"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:112
 #: lib/evo_dash_web/live/agents_live.html.heex:112
 #, elixir-autogen, elixir-format
 msgid "Context Path"
 msgstr "Kontextpfad"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1020
+#: lib/evo_dash_web/components/dashboard_components.ex:1020
+#: lib/evo_dash_web/components/dashboard_components.ex:1181
 #: lib/evo_dash_web/components/dashboard_components.ex:1181
 #, elixir-autogen, elixir-format
 msgid "Crashed"
 msgstr "Abgestürzt"
 
 #: lib/evo_dash_web/live/system_live.ex:341
+#: lib/evo_dash_web/live/system_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "Credentials Reference"
 msgstr "Anmeldeinformations-Referenz"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:186
 #: lib/evo_dash_web/live/agents_live.html.heex:186
 #, elixir-autogen, elixir-format
 msgid "Current Commit"
 msgstr "Aktueller Commit"
 
 #: lib/evo_dash_web/live/tasks_live.ex:21
+#: lib/evo_dash_web/live/tasks_live.ex:21
 #, elixir-autogen, elixir-format
 msgid "Dashboard"
 msgstr "Dashboard"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:565
 #: lib/evo_dash_web/components/dashboard_components.ex:565
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr "Löschen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:564
+#: lib/evo_dash_web/components/dashboard_components.ex:564
 #, elixir-autogen, elixir-format
 msgid "Delete this task?"
 msgstr "Diese Aufgabe löschen?"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:782
+#: lib/evo_dash_web/components/dashboard_components.ex:782
 #: lib/evo_dash_web/components/review_components.ex:224
+#: lib/evo_dash_web/components/review_components.ex:224
+#: lib/evo_dash_web/live/agents_live.html.heex:160
 #: lib/evo_dash_web/live/agents_live.html.heex:160
 #, elixir-autogen, elixir-format
 msgid "Depth"
 msgstr "Tiefe"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:431
+#: lib/evo_dash_web/live/dashboard_live.ex:431
+#: lib/evo_dash_web/live/dashboard_live.ex:450
 #: lib/evo_dash_web/live/dashboard_live.ex:450
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
 msgstr "Verzeichnis existiert nicht: %{path}"
 
 #: lib/evo_dash_web/helpers.ex:292
+#: lib/evo_dash_web/helpers.ex:292
 #, elixir-autogen, elixir-format
 msgid "Empty directory detected — New Codebase mode selected"
 msgstr "Leeres Verzeichnis erkannt – Neuer Codebase-Modus ausgewählt"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1007
+#: lib/evo_dash_web/components/dashboard_components.ex:1007
+#: lib/evo_dash_web/components/dashboard_components.ex:1168
 #: lib/evo_dash_web/components/dashboard_components.ex:1168
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr "Fehler"
 
 #: lib/evo_dash_web/components/layouts.ex:46
+#: lib/evo_dash_web/components/layouts.ex:46
+#: lib/evo_dash_web/components/layouts.ex:51
 #: lib/evo_dash_web/components/layouts.ex:51
 #: lib/evo_dash_web/components/layouts.ex:54
+#: lib/evo_dash_web/components/layouts.ex:54
 #: lib/evo_dash_web/components/layouts/root.html.heex:12
+#: lib/evo_dash_web/components/layouts/root.html.heex:12
+#: lib/evo_dash_web/components/layouts/root.html.heex:14
+#: lib/evo_dash_web/components/layouts/root.html.heex:14
 #: lib/evo_dash_web/components/layouts/root.html.heex:14
 #: lib/evo_dash_web/components/layouts/root.html.heex:14
 #, elixir-autogen, elixir-format
@@ -292,546 +374,692 @@ msgid "Genesis"
 msgstr "Genesis"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:243
+#: lib/evo_dash_web/components/dashboard_components.ex:243
 #, elixir-autogen, elixir-format
 msgid "Execute Task"
 msgstr "Aufgabe ausführen"
 
+#: lib/evo_dash_web/live/tasks_live.ex:41
 #: lib/evo_dash_web/live/tasks_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Failed"
 msgstr "Fehlgeschlagen"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:620
+#: lib/evo_dash_web/live/dashboard_live.ex:620
+#: lib/evo_dash_web/live/tasks_live.ex:428
 #: lib/evo_dash_web/live/tasks_live.ex:428
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr "Aufgabe konnte nicht abgebrochen werden: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:278
+#: lib/evo_dash_web/live/settings_live.ex:278
 #: lib/evo_dash_web/live/settings_live.ex:346
+#: lib/evo_dash_web/live/settings_live.ex:346
+#: lib/evo_dash_web/live/settings_live.ex:533
 #: lib/evo_dash_web/live/settings_live.ex:533
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "Fehler beim Speichern der Konfiguration: %{reason}"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:595
+#: lib/evo_dash_web/live/dashboard_live.ex:595
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "Aufgabe konnte nicht gestartet werden: %{reason}"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:514
 #: lib/evo_dash_web/components/dashboard_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Finished"
 msgstr "Fertiggestellt"
 
 #: lib/evo_dash_web/live/system_live.ex:350
+#: lib/evo_dash_web/live/system_live.ex:350
 #, elixir-autogen, elixir-format
 msgid "For security, credentials cannot be edited from this page. Edit the file directly on your system."
 msgstr "Aus Sicherheitsgründen können Anmeldeinformationen nicht von dieser Seite aus bearbeitet werden. Bearbeiten Sie die Datei direkt auf Ihrem System."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:339
 #: lib/evo_dash_web/components/dashboard_components.ex:339
 #, elixir-autogen, elixir-format
 msgid "Foreign Repositories"
 msgstr "Fremd-Repositories"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:749
+#: lib/evo_dash_web/live/dashboard_live.ex:749
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "Externes Repository '%{repo_id}' erfolgreich registriert."
 
+#: lib/evo_dash_web/live/dashboard_live.ex:776
 #: lib/evo_dash_web/live/dashboard_live.ex:776
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "Externes Repository '%{repo_id}' erfolgreich entfernt."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:580
+#: lib/evo_dash_web/live/agents_live.html.heex:580
 #: lib/evo_dash_web/live/dashboard_live.ex:176
+#: lib/evo_dash_web/live/dashboard_live.ex:176
+#: lib/evo_dash_web/live/tasks_live.ex:209
 #: lib/evo_dash_web/live/tasks_live.ex:209
 #, elixir-autogen, elixir-format
 msgid "Full Objective"
 msgstr "Vollständiges Ziel"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:552
+#: lib/evo_dash_web/components/dashboard_components.ex:552
 #, elixir-autogen, elixir-format
 msgid "Hide Details"
 msgstr "Details ausblenden"
 
+#: lib/evo_dash_web/live/system_live.ex:346
 #: lib/evo_dash_web/live/system_live.ex:346
 #, elixir-autogen, elixir-format
 msgid "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
 msgstr "Schlüssel aus credentials.toml werden beim Start als Umgebungsvariablen geladen. Sie können API-Schlüssel auch direkt über Umgebungsvariablen setzen (z. B. GOOGLE_API_KEY)."
 
 #: lib/evo_dash_web/helpers.ex:366
+#: lib/evo_dash_web/helpers.ex:366
+#: lib/evo_dash_web/live/system_live.ex:728
 #: lib/evo_dash_web/live/system_live.ex:728
 #, elixir-autogen, elixir-format
 msgid "LLM Model"
 msgstr "LLM-Modell"
 
 #: lib/evo_dash_web/components/layouts.ex:176
+#: lib/evo_dash_web/components/layouts.ex:176
 #: lib/evo_dash_web/helpers.ex:351
+#: lib/evo_dash_web/helpers.ex:351
+#: lib/evo_dash_web/live/settings_live.ex:37
 #: lib/evo_dash_web/live/settings_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "Missing Configuration"
 msgstr "Fehlende Konfiguration"
 
 #: lib/evo_dash_web/helpers.ex:274
+#: lib/evo_dash_web/helpers.ex:274
+#: lib/evo_dash_web/helpers.ex:280
 #: lib/evo_dash_web/helpers.ex:280
 #, elixir-autogen, elixir-format
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "Modus: %{mode} | %{prompt}"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:115
+#: lib/evo_dash_web/live/agents_live.html.heex:115
 #, elixir-autogen, elixir-format
 msgid "N/A"
 msgstr "k. A."
 
+#: lib/evo_dash_web/helpers.ex:295
 #: lib/evo_dash_web/helpers.ex:295
 #, elixir-autogen, elixir-format
 msgid "No CONTEXT.md found — Existing Codebase mode selected"
 msgstr "Keine CONTEXT.md gefunden – Vorhandener Codebase-Modus ausgewählt"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1042
+#: lib/evo_dash_web/components/dashboard_components.ex:1042
 #: lib/evo_dash_web/components/dashboard_components.ex:1195
+#: lib/evo_dash_web/components/dashboard_components.ex:1195
+#: lib/evo_dash_web/components/review_components.ex:1005
 #: lib/evo_dash_web/components/review_components.ex:1005
 #, elixir-autogen, elixir-format
 msgid "No Changes"
 msgstr "Keine Änderungen"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:17
+#: lib/evo_dash_web/live/agents_live.html.heex:17
 #, elixir-autogen, elixir-format
 msgid "No agents currently registered"
 msgstr "Derzeit keine Agenten registriert"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:464
 #: lib/evo_dash_web/live/agents_live.html.heex:464
 #, elixir-autogen, elixir-format
 msgid "No history recorded yet"
 msgstr "Noch kein Verlauf aufgezeichnet"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:517
+#: lib/evo_dash_web/live/dashboard_live.ex:517
 #, elixir-autogen, elixir-format
 msgid "No project selected. Please open a project first."
 msgstr "Kein Projekt ausgewählt. Bitte öffnen Sie zuerst ein Projekt."
 
+#: lib/evo_dash_web/live/tasks_live.ex:154
 #: lib/evo_dash_web/live/tasks_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "No tasks found"
 msgstr "Keine Aufgaben gefunden"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:128
+#: lib/evo_dash_web/live/dashboard_live.ex:128
 #, elixir-autogen, elixir-format
 msgid "No tasks yet"
 msgstr "Noch keine Aufgaben"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:209
+#: lib/evo_dash_web/live/agents_live.html.heex:209
 #: lib/evo_dash_web/live/agents_live.html.heex:230
+#: lib/evo_dash_web/live/agents_live.html.heex:230
+#: lib/evo_dash_web/live/system_live.ex:725
 #: lib/evo_dash_web/live/system_live.ex:725
 #, elixir-autogen, elixir-format
 msgid "None"
 msgstr "Keine"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:145
+#: lib/evo_dash_web/live/agents_live.html.heex:145
 #, elixir-autogen, elixir-format
 msgid "Not assigned"
 msgstr "Nicht zugewiesen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:213
+#: lib/evo_dash_web/components/dashboard_components.ex:213
+#: lib/evo_dash_web/components/dashboard_components.ex:789
 #: lib/evo_dash_web/components/dashboard_components.ex:789
 #: lib/evo_dash_web/components/dashboard_components.ex:969
+#: lib/evo_dash_web/components/dashboard_components.ex:969
+#: lib/evo_dash_web/components/dashboard_components.ex:1130
 #: lib/evo_dash_web/components/dashboard_components.ex:1130
 #: lib/evo_dash_web/components/review_components.ex:238
+#: lib/evo_dash_web/components/review_components.ex:238
+#: lib/evo_dash_web/live/agents_live.html.heex:122
 #: lib/evo_dash_web/live/agents_live.html.heex:122
 #, elixir-autogen, elixir-format
 msgid "Objective"
 msgstr "Zielsetzung"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:117
+#: lib/evo_dash_web/components/dashboard_components.ex:117
+#: lib/evo_dash_web/components/review_components.ex:1001
 #: lib/evo_dash_web/components/review_components.ex:1001
 #, elixir-autogen, elixir-format
 msgid "Open"
 msgstr "Öffnen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:74
+#: lib/evo_dash_web/components/dashboard_components.ex:74
 #, elixir-autogen, elixir-format
 msgid "Open Project"
 msgstr "Projekt öffnen"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:133
 #: lib/evo_dash_web/live/dashboard_live.ex:133
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started."
 msgstr "Öffnen Sie ein Projekt, um zu beginnen."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:580
+#: lib/evo_dash_web/components/dashboard_components.ex:580
 #, elixir-autogen, elixir-format
 msgid "Options"
 msgstr "Optionen"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:198
 #: lib/evo_dash_web/live/agents_live.html.heex:198
 #, elixir-autogen, elixir-format
 msgid "Parent"
 msgstr "Übergeordnet"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:389
+#: lib/evo_dash_web/components/dashboard_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Path"
 msgstr "Pfad"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:708
 #: lib/evo_dash_web/live/dashboard_live.ex:708
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "Pfad darf nicht leer sein."
 
 #: lib/evo_dash_web/live/dashboard_live.ex:711
+#: lib/evo_dash_web/live/dashboard_live.ex:711
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute (start with /)."
 msgstr "Pfad muss absolut sein (mit / beginnen)."
 
+#: lib/evo_dash_web/live/system_live.ex:156
 #: lib/evo_dash_web/live/system_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Pause Scheduler"
 msgstr "Scheduler anhalten"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:53
+#: lib/evo_dash_web/live/agents_live.html.heex:53
+#: lib/evo_dash_web/live/tasks_live.ex:39
 #: lib/evo_dash_web/live/tasks_live.ex:39
 #, elixir-autogen, elixir-format
 msgid "Pending"
 msgstr "Ausstehend"
 
 #: lib/evo_dash_web/live/agents_live.ex:151
+#: lib/evo_dash_web/live/agents_live.ex:151
 #: lib/evo_dash_web/live/agents_live.ex:152
+#: lib/evo_dash_web/live/agents_live.ex:152
+#: lib/evo_dash_web/live/agents_live.ex:153
 #: lib/evo_dash_web/live/agents_live.ex:153
 #, elixir-autogen, elixir-format
 msgid "Primary Repo"
 msgstr "Haupt-Repo"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:290
+#: lib/evo_dash_web/components/dashboard_components.ex:290
 #, elixir-autogen, elixir-format
 msgid "Project Root"
 msgstr "Projektverzeichnis"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:271
 #: lib/evo_dash_web/components/dashboard_components.ex:271
 #, elixir-autogen, elixir-format
 msgid "Project Settings"
 msgstr "Projekteinstellungen"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:724
+#: lib/evo_dash_web/live/dashboard_live.ex:724
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "Repository '%{id}' ist bereits registriert."
 
+#: lib/evo_dash_web/live/dashboard_live.ex:768
 #: lib/evo_dash_web/live/dashboard_live.ex:768
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "Repository '%{id}' nicht gefunden."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:382
+#: lib/evo_dash_web/components/dashboard_components.ex:382
 #, elixir-autogen, elixir-format
 msgid "Repo ID"
 msgstr "Repo-ID"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:705
 #: lib/evo_dash_web/live/dashboard_live.ex:705
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "Repository-ID darf nicht leer sein."
 
 #: lib/evo_dash_web/live/agents_live.ex:162
+#: lib/evo_dash_web/live/agents_live.ex:162
+#: lib/evo_dash_web/live/agents_live.ex:166
 #: lib/evo_dash_web/live/agents_live.ex:166
 #, elixir-autogen, elixir-format
 msgid "Repo: %{repo_id}"
 msgstr "Repo: %{repo_id}"
 
 #: lib/evo_dash_web/live/tasks_live.ex:98
+#: lib/evo_dash_web/live/tasks_live.ex:98
 #, elixir-autogen, elixir-format
 msgid "Reset"
 msgstr "Zurücksetzen"
 
+#: lib/evo_dash_web/live/tasks_live.ex:96
 #: lib/evo_dash_web/live/tasks_live.ex:96
 #, elixir-autogen, elixir-format
 msgid "Reset all filters"
 msgstr "Alle Filter zurücksetzen"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:533
+#: lib/evo_dash_web/live/agents_live.html.heex:533
 #, elixir-autogen, elixir-format
 msgid "Response"
 msgstr "Antwort"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:592
+#: lib/evo_dash_web/components/dashboard_components.ex:592
 #: lib/evo_dash_web/components/dashboard_components.ex:797
+#: lib/evo_dash_web/components/dashboard_components.ex:797
+#: lib/evo_dash_web/components/review_components.ex:248
 #: lib/evo_dash_web/components/review_components.ex:248
 #, elixir-autogen, elixir-format
 msgid "Result"
 msgstr "Ergebnis"
 
 #: lib/evo_dash_web/live/system_live.ex:156
+#: lib/evo_dash_web/live/system_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Resume Scheduler"
 msgstr "Scheduler fortsetzen"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:167
 #: lib/evo_dash_web/live/agents_live.html.heex:167
 #, elixir-autogen, elixir-format
 msgid "Retries"
 msgstr "Wiederholungen"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:377
+#: lib/evo_dash_web/live/agents_live.html.heex:377
 #, elixir-autogen, elixir-format
 msgid "Retry #%{attempt} - Starting with %{backoff_seconds}s backoff"
 msgstr "Wiederholung #%{attempt} – Start mit %{backoff_seconds}s Backoff"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:368
+#: lib/evo_dash_web/live/agents_live.html.heex:368
+#: lib/evo_dash_web/live/agents_live.html.heex:514
 #: lib/evo_dash_web/live/agents_live.html.heex:514
 #, elixir-autogen, elixir-format
 msgid "Retry attempt %{attempt}"
 msgstr "Wiederholungsversuch %{attempt}"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:57
+#: lib/evo_dash_web/live/agents_live.html.heex:57
+#: lib/evo_dash_web/live/tasks_live.ex:38
 #: lib/evo_dash_web/live/tasks_live.ex:38
 #, elixir-autogen, elixir-format
 msgid "Running"
 msgstr "Wird ausgeführt"
 
 #: lib/evo_dash_web/live/system_live.ex:140
+#: lib/evo_dash_web/live/system_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "Running agents continue. No new slots or agents will be granted until resumed."
 msgstr "Laufende Agenten laufen weiter. Bis zur Fortsetzung werden keine neuen Slots oder Agenten vergeben."
 
+#: lib/evo_dash_web/live/system_live.ex:136
 #: lib/evo_dash_web/live/system_live.ex:136
 #, elixir-autogen, elixir-format
 msgid "Scheduler Active"
 msgstr "Scheduler aktiv"
 
 #: lib/evo_dash_web/live/system_live.ex:136
+#: lib/evo_dash_web/live/system_live.ex:136
 #, elixir-autogen, elixir-format
 msgid "Scheduler Paused"
 msgstr "Scheduler angehalten"
 
+#: lib/evo_dash_web/live/system_live.ex:488
 #: lib/evo_dash_web/live/system_live.ex:488
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "Scheduler angehalten. Laufende Agenten laufen weiter, aber es werden keine neuen Slots oder Agenten vergeben."
 
 #: lib/evo_dash_web/live/system_live.ex:479
+#: lib/evo_dash_web/live/system_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "Scheduler fortgesetzt. Neue Agenten und Slots werden vergeben."
 
+#: lib/evo_dash_web/live/tasks_live.ex:84
 #: lib/evo_dash_web/live/tasks_live.ex:84
 #, elixir-autogen, elixir-format
 msgid "Search by task ID, prompt, or objective..."
 msgstr "Suche nach Aufgaben-ID, Prompt oder Ziel..."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:475
+#: lib/evo_dash_web/live/agents_live.html.heex:475
 #, elixir-autogen, elixir-format
 msgid "Select an agent to view details"
 msgstr "Wählen Sie einen Agenten aus, um Details anzuzeigen"
 
 #: lib/evo_dash_web/components/layouts.ex:81
+#: lib/evo_dash_web/components/layouts.ex:81
 #: lib/evo_dash_web/components/layouts.ex:150
+#: lib/evo_dash_web/components/layouts.ex:150
+#: lib/evo_dash_web/live/settings_live.ex:15
 #: lib/evo_dash_web/live/settings_live.ex:15
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "Einstellungen"
 
 #: lib/evo_dash_web/components/layouts.ex:302
+#: lib/evo_dash_web/components/layouts.ex:302
 #, elixir-autogen, elixir-format
 msgid "Something went wrong!"
 msgstr "Etwas ist schiefgelaufen!"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:18
 #: lib/evo_dash_web/live/agents_live.html.heex:18
 #, elixir-autogen, elixir-format
 msgid "Start a task from the dashboard to see agents here."
 msgstr "Starten Sie eine Aufgabe im Dashboard, um hier Agenten zu sehen."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:509
+#: lib/evo_dash_web/components/dashboard_components.ex:509
 #: lib/evo_dash_web/components/dashboard_components.ex:868
+#: lib/evo_dash_web/components/dashboard_components.ex:868
+#: lib/evo_dash_web/components/review_components.ex:324
 #: lib/evo_dash_web/components/review_components.ex:324
 #, elixir-autogen, elixir-format
 msgid "Started"
 msgstr "Gestartet"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:178
+#: lib/evo_dash_web/components/dashboard_components.ex:178
 #, elixir-autogen, elixir-format
 msgid "Starting Node"
 msgstr "Start-Knoten"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:50
 #: lib/evo_dash_web/live/agents_live.html.heex:50
 #, elixir-autogen, elixir-format
 msgid "Status Legend"
 msgstr "Status-Legende"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:188
+#: lib/evo_dash_web/components/dashboard_components.ex:188
 #, elixir-autogen, elixir-format
 msgid "Subdirectory to start evolution from (optional)"
 msgstr "Unterverzeichnis für den Start der Evolution (optional)"
 
 #: lib/evo_dash_web/components/settings_components.ex:831
+#: lib/evo_dash_web/components/settings_components.ex:831
+#: lib/evo_dash_web/live/tasks_live.ex:16
 #: lib/evo_dash_web/live/tasks_live.ex:16
 #, elixir-autogen, elixir-format
 msgid "Task History"
 msgstr "Aufgabenverlauf"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:153
+#: lib/evo_dash_web/live/agents_live.html.heex:153
 #, elixir-autogen, elixir-format
 msgid "Task ID"
 msgstr "Aufgaben-ID"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:156
 #: lib/evo_dash_web/components/dashboard_components.ex:156
 #, elixir-autogen, elixir-format
 msgid "Task Mode"
 msgstr "Aufgabenmodus"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:155
+#: lib/evo_dash_web/live/dashboard_live.ex:155
+#: lib/evo_dash_web/live/tasks_live.ex:188
 #: lib/evo_dash_web/live/tasks_live.ex:188
 #, elixir-autogen, elixir-format
 msgid "Task Result"
 msgstr "Aufgabenergebnis"
 
 #: lib/evo_dash_web/components/layouts.ex:76
+#: lib/evo_dash_web/components/layouts.ex:76
+#: lib/evo_dash_web/components/layouts.ex:145
 #: lib/evo_dash_web/components/layouts.ex:145
 #, elixir-autogen, elixir-format
 msgid "Tasks"
 msgstr "Aufgaben"
 
 #: lib/evo_dash_web/live/tasks_live.ex:159
+#: lib/evo_dash_web/live/tasks_live.ex:159
 #, elixir-autogen, elixir-format
 msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "Aufgaben erscheinen hier, sobald Sie sie vom Dashboard aus starten."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1044
+#: lib/evo_dash_web/components/dashboard_components.ex:1044
+#: lib/evo_dash_web/components/dashboard_components.ex:1197
 #: lib/evo_dash_web/components/dashboard_components.ex:1197
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any changes to the codebase."
 msgstr "Der Agent wurde abgeschlossen, ohne Änderungen am Codebestand vorzunehmen."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:416
+#: lib/evo_dash_web/live/agents_live.html.heex:416
+#: lib/evo_dash_web/live/agents_live.html.heex:527
 #: lib/evo_dash_web/live/agents_live.html.heex:527
 #, elixir-autogen, elixir-format
 msgid "Thinking"
 msgstr "Denkt nach"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:539
+#: lib/evo_dash_web/live/agents_live.html.heex:539
 #, elixir-autogen, elixir-format
 msgid "Tool Calls"
 msgstr "Tool-Aufrufe"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:429
 #: lib/evo_dash_web/live/agents_live.html.heex:429
 #, elixir-autogen, elixir-format
 msgid "Tool Calls (%{count})"
 msgstr "Tool-Aufrufe (%{count})"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:444
+#: lib/evo_dash_web/live/agents_live.html.heex:444
+#: lib/evo_dash_web/live/agents_live.html.heex:554
 #: lib/evo_dash_web/live/agents_live.html.heex:554
 #, elixir-autogen, elixir-format
 msgid "Tool Result: %{name}"
 msgstr "Tool-Ergebnis: %{name}"
 
 #: lib/evo_dash_web/live/tasks_live.ex:157
+#: lib/evo_dash_web/live/tasks_live.ex:157
 #, elixir-autogen, elixir-format
 msgid "Try adjusting your filters or search query."
 msgstr "Versuchen Sie, Ihre Filter oder Suchanfrage anzupassen."
 
+#: lib/evo_dash_web/helpers.ex:116
 #: lib/evo_dash_web/helpers.ex:116
 #, elixir-autogen, elixir-format
 msgid "Turn %{turn}"
 msgstr "Runde %{turn}"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:948
+#: lib/evo_dash_web/components/dashboard_components.ex:948
 #: lib/evo_dash_web/components/review_components.ex:1006
+#: lib/evo_dash_web/components/review_components.ex:1006
+#: lib/evo_dash_web/helpers.ex:267
 #: lib/evo_dash_web/helpers.ex:267
 #, elixir-autogen, elixir-format
 msgid "Unknown"
 msgstr "Unbekannt"
 
 #: lib/evo_dash_web/live/agents_live.ex:168
+#: lib/evo_dash_web/live/agents_live.ex:168
 #, elixir-autogen, elixir-format
 msgid "Unknown Repo"
 msgstr "Unbekanntes Repo"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:390
 #: lib/evo_dash_web/live/agents_live.html.heex:390
 #, elixir-autogen, elixir-format
 msgid "View Context (Turn %{turn})"
 msgstr "Kontext anzeigen (Runde %{turn})"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:331
+#: lib/evo_dash_web/live/agents_live.html.heex:331
 #, elixir-autogen, elixir-format
 msgid "View Full Message"
 msgstr "Vollständige Nachricht anzeigen"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:132
 #: lib/evo_dash_web/live/agents_live.html.heex:132
 #, elixir-autogen, elixir-format
 msgid "View Full Objective"
 msgstr "Vollständiges Ziel anzeigen"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:143
+#: lib/evo_dash_web/live/dashboard_live.ex:143
 #, elixir-autogen, elixir-format
 msgid "View Full Task History"
 msgstr "Vollständige Aufgabenhistorie anzeigen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1095
+#: lib/evo_dash_web/components/dashboard_components.ex:1095
+#: lib/evo_dash_web/components/dashboard_components.ex:1247
 #: lib/evo_dash_web/components/dashboard_components.ex:1247
 #, elixir-autogen, elixir-format
 msgid "View PR"
 msgstr "PR ansehen"
 
 #: lib/evo_dash_web/live/tasks_live.ex:17
+#: lib/evo_dash_web/live/tasks_live.ex:17
 #, elixir-autogen, elixir-format
 msgid "View and manage all tasks across projects"
 msgstr "Alle Aufgaben projektübergreifend anzeigen und verwalten"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:61
 #: lib/evo_dash_web/live/agents_live.html.heex:61
 #, elixir-autogen, elixir-format
 msgid "Waiting"
 msgstr "Wartet"
 
 #: lib/evo_dash_web/components/layouts.ex:290
+#: lib/evo_dash_web/components/layouts.ex:290
 #, elixir-autogen, elixir-format
 msgid "We can't find the internet"
 msgstr "Keine Internetverbindung"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:142
 #: lib/evo_dash_web/live/agents_live.html.heex:142
 #, elixir-autogen, elixir-format
 msgid "Worktree"
 msgstr "Worktree"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:311
+#: lib/evo_dash_web/components/dashboard_components.ex:311
 #, elixir-autogen, elixir-format
 msgid "Worktree Init Script"
 msgstr "Worktree-Initialisierungsskript"
 
 #: lib/evo_dash_web/helpers.ex:418
+#: lib/evo_dash_web/helpers.ex:418
+#: lib/evo_dash_web/live/agents_live.html.heex:569
 #: lib/evo_dash_web/live/agents_live.html.heex:569
 #: lib/evo_dash_web/live/agents_live.html.heex:593
+#: lib/evo_dash_web/live/agents_live.html.heex:593
+#: lib/evo_dash_web/live/dashboard_live.ex:165
 #: lib/evo_dash_web/live/dashboard_live.ex:165
 #: lib/evo_dash_web/live/dashboard_live.ex:186
+#: lib/evo_dash_web/live/dashboard_live.ex:186
+#: lib/evo_dash_web/live/dashboard_live.ex:246
 #: lib/evo_dash_web/live/dashboard_live.ex:246
 #, elixir-autogen, elixir-format
 msgid "close"
 msgstr "schließen"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:28
+#: lib/evo_dash_web/live/agents_live.html.heex:28
 #, elixir-autogen, elixir-format
 msgid "directories"
 msgstr "Verzeichnisse"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:185
 #: lib/evo_dash_web/components/dashboard_components.ex:185
 #, elixir-autogen, elixir-format
 msgid "e.g., ./src/components"
 msgstr "z. B. ./src/components"
 
 #: lib/evo_dash_web/helpers.ex:152
+#: lib/evo_dash_web/helpers.ex:152
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "gerade eben"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:679
 #: lib/evo_dash_web/components/dashboard_components.ex:679
 #, elixir-autogen, elixir-format
 msgid "last 20 of %{count}"
 msgstr "letzte 20 von %{count}"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:679
+#: lib/evo_dash_web/components/dashboard_components.ex:679
 #, elixir-autogen, elixir-format
 msgid "%{count}"
 msgstr "%{count}"
 
 #: lib/evo_dash_web/components/review_components.ex:420
+#: lib/evo_dash_web/components/review_components.ex:420
+#: lib/evo_dash_web/components/review_components.ex:441
 #: lib/evo_dash_web/components/review_components.ex:441
 #, elixir-autogen, elixir-format
 msgid "%{count} commit"
@@ -840,6 +1068,7 @@ msgstr[0] "%{count} Commits"
 msgstr[1] "%{count} Commits"
 
 #: lib/evo_dash_web/components/review_components.ex:661
+#: lib/evo_dash_web/components/review_components.ex:661
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
@@ -847,10 +1076,12 @@ msgstr[0] "%{count} Datei"
 msgstr[1] "%{count} Datei"
 
 #: lib/evo_dash_web/components/review_components.ex:405
+#: lib/evo_dash_web/components/review_components.ex:405
 #, elixir-autogen, elixir-format
 msgid "%{count} files changed"
 msgstr "%{count} Dateien geändert"
 
+#: lib/evo_dash_web/live/system_live.ex:228
 #: lib/evo_dash_web/live/system_live.ex:228
 #, elixir-autogen, elixir-format
 msgid "%{count} validation warning"
@@ -859,1423 +1090,1765 @@ msgstr[0] "%{count} Validierungswarnung"
 msgstr[1] "%{count} Validierungswarnung"
 
 #: lib/evo_dash_web/components/settings_components.ex:446
+#: lib/evo_dash_web/components/settings_components.ex:446
 #, elixir-autogen, elixir-format
 msgid "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
 msgstr "<strong>Anbieter nicht gefunden?</strong> Sie können jeden beliebigen Modellstring manuell in das Modellfeld unten eingeben, und zwar im Format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Schlagen Sie Ihr Modell auf <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> nach oder sehen Sie sich <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">unterstützte Anbieter</a> an."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:193
 #: lib/evo_dash_web/components/dashboard_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
 msgstr "Ein Git-Commit-SHA, Branchname oder Tag als Basis. Standardmäßig HEAD."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:382
+#: lib/evo_dash_web/components/dashboard_components.ex:382
 #, elixir-autogen, elixir-format
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "Ein eindeutiger Bezeichner für dieses Repository (z. B. 'original', 'upstream')"
 
 #: lib/evo_dash_web/helpers.ex:367
+#: lib/evo_dash_web/helpers.ex:367
+#: lib/evo_dash_web/live/system_live.ex:729
 #: lib/evo_dash_web/live/system_live.ex:729
 #, elixir-autogen, elixir-format
 msgid "API Key"
 msgstr "API-Schlüssel"
 
 #: lib/evo_dash_web/live/settings_live.ex:470
+#: lib/evo_dash_web/live/settings_live.ex:470
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "API-Schlüssel darf nicht leer sein."
 
+#: lib/evo_dash_web/components/settings_components.ex:372
 #: lib/evo_dash_web/components/settings_components.ex:372
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "API-Schlüssel ist bereits festgelegt"
 
 #: lib/evo_dash_web/live/settings_live.ex:479
+#: lib/evo_dash_web/live/settings_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "API-Schlüssel erfolgreich gespeichert."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:389
 #: lib/evo_dash_web/components/dashboard_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Absolute path to the repository root on this machine"
 msgstr "Absoluter Pfad zum Repository-Stammverzeichnis auf diesem Rechner"
 
 #: lib/evo_dash_web/components/review_components.ex:486
+#: lib/evo_dash_web/components/review_components.ex:486
 #, elixir-autogen, elixir-format
 msgid "Actions"
 msgstr "Aktionen"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:417
 #: lib/evo_dash_web/components/dashboard_components.ex:417
 #, elixir-autogen, elixir-format
 msgid "Add"
 msgstr "Hinzufügen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:347
+#: lib/evo_dash_web/components/dashboard_components.ex:347
 #, elixir-autogen, elixir-format
 msgid "Add repositories to allow agents to reference external code."
 msgstr "Fügen Sie Repositories hinzu, damit Agenten auf externen Code verweisen können."
 
+#: lib/evo_dash_web/components/review_components.ex:365
 #: lib/evo_dash_web/components/review_components.ex:365
 #, elixir-autogen, elixir-format
 msgid "Agent Summary"
 msgstr "KI-Zusammenfassung"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:55
+#: lib/evo_dash_web/live/agents_live.html.heex:55
 #, elixir-autogen, elixir-format
 msgid "Agent is actively executing its assigned task."
 msgstr "Der Agent führt seine zugewiesene Aufgabe aktiv aus."
 
+#: lib/evo_dash_web/live/agents_live.html.heex:63
 #: lib/evo_dash_web/live/agents_live.html.heex:63
 #, elixir-autogen, elixir-format
 msgid "Agent is blocked due to insufficient LLM or tool concurrency. Consider increasing concurrency in Settings."
 msgstr "Agent blockiert wegen unzureichender LLM- oder Tool-Gleichzeitigkeit. Erhöhen Sie die Gleichzeitigkeit in den Einstellungen."
 
 #: lib/evo_dash_web/live/agents_live.html.heex:51
+#: lib/evo_dash_web/live/agents_live.html.heex:51
 #, elixir-autogen, elixir-format
 msgid "Agent is queued and waiting to be scheduled for execution."
 msgstr "Der Agent wartet in der Warteschlange auf seine Ausführung."
 
+#: lib/evo_dash_web/live/agents_live.html.heex:59
 #: lib/evo_dash_web/live/agents_live.html.heex:59
 #, elixir-autogen, elixir-format
 msgid "Agent is waiting for subagents to finish. Nothing to do but wait."
 msgstr "Der Agent wartet auf das Ende von Unteragenten. Es bleibt nur abzuwarten."
 
 #: lib/evo_dash_web/live/settings_live.ex:60
+#: lib/evo_dash_web/live/settings_live.ex:60
 #, elixir-autogen, elixir-format
 msgid "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
 msgstr "Agenten können erst ausgeführt werden, wenn Sie ein Modell festlegen. Gehen Sie zur LLM-Kategorie und füllen Sie das Feld „Modell“ aus."
 
+#: lib/evo_dash_web/live/tasks_live.ex:69
 #: lib/evo_dash_web/live/tasks_live.ex:69
 #, elixir-autogen, elixir-format
 msgid "All Reviews"
 msgstr "Alle Bewertungen"
 
 #: lib/evo_dash_web/live/system_live.ex:632
+#: lib/evo_dash_web/live/system_live.ex:632
 #, elixir-autogen, elixir-format
 msgid "All healthy"
 msgstr "Alles in Ordnung"
 
+#: lib/evo_dash_web/helpers.ex:477
 #: lib/evo_dash_web/helpers.ex:477
 #, elixir-autogen, elixir-format
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "Analysiert eine vorhandene Codebasis und erstellt CONTEXT.md-Raumverträge dafür."
 
 #: lib/evo_dash_web/live/review_live.ex:35
+#: lib/evo_dash_web/live/review_live.ex:35
 #, elixir-autogen, elixir-format
 msgid "Back"
 msgstr "Zurück"
 
+#: lib/evo_dash_web/live/review_live.ex:22
 #: lib/evo_dash_web/live/review_live.ex:22
 #, elixir-autogen, elixir-format
 msgid "Back to Dashboard"
 msgstr "Zurück zum Dashboard"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:65
+#: lib/evo_dash_web/live/agents_live.html.heex:65
 #, elixir-autogen, elixir-format
 msgid "Blocked"
 msgstr "Blockiert"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:72
 #: lib/evo_dash_web/components/dashboard_components.ex:72
 #, elixir-autogen, elixir-format
 msgid "Change"
 msgstr "Ändern"
 
 #: lib/evo_dash_web/components/layouts.ex:395
+#: lib/evo_dash_web/components/layouts.ex:395
 #, elixir-autogen, elixir-format
 msgid "Change language"
 msgstr "Sprache ändern"
 
+#: lib/evo_dash_web/components/review_components.ex:635
 #: lib/evo_dash_web/components/review_components.ex:635
 #, elixir-autogen, elixir-format
 msgid "Changed Files"
 msgstr "Geänderte Dateien"
 
 #: lib/evo_dash_web/live/review_live.ex:332
+#: lib/evo_dash_web/live/review_live.ex:332
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "Änderungen erfolgreich zusammengeführt! Branch %{branch} wurde gelöscht."
 
+#: lib/evo_dash_web/live/review_live.ex:367
 #: lib/evo_dash_web/live/review_live.ex:367
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "Änderungen abgelehnt. Branch %{branch} wurde gelöscht."
 
 #: lib/evo_dash_web/live/dashboard_live.ex:828
+#: lib/evo_dash_web/live/dashboard_live.ex:828
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "Befehl '%{command}' abgeschlossen:\n%{output}"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:836
 #: lib/evo_dash_web/live/dashboard_live.ex:836
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "Befehl '%{command}' fehlgeschlagen (Exit %{code}):\n%{output}"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:803
+#: lib/evo_dash_web/live/dashboard_live.ex:803
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "Befehl nicht gefunden: %{command}"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:203
 #: lib/evo_dash_web/components/dashboard_components.ex:203
 #, elixir-autogen, elixir-format
 msgid "Commit SHA or ref to start from (defaults to HEAD)"
 msgstr "Commit-SHA oder Referenz für den Start (standardmäßig HEAD)"
 
 #: lib/evo_dash_web/components/review_components.ex:148
+#: lib/evo_dash_web/components/review_components.ex:148
 #, elixir-autogen, elixir-format
 msgid "Commits"
 msgstr "Commits"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:294
+#: lib/evo_dash_web/components/dashboard_components.ex:294
+#: lib/evo_dash_web/live/system_live.ex:212
 #: lib/evo_dash_web/live/system_live.ex:212
 #, elixir-autogen, elixir-format
 msgid "Configuration"
 msgstr "Konfiguration"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:131
+#: lib/evo_dash_web/live/dashboard_live.ex:131
 #, elixir-autogen, elixir-format
 msgid "Configure and execute a task above to get started."
 msgstr "Konfigurieren und führen Sie oben eine Aufgabe aus, um zu beginnen."
 
-#: lib/evo_dash_web/components/settings_components.ex:853
+#: lib/evo_dash_web/components/settings_components.ex:855
+#: lib/evo_dash_web/components/settings_components.ex:855
 #, elixir-autogen, elixir-format
 msgid "Configure output truncation limits for tool and context windows."
 msgstr "Kürzungsgrenzen für Tool- und Kontextfenster konfigurieren."
 
-#: lib/evo_dash_web/components/settings_components.ex:844
+#: lib/evo_dash_web/components/settings_components.ex:846
+#: lib/evo_dash_web/components/settings_components.ex:846
 #, elixir-autogen, elixir-format
 msgid "Configure the language model provider and token compression."
 msgstr "Sprachmodell-Anbieter und Token-Komprimierung konfigurieren."
 
+#: lib/evo_dash_web/live/settings_live.ex:47
 #: lib/evo_dash_web/live/settings_live.ex:47
 #, elixir-autogen, elixir-format
 msgid "Configure your LLM model in the LLM category to resolve these issues."
 msgstr "Konfigurieren Sie Ihr LLM-Modell in der LLM-Kategorie, um diese Probleme zu beheben."
 
 #: lib/evo_dash_web/components/settings_components.ex:425
+#: lib/evo_dash_web/components/settings_components.ex:425
 #, elixir-autogen, elixir-format
 msgid "Connected"
 msgstr "Verbunden"
 
+#: lib/evo_dash_web/helpers.ex:298
 #: lib/evo_dash_web/helpers.ex:298
 #, elixir-autogen, elixir-format
 msgid "Context tree detected — Evolution mode selected"
 msgstr "Kontextbaum erkannt – Evolutions-Modus ausgewählt"
 
 #: lib/evo_dash_web/components/review_components.ex:514
+#: lib/evo_dash_web/components/review_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Continue from Here"
 msgstr "Hier fortsetzen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:946
+#: lib/evo_dash_web/components/dashboard_components.ex:946
 #: lib/evo_dash_web/live/tasks_live.ex:73
+#: lib/evo_dash_web/live/tasks_live.ex:73
+#: lib/evo_dash_web/live/tasks_live.ex:132
 #: lib/evo_dash_web/live/tasks_live.ex:132
 #, elixir-autogen, elixir-format
 msgid "Continued"
 msgstr "Fortgesetzt"
 
 #: lib/evo_dash_web/live/review_live.ex:398
+#: lib/evo_dash_web/live/review_live.ex:398
 #, elixir-autogen, elixir-format
 msgid "Continuing from branch %{branch} at %{sha}"
 msgstr "Weiter mit Branch %{branch} auf %{sha}"
 
-#: lib/evo_dash_web/components/settings_components.ex:841
+#: lib/evo_dash_web/components/settings_components.ex:843
+#: lib/evo_dash_web/components/settings_components.ex:843
 #, elixir-autogen, elixir-format
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr "Agenten-Gleichzeitigkeit, Wiederholungsverhalten und Tiefenbegrenzungen steuern."
 
+#: lib/evo_dash_web/components/review_components.ex:140
 #: lib/evo_dash_web/components/review_components.ex:140
 #, elixir-autogen, elixir-format
 msgid "Conversation"
 msgstr "Konversation"
 
 #: lib/evo_dash_web/components/review_components.ex:380
+#: lib/evo_dash_web/components/review_components.ex:380
 #, elixir-autogen, elixir-format
 msgid "Copy agent summary"
 msgstr "KI-Zusammenfassung kopieren"
 
+#: lib/evo_dash_web/live/review_live.ex:164
 #: lib/evo_dash_web/live/review_live.ex:164
 #, elixir-autogen, elixir-format
 msgid "Could not load diff data. The branch may have been modified externally."
 msgstr "Diff-Daten konnten nicht geladen werden. Der Branch wurde möglicherweise extern geändert."
 
 #: lib/evo_dash_web/components/review_components.ex:525
+#: lib/evo_dash_web/components/review_components.ex:525
 #, elixir-autogen, elixir-format
 msgid "Create GitHub PR"
 msgstr "GitHub-PR erstellen"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:164
 #: lib/evo_dash_web/components/dashboard_components.ex:164
 #, elixir-autogen, elixir-format
 msgid "Create New Codebase"
 msgstr "Neue Codebasis erstellen"
 
 #: lib/evo_dash_web/helpers.ex:471
+#: lib/evo_dash_web/helpers.ex:471
 #, elixir-autogen, elixir-format
 msgid "Creates a brand new codebase from scratch in an empty directory using your prompt."
 msgstr "Erstellt eine vollständig neue Codebasis von Grund auf in einem leeren Verzeichnis basierend auf Ihrer Eingabe."
 
+#: lib/evo_dash_web/components/layouts.ex:347
 #: lib/evo_dash_web/components/layouts.ex:347
 #, elixir-autogen, elixir-format
 msgid "Dark theme"
 msgstr "Dunkles Design"
 
 #: lib/evo_dash_web/components/settings_components.ex:38
+#: lib/evo_dash_web/components/settings_components.ex:38
 #, elixir-autogen, elixir-format
 msgid "Default"
 msgstr "Standard"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:280
 #: lib/evo_dash_web/components/dashboard_components.ex:280
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "Standardeinstellungen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:226
+#: lib/evo_dash_web/components/dashboard_components.ex:226
 #, elixir-autogen, elixir-format
 msgid "Describe the codebase you want to create..."
 msgstr "Beschreiben Sie die Codebasis, die Sie erstellen möchten ..."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:224
 #: lib/evo_dash_web/components/dashboard_components.ex:224
 #, elixir-autogen, elixir-format
 msgid "Describe what you want to change or improve..."
 msgstr "Beschreiben Sie, was Sie ändern oder verbessern möchten ..."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:554
+#: lib/evo_dash_web/components/dashboard_components.ex:554
 #, elixir-autogen, elixir-format
 msgid "Details"
 msgstr "Details"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:319
 #: lib/evo_dash_web/components/dashboard_components.ex:319
 #, elixir-autogen, elixir-format
 msgid "Dev Commands"
 msgstr "Entwicklerbefehle"
 
 #: lib/evo_dash_web/live/system_live.ex:252
+#: lib/evo_dash_web/live/system_live.ex:252
 #, elixir-autogen, elixir-format
 msgid "Disabled"
 msgstr "Deaktiviert"
 
+#: lib/evo_dash_web/live/system_live.ex:252
 #: lib/evo_dash_web/live/system_live.ex:252
 #, elixir-autogen, elixir-format
 msgid "Enabled"
 msgstr "Aktiviert"
 
 #: lib/evo_dash_web/components/settings_components.ex:373
+#: lib/evo_dash_web/components/settings_components.ex:373
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "API-Schlüssel eingeben"
 
+#: lib/evo_dash_web/components/settings_components.ex:389
 #: lib/evo_dash_web/components/settings_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Enter your API key."
 msgstr "Geben Sie Ihren API-Schlüssel ein."
 
 #: lib/evo_dash_web/components/settings_components.ex:387
+#: lib/evo_dash_web/components/settings_components.ex:387
 #, elixir-autogen, elixir-format
 msgid "Enter your API key. It should start with"
 msgstr "Geben Sie Ihren API-Schlüssel ein. Er sollte beginnen mit"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:847
 #: lib/evo_dash_web/live/dashboard_live.ex:847
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "Fehler bei Ausführung von '%{command}': %{error}"
 
 #: lib/evo_dash_web/live/system_live.ex:667
+#: lib/evo_dash_web/live/system_live.ex:667
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
 msgstr "EvoX Genesis modelliert Ihre Codebasis als hierarchischen Context Tree. Jedes Verzeichnis enthält eine CONTEXT.md-Datei, die als räumlicher Vertrag fungiert — sie dokumentiert den Zweck, die API-Oberfläche, Einschränkungen und die Weiterleitung an Unterverzeichnisse. Agents lesen diese Dateien, um die Codebasis-Struktur zu verstehen und Arbeiten an die entsprechenden Unterverzeichnisse weiterzuleiten."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:165
 #: lib/evo_dash_web/components/dashboard_components.ex:165
 #, elixir-autogen, elixir-format
 msgid "Evolution"
 msgstr "Evolution"
 
 #: lib/evo_dash_web/live/system_live.ex:308
+#: lib/evo_dash_web/live/system_live.ex:308
 #, elixir-autogen, elixir-format
 msgid "Example Configuration"
 msgstr "Beispielkonfiguration"
 
+#: lib/evo_dash_web/live/system_live.ex:315
 #: lib/evo_dash_web/live/system_live.ex:315
 #, elixir-autogen, elixir-format
 msgid "Example Usage"
 msgstr "Beispielverwendung"
 
 #: lib/evo_dash_web/live/settings_live.ex:63
+#: lib/evo_dash_web/live/settings_live.ex:63
 #, elixir-autogen, elixir-format
 msgid "Example model names:"
 msgstr "Beispielhafte Modellnamen:"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:677
 #: lib/evo_dash_web/components/dashboard_components.ex:677
 #, elixir-autogen, elixir-format
 msgid "Execution Logs"
 msgstr "Ausführungsprotokolle"
 
 #: lib/evo_dash_web/live/review_live.ex:443
+#: lib/evo_dash_web/live/review_live.ex:443
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "Pull Request konnte nicht erstellt werden. Stellen Sie sicher, dass die 'gh'-CLI installiert und authentifiziert ist."
 
 #: lib/evo_dash_web/live/review_live.ex:683
+#: lib/evo_dash_web/live/review_live.ex:683
+#: lib/evo_dash_web/live/review_live.ex:710
 #: lib/evo_dash_web/live/review_live.ex:710
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "Diff für %{path} konnte nicht geladen werden: %{reason}"
 
 #: lib/evo_dash_web/live/review_live.ex:376
+#: lib/evo_dash_web/live/review_live.ex:376
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes: %{reason}"
 msgstr "Änderungen konnten nicht abgelehnt werden: %{reason}"
 
+#: lib/evo_dash_web/live/settings_live.ex:388
 #: lib/evo_dash_web/live/settings_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "Failed to reset key: %{reason}"
 msgstr "Fehler beim Zurücksetzen des Schlüssels: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:486
+#: lib/evo_dash_web/live/settings_live.ex:486
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "Fehler beim Speichern des API-Schlüssels: %{reason}"
 
+#: lib/evo_dash_web/components/review_components.ex:157
 #: lib/evo_dash_web/components/review_components.ex:157
 #, elixir-autogen, elixir-format
 msgid "Files Changed"
 msgstr "Geänderte Dateien"
 
 #: lib/evo_dash_web/live/system_live.ex:256
+#: lib/evo_dash_web/live/system_live.ex:256
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation"
 msgstr "Dateisystem-Isolation"
 
+#: lib/evo_dash_web/components/settings_components.ex:493
 #: lib/evo_dash_web/components/settings_components.ex:493
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation is active. Note: Resource limits are not available on macOS."
 msgstr "Dateisystem-Isolation ist aktiv. Hinweis: Ressourcenbeschränkungen sind unter macOS nicht verfügbar."
 
 #: lib/evo_dash_web/components/settings_components.ex:719
+#: lib/evo_dash_web/components/settings_components.ex:719
 #, elixir-autogen, elixir-format
 msgid "Filter settings..."
 msgstr "Einstellungen filtern…"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:340
 #: lib/evo_dash_web/components/dashboard_components.ex:340
 #, elixir-autogen, elixir-format
 msgid "Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects."
 msgstr "Fremd-Repositories sind zusätzliche Codebasen, auf die Agenten während der Aufgabenausführung zugreifen können. Nützlich zum Referenzieren von Originalcode oder verwandten Projekten."
 
 #: lib/evo_dash_web/live/system_live.ex:322
+#: lib/evo_dash_web/live/system_live.ex:322
 #, elixir-autogen, elixir-format
 msgid "Frequently Asked Questions"
 msgstr "Häufig gestellte Fragen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:583
+#: lib/evo_dash_web/components/dashboard_components.ex:583
+#: lib/evo_dash_web/components/dashboard_components.ex:595
 #: lib/evo_dash_web/components/dashboard_components.ex:595
 #, elixir-autogen, elixir-format
 msgid "Full"
 msgstr "Vollständig"
 
 #: lib/evo_dash_web/components/settings_components.ex:478
+#: lib/evo_dash_web/components/settings_components.ex:478
 #, elixir-autogen, elixir-format
 msgid "Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active."
 msgstr "Vollständige Sandbox ist aktiviert: Dateisystem-Isolation, Ressourcenbeschränkungen und Syscall-Filterung sind aktiv."
 
+#: lib/evo_dash_web/live/system_live.ex:671
 #: lib/evo_dash_web/live/system_live.ex:671
 #, elixir-autogen, elixir-format
 msgid "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
 msgstr "Genesis verwendet für die meisten Einstellungen integrierte Standardwerte, daher ist eine Konfigurationsdatei nicht zwingend erforderlich. Ein LLM-Modell und ein passender API-Schlüssel sind jedoch für die Ausführung von Aufgaben unerlässlich. Der Konfigurationsstatus-Indikator oben auf dieser Seite zeigt an, ob alle kritischen Werte gesetzt sind. Sie können dies auch auf der Einstellungsseite überprüfen."
 
 #: lib/evo_dash_web/helpers.ex:368
+#: lib/evo_dash_web/helpers.ex:368
+#: lib/evo_dash_web/live/system_live.ex:730
 #: lib/evo_dash_web/live/system_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "GitHub Username"
 msgstr "GitHub-Benutzername"
 
 #: lib/evo_dash_web/live/system_live.ex:657
+#: lib/evo_dash_web/live/system_live.ex:657
 #, elixir-autogen, elixir-format
 msgid "How do I change the LLM model?"
 msgstr "Wie ändere ich das LLM-Modell?"
 
+#: lib/evo_dash_web/live/system_live.ex:674
 #: lib/evo_dash_web/live/system_live.ex:674
 #, elixir-autogen, elixir-format
 msgid "How do I configure sandbox resources?"
 msgstr "Wie konfiguriere ich Sandbox-Ressourcen?"
 
 #: lib/evo_dash_web/live/system_live.ex:652
+#: lib/evo_dash_web/live/system_live.ex:652
 #, elixir-autogen, elixir-format
 msgid "How do I set my API key?"
 msgstr "Wie lege ich meinen API-Schlüssel fest?"
 
+#: lib/evo_dash_web/live/system_live.ex:666
 #: lib/evo_dash_web/live/system_live.ex:666
 #, elixir-autogen, elixir-format
 msgid "How does the context tree work?"
 msgstr "Wie funktioniert der Context Tree?"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:163
+#: lib/evo_dash_web/components/dashboard_components.ex:163
 #, elixir-autogen, elixir-format
 msgid "Initialize Existing Codebase"
 msgstr "Vorhandene Codebasis initialisieren"
 
+#: lib/evo_dash_web/components/settings_components.ex:827
 #: lib/evo_dash_web/components/settings_components.ex:827
 #, elixir-autogen, elixir-format
 msgid "LLM"
 msgstr "LLM"
 
 #: lib/evo_dash_web/live/system_live.ex:275
+#: lib/evo_dash_web/live/system_live.ex:275
 #, elixir-autogen, elixir-format
 msgid "LLM Connection"
 msgstr "LLM-Verbindung"
 
+#: lib/evo_dash_web/components/layouts.ex:338
 #: lib/evo_dash_web/components/layouts.ex:338
 #, elixir-autogen, elixir-format
 msgid "Light theme"
 msgstr "Helles Design"
 
 #: lib/evo_dash_web/components/review_components.ex:817
+#: lib/evo_dash_web/components/review_components.ex:817
 #, elixir-autogen, elixir-format
 msgid "Loading diff..."
 msgstr "Diff wird geladen…"
 
 #: lib/evo_dash_web/live/review_live.ex:44
+#: lib/evo_dash_web/live/review_live.ex:44
 #, elixir-autogen, elixir-format
 msgid "Loading review data..."
 msgstr "Review-Daten werden geladen…"
 
-#: lib/evo_dash_web/components/settings_components.ex:856
+#: lib/evo_dash_web/components/settings_components.ex:858
+#: lib/evo_dash_web/components/settings_components.ex:858
 #, elixir-autogen, elixir-format
 msgid "Manage how many past tasks are retained and for how long."
 msgstr "Verwalten, wie viele vergangene Aufgaben behalten werden und wie lange."
 
-#: lib/evo_dash_web/components/settings_components.ex:850
+#: lib/evo_dash_web/components/settings_components.ex:852
+#: lib/evo_dash_web/components/settings_components.ex:852
 #, elixir-autogen, elixir-format
 msgid "Manage sandbox isolation, resource limits, and process constraints."
 msgstr "Sandbox-Isolation, Ressourcenbeschränkungen und Prozessgrenzen verwalten."
 
+#: lib/evo_dash_web/components/review_components.ex:497
 #: lib/evo_dash_web/components/review_components.ex:497
 #, elixir-autogen, elixir-format
 msgid "Merge Changes"
 msgstr "Änderungen übernehmen"
 
 #: lib/evo_dash_web/live/review_live.ex:343
+#: lib/evo_dash_web/live/review_live.ex:343
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
 msgstr "Merge-Konflikt! Bitte manuell lösen. %{details}"
 
+#: lib/evo_dash_web/live/review_live.ex:351
 #: lib/evo_dash_web/live/review_live.ex:351
 #, elixir-autogen, elixir-format
 msgid "Merge failed: %{reason}"
 msgstr "Merge fehlgeschlagen: %{reason}"
 
 #: lib/evo_dash_web/components/review_components.ex:493
+#: lib/evo_dash_web/components/review_components.ex:493
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into the current branch?"
 msgstr "Diese Änderungen in den aktuellen Branch übernehmen?"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:944
+#: lib/evo_dash_web/components/dashboard_components.ex:944
+#: lib/evo_dash_web/components/review_components.ex:1002
 #: lib/evo_dash_web/components/review_components.ex:1002
 #: lib/evo_dash_web/live/tasks_live.ex:71
+#: lib/evo_dash_web/live/tasks_live.ex:71
+#: lib/evo_dash_web/live/tasks_live.ex:130
 #: lib/evo_dash_web/live/tasks_live.ex:130
 #, elixir-autogen, elixir-format
 msgid "Merged"
 msgstr "Übernommen"
 
 #: lib/evo_dash_web/live/settings_live.ex:58
+#: lib/evo_dash_web/live/settings_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "No LLM Model Configured"
 msgstr "Kein LLM-Modell konfiguriert"
 
+#: lib/evo_dash_web/live/review_live.ex:139
 #: lib/evo_dash_web/live/review_live.ex:139
 #, elixir-autogen, elixir-format
 msgid "No diff data available for this review."
 msgstr "Für diesen Review sind keine Diff-Daten verfügbar."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:302
+#: lib/evo_dash_web/components/dashboard_components.ex:302
 #, elixir-autogen, elixir-format
 msgid "No genesis.toml — using global defaults"
 msgstr "Kein genesis.toml — verwende globale Standardeinstellungen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:346
+#: lib/evo_dash_web/components/dashboard_components.ex:346
 #, elixir-autogen, elixir-format
 msgid "No foreign repositories registered"
 msgstr "Keine Fremd-Repositories registriert"
 
-#: lib/evo_dash_web/components/settings_components.ex:881
+#: lib/evo_dash_web/components/settings_components.ex:886
+#: lib/evo_dash_web/components/settings_components.ex:886
 #, elixir-autogen, elixir-format
 msgid "No prefix (hexadecimal)"
 msgstr "Kein Präfix (hexadezimal)"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:32
 #: lib/evo_dash_web/components/dashboard_components.ex:32
 #, elixir-autogen, elixir-format
 msgid "No project selected"
 msgstr "Kein Projekt ausgewählt"
 
 #: lib/evo_dash_web/components/settings_components.ex:508
+#: lib/evo_dash_web/components/settings_components.ex:508
 #, elixir-autogen, elixir-format
 msgid "No sandbox support on this platform. Commands will run directly on the host."
 msgstr "Keine Sandbox-Unterstützung auf dieser Plattform. Befehle werden direkt auf dem Host ausgeführt."
 
+#: lib/evo_dash_web/components/settings_components.ex:504
 #: lib/evo_dash_web/components/settings_components.ex:504
 #, elixir-autogen, elixir-format
 msgid "Not Available"
 msgstr "Nicht verfügbar"
 
 #: lib/evo_dash_web/components/settings_components.ex:415
+#: lib/evo_dash_web/components/settings_components.ex:415
 #, elixir-autogen, elixir-format
 msgid "Not tested — click to verify LLM connectivity"
 msgstr "Nicht getestet — klicken Sie, um die LLM-Konnektivität zu überprüfen"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:33
 #: lib/evo_dash_web/components/dashboard_components.ex:33
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started"
 msgstr "Öffnen Sie ein Projekt, um zu beginnen"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:108
+#: lib/evo_dash_web/live/dashboard_live.ex:108
 #: lib/evo_dash_web/live/tasks_live.ex:70
+#: lib/evo_dash_web/live/tasks_live.ex:70
+#: lib/evo_dash_web/live/tasks_live.ex:129
 #: lib/evo_dash_web/live/tasks_live.ex:129
 #, elixir-autogen, elixir-format
 msgid "Pending Review"
 msgstr "Ausstehende Überprüfung"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:24
+#: lib/evo_dash_web/live/dashboard_live.ex:24
 #, elixir-autogen, elixir-format
 msgid "Phoenix LiveDashboard — system metrics, processes, and application telemetry"
 msgstr "Phoenix LiveDashboard — Systemmetriken, Prozesse und Anwendungs-Telemetrie"
 
+#: lib/evo_dash_web/components/settings_components.ex:562
 #: lib/evo_dash_web/components/settings_components.ex:562
 #, elixir-autogen, elixir-format
 msgid "Process Limits"
 msgstr "Prozessgrenzen"
 
 #: lib/evo_dash_web/components/settings_components.ex:570
+#: lib/evo_dash_web/components/settings_components.ex:570
 #, elixir-autogen, elixir-format
 msgid "Process limits are only available on Linux with systemd-run."
 msgstr "Prozessgrenzen sind nur unter Linux mit systemd-run verfügbar."
 
 #: lib/evo_dash_web/components/layouts.ex:66
+#: lib/evo_dash_web/components/layouts.ex:66
+#: lib/evo_dash_web/components/layouts.ex:135
 #: lib/evo_dash_web/components/layouts.ex:135
 #, elixir-autogen, elixir-format
 msgid "Projects"
 msgstr "Projekte"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:215
+#: lib/evo_dash_web/components/dashboard_components.ex:215
 #, elixir-autogen, elixir-format
 msgid "Prompt"
 msgstr "Eingabeaufforderung"
 
+#: lib/evo_dash_web/live/review_live.ex:434
 #: lib/evo_dash_web/live/review_live.ex:434
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "Pull Request erstellt: %{title}"
 
 #: lib/evo_dash_web/components/settings_components.ex:195
+#: lib/evo_dash_web/components/settings_components.ex:195
 #, elixir-autogen, elixir-format
 msgid "Quick Setup"
 msgstr "Schnellkonfiguration"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:320
 #: lib/evo_dash_web/components/dashboard_components.ex:320
 #, elixir-autogen, elixir-format
 msgid "Quick shortcuts for common development commands. Click Run to execute."
 msgstr "Schnellzugriffe für häufige Entwicklerbefehle. Klicken Sie auf Ausführen, um sie zu starten."
 
 #: lib/evo_dash_web/components/settings_components.ex:270
+#: lib/evo_dash_web/components/settings_components.ex:270
 #, elixir-autogen, elixir-format
 msgid "Quick-select a model:"
 msgstr "Modell schnell auswählen:"
 
+#: lib/evo_dash_web/live/system_live.ex:206
 #: lib/evo_dash_web/live/system_live.ex:206
 #, elixir-autogen, elixir-format
 msgid "Re-check"
 msgstr "Erneut prüfen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:46
+#: lib/evo_dash_web/components/dashboard_components.ex:46
 #, elixir-autogen, elixir-format
 msgid "Recent"
 msgstr "Zuletzt verwendet"
 
+#: lib/evo_dash_web/components/review_components.ex:506
 #: lib/evo_dash_web/components/review_components.ex:506
 #, elixir-autogen, elixir-format
 msgid "Reject Changes"
 msgstr "Änderungen ablehnen"
 
 #: lib/evo_dash_web/components/review_components.ex:502
+#: lib/evo_dash_web/components/review_components.ex:502
 #, elixir-autogen, elixir-format
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "Diese Änderungen ablehnen und löschen? Dies kann nicht rückgängig gemacht werden."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:945
+#: lib/evo_dash_web/components/dashboard_components.ex:945
+#: lib/evo_dash_web/components/review_components.ex:1003
 #: lib/evo_dash_web/components/review_components.ex:1003
 #: lib/evo_dash_web/live/tasks_live.ex:72
+#: lib/evo_dash_web/live/tasks_live.ex:72
+#: lib/evo_dash_web/live/tasks_live.ex:131
 #: lib/evo_dash_web/live/tasks_live.ex:131
 #, elixir-autogen, elixir-format
 msgid "Rejected"
 msgstr "Abgelehnt"
 
 #: lib/evo_dash_web/live/system_live.ex:235
+#: lib/evo_dash_web/live/system_live.ex:235
 #, elixir-autogen, elixir-format
 msgid "Required Tools"
 msgstr "Erforderliche Tools"
 
+#: lib/evo_dash_web/live/settings_live.ex:383
 #: lib/evo_dash_web/live/settings_live.ex:383
 #, elixir-autogen, elixir-format
 msgid "Reset %{key} to default."
 msgstr "%{key} auf Standardwert zurückgesetzt."
 
 #: lib/evo_dash_web/components/settings_components.ex:31
+#: lib/evo_dash_web/components/settings_components.ex:31
 #, elixir-autogen, elixir-format
 msgid "Reset to default"
 msgstr "Auf Standard zurücksetzen"
 
+#: lib/evo_dash_web/live/system_live.ex:257
 #: lib/evo_dash_web/live/system_live.ex:257
 #, elixir-autogen, elixir-format
 msgid "Resource limits"
 msgstr "Ressourcengrenzen"
 
 #: lib/evo_dash_web/components/settings_components.ex:540
+#: lib/evo_dash_web/components/settings_components.ex:540
 #, elixir-autogen, elixir-format
 msgid "Resource limits are only available on Linux with systemd-run."
 msgstr "Ressourcenbeschränkungen sind nur unter Linux mit systemd-run verfügbar."
 
+#: lib/evo_dash_web/components/settings_components.ex:532
 #: lib/evo_dash_web/components/settings_components.ex:532
 #, elixir-autogen, elixir-format
 msgid "Resources"
 msgstr "Ressourcen"
 
 #: lib/evo_dash_web/components/settings_components.ex:430
+#: lib/evo_dash_web/components/settings_components.ex:430
 #, elixir-autogen, elixir-format
 msgid "Retest"
 msgstr "Erneut testen"
 
+#: lib/evo_dash_web/components/settings_components.ex:437
 #: lib/evo_dash_web/components/settings_components.ex:437
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr "Wiederholen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:542
+#: lib/evo_dash_web/components/dashboard_components.ex:542
 #, elixir-autogen, elixir-format
 msgid "Review"
 msgstr "Überprüfen"
 
+#: lib/evo_dash_web/live/review_live.ex:563
 #: lib/evo_dash_web/live/review_live.ex:563
 #, elixir-autogen, elixir-format
 msgid "Review Changes"
 msgstr "Änderungen überprüfen"
 
 #: lib/evo_dash_web/live/review_live.ex:19
+#: lib/evo_dash_web/live/review_live.ex:19
 #, elixir-autogen, elixir-format
 msgid "Review Not Available"
 msgstr "Review nicht verfügbar"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:328
 #: lib/evo_dash_web/components/dashboard_components.ex:328
 #, elixir-autogen, elixir-format
 msgid "Run"
 msgstr "Ausführen"
 
 #: lib/evo_dash_web/live/settings_live.ex:16
+#: lib/evo_dash_web/live/settings_live.ex:16
 #, elixir-autogen, elixir-format
 msgid "Runtime configuration and file settings"
 msgstr "Laufzeitkonfiguration und Dateieinstellungen"
 
 #: lib/evo_dash_web/components/settings_components.ex:829
+#: lib/evo_dash_web/components/settings_components.ex:829
+#: lib/evo_dash_web/live/system_live.ex:245
 #: lib/evo_dash_web/live/system_live.ex:245
 #, elixir-autogen, elixir-format
 msgid "Sandbox"
 msgstr "Sandbox"
 
 #: lib/evo_dash_web/live/system_live.ex:663
+#: lib/evo_dash_web/live/system_live.ex:663
 #, elixir-autogen, elixir-format
 msgid "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
 msgstr "Der Sandbox-Modus steuert, wie EvoX Genesis LLM-generierten Code isoliert. Unter Linux wird systemd-run für vollständige Sandboxing-Funktionen verwendet (Dateisystem-Isolation, Ressourcengrenzen, Syscall-Filterung). Unter macOS wird sandbox-exec nur für Dateisystem-Isolation verwendet. \"auto\" aktiviert das passende Backend für Ihre Plattform. \"enabled\" erzwingt Sandboxing. \"disabled\" schaltet es vollständig aus — mit Vorsicht verwenden. Ressourcengrenzen (nur Linux) können in config.toml unter [sandbox.resources] und [sandbox.process] konfiguriert werden."
 
+#: lib/evo_dash_web/live/system_live.ex:675
 #: lib/evo_dash_web/live/system_live.ex:675
 #, elixir-autogen, elixir-format
 msgid "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
 msgstr "Sandbox-Ressourcengrenzen können in Ihrer config.toml unter dem Abschnitt [sandbox.resources] (aggregierte Grenzen) und [sandbox.process] (Prozessgrenzen) festgelegt werden. Ressourcengrenzen sind nur unter Linux mit systemd-run verfügbar. Unter macOS bietet sandbox-exec nur Dateisystem-Isolation. Sie können die Einstellungen auf der Einstellungsseite im Dashboard anpassen."
 
 #: lib/evo_dash_web/components/settings_components.ex:607
+#: lib/evo_dash_web/components/settings_components.ex:607
 #, elixir-autogen, elixir-format
 msgid "Save %{category} Settings"
 msgstr "%{category}-Einstellungen speichern"
 
+#: lib/evo_dash_web/components/settings_components.ex:395
 #: lib/evo_dash_web/components/settings_components.ex:395
 #, elixir-autogen, elixir-format
 msgid "Save Key"
 msgstr "Schlüssel speichern"
 
 #: lib/evo_dash_web/components/settings_components.ex:826
+#: lib/evo_dash_web/components/settings_components.ex:826
 #, elixir-autogen, elixir-format
 msgid "Scheduler"
 msgstr "Planer"
 
+#: lib/evo_dash_web/components/settings_components.ex:196
 #: lib/evo_dash_web/components/settings_components.ex:196
 #, elixir-autogen, elixir-format
 msgid "Select a provider to quickly configure your model and API key."
 msgstr "Wählen Sie einen Anbieter zur schnellen Konfiguration Ihres Modells und API-Schlüssels."
 
 #: lib/evo_dash_web/components/settings_components.ex:247
+#: lib/evo_dash_web/components/settings_components.ex:247
 #, elixir-autogen, elixir-format
 msgid "Select a variant:"
 msgstr "Variante auswählen:"
 
 #: lib/evo_dash_web/components/settings_components.ex:364
+#: lib/evo_dash_web/components/settings_components.ex:364
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "Festlegen"
 
-#: lib/evo_dash_web/components/settings_components.ex:847
+#: lib/evo_dash_web/components/settings_components.ex:849
+#: lib/evo_dash_web/components/settings_components.ex:849
 #, elixir-autogen, elixir-format
 msgid "Set your user identity for Git commits and collaboration."
 msgstr "Legen Sie Ihre Benutzeridentität für Git-Commits und Zusammenarbeit fest."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:193
 #: lib/evo_dash_web/components/dashboard_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "Starting Commit"
 msgstr "Start-Commit"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:23
+#: lib/evo_dash_web/live/dashboard_live.ex:23
+#: lib/evo_dash_web/live/system_live.ex:297
 #: lib/evo_dash_web/live/system_live.ex:297
 #, elixir-autogen, elixir-format
 msgid "System Dashboard"
 msgstr "System-Dashboard"
 
 #: lib/evo_dash_web/live/system_live.ex:200
+#: lib/evo_dash_web/live/system_live.ex:200
 #, elixir-autogen, elixir-format
 msgid "System Self-Check"
 msgstr "System-Selbsttest"
 
+#: lib/evo_dash_web/live/system_live.ex:201
 #: lib/evo_dash_web/live/system_live.ex:201
 #, elixir-autogen, elixir-format
 msgid "System status and health overview"
 msgstr "Systemstatus und Zustandsübersicht"
 
 #: lib/evo_dash_web/components/layouts.ex:329
+#: lib/evo_dash_web/components/layouts.ex:329
 #, elixir-autogen, elixir-format
 msgid "System theme"
 msgstr "System-Design"
 
+#: lib/evo_dash_web/live/review_live.ex:532
 #: lib/evo_dash_web/live/review_live.ex:532
 #, elixir-autogen, elixir-format
 msgid "Task not found. It may have been deleted."
 msgstr "Aufgabe nicht gefunden. Sie wurde möglicherweise gelöscht."
 
 #: lib/evo_dash_web/components/settings_components.ex:418
+#: lib/evo_dash_web/components/settings_components.ex:418
 #, elixir-autogen, elixir-format
 msgid "Test Connection"
 msgstr "Verbindung testen"
 
+#: lib/evo_dash_web/components/settings_components.ex:422
 #: lib/evo_dash_web/components/settings_components.ex:422
 #, elixir-autogen, elixir-format
 msgid "Testing LLM connection..."
 msgstr "LLM-Verbindung wird getestet..."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:178
+#: lib/evo_dash_web/components/dashboard_components.ex:178
 #, elixir-autogen, elixir-format
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "Das Unterverzeichnis innerhalb des Projekts, von dem aus die Evolution gestartet wird. Verwenden Sie './' für das Stammverzeichnis."
 
+#: lib/evo_dash_web/components/settings_components.ex:830
 #: lib/evo_dash_web/components/settings_components.ex:830
 #, elixir-autogen, elixir-format
 msgid "Truncation"
 msgstr "Kürzung"
 
 #: lib/evo_dash_web/components/settings_components.ex:828
+#: lib/evo_dash_web/components/settings_components.ex:828
 #, elixir-autogen, elixir-format
 msgid "User"
 msgstr "Benutzer"
 
+#: lib/evo_dash_web/helpers.ex:480
 #: lib/evo_dash_web/helpers.ex:480
 #, elixir-autogen, elixir-format
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr "Verwendet einen einzelnen Top-Down-Agenten, um die Codebasis basierend auf Ihrem Ziel zu ändern."
 
 #: lib/evo_dash_web/live/settings_live.ex:291
+#: lib/evo_dash_web/live/settings_live.ex:291
+#: lib/evo_dash_web/live/settings_live.ex:361
 #: lib/evo_dash_web/live/settings_live.ex:361
 #, elixir-autogen, elixir-format
 msgid "Validation failed. Please fix the errors below."
 msgstr "Validierung fehlgeschlagen. Bitte korrigieren Sie die untenstehenden Fehler."
 
 #: lib/evo_dash_web/components/review_components.ex:531
+#: lib/evo_dash_web/components/review_components.ex:531
 #, elixir-autogen, elixir-format
 msgid "View GitHub PR"
 msgstr "GitHub-PR anzeigen"
 
+#: lib/evo_dash_web/live/system_live.ex:298
 #: lib/evo_dash_web/live/system_live.ex:298
 #, elixir-autogen, elixir-format
 msgid "View system metrics, processes, and application telemetry"
 msgstr "Systemmetriken, Prozesse und Anwendungstelemetrie anzeigen"
 
 #: lib/evo_dash_web/live/system_live.ex:670
+#: lib/evo_dash_web/live/system_live.ex:670
 #, elixir-autogen, elixir-format
 msgid "What happens if my config is missing?"
 msgstr "Was passiert, wenn meine Konfiguration fehlt?"
 
+#: lib/evo_dash_web/live/system_live.ex:662
 #: lib/evo_dash_web/live/system_live.ex:662
 #, elixir-autogen, elixir-format
 msgid "What is sandbox mode?"
 msgstr "Was ist der Sandbox-Modus?"
 
 #: lib/evo_dash_web/components/settings_components.ex:382
+#: lib/evo_dash_web/components/settings_components.ex:382
 #, elixir-autogen, elixir-format
 msgid "Your API key is configured and ready to use."
 msgstr "Ihr API-Schlüssel ist konfiguriert und einsatzbereit."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:200
 #: lib/evo_dash_web/components/dashboard_components.ex:200
 #, elixir-autogen, elixir-format
 msgid "e.g., abc1234 or HEAD"
 msgstr "z. B. abc1234 oder HEAD"
 
 #: lib/evo_dash_web/components/settings_components.ex:74
+#: lib/evo_dash_web/components/settings_components.ex:74
+#: lib/evo_dash_web/components/settings_components.ex:84
 #: lib/evo_dash_web/components/settings_components.ex:84
 #: lib/evo_dash_web/components/settings_components.ex:94
+#: lib/evo_dash_web/components/settings_components.ex:94
+#: lib/evo_dash_web/components/settings_components.ex:105
 #: lib/evo_dash_web/components/settings_components.ex:105
 #: lib/evo_dash_web/components/settings_components.ex:113
+#: lib/evo_dash_web/components/settings_components.ex:113
+#: lib/evo_dash_web/components/settings_components.ex:822
 #: lib/evo_dash_web/components/settings_components.ex:822
 #, elixir-autogen, elixir-format
 msgid "empty"
 msgstr "leer"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:276
+#: lib/evo_dash_web/components/dashboard_components.ex:276
 #, elixir-autogen, elixir-format
 msgid "genesis.toml"
 msgstr "genesis.toml"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:298
 #: lib/evo_dash_web/components/dashboard_components.ex:298
 #, elixir-autogen, elixir-format
 msgid "genesis.toml found — using project settings"
 msgstr "genesis.toml gefunden — verwende Projekteinstellungen"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:241
+#: lib/evo_dash_web/live/dashboard_live.ex:241
 #, elixir-autogen, elixir-format
 msgid "Configure LLM"
 msgstr "LLM konfigurieren"
 
+#: lib/evo_dash_web/components/settings_components.ex:408
 #: lib/evo_dash_web/components/settings_components.ex:408
 #, elixir-autogen, elixir-format
 msgid "Connection Test"
 msgstr "Verbindungstest"
 
 #: lib/evo_dash_web/live/system_live.ex:269
+#: lib/evo_dash_web/live/system_live.ex:269
 #, elixir-autogen, elixir-format
 msgid "EvoDash"
 msgstr "EvoDash"
 
+#: lib/evo_dash_web/live/system_live.ex:268
 #: lib/evo_dash_web/live/system_live.ex:268
 #, elixir-autogen, elixir-format
 msgid "EvoGit"
 msgstr "EvoGit"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:202
+#: lib/evo_dash_web/live/dashboard_live.ex:202
 #, elixir-autogen, elixir-format
 msgid "EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?"
 msgstr "EvoGit verwendet KI-Agenten, um Codebasen zu erstellen und weiterzuentwickeln. Um loszulegen, müssen Sie ein LLM-Modell und einen API-Schlüssel konfigurieren. Möchten Sie das jetzt einrichten?"
 
+#: lib/evo_dash_web/live/system_live.ex:265
 #: lib/evo_dash_web/live/system_live.ex:265
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis Process Tree"
 msgstr "EvoX-Genesis-Prozessbaum"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:644
+#: lib/evo_dash_web/components/dashboard_components.ex:644
+#: lib/evo_dash_web/live/agents_live.html.heex:290
 #: lib/evo_dash_web/live/agents_live.html.heex:290
 #, elixir-autogen, elixir-format
 msgid "Input Cost"
 msgstr "Eingabekosten"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:610
+#: lib/evo_dash_web/components/dashboard_components.ex:610
+#: lib/evo_dash_web/components/dashboard_components.ex:845
 #: lib/evo_dash_web/components/dashboard_components.ex:845
 #: lib/evo_dash_web/components/review_components.ex:300
+#: lib/evo_dash_web/components/review_components.ex:300
+#: lib/evo_dash_web/live/agents_live.html.heex:257
 #: lib/evo_dash_web/live/agents_live.html.heex:257
 #, elixir-autogen, elixir-format
 msgid "Input Tokens"
 msgstr "Eingabe-Token"
 
 #: lib/evo_dash_web/live/system_live.ex:278
+#: lib/evo_dash_web/live/system_live.ex:278
 #, elixir-autogen, elixir-format
 msgid "LLM connection testing is now available on the Settings page."
 msgstr "LLM-Verbindungstest ist jetzt auf der Einstellungsseite verfügbar."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:648
+#: lib/evo_dash_web/components/dashboard_components.ex:648
+#: lib/evo_dash_web/live/agents_live.html.heex:294
 #: lib/evo_dash_web/live/agents_live.html.heex:294
 #, elixir-autogen, elixir-format
 msgid "Output Cost"
 msgstr "Ausgabekosten"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:614
+#: lib/evo_dash_web/components/dashboard_components.ex:614
+#: lib/evo_dash_web/components/dashboard_components.ex:849
 #: lib/evo_dash_web/components/dashboard_components.ex:849
 #: lib/evo_dash_web/components/review_components.ex:304
+#: lib/evo_dash_web/components/review_components.ex:304
+#: lib/evo_dash_web/live/agents_live.html.heex:261
 #: lib/evo_dash_web/live/agents_live.html.heex:261
 #, elixir-autogen, elixir-format
 msgid "Output Tokens"
 msgstr "Ausgabe-Token"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:237
+#: lib/evo_dash_web/live/dashboard_live.ex:237
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "Überspringen"
 
+#: lib/evo_dash_web/live/system_live.ex:281
 #: lib/evo_dash_web/live/system_live.ex:281
 #, elixir-autogen, elixir-format
 msgid "Test in Settings"
 msgstr "Test in den Einstellungen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:606
+#: lib/evo_dash_web/components/dashboard_components.ex:606
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
 msgstr "Token- & Kostennutzung"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:652
+#: lib/evo_dash_web/components/dashboard_components.ex:652
 #: lib/evo_dash_web/components/review_components.ex:77
+#: lib/evo_dash_web/components/review_components.ex:77
+#: lib/evo_dash_web/live/agents_live.html.heex:298
 #: lib/evo_dash_web/live/agents_live.html.heex:298
 #, elixir-autogen, elixir-format
 msgid "Total Cost"
 msgstr "Gesamtkosten"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:618
+#: lib/evo_dash_web/components/dashboard_components.ex:618
+#: lib/evo_dash_web/components/dashboard_components.ex:853
 #: lib/evo_dash_web/components/dashboard_components.ex:853
 #: lib/evo_dash_web/components/review_components.ex:69
+#: lib/evo_dash_web/components/review_components.ex:69
 #: lib/evo_dash_web/components/review_components.ex:308
+#: lib/evo_dash_web/components/review_components.ex:308
+#: lib/evo_dash_web/live/agents_live.html.heex:265
 #: lib/evo_dash_web/live/agents_live.html.heex:265
 #, elixir-autogen, elixir-format
 msgid "Total Tokens"
 msgstr "Token gesamt"
 
 #: lib/evo_dash_web/components/settings_components.ex:409
+#: lib/evo_dash_web/components/settings_components.ex:409
 #, elixir-autogen, elixir-format
 msgid "Verify your LLM configuration is working"
 msgstr "Überprüfen Sie, ob Ihre LLM-Konfiguration funktioniert"
 
+#: lib/evo_dash_web/live/dashboard_live.ex:199
 #: lib/evo_dash_web/live/dashboard_live.ex:199
 #, elixir-autogen, elixir-format
 msgid "Welcome to EvoGit!"
 msgstr "Willkommen bei EvoGit!"
 
 #: lib/evo_dash_web/components/settings_components.ex:645
+#: lib/evo_dash_web/components/settings_components.ex:645
 #, elixir-autogen, elixir-format
 msgid "%{count} setting(s) matching \"%{query}\""
 msgstr "%{count} Einstellung(en) passend zu \"%{query}\""
 
+#: lib/evo_dash_web/components/settings_components.ex:643
 #: lib/evo_dash_web/components/settings_components.ex:643
 #, elixir-autogen, elixir-format
 msgid "No settings found matching \"%{query}\""
 msgstr "Keine Einstellungen gefunden zu \"%{query}\""
 
 #: lib/evo_dash_web/components/settings_components.ex:691
+#: lib/evo_dash_web/components/settings_components.ex:691
 #, elixir-autogen, elixir-format
 msgid "Save Changes"
 msgstr "Änderungen speichern"
 
+#: lib/evo_dash_web/components/settings_components.ex:639
 #: lib/evo_dash_web/components/settings_components.ex:639
 #, elixir-autogen, elixir-format
 msgid "Search Results"
 msgstr "Suchergebnisse"
 
 #: lib/evo_dash_web/components/settings_components.ex:657
+#: lib/evo_dash_web/components/settings_components.ex:657
 #, elixir-autogen, elixir-format
 msgid "Try a different search term."
 msgstr "Versuchen Sie einen anderen Suchbegriff."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:520
 #: lib/evo_dash_web/components/dashboard_components.ex:520
 #, elixir-autogen, elixir-format
 msgid "%{count} Agents"
 msgstr "%{count} Agents"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:663
+#: lib/evo_dash_web/components/dashboard_components.ex:663
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
 msgstr "Gestartete Agents"
 
+#: lib/evo_dash_web/components/review_components.ex:587
 #: lib/evo_dash_web/components/review_components.ex:587
 #, elixir-autogen, elixir-format
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "Analysiere die Änderungen in diesem PR und extrahiere wiederverwendbares Wissen in EvoGit-Skills. Der Agent untersucht den Diff, identifiziert wertvolle Muster und erstellt Skill-Dateien unter .agents/skills/."
 
 #: lib/evo_dash_web/components/review_components.ex:542
+#: lib/evo_dash_web/components/review_components.ex:542
 #: lib/evo_dash_web/components/review_components.ex:583
+#: lib/evo_dash_web/components/review_components.ex:583
+#: lib/evo_dash_web/components/review_components.ex:613
 #: lib/evo_dash_web/components/review_components.ex:613
 #, elixir-autogen, elixir-format
 msgid "Extract Skills"
 msgstr "Skills extrahieren"
 
 #: lib/evo_dash_web/live/review_live.ex:505
+#: lib/evo_dash_web/live/review_live.ex:505
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "Fehler beim Starten der Kompetenzextraktion: %{reason}"
 
+#: lib/evo_dash_web/components/review_components.ex:594
 #: lib/evo_dash_web/components/review_components.ex:594
 #, elixir-autogen, elixir-format
 msgid "Optional: Note for the skill extraction agent"
 msgstr "Optional: Hinweis für den Skill-Extraktionsagenten"
 
 #: lib/evo_dash_web/components/review_components.ex:603
+#: lib/evo_dash_web/components/review_components.ex:603
 #, elixir-autogen, elixir-format
 msgid "Provide specific instructions on what knowledge should be captured as skills."
 msgstr "Gib konkrete Anweisungen, welches Wissen als Skills erfasst werden soll."
 
+#: lib/evo_dash_web/live/review_live.ex:495
 #: lib/evo_dash_web/live/review_live.ex:495
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "Aufgabe zur Kompetenzextraktion gestartet. Sie können den Fortschritt auf dem Dashboard verfolgen."
 
 #: lib/evo_dash_web/components/review_components.ex:600
+#: lib/evo_dash_web/components/review_components.ex:600
 #, elixir-autogen, elixir-format
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "z. B. Fokussiere dich auf den Deployment-Workflow und die in diesem PR entdeckten Datenbankmigrationsmuster."
 
+#: lib/evo_dash_web/components/dashboard_components.ex:667
 #: lib/evo_dash_web/components/dashboard_components.ex:667
 #, elixir-autogen, elixir-format
 msgid "total agents (incl. subagents)"
 msgstr "Agents gesamt (inkl. Sub-Agents)"
 
 #: lib/evo_dash_web/live/review_live.ex:31
+#: lib/evo_dash_web/live/review_live.ex:31
 #, elixir-autogen, elixir-format
 msgid "Back to Review"
 msgstr "Zurück zur Überprüfung"
 
+#: lib/evo_dash_web/live/review_live.ex:766
 #: lib/evo_dash_web/live/review_live.ex:766
 #, elixir-autogen, elixir-format
 msgid "Commit details"
 msgstr "Commit-Details"
 
 #: lib/evo_dash_web/live/review_live.ex:315
+#: lib/evo_dash_web/live/review_live.ex:315
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "Fehler beim Erweitern des Kontexts: %{reason}"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:409
 #: lib/evo_dash_web/components/dashboard_components.ex:409
 #, elixir-autogen, elixir-format
 msgid "Description (optional)"
 msgstr "Beschreibung (optional)"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:411
+#: lib/evo_dash_web/components/dashboard_components.ex:411
 #, elixir-autogen, elixir-format
 msgid "Short description of what this repo does"
 msgstr "Kurzbeschreibung des Repository-Zwecks"
 
+#: lib/evo_dash_web/live/system_live.ex:370
 #: lib/evo_dash_web/live/system_live.ex:370
 #, elixir-autogen, elixir-format
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "Der gesamte In-Memory-Laufzeitzustand (laufende Aufgaben, Scheduler-Status, laufende Agents) geht verloren. Dies kann nicht rückgängig gemacht werden."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:630
+#: lib/evo_dash_web/components/dashboard_components.ex:630
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "Cache-Erstellung"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:634
+#: lib/evo_dash_web/components/dashboard_components.ex:634
 #: lib/evo_dash_web/components/review_components.ex:85
+#: lib/evo_dash_web/components/review_components.ex:85
+#: lib/evo_dash_web/live/agents_live.html.heex:276
 #: lib/evo_dash_web/live/agents_live.html.heex:276
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "Cache-Trefferquote"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:626
+#: lib/evo_dash_web/components/dashboard_components.ex:626
+#: lib/evo_dash_web/live/agents_live.html.heex:272
 #: lib/evo_dash_web/live/agents_live.html.heex:272
 #, elixir-autogen, elixir-format
 msgid "Cached Tokens"
 msgstr "Zwischengespeicherte Token"
 
 #: lib/evo_dash_web/live/system_live.ex:180
+#: lib/evo_dash_web/live/system_live.ex:180
+#: lib/evo_dash_web/live/system_live.ex:379
 #: lib/evo_dash_web/live/system_live.ex:379
 #, elixir-autogen, elixir-format
 msgid "Restart System"
 msgstr "System neu starten"
 
 #: lib/evo_dash_web/live/system_live.ex:363
+#: lib/evo_dash_web/live/system_live.ex:363
 #, elixir-autogen, elixir-format
 msgid "Restart System?"
 msgstr "System neu starten?"
 
+#: lib/evo_dash_web/live/system_live.ex:166
 #: lib/evo_dash_web/live/system_live.ex:166
 #, elixir-autogen, elixir-format
 msgid "System Control"
 msgstr "Systemsteuerung"
 
 #: lib/evo_dash_web/live/system_live.ex:521
+#: lib/evo_dash_web/live/system_live.ex:521
 #, elixir-autogen, elixir-format
 msgid "System is restarting. Please wait while the Erlang VM comes back up."
 msgstr "Das System wird neu gestartet. Bitte warten Sie, während die Erlang-VM hochfährt."
 
+#: lib/evo_dash_web/live/system_live.ex:367
 #: lib/evo_dash_web/live/system_live.ex:367
 #, elixir-autogen, elixir-format
 msgid "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
 msgstr "Die Erlang-VM wird sauber neu gestartet. Alle Anwendungen werden heruntergefahren und neu gestartet."
 
 #: lib/evo_dash_web/live/system_live.ex:169
+#: lib/evo_dash_web/live/system_live.ex:169
 #, elixir-autogen, elixir-format
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "Erlang-VM sauber neu starten oder anhalten. Ein Neustart fährt alle Anwendungen herunter und startet sie neu; Beenden fährt die VM sauber herunter und sie muss manuell wieder gestartet werden. Der In-Memory-Laufzeitzustand geht in beiden Fällen verloren."
 
+#: lib/evo_dash_web/live/system_live.ex:124
 #: lib/evo_dash_web/live/system_live.ex:124
 #, elixir-autogen, elixir-format
 msgid "Scheduler controls, system health, and usage guides"
 msgstr "Scheduler-Steuerung, Systemzustand und Bedienungsanleitungen"
 
 #: lib/evo_dash_web/live/system_live.ex:188
+#: lib/evo_dash_web/live/system_live.ex:188
+#: lib/evo_dash_web/live/system_live.ex:409
 #: lib/evo_dash_web/live/system_live.ex:409
 #, elixir-autogen, elixir-format
 msgid "Stop System"
 msgstr "System anhalten"
 
 #: lib/evo_dash_web/live/system_live.ex:393
+#: lib/evo_dash_web/live/system_live.ex:393
 #, elixir-autogen, elixir-format
 msgid "Stop System?"
 msgstr "System anhalten?"
 
 #: lib/evo_dash_web/components/layouts.ex:86
+#: lib/evo_dash_web/components/layouts.ex:86
 #: lib/evo_dash_web/components/layouts.ex:155
+#: lib/evo_dash_web/components/layouts.ex:155
+#: lib/evo_dash_web/live/system_live.ex:123
 #: lib/evo_dash_web/live/system_live.ex:123
 #, elixir-autogen, elixir-format
 msgid "System"
 msgstr "System"
 
 #: lib/evo_dash_web/live/system_live.ex:552
+#: lib/evo_dash_web/live/system_live.ex:552
 #, elixir-autogen, elixir-format
 msgid "System is stopping. The Erlang VM will shut down and must be started again manually."
 msgstr "Das System wird angehalten. Die Erlang-VM wird heruntergefahren und muss manuell neu gestartet werden."
 
+#: lib/evo_dash_web/live/system_live.ex:400
 #: lib/evo_dash_web/live/system_live.ex:400
 #, elixir-autogen, elixir-format
 msgid "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "Die VM wird angehalten und muss manuell neu gestartet werden. Der gesamte In-Memory-Laufzeitzustand (laufende Aufgaben, Scheduler-Status, laufende Agents) geht verloren. Dies kann nicht rückgängig gemacht werden."
 
 #: lib/evo_dash_web/live/system_live.ex:397
+#: lib/evo_dash_web/live/system_live.ex:397
 #, elixir-autogen, elixir-format
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "Die Erlang-VM wird sauber heruntergefahren. Alle Anwendungen werden der Reihe nach gestoppt."
 
+#: lib/evo_dash_web/components/review_components.ex:560
 #: lib/evo_dash_web/components/review_components.ex:560
 #, elixir-autogen, elixir-format
 msgid "Ignore"
 msgstr "Ignorieren"
 
 #: lib/evo_dash_web/components/review_components.ex:556
+#: lib/evo_dash_web/components/review_components.ex:556
 #, elixir-autogen, elixir-format
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "Diese Überprüfung ignorieren? Sie wird dann aus den ausstehenden Überprüfungen entfernt."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:947
+#: lib/evo_dash_web/components/dashboard_components.ex:947
+#: lib/evo_dash_web/components/review_components.ex:1004
 #: lib/evo_dash_web/components/review_components.ex:1004
 #, elixir-autogen, elixir-format
 msgid "Ignored"
 msgstr "Ignoriert"
 
 #: lib/evo_dash_web/live/review_live.ex:414
+#: lib/evo_dash_web/live/review_live.ex:414
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "Review ignoriert und verworfen."
 
+#: lib/evo_dash_web/components/review_components.ex:549
 #: lib/evo_dash_web/components/review_components.ex:549
 #, elixir-autogen, elixir-format
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "Dieser Branch existiert nicht mehr. Sie können ihn mit „Ignorieren“ verwerfen."
 
 #: lib/evo_dash_web/components/review_components.ex:167
+#: lib/evo_dash_web/components/review_components.ex:167
 #, elixir-autogen, elixir-format
 msgid "Archive"
 msgstr "Archiv"
 
+#: lib/evo_dash_web/components/review_components.ex:287
 #: lib/evo_dash_web/components/review_components.ex:287
 #, elixir-autogen, elixir-format
 msgid "Archive End"
 msgstr "Archiv Ende"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:828
+#: lib/evo_dash_web/components/dashboard_components.ex:828
 #, elixir-autogen, elixir-format
 msgid "Archive Final Ref"
 msgstr "End-Referenz archivieren"
 
+#: lib/evo_dash_web/components/review_components.ex:279
 #: lib/evo_dash_web/components/review_components.ex:279
 #, elixir-autogen, elixir-format
 msgid "Archive Start"
 msgstr "Archiv Start"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:822
+#: lib/evo_dash_web/components/dashboard_components.ex:822
 #, elixir-autogen, elixir-format
 msgid "Archive Start Ref"
 msgstr "Start-Referenz archivieren"
 
+#: lib/evo_dash_web/components/dashboard_components.ex:236
 #: lib/evo_dash_web/components/dashboard_components.ex:236
 #, elixir-autogen, elixir-format
 msgid "Archive agent details"
 msgstr "Agentendetails archivieren"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:734
+#: lib/evo_dash_web/components/dashboard_components.ex:734
+#: lib/evo_dash_web/components/review_components.ex:193
 #: lib/evo_dash_web/components/review_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "Archivierte Agentendetails"
 
 #: lib/evo_dash_web/components/settings_components.ex:311
+#: lib/evo_dash_web/components/settings_components.ex:311
 #, elixir-autogen, elixir-format
 msgid "Base URL"
 msgstr "Basis-URL"
 
+#: lib/evo_dash_web/live/settings_live.ex:439
 #: lib/evo_dash_web/live/settings_live.ex:439
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "Basis-URL darf nicht leer sein."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:836
+#: lib/evo_dash_web/components/dashboard_components.ex:836
 #, elixir-autogen, elixir-format
 msgid "Branch"
 msgstr "Branch"
 
+#: lib/evo_dash_web/live/agents_live.html.heex:281
 #: lib/evo_dash_web/live/agents_live.html.heex:281
 #, elixir-autogen, elixir-format
 msgid "Context"
 msgstr "Kontext"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:857
+#: lib/evo_dash_web/components/dashboard_components.ex:857
+#: lib/evo_dash_web/components/review_components.ex:312
 #: lib/evo_dash_web/components/review_components.ex:312
 #, elixir-autogen, elixir-format
 msgid "Cost"
 msgstr "Kosten"
 
 #: lib/evo_dash_web/live/system_live.ex:653
+#: lib/evo_dash_web/live/system_live.ex:653
 #, elixir-autogen, elixir-format
 msgid "Create a credentials.toml file at %{path} with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
 msgstr "Erstellen Sie eine Datei credentials.toml unter %{path} mit Ihrem API-Schlüssel. Es wird nur ein Schlüssel benötigt — setzen Sie den, der zu Ihrem LLM-Anbieter passt (z. B. GOOGLE_API_KEY für Google Gemini). Alternativ können Sie API-Schlüssel direkt als Umgebungsvariablen setzen (z. B. export GOOGLE_API_KEY=AIza...)."
 
+#: lib/evo_dash_web/live/settings_live.ex:459
 #: lib/evo_dash_web/live/settings_live.ex:459
 #, elixir-autogen, elixir-format
 msgid "Custom model saved."
 msgstr "Benutzerdefiniertes Modell gespeichert."
 
 #: lib/evo_dash_web/live/system_live.ex:658
+#: lib/evo_dash_web/live/system_live.ex:658
 #, elixir-autogen, elixir-format
 msgid "Edit your config.toml file at %{path} and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
 msgstr "Bearbeiten Sie Ihre config.toml-Datei unter %{path} und setzen Sie das model-Feld unter [llm] (z. B. model = \"anthropic:claude-sonnet-4-20250514\"). Sie können das Modell auch vorübergehend auf der Einstellungsseite im Dashboard anpassen."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:812
+#: lib/evo_dash_web/components/dashboard_components.ex:812
+#: lib/evo_dash_web/components/review_components.ex:266
 #: lib/evo_dash_web/components/review_components.ex:266
 #, elixir-autogen, elixir-format
 msgid "End Commit"
 msgstr "End-Commit"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:738
+#: lib/evo_dash_web/components/dashboard_components.ex:738
 #: lib/evo_dash_web/components/review_components.ex:198
+#: lib/evo_dash_web/components/review_components.ex:198
+#: lib/evo_dash_web/live/review_live.ex:117
 #: lib/evo_dash_web/live/review_live.ex:117
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "JSON exportieren"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:205
+#: lib/evo_dash_web/live/dashboard_live.ex:205
 #, elixir-autogen, elixir-format
 msgid "Language"
 msgstr "Sprache"
 
 #: lib/evo_dash_web/components/settings_components.ex:299
+#: lib/evo_dash_web/components/settings_components.ex:299
+#: lib/evo_dash_web/components/settings_components.ex:336
 #: lib/evo_dash_web/components/settings_components.ex:336
 #, elixir-autogen, elixir-format
 msgid "Model Name"
 msgstr "Modellname"
 
 #: lib/evo_dash_web/live/settings_live.ex:435
+#: lib/evo_dash_web/live/settings_live.ex:435
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "Modellname darf nicht leer sein."
 
+#: lib/evo_dash_web/live/settings_live.ex:416
 #: lib/evo_dash_web/live/settings_live.ex:416
 #, elixir-autogen, elixir-format
 msgid "Model selected and saved."
 msgstr "Modell ausgewählt und gespeichert."
 
 #: lib/evo_dash_web/controllers/task_export_controller.ex:19
+#: lib/evo_dash_web/controllers/task_export_controller.ex:19
 #, elixir-autogen, elixir-format
 msgid "No archive data available for this task"
 msgstr "Keine Archivdaten für diesen Task verfügbar"
 
+#: lib/evo_dash_web/live/review_live.ex:154
 #: lib/evo_dash_web/live/review_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "Keine archivierten Agentendaten für diese Aufgabe verfügbar."
 
 #: lib/evo_dash_web/components/settings_components.ex:328
+#: lib/evo_dash_web/components/settings_components.ex:328
+#: lib/evo_dash_web/components/settings_components.ex:350
 #: lib/evo_dash_web/components/settings_components.ex:350
 #, elixir-autogen, elixir-format
 msgid "Set Model"
 msgstr "Modell festlegen"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:806
+#: lib/evo_dash_web/components/dashboard_components.ex:806
+#: lib/evo_dash_web/components/review_components.ex:258
 #: lib/evo_dash_web/components/review_components.ex:258
 #, elixir-autogen, elixir-format
 msgid "Start Commit"
 msgstr "Start-Commit"
 
 #: lib/evo_dash_web/controllers/task_export_controller.ex:10
+#: lib/evo_dash_web/controllers/task_export_controller.ex:10
 #, elixir-autogen, elixir-format
 msgid "Task not found"
 msgstr "Task nicht gefunden"
 
+#: lib/evo_dash_web/components/settings_components.ex:347
 #: lib/evo_dash_web/components/settings_components.ex:347
 #, elixir-autogen, elixir-format
 msgid "The model will be saved as"
 msgstr "Das Modell wird gespeichert als"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:241
+#: lib/evo_dash_web/live/agents_live.html.heex:241
 #, elixir-autogen, elixir-format
 msgid "Token and Cost"
 msgstr "Token und Kosten"
 
+#: lib/evo_dash_web/components/settings_components.ex:142
 #: lib/evo_dash_web/components/settings_components.ex:142
 #, elixir-autogen, elixir-format
 msgid "Type a model string or use Quick Setup above"
 msgstr "Modellbezeichnung eingeben oder Quick-Setup oben verwenden"
 
 #: lib/evo_dash_web/live/settings_live.ex:432
+#: lib/evo_dash_web/live/settings_live.ex:432
+#: lib/evo_dash_web/live/settings_live.ex:463
 #: lib/evo_dash_web/live/settings_live.ex:463
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "Unbekannter Anbieter."
 
 #: lib/evo_dash_web/components/settings_components.ex:324
+#: lib/evo_dash_web/components/settings_components.ex:324
 #, elixir-autogen, elixir-format
 msgid "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
 msgstr "Achtung: OpenAI-kompatible APIs unterscheiden sich in der Kompatibilität. Einige Funktionen (Tool-Aufrufe, Streaming, strukturierte Ausgaben) können je nach Anbieter eingeschränkt sein."
 
+#: lib/evo_dash_web/components/settings_components.ex:342
 #: lib/evo_dash_web/components/settings_components.ex:342
 #, elixir-autogen, elixir-format
 msgid "anthropic/claude-3.5-sonnet"
 msgstr "anthropic/claude-3.5-sonnet"
 
 #: lib/evo_dash_web/components/settings_components.ex:139
+#: lib/evo_dash_web/components/settings_components.ex:139
 #, elixir-autogen, elixir-format
 msgid "e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5"
 msgstr "z. B. anthropic:claude-opus-4-7 oder openai:gpt-5.5"
 
+#: lib/evo_dash_web/components/settings_components.ex:305
 #: lib/evo_dash_web/components/settings_components.ex:305
 #, elixir-autogen, elixir-format
 msgid "e.g. gpt-4o or my-custom-model"
 msgstr "z. B. gpt-4o oder mein-benutzerdefiniertes-Modell"
 
 #: lib/evo_dash_web/components/settings_components.ex:317
+#: lib/evo_dash_web/components/settings_components.ex:317
 #, elixir-autogen, elixir-format
 msgid "https://api.my-provider.com/v1"
 msgstr "https://api.my-provider.com/v1"
 
+#: lib/evo_dash_web/components/settings_components.ex:347
 #: lib/evo_dash_web/components/settings_components.ex:347
 #, elixir-autogen, elixir-format
 msgid "openrouter:<model-name>"
 msgstr "openrouter:<Modellname>"
 
 #: lib/evo_dash_web/live/settings_live.ex:22
+#: lib/evo_dash_web/live/settings_live.ex:22
 #, elixir-autogen, elixir-format
 msgid "Configuration file"
 msgstr "Konfigurationsdatei"
 
+#: lib/evo_dash_web/live/settings_live.ex:24
 #: lib/evo_dash_web/live/settings_live.ex:24
 #, elixir-autogen, elixir-format
 msgid "Copy path"
 msgstr "Pfad kopieren"
 
 #: lib/evo_dash_web/live/settings_live.ex:29
+#: lib/evo_dash_web/live/settings_live.ex:29
 #, elixir-autogen, elixir-format
 msgid "File does not exist yet"
 msgstr "Datei existiert noch nicht"
 
+#: lib/evo_dash_web/components/review_components.ex:103
 #: lib/evo_dash_web/components/review_components.ex:103
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "Status"
 
 #: lib/evo_dash_web/components/review_components.ex:111
+#: lib/evo_dash_web/components/review_components.ex:111
 #, elixir-autogen, elixir-format
 msgid "Task Type"
 msgstr "Aufgabentyp"
 
 #: lib/evo_dash_web/components/settings_components.ex:53
+#: lib/evo_dash_web/components/settings_components.ex:53
 #, elixir-autogen, elixir-format
 msgid "(provider default)"
 msgstr "(Anbieter-Standard)"
+
+#: lib/evo_dash_web/components/settings_components.ex:861
+#: lib/evo_dash_web/components/settings_components.ex:861
+#, elixir-autogen, elixir-format
+msgid "Configure Nix develop environment integration for tool calls."
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:832
+#: lib/evo_dash_web/components/settings_components.ex:832
+#, elixir-autogen, elixir-format
+msgid "Nix"
+msgstr ""

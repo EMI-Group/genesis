@@ -37,6 +37,14 @@ defmodule EvoGit do
       memory_max = "12G"
       limit_nofile = 65536
       oom_score_adjust = 1000
+
+  ## Nix Develop Integration
+
+  When `[nix] enabled = true` in config and a `flake.nix` exists in the config
+  directory (e.g. `~/.config/genesis/flake.nix`), all tool calls are wrapped in
+  `nix develop` so that tools defined in the flake are available to the agent.
+  This is handled transparently by each sandbox backend via the `EvoGit.Nix`
+  helper module.
   """
 
   @doc """

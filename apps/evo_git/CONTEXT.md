@@ -29,6 +29,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `EvoGit.Config` | Unified 3-level configuration resolver (defaults → user TOML → runtime overrides) |
 | `EvoGit.Defaults` | Backward-compatibility shim delegating to `EvoGit.Config` |
 | `EvoGit.Platform` | Cross-platform OS detection, config/data directory resolution |
+| `EvoGit.Nix` | Nix develop integration helper — wraps tool calls in `nix develop` when enabled via `[nix]` config section with a `flake.nix` in the config directory |
 
 ## Subdirectories
 | Directory | Purpose |

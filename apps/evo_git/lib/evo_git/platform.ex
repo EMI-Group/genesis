@@ -177,6 +177,16 @@ defmodule EvoGit.Platform do
   end
 
   @doc """
+  Returns true if `nix` is available on the system.
+
+  Returns true on any platform where the `nix` binary is found in PATH.
+  """
+  @spec nix_available?() :: boolean()
+  def nix_available? do
+    System.find_executable("nix") != nil
+  end
+
+  @doc """
   Returns true if `sandbox-exec` is available on this platform.
 
   Only returns true on macOS where sandbox-exec is found in PATH.

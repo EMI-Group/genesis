@@ -6,7 +6,7 @@ defmodule EvoGit.Sandbox.Linux do
   syscall filtering, and process isolation. Requires systemd.
   """
 
-  alias EvoGit.Platform
+  alias EvoGit.{Nix, Platform}
 
   @doc "Returns true when sandbox mode allows systemd-run on Linux."
   @spec enabled?() :: boolean()
@@ -93,10 +93,19 @@ defmodule EvoGit.Sandbox.Linux do
       ]
       |> Enum.map(&Path.join(home, &1))
 
+    # Add nix store and daemon socket dirs when nix wrapping is enabled
+    nix_paths =
+      if Nix.enabled?() do
+        ["/nix/store", "/nix/var"]
+      else
+        []
+      end
+
     # Add cwd, the system temp folders, and the language caches
     read_write_paths =
       [cwd | Platform.tmp_paths()] ++
         build_cache_dirs ++
+        nix_paths ++
         if repo_root do
           [Path.join(repo_root, ".git")]
         else
@@ -125,6 +134,14 @@ defmodule EvoGit.Sandbox.Linux do
         {key, value} -> ["--setenv=#{key}=#{value}"]
       end)
 
+    nix_env_args =
+      if Nix.enabled?() do
+        Nix.nix_env_vars()
+        |> Enum.flat_map(fn {key, value} -> ["--setenv=#{key}=#{value}"] end)
+      else
+        []
+      end
+
     [
       "--user",
       "--slice=evogit",
@@ -134,6 +151,7 @@ defmodule EvoGit.Sandbox.Linux do
       "-q"
     ] ++
       env_args ++
+      nix_env_args ++
       [
         "-p",
         "WorkingDirectory=#{cwd}",
@@ -170,9 +188,15 @@ defmodule EvoGit.Sandbox.Linux do
         "-p",
         "ProtectProc=invisible"
       ] ++
-        resource_args() ++
-        read_write_args ++
-        inaccessible_args ++ [executable | args]
+      resource_args() ++
+      read_write_args ++
+      inaccessible_args ++
+      if Nix.enabled?() do
+        {nix_exe, nix_args} = Nix.wrap_command(executable, args)
+        [nix_exe | nix_args]
+      else
+        [executable | args]
+      end
   end
 
   defp resource_args do
@@ -208,9 +232,14 @@ defmodule EvoGit.Sandbox.Linux do
   defp get_process_resources do
     try do
       case EvoGit.AgentScheduler.get_config()[:sandbox_process_resources] do
-        nil -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
-        resources when map_size(resources) == 0 -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
-        resources -> resources
+        nil ->
+          EvoGit.Config.resolve([:sandbox, :process]) || %{}
+
+        resources when map_size(resources) == 0 ->
+          EvoGit.Config.resolve([:sandbox, :process]) || %{}
+
+        resources ->
+          resources
       end
     rescue
       _ -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
