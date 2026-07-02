@@ -37,7 +37,7 @@ This is the native application layer — it contains NO Elixir code. The actual 
 └─────────────────────┘
 ```
 
-Tauri launches the Phoenix app as a sidecar process. The WebView connects to Phoenix over HTTP to render the LiveView UI. When the window closes, the sidecar is killed.
+Tauri launches the Phoenix app as a sidecar process. The WebView connects to Phoenix over HTTP to render the LiveView UI. Closing the window hides it to the system tray — the backend keeps running. The user fully exits via the tray's "Quit" menu item.
 
 ## Sidecar Lifecycle
 
