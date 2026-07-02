@@ -505,8 +505,8 @@ defmodule EvoGit.Config.Schema do
   ## Examples
 
       iex> schemas = EvoGit.Config.Schema.schemas_by_category()
-      iex> Map.keys(schemas)
-      [:scheduler, :llm, :user, :sandbox, :truncation, :task_history]
+      iex> Map.keys(schemas) |> MapSet.new()
+      MapSet.new([:nix, :scheduler, :llm, :user, :sandbox, :truncation, :task_history])
   """
   @spec schemas_by_category() :: %{category() => [schema_map()]}
   def schemas_by_category do
