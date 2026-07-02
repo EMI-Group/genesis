@@ -23,22 +23,22 @@ msgstr[3] "تم العثور على %{count} مهام"
 msgstr[4] "تم العثور على %{count} مهمة"
 msgstr[5] "تم العثور على %{count} مهمة"
 
-#: lib/evo_dash_web/helpers.ex:156
+#: lib/evo_dash_web/helpers.ex:178
 #, elixir-autogen, elixir-format
 msgid "%{count}d ago"
 msgstr "منذ %{count} يوم"
 
-#: lib/evo_dash_web/helpers.ex:155
+#: lib/evo_dash_web/helpers.ex:177
 #, elixir-autogen, elixir-format
 msgid "%{count}h ago"
 msgstr "منذ %{count} ساعة"
 
-#: lib/evo_dash_web/helpers.ex:154
+#: lib/evo_dash_web/helpers.ex:176
 #, elixir-autogen, elixir-format
 msgid "%{count}m ago"
 msgstr "منذ %{count} دقيقة"
 
-#: lib/evo_dash_web/helpers.ex:153
+#: lib/evo_dash_web/helpers.ex:175
 #, elixir-autogen, elixir-format
 msgid "%{count}s ago"
 msgstr "منذ %{count} ثانية"
@@ -127,13 +127,13 @@ msgstr "جميع المشاريع"
 msgid "All Statuses"
 msgstr "جميع الحالات"
 
-#: lib/evo_dash_web/helpers.ex:344
-#: lib/evo_dash_web/live/system_live.ex:215
+#: lib/evo_dash_web/helpers.ex:366
+#: lib/evo_dash_web/live/system_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "All configured"
 msgstr "كل القيم مضبوطة"
 
-#: lib/evo_dash_web/helpers.ex:345
+#: lib/evo_dash_web/helpers.ex:367
 #, elixir-autogen, elixir-format
 msgid "All critical configuration values are set"
 msgstr "جميع قيم الإعدادات الحرجة مضبوطة"
@@ -164,8 +164,8 @@ msgstr "تصفح للبحث عن مجلد"
 #: lib/evo_dash_web/components/dashboard_components.ex:452
 #: lib/evo_dash_web/components/dashboard_components.ex:565
 #: lib/evo_dash_web/components/review_components.ex:609
-#: lib/evo_dash_web/live/system_live.ex:375
-#: lib/evo_dash_web/live/system_live.ex:405
+#: lib/evo_dash_web/live/system_live.ex:410
+#: lib/evo_dash_web/live/system_live.ex:440
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "إلغاء"
@@ -200,7 +200,7 @@ msgstr "مسح السجل"
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "مسح سجل جميع المهام المنجزة؟ هذا الإجراء لا يمكن التراجع عنه."
 
-#: lib/evo_dash_web/helpers.ex:412
+#: lib/evo_dash_web/helpers.ex:434
 #: lib/evo_dash_web/live/agents_live.html.heex:564
 #: lib/evo_dash_web/live/agents_live.html.heex:588
 #: lib/evo_dash_web/live/dashboard_live.ex:163
@@ -240,7 +240,7 @@ msgstr "مسار السياق"
 msgid "Crashed"
 msgstr "تعطل"
 
-#: lib/evo_dash_web/live/system_live.ex:341
+#: lib/evo_dash_web/live/system_live.ex:376
 #, elixir-autogen, elixir-format
 msgid "Credentials Reference"
 msgstr "مرجع بيانات الاعتماد"
@@ -278,7 +278,7 @@ msgstr "العمق"
 msgid "Directory does not exist: %{path}"
 msgstr "المجلد غير موجود: %{path}"
 
-#: lib/evo_dash_web/helpers.ex:292
+#: lib/evo_dash_web/helpers.ex:314
 #, elixir-autogen, elixir-format
 msgid "Empty directory detected — New Codebase mode selected"
 msgstr "تم اكتشاف مجلد فارغ — تم تحديد وضع قاعدة الشيفرة الجديدة"
@@ -332,7 +332,7 @@ msgstr "فشل بدء المهمة: %{reason}"
 msgid "Finished"
 msgstr "مكتمل"
 
-#: lib/evo_dash_web/live/system_live.ex:350
+#: lib/evo_dash_web/live/system_live.ex:385
 #, elixir-autogen, elixir-format
 msgid "For security, credentials cannot be edited from this page. Edit the file directly on your system."
 msgstr "لأسباب أمنية، لا يمكن تعديل بيانات الاعتماد من هذه الصفحة. قم بتحرير الملف مباشرة على نظامك."
@@ -364,26 +364,26 @@ msgstr "الهدف الكامل"
 msgid "Hide Details"
 msgstr "إخفاء التفاصيل"
 
-#: lib/evo_dash_web/live/system_live.ex:346
+#: lib/evo_dash_web/live/system_live.ex:381
 #, elixir-autogen, elixir-format
 msgid "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
 msgstr "يتم تحميل المفاتيح من credentials.toml كمتغيرات بيئة عند بدء التشغيل. يمكنك أيضاً تعيين مفاتيح API مباشرة عبر متغيرات البيئة (مثل GOOGLE_API_KEY)."
 
-#: lib/evo_dash_web/helpers.ex:366
-#: lib/evo_dash_web/live/system_live.ex:728
+#: lib/evo_dash_web/helpers.ex:388
+#: lib/evo_dash_web/live/system_live.ex:803
 #, elixir-autogen, elixir-format
 msgid "LLM Model"
 msgstr "نموذج LLM"
 
 #: lib/evo_dash_web/components/layouts.ex:176
-#: lib/evo_dash_web/helpers.ex:351
+#: lib/evo_dash_web/helpers.ex:373
 #: lib/evo_dash_web/live/settings_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "Missing Configuration"
 msgstr "تكوين مفقود"
 
-#: lib/evo_dash_web/helpers.ex:274
-#: lib/evo_dash_web/helpers.ex:280
+#: lib/evo_dash_web/helpers.ex:296
+#: lib/evo_dash_web/helpers.ex:302
 #, elixir-autogen, elixir-format
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "الوضع: %{mode} | %{prompt}"
@@ -393,14 +393,14 @@ msgstr "الوضع: %{mode} | %{prompt}"
 msgid "N/A"
 msgstr "غير متاح"
 
-#: lib/evo_dash_web/helpers.ex:295
+#: lib/evo_dash_web/helpers.ex:317
 #, elixir-autogen, elixir-format
 msgid "No CONTEXT.md found — Existing Codebase mode selected"
 msgstr "لم يتم العثور على CONTEXT.md — تم تحديد وضع قاعدة الشيفرة الحالية"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1074
 #: lib/evo_dash_web/components/dashboard_components.ex:1227
-#: lib/evo_dash_web/components/review_components.ex:1005
+#: lib/evo_dash_web/components/review_components.ex:1043
 #, elixir-autogen, elixir-format
 msgid "No Changes"
 msgstr "لا توجد تغييرات"
@@ -432,7 +432,7 @@ msgstr "لا توجد مهام بعد"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:209
 #: lib/evo_dash_web/live/agents_live.html.heex:230
-#: lib/evo_dash_web/live/system_live.ex:725
+#: lib/evo_dash_web/live/system_live.ex:800
 #, elixir-autogen, elixir-format
 msgid "None"
 msgstr "لا شيء"
@@ -453,7 +453,7 @@ msgid "Objective"
 msgstr "الهدف"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:117
-#: lib/evo_dash_web/components/review_components.ex:1001
+#: lib/evo_dash_web/components/review_components.ex:1039
 #, elixir-autogen, elixir-format
 msgid "Open"
 msgstr "فتح"
@@ -611,12 +611,12 @@ msgstr "المجدول نشط"
 msgid "Scheduler Paused"
 msgstr "المجدول متوقف مؤقتًا"
 
-#: lib/evo_dash_web/live/system_live.ex:488
+#: lib/evo_dash_web/live/system_live.ex:526
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "تم إيقاف المجدول مؤقتًا. يستمر الوكلاء الحاليون في العمل، لكن لن يتم منح فتحات أو وكلاء جدد."
 
-#: lib/evo_dash_web/live/system_live.ex:479
+#: lib/evo_dash_web/live/system_live.ex:517
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "تم استئناف المجدول. يتم الآن منح وكلاء وفتحات جدد."
@@ -670,7 +670,7 @@ msgstr "دليل الحالات"
 msgid "Subdirectory to start evolution from (optional)"
 msgstr "المجلد الفرعي لبدء التطور منه (اختياري)"
 
-#: lib/evo_dash_web/components/settings_components.ex:831
+#: lib/evo_dash_web/components/settings_components.ex:841
 #: lib/evo_dash_web/live/tasks_live.ex:16
 #, elixir-autogen, elixir-format
 msgid "Task History"
@@ -736,14 +736,14 @@ msgstr "نتيجة الأداة: %{name}"
 msgid "Try adjusting your filters or search query."
 msgstr "حاول تعديل عوامل التصفية أو استعلام البحث."
 
-#: lib/evo_dash_web/helpers.ex:116
+#: lib/evo_dash_web/helpers.ex:138
 #, elixir-autogen, elixir-format
 msgid "Turn %{turn}"
 msgstr "الدور %{turn}"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:980
-#: lib/evo_dash_web/components/review_components.ex:1006
-#: lib/evo_dash_web/helpers.ex:267
+#: lib/evo_dash_web/components/review_components.ex:1044
+#: lib/evo_dash_web/helpers.ex:289
 #, elixir-autogen, elixir-format
 msgid "Unknown"
 msgstr "غير معروف"
@@ -804,7 +804,7 @@ msgstr "شجرة العمل"
 msgid "Worktree Init Script"
 msgstr "نص تهيئة شجرة العمل"
 
-#: lib/evo_dash_web/helpers.ex:418
+#: lib/evo_dash_web/helpers.ex:440
 #: lib/evo_dash_web/live/agents_live.html.heex:569
 #: lib/evo_dash_web/live/agents_live.html.heex:593
 #: lib/evo_dash_web/live/dashboard_live.ex:167
@@ -824,7 +824,7 @@ msgstr "دليل"
 msgid "e.g., ./src/components"
 msgstr "مثل: ./src/components"
 
-#: lib/evo_dash_web/helpers.ex:152
+#: lib/evo_dash_web/helpers.ex:174
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "الآن للتو"
@@ -867,7 +867,7 @@ msgstr[5] "%{count} ملف"
 msgid "%{count} files changed"
 msgstr "تم تغيير %{count} ملف"
 
-#: lib/evo_dash_web/live/system_live.ex:228
+#: lib/evo_dash_web/live/system_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "%{count} validation warning"
 msgid_plural "%{count} validation warnings"
@@ -878,7 +878,7 @@ msgstr[3] "%{count} تحذيرات تحقق"
 msgstr[4] "%{count} تحذيراً"
 msgstr[5] "%{count} تحذير تحقق"
 
-#: lib/evo_dash_web/components/settings_components.ex:446
+#: lib/evo_dash_web/components/settings_components.ex:456
 #, elixir-autogen, elixir-format
 msgid "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
 msgstr "<strong>ألا ترى مزود الخدمة الخاص بك؟</strong> يمكنك إدخال أي نص نموذج يدويًا في حقل النموذج أدناه باستخدام الصيغة <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. ابحث عن نموذجك في <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> أو اطّلع على <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">مزودي الخدمة المدعومين</a>."
@@ -893,8 +893,8 @@ msgstr "SHA أو اسم فرع أو علامة Git لاستخدامها كقاع
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "معرف فريد لهذا المستودع (مثل: 'original', 'upstream')"
 
-#: lib/evo_dash_web/helpers.ex:367
-#: lib/evo_dash_web/live/system_live.ex:729
+#: lib/evo_dash_web/helpers.ex:389
+#: lib/evo_dash_web/live/system_live.ex:804
 #, elixir-autogen, elixir-format
 msgid "API Key"
 msgstr "مفتاح API"
@@ -904,7 +904,7 @@ msgstr "مفتاح API"
 msgid "API key cannot be empty."
 msgstr "لا يمكن أن يكون مفتاح API فارغًا."
 
-#: lib/evo_dash_web/components/settings_components.ex:372
+#: lib/evo_dash_web/components/settings_components.ex:382
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "مفتاح API مضبوط مسبقًا"
@@ -969,12 +969,12 @@ msgstr "لا يمكن للوكلاء العمل حتى تقوم بتعيين ن�
 msgid "All Reviews"
 msgstr "جميع المراجعات"
 
-#: lib/evo_dash_web/live/system_live.ex:632
+#: lib/evo_dash_web/live/system_live.ex:691
 #, elixir-autogen, elixir-format
 msgid "All healthy"
 msgstr "كل شيء سليم"
 
-#: lib/evo_dash_web/helpers.ex:477
+#: lib/evo_dash_web/helpers.ex:499
 #, elixir-autogen, elixir-format
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "يحلل قاعدة شيفرة موجودة وينشئ عقود CONTEXT.md المكانية لها."
@@ -1045,7 +1045,7 @@ msgid "Commits"
 msgstr "الالتزامات"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:326
-#: lib/evo_dash_web/live/system_live.ex:212
+#: lib/evo_dash_web/live/system_live.ex:218
 #, elixir-autogen, elixir-format
 msgid "Configuration"
 msgstr "الإعدادات"
@@ -1055,12 +1055,12 @@ msgstr "الإعدادات"
 msgid "Configure and execute a task above to get started."
 msgstr "قم بتكوين وتنفيذ مهمة أعلاه للبدء."
 
-#: lib/evo_dash_web/components/settings_components.ex:855
+#: lib/evo_dash_web/components/settings_components.ex:865
 #, elixir-autogen, elixir-format
 msgid "Configure output truncation limits for tool and context windows."
 msgstr "اضبط حدود اقتطاع المخرجات لنوافذ الأدوات والسياق."
 
-#: lib/evo_dash_web/components/settings_components.ex:846
+#: lib/evo_dash_web/components/settings_components.ex:856
 #, elixir-autogen, elixir-format
 msgid "Configure the language model provider and token compression."
 msgstr "اضبط مزود نموذج اللغة وضغط الترميزات."
@@ -1070,12 +1070,12 @@ msgstr "اضبط مزود نموذج اللغة وضغط الترميزات."
 msgid "Configure your LLM model in the LLM category to resolve these issues."
 msgstr "قم بتكوين نموذج LLM الخاص بك في فئة LLM لحل هذه المشكلات."
 
-#: lib/evo_dash_web/components/settings_components.ex:425
+#: lib/evo_dash_web/components/settings_components.ex:435
 #, elixir-autogen, elixir-format
 msgid "Connected"
 msgstr "متصل"
 
-#: lib/evo_dash_web/helpers.ex:298
+#: lib/evo_dash_web/helpers.ex:320
 #, elixir-autogen, elixir-format
 msgid "Context tree detected — Evolution mode selected"
 msgstr "تم اكتشاف شجرة السياق — تم تحديد وضع التطور"
@@ -1097,7 +1097,7 @@ msgstr "مستمر"
 msgid "Continuing from branch %{branch} at %{sha}"
 msgstr "المتابعة من الفرع %{branch} عند %{sha}"
 
-#: lib/evo_dash_web/components/settings_components.ex:843
+#: lib/evo_dash_web/components/settings_components.ex:853
 #, elixir-autogen, elixir-format
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr "تحكم في التزامن الوكيل وسلوك إعادة المحاولة وحدود العمق."
@@ -1127,7 +1127,7 @@ msgstr "إنشاء طلب سحب على GitHub"
 msgid "Create New Codebase"
 msgstr "إنشاء قاعدة كود جديدة"
 
-#: lib/evo_dash_web/helpers.ex:471
+#: lib/evo_dash_web/helpers.ex:493
 #, elixir-autogen, elixir-format
 msgid "Creates a brand new codebase from scratch in an empty directory using your prompt."
 msgstr "ينشئ قاعدة شيفرة جديدة كليًا من الصفر في مجلد فارغ باستخدام طلبك."
@@ -1167,27 +1167,29 @@ msgstr "التفاصيل"
 msgid "Dev Commands"
 msgstr "أوامر التطوير"
 
-#: lib/evo_dash_web/live/system_live.ex:252
+#: lib/evo_dash_web/live/system_live.ex:258
+#: lib/evo_dash_web/live/system_live.ex:285
 #, elixir-autogen, elixir-format
 msgid "Disabled"
 msgstr "معطل"
 
-#: lib/evo_dash_web/live/system_live.ex:252
+#: lib/evo_dash_web/live/system_live.ex:258
+#: lib/evo_dash_web/live/system_live.ex:285
 #, elixir-autogen, elixir-format
 msgid "Enabled"
 msgstr "مفعل"
 
-#: lib/evo_dash_web/components/settings_components.ex:373
+#: lib/evo_dash_web/components/settings_components.ex:383
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "أدخل مفتاح API الخاص بك"
 
-#: lib/evo_dash_web/components/settings_components.ex:389
+#: lib/evo_dash_web/components/settings_components.ex:399
 #, elixir-autogen, elixir-format
 msgid "Enter your API key."
 msgstr "أدخل مفتاح API الخاص بك."
 
-#: lib/evo_dash_web/components/settings_components.ex:387
+#: lib/evo_dash_web/components/settings_components.ex:397
 #, elixir-autogen, elixir-format
 msgid "Enter your API key. It should start with"
 msgstr "أدخل مفتاح API الخاص بك. يجب أن يبدأ بـ"
@@ -1197,7 +1199,7 @@ msgstr "أدخل مفتاح API الخاص بك. يجب أن يبدأ بـ"
 msgid "Error running '%{command}': %{error}"
 msgstr "خطأ أثناء تشغيل '%{command}': %{error}"
 
-#: lib/evo_dash_web/live/system_live.ex:667
+#: lib/evo_dash_web/live/system_live.ex:726
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
 msgstr "يقوم EvoX Genesis بنمذجة قاعدة الشيفرة البرمجية الخاصة بك كشجرة سياق هرمية. كل مجلد يحتوي على ملف CONTEXT.md يعمل كعقد مكاني — يوثق الغرض منه، واجهة API، القيود، والتوجيه إلى المجلدات الفرعية. تقوم الوكلاء بقراءة هذه الملفات لفهم هيكل قاعدة الشيفرة وتوجيه العمل إلى المجلدات الفرعية المناسبة."
@@ -1207,12 +1209,12 @@ msgstr "يقوم EvoX Genesis بنمذجة قاعدة الشيفرة البرم�
 msgid "Evolution"
 msgstr "التطور"
 
-#: lib/evo_dash_web/live/system_live.ex:308
+#: lib/evo_dash_web/live/system_live.ex:343
 #, elixir-autogen, elixir-format
 msgid "Example Configuration"
 msgstr "مثال على التكوين"
 
-#: lib/evo_dash_web/live/system_live.ex:315
+#: lib/evo_dash_web/live/system_live.ex:350
 #, elixir-autogen, elixir-format
 msgid "Example Usage"
 msgstr "مثال على الاستخدام"
@@ -1258,17 +1260,17 @@ msgstr "فشل حفظ مفتاح API: %{reason}"
 msgid "Files Changed"
 msgstr "الملفات المغيَّرة"
 
-#: lib/evo_dash_web/live/system_live.ex:256
+#: lib/evo_dash_web/live/system_live.ex:262
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation"
 msgstr "عزل نظام الملفات"
 
-#: lib/evo_dash_web/components/settings_components.ex:493
+#: lib/evo_dash_web/components/settings_components.ex:503
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation is active. Note: Resource limits are not available on macOS."
 msgstr "عزل نظام الملفات نشط. ملاحظة: حدود الموارد غير متوفرة على macOS."
 
-#: lib/evo_dash_web/components/settings_components.ex:719
+#: lib/evo_dash_web/components/settings_components.ex:729
 #, elixir-autogen, elixir-format
 msgid "Filter settings..."
 msgstr "تصفية الإعدادات..."
@@ -1278,7 +1280,7 @@ msgstr "تصفية الإعدادات..."
 msgid "Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects."
 msgstr "المستودعات الخارجية هي قواعد كود إضافية يمكن للوكلاء الوصول إليها أثناء تنفيذ المهمة. مفيدة للرجوع إلى الكود الأصلي أو المشاريع ذات الصلة."
 
-#: lib/evo_dash_web/live/system_live.ex:322
+#: lib/evo_dash_web/live/system_live.ex:357
 #, elixir-autogen, elixir-format
 msgid "Frequently Asked Questions"
 msgstr "أسئلة متكررة"
@@ -1289,38 +1291,38 @@ msgstr "أسئلة متكررة"
 msgid "Full"
 msgstr "كامل"
 
-#: lib/evo_dash_web/components/settings_components.ex:478
+#: lib/evo_dash_web/components/settings_components.ex:488
 #, elixir-autogen, elixir-format
 msgid "Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active."
 msgstr "وضع الحماية الكامل مفعّل: عزل نظام الملفات، حدود الموارد، وتصفية استدعاءات النظام نشطة."
 
-#: lib/evo_dash_web/live/system_live.ex:671
+#: lib/evo_dash_web/live/system_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
 msgstr "يستخدم Genesis إعدادات افتراضية مدمجة لمعظم الخيارات، لذا فإن ملف التكوين ليس ضرورياً بشكل صارم. ومع ذلك، فإن نموذج LLM ومفتاح API مطابق ضروريان لتشغيل المهام. يُظهر مؤشر حالة التكوين في أعلى هذه الصفحة ما إذا تم تعيين جميع القيم الحرجة. يمكنك أيضاً التحقق من صفحة الإعدادات."
 
-#: lib/evo_dash_web/helpers.ex:368
-#: lib/evo_dash_web/live/system_live.ex:730
+#: lib/evo_dash_web/helpers.ex:390
+#: lib/evo_dash_web/live/system_live.ex:805
 #, elixir-autogen, elixir-format
 msgid "GitHub Username"
 msgstr "اسم مستخدم GitHub"
 
-#: lib/evo_dash_web/live/system_live.ex:657
+#: lib/evo_dash_web/live/system_live.ex:716
 #, elixir-autogen, elixir-format
 msgid "How do I change the LLM model?"
 msgstr "كيف يمكنني تغيير نموذج LLM؟"
 
-#: lib/evo_dash_web/live/system_live.ex:674
+#: lib/evo_dash_web/live/system_live.ex:733
 #, elixir-autogen, elixir-format
 msgid "How do I configure sandbox resources?"
 msgstr "كيف يمكنني تكوين موارد الصندوق الرملي؟"
 
-#: lib/evo_dash_web/live/system_live.ex:652
+#: lib/evo_dash_web/live/system_live.ex:711
 #, elixir-autogen, elixir-format
 msgid "How do I set my API key?"
 msgstr "كيف يمكنني تعيين مفتاح API الخاص بي؟"
 
-#: lib/evo_dash_web/live/system_live.ex:666
+#: lib/evo_dash_web/live/system_live.ex:725
 #, elixir-autogen, elixir-format
 msgid "How does the context tree work?"
 msgstr "كيف تعمل شجرة السياق؟"
@@ -1330,12 +1332,12 @@ msgstr "كيف تعمل شجرة السياق؟"
 msgid "Initialize Existing Codebase"
 msgstr "تهيئة قاعدة كود موجودة"
 
-#: lib/evo_dash_web/components/settings_components.ex:827
+#: lib/evo_dash_web/components/settings_components.ex:837
 #, elixir-autogen, elixir-format
 msgid "LLM"
 msgstr "نموذج اللغة"
 
-#: lib/evo_dash_web/live/system_live.ex:275
+#: lib/evo_dash_web/live/system_live.ex:309
 #, elixir-autogen, elixir-format
 msgid "LLM Connection"
 msgstr "اتصال LLM"
@@ -1355,12 +1357,12 @@ msgstr "جارٍ تحميل الفروقات…"
 msgid "Loading review data..."
 msgstr "جارٍ تحميل بيانات المراجعة..."
 
-#: lib/evo_dash_web/components/settings_components.ex:858
+#: lib/evo_dash_web/components/settings_components.ex:868
 #, elixir-autogen, elixir-format
 msgid "Manage how many past tasks are retained and for how long."
 msgstr "إدارة عدد المهام السابقة المحتفظ بها ومدة الاحتفاظ."
 
-#: lib/evo_dash_web/components/settings_components.ex:852
+#: lib/evo_dash_web/components/settings_components.ex:862
 #, elixir-autogen, elixir-format
 msgid "Manage sandbox isolation, resource limits, and process constraints."
 msgstr "إدارة عزل وضع الحماية وحدود الموارد وقيود العمليات."
@@ -1386,7 +1388,7 @@ msgid "Merge these changes into the current branch?"
 msgstr "هل تريد دمج هذه التغييرات في الفرع الحالي؟"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:976
-#: lib/evo_dash_web/components/review_components.ex:1002
+#: lib/evo_dash_web/components/review_components.ex:1040
 #: lib/evo_dash_web/live/tasks_live.ex:71
 #: lib/evo_dash_web/live/tasks_live.ex:130
 #, elixir-autogen, elixir-format
@@ -1413,7 +1415,7 @@ msgstr "لا يوجد genesis.toml — يتم استخدام الإعدادات 
 msgid "No foreign repositories registered"
 msgstr "لا توجد مستودعات خارجية مسجلة"
 
-#: lib/evo_dash_web/components/settings_components.ex:886
+#: lib/evo_dash_web/components/settings_components.ex:896
 #, elixir-autogen, elixir-format
 msgid "No prefix (hexadecimal)"
 msgstr "بدون بادئة (سداسي عشري)"
@@ -1423,17 +1425,17 @@ msgstr "بدون بادئة (سداسي عشري)"
 msgid "No project selected"
 msgstr "لم يتم تحديد مشروع"
 
-#: lib/evo_dash_web/components/settings_components.ex:508
+#: lib/evo_dash_web/components/settings_components.ex:518
 #, elixir-autogen, elixir-format
 msgid "No sandbox support on this platform. Commands will run directly on the host."
 msgstr "لا يوجد دعم لوضع الحماية على هذا النظام. سيتم تشغيل الأوامر مباشرة على المضيف."
 
-#: lib/evo_dash_web/components/settings_components.ex:504
+#: lib/evo_dash_web/components/settings_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Not Available"
 msgstr "غير متاح"
 
-#: lib/evo_dash_web/components/settings_components.ex:415
+#: lib/evo_dash_web/components/settings_components.ex:425
 #, elixir-autogen, elixir-format
 msgid "Not tested — click to verify LLM connectivity"
 msgstr "لم يتم الاختبار — انقر للتحقق من اتصال LLM"
@@ -1455,12 +1457,12 @@ msgstr "بانتظار المراجعة"
 msgid "Phoenix LiveDashboard — system metrics, processes, and application telemetry"
 msgstr "Phoenix LiveDashboard — مقاييس النظام والعمليات وقياس أداء التطبيق"
 
-#: lib/evo_dash_web/components/settings_components.ex:562
+#: lib/evo_dash_web/components/settings_components.ex:572
 #, elixir-autogen, elixir-format
 msgid "Process Limits"
 msgstr "حدود العمليات"
 
-#: lib/evo_dash_web/components/settings_components.ex:570
+#: lib/evo_dash_web/components/settings_components.ex:580
 #, elixir-autogen, elixir-format
 msgid "Process limits are only available on Linux with systemd-run."
 msgstr "حدود العمليات متوفرة فقط على Linux مع systemd-run."
@@ -1481,7 +1483,7 @@ msgstr "التعليمة"
 msgid "Pull request created: %{title}"
 msgstr "تم إنشاء طلب السحب: %{title}"
 
-#: lib/evo_dash_web/components/settings_components.ex:195
+#: lib/evo_dash_web/components/settings_components.ex:205
 #, elixir-autogen, elixir-format
 msgid "Quick Setup"
 msgstr "الإعداد السريع"
@@ -1491,7 +1493,7 @@ msgstr "الإعداد السريع"
 msgid "Quick shortcuts for common development commands. Click Run to execute."
 msgstr "اختصارات سريعة لأوامر التطوير الشائعة. انقر على تشغيل للتنفيذ."
 
-#: lib/evo_dash_web/components/settings_components.ex:270
+#: lib/evo_dash_web/components/settings_components.ex:280
 #, elixir-autogen, elixir-format
 msgid "Quick-select a model:"
 msgstr "اختيار سريع لنموذج:"
@@ -1517,14 +1519,14 @@ msgid "Reject and delete these changes? This cannot be undone."
 msgstr "هل تريد رفض هذه التغييرات وحذفها؟ لا يمكن التراجع عن هذا الإجراء."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:977
-#: lib/evo_dash_web/components/review_components.ex:1003
+#: lib/evo_dash_web/components/review_components.ex:1041
 #: lib/evo_dash_web/live/tasks_live.ex:72
 #: lib/evo_dash_web/live/tasks_live.ex:131
 #, elixir-autogen, elixir-format
 msgid "Rejected"
 msgstr "مرفوض"
 
-#: lib/evo_dash_web/live/system_live.ex:235
+#: lib/evo_dash_web/live/system_live.ex:241
 #, elixir-autogen, elixir-format
 msgid "Required Tools"
 msgstr "الأدوات المطلوبة"
@@ -1539,27 +1541,27 @@ msgstr "إعادة تعيين %{key} إلى الإعداد الافتراضي."
 msgid "Reset to default"
 msgstr "إعادة إلى الإعداد الافتراضي"
 
-#: lib/evo_dash_web/live/system_live.ex:257
+#: lib/evo_dash_web/live/system_live.ex:263
 #, elixir-autogen, elixir-format
 msgid "Resource limits"
 msgstr "حدود الموارد"
 
-#: lib/evo_dash_web/components/settings_components.ex:540
+#: lib/evo_dash_web/components/settings_components.ex:550
 #, elixir-autogen, elixir-format
 msgid "Resource limits are only available on Linux with systemd-run."
 msgstr "حدود الموارد متوفرة فقط على Linux مع systemd-run."
 
-#: lib/evo_dash_web/components/settings_components.ex:532
+#: lib/evo_dash_web/components/settings_components.ex:542
 #, elixir-autogen, elixir-format
 msgid "Resources"
 msgstr "الموارد"
 
-#: lib/evo_dash_web/components/settings_components.ex:430
+#: lib/evo_dash_web/components/settings_components.ex:440
 #, elixir-autogen, elixir-format
 msgid "Retest"
 msgstr "إعادة الاختبار"
 
-#: lib/evo_dash_web/components/settings_components.ex:437
+#: lib/evo_dash_web/components/settings_components.ex:447
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr "إعادة المحاولة"
@@ -1589,53 +1591,53 @@ msgstr "تشغيل"
 msgid "Runtime configuration and file settings"
 msgstr "إعدادات التشغيل والملفات"
 
-#: lib/evo_dash_web/components/settings_components.ex:829
-#: lib/evo_dash_web/live/system_live.ex:245
+#: lib/evo_dash_web/components/settings_components.ex:839
+#: lib/evo_dash_web/live/system_live.ex:251
 #, elixir-autogen, elixir-format
 msgid "Sandbox"
 msgstr "وضع الحماية"
 
-#: lib/evo_dash_web/live/system_live.ex:663
+#: lib/evo_dash_web/live/system_live.ex:722
 #, elixir-autogen, elixir-format
 msgid "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
 msgstr "يتحكم وضع الصندوق الرملي في كيفية عزل EvoX Genesis للشيفرة المُنشأة بواسطة LLM. على Linux، يستخدم systemd-run لعزل كامل (عزل نظام الملفات، حدود الموارد، تصفية استدعاءات النظام). على macOS، يستخدم sandbox-exec لعزل نظام الملفات فقط. \"auto\" يُفعّل الخلفية المناسبة لمنصتك. \"enabled\" يُجبر العزل على العمل. \"disabled\" يُعطله تماماً — استخدم بحذر. يمكن تكوين حدود الموارد (Linux فقط) في config.toml تحت [sandbox.resources] و [sandbox.process]."
 
-#: lib/evo_dash_web/live/system_live.ex:675
+#: lib/evo_dash_web/live/system_live.ex:734
 #, elixir-autogen, elixir-format
 msgid "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
 msgstr "يمكن تعيين حدود موارد الصندوق الرملي في ملف config.toml تحت قسم [sandbox.resources] (الحدود الإجمالية) وقسم [sandbox.process] (الحدود لكل عملية). حدود الموارد متاحة فقط على Linux مع systemd-run. على macOS، يوفر sandbox-exec عزل نظام الملفات فقط. يمكنك تعديل الإعدادات من صفحة الإعدادات في لوحة التحكم."
 
-#: lib/evo_dash_web/components/settings_components.ex:607
+#: lib/evo_dash_web/components/settings_components.ex:617
 #, elixir-autogen, elixir-format
 msgid "Save %{category} Settings"
 msgstr "حفظ إعدادات %{category}"
 
-#: lib/evo_dash_web/components/settings_components.ex:395
+#: lib/evo_dash_web/components/settings_components.ex:405
 #, elixir-autogen, elixir-format
 msgid "Save Key"
 msgstr "حفظ المفتاح"
 
-#: lib/evo_dash_web/components/settings_components.ex:826
+#: lib/evo_dash_web/components/settings_components.ex:836
 #, elixir-autogen, elixir-format
 msgid "Scheduler"
 msgstr "المجدول"
 
-#: lib/evo_dash_web/components/settings_components.ex:196
+#: lib/evo_dash_web/components/settings_components.ex:206
 #, elixir-autogen, elixir-format
 msgid "Select a provider to quickly configure your model and API key."
 msgstr "اختر مزود خدمة لتكوين النموذج ومفتاح API بسرعة."
 
-#: lib/evo_dash_web/components/settings_components.ex:247
+#: lib/evo_dash_web/components/settings_components.ex:257
 #, elixir-autogen, elixir-format
 msgid "Select a variant:"
 msgstr "اختر متغيرًا:"
 
-#: lib/evo_dash_web/components/settings_components.ex:364
+#: lib/evo_dash_web/components/settings_components.ex:374
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "تعيين"
 
-#: lib/evo_dash_web/components/settings_components.ex:849
+#: lib/evo_dash_web/components/settings_components.ex:859
 #, elixir-autogen, elixir-format
 msgid "Set your user identity for Git commits and collaboration."
 msgstr "عيّن هوية المستخدم الخاصة بك لالتزامات Git والتعاون."
@@ -1646,7 +1648,7 @@ msgid "Starting Commit"
 msgstr "البدء بالالتزام"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:23
-#: lib/evo_dash_web/live/system_live.ex:297
+#: lib/evo_dash_web/live/system_live.ex:332
 #, elixir-autogen, elixir-format
 msgid "System Dashboard"
 msgstr "لوحة تحكم النظام"
@@ -1671,12 +1673,12 @@ msgstr "سمة النظام"
 msgid "Task not found. It may have been deleted."
 msgstr "المهمة غير موجودة. ربما تم حذفها."
 
-#: lib/evo_dash_web/components/settings_components.ex:418
+#: lib/evo_dash_web/components/settings_components.ex:428
 #, elixir-autogen, elixir-format
 msgid "Test Connection"
 msgstr "اختبار الاتصال"
 
-#: lib/evo_dash_web/components/settings_components.ex:422
+#: lib/evo_dash_web/components/settings_components.ex:432
 #, elixir-autogen, elixir-format
 msgid "Testing LLM connection..."
 msgstr "جارٍ اختبار اتصال LLM..."
@@ -1686,17 +1688,17 @@ msgstr "جارٍ اختبار اتصال LLM..."
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "المجلد الفرعي داخل المشروع لبدء التطور منه. استخدم './' للجذر."
 
-#: lib/evo_dash_web/components/settings_components.ex:830
+#: lib/evo_dash_web/components/settings_components.ex:840
 #, elixir-autogen, elixir-format
 msgid "Truncation"
 msgstr "الاقتطاع"
 
-#: lib/evo_dash_web/components/settings_components.ex:828
+#: lib/evo_dash_web/components/settings_components.ex:838
 #, elixir-autogen, elixir-format
 msgid "User"
 msgstr "المستخدم"
 
-#: lib/evo_dash_web/helpers.ex:480
+#: lib/evo_dash_web/helpers.ex:502
 #, elixir-autogen, elixir-format
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr "يستخدم وكيلًا واحدًا من الأعلى إلى الأسفل لتعديل قاعدة الشيفرة بناءً على هدفك."
@@ -1712,22 +1714,22 @@ msgstr "فشل التحقق. يرجى تصحيح الأخطاء أدناه."
 msgid "View GitHub PR"
 msgstr "عرض طلب السحب على GitHub"
 
-#: lib/evo_dash_web/live/system_live.ex:298
+#: lib/evo_dash_web/live/system_live.ex:333
 #, elixir-autogen, elixir-format
 msgid "View system metrics, processes, and application telemetry"
 msgstr "عرض مقاييس النظام، العمليات، وبيانات التطبيق عن بُعد"
 
-#: lib/evo_dash_web/live/system_live.ex:670
+#: lib/evo_dash_web/live/system_live.ex:729
 #, elixir-autogen, elixir-format
 msgid "What happens if my config is missing?"
 msgstr "ماذا يحدث إذا كان ملف التكوين مفقوداً؟"
 
-#: lib/evo_dash_web/live/system_live.ex:662
+#: lib/evo_dash_web/live/system_live.ex:721
 #, elixir-autogen, elixir-format
 msgid "What is sandbox mode?"
 msgstr "ما هو وضع الصندوق الرملي؟"
 
-#: lib/evo_dash_web/components/settings_components.ex:382
+#: lib/evo_dash_web/components/settings_components.ex:392
 #, elixir-autogen, elixir-format
 msgid "Your API key is configured and ready to use."
 msgstr "مفتاح API الخاص بك مُعد وجاهز للاستخدام."
@@ -1742,7 +1744,7 @@ msgstr "مثل: abc1234 أو HEAD"
 #: lib/evo_dash_web/components/settings_components.ex:94
 #: lib/evo_dash_web/components/settings_components.ex:105
 #: lib/evo_dash_web/components/settings_components.ex:113
-#: lib/evo_dash_web/components/settings_components.ex:822
+#: lib/evo_dash_web/components/settings_components.ex:832
 #, elixir-autogen, elixir-format
 msgid "empty"
 msgstr "فارغ"
@@ -1762,17 +1764,17 @@ msgstr "تم العثور على genesis.toml — يتم استخدام إعدا
 msgid "Configure LLM"
 msgstr "إعداد نموذج LLM"
 
-#: lib/evo_dash_web/components/settings_components.ex:408
+#: lib/evo_dash_web/components/settings_components.ex:418
 #, elixir-autogen, elixir-format
 msgid "Connection Test"
 msgstr "اختبار الاتصال"
 
-#: lib/evo_dash_web/live/system_live.ex:269
+#: lib/evo_dash_web/live/system_live.ex:275
 #, elixir-autogen, elixir-format
 msgid "EvoDash"
 msgstr "إيفو داش"
 
-#: lib/evo_dash_web/live/system_live.ex:268
+#: lib/evo_dash_web/live/system_live.ex:274
 #, elixir-autogen, elixir-format
 msgid "EvoGit"
 msgstr "إيفو جيت"
@@ -1782,7 +1784,7 @@ msgstr "إيفو جيت"
 msgid "EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?"
 msgstr "يستخدم EvoGit وكلاء ذكاء اصطناعي لبناء وتطوير قواعد الأكواد. للبدء، ستحتاج إلى إعداد نموذج LLM ومفتاح API. هل ترغب في إعداد ذلك الآن؟"
 
-#: lib/evo_dash_web/live/system_live.ex:265
+#: lib/evo_dash_web/live/system_live.ex:271
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis Process Tree"
 msgstr "شجرة عمليات إيفو إكس جينيسيس"
@@ -1801,7 +1803,7 @@ msgstr "تكلفة الإدخال"
 msgid "Input Tokens"
 msgstr "رموز الإدخال"
 
-#: lib/evo_dash_web/live/system_live.ex:278
+#: lib/evo_dash_web/live/system_live.ex:312
 #, elixir-autogen, elixir-format
 msgid "LLM connection testing is now available on the Settings page."
 msgstr "اختبار اتصال LLM متوفر الآن في صفحة الإعدادات."
@@ -1825,7 +1827,7 @@ msgstr "رموز الإخراج"
 msgid "Skip"
 msgstr "تخطي"
 
-#: lib/evo_dash_web/live/system_live.ex:281
+#: lib/evo_dash_web/live/system_live.ex:315
 #, elixir-autogen, elixir-format
 msgid "Test in Settings"
 msgstr "اختبار في الإعدادات"
@@ -1851,7 +1853,7 @@ msgstr "التكلفة الإجمالية"
 msgid "Total Tokens"
 msgstr "إجمالي الرموز"
 
-#: lib/evo_dash_web/components/settings_components.ex:409
+#: lib/evo_dash_web/components/settings_components.ex:419
 #, elixir-autogen, elixir-format
 msgid "Verify your LLM configuration is working"
 msgstr "تحقق من أن إعدادات LLM الخاصة بك تعمل بشكل صحيح"
@@ -1861,27 +1863,27 @@ msgstr "تحقق من أن إعدادات LLM الخاصة بك تعمل بشك�
 msgid "Welcome to EvoGit!"
 msgstr "مرحباً بك في EvoGit!"
 
-#: lib/evo_dash_web/components/settings_components.ex:645
+#: lib/evo_dash_web/components/settings_components.ex:655
 #, elixir-autogen, elixir-format
 msgid "%{count} setting(s) matching \"%{query}\""
 msgstr "%{count} إعدادًا تطابق \"%{query}\""
 
-#: lib/evo_dash_web/components/settings_components.ex:643
+#: lib/evo_dash_web/components/settings_components.ex:653
 #, elixir-autogen, elixir-format
 msgid "No settings found matching \"%{query}\""
 msgstr "لم يتم العثور على إعدادات تطابق \"%{query}\""
 
-#: lib/evo_dash_web/components/settings_components.ex:691
+#: lib/evo_dash_web/components/settings_components.ex:701
 #, elixir-autogen, elixir-format
 msgid "Save Changes"
 msgstr "حفظ التغييرات"
 
-#: lib/evo_dash_web/components/settings_components.ex:639
+#: lib/evo_dash_web/components/settings_components.ex:649
 #, elixir-autogen, elixir-format
 msgid "Search Results"
 msgstr "نتائج البحث"
 
-#: lib/evo_dash_web/components/settings_components.ex:657
+#: lib/evo_dash_web/components/settings_components.ex:667
 #, elixir-autogen, elixir-format
 msgid "Try a different search term."
 msgstr "جرّب مصطلح بحث مختلف."
@@ -1963,7 +1965,7 @@ msgstr "الوصف (اختياري)"
 msgid "Short description of what this repo does"
 msgstr "وصف مختصر لوظيفة هذا المستودع"
 
-#: lib/evo_dash_web/live/system_live.ex:370
+#: lib/evo_dash_web/live/system_live.ex:405
 #, elixir-autogen, elixir-format
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "سيتم فقدان جميع بيانات حالة وقت التشغيل في الذاكرة (المهام الجارية، حالة المجدول، الوكلاء قيد التنفيذ). لا يمكن التراجع عن ذلك."
@@ -1987,12 +1989,12 @@ msgid "Cached Tokens"
 msgstr "الرموز المخزنة مؤقتًا"
 
 #: lib/evo_dash_web/live/system_live.ex:180
-#: lib/evo_dash_web/live/system_live.ex:379
+#: lib/evo_dash_web/live/system_live.ex:414
 #, elixir-autogen, elixir-format
 msgid "Restart System"
 msgstr "إعادة تشغيل النظام"
 
-#: lib/evo_dash_web/live/system_live.ex:363
+#: lib/evo_dash_web/live/system_live.ex:398
 #, elixir-autogen, elixir-format
 msgid "Restart System?"
 msgstr "إعادة تشغيل النظام؟"
@@ -2002,12 +2004,12 @@ msgstr "إعادة تشغيل النظام؟"
 msgid "System Control"
 msgstr "التحكم في النظام"
 
-#: lib/evo_dash_web/live/system_live.ex:521
+#: lib/evo_dash_web/live/system_live.ex:559
 #, elixir-autogen, elixir-format
 msgid "System is restarting. Please wait while the Erlang VM comes back up."
 msgstr "جاري إعادة تشغيل النظام. يُرجى الانتظار حتى يعود جهاز Erlang VM الافتراضي للعمل."
 
-#: lib/evo_dash_web/live/system_live.ex:367
+#: lib/evo_dash_web/live/system_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
 msgstr "سيؤدي هذا إلى إعادة تشغيل Erlang VM بشكل آمن. سيتم إيقاف جميع التطبيقات وإعادة تشغيلها."
@@ -2023,12 +2025,12 @@ msgid "Scheduler controls, system health, and usage guides"
 msgstr "عناصر التحكم في المجدول، صحة النظام، وأدلة الاستخدام"
 
 #: lib/evo_dash_web/live/system_live.ex:188
-#: lib/evo_dash_web/live/system_live.ex:409
+#: lib/evo_dash_web/live/system_live.ex:444
 #, elixir-autogen, elixir-format
 msgid "Stop System"
 msgstr "إيقاف النظام"
 
-#: lib/evo_dash_web/live/system_live.ex:393
+#: lib/evo_dash_web/live/system_live.ex:428
 #, elixir-autogen, elixir-format
 msgid "Stop System?"
 msgstr "إيقاف النظام؟"
@@ -2040,17 +2042,17 @@ msgstr "إيقاف النظام؟"
 msgid "System"
 msgstr "النظام"
 
-#: lib/evo_dash_web/live/system_live.ex:552
+#: lib/evo_dash_web/live/system_live.ex:590
 #, elixir-autogen, elixir-format
 msgid "System is stopping. The Erlang VM will shut down and must be started again manually."
 msgstr "جاري إيقاف النظام. سيتم إغلاق Erlang VM ويجب تشغيله يدويًا مرة أخرى."
 
-#: lib/evo_dash_web/live/system_live.ex:400
+#: lib/evo_dash_web/live/system_live.ex:435
 #, elixir-autogen, elixir-format
 msgid "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "سيتم إيقاف VM ويجب إعادة تشغيله يدويًا. جميع بيانات حالة وقت التشغيل في الذاكرة (المهام الجارية، حالة المجدول، الوكلاء قيد التنفيذ) ستفقد. لا يمكن التراجع عن ذلك."
 
-#: lib/evo_dash_web/live/system_live.ex:397
+#: lib/evo_dash_web/live/system_live.ex:432
 #, elixir-autogen, elixir-format
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "سيؤدي هذا إلى إيقاف Erlang VM بشكل آمن. سيتم إيقاف جميع التطبيقات بالترتيب."
@@ -2066,7 +2068,7 @@ msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "تجاهل هذه المراجعة؟ سيتم رفضها من المراجعات المعلقة."
 
 #: lib/evo_dash_web/components/dashboard_components.ex:979
-#: lib/evo_dash_web/components/review_components.ex:1004
+#: lib/evo_dash_web/components/review_components.ex:1042
 #, elixir-autogen, elixir-format
 msgid "Ignored"
 msgstr "تم التجاهل"
@@ -2117,7 +2119,7 @@ msgstr "أرشفة تفاصيل الوكيل"
 msgid "Archived Agent Details"
 msgstr "تفاصيل الوكيل المؤرشفة"
 
-#: lib/evo_dash_web/components/settings_components.ex:311
+#: lib/evo_dash_web/components/settings_components.ex:321
 #, elixir-autogen, elixir-format
 msgid "Base URL"
 msgstr "الرابط الأساسي"
@@ -2143,7 +2145,7 @@ msgstr "السياق"
 msgid "Cost"
 msgstr "التكلفة"
 
-#: lib/evo_dash_web/live/system_live.ex:653
+#: lib/evo_dash_web/live/system_live.ex:712
 #, elixir-autogen, elixir-format
 msgid "Create a credentials.toml file at %{path} with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
 msgstr "أنشئ ملف credentials.toml في المسار %{path} باستخدام مفتاح API الخاص بك. مطلوب مفتاح واحد فقط — اختر المفتاح المُطابق لموزع LLM الذي تستخدمه (مثل GOOGLE_API_KEY لـ Google Gemini). بدلاً من ذلك، يمكنك تعيين مفاتيح API مباشرة كمتغيرات بيئة (مثل export GOOGLE_API_KEY=AIza...)."
@@ -2153,7 +2155,7 @@ msgstr "أنشئ ملف credentials.toml في المسار %{path} باستخد�
 msgid "Custom model saved."
 msgstr "تم حفظ النموذج المخصص."
 
-#: lib/evo_dash_web/live/system_live.ex:658
+#: lib/evo_dash_web/live/system_live.ex:717
 #, elixir-autogen, elixir-format
 msgid "Edit your config.toml file at %{path} and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
 msgstr "عدّل ملف config.toml في المسار %{path} واضبط حقل model تحت [llm] (مثل model = \"anthropic:claude-sonnet-4-20250514\"). يمكنك أيضاً تعديل النموذج مؤقتاً من صفحة الإعدادات في لوحة التحكم."
@@ -2176,8 +2178,8 @@ msgstr "تصدير JSON"
 msgid "Language"
 msgstr "اللغة"
 
-#: lib/evo_dash_web/components/settings_components.ex:299
-#: lib/evo_dash_web/components/settings_components.ex:336
+#: lib/evo_dash_web/components/settings_components.ex:309
+#: lib/evo_dash_web/components/settings_components.ex:346
 #, elixir-autogen, elixir-format
 msgid "Model Name"
 msgstr "اسم النموذج"
@@ -2202,8 +2204,8 @@ msgstr "لا توجد بيانات أرشيفية متاحة لهذه المهم
 msgid "No archived agent data available for this task."
 msgstr "لا توجد بيانات وكيل مؤرشفة متاحة لهذه المهمة."
 
-#: lib/evo_dash_web/components/settings_components.ex:328
-#: lib/evo_dash_web/components/settings_components.ex:350
+#: lib/evo_dash_web/components/settings_components.ex:338
+#: lib/evo_dash_web/components/settings_components.ex:360
 #, elixir-autogen, elixir-format
 msgid "Set Model"
 msgstr "تعيين النموذج"
@@ -2219,7 +2221,7 @@ msgstr "بداية الإيداع"
 msgid "Task not found"
 msgstr "المهمة غير موجودة"
 
-#: lib/evo_dash_web/components/settings_components.ex:347
+#: lib/evo_dash_web/components/settings_components.ex:357
 #, elixir-autogen, elixir-format
 msgid "The model will be saved as"
 msgstr "سيتم حفظ النموذج كـ"
@@ -2229,7 +2231,7 @@ msgstr "سيتم حفظ النموذج كـ"
 msgid "Token and Cost"
 msgstr "الرموز والتكلفة"
 
-#: lib/evo_dash_web/components/settings_components.ex:142
+#: lib/evo_dash_web/components/settings_components.ex:152
 #, elixir-autogen, elixir-format
 msgid "Type a model string or use Quick Setup above"
 msgstr "اكتب نص النموذج أو استخدم الإعداد السريع أعلاه"
@@ -2240,32 +2242,32 @@ msgstr "اكتب نص النموذج أو استخدم الإعداد السري
 msgid "Unknown provider."
 msgstr "موفر غير معروف."
 
-#: lib/evo_dash_web/components/settings_components.ex:324
+#: lib/evo_dash_web/components/settings_components.ex:334
 #, elixir-autogen, elixir-format
 msgid "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
 msgstr "تحذير: تتفاوت واجهات API المتوافقة مع OpenAI في التوافق. بعض الميزات (استدعاء الأدوات، البث، المخرجات المنظمة) قد لا تعمل حسب المُزود."
 
-#: lib/evo_dash_web/components/settings_components.ex:342
+#: lib/evo_dash_web/components/settings_components.ex:352
 #, elixir-autogen, elixir-format
 msgid "anthropic/claude-3.5-sonnet"
 msgstr "anthropic/claude-3.5-sonnet"
 
-#: lib/evo_dash_web/components/settings_components.ex:139
+#: lib/evo_dash_web/components/settings_components.ex:149
 #, elixir-autogen, elixir-format
 msgid "e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5"
 msgstr "مثل: anthropic:claude-opus-4-7 أو openai:gpt-5.5"
 
-#: lib/evo_dash_web/components/settings_components.ex:305
+#: lib/evo_dash_web/components/settings_components.ex:315
 #, elixir-autogen, elixir-format
 msgid "e.g. gpt-4o or my-custom-model"
 msgstr "مثل: gpt-4o أو my-custom-model"
 
-#: lib/evo_dash_web/components/settings_components.ex:317
+#: lib/evo_dash_web/components/settings_components.ex:327
 #, elixir-autogen, elixir-format
 msgid "https://api.my-provider.com/v1"
 msgstr "https://api.my-provider.com/v1"
 
-#: lib/evo_dash_web/components/settings_components.ex:347
+#: lib/evo_dash_web/components/settings_components.ex:357
 #, elixir-autogen, elixir-format
 msgid "openrouter:<model-name>"
 msgstr "openrouter:<model-name>"
@@ -2300,12 +2302,12 @@ msgstr "نوع المهمة"
 msgid "(provider default)"
 msgstr "(القيمة الافتراضية للمُزود)"
 
-#: lib/evo_dash_web/components/settings_components.ex:861
+#: lib/evo_dash_web/components/settings_components.ex:871
 #, elixir-autogen, elixir-format
 msgid "Configure Nix develop environment integration for tool calls."
 msgstr "قم بتكوين تكامل بيئة تطوير Nix لاستدعاءات الأدوات."
 
-#: lib/evo_dash_web/components/settings_components.ex:832
+#: lib/evo_dash_web/components/settings_components.ex:842
 #, elixir-autogen, elixir-format
 msgid "Nix"
 msgstr "Nix"
@@ -2329,3 +2331,33 @@ msgstr "استئناف من"
 #, elixir-autogen, elixir-format
 msgid "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
 msgstr "معرف المهمة السابقة التي تريد الاستمرار منها. يُدرج سياق المهمة السابقة (التغييرات، الهدف، والنتيجة) في هدف هذه المهمة."
+
+#: lib/evo_dash_web/live/system_live.ex:288
+#, elixir-autogen, elixir-format
+msgid "Binary"
+msgstr "ثنائي"
+
+#: lib/evo_dash_web/live/system_live.ex:214
+#, elixir-autogen, elixir-format
+msgid "Checking system status..."
+msgstr "جارٍ التحقق من حالة النظام..."
+
+#: lib/evo_dash_web/live/system_live.ex:206
+#, elixir-autogen, elixir-format
+msgid "Checking..."
+msgstr "جارٍ التحقق..."
+
+#: lib/evo_dash_web/live/system_live.ex:295
+#, elixir-autogen, elixir-format
+msgid "Flake valid"
+msgstr "ملف flake صالح"
+
+#: lib/evo_dash_web/live/system_live.ex:281
+#, elixir-autogen, elixir-format
+msgid "Nix Environment"
+msgstr "بيئة Nix"
+
+#: lib/evo_dash_web/live/system_live.ex:291
+#, elixir-autogen, elixir-format
+msgid "flake.nix"
+msgstr "flake.nix"
