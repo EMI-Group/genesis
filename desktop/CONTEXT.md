@@ -60,7 +60,8 @@ The Tauri config references the sidecar at `externalBin: ["sidecars/evogit-backe
 
 ## Constraints
 
-- Tauri v2 (not v1) — API and config schema differ significantly
+- Tauri v2 (not v1) — API and config schema differ significantly. Pinned in `Cargo.lock`: `tauri` 2.11.3, `tauri-build` 2.x, `tray-icon` 0.24.1 (transitive, but the `"tray-icon"` Cargo feature is **not** enabled — no system tray support is implemented).
+- **No system tray**: there is no `trayIcon`/`systemTray` config in `tauri.conf.json`, no `tauri::tray` usage in Rust, and the only `tauri` feature enabled is `devtools`. On window close the app terminates the sidecar and exits (`main.rs` `on_window_event` → `WindowEvent::Destroyed`). To add "stay in tray when closed", enable the Tauri v2 `"tray-icon"` feature, add a `trayIcon` entry to `tauri.conf.json`, build a `tauri::tray::TrayIconBuilder` in `setup`, and intercept `WindowEvent::CloseRequested` (using `api.prevent_close()` + `window.hide()`) instead of exiting on `Destroyed`.
 - The desktop shell contains NO Elixir code — only Rust
 - `withGlobalTauri: true` — the webview gets `window.__TAURI__` API without npm imports
 - Requires Rust toolchain + Zig (for Burrito cross-compilation) to build
