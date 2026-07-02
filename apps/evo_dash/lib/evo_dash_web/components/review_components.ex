@@ -959,13 +959,20 @@ defmodule EvoDashWeb.ReviewComponents do
   # Build a nested tree from a flat list of archive metadata maps.
   # Groups agents by parent_id; roots are those with nil parent_id.
   # Returns [{agent, [{child, [...]}, ...]}, ...].
+  #
+  # The input maps may have either atom keys (in-memory) or string keys (after
+  # a DB round-trip through Jason.decode). We normalize to atom keys first so
+  # both the tree-building and the HEEx renderers work uniformly. A visited-set
+  # guard makes the recursion bounded and total — it can never infinite-loop on
+  # cyclic or malformed data.
   defp build_archive_tree(agents) do
-    # Group all agents by their parent_id.
+    agents = Enum.map(agents, &normalize_agent_keys/1)
+
     by_parent =
       Enum.group_by(
         agents,
         fn agent ->
-          case agent[:parent_id] do
+          case agent_key(agent, :parent_id) do
             nil -> nil
             id when is_binary(id) -> id
             _ -> nil
@@ -973,16 +980,47 @@ defmodule EvoDashWeb.ReviewComponents do
         end
       )
 
-    # Recursively build children for a given parent_id.
-    build_children = fn parent_id, recurse ->
+    build_children = fn parent_id, visited, recurse ->
       (by_parent[parent_id] || [])
+      |> Enum.filter(fn agent ->
+        id = agent_key(agent, :agent_id)
+        id not in [nil, ""] and not MapSet.member?(visited, id)
+      end)
       |> Enum.map(fn agent ->
-        {agent, recurse.(agent[:agent_id], recurse)}
+        id = agent_key(agent, :agent_id)
+        {agent, recurse.(id, MapSet.put(visited, id), recurse)}
       end)
     end
 
-    build_children.(nil, build_children)
+    build_children.(nil, MapSet.new(), build_children)
   end
+
+  # Read a value from an agent map regardless of whether keys are atoms or strings.
+  defp agent_key(agent, key) when is_atom(key) do
+    case Map.fetch(agent, key) do
+      {:ok, v} -> v
+      :error -> Map.get(agent, Atom.to_string(key))
+    end
+  end
+
+  # Normalize an agent map's top-level string keys to atoms so that both
+  # tree-building and the HEEx renderers (which use atom-key access) work
+  # uniformly. Unknown string keys that have no existing atom are left as-is.
+  defp normalize_agent_keys(agent) when is_map(agent) do
+    Map.new(agent, fn
+      {key, value} when is_atom(key) ->
+        {key, value}
+
+      {key, value} when is_binary(key) ->
+        try do
+          {String.to_existing_atom(key), value}
+        rescue
+          ArgumentError -> {key, value}
+        end
+    end)
+  end
+
+  defp normalize_agent_keys(agent), do: agent
 
   defp review_status_badge(:open), do: "badge-warning"
   defp review_status_badge(:merged), do: "badge-success"
