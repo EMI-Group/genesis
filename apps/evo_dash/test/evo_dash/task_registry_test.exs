@@ -2,27 +2,27 @@ defmodule EvoDash.TaskRegistryTest do
   use ExUnit.Case, async: false
 
   alias EvoDash.TaskRegistry
-  alias EvoDash.TaskRegistry.TaskInfo
+  alias EvoDash.TaskInfo
 
   setup do
     # Terminate production children to prevent auto-restarts and use isolated stores.
     Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
-    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskStore)
+    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.Store)
 
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_tasks_#{unique}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
 
-    start_supervised({EvoDash.TaskStore, data_dir: sqlite_path})
+    start_supervised({EvoDash.Store, data_dir: sqlite_path})
 
     start_supervised(
-      {TaskRegistry, task_store: EvoDash.TaskStore, data_dir: root, name: EvoDash.TaskRegistry}
+      {TaskRegistry, task_store: EvoDash.Store, data_dir: root, name: EvoDash.TaskRegistry}
     )
 
     on_exit(fn ->
       File.rm_rf(root)
-      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskStore)
+      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.Store)
       Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
     end)
 
@@ -47,7 +47,7 @@ defmodule EvoDash.TaskRegistryTest do
       result: nil
     }
 
-    EvoDash.TaskStore.put_task(EvoDash.TaskStore, trigger)
+    EvoDash.Store.put_task(EvoDash.Store, trigger)
     # update_task_status transitions to :completed which triggers cleanup_expired_tasks()
     TaskRegistry.update_task_status(trigger_id, :completed, nil)
     # Sync with a call to ensure all prior casts have been processed
@@ -60,6 +60,23 @@ defmodule EvoDash.TaskRegistryTest do
     if Process.alive?(pid) do
       Process.exit(pid, :kill)
     end
+  end
+
+  # Helper: compute an age in days guaranteed to EXCEED the configured
+  # max_age_days. Reads the actual runtime config (fallback to default 14) so
+  # tests are robust regardless of the local config.toml setting.
+  defp old_age_days do
+    config = EvoGit.Config.resolve()
+    configured = (config[:task_history] || %{})[:max_age_days] || 14
+    configured + 10
+  end
+
+  # Helper: compute an age in days guaranteed to be WITHIN the configured
+  # max_age_days window. Uses roughly a third of the window, floored to 1 day.
+  defp within_age_days do
+    config = EvoGit.Config.resolve()
+    configured = (config[:task_history] || %{})[:max_age_days] || 14
+    max(div(configured, 3), 1)
   end
 
   describe "task_history_config/0 defaults" do
@@ -82,20 +99,22 @@ defmodule EvoDash.TaskRegistryTest do
     test "removes tasks older than max_age_days via persist cycle" do
       unique = System.unique_integer([:positive])
 
-      # Insert an old finished task directly into the store (20 days old > 14 day default)
+      # Insert an old finished task directly into the store.
+      # Age is computed to exceed whatever max_age_days is configured locally.
+      age = old_age_days()
       old_task = %TaskInfo{
         id: "test_old_#{unique}",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         logs: [],
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, old_task)
+      EvoDash.Store.put_task(EvoDash.Store, old_task)
 
       # Insert a recent finished task (today)
       recent_task = %TaskInfo{
@@ -110,7 +129,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, recent_task)
+      EvoDash.Store.put_task(EvoDash.Store, recent_task)
 
       # Verify both exist
       tasks = TaskRegistry.list_tasks()
@@ -130,20 +149,21 @@ defmodule EvoDash.TaskRegistryTest do
     test "preserves tasks within max_age_days" do
       unique = System.unique_integer([:positive])
 
-      # Insert a task 5 days old (within 14 day default)
+      # Insert a task within the configured max_age_days window.
+      age = within_age_days()
       task = %TaskInfo{
         id: "test_5day_#{unique}",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -5 * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -5 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         logs: [],
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -156,6 +176,9 @@ defmodule EvoDash.TaskRegistryTest do
     test "never cleans up running or pending tasks even if old" do
       unique = System.unique_integer([:positive])
 
+      # Age guaranteed to exceed the configured max_age_days window.
+      age = old_age_days()
+
       # Running task with old started_at (finished_at is nil)
       running_task = %TaskInfo{
         id: "test_running_#{unique}",
@@ -163,13 +186,13 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         finished_at: nil,
         logs: [],
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, running_task)
+      EvoDash.Store.put_task(EvoDash.Store, running_task)
 
       # Pending task
       pending_task = %TaskInfo{
@@ -178,13 +201,13 @@ defmodule EvoDash.TaskRegistryTest do
         status: :pending,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         finished_at: nil,
         logs: [],
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, pending_task)
+      EvoDash.Store.put_task(EvoDash.Store, pending_task)
 
       # Old finished task (should be cleaned)
       old_finished = %TaskInfo{
@@ -193,13 +216,13 @@ defmodule EvoDash.TaskRegistryTest do
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         logs: [],
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, old_finished)
+      EvoDash.Store.put_task(EvoDash.Store, old_finished)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -219,22 +242,23 @@ defmodule EvoDash.TaskRegistryTest do
       unique = System.unique_integer([:positive])
       now = DateTime.utc_now()
 
-      # Old task (over 14 days) - should be cleaned by age
+      # Old task — age guaranteed to exceed the configured max_age_days window.
+      age = old_age_days()
       old_task = %TaskInfo{
         id: "test_combined_old_#{unique}",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(now, -20 * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(now, -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
+        finished_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
         logs: [],
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, old_task)
+      EvoDash.Store.put_task(EvoDash.Store, old_task)
 
-      # Recent tasks (within 14 days) - should be kept
+      # Recent tasks (within max_age_days) - should be kept
       for i <- 1..3 do
         recent = %TaskInfo{
           id: "test_combined_recent_#{unique}_#{i}",
@@ -248,7 +272,7 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        EvoDash.TaskStore.put_task(EvoDash.TaskStore, recent)
+        EvoDash.Store.put_task(EvoDash.Store, recent)
       end
 
       # Running task - should always be kept regardless of age
@@ -258,13 +282,13 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(now, -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
         finished_at: nil,
         logs: [],
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, running)
+      EvoDash.Store.put_task(EvoDash.Store, running)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -300,7 +324,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       TaskRegistry.set_review_metadata(task_id, "abc123", "def456")
 
@@ -314,7 +338,7 @@ defmodule EvoDash.TaskRegistryTest do
 
     test "persists to the store after update" do
       unique = System.unique_integer([:positive])
-      task_id = "review_meta_dets_#{unique}"
+      task_id = "review_meta_#{unique}"
 
       task = %TaskInfo{
         id: task_id,
@@ -328,7 +352,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       TaskRegistry.set_review_metadata(task_id, "base_sha_1", "commit_sha_1")
 
@@ -336,7 +360,7 @@ defmodule EvoDash.TaskRegistryTest do
       TaskRegistry.list_tasks()
 
       # Read directly from the store to confirm persistence
-      stored_task = EvoDash.TaskStore.get_task(EvoDash.TaskStore, task_id)
+      stored_task = EvoDash.Store.get_task(EvoDash.Store, task_id)
 
       assert stored_task.base_sha == "base_sha_1"
       assert stored_task.commit_sha == "commit_sha_1"
@@ -369,7 +393,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       TaskRegistry.set_review_metadata(task_id, "base1", "commit1")
       TaskRegistry.list_tasks()
@@ -413,7 +437,7 @@ defmodule EvoDash.TaskRegistryTest do
         |> Map.put(:__struct__, TaskInfo)
         |> Map.drop([:base_sha, :commit_sha])
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, old_map)
+      EvoDash.Store.put_task(EvoDash.Store, old_map)
 
       # Stop the supervised registry, then restart it so normalize_tasks runs.
       # KEEP the same store running so the backfilled data persists.
@@ -421,7 +445,7 @@ defmodule EvoDash.TaskRegistryTest do
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       # The backfilled task should exist with nil for the new fields
@@ -435,7 +459,7 @@ defmodule EvoDash.TaskRegistryTest do
   describe "persistence" do
     test "get_task retrieves a task seeded directly into the store" do
       unique = System.unique_integer([:positive])
-      task_id = "cubdb_crud_#{unique}"
+      task_id = "persistence_crud_#{unique}"
 
       task = %TaskInfo{
         id: task_id,
@@ -449,7 +473,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ok = EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      :ok = EvoDash.Store.put_task(EvoDash.Store, task)
 
       fetched = TaskRegistry.get_task(task_id)
       assert %TaskInfo{} = fetched
@@ -462,7 +486,7 @@ defmodule EvoDash.TaskRegistryTest do
 
     test "task persists across a registry restart with the same store", %{data_dir: data_dir} do
       unique = System.unique_integer([:positive])
-      task_id = "cubdb_durable_#{unique}"
+      task_id = "persistence_durable_#{unique}"
 
       task = %TaskInfo{
         id: task_id,
@@ -476,7 +500,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      :ok = EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      :ok = EvoDash.Store.put_task(EvoDash.Store, task)
 
       # Confirm the task is visible before restart.
       assert %TaskInfo{} = TaskRegistry.get_task(task_id)
@@ -487,7 +511,7 @@ defmodule EvoDash.TaskRegistryTest do
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       # The task persisted in the store must survive the registry restart.
@@ -497,50 +521,6 @@ defmodule EvoDash.TaskRegistryTest do
       assert fetched.type == :evolve
       assert fetched.status == :completed
       assert fetched.opts[:objective] == "durability check"
-    end
-  end
-
-  describe "schema migration" do
-    test "detects old blob-based schema and recreates with column-based tables" do
-      unique = System.unique_integer([:positive])
-      root = Path.join(System.tmp_dir!(), "evogit_test_schema_migrate_#{unique}")
-      File.mkdir_p!(root)
-      sqlite_path = Path.join(root, "tasks.sqlite")
-
-      # Seed a STALE schema: both tables use the old (id/path, data BLOB) format.
-      {:ok, conn} = Xqlite.open(sqlite_path)
-      {:ok, _} =
-        XqliteNIF.execute(conn, "CREATE TABLE tasks (id TEXT PRIMARY KEY, data BLOB)", [])
-      {:ok, _} =
-        XqliteNIF.execute(conn, "CREATE TABLE projects (path TEXT PRIMARY KEY, data BLOB)", [])
-      {:ok, _} =
-        XqliteNIF.execute(conn, "INSERT INTO tasks (id, data) VALUES (?1, ?2)", [
-          "old_task",
-          :erlang.term_to_binary(%{id: "old_task", status: :completed})
-        ])
-      :ok = XqliteNIF.close(conn)
-      on_exit(fn -> File.rm_rf(root) end)
-
-      # Stop the default supervised store + registry, then start fresh ones.
-      # TaskStore.init detects the old schema (tables with `data` column)
-      # and drops + recreates with the new column-based schema.
-      stop_supervised(EvoDash.TaskRegistry)
-      stop_supervised(EvoDash.TaskStore)
-      start_supervised({EvoDash.TaskStore, data_dir: sqlite_path})
-      start_supervised(
-        {TaskRegistry, task_store: EvoDash.TaskStore, data_dir: root, name: EvoDash.TaskRegistry}
-      )
-
-      # Old data is gone (clean slate). New operations work correctly.
-      projects = TaskRegistry.list_recent_projects()
-      assert projects == []
-
-      # Verify the store accepts new data with the new column-based schema.
-      :ok = TaskRegistry.add_recent_project("/tmp/new_proj", "New Project")
-      projects = TaskRegistry.list_recent_projects()
-      assert length(projects) == 1
-      assert hd(projects).path == "/tmp/new_proj"
-      assert hd(projects).name == "New Project"
     end
   end
 
@@ -562,7 +542,7 @@ defmodule EvoDash.TaskRegistryTest do
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       # The project must survive the registry restart.
@@ -590,7 +570,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       pid = GenServer.whereis(EvoDash.TaskRegistry)
       assert is_pid(pid)
@@ -628,7 +608,7 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+        EvoDash.Store.put_task(EvoDash.Store, task)
         TaskRegistry.delete_task(id)
       end
 
@@ -671,8 +651,8 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, good1)
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, good2)
+      EvoDash.Store.put_task(EvoDash.Store, good1)
+      EvoDash.Store.put_task(EvoDash.Store, good2)
 
       # Structurally corrupt entries (valid keys, wrong-shape values).
       # Inject corrupt rows via raw SQL (bypassing put_task validation).
@@ -682,8 +662,8 @@ defmodule EvoDash.TaskRegistryTest do
       XqliteNIF.execute(raw_conn, "INSERT OR REPLACE INTO tasks (id, status, type) VALUES (?1, ?2, ?3)", ["bad_map", "completed", "invalid_type_atom_xyz"])
       XqliteNIF.close(raw_conn)
 
-      EvoDash.TaskStore.put_project(
-        EvoDash.TaskStore,
+      EvoDash.Store.put_project(
+        EvoDash.Store,
         %EvoDash.RecentProject{path: "/some/path", name: "test", last_opened_at: DateTime.utc_now()}
       )
 
@@ -728,7 +708,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, good)
+      EvoDash.Store.put_task(EvoDash.Store, good)
 
       # Corrupt entry
       # Inject a corrupt row via raw SQL (put_task rejects non-struct input)
@@ -778,7 +758,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       # Simulate completion via cast (this calls cleanup_expired_tasks internally)
       TaskRegistry.update_task_status(task_id, :completed, {:ok, %{usage: nil, agent_count: 1}})
@@ -823,7 +803,7 @@ defmodule EvoDash.TaskRegistryTest do
         archive_metadata: archive
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       fetched = TaskRegistry.get_task(task_id)
       assert %TaskInfo{} = fetched
@@ -852,7 +832,7 @@ defmodule EvoDash.TaskRegistryTest do
         }
         |> Map.delete(:archive_metadata)
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, stripped)
+      EvoDash.Store.put_task(EvoDash.Store, stripped)
 
       # Restart the registry to trigger normalize_tasks on init. normalize_tasks
       # runs Map.merge(%TaskInfo{}, task), backfilling the missing field to its
@@ -861,7 +841,7 @@ defmodule EvoDash.TaskRegistryTest do
 
       start_supervised!(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -885,7 +865,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       archive_records = [
         %{"agent_id" => "T1_A1", "parent_id" => nil, "objective" => "Genesis", "role" => "manager"},
@@ -935,7 +915,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       # Confirm the process is alive before restart.
       assert Process.alive?(agent_pid)
@@ -945,7 +925,7 @@ defmodule EvoDash.TaskRegistryTest do
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       # The task should STILL be running (not failed) and re-monitored.
@@ -988,7 +968,7 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       refute Process.alive?(agent_pid)
 
@@ -996,7 +976,7 @@ defmodule EvoDash.TaskRegistryTest do
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -1022,18 +1002,95 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       stop_supervised(EvoDash.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
       assert fetched != nil
       assert fetched.status == :failed
+    end
+
+    test "a running task with a dead PID stays :running if AgentScheduler has active agents",
+         %{data_dir: data_dir} do
+      task_id = "restart_ets_#{System.unique_integer([:positive])}"
+
+      # Spawn and immediately kill a process so the PID is dead.
+      {:ok, agent_pid} =
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          :ok
+        end)
+
+      # Wait for the process to exit.
+      ref = Process.monitor(agent_pid)
+
+      receive do
+        {:DOWN, ^ref, :process, ^agent_pid, _} -> :ok
+      after
+        1_000 -> flunk("process did not exit")
+      end
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: agent_pid,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      refute Process.alive?(agent_pid)
+
+      # Set up the :evogit_sched_meta ETS table with a fake active agent for
+      # this task_id. This simulates AgentScheduler still running the task
+      # under a sibling process while TaskRegistry restarts.
+      try do
+        :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
+      rescue
+        ArgumentError -> :ok
+      end
+
+      sched_meta_entry = %EvoGit.AgentScheduler.SchedMeta{
+        id: System.unique_integer([:positive]),
+        depth: 0,
+        spec: %{},
+        task_id: task_id,
+        status: :running
+      }
+
+      :ets.insert(:evogit_sched_meta, {sched_meta_entry.id, sched_meta_entry})
+
+      try do
+        stop_supervised(EvoDash.TaskRegistry)
+
+        start_supervised(
+          {TaskRegistry,
+           task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+        )
+
+        # The task should STILL be :running — the ETS check found active agents.
+        fetched = TaskRegistry.get_task(task_id)
+        assert fetched != nil
+        assert fetched.status == :running
+      after
+        # Clean up the ETS entry.
+        try do
+          :ets.delete(:evogit_sched_meta, sched_meta_entry.id)
+        rescue
+          _ -> :ok
+        end
+      end
     end
 
     test "DOWN handler marks a re-monitored task as :completed when it exits :normal",
@@ -1060,13 +1117,13 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       stop_supervised(EvoDash.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       # Wait for the process to exit and the DOWN handler to fire.
@@ -1105,13 +1162,13 @@ defmodule EvoDash.TaskRegistryTest do
         result: nil
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       stop_supervised(EvoDash.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.TaskStore, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
       )
 
       TaskRegistry.list_tasks()
@@ -1126,14 +1183,14 @@ defmodule EvoDash.TaskRegistryTest do
     end
   end
 
-  describe "TaskStore.integrity_check" do
+  describe "Store.integrity_check" do
     test "returns :ok on a healthy store" do
       unique = System.unique_integer([:positive])
       store = :"ic_healthy_store_#{unique}"
       sqlite_path = Path.join(System.tmp_dir!(), "evogit_ic_healthy_#{unique}.sqlite")
       File.mkdir_p!(Path.dirname(sqlite_path))
 
-      {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+      {:ok, _} = EvoDash.Store.start_link(data_dir: sqlite_path, name: store)
 
       try do
         good = %TaskInfo{
@@ -1148,12 +1205,12 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        :ok = EvoDash.TaskStore.put_task(store, good)
+        :ok = EvoDash.Store.put_task(store, good)
 
-        assert EvoDash.TaskStore.integrity_check(store) == :ok
+        assert EvoDash.Store.integrity_check(store) == :ok
 
         # The good entry is still present.
-        fetched = EvoDash.TaskStore.get_task(store, "ic_good_#{unique}")
+        fetched = EvoDash.Store.get_task(store, "ic_good_#{unique}")
         assert %TaskInfo{} = fetched
         assert fetched.id == "ic_good_#{unique}"
       after
@@ -1173,7 +1230,7 @@ defmodule EvoDash.TaskRegistryTest do
       sqlite_path = Path.join(System.tmp_dir!(), "evogit_ic_garbage_#{unique}.sqlite")
       File.mkdir_p!(Path.dirname(sqlite_path))
 
-      {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+      {:ok, _} = EvoDash.Store.start_link(data_dir: sqlite_path, name: store)
 
       try do
         good = %TaskInfo{
@@ -1188,7 +1245,7 @@ defmodule EvoDash.TaskRegistryTest do
           result: nil
         }
 
-        :ok = EvoDash.TaskStore.put_task(store, good)
+        :ok = EvoDash.Store.put_task(store, good)
 
         # Inject a row with garbage bytes directly via the raw connection.
         # We cannot reach the private conn from here, so insert via a one-off
@@ -1210,15 +1267,15 @@ defmodule EvoDash.TaskRegistryTest do
         # Reopen the store so it sees the injected row. The existing store
         # process holds its own connection, so stop and restart it.
         :ok = GenServer.stop(store)
-        {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+        {:ok, _} = EvoDash.Store.start_link(data_dir: sqlite_path, name: store)
 
         # integrity_check should remove the undecodable row.
-        result = EvoDash.TaskStore.integrity_check(store)
+        result = EvoDash.Store.integrity_check(store)
         assert match?({:repaired, _}, result) or match?(:ok, result)
 
         # safe_select_all_tasks returns all decodable TaskInfo structs.
         # With JSON encoding, the garbage row decodes (opts → nil) so it survives.
-        entries = EvoDash.TaskStore.safe_select_all_tasks(store)
+        entries = EvoDash.Store.safe_select_all_tasks(store)
         ids = Enum.map(entries, & &1.id)
         assert "ic_good2_#{unique}" in ids
       after
@@ -1238,12 +1295,12 @@ defmodule EvoDash.TaskRegistryTest do
       sqlite_path = Path.join(System.tmp_dir!(), "evogit_ic_proj_quarantine_#{unique}.sqlite")
       File.mkdir_p!(Path.dirname(sqlite_path))
 
-      {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+      {:ok, _} = EvoDash.Store.start_link(data_dir: sqlite_path, name: store)
 
       try do
         good_proj = %EvoDash.RecentProject{path: "/tmp/good_proj_#{unique}", name: "good", last_opened_at: DateTime.utc_now()}
 
-        :ok = EvoDash.TaskStore.put_project(store, good_proj)
+        :ok = EvoDash.Store.put_project(store, good_proj)
         garbage_id = "garbage_proj_#{unique}"
 
         # Inject garbage into the projects table via raw connection.
@@ -1263,13 +1320,13 @@ defmodule EvoDash.TaskRegistryTest do
 
         # Reopen so the store sees the injected row.
         :ok = GenServer.stop(store)
-        {:ok, _} = EvoDash.TaskStore.start_link(data_dir: sqlite_path, name: store)
+        {:ok, _} = EvoDash.Store.start_link(data_dir: sqlite_path, name: store)
 
-        result = EvoDash.TaskStore.integrity_check(store)
+        result = EvoDash.Store.integrity_check(store)
         assert match?({:repaired, _}, result) or match?(:ok, result)
         # safe_select_all_projects returns all decodable RecentProject structs.
         # With JSON/ISO8601 encoding, the garbage row decodes (last_opened_at -> nil).
-        entries = EvoDash.TaskStore.safe_select_all_projects(store)
+        entries = EvoDash.Store.safe_select_all_projects(store)
         paths = Enum.map(entries, & &1.path)
         assert "/tmp/good_proj_#{unique}" in paths
       after

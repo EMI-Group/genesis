@@ -3,7 +3,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
   import Phoenix.LiveViewTest
 
   alias EvoDash.TaskRegistry
-  alias EvoDash.TaskRegistry.TaskInfo
+  alias EvoDash.TaskInfo
 
   describe "review for non-existent task" do
     test "shows error for non-existent task id", %{conn: conn} do
@@ -50,7 +50,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
@@ -138,7 +138,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+      EvoDash.Store.put_task(EvoDash.Store, task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)

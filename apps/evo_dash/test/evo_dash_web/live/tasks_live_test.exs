@@ -3,29 +3,29 @@ defmodule EvoDashWeb.TasksLiveTest do
   import Phoenix.LiveViewTest
 
   alias EvoDash.TaskRegistry
-  alias EvoDash.TaskRegistry.TaskInfo
+  alias EvoDash.TaskInfo
 
   setup do
     # Terminate production children to prevent auto-restarts and use isolated stores.
     Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
-    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskStore)
+    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.Store)
 
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_tasks_live_#{unique}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
 
-    start_supervised({EvoDash.TaskStore, data_dir: sqlite_path})
+    start_supervised({EvoDash.Store, data_dir: sqlite_path})
     start_supervised(
       {TaskRegistry,
-       task_store: EvoDash.TaskStore,
+       task_store: EvoDash.Store,
        data_dir: root,
        name: EvoDash.TaskRegistry}
     )
 
     on_exit(fn ->
       File.rm_rf(root)
-      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskStore)
+      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.Store)
       Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
     end)
 
@@ -51,7 +51,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     }
     |> Map.merge(Enum.into(overrides, %{}))
 
-    EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+    EvoDash.Store.put_task(EvoDash.Store, task)
     id
   end
 

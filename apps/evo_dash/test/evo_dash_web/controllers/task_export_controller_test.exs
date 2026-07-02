@@ -2,7 +2,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
   use EvoDashWeb.ConnCase, async: false
 
   alias EvoDash.TaskRegistry
-  alias EvoDash.TaskRegistry.TaskInfo
+  alias EvoDash.TaskInfo
 
   describe "GET /tasks/:task_id/export" do
     test "returns 404 when the task does not exist", %{conn: conn} do
@@ -95,7 +95,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
   end
 
   # Seeds a completed task with the given archive_metadata into the production
-  # TaskStore, returns the task id. Uses unique ids to avoid collisions.
+  # Store, returns the task id. Uses unique ids to avoid collisions.
   defp seed_completed_task(archive_metadata) do
     task_id = "export_test_#{System.unique_integer([:positive])}"
 
@@ -113,7 +113,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       archive_metadata: archive_metadata
     }
 
-    EvoDash.TaskStore.put_task(EvoDash.TaskStore, task)
+    EvoDash.Store.put_task(EvoDash.Store, task)
 
     task_id
   end

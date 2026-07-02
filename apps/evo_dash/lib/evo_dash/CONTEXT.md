@@ -14,16 +14,16 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
   1. `EvoDashWeb.Telemetry`
   2. `DNSCluster`
   3. `Phoenix.PubSub` (registered as `EvoDash.PubSub`)
-  4. `EvoDash.TaskStore` (SQLite store — started BEFORE TaskRegistry, which depends on it at init)
+  4. `EvoDash.Store` (SQLite store — started BEFORE TaskRegistry, which depends on it at init)
   5. `EvoDash.TaskRegistry`
   6. `EvoDashWeb.Endpoint`
 
-### `EvoDash.RecentProject` (`task_store.ex`)
+### `EvoDash.RecentProject` (`store.ex`)
 - Struct representing a recently opened project: `%RecentProject{path: String.t(), name: String.t(), last_opened_at: DateTime.t() | nil}`.
 
-### `EvoDash.TaskStore` (`task_store.ex`)
+### `EvoDash.Store` (`store.ex`)
 - GenServer wrapping a single xqlite (SQLite) connection, owning the connection in its state.
-- Started under supervision with `data_dir:` (a FILE path to the `.sqlite` file) and optional `name:` (defaults to `EvoDash.TaskStore`).
+- Started under supervision with `data_dir:` (a FILE path to the `.sqlite` file) and optional `name:` (defaults to `EvoDash.Store`).
 - **Column-based SQLite schema** (NOT term_to_binary blobs): each TaskInfo/RecentProject field maps to a dedicated SQLite column.
 - **Explicit durability PRAGMAs**: `Xqlite.open(path, journal_mode: :wal, synchronous: :normal)` — WAL + NORMAL is the recommended combo for crash safety and write performance.
 - **Graceful connection close**: `terminate/2` calls `XqliteNIF.close(conn)` (wrapped in try/rescue).
@@ -79,21 +79,17 @@ count_projects(store) :: non_neg_integer()
 # Safety / Integrity
 safe_select_all_tasks(store) :: [TaskInfo.t()]            # quarantines bad rows, never raises
 safe_select_all_projects(store) :: [RecentProject.t()]
-safe_get_task(store, task_id) :: TaskInfo.t() | nil       # returns nil on error
-safe_get_project(store, path) :: RecentProject.t() | nil
 integrity_check(store) :: :ok | {:repaired, count} | {:error, reason}
 size(store) :: non_neg_integer()                          # total across both tables
-safe_size(store) :: non_neg_integer()
 ```
 
 - `integrity_check/1`: Runs `PRAGMA integrity_check`, scans all rows, quarantines undecodable rows (INSERT raw JSON into quarantine table + DELETE from live). If quarantine INSERT fails, row is left in place (never destroyed). Returns `:ok` / `{:repaired, count}` / `{:error, reason}`. Called by TaskRegistry on init.
-- **Schema migration**: `maybe_migrate_old_schema/1` detects old `(id, data BLOB)` schema via `PRAGMA table_info`, drops both tables, and recreates with the new column-based schema. Old data is lost (acceptable in early development).
 
 ### `EvoDash.TaskRegistry` (`task_registry.ex`)
-- Singleton `GenServer` backed by SQLite via `EvoDash.TaskStore` (single source of truth).
+- Singleton `GenServer` backed by SQLite via `EvoDash.Store` (single source of truth).
 - Tracks EvoGit tasks (`:genesis` / `:evolve` / `:extract_skills`) with id, type, status, opts, pid, timestamps, logs, result, review metadata, usage, archive_metadata.
 - Runtime-only task references (`%Task{}`) are kept in an in-memory `task_refs` map (`%{task_id => %Task{}}`), not persisted.
-- All store-touching `handle_*` callbacks are wrapped in `try/rescue` (bodies extracted to `do_*` privates).
+- All store-touching `handle_*` callbacks have NO try/rescue — if the Store is down, the GenServer crashes and the supervisor restarts it. This is correct process isolation and prevents silent data loss.
 
 **Client API:**
 | Function | Description |
@@ -113,7 +109,7 @@ safe_size(store) :: non_neg_integer()
 
 ## Task Lifecycle
 1. **Creation** (`start_task/2`): Generates random 16-char hex ID, spawns `Task.Supervisor.async_nolink` task, writes `TaskInfo` to SQLite via `put_task` (ref nulled), stores ref in `task_refs`.
-2. **Running**: Status updates via `cast`. All writes go through `EvoDash.TaskStore.put_task/2`.
+2. **Running**: Status updates via `cast`. All writes go through `EvoDash.Store.put_task/2`.
 3. **Completion/Failure**: On terminal status, `finished_at` is set, task removed from `task_refs`, `cleanup_expired_tasks/1` runs.
 4. **Crash recovery**: `normalize_tasks/1` reconciles `:running`/`:pending` tasks on startup. Live pids are re-monitored; dead/nil pids marked `:failed`.
 5. **DOWN handling**: `handle_info({:DOWN, ...})` reconciles task termination.
@@ -123,12 +119,9 @@ safe_size(store) :: non_neg_integer()
 - `cleanup_expired_tasks/1`: removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100). Uses `delete_tasks/2` for batch deletion.
 - Recent projects capped at 10 via `trim_recent_projects/1`.
 
-## One-time DETS→SQLite Migration
-- `maybe_migrate_from_dets/1`: if SQLite store is empty AND old DETS files exist, migrates records via `put_task`/`put_project`, then renames `.dets` files to `.dets.migrated`.
-
 ## Constraints
 - `TaskRegistry` is a singleton; do not start multiple instances.
-- `EvoDash.TaskStore` is the single source of truth — all reads/writes go through the typed GenServer API.
+- `EvoDash.Store` is the single source of truth — all reads/writes go through the typed GenServer API.
 - Runtime task refs (`%Task{}`) are in-memory only; persisted tasks always have `ref: nil`.
 - Task log list stored in reverse chronological order (newest first).
 - All task types must be `:genesis`, `:evolve`, or `:extract_skills`.
