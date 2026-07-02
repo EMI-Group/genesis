@@ -39,6 +39,26 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 | `agent_type/0` | `:read_write` | `:read` or `:read_write` — controls spatial contract validation |
 | `delegation_level/0` | `:high` | `:high` or `:low` — controls turn-budget warning frequency for delegation reminders |
 
+## First User Prompt Assembly
+The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's first user message as two distinct, XML-delimited blocks separated by a markdown horizontal rule, so the LLM can cleanly distinguish environment from objective:
+
+```
+<context>
+{context_tree}
+
+{foreign_repos_section}  ← omitted when blank
+</context>
+
+---
+
+<objective>
+{objective}  ← entire block omitted when there is no objective
+</objective>
+```
+
+- **`build_dynamic_context/1`** and **`build_foreign_repos_section/1`** produce the section bodies (unchanged by framing); only how the sections are delimited relative to each other is structured.
+- Blank sections (e.g. no foreign repos, or no objective) are dropped entirely — no dangling rules, empty headers, or empty XML blocks are ever emitted. The `---` delimiter appears only between two non-blank blocks.
+
 ## Constraints
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` outside adapters.
 - Agents are transient modules using `EvoGit.Agent` behaviour; persistent state lives in ETS.
