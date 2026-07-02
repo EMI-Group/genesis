@@ -146,14 +146,33 @@ defmodule EvoGit.Agent do
 
           {:error, :path_not_exist}
         else
-          # Build context tree and merge into first user prompt
-          # Use :repo_path (set by scheduler to worktree path)
+          # Build context tree and merge into first user prompt.
+          # Use :repo_path (set by scheduler to worktree path).
+          #
+          # The first user prompt is framed as two distinct blocks so the LLM
+          # can unambiguously tell where the descriptive context/environment
+          # ends and the actionable objective begins:
+          #
+          #   <context>...</context>
+          #   ---
+          #   <objective>...</objective>
+          #
+          # Empty/blank sections are dropped so we never emit dangling rules,
+          # empty blocks, or doubled delimiters.
           context_tree = build_dynamic_context(%{node_path: node_path, repo_path: repo_path})
           foreign_repos_section = build_foreign_repos_section(agent_state.foreign_repos)
-          objective_prompt = if objective, do: "Your Task:\n#{objective}", else: ""
+
+          context_body =
+            [context_tree, foreign_repos_section]
+            |> Enum.reject(&blank?/1)
+            |> Enum.join("\n\n")
+
+          objective_body = if blank?(objective), do: "", else: to_string(objective)
 
           combined_prompt =
-            "Current Context Tree:\n#{context_tree}\n\n#{foreign_repos_section}\n\n#{objective_prompt}"
+            [context_block(context_body), objective_block(objective_body)]
+            |> Enum.reject(&blank?/1)
+            |> Enum.join("\n\n---\n\n")
 
           context = ReqLLM.Context.new([system(system_prompt()), user(combined_prompt)])
           # Tag initial messages (system + user prompt) with turn 0
@@ -1201,6 +1220,29 @@ defmodule EvoGit.Agent do
             "| ID | Path | Description |\n|------|------|-------------|\n#{rows}\n\n" <>
             "Use absolute paths (e.g., `#{hd(repos).root}`) when delegating to foreign repositories."
         end
+      end
+
+      # Treats `nil` or whitespace-only strings/binaries as blank.
+      defp blank?(nil), do: true
+
+      defp blank?(value) when is_binary(value) do
+        String.trim(value) == ""
+      end
+
+      defp blank?(_), do: false
+
+      # Wraps the environment/context body in an XML-like block. Returns "" when
+      # the body is blank so the caller can drop it without leaving an empty
+      # `<context></context>` block.
+      defp context_block(body) do
+        if blank?(body), do: "", else: "<context>\n#{body}\n</context>"
+      end
+
+      # Wraps the objective body in an XML-like block. Returns "" when the body
+      # is blank so the caller can drop it without leaving an empty
+      # `<objective></objective>` block.
+      defp objective_block(body) do
+        if blank?(body), do: "", else: "<objective>\n#{body}\n</objective>"
       end
 
       defp sync_context_to_ets(agent_id, context) do
