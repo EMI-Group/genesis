@@ -110,9 +110,18 @@ size(store) :: non_neg_integer()                          # total across both ta
 1. **Creation** (`start_task/2`): Generates random 16-char hex ID, spawns `Task.Supervisor.async_nolink` task, writes `TaskInfo` to SQLite via `put_task` (ref nulled), stores ref in `task_refs`.
 2. **Running**: Status updates via `cast`. All writes go through `EvoDash.Store.put_task/2`.
 3. **Completion/Failure**: On terminal status, `finished_at` is set, task removed from `task_refs`, `cleanup_expired_tasks/1` runs.
-4. **Crash recovery**: `normalize_tasks/1` reconciles `:running`/`:pending` tasks on startup. Live pids are re-monitored; dead/nil pids marked `:failed`.
+4. **Crash recovery**: `normalize_tasks/1` reconciles `:running`/`:pending` tasks on startup. Live pids are re-monitored; dead/nil pids marked `:failed` (unless `:evogit_sched_meta` ETS still has active agents for the task_id).
 5. **DOWN handling**: `handle_info({:DOWN, ...})` reconciles task termination.
-6. **Deletion**: `delete_task/1` → `TaskStore.delete_task/2`. `clear_finished_tasks/0` → `TaskStore.delete_tasks/2`.
+6. **Deletion**: `delete_task/1` → `Store.delete_task/2`. `clear_finished_tasks/0` → `Store.delete_tasks/2`.
+
+### All `:failed`-Transition Sites (status set to `:failed`)
+| # | Site (file:line) | Trigger | Guard/Condition |
+|---|---|---|---|
+| 1 | `task_registry.ex:829-831` (`handle_info({ref, result})`) | Task result arrives | Catch-all `_ -> :failed` for any result NOT `{:ok, _}` |
+| 2 | `task_registry.ex:879` (`handle_info({:DOWN, ref, ...})`) | Task process exits | `reason != :normal` → `:failed` |
+| 3 | `task_registry.ex:306-343` (`handle_cast({:update_status, ...})`) | Receives ANY status via cast | Persists `:failed` if cast — called by sites #1 and #2 |
+| 4 | `task_registry.ex:800` (`handle_info({:task_status, task_id, status})`) | PubSub `"tasks"` topic | Blindly persists whatever status atom arrives (currently only `:finalizing` is broadcast) |
+| 5 | `task_registry.ex:529` (`reconcile_task_status`) | Registry restart (init) | Dead/nil pid AND no active agents in ETS |
 
 ## Retention & Eviction
 - `cleanup_expired_tasks/1`: removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100). Uses `delete_tasks/2` for batch deletion.
