@@ -2,7 +2,7 @@
 System.put_env("XDG_DATA_HOME", Path.join(System.tmp_dir!(), "evogit_test_data"))
 File.mkdir_p!(Path.join(System.tmp_dir!(), "evogit_test_data"))
 
-ExUnit.start()
+ExUnit.start(capture_log: true)
 
 ExUnit.after_suite(fn _ ->
   # Clean up test data directory
