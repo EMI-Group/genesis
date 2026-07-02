@@ -102,7 +102,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       {:ok, entries} ->
         entries
         |> Enum.map(&parse_task_number/1)
-        |> Enum.filter(&(&1))
+        |> Enum.filter(& &1)
         |> Enum.max(fn -> 0 end)
         |> Kernel.+(1)
 
@@ -159,7 +159,11 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
     worktree_path =
-      Path.join([agent_repo_root, ".evogit/workers", "worker_T#{meta.task_number}_A#{task_local_id}"])
+      Path.join([
+        agent_repo_root,
+        ".evogit/workers",
+        "worker_T#{meta.task_number}_A#{task_local_id}"
+      ])
 
     Store.put_sched_meta(agent_id, %{meta | worktree: worktree_path})
 
