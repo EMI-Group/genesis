@@ -64,11 +64,11 @@ defmodule EvoGit.Agent.Tools.Glob do
   defp do_glob(pattern, search_path, max_files) do
     full_pattern = Path.join(search_path, pattern)
 
-    case Path.wildcard(full_pattern, match_dot: true) do
-      [] ->
+    case safe_wildcard(full_pattern) do
+      {:ok, []} ->
         "No files found matching pattern: #{pattern}"
 
-      paths ->
+      {:ok, paths} ->
         {sorted_paths, total_count} =
           paths
           |> Enum.flat_map(fn path ->
@@ -99,7 +99,35 @@ defmodule EvoGit.Agent.Tools.Glob do
         truncated = total_count > max_files
 
         format_result(relative_paths, total_count, truncated)
+
+      {:error, reason} ->
+        format_pattern_error(pattern, reason)
     end
+  end
+
+  # Wraps Path.wildcard so that malformed glob patterns (e.g. unmatched `{` or
+  # `[`) are caught instead of crashing the agent. On this codebase's Elixir,
+  # an invalid brace pattern raises `{:badpattern, :missing_delimiter}` as an
+  # `:error`; other Erlang/Elixir versions may throw or exit instead, so we
+  # cover all three kinds to guarantee no escape path crashes.
+  defp safe_wildcard(full_pattern) do
+    try do
+      {:ok, Path.wildcard(full_pattern, match_dot: true)}
+    catch
+      :error, reason -> {:error, reason}
+      :throw, reason -> {:error, reason}
+      :exit, reason -> {:error, reason}
+    end
+  end
+
+  defp format_pattern_error(pattern, {:badpattern, reason}) do
+    "Error: invalid glob pattern '#{pattern}' (malformed: #{inspect(reason)}). " <>
+      "Please check the pattern syntax — e.g. ensure braces '{...}' and brackets '[...]' are balanced."
+  end
+
+  defp format_pattern_error(pattern, reason) do
+    "Error: invalid glob pattern '#{pattern}' (#{inspect(reason)}). " <>
+      "Please check the pattern syntax — e.g. ensure braces '{...}' and brackets '[...]' are balanced."
   end
 
   defp format_result(paths, total_count, truncated) do
