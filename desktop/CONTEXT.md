@@ -14,10 +14,10 @@ This is the native application layer — it contains NO Elixir code. The actual 
 
 | File | Purpose |
 |------|---------|
-| `src-tauri/src/main.rs` | Rust entry point — initializes Tauri, spawns sidecar, opens window |
-| `src-tauri/src/sidecar.rs` | Sidecar lifecycle: spawn backend process, health-check polling, shutdown |
-| `src-tauri/Cargo.toml` | Rust dependencies (tauri v2, tauri-plugin-shell, tauri-plugin-dialog, reqwest) |
-| `src-tauri/tauri.conf.json` | Tauri config: window settings, sidecar reference, bundle metadata |
+| `src-tauri/src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns sidecar, opens window, intercepts close-to-tray |
+| `src-tauri/src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), spawn backend process, health-check polling, shutdown |
+| `src-tauri/Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-dialog, reqwest) |
+| `src-tauri/tauri.conf.json` | Tauri config: window settings, trayIcon config, sidecar reference, bundle metadata |
 | `src-tauri/capabilities/default.json` | Tauri v2 permissions: shell (sidecar), dialog (directory picker) |
 
 ## Architecture
