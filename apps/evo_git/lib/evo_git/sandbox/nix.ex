@@ -38,7 +38,10 @@ defmodule EvoGit.Nix do
   """
   @spec enabled?() :: boolean()
   def enabled? do
-    nix_enabled_in_config?() and Platform.nix_available?() and flake_exists?()
+    case Application.get_env(:evo_git, :nix_enabled) do
+      nil -> nix_enabled_in_config?() and Platform.nix_available?() and flake_exists?()
+      override -> override
+    end
   end
 
   @doc """

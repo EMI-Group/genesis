@@ -32,6 +32,13 @@ defmodule EvoGit.Sandbox.LinuxTest do
     original
   end
 
+  setup do
+    original = Application.get_env(:evo_git, :nix_enabled)
+    Application.put_env(:evo_git, :nix_enabled, false)
+    on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
+    :ok
+  end
+
   describe "args/4 — TMPDIR forwarding (TMPDIR unset)" do
     test "always includes a --setenv=TMPDIR=... entry" do
       save_tmpdir()

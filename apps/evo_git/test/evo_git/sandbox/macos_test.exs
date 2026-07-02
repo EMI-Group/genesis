@@ -17,6 +17,13 @@ defmodule EvoGit.Sandbox.MacOSTest do
     original
   end
 
+  setup do
+    original = Application.get_env(:evo_git, :nix_enabled)
+    Application.put_env(:evo_git, :nix_enabled, false)
+    on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
+    :ok
+  end
+
   describe "generate_profile/2" do
     test "grants file-write to the default tmp paths" do
       profile = MacOS.generate_profile("/some/cwd", nil)
