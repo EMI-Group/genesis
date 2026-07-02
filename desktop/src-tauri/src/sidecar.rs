@@ -28,14 +28,21 @@ const POLL_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 ///
 /// These configure the Phoenix backend to run as a local, single-user
 /// server (no distributed Erlang, fixed port, server mode enabled).
-fn sidecar_env() -> [(&'static str, &'static str); 6] {
-    [
-        ("PORT", "9999"),
-        ("EVOGIT_DESKTOP_PORT", "9999"),
-        ("PHX_SERVER", "true"),
-        ("SECRET_KEY_BASE", SECRET_KEY_BASE),
-        ("RELEASE_DISTRIBUTION", "none"),
-        ("EVOGIT_DESKTOP", "1"),
+///
+/// The bind address defaults to `127.0.0.1` (localhost only) for security.
+/// Users can override it by setting the `EVOGIT_BIND` environment variable
+/// before launching the desktop app (e.g. `EVOGIT_BIND=0.0.0.0` for remote
+/// access). The value is passed to Phoenix as `PHX_IP`.
+fn sidecar_env() -> Vec<(String, String)> {
+    let phx_ip = std::env::var("EVOGIT_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
+
+    vec![
+        ("PORT".to_string(), "9999".to_string()),
+        ("PHX_IP".to_string(), phx_ip),
+        ("PHX_SERVER".to_string(), "true".to_string()),
+        ("SECRET_KEY_BASE".to_string(), SECRET_KEY_BASE.to_string()),
+        ("RELEASE_DISTRIBUTION".to_string(), "none".to_string()),
+        ("EVOGIT_DESKTOP".to_string(), "1".to_string()),
     ]
 }
 

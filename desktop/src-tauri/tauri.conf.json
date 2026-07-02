@@ -21,6 +21,12 @@
         "center": true
       }
     ],
+    "trayIcon": {
+      "id": "main",
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "tooltip": "Genesis"
+    },
     "security": {
       "csp": null
     }
