@@ -67,7 +67,9 @@ Worktrees are **persistent per-agent** (created on dispatch, reused on retry, de
 Handles the mechanics of registering and dispatching agents:
 
 1. `register_agent/6` — Assigns agent IDs, computes task-local IDs, resolves event sink inheritance, writes both ETS tables
-2. `try_dispatch/2` — Creates persistent worktree, runs init script, spawns Task, updates ETS. Uses `with` guard to bail cleanly if ETS entries are missing (genuine race).
+2. `try_dispatch/2` — **Two-phase dispatch** for parallel subagent startup. Uses `with` guard to bail cleanly if ETS entries are missing (genuine race).
+   - **Phase 1 (GenServer, fast):** Computes worktree path, stores it in sched_meta **before** spawning the task (so `cancel_agent` can find the worktree), spawns `Task.Supervisor.async_nolink` immediately, updates `ref_to_agent`. **NO git commands or init scripts run here** — the GenServer never does blocking I/O.
+   - **Phase 2 (Task process, slow/concurrent):** `setup_worktree_in_task/5` runs inside the task, before `spec.agent_module.run/1`: creates the worktree (`Git.add_worktree`), prepares it (`assign_and_prepare_worktree`), and runs the init script on first creation (primary repo only). All of this runs concurrently across subagents, so `spawn_validated_subagents`' `Enum.reduce` over `try_dispatch` spawns all tasks immediately.
 3. `commit_pending_in_worktree/0` — Best-effort git commit of pending changes, designed to run in the **agent process** (not the scheduler). Uses `Process.get(:repo_path)` for the worktree path. Has `try/rescue` to swallow git errors — the only place where defensive error handling is warranted since git may fail if the worktree is in a bad state. Called via `try/after` in the Task spawn after `spec.agent_module.run(spec.objective)`. **The scheduler process NEVER calls git directly.**
 4. `resolve_agent_repo_root/2` — Resolves repo root from spec (primary vs foreign repo)
 5. `dispatch_queued_agents/1` — Drains queue dispatching agents (used after resume)
