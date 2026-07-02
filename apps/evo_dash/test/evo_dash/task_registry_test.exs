@@ -62,6 +62,23 @@ defmodule EvoDash.TaskRegistryTest do
     end
   end
 
+  # Helper: compute an age in days guaranteed to EXCEED the configured
+  # max_age_days. Reads the actual runtime config (fallback to default 14) so
+  # tests are robust regardless of the local config.toml setting.
+  defp old_age_days do
+    config = EvoGit.Config.resolve()
+    configured = (config[:task_history] || %{})[:max_age_days] || 14
+    configured + 10
+  end
+
+  # Helper: compute an age in days guaranteed to be WITHIN the configured
+  # max_age_days window. Uses roughly a third of the window, floored to 1 day.
+  defp within_age_days do
+    config = EvoGit.Config.resolve()
+    configured = (config[:task_history] || %{})[:max_age_days] || 14
+    max(div(configured, 3), 1)
+  end
+
   describe "task_history_config/0 defaults" do
     test "returns default max_tasks and max_age_days when no config set" do
       config = EvoGit.Config.resolve()
@@ -82,15 +99,17 @@ defmodule EvoDash.TaskRegistryTest do
     test "removes tasks older than max_age_days via persist cycle" do
       unique = System.unique_integer([:positive])
 
-      # Insert an old finished task directly into the store (20 days old > 14 day default)
+      # Insert an old finished task directly into the store.
+      # Age is computed to exceed whatever max_age_days is configured locally.
+      age = old_age_days()
       old_task = %TaskInfo{
         id: "test_old_#{unique}",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         logs: [],
         result: nil
       }
@@ -130,15 +149,16 @@ defmodule EvoDash.TaskRegistryTest do
     test "preserves tasks within max_age_days" do
       unique = System.unique_integer([:positive])
 
-      # Insert a task 5 days old (within 14 day default)
+      # Insert a task within the configured max_age_days window.
+      age = within_age_days()
       task = %TaskInfo{
         id: "test_5day_#{unique}",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -5 * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -5 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         logs: [],
         result: nil
       }
@@ -156,6 +176,9 @@ defmodule EvoDash.TaskRegistryTest do
     test "never cleans up running or pending tasks even if old" do
       unique = System.unique_integer([:positive])
 
+      # Age guaranteed to exceed the configured max_age_days window.
+      age = old_age_days()
+
       # Running task with old started_at (finished_at is nil)
       running_task = %TaskInfo{
         id: "test_running_#{unique}",
@@ -163,7 +186,7 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         finished_at: nil,
         logs: [],
         result: nil
@@ -178,7 +201,7 @@ defmodule EvoDash.TaskRegistryTest do
         status: :pending,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         finished_at: nil,
         logs: [],
         result: nil
@@ -193,8 +216,8 @@ defmodule EvoDash.TaskRegistryTest do
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
         logs: [],
         result: nil
       }
@@ -219,22 +242,23 @@ defmodule EvoDash.TaskRegistryTest do
       unique = System.unique_integer([:positive])
       now = DateTime.utc_now()
 
-      # Old task (over 14 days) - should be cleaned by age
+      # Old task — age guaranteed to exceed the configured max_age_days window.
+      age = old_age_days()
       old_task = %TaskInfo{
         id: "test_combined_old_#{unique}",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(now, -20 * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(now, -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
+        finished_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
         logs: [],
         result: nil
       }
 
       EvoDash.Store.put_task(EvoDash.Store, old_task)
 
-      # Recent tasks (within 14 days) - should be kept
+      # Recent tasks (within max_age_days) - should be kept
       for i <- 1..3 do
         recent = %TaskInfo{
           id: "test_combined_recent_#{unique}_#{i}",
@@ -258,7 +282,7 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(now, -20 * 24 * 60 * 60, :second),
+        started_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
         finished_at: nil,
         logs: [],
         result: nil
