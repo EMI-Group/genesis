@@ -95,8 +95,30 @@ defmodule EvoDashWeb.Helpers do
   Formats a `DateTime` as `"YYYY-MM-DD HH:MM"`.
 
   With `:time` option, formats as `"HH:MM:SS"`.
+
+  Robust to `nil` (returns an empty string) and ISO8601 binary strings
+  (as stored in JSON/DETS archive metadata) by parsing them before
+  formatting. Unparseable strings are returned as-is.
   """
+  def format_datetime(nil), do: ""
+
+  def format_datetime(datetime) when is_binary(datetime) do
+    case DateTime.from_iso8601(datetime) do
+      {:ok, dt, _offset} -> format_datetime(dt)
+      {:error, _} -> datetime
+    end
+  end
+
   def format_datetime(datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
+
+  def format_datetime(nil, :time), do: ""
+
+  def format_datetime(datetime, :time) when is_binary(datetime) do
+    case DateTime.from_iso8601(datetime) do
+      {:ok, dt, _offset} -> format_datetime(dt, :time)
+      {:error, _} -> datetime
+    end
+  end
 
   def format_datetime(datetime, :time),
     do: datetime.time |> Time.to_string() |> String.slice(0..7)
