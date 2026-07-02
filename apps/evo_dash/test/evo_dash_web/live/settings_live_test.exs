@@ -2,6 +2,36 @@ defmodule EvoDashWeb.SettingsLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
+  # Isolate all tests in this file from the host's real user config.
+  # SettingsLive.mount/1 calls load_file_config() → EvoGit.Config.resolve(),
+  # which reads config.toml from EvoGit.Config.config_dir/0. On Linux that
+  # honours the XDG_CONFIG_HOME env var, so pointing it at an empty temp dir
+  # guarantees no config.toml exists and schema defaults (e.g. nix.enabled =
+  # false) are used — making the tests deterministic regardless of host env.
+  setup do
+    tmp_config =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_settings_test_config_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(tmp_config)
+    original = System.get_env("XDG_CONFIG_HOME")
+    System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+    on_exit(fn ->
+      if original do
+        System.put_env("XDG_CONFIG_HOME", original)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_config)
+    end)
+
+    :ok
+  end
+
   describe "settings search" do
     test "renders the search input", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/settings")
