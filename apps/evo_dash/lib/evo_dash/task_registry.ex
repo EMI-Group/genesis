@@ -312,26 +312,39 @@ defmodule EvoDash.TaskRegistry do
     state =
       case task_get(state, task_id) do
         %TaskInfo{} = task ->
-          finished_at =
-            if status in [:completed, :failed, :cancelled],
-              do: DateTime.utc_now(),
-              else: task.finished_at
+          if task.status in [:completed, :failed, :cancelled] and
+               status in [:completed, :failed, :cancelled] and
+               task.status != status do
+            Logger.warning(
+              "TaskRegistry: Ignoring stale status update for task #{task_id}: " <>
+                "already #{task.status}, ignoring #{status}"
+            )
 
-          updated = %{task | status: status, result: result, finished_at: finished_at}
-          updated = if usage, do: %{updated | usage: usage}, else: updated
-          updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
-          updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
-
-          updated =
-            if archive_records, do: %{updated | archive_metadata: archive_records}, else: updated
-
-          EvoDash.Store.put_task(state.task_store, updated)
-
-          if status in [:completed, :failed, :cancelled] do
-            cleanup_expired_tasks(state)
-            %{state | task_refs: Map.delete(state.task_refs, task_id)}
-          else
             state
+          else
+            finished_at =
+              if status in [:completed, :failed, :cancelled],
+                do: DateTime.utc_now(),
+                else: task.finished_at
+
+            updated = %{task | status: status, result: result, finished_at: finished_at}
+            updated = if usage, do: %{updated | usage: usage}, else: updated
+            updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
+            updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
+
+            updated =
+              if archive_records,
+                do: %{updated | archive_metadata: archive_records},
+                else: updated
+
+            EvoDash.Store.put_task(state.task_store, updated)
+
+            if status in [:completed, :failed, :cancelled] do
+              cleanup_expired_tasks(state)
+              %{state | task_refs: Map.delete(state.task_refs, task_id)}
+            else
+              state
+            end
           end
 
         nil ->
@@ -792,19 +805,28 @@ defmodule EvoDash.TaskRegistry do
     state =
       case task_get(state, task_id) do
         %TaskInfo{} = task ->
-          finished_at =
-            if status in [:completed, :failed, :cancelled],
-              do: DateTime.utc_now(),
-              else: task.finished_at
+          if task.status in [:completed, :failed, :cancelled] do
+            Logger.debug(
+              "TaskRegistry: Ignoring stale :task_status update for task #{task_id}: " <>
+                "already terminal (#{task.status}), ignoring #{status}"
+            )
 
-          updated = %{task | status: status, finished_at: finished_at}
-          EvoDash.Store.put_task(state.task_store, updated)
-
-          if status in [:completed, :failed, :cancelled] do
-            cleanup_expired_tasks(state)
-            %{state | task_refs: Map.delete(state.task_refs, task_id)}
-          else
             state
+          else
+            finished_at =
+              if status in [:completed, :failed, :cancelled],
+                do: DateTime.utc_now(),
+                else: task.finished_at
+
+            updated = %{task | status: status, finished_at: finished_at}
+            EvoDash.Store.put_task(state.task_store, updated)
+
+            if status in [:completed, :failed, :cancelled] do
+              cleanup_expired_tasks(state)
+              %{state | task_refs: Map.delete(state.task_refs, task_id)}
+            else
+              state
+            end
           end
 
         nil ->
@@ -825,10 +847,23 @@ defmodule EvoDash.TaskRegistry do
     if task_id do
       status =
         case result do
-          {:ok, _} -> :completed
-          {:error, _} -> :failed
-          {:exit, _} -> :failed
-          _ -> :failed
+          {:ok, _} ->
+            :completed
+
+          {:error, reason} ->
+            Logger.warning("TaskRegistry: Task #{task_id} returned error: #{inspect(reason)}")
+            :failed
+
+          {:exit, reason} ->
+            Logger.warning("TaskRegistry: Task #{task_id} exited: #{inspect(reason)}")
+            :failed
+
+          other ->
+            Logger.warning(
+              "TaskRegistry: Task #{task_id} returned unexpected result shape: #{inspect(other)}"
+            )
+
+            :failed
         end
 
       task_usage =
@@ -869,16 +904,41 @@ defmodule EvoDash.TaskRegistry do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
     task_id =
       Enum.find_value(state.task_refs, fn {id, %Task{ref: task_ref}} ->
         if task_ref == ref, do: id
       end)
 
     if task_id do
-      status = if reason == :normal, do: :completed, else: :failed
-      result = if reason == :normal, do: nil, else: "Task process exited: #{inspect(reason)}"
-      update_task_status(task_id, status, result)
+      case reason do
+        :normal ->
+          # Normal completion via :DOWN (task returned a result and exited cleanly).
+          # The {ref, result} handler should have already processed this, but handle
+          # the edge case where {ref, result} was somehow missed.
+          update_task_status(task_id, :completed)
+
+        reason ->
+          Logger.warning(
+            "TaskRegistry: Task #{task_id} wrapper process #{inspect(pid)} exited abnormally: #{inspect(reason)}. " <>
+              "Checking if AgentScheduler still has active agents before marking as failed."
+          )
+
+          # Check if the AgentScheduler still has active agents for this task.
+          # If so, the wrapper crashed but the real work is still ongoing — do NOT
+          # mark as failed. The task will complete normally when the scheduler
+          # eventually finishes and the result arrives via a different mechanism.
+          if sched_meta_has_active_agents?(task_id) do
+            Logger.info(
+              "TaskRegistry: Task #{task_id} still has active agents in AgentScheduler — keeping as :running despite wrapper crash"
+            )
+
+            # Do NOT update status — leave as :running
+          else
+            # No active agents — genuine failure
+            update_task_status(task_id, :failed, "Task process exited: #{inspect(reason)}")
+          end
+      end
     end
 
     {:noreply, state}
