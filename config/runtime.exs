@@ -56,8 +56,6 @@ if config_env() == :prod do
 
   port = String.to_integer(System.get_env("PORT") || "4000")
 
-  config :evo_dash, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
-
   # Detect desktop mode from two independent signals so detection is robust
   # against env var forwarding issues through the Burrito Zig wrapper:
   #   1. The compile-time `:desktop_release` flag baked into sys.config by the
