@@ -17,6 +17,11 @@ defmodule EvoGit.SandboxSlice do
 
   @slice_name "evogit"
 
+  # Compile-time Mix env — safe in releases (Mix.env/0 is evaluated at compile
+  # time; in prod releases it resolves to :prod). Used to skip systemd slice
+  # creation entirely in the test environment.
+  @mix_env Mix.env()
+
   # --- Client API ---
 
   def start_link(opts \\ []) do
@@ -149,10 +154,18 @@ defmodule EvoGit.SandboxSlice do
   end
 
   defp sandbox_enabled? do
-    case EvoGit.Config.resolve([:sandbox, :mode]) || :auto do
-      :enabled -> true
-      :disabled -> false
-      :auto -> EvoGit.Platform.systemd_available?()
+    cond do
+      # Tests never need systemd sandboxing, and the user bus is typically
+      # unavailable in CI/local test environments. Skip slice creation.
+      @mix_env == :test ->
+        false
+
+      true ->
+        case EvoGit.Config.resolve([:sandbox, :mode]) || :auto do
+          :enabled -> true
+          :disabled -> false
+          :auto -> EvoGit.Platform.systemd_available?()
+        end
     end
   end
 
