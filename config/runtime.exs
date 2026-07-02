@@ -66,18 +66,38 @@ if config_env() == :prod do
     Application.get_env(:evo_dash, :desktop_release, false) or
       System.get_env("EVOGIT_DESKTOP") == "1"
 
+  # Bind address for the desktop server. Defaults to loopback (localhost only)
+  # so the dashboard is never exposed to the network without explicit opt-in.
+  # Users can override by setting PHX_IP (e.g. PHX_IP=0.0.0.0 for remote access).
+  desktop_ip =
+    case System.get_env("PHX_IP") do
+      nil ->
+        {127, 0, 0, 1}
+
+      ip_str ->
+        case :inet.parse_address(String.to_charlist(ip_str)) do
+          {:ok, ip} ->
+            ip
+
+          {:error, _} ->
+            IO.warn(
+              "Invalid PHX_IP value #{inspect(ip_str)}, falling back to loopback (127.0.0.1)"
+            )
+
+            {127, 0, 0, 1}
+        end
+    end
+
   if desktop_mode do
     # Desktop mode: local single-user server accessed via Tauri WebView.
     # check_origin is disabled because the WebView connects over plain HTTP
     # to localhost, which would otherwise be rejected by Phoenix's origin check.
+    # The bind address defaults to loopback (127.0.0.1) for security; set
+    # PHX_IP to expose the server on other interfaces (e.g. for remote access).
     config :evo_dash, EvoDashWeb.Endpoint,
       url: [host: "localhost", port: port, scheme: "http"],
       http: [
-        # Enable IPv6 and bind on all interfaces.
-        # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-        # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-        # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-        ip: {0, 0, 0, 0, 0, 0, 0, 0},
+        ip: desktop_ip,
         port: port
       ],
       check_origin: false,

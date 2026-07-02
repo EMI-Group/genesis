@@ -56,7 +56,7 @@ jobs:
             rust_target: x86_64-unknown-linux-gnu
             rg_target: x86_64-unknown-linux-musl
             vendor_platform: linux-x86_64
-            tauri_bundles: "deb,rpm,appimage"
+            tauri_bundles: "rpm,appimage"
           - os_label: Linux
             arch: arm64
             runner: ubuntu-24.04-arm
@@ -66,7 +66,7 @@ jobs:
             vendor_platform: linux-arm64
             # AppImage is excluded on ARM64: appimagetool/linuxdeploy are
             # x86_64-only binaries and the bundling step fails on ARM hosts.
-            tauri_bundles: "deb,rpm"
+            tauri_bundles: "rpm"
             # The GitHub-hosted ARM partner runner reports ImageOS as
             # 'ubuntu24-arm64', which erlef/setup-beam does not recognize.
             # Override to the base value so setup-beam maps it correctly.
@@ -80,7 +80,7 @@ jobs:
         if: startsWith(matrix.runner, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev
 
       - name: Fix ImageOS for ARM partner runners
         # The GitHub-hosted ARM partner runner reports ImageOS as
@@ -192,6 +192,15 @@ jobs:
             cargo tauri build --target ${{ matrix.rust_target }}
           fi
 
+      - name: Create tarball
+        # Package the compiled binary as a portable .tar.gz archive for Linux.
+        # Tauri does not have a native tar.gz bundle target, so we create it
+        # manually from the release binary.
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          cd desktop/src-tauri/target/${{ matrix.rust_target }}/release
+          tar -czf /tmp/evogit-desktop-${{ matrix.rust_target }}.tar.gz evogit-desktop
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
         with:
@@ -199,9 +208,21 @@ jobs:
           files: |
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/*.app
-            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb/*.deb
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/appimage/*.AppImage
+            /tmp/evogit-desktop-*.tar.gz
+
+      # NOTE on Flatpak: Tauri v2 does not have a native Flatpak bundle target.
+      # Producing a Flatpak requires a flatpak-builder manifest (YAML) declaring
+      # a Flatpak runtime (e.g. org.freedesktop.Platform//24.08), the application
+      # metadata (.desktop file, icon), and build commands. This is significantly
+      # more involved than the native Tauri bundlers and typically targets Flathub
+      # rather than direct GitHub release downloads. See:
+      #   https://v2.tauri.app/distribute/  (no flatpak target listed)
+      #   https://docs.flatpak.org/  (flatpak-builder documentation)
+      # To add Flatpak support in the future: create a com.evogit.desktop.yaml
+      # manifest and add a `flatpak-builder --force-clean build-dir manifest.yaml`
+      # step here, then upload the resulting .flatpak bundle.
 
   build-windows:
     name: Build Windows (${{ matrix.arch }})
