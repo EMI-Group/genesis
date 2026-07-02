@@ -146,7 +146,7 @@ defmodule EvoDashWeb.DashboardComponents do
     <.form
       for={%{}}
       phx-submit="task_submit"
-      class="bg-base-100 rounded-2xl shadow-sm border border-base-200 overflow-hidden"
+      class="bg-base-100 rounded-2xl shadow-sm border border-base-200"
     >
       <!-- Body -->
       <div class={["p-4 sm:p-5 space-y-4", @disabled && "opacity-50 pointer-events-none select-none"]}>
@@ -174,10 +174,10 @@ defmodule EvoDashWeb.DashboardComponents do
         </div>
 
         <%= if String.starts_with?(@mode, "evolve") do %>
-          <div class="rounded-xl border border-base-200 bg-base-200/30 overflow-hidden">
+          <div class="rounded-xl border border-base-200 bg-base-200/30">
             <button
               type="button"
-              class="w-full px-4 py-3 cursor-pointer hover:bg-base-200/50 transition-colors flex items-center gap-2"
+              class={"w-full px-4 py-3 cursor-pointer hover:bg-base-200/50 transition-colors flex items-center gap-2 rounded-t-xl #{if @show_advanced, do: "", else: "rounded-b-xl"}"}
               phx-click="toggle_advanced"
             >
               <.icon name="hero-adjustments-horizontal" class="size-4 text-base-content/60" />
@@ -185,7 +185,7 @@ defmodule EvoDashWeb.DashboardComponents do
               <.icon name="hero-chevron-down" class={"size-4 text-base-content/40 ml-auto transition-transform #{if @show_advanced, do: "rotate-180", else: ""}"} />
             </button>
             <%= if @show_advanced do %>
-              <div class="px-4 pb-4 pt-2 space-y-4 border-t border-base-200">
+              <div class="px-4 pb-4 pt-2 space-y-4 border-t border-base-200 rounded-b-xl">
                 <div class="flex flex-col md:flex-row gap-4">
                   <div class="form-control flex-1">
                     <label class="label">
