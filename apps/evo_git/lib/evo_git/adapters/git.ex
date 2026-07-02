@@ -10,12 +10,16 @@ defmodule EvoGit.Adapters.Git do
   Sets LC_ALL=C to ensure locale-independent (English) output for reliable parsing.
   """
   def run(args, cd) do
-    System.cmd(EvoGit.Executable.resolve("git"), args,
-      cd: cd,
-      stderr_to_stdout: true,
-      env: %{"LC_ALL" => "C"}
-    )
-    |> handle_git_command_result(args, cd)
+    if cd && not File.dir?(cd) do
+      {:error, :enoent, "Repository path does not exist: #{cd}"}
+    else
+      System.cmd(EvoGit.Executable.resolve("git"), args,
+        cd: cd,
+        stderr_to_stdout: true,
+        env: %{"LC_ALL" => "C"}
+      )
+      |> handle_git_command_result(args, cd)
+    end
   end
 
   defp handle_git_command_result({output, 0}, _args, _cd), do: {:ok, String.trim(output)}
@@ -359,13 +363,17 @@ defmodule EvoGit.Adapters.Git do
   Uses `git show-ref --verify --quiet refs/heads/<branch_name>` and checks the exit code.
   """
   def branch_exists?(repo_path, branch_name) do
-    case System.cmd(
-           EvoGit.Executable.resolve("git"),
-           ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
-           cd: repo_path
-         ) do
-      {_output, 0} -> true
-      {_output, _code} -> false
+    if not File.dir?(repo_path) do
+      false
+    else
+      case System.cmd(
+             EvoGit.Executable.resolve("git"),
+             ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
+             cd: repo_path
+           ) do
+        {_output, 0} -> true
+        {_output, _code} -> false
+      end
     end
   end
 

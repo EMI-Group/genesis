@@ -562,7 +562,7 @@ defmodule EvoDashWeb.ReviewLive do
 
         title = pr_title || objective || branch_name || gettext("Review Changes")
 
-        branch_exists = branch_name && repo_path && Review.branch_exists?(repo_path, branch_name)
+        branch_exists = branch_name && repo_path && File.dir?(repo_path) && Review.branch_exists?(repo_path, branch_name)
 
         rs = Map.get(task, :review_status)
 
