@@ -7,7 +7,8 @@ config :evo_dash, EvoDashWeb.Endpoint,
   secret_key_base: "vCv3gpepylQQ9k01zsQNk7fFVtFbYc7zdD43FTMQ5o/kuulG43J9n1aaTRIPXrJ6",
   server: false
 
-# Print only warnings and errors during test
+# Capture Logger output during tests; logs are only shown when a test fails.
+# This keeps test output clean while preserving diagnostics on failure.
 config :logger, level: :warning
 
 # Initialize plugs at runtime for faster test compilation
@@ -16,6 +17,3 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
-
-# Print only warnings and errors during test
-config :logger, level: :warning
