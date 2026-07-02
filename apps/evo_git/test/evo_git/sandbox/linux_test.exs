@@ -137,8 +137,9 @@ defmodule EvoGit.Sandbox.LinuxTest do
   end
 
   describe "args/4 — Nix integration (nix disabled, default)" do
-    # When nix is not enabled (the default — no config, no binary, or no flake),
-    # the args should run the original executable directly without nix wrapping.
+    # When nix is not active (the default — no config, no binary, or no flake,
+    # or dev-env build failed), the args should run the original executable
+    # directly without nix wrapping.
 
     test "does not contain nix develop or --command when nix is disabled" do
       args = build_args()
@@ -156,5 +157,9 @@ defmodule EvoGit.Sandbox.LinuxTest do
       assert "/usr/bin/env" in args,
              "expected original executable in args when nix is disabled, got: #{inspect(args)}"
     end
+
+    # Note: the nix-ENABLEED path in args/4 can't be tested here without a
+    # real nix install, because active?/0 gates on enabled?/0 (config + binary
+    # + flake). The wrap_command/2 output itself is tested in nix_test.exs.
   end
 end

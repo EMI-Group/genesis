@@ -33,7 +33,7 @@ defmodule EvoGit.Sandbox.MacOS do
       profile = generate_profile(cwd, repo_root)
 
       {exec, exec_args} =
-        if Nix.enabled?() do
+        if Nix.active?() do
           Nix.wrap_command(executable, args)
         else
           {executable, args}

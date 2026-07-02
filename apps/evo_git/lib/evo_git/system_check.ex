@@ -156,11 +156,59 @@ defmodule EvoGit.SystemCheck do
   end
 
   @doc """
-  Runs all non-destructive system checks (config, tools, sandbox, supervisor).
+  Checks Nix dev-environment integration.
+
+  When nix is enabled (config + binary + flake), validates that the flake
+  actually evaluates by running `Nix.build_dev_env/0`.
+
+  Returns:
+
+      %{
+        available: boolean(),
+        enabled: boolean(),
+        flake_present: boolean(),
+        dev_env_built: boolean(),
+        error: String.t() | nil
+      }
+
+  When nix is not enabled, all boolean fields are `false` and `error` is `nil`.
+  """
+  @spec nix_check() :: map()
+  def nix_check do
+    available = EvoGit.Platform.nix_available?()
+    enabled = EvoGit.Nix.enabled?()
+    flake_present = File.exists?(EvoGit.Nix.flake_path())
+
+    if enabled and flake_present do
+      case EvoGit.Nix.build_dev_env() do
+        {:ok, _path} ->
+          %{available: available, enabled: enabled, flake_present: flake_present, dev_env_built: true, error: nil}
+
+        {:error, reason} ->
+          %{available: available, enabled: enabled, flake_present: flake_present, dev_env_built: false, error: reason}
+      end
+    else
+      %{available: available, enabled: enabled, flake_present: flake_present, dev_env_built: false, error: nil}
+    end
+  rescue
+    e ->
+      Logger.warning("SystemCheck nix_check failed: #{Exception.message(e)}")
+
+      %{
+        available: false,
+        enabled: false,
+        flake_present: false,
+        dev_env_built: false,
+        error: Exception.message(e)
+      }
+  end
+
+  @doc """
+  Runs all non-destructive system checks (config, tools, sandbox, supervisor, nix).
 
   Does **not** run `llm_test/0` since that makes an actual LLM API call.
 
-  Returns `%{config: map(), tools: map(), sandbox: map(), supervisor: map()}`.
+  Returns `%{config: map(), tools: map(), sandbox: map(), supervisor: map(), nix: map()}`.
   """
   @spec run_all_checks() :: map()
   def run_all_checks do
@@ -168,7 +216,8 @@ defmodule EvoGit.SystemCheck do
       config: config_check(),
       tools: tool_check(),
       sandbox: sandbox_check(),
-      supervisor: supervisor_check()
+      supervisor: supervisor_check(),
+      nix: nix_check()
     }
   rescue
     e ->

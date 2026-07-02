@@ -460,7 +460,7 @@ defmodule EvoGit.Config.Schema do
       category: :nix,
       sub_category: nil,
       description:
-        "When true, enables running all tool calls inside a Nix develop environment. Requires the `nix` binary to be available and a `flake.nix` to exist in the config directory (e.g. ~/.config/genesis/flake.nix). When nix or the flake is unavailable, commands run normally regardless of this setting."
+        "When true, enables running all tool calls inside a cached Nix dev environment. The dev env is built once via `nix print-dev-env` and sourced per call. Requires the `nix` binary to be available and a `flake.nix` to exist in the config directory (e.g. ~/.config/genesis/flake.nix). When nix or the flake is unavailable, commands run normally regardless of this setting."
     },
     %{
       key_path: [:nix, :flake_output],
@@ -470,7 +470,7 @@ defmodule EvoGit.Config.Schema do
       category: :nix,
       sub_category: nil,
       description:
-        "Optional flake output attribute to develop in (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\"."
+        "Optional flake output attribute to use (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\" for `nix print-dev-env`."
     }
   ]
 

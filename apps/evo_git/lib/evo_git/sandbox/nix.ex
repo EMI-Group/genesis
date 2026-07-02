@@ -1,29 +1,98 @@
 defmodule EvoGit.Nix do
   @moduledoc """
-  Shared helper for running commands inside a Nix develop environment.
+  Shared helper for running commands inside a Nix development environment.
 
-  When enabled via config and the `nix` binary is available and a `flake.nix`
-  exists in the config directory, all sandboxed tool calls are wrapped in
-  `nix develop <flake-uri> --command <executable> <args...>`.
+  Instead of re-evaluating the flake on every tool call (which `nix develop`
+  would do), this module builds the dev environment **once** via
+  `nix print-dev-env`, caches the resulting bash script to
+  `<data_dir>/nix-dev-env.sh`, and then sources it per call via
+  `bash -c "source <path>; exec <cmd>"`. This avoids the expensive per-call
+  flake evaluation.
 
-  This ensures LLM-generated tool calls have access to the tools and
-  environment defined in the user's Nix flake (e.g. mix, elixir, erlang,
-  ripgrep, etc.).
+  The cache is keyed on the SHA-256 hash of `flake.nix`: when the flake
+  content changes, the dev env is rebuilt automatically.
+
+  ## Gating
+
+  - `enabled?/0` — *static capability*: nix is enabled in config, the `nix`
+    binary is available, and a `flake.nix` exists in the config directory.
+  - `active?/0` — *runtime gate*: `enabled?/0` AND the dev-env build has not
+    previously failed. Backends consult `active?/0` when deciding whether to
+    wrap commands. On the first call (state `:not_attempted`) the build is
+    triggered lazily. Once a build fails, nix is gracefully disabled for the
+    rest of the session.
   """
 
   alias EvoGit.{Config, Platform}
 
+  @persistent_term_key :evogit_nix_dev_env_state
+
   @doc """
-  Returns true when ALL conditions are met:
+  Returns true when ALL conditions are met (static capability check):
   - Nix is enabled in config (`[nix] enabled = true`)
   - The `nix` binary is available on the system
   - A `flake.nix` exists in the config directory
 
-  When any condition is false, commands run normally without nix wrapping.
+  This does NOT consider whether the dev-env build has succeeded — see
+  `active?/0` for the runtime gate used by backends.
   """
   @spec enabled?() :: boolean()
   def enabled? do
     nix_enabled_in_config?() and Platform.nix_available?() and flake_exists?()
+  end
+
+  @doc """
+  Returns true when nix wrapping should be used for the current call.
+
+  This is `enabled?/0` AND the dev-env build has not previously failed.
+  On the first call (state `:not_attempted`), this returns true if enabled,
+  allowing a lazy build. Once a build fails, this returns false for the
+  rest of the session (graceful disable).
+  """
+  @spec active?() :: boolean()
+  def active? do
+    case dev_env_state() do
+      {:failed, _} -> false
+      _ -> enabled?()
+    end
+  end
+
+  @doc """
+  Returns the current dev-env build state.
+
+  - `:not_attempted` — no build has been attempted yet (default).
+  - `{:built, path}` — the dev env was successfully built and cached at `path`.
+  - `{:failed, reason}` — the last build attempt failed with `reason`.
+
+  Primarily useful for testing and diagnostics.
+  """
+  @spec dev_env_state() :: {:built, String.t()} | {:failed, String.t()} | :not_attempted
+  def dev_env_state do
+    try do
+      :persistent_term.get(@persistent_term_key, :not_attempted)
+    rescue
+      _ -> :not_attempted
+    catch
+      _, _ -> :not_attempted
+    end
+  end
+
+  @doc """
+  Resets the dev-env build state (for testing).
+
+  Clears the persistent_term entry so that the next call starts fresh.
+  """
+  @spec reset_state() :: :ok
+  def reset_state do
+    try do
+      :persistent_term.erase(@persistent_term_key)
+    rescue
+      _ -> :ok
+    catch
+      _, _ -> :ok
+    end
+
+    :ok
   end
 
   @doc """
@@ -37,7 +106,7 @@ defmodule EvoGit.Nix do
   end
 
   @doc """
-  Returns the Nix flake URI for `nix develop`.
+  Returns the Nix flake URI for `nix print-dev-env`.
 
   Uses the config directory as the flake path, optionally appending a
   flake output attribute if `[nix] flake_output` is configured.
@@ -65,9 +134,50 @@ defmodule EvoGit.Nix do
   end
 
   @doc """
-  Wraps a command in `nix develop <flake-uri> --command <executable> <args...>`.
+  Builds (or rebuilds) the dev environment via `nix print-dev-env`.
 
-  Returns `{executable, args}` tuple suitable for `System.cmd/3`.
+  Runs `nix print-dev-env <flake-uri>`, writes the resulting bash script to
+  the cache file (`<data_dir>/nix-dev-env.sh`), stores the flake hash, and
+  updates the global build state. Returns `{:ok, path}` on success or
+  `{:error, reason}` on failure. Never raises — all exceptions are caught
+  and converted to `{:error, reason}`.
+  """
+  @spec build_dev_env() :: {:ok, String.t()} | {:error, String.t()}
+  def build_dev_env do
+    do_build_dev_env()
+  rescue
+    e ->
+      reason = "nix print-dev-env failed: #{Exception.message(e)}"
+      put_state({:failed, reason})
+      {:error, reason}
+  end
+
+  @doc """
+  Ensures the dev environment is built and cached.
+
+  If the cache exists and the flake hash is unchanged, returns the cached
+  path immediately (no rebuild). Otherwise, rebuilds via `build_dev_env/0`.
+  """
+  @spec ensure_dev_env() :: {:ok, String.t()} | {:error, String.t()}
+  def ensure_dev_env do
+    if cache_valid?() do
+      {:ok, cache_path()}
+    else
+      build_dev_env()
+    end
+  end
+
+  @doc """
+  Wraps a command so it runs inside the cached Nix dev environment.
+
+  Produces `{"bash", ["-c", "source <path>; exec <escaped-exec> <escaped-args>"]}`.
+  The dev-env script is sourced first (setting up PATH and env), then the
+  executable runs via `exec`.
+
+  If the dev-env build has already succeeded (`{:built, path}`), the cached
+  path is used directly. If not yet attempted, a lazy build is triggered.
+  If the build fails, the command falls back to running directly (no nix
+  sourcing) without crashing.
 
   ## Parameters
 
@@ -76,12 +186,25 @@ defmodule EvoGit.Nix do
 
   ## Returns
 
-  A `{"nix", [String.t()]}` tuple where the args list is:
-  `["develop", <flake-uri>, "--command", <executable> | <args>]`
+  A `{String.t(), [String.t()]}` tuple suitable for `System.cmd/3`.
   """
   @spec wrap_command(String.t(), [String.t()]) :: {String.t(), [String.t()]}
   def wrap_command(executable, args) do
-    {"nix", ["develop", flake_uri(), "--command", executable | args]}
+    case dev_env_state() do
+      {:built, path} ->
+        build_bash_command(path, executable, args)
+
+      {:failed, _reason} ->
+        # Build previously failed; run directly without nix
+        {executable, args}
+
+      :not_attempted ->
+        # Lazy build on first call
+        case ensure_dev_env() do
+          {:ok, path} -> build_bash_command(path, executable, args)
+          {:error, _reason} -> {executable, args}
+        end
+    end
   end
 
   @doc """
@@ -108,7 +231,79 @@ defmodule EvoGit.Nix do
     |> Enum.map(fn {key, value} -> {key, value} end)
   end
 
-  # --- Private helpers ---
+  # --- Private: dev-env cache management ---
+
+  defp do_build_dev_env do
+    uri = flake_uri()
+
+    {output, exit_code} = System.cmd("nix", ["print-dev-env", uri], stderr_to_stdout: true)
+
+    if exit_code == 0 do
+      path = cache_path()
+      File.mkdir_p!(Platform.data_dir())
+      File.write!(path, output)
+      write_flake_hash()
+      put_state({:built, path})
+      {:ok, path}
+    else
+      reason = "nix print-dev-env failed (exit #{exit_code}): #{String.trim(output)}"
+      put_state({:failed, reason})
+      {:error, reason}
+    end
+  end
+
+  defp cache_path, do: Path.join(Platform.data_dir(), "nix-dev-env.sh")
+
+  defp hash_path, do: Path.join(Platform.data_dir(), "nix-dev-env.hash")
+
+  defp cache_valid? do
+    with true <- File.exists?(cache_path()),
+         {:ok, current_hash} <- flake_hash(),
+         {:ok, stored_hash} <- File.read(hash_path()) do
+      String.trim(stored_hash) == current_hash
+    else
+      _ -> false
+    end
+  end
+
+  defp flake_hash do
+    case File.read(flake_path()) do
+      {:ok, content} ->
+        {:ok, :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)}
+
+      {:error, _reason} ->
+        {:error, "could not read flake.nix"}
+    end
+  end
+
+  defp write_flake_hash do
+    case flake_hash() do
+      {:ok, hash} -> File.write!(hash_path(), hash)
+      _ -> :ok
+    end
+  end
+
+  # --- Private: bash command building & shell escaping ---
+
+  defp build_bash_command(dev_env_path, executable, args) do
+    escaped_exec = shell_escape(executable)
+    escaped_args = Enum.map_join(args, " ", &shell_escape/1)
+    cmd = "source #{shell_escape(dev_env_path)}; exec #{escaped_exec} #{escaped_args}"
+    {"bash", ["-c", cmd]}
+  end
+
+  # POSIX-safe shell escaping: wrap each argument in single quotes and
+  # replace every literal single-quote with the sequence '\''.
+  # e.g. `it's a test` → `'it'\''s a test'`
+  defp shell_escape(arg) do
+    "'" <> String.replace(arg, "'", "'\\''") <> "'"
+  end
+
+  # --- Private: config helpers ---
+
+  defp put_state(state) do
+    :persistent_term.put(@persistent_term_key, state)
+  end
 
   defp nix_enabled_in_config? do
     case nix_config_value(:enabled) do
