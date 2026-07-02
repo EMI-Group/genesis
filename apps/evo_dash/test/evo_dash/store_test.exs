@@ -1,31 +1,31 @@
-defmodule EvoDash.TaskStoreTest do
+defmodule EvoDash.StoreTest do
   use ExUnit.Case, async: false
 
-  alias EvoDash.TaskStore
-  alias EvoDash.TaskRegistry.TaskInfo
+  alias EvoDash.Store
+  alias EvoDash.TaskInfo
   alias EvoDash.RecentProject
 
-  # Terminate production children (TaskRegistry depends on TaskStore) and start
-  # an isolated TaskStore with a unique tmp SQLite path. `async: false` because
+  # Terminate production children (TaskRegistry depends on Store) and start
+  # an isolated Store with a unique tmp SQLite path. `async: false` because
   # we mutate the shared production supervision tree.
   setup do
     Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
-    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskStore)
+    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.Store)
 
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_store_#{unique}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
 
-    start_supervised({TaskStore, data_dir: sqlite_path})
+    start_supervised({Store, data_dir: sqlite_path})
 
     on_exit(fn ->
       File.rm_rf(root)
-      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskStore)
+      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.Store)
       Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
     end)
 
-    {:ok, %{store: TaskStore, sqlite_path: sqlite_path, root: root}}
+    {:ok, %{store: Store, sqlite_path: sqlite_path, root: root}}
   end
 
   describe "task put/get round-trip" do
@@ -47,8 +47,8 @@ defmodule EvoDash.TaskStoreTest do
         commit_sha: "def456"
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-1")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-1")
 
       assert %TaskInfo{} = fetched
       assert fetched.id == "rt-1"
@@ -73,8 +73,8 @@ defmodule EvoDash.TaskStoreTest do
         result: nil
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-dt")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-dt")
 
       assert %DateTime{} = fetched.started_at
       assert %DateTime{} = fetched.finished_at
@@ -93,8 +93,8 @@ defmodule EvoDash.TaskStoreTest do
         result: nil
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-opts")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-opts")
 
       assert is_list(fetched.opts)
       assert fetched.opts[:path] == "/tmp/proj"
@@ -114,8 +114,8 @@ defmodule EvoDash.TaskStoreTest do
         result: nil
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-logs")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-logs")
 
       assert fetched.logs == ["line 1", "line 2", "line 3"]
     end
@@ -140,8 +140,8 @@ defmodule EvoDash.TaskStoreTest do
            }}
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-result")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-result")
 
       assert {:ok, %{commit_sha: "abc123def", branch_name: "evogit/test"}} = fetched.result
     end
@@ -181,8 +181,8 @@ defmodule EvoDash.TaskStoreTest do
            }}
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-result-usage")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-result-usage")
 
       assert {:ok, data} = fetched.result
       assert data.commit_sha == "deadbeef"
@@ -227,8 +227,8 @@ defmodule EvoDash.TaskStoreTest do
            }}
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-result-nochanges")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-result-nochanges")
 
       assert {:ok, data} = fetched.result
       assert data.no_changes == true
@@ -249,8 +249,8 @@ defmodule EvoDash.TaskStoreTest do
         result: {:error, "something went wrong"}
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-result-error")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-result-error")
 
       assert fetched.result == {:error, "something went wrong"}
     end
@@ -267,8 +267,8 @@ defmodule EvoDash.TaskStoreTest do
         result: {:exit, :killed}
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-result-exit")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-result-exit")
 
       assert fetched.result == {:exit, :killed}
     end
@@ -285,8 +285,8 @@ defmodule EvoDash.TaskStoreTest do
         result: "Process crashed while task was running"
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-result-string")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-result-string")
 
       assert fetched.result == "Process crashed while task was running"
     end
@@ -303,8 +303,8 @@ defmodule EvoDash.TaskStoreTest do
         result: {:error, {:bad_match, [1, 2, 3]}}
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-result-complex-error")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-result-complex-error")
 
       # The complex tuple can't be JSON-encoded directly, so it falls back to
       # inspect — but the tuple shape {:error, _} is preserved.
@@ -324,8 +324,8 @@ defmodule EvoDash.TaskStoreTest do
         result: nil
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-result-nil")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-result-nil")
 
       assert fetched.result == nil
     end
@@ -354,8 +354,8 @@ defmodule EvoDash.TaskStoreTest do
         usage: usage
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-usage")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-usage")
 
       assert %EvoGit.Agent.Usage{} = fetched.usage
       assert fetched.usage.input_tokens == 100
@@ -382,8 +382,8 @@ defmodule EvoDash.TaskStoreTest do
         archive_metadata: archive
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-archive")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-archive")
 
       assert is_list(fetched.archive_metadata)
       assert length(fetched.archive_metadata) == 1
@@ -403,8 +403,8 @@ defmodule EvoDash.TaskStoreTest do
         archive_metadata: nil
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-nil")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-nil")
 
       assert fetched.finished_at == nil
       assert fetched.result == nil
@@ -425,8 +425,8 @@ defmodule EvoDash.TaskStoreTest do
         result: nil
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rt-ref")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-ref")
 
       assert fetched.ref == nil
     end
@@ -440,8 +440,8 @@ defmodule EvoDash.TaskStoreTest do
         last_opened_at: ~U[2026-06-26 07:19:44Z]
       }
 
-      :ok = TaskStore.put_project(TaskStore, project)
-      fetched = TaskStore.get_project(TaskStore, "/tmp/myproj")
+      :ok = Store.put_project(Store, project)
+      fetched = Store.get_project(Store, "/tmp/myproj")
 
       assert %RecentProject{} = fetched
       assert fetched.path == "/tmp/myproj"
@@ -453,23 +453,23 @@ defmodule EvoDash.TaskStoreTest do
 
   describe "validation" do
     test "put_task rejects non-struct input" do
-      result = TaskStore.put_task(TaskStore, "not a struct")
+      result = Store.put_task(Store, "not a struct")
       assert match?({:error, _}, result)
     end
 
     test "put_task rejects nil id" do
-      result = TaskStore.put_task(TaskStore, %TaskInfo{id: nil, status: :pending})
+      result = Store.put_task(Store, %TaskInfo{id: nil, status: :pending})
       assert result == {:error, :missing_task_id}
     end
 
     test "put_task rejects nil status" do
-      result = TaskStore.put_task(TaskStore, %TaskInfo{id: "x", status: nil})
+      result = Store.put_task(Store, %TaskInfo{id: "x", status: nil})
       # status nil encoded via Atom.to_string would crash; validation catches it
       assert match?({:error, _}, result)
     end
 
     test "put_project rejects nil path" do
-      result = TaskStore.put_project(TaskStore, %RecentProject{path: nil, name: "x"})
+      result = Store.put_project(Store, %RecentProject{path: nil, name: "x"})
       assert result == {:error, :missing_project_path}
     end
   end
@@ -477,17 +477,17 @@ defmodule EvoDash.TaskStoreTest do
   describe "delete operations" do
     test "delete_task removes a single task" do
       task = %TaskInfo{id: "del-1", type: :genesis, status: :completed, opts: [path: "/t"]}
-      :ok = TaskStore.put_task(TaskStore, task)
-      assert TaskStore.get_task(TaskStore, "del-1") != nil
+      :ok = Store.put_task(Store, task)
+      assert Store.get_task(Store, "del-1") != nil
 
-      :ok = TaskStore.delete_task(TaskStore, "del-1")
-      assert TaskStore.get_task(TaskStore, "del-1") == nil
+      :ok = Store.delete_task(Store, "del-1")
+      assert Store.get_task(Store, "del-1") == nil
     end
 
     test "delete_tasks removes multiple tasks in batch" do
       for i <- 1..3 do
         :ok =
-          TaskStore.put_task(TaskStore, %TaskInfo{
+          Store.put_task(Store, %TaskInfo{
             id: "batch-#{i}",
             type: :genesis,
             status: :completed,
@@ -495,10 +495,10 @@ defmodule EvoDash.TaskStoreTest do
           })
       end
 
-      :ok = TaskStore.delete_tasks(TaskStore, ["batch-1", "batch-2"])
-      assert TaskStore.get_task(TaskStore, "batch-1") == nil
-      assert TaskStore.get_task(TaskStore, "batch-2") == nil
-      assert TaskStore.get_task(TaskStore, "batch-3") != nil
+      :ok = Store.delete_tasks(Store, ["batch-1", "batch-2"])
+      assert Store.get_task(Store, "batch-1") == nil
+      assert Store.get_task(Store, "batch-2") == nil
+      assert Store.get_task(Store, "batch-3") != nil
     end
   end
 
@@ -506,7 +506,7 @@ defmodule EvoDash.TaskStoreTest do
     test "select_all_tasks returns all tasks" do
       for i <- 1..3 do
         :ok =
-          TaskStore.put_task(TaskStore, %TaskInfo{
+          Store.put_task(Store, %TaskInfo{
             id: "sel-#{i}",
             type: :genesis,
             status: :completed,
@@ -514,7 +514,7 @@ defmodule EvoDash.TaskStoreTest do
           })
       end
 
-      tasks = TaskStore.select_all_tasks(TaskStore)
+      tasks = Store.select_all_tasks(Store)
       ids = Enum.map(tasks, & &1.id)
       assert "sel-1" in ids
       assert "sel-2" in ids
@@ -523,12 +523,12 @@ defmodule EvoDash.TaskStoreTest do
 
     test "select_all_projects returns all projects" do
       :ok =
-        TaskStore.put_project(TaskStore, %RecentProject{path: "/p1", name: "P1"})
+        Store.put_project(Store, %RecentProject{path: "/p1", name: "P1"})
 
       :ok =
-        TaskStore.put_project(TaskStore, %RecentProject{path: "/p2", name: "P2"})
+        Store.put_project(Store, %RecentProject{path: "/p2", name: "P2"})
 
-      projects = TaskStore.select_all_projects(TaskStore)
+      projects = Store.select_all_projects(Store)
       paths = Enum.map(projects, & &1.path)
       assert "/p1" in paths
       assert "/p2" in paths
@@ -536,29 +536,29 @@ defmodule EvoDash.TaskStoreTest do
 
     test "count_tasks returns correct count" do
       :ok =
-        TaskStore.put_task(TaskStore, %TaskInfo{
+        Store.put_task(Store, %TaskInfo{
           id: "cnt-1",
           type: :genesis,
           status: :completed,
           opts: [path: "/t"]
         })
 
-      assert TaskStore.count_tasks(TaskStore) >= 1
+      assert Store.count_tasks(Store) >= 1
     end
 
     test "count_projects returns correct count" do
       :ok =
-        TaskStore.put_project(TaskStore, %RecentProject{path: "/cnt-p1", name: "P1"})
+        Store.put_project(Store, %RecentProject{path: "/cnt-p1", name: "P1"})
 
-      assert TaskStore.count_projects(TaskStore) >= 1
+      assert Store.count_projects(Store) >= 1
     end
 
     test "size returns total across both tables" do
-      tasks_before = TaskStore.count_tasks(TaskStore)
-      projects_before = TaskStore.count_projects(TaskStore)
+      tasks_before = Store.count_tasks(Store)
+      projects_before = Store.count_projects(Store)
 
       :ok =
-        TaskStore.put_task(TaskStore, %TaskInfo{
+        Store.put_task(Store, %TaskInfo{
           id: "size-1",
           type: :genesis,
           status: :completed,
@@ -566,29 +566,29 @@ defmodule EvoDash.TaskStoreTest do
         })
 
       :ok =
-        TaskStore.put_project(TaskStore, %RecentProject{path: "/size-p1", name: "P1"})
+        Store.put_project(Store, %RecentProject{path: "/size-p1", name: "P1"})
 
-      size = TaskStore.size(TaskStore)
+      size = Store.size(Store)
       assert size == tasks_before + projects_before + 2
     end
 
     test "clear_tasks removes all tasks" do
       :ok =
-        TaskStore.put_task(TaskStore, %TaskInfo{
+        Store.put_task(Store, %TaskInfo{
           id: "clr-1",
           type: :genesis,
           status: :completed,
           opts: [path: "/t"]
         })
 
-      :ok = TaskStore.clear_tasks(TaskStore)
-      assert TaskStore.count_tasks(TaskStore) == 0
+      :ok = Store.clear_tasks(Store)
+      assert Store.count_tasks(Store) == 0
     end
   end
 
   describe "integrity check" do
     test "returns :ok on a healthy store" do
-      assert TaskStore.integrity_check(TaskStore) == :ok
+      assert Store.integrity_check(Store) == :ok
     end
 
     test "safe_select_all_tasks never raises on bad data", %{sqlite_path: sqlite_path} do
@@ -604,7 +604,7 @@ defmodule EvoDash.TaskStoreTest do
       :ok = XqliteNIF.close(conn)
 
       # safe_select_all_tasks should not raise — it rescues bad rows
-      tasks = TaskStore.safe_select_all_tasks(TaskStore)
+      tasks = Store.safe_select_all_tasks(Store)
       assert is_list(tasks)
     end
   end
@@ -632,21 +632,21 @@ defmodule EvoDash.TaskStoreTest do
 
       # Start a store — init should detect old schema and recreate
       store = :"schema_test_#{unique}"
-      {:ok, _} = TaskStore.start_link(data_dir: sqlite_path, name: store)
+      {:ok, _} = Store.start_link(data_dir: sqlite_path, name: store)
 
       try do
         # Old data is lost (clean slate). New operations work.
-        assert TaskStore.count_tasks(store) == 0
+        assert Store.count_tasks(store) == 0
 
         :ok =
-          TaskStore.put_task(store, %TaskInfo{
+          Store.put_task(store, %TaskInfo{
             id: "new-task",
             type: :genesis,
             status: :completed,
             opts: [path: "/t"]
           })
 
-        fetched = TaskStore.get_task(store, "new-task")
+        fetched = Store.get_task(store, "new-task")
         assert %TaskInfo{} = fetched
         assert fetched.id == "new-task"
       after
@@ -677,15 +677,15 @@ defmodule EvoDash.TaskStoreTest do
         review_status: :merged
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rs-merged")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rs-merged")
 
       # Consumer needs an atom for pattern matching.
       assert fetched.review_status == :merged
 
       # Re-put the fetched task — this is exactly the crash scenario.
-      assert :ok = TaskStore.put_task(TaskStore, fetched)
-      fetched2 = TaskStore.get_task(TaskStore, "rs-merged")
+      assert :ok = Store.put_task(Store, fetched)
+      fetched2 = Store.get_task(Store, "rs-merged")
       assert fetched2.review_status == :merged
     end
 
@@ -703,8 +703,8 @@ defmodule EvoDash.TaskStoreTest do
           review_status: status
         }
 
-        :ok = TaskStore.put_task(TaskStore, task)
-        fetched = TaskStore.get_task(TaskStore, "rs-#{status}")
+        :ok = Store.put_task(Store, task)
+        fetched = Store.get_task(Store, "rs-#{status}")
         assert is_atom(fetched.review_status), "review_status #{status} decoded as non-atom"
         assert fetched.review_status == status
       end
@@ -723,8 +723,8 @@ defmodule EvoDash.TaskStoreTest do
         review_status: nil
       }
 
-      :ok = TaskStore.put_task(TaskStore, task)
-      fetched = TaskStore.get_task(TaskStore, "rs-nil")
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rs-nil")
       assert fetched.review_status == nil
     end
 
@@ -741,8 +741,8 @@ defmodule EvoDash.TaskStoreTest do
           result: nil
         }
 
-        :ok = TaskStore.put_task(TaskStore, task)
-        fetched = TaskStore.get_task(TaskStore, "type-#{type}")
+        :ok = Store.put_task(Store, task)
+        fetched = Store.get_task(Store, "type-#{type}")
         assert is_atom(fetched.type)
         assert fetched.type == type
       end
@@ -761,8 +761,8 @@ defmodule EvoDash.TaskStoreTest do
           result: nil
         }
 
-        :ok = TaskStore.put_task(TaskStore, task)
-        fetched = TaskStore.get_task(TaskStore, "status-#{status}")
+        :ok = Store.put_task(Store, task)
+        fetched = Store.get_task(Store, "status-#{status}")
         assert is_atom(fetched.status)
         assert fetched.status == status
       end
@@ -782,8 +782,8 @@ defmodule EvoDash.TaskStoreTest do
           review_status: review_status
         }
 
-        :ok = TaskStore.put_task(TaskStore, task)
-        fetched = TaskStore.get_task(TaskStore, "rs-#{review_status}")
+        :ok = Store.put_task(Store, task)
+        fetched = Store.get_task(Store, "rs-#{review_status}")
         assert is_atom(fetched.review_status)
         assert fetched.review_status == review_status
       end
@@ -801,7 +801,7 @@ defmodule EvoDash.TaskStoreTest do
 
       :ok = XqliteNIF.close(conn)
 
-      fetched = TaskStore.get_task(TaskStore, "bad-rs")
+      fetched = Store.get_task(Store, "bad-rs")
       assert %TaskInfo{} = fetched
       # Unknown value decodes to nil, not a crash.
       assert fetched.review_status == nil
@@ -824,12 +824,12 @@ defmodule EvoDash.TaskStoreTest do
 
       :ok = XqliteNIF.close(conn)
 
-      fetched = TaskStore.get_task(TaskStore, "str-rs")
+      fetched = Store.get_task(Store, "str-rs")
       assert fetched.review_status == :merged
 
       # Re-put — must not crash (this was the original FunctionClauseError).
-      assert :ok = TaskStore.put_task(TaskStore, fetched)
-      fetched2 = TaskStore.get_task(TaskStore, "str-rs")
+      assert :ok = Store.put_task(Store, fetched)
+      fetched2 = Store.get_task(Store, "str-rs")
       assert fetched2.review_status == :merged
     end
   end
@@ -840,7 +840,7 @@ defmodule EvoDash.TaskStoreTest do
       sqlite_path = Path.join(System.tmp_dir!(), "evogit_term_#{unique}.sqlite")
       store = :"term_test_#{unique}"
 
-      {:ok, _} = TaskStore.start_link(data_dir: sqlite_path, name: store)
+      {:ok, _} = Store.start_link(data_dir: sqlite_path, name: store)
 
       # Stop should not raise — terminate/2 closes the connection
       :ok = GenServer.stop(store)
