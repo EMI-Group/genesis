@@ -54,6 +54,46 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
+  describe "boolean field rendering (nix.enabled)" do
+    test "renders a DaisyUI toggle with hidden field for false value submission", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      # The hidden field (value="false") must appear BEFORE the checkbox so that
+      # unchecked submits "false" and checked submits "true" (checkbox overrides).
+      hidden_html = ~s(type="hidden" name="nix.enabled" value="false")
+      checkbox_html = ~s(type="checkbox" name="nix.enabled" value="true")
+
+      hidden_pos = :binary.match(html, hidden_html)
+      checkbox_pos = :binary.match(html, checkbox_html)
+
+      # Both must be present
+      assert hidden_pos != :nomatch, "hidden boolean field not rendered"
+      assert checkbox_pos != :nomatch, "checkbox boolean field not rendered"
+
+      # Hidden must come before checkbox in the HTML
+      {hidden_start, _} = hidden_pos
+      {checkbox_start, _} = checkbox_pos
+      assert hidden_start < checkbox_start, "hidden field must precede the checkbox"
+    end
+
+    test "toggle is unchecked when value is false/nil (default)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      # Default for nix.enabled is false, so the checkbox should NOT have 'checked'
+      assert html =~ ~s(name="nix.enabled")
+      refute html =~ ~s(name="nix.enabled" value="true" class="toggle toggle-primary toggle-sm" checked)
+    end
+
+    test "toggle uses DaisyUI toggle classes", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert html =~ ~s(class="toggle toggle-primary toggle-sm")
+    end
+  end
+
   describe "custom model providers (OpenRouter / OpenAI-Compatible)" do
     # Note: gettext is NOT imported in ConnCase, so assertions use literal
     # English source strings (matching what the en translation returns).

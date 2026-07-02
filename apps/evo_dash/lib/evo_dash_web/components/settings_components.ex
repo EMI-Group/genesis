@@ -129,6 +129,16 @@ defmodule EvoDashWeb.SettingsComponents do
                   <.icon name="hero-chevron-down" class="size-4" />
                 </div>
               </div>
+            <% :boolean -> %>
+              <%!-- Hidden field ensures "false" is submitted when checkbox is unchecked --%>
+              <input type="hidden" name={Enum.join(@schema.key_path, ".")} value="false" />
+              <input
+                type="checkbox"
+                name={Enum.join(@schema.key_path, ".")}
+                value="true"
+                class="toggle toggle-primary toggle-sm"
+                checked={@value in [true, "true"]}
+              />
             <% :model_spec -> %>
               <%!-- Editable model field: can be typed manually or set via Quick Setup above --%>
               <div class="w-full">

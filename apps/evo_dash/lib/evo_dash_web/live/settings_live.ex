@@ -582,6 +582,9 @@ defmodule EvoDashWeb.SettingsLive do
 
       parsed =
         cond do
+          schema.type == :boolean ->
+            value == "true"
+
           is_nil(value) or value == "" ->
             :explicitly_empty
 
