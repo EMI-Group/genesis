@@ -1,6 +1,13 @@
 defmodule EvoGitTest do
   use ExUnit.Case
 
+  setup do
+    original = Application.get_env(:evo_git, :nix_enabled)
+    Application.put_env(:evo_git, :nix_enabled, false)
+    on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
+    :ok
+  end
+
   describe "sandbox_args/4" do
     test "generates correct systemd-run args" do
       cwd = "/my/project"

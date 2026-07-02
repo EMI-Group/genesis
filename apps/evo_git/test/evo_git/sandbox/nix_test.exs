@@ -5,7 +5,12 @@ defmodule EvoGit.NixTest do
 
   setup do
     Nix.reset_state()
-    on_exit(fn -> Nix.reset_state() end)
+    original = Application.get_env(:evo_git, :nix_enabled)
+    Application.put_env(:evo_git, :nix_enabled, false)
+    on_exit(fn ->
+      Nix.reset_state()
+      Application.put_env(:evo_git, :nix_enabled, original)
+    end)
     :ok
   end
 

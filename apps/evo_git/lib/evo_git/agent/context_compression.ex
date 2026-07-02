@@ -148,6 +148,9 @@ defmodule EvoGit.Agent.ContextCompression do
     ## Decisions Made
     [Architectural or design decisions with their rationale.]
 
+    ## SubAgents Dispatched
+    [Which subagents were spawned, their objectives, and their outcomes.]
+
     ## Errors Encountered
     [Failed approaches, bugs found, blockers. Include exact error messages and what was tried.]
 
