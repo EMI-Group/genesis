@@ -22,7 +22,6 @@ defmodule EvoDash.Store do
   The only localized try/rescue patterns that remain are:
     * `terminate/2` — graceful connection close during shutdown (never crash on
       shutdown).
-    * `maybe_migrate_old_schema/1` — best-effort schema migration check.
     * `integrity_check` and `safe_select_all_rows` — diagnostic/repair functions
       that quarantine corrupt rows rather than crashing.
   """
@@ -185,8 +184,6 @@ defmodule EvoDash.Store do
 
     case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal) do
       {:ok, conn} ->
-        # Detect and migrate from old blob-based schema before creating tables.
-        maybe_migrate_old_schema(conn)
         create_tables(conn)
 
         {:ok, %{conn: conn, data_dir: data_dir}}
@@ -374,7 +371,7 @@ defmodule EvoDash.Store do
     {:reply, reply, state}
   end
 
-  ## Private — Schema creation & migration
+  ## Private — Schema creation
 
   defp create_tables(conn) do
     {:ok, _} =
@@ -430,45 +427,6 @@ defmodule EvoDash.Store do
       )
 
     :ok
-  end
-
-  # Detects the old blob-based schema (tables with a `data` column instead of
-  # proper typed columns) and drops both tables so they can be recreated with
-  # the new column-based schema. Old data is lost — this is acceptable in early
-  # development.
-  defp maybe_migrate_old_schema(conn) do
-    try do
-      old_tasks = has_data_column?(conn, "tasks")
-      old_projects = has_data_column?(conn, "projects")
-
-      if old_tasks or old_projects do
-        Logger.info(
-          "Store: detected old blob-based schema, recreating tables with " <>
-            "column-based schema (old data will be lost)"
-        )
-
-        {:ok, _} = XqliteNIF.execute(conn, "DROP TABLE IF EXISTS tasks", [])
-        {:ok, _} = XqliteNIF.execute(conn, "DROP TABLE IF EXISTS projects", [])
-        {:ok, _} = XqliteNIF.execute(conn, "DROP TABLE IF EXISTS tasks_quarantine", [])
-        {:ok, _} = XqliteNIF.execute(conn, "DROP TABLE IF EXISTS projects_quarantine", [])
-      end
-    rescue
-      e ->
-        Logger.error("Store: old schema migration check failed: #{Exception.message(e)}")
-    end
-  end
-
-  defp has_data_column?(conn, table) do
-    case XqliteNIF.query(conn, "PRAGMA table_info(#{table})", []) do
-      {:ok, %{rows: rows}} when rows != [] ->
-        Enum.any?(rows, fn
-          [_cid, "data" | _] -> true
-          _ -> false
-        end)
-
-      _ ->
-        false
-    end
   end
 
   ## Private — SQL builders

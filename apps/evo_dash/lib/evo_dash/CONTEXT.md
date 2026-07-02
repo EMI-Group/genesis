@@ -84,7 +84,6 @@ size(store) :: non_neg_integer()                          # total across both ta
 ```
 
 - `integrity_check/1`: Runs `PRAGMA integrity_check`, scans all rows, quarantines undecodable rows (INSERT raw JSON into quarantine table + DELETE from live). If quarantine INSERT fails, row is left in place (never destroyed). Returns `:ok` / `{:repaired, count}` / `{:error, reason}`. Called by TaskRegistry on init.
-- **Schema migration**: `maybe_migrate_old_schema/1` detects old `(id, data BLOB)` schema via `PRAGMA table_info`, drops both tables, and recreates with the new column-based schema. Old data is lost (acceptable in early development).
 
 ### `EvoDash.TaskRegistry` (`task_registry.ex`)
 - Singleton `GenServer` backed by SQLite via `EvoDash.Store` (single source of truth).
@@ -119,9 +118,6 @@ size(store) :: non_neg_integer()                          # total across both ta
 ## Retention & Eviction
 - `cleanup_expired_tasks/1`: removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100). Uses `delete_tasks/2` for batch deletion.
 - Recent projects capped at 10 via `trim_recent_projects/1`.
-
-## One-time DETS→SQLite Migration
-- `maybe_migrate_from_dets/1`: if SQLite store is empty AND old DETS files exist, migrates records via `put_task`/`put_project`, then renames `.dets` files to `.dets.migrated`.
 
 ## Constraints
 - `TaskRegistry` is a singleton; do not start multiple instances.

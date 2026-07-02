@@ -609,56 +609,6 @@ defmodule EvoDash.StoreTest do
     end
   end
 
-  describe "schema migration" do
-    test "detects old blob-based schema and recreates with column-based tables" do
-      unique = System.unique_integer([:positive])
-      sqlite_path = Path.join(System.tmp_dir!(), "evogit_schema_test_#{unique}.sqlite")
-      File.mkdir_p!(Path.dirname(sqlite_path))
-
-      # Seed old schema: (id TEXT PRIMARY KEY, data BLOB)
-      {:ok, conn} = Xqlite.open(sqlite_path)
-
-      XqliteNIF.execute(conn, "CREATE TABLE tasks (id TEXT PRIMARY KEY, data BLOB)", [])
-      XqliteNIF.execute(conn, "CREATE TABLE projects (id TEXT PRIMARY KEY, data BLOB)", [])
-
-      XqliteNIF.execute(conn, "INSERT INTO tasks (id, data) VALUES (?1, ?2)", [
-        "old-task",
-        :erlang.term_to_binary(%{old: true})
-      ])
-
-      :ok = XqliteNIF.close(conn)
-
-      on_exit(fn -> File.rm(sqlite_path) end)
-
-      # Start a store — init should detect old schema and recreate
-      store = :"schema_test_#{unique}"
-      {:ok, _} = Store.start_link(data_dir: sqlite_path, name: store)
-
-      try do
-        # Old data is lost (clean slate). New operations work.
-        assert Store.count_tasks(store) == 0
-
-        :ok =
-          Store.put_task(store, %TaskInfo{
-            id: "new-task",
-            type: :genesis,
-            status: :completed,
-            opts: [path: "/t"]
-          })
-
-        fetched = Store.get_task(store, "new-task")
-        assert %TaskInfo{} = fetched
-        assert fetched.id == "new-task"
-      after
-        try do
-          GenServer.stop(store)
-        catch
-          _, _ -> :ok
-        end
-      end
-    end
-  end
-
   describe "atom field round-trip safety (regression)" do
     # Regression for the critical crash: encode_atom/1 only accepted nil and
     # atoms, but decode_atom/1 could return a string. If a decoded value

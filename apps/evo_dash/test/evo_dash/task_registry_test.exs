@@ -338,7 +338,7 @@ defmodule EvoDash.TaskRegistryTest do
 
     test "persists to the store after update" do
       unique = System.unique_integer([:positive])
-      task_id = "review_meta_dets_#{unique}"
+      task_id = "review_meta_#{unique}"
 
       task = %TaskInfo{
         id: task_id,
@@ -459,7 +459,7 @@ defmodule EvoDash.TaskRegistryTest do
   describe "persistence" do
     test "get_task retrieves a task seeded directly into the store" do
       unique = System.unique_integer([:positive])
-      task_id = "cubdb_crud_#{unique}"
+      task_id = "persistence_crud_#{unique}"
 
       task = %TaskInfo{
         id: task_id,
@@ -486,7 +486,7 @@ defmodule EvoDash.TaskRegistryTest do
 
     test "task persists across a registry restart with the same store", %{data_dir: data_dir} do
       unique = System.unique_integer([:positive])
-      task_id = "cubdb_durable_#{unique}"
+      task_id = "persistence_durable_#{unique}"
 
       task = %TaskInfo{
         id: task_id,
@@ -521,50 +521,6 @@ defmodule EvoDash.TaskRegistryTest do
       assert fetched.type == :evolve
       assert fetched.status == :completed
       assert fetched.opts[:objective] == "durability check"
-    end
-  end
-
-  describe "schema migration" do
-    test "detects old blob-based schema and recreates with column-based tables" do
-      unique = System.unique_integer([:positive])
-      root = Path.join(System.tmp_dir!(), "evogit_test_schema_migrate_#{unique}")
-      File.mkdir_p!(root)
-      sqlite_path = Path.join(root, "tasks.sqlite")
-
-      # Seed a STALE schema: both tables use the old (id/path, data BLOB) format.
-      {:ok, conn} = Xqlite.open(sqlite_path)
-      {:ok, _} =
-        XqliteNIF.execute(conn, "CREATE TABLE tasks (id TEXT PRIMARY KEY, data BLOB)", [])
-      {:ok, _} =
-        XqliteNIF.execute(conn, "CREATE TABLE projects (path TEXT PRIMARY KEY, data BLOB)", [])
-      {:ok, _} =
-        XqliteNIF.execute(conn, "INSERT INTO tasks (id, data) VALUES (?1, ?2)", [
-          "old_task",
-          :erlang.term_to_binary(%{id: "old_task", status: :completed})
-        ])
-      :ok = XqliteNIF.close(conn)
-      on_exit(fn -> File.rm_rf(root) end)
-
-      # Stop the default supervised store + registry, then start fresh ones.
-      # Store.init detects the old schema (tables with `data` column)
-      # and drops + recreates with the new column-based schema.
-      stop_supervised(EvoDash.TaskRegistry)
-      stop_supervised(EvoDash.Store)
-      start_supervised({EvoDash.Store, data_dir: sqlite_path})
-      start_supervised(
-        {TaskRegistry, task_store: EvoDash.Store, data_dir: root, name: EvoDash.TaskRegistry}
-      )
-
-      # Old data is gone (clean slate). New operations work correctly.
-      projects = TaskRegistry.list_recent_projects()
-      assert projects == []
-
-      # Verify the store accepts new data with the new column-based schema.
-      :ok = TaskRegistry.add_recent_project("/tmp/new_proj", "New Project")
-      projects = TaskRegistry.list_recent_projects()
-      assert length(projects) == 1
-      assert hd(projects).path == "/tmp/new_proj"
-      assert hd(projects).name == "New Project"
     end
   end
 
