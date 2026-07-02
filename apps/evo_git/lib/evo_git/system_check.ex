@@ -159,7 +159,8 @@ defmodule EvoGit.SystemCheck do
   Checks Nix dev-environment integration.
 
   When nix is enabled (config + binary + flake), validates that the flake
-  actually evaluates by running `Nix.build_dev_env/0`.
+  actually evaluates by running `Nix.ensure_dev_env/0`, which uses the
+  SHA-256-keyed cache so repeated checks don't re-evaluate the flake.
 
   Returns:
 
@@ -180,7 +181,7 @@ defmodule EvoGit.SystemCheck do
     flake_present = File.exists?(EvoGit.Nix.flake_path())
 
     if enabled and flake_present do
-      case EvoGit.Nix.build_dev_env() do
+      case EvoGit.Nix.ensure_dev_env() do
         {:ok, _path} ->
           %{available: available, enabled: enabled, flake_present: flake_present, dev_env_built: true, error: nil}
 
