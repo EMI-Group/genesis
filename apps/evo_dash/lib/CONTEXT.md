@@ -8,7 +8,7 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 
 ## Routing Table
 
-- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `TaskStore` (SQLite persistence via xqlite), `TaskRegistry` (SQLite-backed GenServer)
+- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `Store` (SQLite persistence via xqlite), `Store.Codec` (pure serialization), `TaskInfo`/`RecentProject` (structs), `TaskRegistry` (SQLite-backed GenServer)
 - `./evo_dash_web/` → Web interface: LiveViews, components, router, endpoint, helpers
 - `./evo_dash_web.ex` → Web module macro (`use EvoDashWeb, :live_view` / `:html` / `:controller` etc.)
 
@@ -18,9 +18,12 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 
 | Module | Purpose |
 |--------|---------|
-| `EvoDash.Application` | OTP supervisor tree (Telemetry → DNSCluster → PubSub → TaskSupervisor → TaskStore → TaskRegistry → Endpoint) |
-| `EvoDash.TaskStore` | SQLite-backed persistent store (single GenServer holding one xqlite connection; column-based `tasks`/`projects` tables with JSON encoding, explicit WAL+NORMAL durability PRAGMAs, graceful connection close in `terminate/2`); `EvoDash.RecentProject` struct also defined here |
-| `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes |
+| `EvoDash.Application` | OTP supervisor tree (Telemetry → DNSCluster → PubSub → TaskSupervisor → Store → TaskRegistry → Endpoint) |
+| `EvoDash.Store` | SQLite-backed persistent store (single GenServer holding one xqlite connection; column-based `tasks`/`projects` tables with JSON encoding, explicit WAL+NORMAL durability PRAGMAs, graceful connection close in `terminate/2`). Delegates ALL serialization to `EvoDash.Store.Codec`. Callbacks have NO try/rescue — crashes propagate to supervisor for restart. Localized try/rescue only in quarantine/integrity-check helpers. |
+| `EvoDash.Store.Codec` | Pure serialization module (no GenServer, no I/O). TOTAL encode functions (never raise — fallback to `inspect/1`). Decode functions raise on bad data (Store's quarantine logic handles recovery). |
+| `EvoDash.TaskInfo` | Struct representing a task in the registry (extracted from nested module) |
+| `EvoDash.RecentProject` | Struct for recently opened projects |
+| `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes. Callbacks have NO try/rescue. On restart, `reconcile_task_status/2` checks `:evogit_sched_meta` ETS for active agents before marking running tasks as failed. |
 
 ### Web Modules (`./evo_dash_web/`)
 
