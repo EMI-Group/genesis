@@ -291,7 +291,7 @@ defmodule EvoDash.TaskRegistry do
     trim_recent_projects(state)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
-    {:reply, {:ok, state}, state}
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -308,7 +308,7 @@ defmodule EvoDash.TaskRegistry do
     EvoDash.Store.delete_project(state.task_store, path)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
-    {:reply, {:ok, state}, state}
+    {:reply, :ok, state}
   end
 
   @impl true
