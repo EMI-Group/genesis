@@ -102,7 +102,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       {:ok, entries} ->
         entries
         |> Enum.map(&parse_task_number/1)
-        |> Enum.filter(&(&1))
+        |> Enum.filter(& &1)
         |> Enum.max(fn -> 0 end)
         |> Kernel.+(1)
 
@@ -125,11 +125,13 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   # --- Dispatch ---
 
   @doc """
-  Dispatches an agent by creating/assigning a worktree and spawning a Task.
+  Dispatches an agent by computing the worktree path and spawning a Task.
 
-  Creates a persistent worktree for the agent (if it doesn't exist), prepares it,
-  runs the init script on first creation, and spawns the agent Task. Updates ETS
-  with worktree assignment and running status.
+  The GenServer phase (this function) is fast: it computes the worktree path,
+  stores it in sched_meta (so cancel_agent can find the worktree), and spawns
+  the agent Task. All blocking I/O — worktree creation, git clean/checkout,
+  and the init script — runs inside the Task process, allowing multiple
+  subagents to start up concurrently.
   """
   @spec try_dispatch(State.t(), pos_integer()) :: State.t()
   def try_dispatch(state, agent_id) do
@@ -148,15 +150,87 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   defp do_try_dispatch(state, agent_id, meta, agent_state) do
     retries = meta.retries
     spec = meta.spec
-    task_number = meta.task_number
     task_local_id = agent_state.task_local_id
 
-    # Create a persistent worktree for this agent: worker_T<task_number>_A<task_local_id>
-    # Determine repo root from the agent's spec data, with repos map as fallback
+    # Phase 1 — GenServer phase (fast, no blocking I/O):
+    # Compute the worktree path and store it in sched_meta BEFORE spawning the
+    # task, so cancel_agent can find the worktree to clean up even if the task
+    # hasn't finished its setup yet.
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
     worktree_path =
-      Path.join([agent_repo_root, ".evogit/workers", "worker_T#{task_number}_A#{task_local_id}"])
+      Path.join([
+        agent_repo_root,
+        ".evogit/workers",
+        "worker_T#{meta.task_number}_A#{task_local_id}"
+      ])
+
+    Store.put_sched_meta(agent_id, %{meta | worktree: worktree_path})
+
+    # Phase 2 — Task phase (slow, concurrent):
+    # All blocking I/O (worktree creation, preparation, init script) runs
+    # inside the task process, so multiple subagents start in parallel.
+    task =
+      Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
+        Process.put(:evogit_agent_id, agent_id)
+        Process.put(:evogit_agent_depth, meta.depth)
+        Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
+        Process.put(:evogit_repo_root, agent_repo_root)
+        Process.put(:evogit_repo_id, spec.repo_id)
+        Process.put(:repo_path, worktree_path)
+
+        # Create/prepare worktree and run init script (blocking I/O, runs
+        # concurrently across subagents). If this fails, the task crashes
+        # (caught by the :DOWN handler / crash recovery) rather than the
+        # GenServer — which is the desired behaviour.
+        setup_worktree_in_task(agent_id, agent_repo_root, worktree_path, spec, meta)
+
+        if retries > 0 do
+          Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
+          Process.sleep(30_000 * retries)
+        else
+          Logger.info(
+            "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
+          )
+        end
+
+        # The agent process owns git operations. After the agent finishes
+        # (any exit path), commit any pending changes as a best-effort
+        # fallback so the worktree is clean before the scheduler processes
+        # the result. The scheduler never touches git directly.
+        try do
+          spec.agent_module.run(spec.objective)
+        after
+          commit_pending_in_worktree()
+        end
+      end)
+
+    # Update scheduler metadata with running status and the task reference.
+    # Store the full %Task{} struct so cancel_agent can call Task.shutdown/2.
+    # ref_to_agent still keys on task.ref (the monitor reference).
+    Store.put_sched_meta(agent_id, %{
+      meta
+      | status: :running,
+        worktree: worktree_path,
+        task_ref: task
+    })
+
+    %{
+      state
+      | ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
+    }
+  end
+
+  # Performs worktree setup inside the agent (Task) process. This is the
+  # blocking I/O that was previously done synchronously in the GenServer:
+  #   1. Create the worktree if it doesn't exist (Git.add_worktree)
+  #   2. Prepare it (Git.clean + Git.checkout) via assign_and_prepare_worktree
+  #   3. Run the init script on first creation (primary repo only)
+  # Running this in the task allows multiple subagents to set up concurrently.
+  defp setup_worktree_in_task(agent_id, agent_repo_root, worktree_path, spec, meta) do
+    task_number = meta.task_number
+    {:ok, agent_state} = Store.get_agent_state(agent_id)
+    task_local_id = agent_state.task_local_id
 
     # Create the worktree if it doesn't exist (e.g., on first dispatch)
     newly_created =
@@ -200,51 +274,6 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         source_worktree_path: parent_worktree || agent_repo_root
       )
     end
-
-    task =
-      Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
-        Process.put(:evogit_agent_id, agent_id)
-        Process.put(:evogit_agent_depth, meta.depth)
-        Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
-
-        Process.put(:evogit_repo_root, agent_repo_root)
-        Process.put(:evogit_repo_id, spec.repo_id)
-        Process.put(:repo_path, worktree_path)
-
-        if retries > 0 do
-          Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
-          Process.sleep(30_000 * retries)
-        else
-          Logger.info(
-            "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
-          )
-        end
-
-        # The agent process owns git operations. After the agent finishes
-        # (any exit path), commit any pending changes as a best-effort
-        # fallback so the worktree is clean before the scheduler processes
-        # the result. The scheduler never touches git directly.
-        try do
-          spec.agent_module.run(spec.objective)
-        after
-          commit_pending_in_worktree()
-        end
-      end)
-
-    # Update scheduler metadata with worktree assignment and running status.
-    # Store the full %Task{} struct so cancel_agent can call Task.shutdown/2.
-    # ref_to_agent still keys on task.ref (the monitor reference).
-    Store.put_sched_meta(agent_id, %{
-      meta
-      | status: :running,
-        worktree: worktree_path,
-        task_ref: task
-    })
-
-    %{
-      state
-      | ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
-    }
   end
 
   # --- Auto-Commit Fallback (agent process) ---
