@@ -64,7 +64,6 @@ defmodule EvoDash.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:gettext, "~> 1.0"},
-      {:dns_cluster, "~> 0.2.0"},
       {:phoenix_pubsub, "~> 2.2"},
       {:bandit, "~> 1.5"},
       {:xqlite, "~> 0.7"},

@@ -12,11 +12,10 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 - OTP Application callback module.
 - **Supervision tree children** (strategy: `one_for_one`):
   1. `EvoDashWeb.Telemetry`
-  2. `DNSCluster`
-  3. `Phoenix.PubSub` (registered as `EvoDash.PubSub`)
-  4. `EvoDash.Store` (SQLite store — started BEFORE TaskRegistry, which depends on it at init)
-  5. `EvoDash.TaskRegistry`
-  6. `EvoDashWeb.Endpoint`
+  2. `Phoenix.PubSub` (registered as `EvoDash.PubSub`)
+  3. `EvoDash.Store` (SQLite store — started BEFORE TaskRegistry, which depends on it at init)
+  4. `EvoDash.TaskRegistry`
+  5. `EvoDashWeb.Endpoint`
 
 ### `EvoDash.RecentProject` (`store.ex`)
 - Struct representing a recently opened project: `%RecentProject{path: String.t(), name: String.t(), last_opened_at: DateTime.t() | nil}`.
