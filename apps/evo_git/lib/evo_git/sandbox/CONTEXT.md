@@ -10,7 +10,7 @@ Provides platform-specific sandboxing for agent-executed commands. Dispatches to
 | `EvoGit.Sandbox.Linux` | Linux/systemd-run backend (full sandboxing) |
 | `EvoGit.Sandbox.MacOS` | macOS/sandbox-exec backend (filesystem isolation) |
 | `EvoGit.Sandbox.None` | Passthrough backend (no sandboxing) |
-| `EvoGit.Nix` | Shared helper for running commands inside a Nix develop environment — wraps commands in `nix develop <flake-uri> --command <executable> <args>` when enabled via config (`[nix] enabled = true`), the `nix` binary is available, and a `flake.nix` exists in the config directory |
+| `EvoGit.Nix` | Shared helper for running commands inside a cached Nix dev environment — builds the dev env ONCE via `nix print-dev-env`, caches the bash script to `<data_dir>/nix-dev-env.sh`, and sources it per call via `bash -c "source <path>; exec <cmd>"`. Gate: `active?/0` (enabled + dev-env build not failed); `enabled?/0` is the static capability check |
 
 ## Constraints
 - All backends implement the same behaviour: `enabled?/0`, `ensure_initialized/0`, `run/4`
