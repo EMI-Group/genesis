@@ -191,7 +191,7 @@ defmodule EvoGit.Sandbox.Linux do
       resource_args() ++
       read_write_args ++
       inaccessible_args ++
-      if Nix.enabled?() do
+      if Nix.active?() do
         {nix_exe, nix_args} = Nix.wrap_command(executable, args)
         [nix_exe | nix_args]
       else

@@ -2,10 +2,12 @@ defmodule EvoGit.Sandbox.None do
   @moduledoc """
   No-op sandbox backend for Windows and other unsupported platforms.
 
-  All commands run directly without any sandboxing. When Nix develop wrapping
-  is enabled (via config + available `nix` binary + `flake.nix`), commands
-  are wrapped in `nix develop` so that LLM-generated tool calls have access
-  to the tools and environment defined in the user's Nix flake.
+  All commands run directly without any sandboxing. When the Nix dev
+  environment is active (enabled via config + available `nix` binary +
+  `flake.nix` + successful dev-env build), commands are run inside the
+  cached dev environment (sourced via `bash -c`) so that LLM-generated
+  tool calls have access to the tools and environment defined in the
+  user's Nix flake.
   """
 
   alias EvoGit.Nix
@@ -18,12 +20,12 @@ defmodule EvoGit.Sandbox.None do
   @spec ensure_initialized() :: :ok
   def ensure_initialized, do: :ok
 
-  @doc "Runs command directly, optionally wrapped in nix develop when enabled."
+  @doc "Runs command directly, optionally inside the cached nix dev env when active."
   @spec run(String.t(), String.t(), [String.t()], String.t() | nil) ::
           {String.t(), non_neg_integer()}
   def run(cwd, executable, args \\ [], _repo_root \\ nil) do
     {exec, exec_args} =
-      if Nix.enabled?() do
+      if Nix.active?() do
         Nix.wrap_command(executable, args)
       else
         {executable, args}

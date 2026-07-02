@@ -1,10 +1,19 @@
 defmodule EvoGit.SystemCheckTest do
   use ExUnit.Case, async: false
 
-  alias EvoGit.SystemCheck
+  alias EvoGit.{Nix, SystemCheck}
 
   # Expected tool_result keys
   @tool_keys [:available, :path, :version, :error]
+
+  # Expected nix_check keys
+  @nix_keys [:available, :enabled, :flake_present, :dev_env_built, :error]
+
+  setup do
+    Nix.reset_state()
+    on_exit(fn -> Nix.reset_state() end)
+    :ok
+  end
 
   describe "tool_check/0" do
     test "returns a map with :git and :rg keys" do
@@ -246,6 +255,58 @@ defmodule EvoGit.SystemCheckTest do
     end
   end
 
+  describe "nix_check/0" do
+    test "returns a map with expected keys" do
+      result = SystemCheck.nix_check()
+
+      assert is_map(result)
+
+      for key <- @nix_keys do
+        assert Map.has_key?(result, key), "nix result missing key: #{inspect(key)}"
+      end
+    end
+
+    test ":available is a boolean" do
+      result = SystemCheck.nix_check()
+      assert is_boolean(result.available)
+    end
+
+    test ":enabled is a boolean" do
+      result = SystemCheck.nix_check()
+      assert is_boolean(result.enabled)
+    end
+
+    test ":flake_present is a boolean" do
+      result = SystemCheck.nix_check()
+      assert is_boolean(result.flake_present)
+    end
+
+    test ":dev_env_built is a boolean" do
+      result = SystemCheck.nix_check()
+      assert is_boolean(result.dev_env_built)
+    end
+
+    test ":error is nil or a string" do
+      result = SystemCheck.nix_check()
+      assert result.error == nil or is_binary(result.error)
+    end
+
+    test "does not raise" do
+      # nix_check/0 is wrapped in a rescue clause and must always return a map
+      result = SystemCheck.nix_check()
+      assert is_map(result)
+    end
+
+    test "when nix is not enabled, returns all-false map with nil error" do
+      result = SystemCheck.nix_check()
+
+      if result.enabled == false do
+        assert result.dev_env_built == false
+        assert result.error == nil
+      end
+    end
+  end
+
   describe "run_all_checks/0" do
     test "returns a map with expected keys" do
       result = SystemCheck.run_all_checks()
@@ -255,6 +316,7 @@ defmodule EvoGit.SystemCheckTest do
       assert Map.has_key?(result, :tools)
       assert Map.has_key?(result, :sandbox)
       assert Map.has_key?(result, :supervisor)
+      assert Map.has_key?(result, :nix)
     end
 
     test "does not raise" do
@@ -304,6 +366,16 @@ defmodule EvoGit.SystemCheckTest do
       assert Map.has_key?(supervisor, :evo_git)
       assert Map.has_key?(supervisor, :evo_dash)
       assert Map.has_key?(supervisor, :healthy)
+    end
+
+    test ":nix value matches nix_check/0 structure" do
+      nix = SystemCheck.run_all_checks()[:nix]
+
+      assert is_map(nix)
+
+      for key <- @nix_keys do
+        assert Map.has_key?(nix, key), "nix result missing key: #{inspect(key)}"
+      end
     end
   end
 end

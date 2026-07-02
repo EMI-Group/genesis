@@ -105,7 +105,7 @@ github_username = "..."      # For PR creation
 mode = "auto"                # "auto" | "enabled" | "disabled"
 
 [nix]
-enabled = false              # Wrap tool calls in `nix develop` (requires flake.nix in config dir)
+enabled = false              # Run tool calls inside a cached Nix dev environment (requires flake.nix in config dir)
 flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
 ```
 
