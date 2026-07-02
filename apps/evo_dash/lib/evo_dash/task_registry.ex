@@ -690,11 +690,17 @@ defmodule EvoDash.TaskRegistry do
   # means agents are still active. Returns false if the table doesn't exist.
   defp sched_meta_has_active_agents?(task_id) do
     try do
-      :ets.select(:evogit_sched_meta, [
-        {{"$1", "$2"},
-         [{:==, {:map_get, :task_id, :"$2"}, {:const, task_id}}],
-         ["$2"]}
-      ]) != []
+      case :ets.whereis(:evogit_sched_meta) do
+        :undefined ->
+          false
+
+        _ ->
+          :evogit_sched_meta
+          |> :ets.tab2list()
+          |> Enum.any?(fn {_id, meta} ->
+            Map.get(meta, :task_id) == task_id
+          end)
+      end
     rescue
       # Table doesn't exist (e.g., AgentScheduler not started, or full VM restart)
       ArgumentError -> false

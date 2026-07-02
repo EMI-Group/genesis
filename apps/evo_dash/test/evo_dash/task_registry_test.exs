@@ -1036,6 +1036,83 @@ defmodule EvoDash.TaskRegistryTest do
       assert fetched.status == :failed
     end
 
+    test "a running task with a dead PID stays :running if AgentScheduler has active agents",
+         %{data_dir: data_dir} do
+      task_id = "restart_ets_#{System.unique_integer([:positive])}"
+
+      # Spawn and immediately kill a process so the PID is dead.
+      {:ok, agent_pid} =
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          :ok
+        end)
+
+      # Wait for the process to exit.
+      ref = Process.monitor(agent_pid)
+
+      receive do
+        {:DOWN, ^ref, :process, ^agent_pid, _} -> :ok
+      after
+        1_000 -> flunk("process did not exit")
+      end
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: agent_pid,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      refute Process.alive?(agent_pid)
+
+      # Set up the :evogit_sched_meta ETS table with a fake active agent for
+      # this task_id. This simulates AgentScheduler still running the task
+      # under a sibling process while TaskRegistry restarts.
+      try do
+        :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
+      rescue
+        ArgumentError -> :ok
+      end
+
+      sched_meta_entry = %EvoGit.AgentScheduler.SchedMeta{
+        id: System.unique_integer([:positive]),
+        depth: 0,
+        spec: %{},
+        task_id: task_id,
+        status: :running
+      }
+
+      :ets.insert(:evogit_sched_meta, {sched_meta_entry.id, sched_meta_entry})
+
+      try do
+        stop_supervised(EvoDash.TaskRegistry)
+
+        start_supervised(
+          {TaskRegistry,
+           task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+        )
+
+        # The task should STILL be :running — the ETS check found active agents.
+        fetched = TaskRegistry.get_task(task_id)
+        assert fetched != nil
+        assert fetched.status == :running
+      after
+        # Clean up the ETS entry.
+        try do
+          :ets.delete(:evogit_sched_meta, sched_meta_entry.id)
+        rescue
+          _ -> :ok
+        end
+      end
+    end
+
     test "DOWN handler marks a re-monitored task as :completed when it exits :normal",
          %{data_dir: data_dir} do
       task_id = "restart_down_normal_#{System.unique_integer([:positive])}"
