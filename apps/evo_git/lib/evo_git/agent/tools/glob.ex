@@ -105,11 +105,14 @@ defmodule EvoGit.Agent.Tools.Glob do
     end
   end
 
-  # Wraps Path.wildcard so that malformed glob patterns (e.g. unmatched `{` or
-  # `[`) are caught instead of crashing the agent. On this codebase's Elixir,
-  # an invalid brace pattern raises `{:badpattern, :missing_delimiter}` as an
-  # `:error`; other Erlang/Elixir versions may throw or exit instead, so we
-  # cover all three kinds to guarantee no escape path crashes.
+  # KEEP (try/catch, not rescue): Path.wildcard has no non-crashing variant.
+  # We genuinely expect this error — the glob pattern is user input (from the
+  # LLM tool call) and malformed patterns (e.g. unmatched `{` or `[`) crash as
+  # `{:badpattern, :missing_delimiter}`. Different Erlang/Elixir versions raise
+  # (:error), throw, or exit, so we catch all three. Crashing the agent on a
+  # bad pattern would waste a retry; returning a helpful error message is the
+  # right behavior. case/with cannot be used because Path.wildcard crashes
+  # rather than returning error tuples.
   defp safe_wildcard(full_pattern) do
     try do
       {:ok, Path.wildcard(full_pattern, match_dot: true)}
