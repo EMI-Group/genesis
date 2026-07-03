@@ -19,11 +19,23 @@ defmodule EvoDash.Store do
   supervisor restarts it with a fresh connection. Data is safe in SQLite WAL
   mode (`journal_mode=WAL`, `synchronous=NORMAL`).
 
-  The only localized try/rescue patterns that remain are:
-    * `terminate/2` — graceful connection close during shutdown (never crash on
-      shutdown).
-    * `integrity_check` and `safe_select_all_rows` — diagnostic/repair functions
-      that quarantine corrupt rows rather than crashing.
+  The codec (`EvoDash.Store.Codec`) uses non-crashing `Jason.encode/1` + `case`
+  for TOTAL encode (no try/rescue). Decode functions raise on bad data by
+  design — the quarantine/recovery logic below catches those failures.
+
+  The only justified try/rescue patterns that remain are:
+    * `terminate/2` — graceful connection close during shutdown. GenServer
+      terminate/2 must never raise; a crash here could prevent clean
+      supervision shutdown.
+    * `do_safe_select_all_rows`, `scan_and_repair` — quarantine/data-recovery
+      boundaries that deliberately catch decode failures to quarantine corrupt
+      rows rather than crashing. The decoder raises by design; quarantine is the
+      deliberate recovery boundary.
+    * `do_integrity_check` — a diagnostic/recovery routine called during
+      TaskRegistry init. It must return `{:error, _}` rather than crashing,
+      because a crash here would prevent TaskRegistry from starting.
+    * `quarantine_row` (INSERT/DELETE) — data-recovery boundary that must never
+      destroy data; if the quarantine INSERT fails, the row is left in place.
   """
 
   use GenServer
@@ -195,6 +207,11 @@ defmodule EvoDash.Store do
 
   @impl true
   def terminate(_reason, %{conn: conn} = _state) do
+    # Justified try/rescue: (1) Do we expect an error here? Possibly — the
+    # connection may already be closed or in a bad state during shutdown.
+    # (2) Is try/rescue cleanest? Yes — GenServer terminate/2 must NEVER raise;
+    # a crash here could prevent clean supervision shutdown and leave the process
+    # in a half-dead state.
     try do
       XqliteNIF.close(conn)
     rescue
@@ -464,6 +481,12 @@ defmodule EvoDash.Store do
         Enum.flat_map(rows, fn row ->
           id = hd(row)
 
+          # Justified try/rescue — quarantine/data-recovery boundary.
+          # (1) Do we expect this? Yes — DB rows may contain corrupt or legacy
+          # data that fails to decode. (2) Cleanest approach? The decoder raises
+          # by design (Codec decode philosophy); quarantine is the deliberate
+          # recovery boundary that moves bad rows aside rather than crashing the
+          # entire select.
           try do
             [decoder.(row)]
           rescue
@@ -487,6 +510,12 @@ defmodule EvoDash.Store do
   ## Private — Integrity check
 
   defp do_integrity_check(conn) do
+    # Justified try/rescue — diagnostic/recovery routine.
+    # (1) Do we expect an error here? Possibly — unexpected SQLite-level
+    # failures during the diagnostic scan itself. (2) Cleanest approach?
+    # integrity_check is a recovery routine called during GenServer init (from
+    # TaskRegistry.init/1). It must return {:error, _} rather than crashing,
+    # because a crash here would prevent TaskRegistry from starting at all.
     try do
       case XqliteNIF.query(conn, "PRAGMA integrity_check", []) do
         {:ok, %{rows: [["ok"]]}} ->
@@ -531,6 +560,9 @@ defmodule EvoDash.Store do
         Enum.reduce(rows, 0, fn row, acc ->
           id = hd(row)
 
+          # Justified try/rescue — quarantine/data-recovery boundary (same as
+          # safe_select_all_rows). The decoder raises by design; quarantine is
+          # the deliberate recovery boundary.
           try do
             decoder.(row)
             acc
@@ -553,15 +585,14 @@ defmodule EvoDash.Store do
     quarantine_table = "#{table}_quarantine"
 
     json_data =
-      try do
-        columns
-        |> Enum.zip(row)
-        |> Map.new()
-        |> Jason.encode!()
-      rescue
-        _ -> nil
+      case columns |> Enum.zip(row) |> Map.new() |> Jason.encode() do
+        {:ok, json} -> json
+        {:error, _} -> nil
       end
 
+    # Justified try/rescue — data-recovery boundary. Must never destroy data;
+    # if the quarantine INSERT or DELETE fails, we log and leave the row in
+    # place rather than crashing and potentially losing the row entirely.
     try do
       {:ok, _} =
         XqliteNIF.execute(

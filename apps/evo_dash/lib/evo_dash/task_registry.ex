@@ -115,13 +115,9 @@ defmodule EvoDash.TaskRegistry do
     }
 
     # Repair the store from any corrupt (un-deserializable) entries before we
-    # read or normalize anything. Best-effort: never let this crash init.
-    try do
-      EvoDash.Store.integrity_check(task_store)
-    rescue
-      error ->
-        Logger.warning("TaskRegistry init: integrity check failed: #{inspect(error)}")
-    end
+    # read or normalize anything. integrity_check returns {:error, _} for
+    # problems rather than raising, so no rescue is needed here.
+    EvoDash.Store.integrity_check(task_store)
 
     # Normalize SQLite entries in place (backfill fields, reset crashed tasks,
     # and re-monitor any tasks whose processes are still alive under the sibling
@@ -196,12 +192,19 @@ defmodule EvoDash.TaskRegistry do
                 # Notify the AgentScheduler to cancel all agents for this task
                 # before killing the wrapper process. The scheduler uses the caller PID
                 # to find the matching top-level agent and cascade cleanup to subagents.
+                #
+                # Justified catch :exit — cross-app boundary. The scheduler may
+                # genuinely not be running (or the GenServer may be dead), in which
+                # case the GenServer call raises an exit (not a rescue-able
+                # exception). We always proceed to brutal_kill the wrapper
+                # regardless, so we log the exit and continue.
                 try do
                   EvoGit.AgentScheduler.cancel_task_agents(pid)
-                rescue
-                  _ -> :ok
                 catch
-                  _, _ -> :ok
+                  :exit, reason ->
+                    Logger.warning(
+                      "TaskRegistry: AgentScheduler cancel failed (exit): #{inspect(reason)}"
+                    )
                 end
 
                 Task.shutdown(task_ref, :brutal_kill)
@@ -489,20 +492,11 @@ defmodule EvoDash.TaskRegistry do
     objects = select_all_tasks(state)
 
     Enum.reduce(objects, state, fn %TaskInfo{} = task, acc ->
-      try do
-        task = Map.merge(%TaskInfo{}, task)
-        {task, acc} = reconcile_task_status(task, acc)
-        # Persist with ref nulled (ref is runtime-only data)
-        EvoDash.Store.put_task(state.task_store, %{task | ref: nil})
-        acc
-      rescue
-        error ->
-          Logger.warning(
-            "normalize_tasks: failed to normalize task #{inspect(task.id)}: #{inspect(error)}"
-          )
-
-          acc
-      end
+      task = Map.merge(%TaskInfo{}, task)
+      {task, acc} = reconcile_task_status(task, acc)
+      # Persist with ref nulled (ref is runtime-only data)
+      EvoDash.Store.put_task(state.task_store, %{task | ref: nil})
+      acc
     end)
   end
 
@@ -553,22 +547,19 @@ defmodule EvoDash.TaskRegistry do
   # given task_id. The table stores {id, %SchedMeta{task_id: ..., status: ...}}.
   # Terminal agents are removed from the table, so ANY entry for this task_id
   # means agents are still active. Returns false if the table doesn't exist.
+  # Uses :ets.info/1 which returns :undefined for missing/nonexistent tables
+  # (non-crashing) — no try/rescue needed.
   defp sched_meta_has_active_agents?(task_id) do
-    try do
-      case :ets.whereis(:evogit_sched_meta) do
-        :undefined ->
-          false
+    case :ets.info(:evogit_sched_meta) do
+      :undefined ->
+        false
 
-        _ ->
-          :evogit_sched_meta
-          |> :ets.tab2list()
-          |> Enum.any?(fn {_id, meta} ->
-            Map.get(meta, :task_id) == task_id
-          end)
-      end
-    rescue
-      # Table doesn't exist (e.g., AgentScheduler not started, or full VM restart)
-      ArgumentError -> false
+      _ ->
+        :evogit_sched_meta
+        |> :ets.tab2list()
+        |> Enum.any?(fn {_id, meta} ->
+          Map.get(meta, :task_id) == task_id
+        end)
     end
   end
 
