@@ -115,9 +115,11 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     rest
     |> String.split("_", parts: 2)
     |> List.first()
-    |> String.to_integer()
-  rescue
-    _ -> nil
+    |> Integer.parse()
+    |> case do
+      {n, _} -> n
+      :error -> nil
+    end
   end
 
   defp parse_task_number(_), do: nil
@@ -283,58 +285,56 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   Designed to run in the AGENT (Task) process — not the scheduler. Uses
   `Process.get(:repo_path)` for the worktree path. This is a safety net
-  called after agent execution completes (normal or max-turns) and is the
-  idiomatic place for a try/rescue: git may fail if the worktree is in a
-  bad state, but that must not crash the agent.
+  called after agent execution completes (normal or max-turns).
+
+  Git can legitimately fail here (nothing to commit, worktree in a bad
+  state, merge conflict state). We handle all git adapter error tuples
+  explicitly via `with` rather than a broad rescue, so failures are logged
+  but never crash the agent.
 
   The scheduler process must NEVER call git directly.
   """
   @spec commit_pending_in_worktree() :: :ok
   def commit_pending_in_worktree do
-    wt = Process.get(:repo_path)
-
-    if wt do
-      try do
-        case Git.status(wt) do
-          {:ok, ""} ->
-            :ok
-
-          {:ok, _changes} ->
-            Logger.info("Agent: Auto-committing pending changes in worktree #{wt}")
-
-            {:ok, prev_sha} = Git.rev_parse(wt)
-
-            Git.run(["add", "--all"], wt)
-            Git.commit(wt, "Agent: auto-commit fallback")
-
-            case Git.rev_parse(wt) do
-              {:ok, ^prev_sha} ->
-                Logger.debug("Agent: Auto-commit resulted in no new commit")
-
-              {:ok, new_sha} ->
-                case Git.diff_stat(wt, prev_sha, new_sha) do
-                  {:ok, stats} when stats != "" ->
-                    Logger.info("Agent: Auto-commit stats:\n#{stats}")
-
-                  _ ->
-                    :ok
-                end
-            end
-
-            :ok
-
-          _ ->
-            :ok
-        end
-      rescue
-        e ->
-          Logger.warning(
-            "Agent: Auto-commit fallback failed (best-effort, ignoring): #{inspect(e)}"
-          )
-      end
+    if wt = Process.get(:repo_path) do
+      do_commit_pending(wt)
     end
 
     :ok
+  end
+
+  defp do_commit_pending(wt) do
+    with {:ok, changes} when changes != "" <- Git.status(wt),
+         {:ok, prev_sha} <- Git.rev_parse(wt),
+         {:ok, _} <- Git.run(["add", "--all"], wt),
+         {:ok, _} <- Git.commit(wt, "Agent: auto-commit fallback") do
+      Logger.info("Agent: Auto-committing pending changes in worktree #{wt}")
+
+      case Git.rev_parse(wt) do
+        {:ok, ^prev_sha} ->
+          Logger.debug("Agent: Auto-commit resulted in no new commit")
+
+        {:ok, new_sha} ->
+          case Git.diff_stat(wt, prev_sha, new_sha) do
+            {:ok, stats} when stats != "" ->
+              Logger.info("Agent: Auto-commit stats:\n#{stats}")
+
+            _ ->
+              :ok
+          end
+
+        _ ->
+          :ok
+      end
+    else
+      {:ok, ""} ->
+        :ok
+
+      error ->
+        Logger.warning(
+          "Agent: Auto-commit fallback failed (best-effort, ignoring): #{inspect(error)}"
+        )
+    end
   end
 
   # --- Repo Root Resolution ---
