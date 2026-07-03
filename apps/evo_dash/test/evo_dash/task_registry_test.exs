@@ -1183,6 +1183,127 @@ defmodule EvoDash.TaskRegistryTest do
     end
   end
 
+  describe "status recovery from spurious :failed" do
+    test "a :failed task can recover to :completed via update_task_status" do
+      task_id = "recover_completed_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :failed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      usage = %EvoGit.Agent.Usage{input_tokens: 100, total_tokens: 100}
+
+      # update_task_status is a cast; list_tasks() syncs to ensure it's processed.
+      TaskRegistry.update_task_status(task_id, :completed, nil,
+        usage: usage,
+        commit_sha: "abc123"
+      )
+
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      # The spurious :failed was overwritten by the legitimate :completed.
+      assert fetched.status == :completed
+      # Recovery should persist metadata, not just flip status.
+      assert fetched.commit_sha == "abc123"
+      assert fetched.usage == %EvoGit.Agent.Usage{input_tokens: 100, total_tokens: 100}
+    end
+
+    test "a :finalizing status update is accepted for a :failed task (recovery before completion)" do
+      task_id = "recover_finalizing_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :failed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      # The registry subscribes to the "tasks" PubSub topic on init.
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
+
+      # Sync with a call so the info message is processed before we assert.
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      # :failed should accept :finalizing (was previously blocked).
+      assert fetched.status == :finalizing
+    end
+
+    test "a :completed task still rejects stale status updates (guard integrity)" do
+      task_id = "completed_guard_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      # A late :failed update must NOT overwrite a terminal :completed.
+      TaskRegistry.update_task_status(task_id, :failed, "late error")
+
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.status == :completed
+    end
+
+    test "a :cancelled task still rejects stale :finalizing via PubSub (guard integrity)" do
+      task_id = "cancelled_guard_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :cancelled,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      # A late :finalizing PubSub update must NOT overwrite a terminal :cancelled.
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
+
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.status == :cancelled
+    end
+  end
+
   describe "Store.integrity_check" do
     test "returns :ok on a healthy store" do
       unique = System.unique_integer([:positive])
