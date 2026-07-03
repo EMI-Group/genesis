@@ -13,53 +13,89 @@ defmodule EvoGit.Runtime.Helpers do
     result = agent_output.result
     tag = agent_output.tag
 
-    {:ok, base_sha} = Git.rev_parse(repo_path)
+    with {:ok, base_sha} <- Git.rev_parse(repo_path) do
+      if final_sha && final_sha != base_sha do
+        Logger.info(
+          "#{String.capitalize(phase)}: Agent produced changes (#{String.slice(base_sha, 0, 7)} -> #{String.slice(final_sha, 0, 7)})"
+        )
 
-    if final_sha && final_sha != base_sha do
-      Logger.info(
-        "#{String.capitalize(phase)}: Agent produced changes (#{String.slice(base_sha, 0, 7)} -> #{String.slice(final_sha, 0, 7)})"
-      )
+        branch_name = generate_branch_name(phase)
 
-      branch_name = generate_branch_name(phase)
-      {:ok, _} = Git.create_branch(repo_path, branch_name, final_sha)
+        case Git.create_branch(repo_path, branch_name, final_sha) do
+          {:ok, _} ->
+            Logger.info(
+              "#{String.capitalize(phase)}: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}"
+            )
 
-      Logger.info(
-        "#{String.capitalize(phase)}: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}"
-      )
+            {:ok,
+             %{
+               commit_sha: final_sha,
+               result: result,
+               tag: tag,
+               branch_name: branch_name,
+               pr_url: nil,
+               pr_title: nil,
+               usage: agent_output.usage,
+               agent_count: agent_output.agent_count,
+               archive_records: agent_output.archive_records
+             }}
 
-      # PR creation is now manual via the Review page — no automatic PR
-      {pr_url, pr_title} = {nil, nil}
+          error ->
+            Logger.error(
+              "#{String.capitalize(phase)}: Failed to create branch '#{branch_name}': #{inspect(error)}"
+            )
 
-      {:ok,
-       %{
-         commit_sha: final_sha,
-         result: result,
-         tag: tag,
-         branch_name: branch_name,
-         pr_url: pr_url,
-         pr_title: pr_title,
-         usage: agent_output.usage,
-         agent_count: agent_output.agent_count,
-         archive_records: agent_output.archive_records
-       }}
+            # Still return success — the agent's work is committed, we just couldn't
+            # create a named branch. The commit_sha is still valid.
+            {:ok,
+             %{
+               commit_sha: final_sha,
+               result: result,
+               tag: tag,
+               branch_name: nil,
+               pr_url: nil,
+               pr_title: nil,
+               usage: agent_output.usage,
+               agent_count: agent_output.agent_count,
+               archive_records: agent_output.archive_records
+             }}
+        end
+      else
+        Logger.info(
+          "#{String.capitalize(phase)}: No changes detected (base and final commit are the same)"
+        )
+
+        {:ok,
+         %{
+           commit_sha: final_sha || base_sha,
+           result: result,
+           tag: tag,
+           branch_name: nil,
+           pr_url: nil,
+           pr_title: nil,
+           no_changes: true,
+           usage: agent_output.usage,
+           agent_count: agent_output.agent_count,
+           archive_records: agent_output.archive_records
+         }}
+      end
     else
-      Logger.info(
-        "#{String.capitalize(phase)}: No changes detected (base and final commit are the same)"
-      )
-
-      {:ok,
-       %{
-         commit_sha: final_sha || base_sha,
-         result: result,
-         tag: tag,
-         branch_name: nil,
-         pr_url: nil,
-         pr_title: nil,
-         no_changes: true,
-         usage: agent_output.usage,
-         agent_count: agent_output.agent_count,
-         archive_records: agent_output.archive_records
-       }}
+      error ->
+        Logger.error("#{String.capitalize(phase)}: Failed to resolve base SHA: #{inspect(error)}")
+        # Return the agent's result anyway — the work IS done, we just couldn't
+        # do post-processing. Mark commit_sha as the agent's final_sha.
+        {:ok,
+         %{
+           commit_sha: final_sha,
+           result: result,
+           tag: tag,
+           branch_name: nil,
+           pr_url: nil,
+           pr_title: nil,
+           usage: agent_output.usage,
+           agent_count: agent_output.agent_count,
+           archive_records: agent_output.archive_records
+         }}
     end
   end
 
