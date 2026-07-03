@@ -31,7 +31,7 @@ defmodule EvoDashWeb.TasksLive do
           <div class="form-control">
             <select
               name="status_filter"
-              class="select select-bordered select-sm rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              class="select select-bordered select-md rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
               phx-change="filter_tasks"
             >
               <option value="all" selected={@status_filter == "all"}>{gettext("All Statuses")}</option>
@@ -47,7 +47,7 @@ defmodule EvoDashWeb.TasksLive do
           <div class="form-control">
             <select
               name="project_filter"
-              class="select select-bordered select-sm rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              class="select select-bordered select-md rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
               phx-change="filter_tasks"
             >
               <option value="all" selected={@project_filter == "all"}>{gettext("All Projects")}</option>
@@ -63,7 +63,7 @@ defmodule EvoDashWeb.TasksLive do
           <div class="form-control">
             <select
               name="review_filter"
-              class="select select-bordered select-sm rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              class="select select-bordered select-md rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
               phx-change="filter_review"
             >
               <option value="all" selected={@review_status_filter == "all"}>{gettext("All Reviews")}</option>
@@ -76,22 +76,28 @@ defmodule EvoDashWeb.TasksLive do
 
           <!-- Search -->
           <div class="form-control flex-1">
-            <input
-              type="text"
-              name="search_query"
-              value={@search_query}
-              class="input input-bordered input-sm rounded-md bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder={gettext("Search by task ID, prompt, or objective...")}
-              phx-change="search_tasks"
-              phx-debounce="200"
-            />
+            <div class="relative">
+              <.icon
+                name="hero-magnifying-glass"
+                class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/40 pointer-events-none z-10"
+              />
+              <input
+                type="text"
+                name="search_query"
+                value={@search_query}
+                class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary shadow-sm"
+                placeholder={gettext("Search by task ID, prompt, or objective...")}
+                phx-change="search_tasks"
+                phx-debounce="200"
+              />
+            </div>
           </div>
 
           <!-- Actions -->
           <div class="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              class="btn btn-ghost btn-sm"
+              class="btn btn-ghost btn-md"
               phx-click="reset_filters"
               title={gettext("Reset all filters")}
             >
