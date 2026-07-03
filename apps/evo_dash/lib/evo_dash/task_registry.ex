@@ -314,7 +314,8 @@ defmodule EvoDash.TaskRegistry do
         %TaskInfo{} = task ->
           if task.status in [:completed, :failed, :cancelled] and
                status in [:completed, :failed, :cancelled] and
-               task.status != status do
+               task.status != status and
+               status != :completed do
             Logger.warning(
               "TaskRegistry: Ignoring stale status update for task #{task_id}: " <>
                 "already #{task.status}, ignoring #{status}"
@@ -805,7 +806,7 @@ defmodule EvoDash.TaskRegistry do
     state =
       case task_get(state, task_id) do
         %TaskInfo{} = task ->
-          if task.status in [:completed, :failed, :cancelled] do
+          if task.status in [:completed, :cancelled] do
             Logger.debug(
               "TaskRegistry: Ignoring stale :task_status update for task #{task_id}: " <>
                 "already terminal (#{task.status}), ignoring #{status}"
