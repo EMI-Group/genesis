@@ -86,25 +86,19 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
   def generate_with_llm(objective, n, %{model: model} = _config) when is_binary(objective) and is_integer(n) and n > 0 do
     prompt = build_generation_prompt(objective, n)
 
-    try do
-      context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
+    context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
-      with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
-           {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-           text <- ReqLLM.Response.text(response) do
-        parse_code_blocks(text)
-      else
-        {:error, reason} ->
-          Logger.warning("SeedFragments LLM generation failed: #{inspect(reason)}")
-          []
+    with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
+         {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
+         text <- ReqLLM.Response.text(response) do
+      parse_code_blocks(text)
+    else
+      {:error, reason} ->
+        Logger.warning("SeedFragments LLM generation failed: #{inspect(reason)}")
+        []
 
-        _ ->
-          Logger.warning("SeedFragments LLM generation returned unexpected result")
-          []
-      end
-    rescue
-      e ->
-        Logger.warning("SeedFragments LLM generation raised: #{Exception.message(e)}")
+      _ ->
+        Logger.warning("SeedFragments LLM generation returned unexpected result")
         []
     end
   end

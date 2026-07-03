@@ -157,49 +157,10 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       # Note: the crashed task's ref was already popped from ref_to_agent
       # in the :DOWN handler, so the derived running count is correct.
       state =
-        try do
-          if state.paused do
-            %{state | queue: :queue.in(agent_id, state.queue)}
-          else
-            Dispatch.try_dispatch(state, agent_id)
-          end
-        rescue
-          e ->
-            Logger.error(
-              "AgentScheduler: Failed to retry dispatch for agent #{agent_id}: #{inspect(e)}. " <>
-                "Treating as permanent failure."
-            )
-
-            # Clean up and permanently fail the agent
-            agent_repo_root =
-              case Store.get_agent_state(agent_id) do
-                {:ok, %{repo_root: root}} when is_binary(root) -> root
-                _ -> nil
-              end
-
-            if meta.worktree && agent_repo_root do
-              Worktrees.delete(meta.worktree, agent_repo_root)
-            end
-
-            Store.delete_agent_state(agent_id)
-            Store.delete_sched_meta(agent_id)
-            updated_state = state
-
-            updated_state =
-              if meta.parent_id do
-                Subagents.store_sub_result(
-                  meta.parent_id,
-                  agent_id,
-                  {:error, :worktree_creation_failed}
-                )
-
-                Subagents.maybe_resume_parent(updated_state, meta.parent_id)
-              else
-                GenServer.reply(meta.from, {:error, :worktree_creation_failed})
-                updated_state
-              end
-
-            updated_state
+        if state.paused do
+          %{state | queue: :queue.in(agent_id, state.queue)}
+        else
+          Dispatch.try_dispatch(state, agent_id)
         end
 
       state = Dispatch.process_queue(state)
