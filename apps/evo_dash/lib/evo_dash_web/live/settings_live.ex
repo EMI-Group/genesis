@@ -167,22 +167,23 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    # Map the raw query param to a known category atom via a whitelist lookup
+    # built from the existing schemas_by_category map (atom keys). Stringify
+    # the keys so we compare string-to-string — no String.to_existing_atom on
+    # untrusted input, fully crash-safe for unknown values.
+    category_str_to_atom =
+      Map.new(socket.assigns.schemas_by_category, fn {cat_atom, _schemas} ->
+        {Atom.to_string(cat_atom), cat_atom}
+      end)
+
     category =
       case params["category"] do
-        cat when is_binary(cat) ->
-          try do
-            String.to_existing_atom(cat)
-          rescue
-            ArgumentError -> socket.assigns.active_category
-          end
-
-        _ ->
-          socket.assigns.active_category
+        cat when is_binary(cat) -> Map.get(category_str_to_atom, cat)
+        _ -> nil
       end
 
-    # Only update if category is valid and different
-    valid_categories = Map.keys(socket.assigns.schemas_by_category)
-    category = if category in valid_categories, do: category, else: socket.assigns.active_category
+    # Fall back to active_category for unknown/missing input
+    category = category || socket.assigns.active_category
 
     socket =
       if category != socket.assigns.active_category do
@@ -422,45 +423,44 @@ defmodule EvoDashWeb.SettingsLive do
     base_url = params["base_url"]
     provider_id_str = params["provider_id"]
 
-    try do
-      provider_id = String.to_existing_atom(provider_id_str)
-      provider = Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == provider_id))
+    # Build a whitelist map keyed by the string form of each provider's atom id,
+    # so untrusted POST data is matched without String.to_existing_atom.
+    provider_by_id_str =
+      Map.new(EvoGit.Config.LLMCatalog.providers(), fn p -> {Atom.to_string(p.id), p} end)
 
-      result =
-        cond do
-          is_nil(provider) ->
-            {:error, gettext("Unknown provider.")}
+    provider = Map.get(provider_by_id_str, provider_id_str)
 
-          String.trim(model_name || "") == "" ->
-            {:error, gettext("Model name cannot be empty.")}
+    result =
+      cond do
+        is_nil(provider) ->
+          {:error, gettext("Unknown provider.")}
 
-          provider[:requires_base_url] == true ->
-            if String.trim(base_url || "") == "" do
-              {:error, gettext("Base URL cannot be empty.")}
-            else
-              {:ok,
-               %{
-                 provider: :openai,
-                 id: String.trim(model_name),
-                 base_url: String.trim(base_url)
-               }}
-            end
+        String.trim(model_name || "") == "" ->
+          {:error, gettext("Model name cannot be empty.")}
 
-          true ->
-            {:ok, "openrouter:#{String.trim(model_name)}"}
-        end
+        provider[:requires_base_url] == true ->
+          if String.trim(base_url || "") == "" do
+            {:error, gettext("Base URL cannot be empty.")}
+          else
+            {:ok,
+             %{
+               provider: :openai,
+               id: String.trim(model_name),
+               base_url: String.trim(base_url)
+             }}
+          end
 
-      case result do
-        {:error, msg} ->
-          {:noreply, put_flash(socket, :error, msg)}
-
-        {:ok, model_value} ->
-          file_config = put_in(socket.assigns.file_config, [:llm, :model], model_value)
-          persist_file_config(file_config, socket, gettext("Custom model saved."))
+        true ->
+          {:ok, "openrouter:#{String.trim(model_name)}"}
       end
-    rescue
-      ArgumentError ->
-        {:noreply, put_flash(socket, :error, gettext("Unknown provider."))}
+
+    case result do
+      {:error, msg} ->
+        {:noreply, put_flash(socket, :error, msg)}
+
+      {:ok, model_value} ->
+        file_config = put_in(socket.assigns.file_config, [:llm, :model], model_value)
+        persist_file_config(file_config, socket, gettext("Custom model saved."))
     end
   end
 
@@ -540,23 +540,11 @@ defmodule EvoDashWeb.SettingsLive do
   # ───────────────────────────────────────────────────────────────────────────
 
   defp load_file_config do
-    try do
-      EvoGit.Config.resolve()
-    rescue
-      _ -> %{}
-    catch
-      _, _ -> %{}
-    end
+    EvoGit.Config.resolve()
   end
 
   defp load_scheduler_config do
-    try do
-      EvoGit.AgentScheduler.get_config()
-    rescue
-      _ -> %{}
-    catch
-      _, _ -> %{}
-    end
+    EvoGit.AgentScheduler.get_config()
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -598,7 +586,7 @@ defmodule EvoDashWeb.SettingsLive do
             value
 
           schema.type == :atom ->
-            parse_atom(value)
+            parse_atom(value, schema)
         end
 
       cond do
@@ -685,13 +673,19 @@ defmodule EvoDashWeb.SettingsLive do
 
   defp parse_float(_), do: nil
 
-  defp parse_atom(value) when is_binary(value) and value != "" do
-    String.to_existing_atom(value)
-  rescue
-    ArgumentError -> value
+  defp parse_atom(value, schema) when is_binary(value) and value != "" do
+    # Convert a form string to an atom using a whitelist derived from the
+    # schema validation (`[in: [...]]`), avoiding String.to_atom/to_existing_atom
+    # on untrusted input (atom-table exhaustion / crashes). Unknown values
+    # return nil so downstream validation can report them.
+    allowed_atoms = schema[:validation][:in] || []
+
+    Enum.find_value(allowed_atoms, fn atom ->
+      if Atom.to_string(atom) == value, do: atom
+    end)
   end
 
-  defp parse_atom(_), do: nil
+  defp parse_atom(_, _), do: nil
 
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: map operations
