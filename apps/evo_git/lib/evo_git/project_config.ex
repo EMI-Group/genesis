@@ -120,19 +120,34 @@ defmodule EvoGit.ProjectConfig do
   def foreign_repos(repo_root) do
     case read(repo_root) do
       %{"foreign_repos" => repos} when is_map(repos) ->
-        Enum.map(repos, fn {id_str, config} ->
-          path = Map.fetch!(config, "path")
-          description = Map.get(config, "description")
-          ForeignRepo.new(id_str, path, description: description)
+        repos
+        |> Enum.flat_map(fn {id_str, config} ->
+          case build_foreign_repo(id_str, config) do
+            {:ok, repo} -> [repo]
+            {:error, reason} ->
+              Logger.warning("Skipping foreign repo '#{id_str}': #{reason}")
+              []
+          end
         end)
 
       _ ->
         []
     end
-  rescue
-    e ->
-      Logger.warning("Failed to parse foreign_repos from genesis.toml: #{inspect(e)}")
-      []
+  end
+
+  defp build_foreign_repo(id_str, config) when is_map(config) do
+    case Map.fetch(config, "path") do
+      {:ok, path} ->
+        description = Map.get(config, "description")
+        {:ok, ForeignRepo.new(id_str, path, description: description)}
+
+      :error ->
+        {:error, "missing required 'path' key"}
+    end
+  end
+
+  defp build_foreign_repo(_id_str, _config) do
+    {:error, "invalid config (expected a TOML table)"}
   end
 
   @doc """

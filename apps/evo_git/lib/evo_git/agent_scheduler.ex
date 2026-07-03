@@ -306,6 +306,8 @@ defmodule EvoGit.AgentScheduler do
   def with_llm_slot(agent_id, fun) when is_function(fun, 0) do
     request_llm_slot(agent_id)
 
+    # try/after (not rescue) — guarantees slot release even if fun raises.
+    # The exception is NOT swallowed; it's re-raised after cleanup.
     try do
       fun.()
     after
@@ -323,6 +325,8 @@ defmodule EvoGit.AgentScheduler do
   def with_tool_slot(agent_id, fun) when is_function(fun, 0) do
     request_tool_slot(agent_id)
 
+    # try/after (not rescue) — guarantees slot release even if fun raises.
+    # The exception is NOT swallowed; it's re-raised after cleanup.
     try do
       fun.()
     after

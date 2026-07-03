@@ -371,12 +371,11 @@ defmodule EvoGit.CLI do
   defp atomize_config_keys(map) when is_map(map) do
     Map.new(map, fn
       {key, value} when is_binary(key) ->
-        atom_key =
-          try do
-            String.to_existing_atom(key)
-          rescue
-            ArgumentError -> key
-          end
+        # Justified: String.to_existing_atom/1 has no non-throwing variant.
+        # It is deliberately used (instead of String.to_atom/1) to avoid
+        # atom-table exhaustion from arbitrary user-supplied config keys.
+        # When the atom doesn't already exist, we keep the key as a string.
+        atom_key = safe_to_existing_atom(key)
 
         {atom_key, atomize_config_keys(value)}
 
@@ -386,6 +385,15 @@ defmodule EvoGit.CLI do
   end
 
   defp atomize_config_keys(value), do: value
+
+  # Returns the existing atom for `key`, or the original string if the atom
+  # does not exist. Uses a rescue because String.to_existing_atom/1 has no
+  # non-throwing variant (no {:ok, _} | :error tuple form).
+  defp safe_to_existing_atom(key) when is_binary(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> key
+  end
 
   defp ensure_llm_section(config) do
     Map.put_new(config, :llm, %{model: nil})

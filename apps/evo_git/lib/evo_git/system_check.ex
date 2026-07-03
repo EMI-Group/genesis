@@ -4,7 +4,7 @@ defmodule EvoGit.SystemCheck do
 
   Provides safe, structured diagnostic data about configuration, tool availability,
   sandbox capabilities, supervisor health, and LLM connectivity. All public functions
-  are wrapped in try/rescue and will never crash the caller.
+  are wrapped in try/rescue so they never crash the LiveView caller process.
   """
 
   require Logger
@@ -22,6 +22,7 @@ defmodule EvoGit.SystemCheck do
   def config_check do
     EvoGit.Config.config_status()
   rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
     e ->
       Logger.warning("SystemCheck config_check failed: #{Exception.message(e)}")
 
@@ -49,6 +50,7 @@ defmodule EvoGit.SystemCheck do
   def tool_check do
     %{git: check_tool("git"), rg: check_tool("rg")}
   rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
     e ->
       Logger.warning("SystemCheck tool_check failed: #{Exception.message(e)}")
 
@@ -83,6 +85,7 @@ defmodule EvoGit.SystemCheck do
       sandbox_exec_available: EvoGit.Platform.sandbox_exec_available?()
     }
   rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
     e ->
       Logger.warning("SystemCheck sandbox_check failed: #{Exception.message(e)}")
 
@@ -124,6 +127,7 @@ defmodule EvoGit.SystemCheck do
       healthy: all_running
     }
   rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
     e ->
       Logger.warning("SystemCheck supervisor_check failed: #{Exception.message(e)}")
 
@@ -150,6 +154,7 @@ defmodule EvoGit.SystemCheck do
       do_llm_test(model)
     end
   rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
     e ->
       Logger.warning("SystemCheck llm_test failed: #{Exception.message(e)}")
       {:error, Exception.message(e)}
@@ -192,6 +197,7 @@ defmodule EvoGit.SystemCheck do
       %{available: available, enabled: enabled, flake_present: flake_present, dev_env_built: false, error: nil}
     end
   rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
     e ->
       Logger.warning("SystemCheck nix_check failed: #{Exception.message(e)}")
 
@@ -221,6 +227,7 @@ defmodule EvoGit.SystemCheck do
       nix: nix_check()
     }
   rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
     e ->
       Logger.warning("SystemCheck run_all_checks failed: #{Exception.message(e)}")
       %{error: Exception.message(e)}
@@ -250,9 +257,6 @@ defmodule EvoGit.SystemCheck do
           error: String.trim(output)
         }
     end
-  rescue
-    e ->
-      %{available: false, path: nil, version: nil, error: Exception.message(e)}
   end
 
   defp check_supervisor(supervisor_name) do
@@ -268,10 +272,6 @@ defmodule EvoGit.SystemCheck do
           %{id: id, status: status, pid: pid}
         end)
     end
-  rescue
-    e ->
-      Logger.warning("SystemCheck check_supervisor(#{inspect(supervisor_name)}) failed: #{Exception.message(e)}")
-      [%{id: supervisor_name, status: :error, pid: nil}]
   end
 
   defp classify_pid(:restarting), do: {:restarting, nil}

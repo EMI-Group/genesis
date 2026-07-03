@@ -291,23 +291,23 @@ defmodule EvoGit.Skills do
   defp run_script(script, repo_path) do
     tmp_file = Path.join(System.tmp_dir!(), "evogit_skill_#{System.unique_integer()}.sh")
 
-    try do
-      File.write!(tmp_file, script)
-      File.chmod!(tmp_file, 0o755)
+    result =
+      with :ok <- File.write(tmp_file, script),
+           :ok <- File.chmod(tmp_file, 0o755) do
+        case System.cmd("bash", [tmp_file], cd: repo_path, stderr_to_stdout: true, parallelism: false) do
+          {output, 0} ->
+            "Skill executed successfully:\n#{String.trim(output)}"
 
-      case System.cmd("bash", [tmp_file], cd: repo_path, stderr_to_stdout: true, parallelism: false) do
-        {output, 0} ->
-          "Skill executed successfully:\n#{String.trim(output)}"
-
-        {output, exit_code} ->
-          "Skill failed with exit code #{exit_code}:\n#{String.trim(output)}"
+          {output, exit_code} ->
+            "Skill failed with exit code #{exit_code}:\n#{String.trim(output)}"
+        end
+      else
+        {:error, reason} ->
+          "Error setting up skill script at #{tmp_file}: #{:file.format_error(reason)}"
       end
-    rescue
-      e in RuntimeError ->
-        "Error executing skill: #{Exception.message(e)}"
-    after
-      File.rm(tmp_file)
-    end
+
+    File.rm(tmp_file)
+    result
   end
 
   # ---------------------------------------------------------------------------
