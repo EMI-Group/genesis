@@ -129,7 +129,26 @@ defmodule EvoGit.Agent do
       Agent state is synced to ETS every turn for dashboard visibility.
       The dashboard reads the `context` field from `evogit_agent_state` table.
       """
-      def run(objective) do
+      def run(objective, dispatch_ctx \\ nil) do
+        if dispatch_ctx do
+          setup_dispatch_context(dispatch_ctx)
+
+          # The agent process owns git operations. After the agent finishes
+          # (any exit path), commit any pending changes as a best-effort
+          # fallback so the worktree is clean before the scheduler processes
+          # the result. The scheduler never touches git directly.
+          try do
+            do_run(objective)
+          after
+            EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree()
+          end
+        else
+          # Direct call (tests, etc.) — process dict already set by caller
+          do_run(objective)
+        end
+      end
+
+      defp do_run(objective) do
         agent_id = EvoGit.AgentScheduler.current_agent_id()
 
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
@@ -215,6 +234,45 @@ defmodule EvoGit.Agent do
           Process.put(:delegation_hints, %{})
           Process.put(:read_delegation_hints, %{})
           loop(state)
+        end
+      end
+
+      defp setup_dispatch_context(ctx) do
+        agent_id = Keyword.fetch!(ctx, :agent_id)
+        depth = Keyword.fetch!(ctx, :depth)
+        repo_root = Keyword.fetch!(ctx, :repo_root)
+        repo_id = Keyword.fetch!(ctx, :repo_id)
+        worktree_path = Keyword.fetch!(ctx, :worktree_path)
+        retries = Keyword.fetch!(ctx, :retries)
+        spec = Keyword.fetch!(ctx, :spec)
+        meta = Keyword.fetch!(ctx, :meta)
+
+        Process.put(:evogit_agent_id, agent_id)
+        Process.put(:evogit_agent_depth, depth)
+        Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
+        Process.put(:evogit_repo_root, repo_root)
+        Process.put(:evogit_repo_id, repo_id)
+        Process.put(:repo_path, worktree_path)
+
+        # Create/prepare worktree and run init script (blocking I/O, runs
+        # concurrently across subagents). If this fails, the task crashes
+        # (caught by the :DOWN handler / crash recovery) rather than the
+        # GenServer — which is the desired behaviour.
+        EvoGit.AgentScheduler.Dispatch.setup_worktree(
+          agent_id,
+          repo_root,
+          worktree_path,
+          spec,
+          meta
+        )
+
+        if retries > 0 do
+          Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
+          Process.sleep(30_000 * retries)
+        else
+          Logger.info(
+            "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
+          )
         end
       end
 
