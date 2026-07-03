@@ -101,7 +101,7 @@ Handles agent completion and crash recovery:
 - Data structs are plain data with no behaviour or callbacks.
 - `Slots`, `Worktrees`, `Dispatch`, `Subagents`, and `Lifecycle` are pure-function modules operating on `State.t()`; they don't maintain their own state.
 - `AgentState` is shared (scheduler + agent processes); `SchedMeta` is scheduler-exclusive.
-- Both ETS tables are created by parent `AgentScheduler` GenServer, not in this directory.
+- Both ETS tables are created by **`EvoGit.Application`** (the application process), NOT by the `AgentScheduler` GenServer (see `application.ex:13-15`). This is deliberate: the tables have **no heir**, so ownership must outlive a scheduler crash. Because they are owned by the long-lived application process, the tables **SURVIVE an `AgentScheduler` restart** — stale `SchedMeta` entries from the crashed instance remain. (Restart semantics: `AgentGroupSupervisor` is `strategy: :one_for_all`, so a scheduler crash also kills `EvoGit.TaskSupervisor` and all running agent Tasks. The GenServer `%State{}` is reset fresh on restart, but the ETS tables persist.)
 - GenServer state must always be `%State{}`; use struct update syntax, not `Map.put/3`.
 - The scheduler process NEVER calls git directly — all git operations (auto-commit, sync) happen in the agent (Task) process. The scheduler only does filesystem operations (worktree creation/deletion).
 - Slot availability is derived from holder MapSets, never stored as a counter — this eliminates leak/deadlock bugs by construction.
