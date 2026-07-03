@@ -171,7 +171,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # All blocking I/O (worktree creation, preparation, init script) runs
     # inside the task process, so multiple subagents start in parallel.
     task =
-      Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
+      Task.Supervisor.async(EvoGit.TaskSupervisor, fn ->
         Process.put(:evogit_agent_id, agent_id)
         Process.put(:evogit_agent_depth, meta.depth)
         Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
@@ -217,7 +217,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
     %{
       state
-      | ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
+      | ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id),
+        pid_to_agent: Map.put(state.pid_to_agent, task.pid, agent_id)
     }
   end
 
