@@ -71,13 +71,9 @@ defmodule EvoGit.Nix do
   """
   @spec dev_env_state() :: {:built, String.t()} | {:failed, String.t()} | :not_attempted
   def dev_env_state do
-    try do
-      :persistent_term.get(@persistent_term_key, :not_attempted)
-    rescue
-      _ -> :not_attempted
-    catch
-      _, _ -> :not_attempted
-    end
+    # :persistent_term.get/2 never raises — it returns the default if the key
+    # is absent. No try/rescue needed.
+    :persistent_term.get(@persistent_term_key, :not_attempted)
   end
 
   @doc """
@@ -87,12 +83,11 @@ defmodule EvoGit.Nix do
   """
   @spec reset_state() :: :ok
   def reset_state do
-    try do
-      :persistent_term.erase(@persistent_term_key)
-    rescue
-      _ -> :ok
-    catch
-      _, _ -> :ok
+    # :persistent_term.erase/1 raises ArgumentError if the key doesn't exist.
+    # Guard with get/2 first so the operation is idempotent without try/rescue.
+    case :persistent_term.get(@persistent_term_key, :not_attempted) do
+      :not_attempted -> :ok
+      _ -> :persistent_term.erase(@persistent_term_key)
     end
 
     :ok
@@ -149,6 +144,12 @@ defmodule EvoGit.Nix do
   def build_dev_env do
     do_build_dev_env()
   rescue
+    # KEPT: do_build_dev_env calls System.cmd("nix", ...) which raises
+    # ErlangError (not {:error, _}) when the nix binary is missing, plus
+    # File.mkdir_p!/File.write! which raise on I/O failures. System.cmd has
+    # no non-raising variant for "binary not found", so converting these
+    # raises into {:error, reason} is the cleanest option. The function's
+    # @spec promises {:ok, _} | {:error, _} — it must never raise.
     e ->
       reason = "nix print-dev-env failed: #{Exception.message(e)}"
       put_state({:failed, reason})
@@ -316,13 +317,8 @@ defmodule EvoGit.Nix do
   end
 
   defp nix_config_value(key) do
-    try do
-      Config.resolve([:nix, key])
-    rescue
-      _ -> nil
-    catch
-      _, _ -> nil
-    end
+    # Config.resolve never raises — it returns nil for missing config paths.
+    Config.resolve([:nix, key])
   end
 
   defp flake_exists? do
