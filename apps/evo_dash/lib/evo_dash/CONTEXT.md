@@ -117,11 +117,28 @@ size(store) :: non_neg_integer()                          # total across both ta
 ### All `:failed`-Transition Sites (status set to `:failed`)
 | # | Site (file:line) | Trigger | Guard/Condition |
 |---|---|---|---|
-| 1 | `task_registry.ex:829-831` (`handle_info({ref, result})`) | Task result arrives | Catch-all `_ -> :failed` for any result NOT `{:ok, _}` |
-| 2 | `task_registry.ex:879` (`handle_info({:DOWN, ref, ...})`) | Task process exits | `reason != :normal` → `:failed` |
-| 3 | `task_registry.ex:306-343` (`handle_cast({:update_status, ...})`) | Receives ANY status via cast | Persists `:failed` if cast — called by sites #1 and #2 |
-| 4 | `task_registry.ex:800` (`handle_info({:task_status, task_id, status})`) | PubSub `"tasks"` topic | Blindly persists whatever status atom arrives (currently only `:finalizing` is broadcast) |
-| 5 | `task_registry.ex:529` (`reconcile_task_status`) | Registry restart (init) | Dead/nil pid AND no active agents in ETS |
+| 1 | `task_registry.ex:848-867` (`handle_info({ref, result})`) | Wrapper Task returns a result | Catch-all `_ -> :failed` for any result NOT `{:ok, _}` (covers `{:error,_}`, `{:exit,_}`, unexpected shapes) |
+| 2 | `task_registry.ex:939` (`handle_info({:DOWN, ref, ...})`) | Wrapper process exits | `reason != :normal` AND `sched_meta_has_active_agents?(task_id)` returns **false** |
+| 3 | `task_registry.ex:306-348` (`handle_cast({:update_status, ...})`) | Receives ANY status via cast | Persists `:failed` if cast — called by sites #1 and #2. Has a stale-terminal-status guard that **ignores** a DIFFERENT terminal status if one is already set (logs "Ignoring stale status update"). |
+| 4 | `task_registry.ex:804-836` (`handle_info({:task_status, task_id, status})`) | PubSub `"tasks"` topic | Blindly persists whatever status atom arrives. Has a terminal-status guard that ignores updates once terminal. NOTE: the evo_git runtime only EVER broadcasts `:finalizing` here (see `runtime/helpers.ex:102`); `:failed`/`:completed` are never broadcast over PubSub — they only originate from sites #1/#2. |
+| 5 | `task_registry.ex:542` (`reconcile_task_status`) | Registry restart (init) | Dead/nil pid AND `sched_meta_has_active_agents?(task_id)` returns false |
+
+### Known Concurrency Hazard — premature `:failed` while work is ongoing
+
+**Symptom:** Tasks get marked `:failed` while still running normally, then subsequent `:finalizing`/`:completed` updates are logged as "Ignoring stale ... already terminal (failed)".
+
+**The `:failed` status is NEVER broadcast from evo_git** — only `:finalizing` is (`Helpers.notify_finalizing/1`, called on the success path AFTER `run_agent/1` returns, BEFORE `merge_and_report/3`). Therefore the premature `:failed` MUST originate inside EvoDash, from one of these two monitors on the wrapper `Task.Supervisor.async_nolink` process:
+
+1. **`handle_info({ref, result})` (line 840)** — the `{ref, result}` message handler. Maps any non-`{:ok,_}` return to `:failed`. But the runtime ALWAYS returns `{:ok,_}` on success, so this only fires `:failed` on a genuine runtime error/exit. **This is NOT the culprit** for a task that later succeeds.
+
+2. **`handle_info({:DOWN, ref, :process, pid, reason})` (line 907)** — the process-down handler. Guarded by `sched_meta_has_active_agents?(task_id)`. **This is the prime suspect.** A `:DOWN` with `reason != :normal` arrives for the wrapper process BEFORE the runtime's `{:ok,_}` result is delivered, and `sched_meta_has_active_agents?` returns **false** (race window), so the task is marked `:failed`. The legitimate `{:ok,_}` result then arrives at `handle_info({ref, result})` and calls `update_task_status(:completed)`, but `handle_cast({:update_status,...})` (line 315) now rejects it as a stale-terminal-status change.
+
+**Race conditions that defeat the `sched_meta_has_active_agents?` guard (line 931/555):**
+- The ETS `:evogit_sched_meta` table is scanned via `:ets.tab2list()` then filtered by `task_id`. Entries are deleted (`Store.delete_sched_meta/1`) during `Lifecycle` agent teardown (`lifecycle.ex:37,93,185,225`). If the top-level agent's SchedMeta has already been removed before the `:DOWN` handler runs, the check returns false → spurious `:failed`.
+- `sched_meta_has_active_agents?` only matches on `Map.get(meta, :task_id) == task_id`. If the wrapper crashed but the scheduler's agents are tracked under a different/derived task grouping, the check misses them.
+- The guard returns false if the `:evogit_sched_meta` table does not exist (`:undefined` / `ArgumentError`), which happens if `AgentScheduler` is not started or after a full VM restart.
+
+**Likely root cause of the observed bug:** The wrapper `Task.Supervisor.async_nolink` process (started at line 146) exits abnormally — e.g. because the scheduler replies to the wrapper and the wrapper exits with a non-`:normal` reason, or a transient crash — at a moment when the scheduler has ALREADY torn down the agent's `SchedMeta` ETS entry (so the active-agents check returns false). The `:DOWN` handler then marks the task `:failed`. The runtime's `{:ok,_}` result (produced by `merge_and_report`, which logs "Agent produced changes" and "Created branch") arrives immediately after and is discarded as stale.
 
 ## Retention & Eviction
 - `cleanup_expired_tasks/1`: removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100). Uses `delete_tasks/2` for batch deletion.
