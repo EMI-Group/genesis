@@ -9,6 +9,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     File.mkdir_p!(tmp_dir)
 
     on_exit(fn ->
+      # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
       try do
         EvoDash.TaskRegistry.remove_recent_project(tmp_dir)
       rescue

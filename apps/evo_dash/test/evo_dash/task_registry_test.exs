@@ -1055,6 +1055,7 @@ defmodule EvoDash.TaskRegistryTest do
       # Set up the :evogit_sched_meta ETS table with a fake active agent for
       # this task_id. This simulates AgentScheduler still running the task
       # under a sibling process while TaskRegistry restarts.
+      # Table may already exist from a prior test; idempotent create is intentional.
       try do
         :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
       rescue
@@ -1085,6 +1086,7 @@ defmodule EvoDash.TaskRegistryTest do
         assert fetched.status == :running
       after
         # Clean up the ETS entry.
+        # Cleanup in after: rescue so teardown failures don't mask real test failures.
         try do
           :ets.delete(:evogit_sched_meta, sched_meta_entry.id)
         rescue
@@ -1335,6 +1337,7 @@ defmodule EvoDash.TaskRegistryTest do
         assert %TaskInfo{} = fetched
         assert fetched.id == "ic_good_#{unique}"
       after
+        # Cleanup in after: catch so teardown failures don't mask real test failures.
         try do
           GenServer.stop(store)
         catch
@@ -1400,6 +1403,7 @@ defmodule EvoDash.TaskRegistryTest do
         ids = Enum.map(entries, & &1.id)
         assert "ic_good2_#{unique}" in ids
       after
+        # Cleanup in after: catch so teardown failures don't mask real test failures.
         try do
           GenServer.stop(store)
         catch
@@ -1451,6 +1455,7 @@ defmodule EvoDash.TaskRegistryTest do
         paths = Enum.map(entries, & &1.path)
         assert "/tmp/good_proj_#{unique}" in paths
       after
+        # Cleanup in after: catch so teardown failures don't mask real test failures.
         try do
           GenServer.stop(store)
         catch

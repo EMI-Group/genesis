@@ -216,4 +216,100 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Base URL cannot be empty."
     end
   end
+
+  describe "whitelist safety (unknown values do not crash)" do
+    # These regression tests verify that the whitelist-based conversion helpers
+    # (category_str_to_atom/1, provider_by_id_str/0, variant_id_by_str/1) safely
+    # map unknown/untrusted client strings to nil/default instead of crashing.
+    # The "doesn't crash" assertion is implicit: render_hook/live returning a
+    # successful result (not raising) proves it didn't crash.
+
+    # In LiveView 1.x the test View struct has no `.assigns` field, so we read
+    # them from the underlying LiveView process socket.
+    defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+
+    test "unknown category does not crash select_category", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "select_category", %{"category" => "totally_fake_category"})
+
+      # Unknown category → active_category stays unchanged (default :llm).
+      assert assigns(view).active_category == :llm
+      # The hidden category input reflects the unchanged value.
+      assert html =~ ~s(name="category" value="llm")
+    end
+
+    test "unknown category in URL params does not crash", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/settings?category=bogus_category")
+
+      # Unknown category in handle_params → keeps current category (:llm).
+      assert assigns(view).active_category == :llm
+      assert html =~ ~s(name="category" value="llm")
+    end
+
+    test "valid category conversion still works", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert assigns(view).active_category == :nix
+      assert html =~ ~s(name="category" value="nix")
+    end
+
+    test "unknown provider does not crash select_llm_provider", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "select_llm_provider", %{"provider_id" => "totally_fake_provider"})
+
+      # Unknown provider → clears selection and shows flash error.
+      assert assigns(view).selected_provider_id == nil
+      assert assigns(view).selected_provider_models == []
+      assert html =~ "Unknown provider."
+    end
+
+    test "valid provider conversion still works", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+
+      assert assigns(view).selected_provider_id == :alibaba
+    end
+
+    test "unknown variant does not crash select_llm_variant", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      render_hook(view, "select_llm_variant", %{"variant_id" => "totally_fake_variant"})
+
+      # No provider selected → selected_variant_id becomes nil.
+      assert assigns(view).selected_variant_id == nil
+    end
+
+    test "unknown variant after valid provider does not crash", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+
+      render_hook(view, "select_llm_variant", %{"variant_id" => "fake_variant"})
+
+      assert assigns(view).selected_variant_id == nil
+    end
+
+    test "valid variant conversion still works", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+
+      html = render_hook(view, "select_llm_variant", %{"variant_id" => "global"})
+
+      assert assigns(view).selected_variant_id == :global
+      # The selected variant button gets the active styling.
+      assert html =~ ~s(phx-value-variant_id="global")
+    end
+
+    test "unknown key path does not crash reset_key", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "reset_key", %{"key_path" => "nope.nope"})
+
+      assert html =~ "Invalid key path."
+    end
+  end
 end
