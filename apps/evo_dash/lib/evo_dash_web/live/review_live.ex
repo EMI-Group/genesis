@@ -178,7 +178,7 @@ defmodule EvoDashWeb.ReviewLive do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end
 
-    config_status = safe_config_status()
+    config_status = config_status()
 
     socket =
       socket

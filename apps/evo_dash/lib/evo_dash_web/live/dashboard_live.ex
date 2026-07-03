@@ -263,7 +263,7 @@ defmodule EvoDashWeb.DashboardLive do
 
     recent_projects = TaskRegistry.list_recent_projects()
 
-    config_status = safe_config_status()
+    config_status = config_status()
 
     socket =
       socket

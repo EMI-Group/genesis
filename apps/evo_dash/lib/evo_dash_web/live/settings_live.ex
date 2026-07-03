@@ -139,7 +139,7 @@ defmodule EvoDashWeb.SettingsLive do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "scheduler_config")
     end
 
-    config_status = safe_config_status()
+    config_status = config_status()
     config_path = EvoGit.Config.config_path()
     config_file_exists = File.exists?(config_path)
     file_config = load_file_config()
@@ -249,7 +249,7 @@ defmodule EvoDashWeb.SettingsLive do
         case EvoGit.Config.save_user_config(config) do
           :ok ->
             file_config = load_file_config()
-            config_status = safe_config_status()
+            config_status = config_status()
             config_file_exists = File.exists?(socket.assigns.config_path)
 
             socket =
@@ -314,7 +314,7 @@ defmodule EvoDashWeb.SettingsLive do
         case EvoGit.Config.save_user_config(config) do
           :ok ->
             file_config = load_file_config()
-            config_status = safe_config_status()
+            config_status = config_status()
             config_file_exists = File.exists?(socket.assigns.config_path)
 
             socket =
@@ -371,7 +371,7 @@ defmodule EvoDashWeb.SettingsLive do
     case EvoGit.Config.save_user_config(config) do
       :ok ->
         file_config = load_file_config()
-        config_status = safe_config_status()
+        config_status = config_status()
         config_file_exists = File.exists?(socket.assigns.config_path)
 
         {:noreply,
@@ -471,7 +471,7 @@ defmodule EvoDashWeb.SettingsLive do
     else
       case EvoGit.Config.save_credentials(%{env_var => String.trim(api_key)}) do
         :ok ->
-          config_status = safe_config_status()
+          config_status = config_status()
 
           {:noreply,
            socket
@@ -512,7 +512,7 @@ defmodule EvoDashWeb.SettingsLive do
     case EvoGit.Config.save_user_config(file_config) do
       :ok ->
         file_config = load_file_config()
-        config_status = safe_config_status()
+        config_status = config_status()
         config_file_exists = File.exists?(socket.assigns.config_path)
 
         socket =

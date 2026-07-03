@@ -21,7 +21,7 @@ defmodule EvoDashWeb.AgentsLive do
     id_to_display =
       Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
 
-    config_status = safe_config_status()
+    config_status = config_status()
 
     socket =
       socket

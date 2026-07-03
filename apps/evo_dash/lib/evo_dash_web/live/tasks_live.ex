@@ -239,7 +239,7 @@ defmodule EvoDashWeb.TasksLive do
     tasks = TaskRegistry.list_tasks()
     project_paths = TaskRegistry.get_unique_paths()
 
-    config_status = safe_config_status()
+    config_status = config_status()
 
     socket =
       socket

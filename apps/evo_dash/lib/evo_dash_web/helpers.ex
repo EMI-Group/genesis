@@ -326,17 +326,14 @@ defmodule EvoDashWeb.Helpers do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Safely calls `EvoGit.Config.config_status/0`, returning a benign default
-  status map if the call raises or throws.
+  Calls `EvoGit.Config.config_status/0`.
+
+  The call is intentionally NOT wrapped in a try/rescue — if the config system
+  crashes, the error must propagate rather than be hidden behind a fake "config
+  OK" status.
   """
-  def safe_config_status do
-    try do
-      EvoGit.Config.config_status()
-    rescue
-      _ -> %{missing: [], warnings: [], ok?: true}
-    catch
-      _, _ -> %{missing: [], warnings: [], ok?: true}
-    end
+  def config_status do
+    EvoGit.Config.config_status()
   end
 
   @doc """
