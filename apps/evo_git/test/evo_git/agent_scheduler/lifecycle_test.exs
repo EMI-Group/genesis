@@ -444,9 +444,11 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert agent_state().compression_count == 0
     end
 
-    test "no-op when the agent state is missing" do
-      # Should not raise even when there is no ETS entry for the agent.
-      assert :ok == AgentScheduler.increment_compression_count(999_999)
+    test "raises when the agent state is missing" do
+      # The agent MUST exist — a missing entry indicates a deep bug.
+      assert_raise MatchError, fn ->
+        AgentScheduler.increment_compression_count(999_999)
+      end
     end
   end
 
@@ -470,9 +472,11 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert agent_state().total_tokens == 0
     end
 
-    test "no-op when the agent state is missing" do
-      # Should not raise even when there is no ETS entry for the agent.
-      assert :ok == AgentScheduler.update_total_tokens(999_999, 100)
+    test "raises when the agent state is missing" do
+      # The agent MUST exist — a missing entry indicates a deep bug.
+      assert_raise MatchError, fn ->
+        AgentScheduler.update_total_tokens(999_999, 100)
+      end
     end
   end
 end

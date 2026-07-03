@@ -999,16 +999,11 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
   def update_agent_context(agent_id, %ReqLLM.Context{} = context) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        updated_state = %{agent_state | context: context}
-        put_agent_state(agent_id, updated_state)
+    {:ok, agent_state} = get_agent_state(agent_id)
+    updated_state = %{agent_state | context: context}
+    put_agent_state(agent_id, updated_state)
 
-        :ok
-
-      :error ->
-        :error
-    end
+    :ok
   end
 
   @doc """
@@ -1016,16 +1011,11 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
   def update_agent_usage(agent_id, %EvoGit.Agent.Usage{} = usage) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        updated_state = %{agent_state | usage: usage}
-        put_agent_state(agent_id, updated_state)
+    {:ok, agent_state} = get_agent_state(agent_id)
+    updated_state = %{agent_state | usage: usage}
+    put_agent_state(agent_id, updated_state)
 
-        :ok
-
-      :error ->
-        :ok
-    end
+    :ok
   end
 
   @doc """
@@ -1033,16 +1023,11 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_agent_turn(pos_integer(), non_neg_integer()) :: :ok
   def update_agent_turn(agent_id, turn) when is_integer(turn) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        updated_state = %{agent_state | turn: turn}
-        put_agent_state(agent_id, updated_state)
+    {:ok, agent_state} = get_agent_state(agent_id)
+    updated_state = %{agent_state | turn: turn}
+    put_agent_state(agent_id, updated_state)
 
-        :ok
-
-      :error ->
-        :ok
-    end
+    :ok
   end
 
   @doc """
@@ -1053,16 +1038,11 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
   def update_total_tokens(agent_id, total_tokens) when is_integer(total_tokens) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        updated_state = %{agent_state | total_tokens: total_tokens}
-        put_agent_state(agent_id, updated_state)
+    {:ok, agent_state} = get_agent_state(agent_id)
+    updated_state = %{agent_state | total_tokens: total_tokens}
+    put_agent_state(agent_id, updated_state)
 
-        :ok
-
-      :error ->
-        :ok
-    end
+    :ok
   end
 
   @doc """
@@ -1073,19 +1053,14 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec increment_compression_count(pos_integer()) :: :ok
   def increment_compression_count(agent_id) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        updated_state = %{
-          agent_state
-          | compression_count: agent_state.compression_count + 1
-        }
+    {:ok, agent_state} = get_agent_state(agent_id)
+    updated_state = %{
+      agent_state
+      | compression_count: agent_state.compression_count + 1
+    }
 
-        put_agent_state(agent_id, updated_state)
+    put_agent_state(agent_id, updated_state)
 
-        :ok
-
-      :error ->
-        :ok
-    end
+    :ok
   end
 end
