@@ -501,7 +501,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 {review_status_label(Map.get(@task, :review_status))}
               </span>
             <% end %>
-            <span class={[task_status_badge(@task.status), "font-medium border-0 px-2.5 py-2 rounded-md"]}>
+            <span class={["badge", task_status_badge(@task.status), "font-medium border-0 px-2.5 py-2 rounded-md"]}>
               <%= if @task.status == :running do %>
                 <span class="relative flex h-2.5 w-2.5 mr-2">
                   <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" style="animation-duration: 2s"></span>
