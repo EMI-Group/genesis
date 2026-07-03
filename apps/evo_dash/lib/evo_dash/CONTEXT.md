@@ -25,7 +25,8 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 - Started under supervision with `data_dir:` (a FILE path to the `.sqlite` file) and optional `name:` (defaults to `EvoDash.Store`).
 - **Column-based SQLite schema** (NOT term_to_binary blobs): each TaskInfo/RecentProject field maps to a dedicated SQLite column.
 - **Explicit durability PRAGMAs**: `Xqlite.open(path, journal_mode: :wal, synchronous: :normal)` — WAL + NORMAL is the recommended combo for crash safety and write performance.
-- **Graceful connection close**: `terminate/2` calls `XqliteNIF.close(conn)` (wrapped in try/rescue).
+- **Graceful connection close**: `terminate/2` calls `XqliteNIF.close(conn)` (wrapped in justified try/rescue — GenServer terminate/2 must never raise).
+- **Crash philosophy / try-rescue anti-pattern**: `handle_call`/`handle_cast`/`handle_info` callbacks have NO try/rescue (crashes propagate to supervisor for restart). The codec uses non-crashing `Jason.encode/1` + `case` for TOTAL encode (no try/rescue). Justified try/rescue remains only in: `terminate/2` (shutdown safety), quarantine/recovery logic (`safe_select_all_rows`, `integrity_check`, `scan_and_repair`, `quarantine_row` — deliberate data-recovery boundaries that quarantine corrupt rows instead of crashing). All justified try/rescue blocks have comments explaining (1) whether the error is expected and (2) why try/rescue is the cleanest approach.
 
 #### Schema
 
@@ -89,6 +90,7 @@ size(store) :: non_neg_integer()                          # total across both ta
 - Tracks EvoGit tasks (`:genesis` / `:evolve` / `:extract_skills`) with id, type, status, opts, pid, timestamps, logs, result, review metadata, usage, archive_metadata.
 - Runtime-only task references (`%Task{}`) are kept in an in-memory `task_refs` map (`%{task_id => %Task{}}`), not persisted.
 - All store-touching `handle_*` callbacks have NO try/rescue — if the Store is down, the GenServer crashes and the supervisor restarts it. This is correct process isolation and prevents silent data loss.
+- **try/rescue anti-pattern cleanup**: `init/1` calls `Store.integrity_check/1` directly (no try/rescue — it returns `{:error, _}` rather than raising). `normalize_tasks/1` has no try/rescue (crashes propagate to supervisor). `sched_meta_has_active_agents?/1` uses `:ets.info/1` (returns `:undefined` for missing tables, non-crashing) instead of try/rescue. `cancel_task_agents` uses `catch :exit` (legitimate for cross-app GenServer calls to a possibly-dead process) with logging instead of silent `rescue _ -> :ok`.
 
 **Client API:**
 | Function | Description |
@@ -136,7 +138,7 @@ size(store) :: non_neg_integer()                          # total across both ta
 **Race conditions that defeat the `sched_meta_has_active_agents?` guard (line 931/555):**
 - The ETS `:evogit_sched_meta` table is scanned via `:ets.tab2list()` then filtered by `task_id`. Entries are deleted (`Store.delete_sched_meta/1`) during `Lifecycle` agent teardown (`lifecycle.ex:37,93,185,225`). If the top-level agent's SchedMeta has already been removed before the `:DOWN` handler runs, the check returns false → spurious `:failed`.
 - `sched_meta_has_active_agents?` only matches on `Map.get(meta, :task_id) == task_id`. If the wrapper crashed but the scheduler's agents are tracked under a different/derived task grouping, the check misses them.
-- The guard returns false if the `:evogit_sched_meta` table does not exist (`:undefined` / `ArgumentError`), which happens if `AgentScheduler` is not started or after a full VM restart.
+- The guard returns false if the `:evogit_sched_meta` table does not exist (`:ets.info/1` returns `:undefined`), which happens if `AgentScheduler` is not started or after a full VM restart.
 
 **Likely root cause of the observed bug:** The wrapper `Task.Supervisor.async_nolink` process (started at line 146) exits abnormally — e.g. because the scheduler replies to the wrapper and the wrapper exits with a non-`:normal` reason, or a transient crash — at a moment when the scheduler has ALREADY torn down the agent's `SchedMeta` ETS entry (so the active-agents check returns false). The `:DOWN` handler then marks the task `:failed`. The runtime's `{:ok,_}` result (produced by `merge_and_report`, which logs "Agent produced changes" and "Created branch") arrives immediately after and is discarded as stale.
 

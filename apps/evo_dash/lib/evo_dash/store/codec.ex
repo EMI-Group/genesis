@@ -2,10 +2,28 @@ defmodule EvoDash.Store.Codec do
   @moduledoc """
   Pure serialization functions for the EvoDash SQLite store.
 
-  This module has NO GenServer, NO I/O, and NO try/rescue in the decode
-  functions (bad data raises — the Store's quarantine logic handles crash
-  recovery). Encode functions are TOTAL — they never raise, falling back to
-  `inspect/1` for un-encodable values so that persistence always succeeds.
+  This module has NO GenServer and NO I/O.
+
+  ## Encode philosophy
+
+  Encode functions are TOTAL — they never raise. All JSON encoding uses the
+  non-crashing `Jason.encode/1` (returns `{:ok, json} | {:error, exception}`)
+  with `case`/`with` to choose fallbacks. There are NO `try/rescue` blocks in
+  the encode functions.
+
+  ## Decode philosophy
+
+  Decode functions raise on bad data — the Store's quarantine logic handles
+  crash recovery by moving undecodable rows to a quarantine table.
+
+  Two justified `try/rescue` patterns remain on the decode side:
+
+    * `decode_reason/1` — best-effort atom recovery. `String.to_existing_atom/1`
+      has no non-crashing variant; an unknown reason string legitimately stays
+      a string (it's a valid alternative representation, not "bad data").
+    * `decode_pid/1` — untrusted DB-stored pid strings. `:erlang.list_to_pid/1`
+      has no non-crashing variant; pid strings are always stale after a VM
+      restart, and returning `nil` is the correct semantic.
   """
 
   require Logger
@@ -205,24 +223,26 @@ defmodule EvoDash.Store.Codec do
         {key, value} -> [to_string(key), value]
       end)
 
-    try do
-      Jason.encode!(pairs)
-    rescue
-      e ->
+    case Jason.encode(pairs) do
+      {:ok, json} ->
+        json
+
+      {:error, e} ->
         Logger.warning(
           "Codec: failed to encode opts fully, trying essential keys: " <>
             "#{Exception.message(e)}"
         )
 
-        try do
-          essential =
-            opts
-            |> Keyword.take([:path, :mode, :prompt, :objective])
-            |> Enum.map(fn {key, value} -> [Atom.to_string(key), value] end)
+        essential =
+          opts
+          |> Keyword.take([:path, :mode, :prompt, :objective])
+          |> Enum.map(fn {key, value} -> [Atom.to_string(key), value] end)
 
-          Jason.encode!(essential)
-        rescue
-          e2 ->
+        case Jason.encode(essential) do
+          {:ok, json} ->
+            json
+
+          {:error, e2} ->
             Logger.warning(
               "Codec: failed to encode essential opts, storing nil: " <>
                 "#{Exception.message(e2)}"
@@ -260,13 +280,12 @@ defmodule EvoDash.Store.Codec do
   end
 
   # --- logs (list of strings) ---
-  def encode_logs(nil), do: Jason.encode!([])
+  def encode_logs(nil), do: "[]"
 
   def encode_logs(logs) when is_list(logs) do
-    try do
-      Jason.encode!(logs)
-    rescue
-      _ -> Jason.encode!([])
+    case Jason.encode(logs) do
+      {:ok, json} -> json
+      {:error, _} -> "[]"
     end
   end
 
@@ -303,31 +322,35 @@ defmodule EvoDash.Store.Codec do
   def encode_result({:ok, data}) when is_map(data) do
     json_data = encode_result_data(data)
 
-    try do
-      Jason.encode!(%{"__result_tag__" => "ok", "data" => json_data})
-    rescue
-      e ->
-        Logger.warning("Codec: failed to encode ok-result: #{Exception.message(e)}")
+    case Jason.encode(%{"__result_tag__" => "ok", "data" => json_data}) do
+      {:ok, json} ->
+        json
 
+      {:error, e} ->
+        Logger.warning("Codec: failed to encode ok-result: #{Exception.message(e)}")
         inspect({:ok, data})
     end
   end
 
   def encode_result({:error, reason}) do
-    try do
-      Jason.encode!(%{"__result_tag__" => "error", "reason" => reason})
-    rescue
-      _ ->
-        # reason may contain non-JSON-safe terms (tuples, pids, etc.)
+    case Jason.encode(%{"__result_tag__" => "error", "reason" => reason}) do
+      {:ok, json} ->
+        json
+
+      {:error, _} ->
+        # reason may contain non-JSON-safe terms (tuples, pids, etc.).
+        # inspect(reason) always produces a JSON-safe string, so encode!/1
+        # can never fail here.
         Jason.encode!(%{"__result_tag__" => "error", "reason" => inspect(reason)})
     end
   end
 
   def encode_result({:exit, reason}) do
-    try do
-      Jason.encode!(%{"__result_tag__" => "exit", "reason" => reason})
-    rescue
-      _ ->
+    case Jason.encode(%{"__result_tag__" => "exit", "reason" => reason}) do
+      {:ok, json} ->
+        json
+
+      {:error, _} ->
         Jason.encode!(%{"__result_tag__" => "exit", "reason" => inspect(reason)})
     end
   end
@@ -418,6 +441,13 @@ defmodule EvoDash.Store.Codec do
   # Reason values for {:error, _} / {:exit, _} are usually strings but may
   # originally have been atoms. Try to restore a pre-existing atom (safe,
   # never creates new atoms) so values like {:exit, :killed} round-trip.
+  #
+  # Justified try/rescue: (1) Do we expect this error? Yes — reason strings from
+  # the DB may not correspond to existing atoms (e.g. {:error, "custom message"}
+  # or strings written by older code versions). (2) Is try/rescue cleanest? Yes
+  # — String.to_existing_atom/1 has no non-crashing variant. The fallback (keep
+  # the string) is the correct semantic: an unknown reason is still valid as a
+  # string, not "bad data".
   def decode_reason(str) when is_binary(str) do
     try do
       String.to_existing_atom(str)
@@ -432,10 +462,11 @@ defmodule EvoDash.Store.Codec do
   def encode_usage(nil), do: nil
 
   def encode_usage(%EvoGit.Agent.Usage{} = usage) do
-    try do
-      Jason.encode!(Map.from_struct(usage))
-    rescue
-      e ->
+    case Jason.encode(Map.from_struct(usage)) do
+      {:ok, json} ->
+        json
+
+      {:error, e} ->
         Logger.warning("Codec: failed to encode usage: #{Exception.message(e)}")
         nil
     end
@@ -472,12 +503,12 @@ defmodule EvoDash.Store.Codec do
   def encode_archive(nil), do: nil
 
   def encode_archive(archive) when is_list(archive) do
-    try do
-      Jason.encode!(archive)
-    rescue
-      e ->
-        Logger.warning("Codec: failed to encode archive_metadata: #{Exception.message(e)}")
+    case Jason.encode(archive) do
+      {:ok, json} ->
+        json
 
+      {:error, e} ->
+        Logger.warning("Codec: failed to encode archive_metadata: #{Exception.message(e)}")
         nil
     end
   end
@@ -500,6 +531,12 @@ defmodule EvoDash.Store.Codec do
 
   def decode_pid(nil), do: nil
 
+  # Justified try/rescue: (1) Do we expect this error? Yes — pid strings from a
+  # previous VM run are always stale/invalid after a restart; the DB persists
+  # them across restarts. (2) Is try/rescue cleanest? Yes —
+  # :erlang.list_to_pid/1 has no non-crashing variant; it raises on malformed
+  # input. Returning nil is the correct semantic (no live pid = nil). This is a
+  # legitimate boundary with untrusted persisted data.
   def decode_pid(str) when is_binary(str) do
     try do
       str |> String.to_charlist() |> :erlang.list_to_pid()
