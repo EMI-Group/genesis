@@ -47,3 +47,11 @@ The `flash/1` component in `CoreComponents` supports three kinds:
 - Layout templates live under the `layouts/` subdirectory; only the root layout exists currently.
 - Components are pure functions — they receive assigns and return HEEx markup; no side effects or direct LiveView process calls.
 - Shared helpers from `EvoDashWeb.Helpers` should be used for cross-component utility functions (status badges, formatting, etc.) to avoid duplication between `DashboardComponents` and `AgentsComponents`.
+
+### `try/rescue` Policy
+
+`try/rescue` is normally an anti-pattern in Elixir. Within these component files:
+
+- **Do NOT** wrap `String.to_existing_atom/1` in `try/rescue`. When normalizing potentially untrusted DB-sourced data (e.g., agent archive maps after a Jason.decode round-trip), use an explicit **whitelist map lookup** (`@known_agent_keys` in `normalize_agent_keys/1`) with `Map.get/3` defaulting to the original key. This avoids dynamic atom creation AND avoids try/rescue.
+- **The ONLY justified `try/rescue`** in this subtree is `highlight_line_content/2` in `review_components.ex`, which wraps `Lumis.highlight!/2` for per-line syntax highlighting. It is justified because: (1) the non-bang `Lumis.highlight/2` also raises internally (does not return `{:error, _}`), so `case`/`with` cannot replace it; (2) per-line async (one Task per diff line) is impractical; (3) falling back to raw un-highlighted content is the correct graceful degradation. This rescue **must** carry the inline justification comment — do not remove it.
+- If any new `try/rescue` is introduced, it MUST include a clear inline comment explaining why it is justified.

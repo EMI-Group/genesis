@@ -622,13 +622,7 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   defp load_paused_state do
-    try do
-      EvoGit.AgentScheduler.get_config()[:paused] || false
-    rescue
-      _ -> false
-    catch
-      _, _ -> false
-    end
+    Map.get(EvoGit.AgentScheduler.get_config(), :paused, false)
   end
 
   # --- Private Components ---
@@ -809,60 +803,6 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   defp safe_system_checks do
-    try do
-      EvoGit.SystemCheck.run_all_checks()
-    rescue
-      e ->
-        nix_error = %{
-          available: false,
-          enabled: false,
-          flake_present: false,
-          dev_env_built: false,
-          error: inspect(e)
-        }
-
-        %{
-          config: %{missing: [], warnings: [], ok?: true, validation_errors: []},
-          tools: %{
-            git: %{available: false, path: nil, version: nil, error: inspect(e)},
-            rg: %{available: false, path: nil, version: nil, error: inspect(e)}
-          },
-          sandbox: %{
-            backend: :none,
-            enabled: false,
-            capabilities: %{filesystem_isolation: false, resource_limits: false, backend: :none},
-            systemd_available: false,
-            sandbox_exec_available: false
-          },
-          supervisor: %{evo_git: [], evo_dash: [], healthy: false},
-          nix: nix_error
-        }
-    catch
-      _, _ ->
-        nix_error = %{
-          available: false,
-          enabled: false,
-          flake_present: false,
-          dev_env_built: false,
-          error: "Unknown error"
-        }
-
-        %{
-          config: %{missing: [], warnings: [], ok?: true, validation_errors: []},
-          tools: %{
-            git: %{available: false, path: nil, version: nil, error: "Unknown error"},
-            rg: %{available: false, path: nil, version: nil, error: "Unknown error"}
-          },
-          sandbox: %{
-            backend: :none,
-            enabled: false,
-            capabilities: %{filesystem_isolation: false, resource_limits: false, backend: :none},
-            systemd_available: false,
-            sandbox_exec_available: false
-          },
-          supervisor: %{evo_git: [], evo_dash: [], healthy: false},
-          nix: nix_error
-        }
-    end
+    EvoGit.SystemCheck.run_all_checks()
   end
 end

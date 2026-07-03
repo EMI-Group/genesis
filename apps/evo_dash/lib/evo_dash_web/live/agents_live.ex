@@ -289,13 +289,7 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   defp safe_compression_threshold do
-    try do
-      EvoGit.Config.resolve([:llm, :compression_threshold_tokens]) || 100_000
-    rescue
-      _ -> 100_000
-    catch
-      _, _ -> 100_000
-    end
+    EvoGit.Config.resolve([:llm, :compression_threshold_tokens]) || 100_000
   end
 
   defp load_agent_history(agent_id) do

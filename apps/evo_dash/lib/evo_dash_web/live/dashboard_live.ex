@@ -844,6 +844,8 @@ defmodule EvoDashWeb.DashboardLive do
          put_flash(socket, :error, gettext("Command not found: %{command}", command: command))}
 
       cmd_string ->
+        # Justified try/rescue: System.cmd runs arbitrary project-config-defined shell commands.
+        # A failing command should show a user-friendly error, not crash the LiveView.
         try do
           {output, exit_code} =
             case :os.type() do
@@ -1133,37 +1135,25 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   defp load_project_config(project_root) do
-    try do
-      config = EvoGit.ProjectConfig.read(project_root)
+    config = EvoGit.ProjectConfig.read(project_root)
 
-      worktree_script =
-        case config do
-          %{"worktree" => %{"script" => script}} when is_binary(script) -> script
-          _ -> nil
-        end
+    worktree_script =
+      case config do
+        %{"worktree" => %{"script" => script}} when is_binary(script) -> script
+        _ -> nil
+      end
 
-      commands = EvoGit.ProjectConfig.commands(project_root)
+    commands = EvoGit.ProjectConfig.commands(project_root)
 
-      {config, worktree_script, commands}
-    rescue
-      _ -> {nil, nil, %{}}
-    catch
-      _, _ -> {nil, nil, %{}}
-    end
+    {config, worktree_script, commands}
   end
 
   defp load_foreign_repos(repo_path) do
-    try do
-      repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
+    repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
 
-      Enum.sort_by(repos, fn repo ->
-        {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
-      end)
-    rescue
-      _ -> []
-    catch
-      _, _ -> []
-    end
+    Enum.sort_by(repos, fn repo ->
+      {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
+    end)
   end
 
   defp task_notification_content(task) do
