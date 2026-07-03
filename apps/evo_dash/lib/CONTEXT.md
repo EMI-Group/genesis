@@ -23,7 +23,7 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 | `EvoDash.Store.Codec` | Pure serialization module (no GenServer, no I/O). Encode functions use non-crashing `Jason.encode/1` + `case` (TOTAL encode, never raise — fallback to `inspect/1`). Decode functions raise on bad data (Store's quarantine logic handles recovery). Two justified try/rescue remain on decode side: `decode_reason` (best-effort atom recovery via `String.to_existing_atom`), `decode_pid` (untrusted DB pid strings via `:erlang.list_to_pid`). |
 | `EvoDash.TaskInfo` | Struct representing a task in the registry (extracted from nested module) |
 | `EvoDash.RecentProject` | Struct for recently opened projects |
-| `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes. Callbacks have NO try/rescue. On restart, `reconcile_task_status/2` checks `:evogit_sched_meta` ETS for active agents before marking running tasks as failed. |
+| `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes. Callbacks have NO try/rescue. On restart, `reconcile_task_status/2` checks `:evogit_sched_meta` ETS (via `:ets.info/1`, non-crashing) for active agents before marking running tasks as failed. |
 
 ### Web Modules (`./evo_dash_web/`)
 
