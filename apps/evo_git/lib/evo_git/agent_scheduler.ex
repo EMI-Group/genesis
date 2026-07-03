@@ -350,9 +350,14 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def init(opts) do
-    :ets.new(@agent_table, [:named_table, :public, :set, read_concurrency: true])
-    :ets.new(@sched_table, [:named_table, :public, :set, read_concurrency: true])
-    :ets.new(:evogit_archive_records, [:named_table, :public, :duplicate_bag, read_concurrency: true])
+    # ETS tables (:evogit_agent_state, :evogit_sched_meta, :evogit_archive_records)
+    # are created by EvoGit.Application before the scheduler starts so they survive
+    # scheduler crashes. Defensive check: warn if any table is unexpectedly missing.
+    for table <- [@agent_table, @sched_table, :evogit_archive_records] do
+      if :ets.whereis(table) == :undefined do
+        Logger.warning("AgentScheduler: ETS table #{inspect(table)} is missing — agents may not function correctly")
+      end
+    end
 
     config = EvoGit.Config.resolve()
 
