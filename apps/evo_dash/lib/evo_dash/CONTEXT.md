@@ -25,7 +25,8 @@ Core domain layer for the EvoDash Phoenix application. Houses the OTP applicatio
 - Started under supervision with `data_dir:` (a FILE path to the `.sqlite` file) and optional `name:` (defaults to `EvoDash.Store`).
 - **Column-based SQLite schema** (NOT term_to_binary blobs): each TaskInfo/RecentProject field maps to a dedicated SQLite column.
 - **Explicit durability PRAGMAs**: `Xqlite.open(path, journal_mode: :wal, synchronous: :normal)` — WAL + NORMAL is the recommended combo for crash safety and write performance.
-- **Graceful connection close**: `terminate/2` calls `XqliteNIF.close(conn)` (wrapped in try/rescue).
+- **Graceful connection close**: `terminate/2` calls `XqliteNIF.close(conn)` (wrapped in justified try/rescue — GenServer terminate/2 must never raise).
+- **Crash philosophy / try-rescue anti-pattern**: `handle_call`/`handle_cast`/`handle_info` callbacks have NO try/rescue (crashes propagate to supervisor for restart). The codec uses non-crashing `Jason.encode/1` + `case` for TOTAL encode (no try/rescue). Justified try/rescue remains only in: `terminate/2` (shutdown safety), quarantine/recovery logic (`safe_select_all_rows`, `integrity_check`, `scan_and_repair`, `quarantine_row` — deliberate data-recovery boundaries that quarantine corrupt rows instead of crashing). All justified try/rescue blocks have comments explaining (1) whether the error is expected and (2) why try/rescue is the cleanest approach.
 
 #### Schema
 
