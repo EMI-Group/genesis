@@ -55,8 +55,11 @@ config :evo_dash, EvoDashWeb.Endpoint,
 # Enable dev routes for dashboard and mailbox
 config :evo_dash, dev_routes: true
 
-# Do not include metadata nor timestamps in development logs
-config :logger, :default_formatter, format: "[$level] $message\n"
+# Include metadata and timestamps in development logs for debugging scheduler crashes
+config :logger, :default_formatter, format: "[$level] $message $metadata\n", metadata: [:module, :pid, :line, :function]
+
+# Enable SASL/OTP reporting so supervisor restarts are visible
+config :logger, handle_otp_reports: true, handle_sasl_reports: true
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
