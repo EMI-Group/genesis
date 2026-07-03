@@ -138,7 +138,7 @@ size(store) :: non_neg_integer()                          # total across both ta
 **Race conditions that defeat the `sched_meta_has_active_agents?` guard (line 931/555):**
 - The ETS `:evogit_sched_meta` table is scanned via `:ets.tab2list()` then filtered by `task_id`. Entries are deleted (`Store.delete_sched_meta/1`) during `Lifecycle` agent teardown (`lifecycle.ex:37,93,185,225`). If the top-level agent's SchedMeta has already been removed before the `:DOWN` handler runs, the check returns false → spurious `:failed`.
 - `sched_meta_has_active_agents?` only matches on `Map.get(meta, :task_id) == task_id`. If the wrapper crashed but the scheduler's agents are tracked under a different/derived task grouping, the check misses them.
-- The guard returns false if the `:evogit_sched_meta` table does not exist (`:undefined` / `ArgumentError`), which happens if `AgentScheduler` is not started or after a full VM restart.
+- The guard returns false if the `:evogit_sched_meta` table does not exist (`:ets.info/1` returns `:undefined`), which happens if `AgentScheduler` is not started or after a full VM restart.
 
 **Likely root cause of the observed bug:** The wrapper `Task.Supervisor.async_nolink` process (started at line 146) exits abnormally — e.g. because the scheduler replies to the wrapper and the wrapper exits with a non-`:normal` reason, or a transient crash — at a moment when the scheduler has ALREADY torn down the agent's `SchedMeta` ETS entry (so the active-agents check returns false). The `:DOWN` handler then marks the task `:failed`. The runtime's `{:ok,_}` result (produced by `merge_and_report`, which logs "Agent produced changes" and "Created branch") arrives immediately after and is discarded as stale.
 
