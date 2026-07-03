@@ -142,7 +142,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       do_try_dispatch(state, agent_id, meta, agent_state)
     else
       _ ->
-        Logger.debug("AgentScheduler: try_dispatch for #{agent_id} — entry missing, skipping")
+        Logger.info("AgentScheduler: try_dispatch for #{agent_id} — entry missing, skipping")
         state
     end
   end

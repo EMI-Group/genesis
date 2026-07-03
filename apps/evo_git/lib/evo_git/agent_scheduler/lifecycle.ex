@@ -38,7 +38,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       state
     else
       _ ->
-        Logger.debug("AgentScheduler: recycle_agent for #{agent_id} — entry already cleaned up")
+        Logger.info("AgentScheduler: recycle_agent for #{agent_id} — entry already cleaned up")
         state
     end
   end
@@ -117,7 +117,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
       :error ->
         Logger.warning(
-          "AgentScheduler: Agent #{agent_id} crashed but no sched_meta found (already cleaned up). Ignoring."
+          "AgentScheduler: Agent #{agent_id} crashed but no sched_meta found. Ignoring."
         )
 
         {:noreply, state}
