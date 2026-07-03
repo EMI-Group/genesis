@@ -112,23 +112,19 @@ defmodule EvoGit.Runtime.Evolution.NoveltyMetric do
     ```
     """
 
-    try do
-      context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
+    context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
-      with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
-           {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-           {:ok, text} <- get_response_text(response),
-           {:ok, decoded} <- JSON.decode(text) do
-        %{
-          complexity: parse_float(decoded["complexity"], 0.5),
-          paradigm: parse_paradigm(decoded["paradigm"]),
-          domain: decoded["domain"] || "unknown",
-          abstraction: parse_float(decoded["abstraction"], 0.5)
-        }
-      else
-        _ -> default_behavioral_profile()
-      end
-    rescue
+    with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
+         {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
+         {:ok, text} <- get_response_text(response),
+         {:ok, decoded} <- JSON.decode(text) do
+      %{
+        complexity: parse_float(decoded["complexity"], 0.5),
+        paradigm: parse_paradigm(decoded["paradigm"]),
+        domain: decoded["domain"] || "unknown",
+        abstraction: parse_float(decoded["abstraction"], 0.5)
+      }
+    else
       _ -> default_behavioral_profile()
     end
   end

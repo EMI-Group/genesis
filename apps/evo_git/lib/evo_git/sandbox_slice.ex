@@ -72,6 +72,7 @@ defmodule EvoGit.SandboxSlice do
     else
       # Load initial resource config from TOML config
       resources = load_config_resources()
+
       state = %{
         slice_active: false,
         resources: resources
@@ -81,7 +82,9 @@ defmodule EvoGit.SandboxSlice do
       state =
         if sandbox_enabled?() do
           case do_create_slice(resources) do
-            :ok -> %{state | slice_active: true}
+            :ok ->
+              %{state | slice_active: true}
+
             {:error, reason} ->
               Logger.warning("SandboxSlice: Failed to create slice on init: #{inspect(reason)}")
               state
@@ -104,6 +107,7 @@ defmodule EvoGit.SandboxSlice do
       case do_create_slice(state.resources) do
         :ok ->
           {:reply, :ok, %{state | slice_active: true}}
+
         {:error, reason} ->
           {:reply, {:error, reason}, state}
       end
@@ -136,6 +140,7 @@ defmodule EvoGit.SandboxSlice do
     if state.slice_active do
       do_stop_slice()
     end
+
     {:reply, :ok, %{state | slice_active: false}}
   end
 
@@ -144,6 +149,7 @@ defmodule EvoGit.SandboxSlice do
     if state.slice_active do
       do_stop_slice()
     end
+
     :ok
   end
 
@@ -170,30 +176,34 @@ defmodule EvoGit.SandboxSlice do
   end
 
   defp do_create_slice(resources) do
-    args = [
-      "--user",
-      "--slice=#{@slice_name}",
-      "--scope",
-      "--collect",
-      "-q"
-    ] ++ ["true"]
+    args =
+      [
+        "--user",
+        "--slice=#{@slice_name}",
+        "--scope",
+        "--collect",
+        "-q"
+      ] ++ ["true"]
 
-    case System.cmd("systemd-run", args, stderr_to_stdout: true) do
-      {_output, 0} ->
+    case system_cmd("systemd-run", args) do
+      {:ok, _output} ->
         # Now set the resource properties on the slice itself
         case do_update_slice_properties(resources) do
           :ok ->
             Logger.info("SandboxSlice: Created slice '#{@slice_name}' with resource limits")
             :ok
+
           {:error, reason} ->
-            Logger.warning("SandboxSlice: Slice created but failed to set properties: #{inspect(reason)}")
+            Logger.warning(
+              "SandboxSlice: Slice created but failed to set properties: #{inspect(reason)}"
+            )
+
             {:error, reason}
         end
-      {output, _code} ->
+
+      {:error, output} ->
         {:error, String.trim(output)}
     end
-  rescue
-    e -> {:error, e}
   end
 
   defp do_update_slice_properties(resources) do
@@ -202,32 +212,32 @@ defmodule EvoGit.SandboxSlice do
     # systemctl --user set-property evogit.slice CPUWeight=30 ...
     args = ["--user", "set-property", "#{@slice_name}.slice"] ++ property_args
 
-    case System.cmd("systemctl", args, stderr_to_stdout: true) do
-      {_output, 0} ->
+    case system_cmd("systemctl", args) do
+      {:ok, _output} ->
         Logger.info("SandboxSlice: Updated resource limits on slice '#{@slice_name}'")
         :ok
-      {output, _code} ->
+
+      {:error, output} ->
         Logger.warning("SandboxSlice: Failed to update slice properties: #{String.trim(output)}")
         {:error, String.trim(output)}
     end
-  rescue
-    e -> {:error, e}
   end
 
   defp do_stop_slice do
-    # Stop the slice and all services/scopes within it
+    # Stop the slice and all services/scopes within it.
+    # This runs during application shutdown (terminate/2 callback), so
+    # failures are logged and swallowed — we cannot meaningfully recover.
     args = ["--user", "stop", "#{@slice_name}.slice"]
 
-    case System.cmd("systemctl", args, stderr_to_stdout: true) do
-      {_output, 0} ->
+    case system_cmd("systemctl", args) do
+      {:ok, _output} ->
         Logger.info("SandboxSlice: Stopped and cleaned up slice '#{@slice_name}'")
         :ok
-      {output, _code} ->
+
+      {:error, output} ->
         Logger.warning("SandboxSlice: Failed to stop slice: #{String.trim(output)}")
         :ok
     end
-  rescue
-    _ -> :ok
   end
 
   defp resource_properties(resources) do
@@ -258,5 +268,19 @@ defmodule EvoGit.SandboxSlice do
       end
 
     props
+  end
+
+  # Runs a System.cmd and normalizes the result into {:ok, output} | {:error, output}.
+  # System.cmd raises ErlangError(:enoent) when the binary is missing;
+  # we pre-check executability to avoid the exception.
+  defp system_cmd(cmd, args) do
+    if System.find_executable(cmd) do
+      case System.cmd(cmd, args, stderr_to_stdout: true) do
+        {output, 0} -> {:ok, output}
+        {output, _code} -> {:error, output}
+      end
+    else
+      {:error, "command not found: #{cmd}"}
+    end
   end
 end

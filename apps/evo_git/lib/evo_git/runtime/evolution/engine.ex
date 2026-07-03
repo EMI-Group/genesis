@@ -164,6 +164,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         Supervisor.stop(pid, :shutdown, 5_000)
     end
   rescue
+    # Supervisor shutdown during cleanup must never crash the caller — best-effort teardown.
     _ -> :ok
   end
 
@@ -347,6 +348,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
             {:error, reason} ->
               Logger.debug("Evolution Engine: Crossover failed: #{inspect(reason)}")
               []
+            nil ->
+              []
           end
         else
           []
@@ -364,6 +367,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
             {:ok, child} -> [child]
             {:error, reason} ->
               Logger.debug("Evolution Engine: Mutation failed: #{inspect(reason)}")
+              []
+            nil ->
               []
           end
         else
@@ -578,6 +583,10 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
   defp safe_llm_call(agent_id, fun) do
     AgentScheduler.with_llm_slot(agent_id, fn ->
+      # Central exception handler for evolution LLM calls. Catches unexpected
+      # exceptions (e.g. from ReqLLM setup) and returns nil; callers handle nil
+      # via `|| %{}` / `|| []` / `List.wrap()`. The with/case chains in
+      # individual modules handle expected `{:error, _}` tuples.
       try do
         fun.()
       rescue
@@ -586,10 +595,6 @@ defmodule EvoGit.Runtime.Evolution.Engine do
           nil
       end
     end)
-  rescue
-    e ->
-      Logger.warning("Evolution Engine: Slot acquisition failed: #{inspect(e)}")
-      nil
   end
 
   defp call_llm(prompt, model) do
@@ -604,7 +609,5 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     else
       {:error, reason} -> {:error, reason}
     end
-  rescue
-    e -> {:error, Exception.message(e)}
   end
 end

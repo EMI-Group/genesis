@@ -230,21 +230,21 @@ defmodule EvoGit.Sandbox.Linux do
   end
 
   defp get_process_resources do
-    try do
-      case EvoGit.AgentScheduler.get_config()[:sandbox_process_resources] do
-        nil ->
-          EvoGit.Config.resolve([:sandbox, :process]) || %{}
-
-        resources when map_size(resources) == 0 ->
-          EvoGit.Config.resolve([:sandbox, :process]) || %{}
-
-        resources ->
-          resources
+    # AgentScheduler.get_config/0 is a GenServer.call that exits (noproc/
+    # timeout) if the scheduler isn't running — e.g. during early init or
+    # tests. We catch that exit specifically. Config.resolve never raises
+    # and returns nil for missing keys, so it needs no protection.
+    scheduler_config =
+      try do
+        EvoGit.AgentScheduler.get_config()
+      catch
+        :exit, _ -> %{}
       end
-    rescue
-      _ -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
-    catch
-      _, _ -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
+
+    case scheduler_config[:sandbox_process_resources] do
+      nil -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
+      resources when map_size(resources) == 0 -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
+      resources -> resources
     end
   end
 end

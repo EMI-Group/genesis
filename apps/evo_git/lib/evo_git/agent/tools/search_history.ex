@@ -135,18 +135,14 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
           matches = filter_commits(commits, regex)
           format_results(matches, pattern)
 
-        {:error, message} ->
-          "Error compiling pattern '#{pattern}': #{message}"
+        {:error, reason} ->
+          "Error compiling pattern '#{pattern}': #{inspect(reason)}"
       end
     end
   end
 
   defp compile_regex(pattern) do
-    try do
-      {:ok, Regex.compile!(pattern)}
-    rescue
-      e -> {:error, Exception.message(e)}
-    end
+    Regex.compile(pattern)
   end
 
   defp parse_log_output(output, separator) do

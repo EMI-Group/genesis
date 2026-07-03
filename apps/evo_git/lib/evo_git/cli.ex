@@ -144,7 +144,10 @@ defmodule EvoGit.CLI do
         seeds = parse_seeds(opts)
         runtime_opts = if seeds, do: Keyword.put(runtime_opts, :seeds, seeds), else: runtime_opts
         concepts = parse_concepts(opts)
-        runtime_opts = if concepts, do: Keyword.put(runtime_opts, :concepts, concepts), else: runtime_opts
+
+        runtime_opts =
+          if concepts, do: Keyword.put(runtime_opts, :concepts, concepts), else: runtime_opts
+
         runtime_opts = Keyword.put(runtime_opts, :starting_commit, opts[:starting_commit])
         runtime_opts = Keyword.put(runtime_opts, :archive, opts[:archive] == true)
 
@@ -306,7 +309,10 @@ defmodule EvoGit.CLI do
 
       IO.puts("\n  Provider: #{provider_part}")
       IO.puts("  Expected API key env var: #{env_var}")
-      IO.puts("  (If this is incorrect, check https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html)\n")
+
+      IO.puts(
+        "  (If this is incorrect, check https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html)\n"
+      )
 
       api_key = prompt_input("Enter #{env_var}: ")
 
@@ -371,12 +377,11 @@ defmodule EvoGit.CLI do
   defp atomize_config_keys(map) when is_map(map) do
     Map.new(map, fn
       {key, value} when is_binary(key) ->
-        atom_key =
-          try do
-            String.to_existing_atom(key)
-          rescue
-            ArgumentError -> key
-          end
+        # Justified: String.to_existing_atom/1 has no non-throwing variant.
+        # It is deliberately used (instead of String.to_atom/1) to avoid
+        # atom-table exhaustion from arbitrary user-supplied config keys.
+        # When the atom doesn't already exist, we keep the key as a string.
+        atom_key = safe_to_existing_atom(key)
 
         {atom_key, atomize_config_keys(value)}
 
@@ -386,6 +391,15 @@ defmodule EvoGit.CLI do
   end
 
   defp atomize_config_keys(value), do: value
+
+  # Returns the existing atom for `key`, or the original string if the atom
+  # does not exist. Uses a rescue because String.to_existing_atom/1 has no
+  # non-throwing variant (no {:ok, _} | :error tuple form).
+  defp safe_to_existing_atom(key) when is_binary(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> key
+  end
 
   defp ensure_llm_section(config) do
     Map.put_new(config, :llm, %{model: nil})
@@ -425,17 +439,21 @@ defmodule EvoGit.CLI do
 
   defp genesis_mode_atom("new"), do: :new
   defp genesis_mode_atom("existing"), do: :existing
+
   defp genesis_mode_atom(other),
     do: raise(ArgumentError, "invalid genesis mode: #{inspect(other)}")
 
   defp evolution_mode_atom("simple"), do: :simple
   defp evolution_mode_atom("complex"), do: :complex
+
   defp evolution_mode_atom(other),
     do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
 
   defp parse_foreign_repos(opts) do
     case Keyword.get_values(opts, :foreign_repo) do
-      [] -> []
+      [] ->
+        []
+
       values ->
         Enum.map(values, fn spec ->
           case String.split(spec, ":", parts: 2) do
@@ -443,6 +461,7 @@ defmodule EvoGit.CLI do
               # No id specified, use directory basename
               id = path |> Path.basename()
               EvoGit.Core.ForeignRepo.new(id, path)
+
             [id_str, path] ->
               EvoGit.Core.ForeignRepo.new(id_str, path)
           end

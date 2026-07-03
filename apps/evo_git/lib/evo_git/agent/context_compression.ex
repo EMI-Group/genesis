@@ -72,32 +72,20 @@ defmodule EvoGit.Agent.ContextCompression do
             state.context
             |> ReqLLM.Context.append(ReqLLM.Context.user(compression_instruction))
 
-          result =
-            AgentScheduler.with_llm_slot(agent_id, fn ->
-              try do
-                with {:ok, stream_response} <-
-                       ReqLLM.stream_text(llm_model, compression_context, llm_gen_opts),
-                     {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-                     text <- ReqLLM.Response.text(response),
-                     summary_msg <- ReqLLM.Context.user("Summary of previous events:\n" <> text),
-                     new_context <-
-                       ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg]) do
-                  AgentScheduler.increment_compression_count(agent_id)
-                  {:ok, %{state | context: new_context, total_tokens: 0}}
-                else
-                  _error -> {:error, state}
-                end
-              rescue
-                e ->
-                  Logger.warning("Agent #{agent_id}: Compression LLM call failed: #{inspect(e)}")
-                  {:error, state}
-              end
-            end)
+          # Let exceptions and error tuples propagate — the agent loop's
+          # restart logic (AgentScheduler retry) handles recovery, same as
+          # any other LLM failure. No silent degradation to uncompressed state.
+          AgentScheduler.with_llm_slot(agent_id, fn ->
+            {:ok, stream_response} =
+              ReqLLM.stream_text(llm_model, compression_context, llm_gen_opts)
 
-          case result do
-            {:ok, new_state} -> new_state
-            {:error, original_state} -> original_state
-          end
+            {:ok, response} = ReqLLM.StreamResponse.process_stream(stream_response)
+            text = ReqLLM.Response.text(response)
+            summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> text)
+            new_context = ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
+            AgentScheduler.increment_compression_count(agent_id)
+            %{state | context: new_context, total_tokens: 0}
+          end)
 
         _ ->
           state

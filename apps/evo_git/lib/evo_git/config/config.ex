@@ -155,34 +155,38 @@ defmodule EvoGit.Config do
     # didn't exist yet — e.g. "base_url").
     atomized =
       Map.new(model, fn
-        {key, value} when is_binary(key) -> {atomize_key(key), value}
+        {key, value} when is_binary(key) -> {safe_atomize(key), value}
         {key, value} -> {key, value}
       end)
 
     # Convert the provider VALUE to an atom if it's a string.
     case Map.get(atomized, :provider) do
-      provider when is_binary(provider) -> Map.put(atomized, :provider, atomize_key(provider))
+      provider when is_binary(provider) -> Map.put(atomized, :provider, safe_atomize(provider))
       _ -> atomized
     end
   end
 
   defp atomize_if_string(value, valid_atoms) when is_binary(value) do
-    atom = String.to_existing_atom(value)
-    if atom in valid_atoms, do: atom, else: value
-  rescue
-    ArgumentError -> value
+    # Build a string→atom lookup from the known valid atoms. This avoids
+    # String.to_existing_atom/1 + rescue entirely — unknown values (typos)
+    # simply pass through as strings via Map.get's default.
+    lookup = Map.new(valid_atoms, &{Atom.to_string(&1), &1})
+    Map.get(lookup, value, value)
   end
 
   defp atomize_if_string(value, _valid_atoms), do: value
 
-  # Safely converts a string to an existing atom, returning the original string
-  # if the atom does not exist. This avoids atom-table exhaustion from dynamic
-  # String.to_atom/1 calls on untrusted input.
-  defp atomize_key(key) when is_binary(key) do
+  defp safe_atomize(string) when is_binary(string) do
+    # KEPT: try/rescue is the idiomatic pattern for safely atomizing
+    # user-supplied TOML config keys. The Elixir atom table is not queryable,
+    # so there is no non-crashing way to check whether an atom exists before
+    # converting. String.to_existing_atom/1 raises ArgumentError for unknown
+    # atoms, which we catch to gracefully reject typo'd config keys — they are
+    # kept as strings rather than crashing or exhausting the atom table.
     try do
-      String.to_existing_atom(key)
+      String.to_existing_atom(string)
     rescue
-      ArgumentError -> key
+      ArgumentError -> string
     end
   end
 
@@ -560,14 +564,6 @@ defmodule EvoGit.Config do
   end
 
   defp atomize_keys(value), do: value
-
-  defp safe_atomize(string) do
-    try do
-      String.to_existing_atom(string)
-    rescue
-      ArgumentError -> string
-    end
-  end
 
   # Walks a nested map following a list of atom keys.
   defp get_in_path(map, []), do: map
