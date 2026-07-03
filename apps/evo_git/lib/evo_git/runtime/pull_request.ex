@@ -140,6 +140,12 @@ defmodule EvoGit.Runtime.PullRequest do
     Result: #{String.slice(agent_result, 0, 2000)}
     """
 
+    # We keep a rescue here (not just the `with` chain) because:
+    # 1. ReqLLM.Context.new/1 and other setup calls can raise on unexpected input.
+    # 2. The caller `try_create/4` has a "never raises" contract — all failures must
+    #    return nil, which `build_title/3` handles by falling back to the branch name.
+    # The `with` chain above handles {:error, _} tuples from ReqLLM functions;
+    # this rescue is the last-resort guard for unexpected exceptions.
     try do
       context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
