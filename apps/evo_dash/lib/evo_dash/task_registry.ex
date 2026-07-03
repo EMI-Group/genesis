@@ -44,6 +44,13 @@ defmodule EvoDash.TaskRegistry do
     GenServer.cast(__MODULE__, {:update_status, task_id, status, result, opts})
   end
 
+  defp update_task_status_with_caller(task_id, status, result, opts) do
+    GenServer.cast(
+      __MODULE__,
+      {:update_status, task_id, status, result, opts, {self(), capture_stacktrace(5)}}
+    )
+  end
+
   def update_task_log(task_id, log_entry) do
     GenServer.cast(__MODULE__, {:append_log, task_id, log_entry})
   end
@@ -307,56 +314,11 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:update_status, task_id, status, result, opts}, state) do
-    usage = Keyword.get(opts, :usage)
-    agent_count = Keyword.get(opts, :agent_count)
-    commit_sha = Keyword.get(opts, :commit_sha)
-    archive_records = Keyword.get(opts, :archive_records)
+    {:noreply, handle_update_status(state, task_id, status, result, opts, nil)}
+  end
 
-    state =
-      case task_get(state, task_id) do
-        %TaskInfo{} = task ->
-          if task.status in [:completed, :failed, :cancelled] and
-               status in [:completed, :failed, :cancelled] and
-               task.status != status and
-               status != :completed do
-            Logger.warning(
-              "TaskRegistry: Ignoring stale status update for task #{task_id}: " <>
-                "already #{task.status}, ignoring #{status}"
-            )
-
-            state
-          else
-            finished_at =
-              if status in [:completed, :failed, :cancelled],
-                do: DateTime.utc_now(),
-                else: task.finished_at
-
-            updated = %{task | status: status, result: result, finished_at: finished_at}
-            updated = if usage, do: %{updated | usage: usage}, else: updated
-            updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
-            updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
-
-            updated =
-              if archive_records,
-                do: %{updated | archive_metadata: archive_records},
-                else: updated
-
-            EvoDash.Store.put_task(state.task_store, updated)
-
-            if status in [:completed, :failed, :cancelled] do
-              cleanup_expired_tasks(state)
-              %{state | task_refs: Map.delete(state.task_refs, task_id)}
-            else
-              state
-            end
-          end
-
-        nil ->
-          state
-      end
-
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
-    {:noreply, state}
+  def handle_cast({:update_status, task_id, status, result, opts, caller_info}, state) do
+    {:noreply, handle_update_status(state, task_id, status, result, opts, caller_info)}
   end
 
   @impl true
@@ -409,6 +371,71 @@ defmodule EvoDash.TaskRegistry do
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
+  end
+
+  # Shared implementation for the :update_status cast handlers (5- and 6-tuple
+  # variants). The optional caller_info is {pid, stacktrace} captured at the
+  # call site by update_task_status_with_caller/4, or nil for the plain
+  # update_task_status/4 API.
+  defp handle_update_status(state, task_id, status, result, opts, caller_info) do
+    usage = Keyword.get(opts, :usage)
+    agent_count = Keyword.get(opts, :agent_count)
+    commit_sha = Keyword.get(opts, :commit_sha)
+    archive_records = Keyword.get(opts, :archive_records)
+
+    state =
+      case task_get(state, task_id) do
+        %TaskInfo{} = task ->
+          if task.status in [:completed, :failed, :cancelled] and
+               status in [:completed, :failed, :cancelled] and
+               task.status != status and
+               status != :completed do
+            Logger.warning(
+              "TaskRegistry: Ignoring stale status update for task #{task_id}: " <>
+                "already #{task.status}, ignoring #{status}"
+            )
+
+            state
+          else
+            # Log any transition INTO :failed that isn't already :failed.
+            if status == :failed and task.status != :failed do
+              log_failed_transition(task_id, :update_status_cast, task.status,
+                result: result,
+                caller_info: caller_info
+              )
+            end
+
+            finished_at =
+              if status in [:completed, :failed, :cancelled],
+                do: DateTime.utc_now(),
+                else: task.finished_at
+
+            updated = %{task | status: status, result: result, finished_at: finished_at}
+            updated = if usage, do: %{updated | usage: usage}, else: updated
+            updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
+            updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
+
+            updated =
+              if archive_records,
+                do: %{updated | archive_metadata: archive_records},
+                else: updated
+
+            EvoDash.Store.put_task(state.task_store, updated)
+
+            if status in [:completed, :failed, :cancelled] do
+              cleanup_expired_tasks(state)
+              %{state | task_refs: Map.delete(state.task_refs, task_id)}
+            else
+              state
+            end
+          end
+
+        nil ->
+          state
+      end
+
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    state
   end
 
   ## Public Task Functions
@@ -534,6 +561,17 @@ defmodule EvoDash.TaskRegistry do
         {%{task | status: :running, ref: nil}, state}
       else
         # No active agents — actual crash / orphan. Mark as failed.
+        prev_status = task.status
+
+        log_failed_transition(task.id, :reconcile, prev_status,
+          result: "Process crashed while task was running",
+          extra: [
+            pid_dead_or_nil: true,
+            process_alive: task.pid != nil and Process.alive?(task.pid),
+            sched_meta_has_active_agents: false
+          ]
+        )
+
         {%{task | status: :failed, ref: nil} |> set_crash_details(), state}
       end
     end
@@ -568,6 +606,124 @@ defmodule EvoDash.TaskRegistry do
   end
 
   defp set_crash_details(task), do: task
+
+  # --- Failed-Transition Diagnostic Logging ---
+  #
+  # When a task transitions to :failed from an unexpected path, it's hard to
+  # determine which code path triggered it. Every site that can set a task to
+  # :failed calls log_failed_transition/4 with a consistent, greppable prefix
+  # ("TaskRegistry: FAILED_TRANSITION") so occurrences can be diagnosed.
+
+  @failed_transition_prefix "TaskRegistry: FAILED_TRANSITION"
+
+  # Logs a consistent, greppable warning whenever a task transitions to :failed.
+  #
+  # ## Parameters
+  #   - `task_id`     — the task being marked failed
+  #   - `source`      — an atom identifying the code path (e.g. :result_handler,
+  #                     :down_handler, :reconcile, :task_status_pubsub,
+  #                     :update_status_cast)
+  #   - `prev_status` — the status BEFORE transitioning to :failed (may be nil
+  #                     if the task couldn't be found)
+  #   - `opts`        — keyword list of extra context:
+  #       * `:result`       — the result/reason value, if any
+  #       * `:extra`        — a keyword list of additional diagnostic fields
+  #       * `:caller_info`  — `{pid, stacktrace}` captured at the call site (for
+  #                           cast-based transitions via update_task_status/4)
+  #
+  # The log captures a short stacktrace of the CURRENT process at the point of
+  # transition, so the user can see WHO triggered it. For cast-based transitions
+  # (where the actual setter is the GenServer, not the original caller), the
+  # caller's pid + stacktrace are included via `caller_info`.
+  defp log_failed_transition(task_id, source, prev_status, opts) do
+    result = Keyword.get(opts, :result)
+    extra = Keyword.get(opts, :extra, [])
+    caller_info = Keyword.get(opts, :caller_info)
+
+    # Current stacktrace (the GenServer process for most paths).
+    stacktrace = format_stacktrace(capture_stacktrace(5))
+
+    # Caller info (captured in the caller's process for cast-based transitions).
+    caller_str =
+      case caller_info do
+        {caller_pid, caller_stack} when is_pid(caller_pid) ->
+          "caller_pid=#{inspect(caller_pid)} caller_stack=\n#{format_stacktrace(caller_stack)}"
+
+        _ ->
+          "caller_pid=N/A (same-process transition)"
+      end
+
+    extra_str =
+      case extra do
+        [] -> ""
+        fields -> " " <> Enum.map_join(fields, " ", fn {k, v} -> "#{k}=#{inspect(v)}" end)
+      end
+
+    Logger.warning(
+      "#{@failed_transition_prefix} task_id=#{task_id} source=#{source} " <>
+        "prev_status=#{inspect(prev_status)} result=#{inspect(result)}#{extra_str}\n" <>
+        "  current_stacktrace=\n#{stacktrace}\n" <>
+        "  #{caller_str}"
+    )
+  end
+
+  # Captures up to `n` frames of the current process stacktrace, skipping the
+  # internal logging helper frames (capture_stacktrace/log_failed_transition) so
+  # the first visible frame is the actual handler that triggered the transition.
+  # GenServer dispatch frames are also skipped. Returns a list of stacktrace
+  # entries. Note: we keep __MODULE__ frames because those are the handlers
+  # (handle_info/handle_cast/reconcile_task_status) that identify the caller.
+  defp capture_stacktrace(n) do
+    {:current_stacktrace, trace} = Process.info(self(), :current_stacktrace)
+
+    trace
+    |> Enum.drop_while(fn
+      {Process, :info, _, _} ->
+        true
+
+      {mod, fun, _, _}
+      when mod == __MODULE__ and fun in [:capture_stacktrace, :log_failed_transition] ->
+        true
+
+      {:gen_server, _, _, _} ->
+        true
+
+      _ ->
+        false
+    end)
+    |> Enum.take(n)
+  end
+
+  # Formats a stacktrace (list of {module, function, arity_or_file_info, location})
+  # into a readable, indented string, one frame per line.
+  defp format_stacktrace([]), do: "  (no stacktrace available)"
+
+  defp format_stacktrace(trace) do
+    Enum.map_join(trace, "\n", fn frame ->
+      "    #{format_stacktrace_frame(frame)}"
+    end)
+  end
+
+  defp format_stacktrace_frame({module, function, arity, location}) do
+    loc = format_location(location)
+    fun = format_function(function, arity)
+    "#{inspect(module)}.#{fun}#{loc}"
+  end
+
+  defp format_stacktrace_frame(other), do: "    #{inspect(other)}"
+
+  defp format_function(name, arity) when is_atom(name) and is_integer(arity),
+    do: "#{name}/#{arity}"
+
+  defp format_function(name, args) when is_atom(name) and is_list(args),
+    do: "#{name}(#{length(args)})"
+
+  defp format_function(other, _), do: inspect(other)
+
+  defp format_location([{file, line} | _]) when is_list(file) and is_integer(line),
+    do: " at #{List.to_string(file)}:#{line}"
+
+  defp format_location(_), do: ""
 
   defp task_history_config do
     defaults = %{max_tasks: 100, max_age_days: 14}
@@ -805,6 +961,12 @@ defmodule EvoDash.TaskRegistry do
 
             state
           else
+            # Log any transition INTO :failed. The core runtime normally only
+            # broadcasts :finalizing on this topic, so :failed here is unexpected.
+            if status == :failed do
+              log_failed_transition(task_id, :task_status_pubsub, task.status, result: nil)
+            end
+
             finished_at =
               if status in [:completed, :failed, :cancelled],
                 do: DateTime.utc_now(),
@@ -858,6 +1020,17 @@ defmodule EvoDash.TaskRegistry do
             :failed
         end
 
+      # Log the failed transition with the result value and current stacktrace.
+      if status == :failed do
+        prev_status =
+          case task_get(state, task_id) do
+            %TaskInfo{status: s} -> s
+            nil -> nil
+          end
+
+        log_failed_transition(task_id, :result_handler, prev_status, result: result)
+      end
+
       task_usage =
         case result do
           {:ok, %{usage: %EvoGit.Agent.Usage{} = u}} -> u
@@ -882,7 +1055,7 @@ defmodule EvoDash.TaskRegistry do
           _ -> nil
         end
 
-      update_task_status(task_id, status, result,
+      update_task_status_with_caller(task_id, status, result,
         usage: task_usage,
         agent_count: task_agent_count,
         commit_sha: task_commit_sha,
@@ -928,7 +1101,27 @@ defmodule EvoDash.TaskRegistry do
             # Do NOT update status — leave as :running
           else
             # No active agents — genuine failure
-            update_task_status(task_id, :failed, "Task process exited: #{inspect(reason)}")
+            prev_status =
+              case task_get(state, task_id) do
+                %TaskInfo{status: s} -> s
+                nil -> nil
+              end
+
+            log_failed_transition(task_id, :down_handler, prev_status,
+              result: "Task process exited: #{inspect(reason)}",
+              extra: [
+                pid: inspect(pid),
+                exit_reason: inspect(reason),
+                sched_meta_has_active_agents: false
+              ]
+            )
+
+            update_task_status_with_caller(
+              task_id,
+              :failed,
+              "Task process exited: #{inspect(reason)}",
+              []
+            )
           end
       end
     end
