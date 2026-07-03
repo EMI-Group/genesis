@@ -359,8 +359,6 @@ defmodule EvoGit.AgentScheduler do
       end
     end
 
-    Process.flag(:trap_exit, true)
-
     config = EvoGit.Config.resolve()
 
     # Load API keys from credentials.toml into environment variables
@@ -828,59 +826,15 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  # Linked task process exited (trap_exit delivers this before :DOWN).
-  # When both EXIT and DOWN fire, the first handles cleanup and the second
-  # is a no-op (ref_to_agent/pid_to_agent entries already removed).
+  # Task process exited (monitor :DOWN).
   @impl true
-  def handle_info({:EXIT, pid, reason}, state) do
-    case Map.pop(state.pid_to_agent, pid) do
-      {nil, _} ->
-        {:noreply, state}
-
-      {agent_id, pid_to_agent} ->
-        # Find and remove the corresponding monitor ref so the subsequent
-        # :DOWN message is a no-op.
-        {_ref, ref_to_agent} =
-          case Enum.find(state.ref_to_agent, fn {_r, a_id} -> a_id == agent_id end) do
-            {r, _} -> {r, Map.delete(state.ref_to_agent, r)}
-            nil -> {nil, state.ref_to_agent}
-          end
-
-        state = %{state | pid_to_agent: pid_to_agent, ref_to_agent: ref_to_agent}
-
-        # Same cleanup logic as :DOWN below.
-        {state, slot_status} = Slots.release_agent_slots(state, agent_id)
-        apply_status_updates(slot_status)
-
-        case get_sched_meta(agent_id) do
-          {:ok, meta} ->
-            if reason == :normal or meta.result_sent do
-              state = Lifecycle.recycle_agent(state, agent_id)
-              state = Dispatch.process_queue(state)
-              {:noreply, state}
-            else
-              Lifecycle.handle_agent_crash(state, agent_id, reason)
-            end
-
-          :error ->
-            Logger.warning(
-              "AgentScheduler: :EXIT for agent #{agent_id} but no sched_meta found. Slots already released, ignoring."
-            )
-
-            {:noreply, state}
-        end
-    end
-  end
-
-  # Task process exited (monitor :DOWN — arrives after :EXIT when trap_exit)
-  @impl true
-  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     case Map.pop(state.ref_to_agent, ref) do
       {nil, _} ->
         {:noreply, state}
 
       {agent_id, ref_to_agent} ->
-        state = %{state | ref_to_agent: ref_to_agent, pid_to_agent: Map.delete(state.pid_to_agent, pid)}
+        state = %{state | ref_to_agent: ref_to_agent}
 
         # Release any slots held by the dead agent and purge from queues.
         # This makes slot leaks impossible by construction — the holder sets

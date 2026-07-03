@@ -73,14 +73,15 @@ defmodule EvoGit.ApplicationTest do
       old_pid = GenServer.whereis(EvoGit.AgentScheduler)
       assert is_pid(old_pid), "AgentScheduler should be running under the supervisor"
 
-      # 4. Terminate the scheduler child (no auto-restart from terminate_child).
-      assert :ok = Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
+      # 4. Terminate the scheduler child via its group supervisor.
+      #    (AgentScheduler is a child of the one_for_all AgentGroupSupervisor)
+      assert :ok = Supervisor.terminate_child(EvoGit.AgentGroupSupervisor, EvoGit.AgentScheduler)
 
       # While terminated, the scheduler process must be gone.
       assert GenServer.whereis(EvoGit.AgentScheduler) == nil
 
       # 5. Restart the scheduler child.
-      assert {:ok, new_pid} = Supervisor.restart_child(EvoGit.Supervisor, EvoGit.AgentScheduler)
+      assert {:ok, new_pid} = Supervisor.restart_child(EvoGit.AgentGroupSupervisor, EvoGit.AgentScheduler)
       assert is_pid(new_pid)
       assert new_pid != old_pid, "scheduler should be a new process after restart"
 

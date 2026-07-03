@@ -16,8 +16,7 @@ defmodule EvoGit.Application do
 
     children = [
       {Phoenix.PubSub, name: EvoGit.PubSub},
-      {Task.Supervisor, name: EvoGit.TaskSupervisor},
-      {EvoGit.AgentScheduler, []}
+      {EvoGit.AgentGroupSupervisor, []}
     ]
 
     # SandboxSlice is only needed on Linux (systemd-run backend)
