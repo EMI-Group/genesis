@@ -7,12 +7,10 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
 
   alias EvoGit.Agent.Tools
 
-  alias EvoGit.Agent.Tools.{
-    CompleteTask
-  }
+  alias EvoGit.Agent.Tools.CompleteTask
 
   def agent_type, do: :read
-  def delegation_level, do: :high
+  def delegation_level, do: :low
 
   def subagent_tool_name, do: "subagent_codebase_investigator"
 
