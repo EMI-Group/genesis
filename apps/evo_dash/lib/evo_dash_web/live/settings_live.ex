@@ -171,10 +171,7 @@ defmodule EvoDashWeb.SettingsLive do
     # built from the existing schemas_by_category map (atom keys). Stringify
     # the keys so we compare string-to-string — no String.to_existing_atom on
     # untrusted input, fully crash-safe for unknown values.
-    category_str_to_atom =
-      Map.new(socket.assigns.schemas_by_category, fn {cat_atom, _schemas} ->
-        {Atom.to_string(cat_atom), cat_atom}
-      end)
+    category_str_to_atom = category_str_to_atom(socket.assigns.schemas_by_category)
 
     category =
       case params["category"] do
@@ -213,7 +210,11 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("select_category", %{"category" => cat_str}, socket) do
-    cat = String.to_existing_atom(cat_str)
+    # Whitelist lookup: validate the client-supplied category string against the
+    # known schema category atoms. Unknown value → nil → keep current category.
+    cat =
+      Map.get(category_str_to_atom(socket.assigns.schemas_by_category), cat_str) ||
+        socket.assigns.active_category
 
     {:noreply,
      socket
@@ -233,11 +234,18 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("save_category", params, socket) do
+    # Whitelist lookup: validate the category string against known schema atoms.
+    # Unknown value → nil → fall back to the current active_category.
     category =
       case params["category"] do
-        cat_str when is_binary(cat_str) -> String.to_existing_atom(cat_str)
-        _ -> socket.assigns.active_category
+        cat_str when is_binary(cat_str) ->
+          Map.get(category_str_to_atom(socket.assigns.schemas_by_category), cat_str)
+
+        _ ->
+          nil
       end
+
+    category = category || socket.assigns.active_category
 
     schemas = Map.get(socket.assigns.schemas_by_category, category, [])
 
@@ -400,22 +408,45 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("select_llm_provider", %{"provider_id" => id_str}, socket) do
-    provider_id = String.to_existing_atom(id_str)
-    models = EvoGit.Config.LLMCatalog.provider_models(provider_id)
-    _variants = EvoGit.Config.LLMCatalog.provider_variants(provider_id)
+    # Whitelist lookup: validate the client-supplied provider id against the
+    # known LLMCatalog providers. Unknown value → nil → clear selection and
+    # surface a friendly flash error instead of crashing.
+    provider = Map.get(provider_by_id_str(), id_str)
 
-    socket =
-      socket
-      |> assign(:selected_provider_id, provider_id)
-      |> assign(:selected_provider_models, models)
-      |> assign(:selected_variant_id, nil)
+    if provider do
+      provider_id = provider.id
+      models = provider.models
+      _variants = provider[:variants]
 
-    {:noreply, socket}
+      socket =
+        socket
+        |> assign(:selected_provider_id, provider_id)
+        |> assign(:selected_provider_models, models)
+        |> assign(:selected_variant_id, nil)
+
+      {:noreply, socket}
+    else
+      # Unknown provider id — keep existing state, show an error flash.
+      {:noreply,
+       socket
+       |> assign(:selected_provider_id, nil)
+       |> assign(:selected_provider_models, [])
+       |> assign(:selected_variant_id, nil)
+       |> put_flash(:error, gettext("Unknown provider."))}
+    end
   end
 
   @impl true
   def handle_event("select_llm_variant", %{"variant_id" => variant_id_str}, socket) do
-    variant_id = String.to_existing_atom(variant_id_str)
+    # Whitelist lookup: validate the client-supplied variant id against the
+    # variants of the currently selected provider. Unknown value (or no
+    # provider selected) → nil → no selection change.
+    variant_id =
+      case socket.assigns.selected_provider_id do
+        nil -> nil
+        provider_atom -> Map.get(variant_id_by_str(provider_atom), variant_id_str)
+      end
+
     {:noreply, assign(socket, :selected_variant_id, variant_id)}
   end
 
@@ -433,10 +464,7 @@ defmodule EvoDashWeb.SettingsLive do
 
     # Build a whitelist map keyed by the string form of each provider's atom id,
     # so untrusted POST data is matched without String.to_existing_atom.
-    provider_by_id_str =
-      Map.new(EvoGit.Config.LLMCatalog.providers(), fn p -> {Atom.to_string(p.id), p} end)
-
-    provider = Map.get(provider_by_id_str, provider_id_str)
+    provider = Map.get(provider_by_id_str(), provider_id_str)
 
     result =
       cond do
@@ -713,6 +741,33 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   defp parse_atom(_, _), do: nil
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: untrusted-string → atom whitelists
+  #
+  # Each helper builds a map keyed by the *string* form of a known atom, so
+  # client-supplied (untrusted) values can be validated via Map.get/2 without
+  # ever calling String.to_existing_atom/1 or String.to_atom/1. Unknown values
+  # resolve to nil so callers can surface a friendly default instead of crashing
+  # with an ArgumentError (or risking atom-table exhaustion via to_atom/1).
+  # ───────────────────────────────────────────────────────────────────────────
+
+  defp category_str_to_atom(schemas_by_category) do
+    Map.new(schemas_by_category, fn {cat_atom, _schemas} ->
+      {Atom.to_string(cat_atom), cat_atom}
+    end)
+  end
+
+  defp provider_by_id_str do
+    Map.new(EvoGit.Config.LLMCatalog.providers(), fn p -> {Atom.to_string(p.id), p} end)
+  end
+
+  defp variant_id_by_str(provider_atom) when is_atom(provider_atom) do
+    case EvoGit.Config.LLMCatalog.provider_variants(provider_atom) do
+      nil -> %{}
+      variants -> Map.new(variants, fn v -> {Atom.to_string(v.id), v.id} end)
+    end
+  end
 
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: map operations
