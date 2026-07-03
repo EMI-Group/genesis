@@ -365,28 +365,36 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("reset_key", %{"key_path" => path_str}, socket) do
-    key_path = parse_key_path(path_str)
+    key_path = parse_key_path(path_str, socket.assigns.schemas_by_category)
     schema = find_schema(key_path, socket.assigns.schemas_by_category)
-    config = put_in(socket.assigns.file_config, key_path, schema.default)
 
-    case EvoGit.Config.save_user_config(config) do
-      :ok ->
-        file_config = load_file_config()
-        config_status = config_status()
-        config_file_exists = File.exists?(socket.assigns.config_path)
+    # An unknown or stale key_path / schema means untrusted client input did not
+    # resolve to a known setting — surface a friendly flash instead of crashing
+    # on put_in with a nil path or a nil schema.default.
+    if is_nil(key_path) or is_nil(schema) do
+      {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
+    else
+      config = put_in(socket.assigns.file_config, key_path, schema.default)
 
-        {:noreply,
-         socket
-         |> assign(:file_config, file_config)
-         |> assign(:config_status, config_status)
-         |> assign(:config_file_exists, config_file_exists)
-         |> assign(:per_category_errors, %{})
-         |> put_flash(:info, gettext("Reset %{key} to default.", key: path_str))}
+      case EvoGit.Config.save_user_config(config) do
+        :ok ->
+          file_config = load_file_config()
+          config_status = config_status()
+          config_file_exists = File.exists?(socket.assigns.config_path)
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, gettext("Failed to reset key: %{reason}", reason: inspect(reason)))}
+          {:noreply,
+           socket
+           |> assign(:file_config, file_config)
+           |> assign(:config_status, config_status)
+           |> assign(:config_file_exists, config_file_exists)
+           |> assign(:per_category_errors, %{})
+           |> put_flash(:info, gettext("Reset %{key} to default.", key: path_str))}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> put_flash(:error, gettext("Failed to reset key: %{reason}", reason: inspect(reason)))}
+      end
     end
   end
 
@@ -639,11 +647,30 @@ defmodule EvoDashWeb.SettingsLive do
   # Helpers: parsing
   # ───────────────────────────────────────────────────────────────────────────
 
-  defp parse_key_path(path_str) when is_binary(path_str) do
-    path_str
-    |> String.split(".")
-    |> Enum.map(&String.to_existing_atom/1)
+  defp parse_key_path(path_str, schemas_by_category) when is_binary(path_str) do
+    # Build a whitelist of valid atom segments (string form -> atom) from every
+    # known schema key_path, then validate each segment of the parsed path
+    # against it. This avoids String.to_existing_atom/to_atom on untrusted
+    # client input (atom-table exhaustion / ArgumentError crashes). Returns nil
+    # when any segment is unknown so the caller can surface a friendly error
+    # instead of crashing.
+    valid_segment_str_to_atom =
+      schemas_by_category
+      |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
+      |> Enum.flat_map(fn schema -> schema.key_path end)
+      |> Enum.uniq()
+      |> Map.new(fn atom -> {Atom.to_string(atom), atom} end)
+
+    segments = String.split(path_str, ".")
+
+    if Enum.all?(segments, &Map.has_key?(valid_segment_str_to_atom, &1)) do
+      Enum.map(segments, &Map.fetch!(valid_segment_str_to_atom, &1))
+    else
+      nil
+    end
   end
+
+  defp find_schema(nil, _schemas_by_category), do: nil
 
   defp find_schema(key_path, schemas_by_category) do
     schemas_by_category
