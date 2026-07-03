@@ -847,7 +847,7 @@ defmodule EvoDashWeb.SettingsComponents do
   def category_icon(:sandbox), do: "hero-shield-check"
   def category_icon(:truncation), do: "hero-scissors"
   def category_icon(:task_history), do: "hero-clock"
-  def category_icon(:nix), do: "hero-snowflake"
+  def category_icon(:nix), do: "hero-cube-transparent"
 
   defp category_description(:scheduler),
     do: gettext("Control agent concurrency, retry behavior, and depth limits.")
