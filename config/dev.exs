@@ -56,7 +56,9 @@ config :evo_dash, EvoDashWeb.Endpoint,
 config :evo_dash, dev_routes: true
 
 # Include metadata and timestamps in development logs for debugging scheduler crashes
-config :logger, :default_formatter, format: "[$level] $message $metadata\n", metadata: [:module, :pid, :line, :function]
+config :logger, :default_formatter,
+  format: "[$level] $message $metadata\n",
+  metadata: [:module, :pid, :line, :function]
 
 # Enable SASL/OTP reporting so supervisor restarts are visible
 config :logger, handle_otp_reports: true, handle_sasl_reports: true

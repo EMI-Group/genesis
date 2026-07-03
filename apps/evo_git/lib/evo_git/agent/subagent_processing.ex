@@ -163,6 +163,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
         ) :: [AgentSpec.t() | {:error, {map(), non_neg_integer(), String.t()}}]
   def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{}) do
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
+    repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
     # Get foreign repos from the agent's inherited state (per-task, not global)
     foreign_repos = state.foreign_repos
@@ -174,7 +175,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
       commit_id = Map.get(call.arguments, "commit_id")
 
       # Determine if this is a cross-repo delegation (absolute path) or same-repo (relative)
-      case resolve_subagent_path(raw_path, parent_state, foreign_repos) do
+      case resolve_subagent_path(raw_path, repo_path, foreign_repos) do
         {:ok, target_repo_id, target_repo_root, resolved_rel_path} ->
           # If the LLM passed a file path, use its parent directory instead
           path =
@@ -189,7 +190,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
           # Load context node with the target repo_id
           sub_context_node =
             if target_repo_id == "primary" do
-              ContextNode.load(path, parent_state.phylo_node.repo)
+              ContextNode.load(path, repo_path)
             else
               # For foreign repos, use the foreign repo root as the base
               ContextNode.load(path, target_repo_root, target_repo_id)
@@ -203,7 +204,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
               base_commit = commit_id || parent_state.phylo_node.current_commit
 
               %PhyloGraphNode{
-                repo: parent_state.phylo_node.repo,
+                repo: repo_path,
                 base_commit: base_commit,
                 current_commit: base_commit
               }
@@ -254,10 +255,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
   """
   @spec resolve_subagent_path(
           raw_path :: String.t() | nil,
-          parent_state :: map(),
+          repo_path :: String.t(),
           foreign_repos :: [ForeignRepo.t()]
         ) :: {:ok, String.t(), String.t(), String.t()} | {:error, String.t()}
-  def resolve_subagent_path(raw_path, parent_state, foreign_repos) do
+  def resolve_subagent_path(raw_path, repo_path, foreign_repos) do
     if ForeignRepo.absolute_path?(raw_path) do
       # Absolute path — resolve to the correct foreign repo, falling back to primary
       case ForeignRepo.resolve_path(foreign_repos, raw_path) do
@@ -268,7 +269,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
         {:error, :not_in_any_repo} ->
           # Not in any registered foreign repo. Try the primary repo root directly,
           # since it may not be in the foreign_repos list.
-          primary_root = parent_state.phylo_node.repo
+          primary_root = repo_path
 
           case foreign_repo_match_root(primary_root, raw_path) do
             {:ok, rel_path} ->
@@ -296,7 +297,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     else
       # Relative path — same repo as parent
       normalized = ContextNode.normalize_relpath(raw_path)
-      {:ok, "primary", parent_state.phylo_node.repo, normalized}
+      {:ok, "primary", repo_path, normalized}
     end
   end
 

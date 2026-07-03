@@ -7,11 +7,9 @@ defmodule EvoGit.Agent do
   - `context_node` (spatial): the node in the Context Tree
   - `phylo_node` (temporal): git commit state with `base_commit` and `current_commit`
 
-  The agent reads its spatial/temporal state from the `:evogit_agent_state` ETS
-  table managed by `EvoGit.AgentScheduler`. The worktree path lives inside
-  `phylo_node.repo` and is re-read at the start of **every turn** via
-  `load_worktree_path/1`. This ensures correctness when an agent is rescheduled
-  to a different worktree after yielding (e.g., during subagent delegation).
+  The agent's worktree path is fixed for the agent's entire lifetime. It is set
+  once by the scheduler via `Process.put(:repo_path, ...)` before the agent task
+  starts, read at startup, and stored in `LoopState.repo_path`. It never changes.
 
   Scheduling metadata (status, worktree assignment, parent tracking) lives in
   a separate `:evogit_sched_meta` table owned by the scheduler — agents never
@@ -24,7 +22,6 @@ defmodule EvoGit.Agent do
     the user's objective (the query) as user prompts.
   """
 
-  alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
   alias EvoGit.Agent.OutputSanitizer
@@ -124,8 +121,8 @@ defmodule EvoGit.Agent do
       @doc """
       Runs the agent synchronously, blocking until it completes.
 
-      The agent reads its spatial/temporal state from ETS every turn via
-      `load_worktree_path/1`, ensuring it always has the correct worktree path.
+      The agent's worktree path is set once at startup via
+      `Process.get(:repo_path)` and stored in `LoopState.repo_path`.
       Agent state is synced to ETS every turn for dashboard visibility.
       The dashboard reads the `context` field from `evogit_agent_state` table.
       """
@@ -201,6 +198,7 @@ defmodule EvoGit.Agent do
             agent_module: __MODULE__,
             depth: EvoGit.AgentScheduler.current_depth(),
             node_path: node_path,
+            repo_path: repo_path,
             context: context,
             max_turns: max_turns,
             skill_schemas: skill_schemas,
@@ -219,20 +217,6 @@ defmodule EvoGit.Agent do
       end
 
       # --- Internal Execution Logic ---
-
-      defp load_worktree_path(state) do
-        case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
-          {:ok, %AgentState{phylo_node: %{repo: wt}}} when not is_nil(wt) ->
-            Process.put(:repo_path, wt)
-            %{state | repo_path: wt}
-
-          {:ok, %AgentState{phylo_node: phylo_node}} when is_nil(phylo_node.repo) ->
-            raise "PhyloNode repo is nil for agent #{state.agent_id} - scheduler bug"
-
-          _ ->
-            raise "No ETS state found for agent #{state.agent_id} - scheduler bug"
-        end
-      end
 
       defp sync_current_commit_after_tools(state) do
         repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
@@ -306,9 +290,6 @@ defmodule EvoGit.Agent do
       end
 
       defp loop(state) do
-        # Re-read worktree from ETS every turn
-        state = load_worktree_path(state)
-
         context_before = state.context
 
         state =
