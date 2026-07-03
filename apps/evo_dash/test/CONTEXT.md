@@ -38,3 +38,4 @@ Holds all test files for the EvoDash application. Provides the ExUnit test runne
 - Test file naming: `*_test.exs`.
 - Tests requiring an isolated TaskRegistry/TaskStore terminate the production children from `EvoDash.Supervisor` and restart them via `Supervisor.restart_child/2` in `on_exit` to avoid breaking other suites.
 - All task persistence in tests goes through `EvoDash.Store` (SQLite-backed) — no legacy storage formats are used.
+- **`try/rescue`/`catch` policy for test files:** While the codebase's design philosophy treats `try/rescue` as an anti-pattern, in test files it is acceptable — and encouraged — in `on_exit`/teardown cleanup paths, because a teardown failure should NOT mask or obscure an actual test failure. Such cleanup rescues must be accompanied by a brief comment documenting why. Rescues that wrap actual test assertions or mask real behavior under test are forbidden; if an assertion would fail, the test must fail loudly.
