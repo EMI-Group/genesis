@@ -233,20 +233,16 @@ defmodule EvoGit.Runtime.Evolution.LLMSynthesis do
   # ---------------------------------------------------------------------------
 
   defp call_llm(prompt, model) do
-    try do
-      alias ReqLLM.Context, as: C
+    alias ReqLLM.Context, as: C
 
-      context = C.new([C.user(prompt)])
+    context = C.new([C.user(prompt)])
 
-      with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
-           {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-           text <- ReqLLM.Response.text(response) do
-        {:ok, text}
-      else
-        {:error, reason} -> {:error, reason}
-      end
-    rescue
-      e -> {:error, Exception.message(e)}
+    with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
+         {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
+         text <- ReqLLM.Response.text(response) do
+      {:ok, text}
+    else
+      {:error, reason} -> {:error, reason}
     end
   end
 

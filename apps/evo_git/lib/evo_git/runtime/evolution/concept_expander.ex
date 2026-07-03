@@ -65,21 +65,12 @@ defmodule EvoGit.Runtime.Evolution.ConceptExpander do
     model = Keyword.fetch!(opts, :model)
     prompt = build_subtopics_prompt(concept, breadth)
 
-    try do
-      case call_llm(prompt, model, opts) do
-        {:ok, text} ->
-          parse_subtopics(text)
+    case call_llm(prompt, model, opts) do
+      {:ok, text} ->
+        parse_subtopics(text)
 
-        {:error, reason} ->
-          Logger.warning("ConceptExpander: Sub-topic expansion failed: #{inspect(reason)}")
-          []
-      end
-    rescue
-      e ->
-        Logger.warning(
-          "ConceptExpander: Sub-topic expansion raised: #{Exception.message(e)}"
-        )
-
+      {:error, reason} ->
+        Logger.warning("ConceptExpander: Sub-topic expansion failed: #{inspect(reason)}")
         []
     end
   end
@@ -97,22 +88,13 @@ defmodule EvoGit.Runtime.Evolution.ConceptExpander do
     model = Keyword.fetch!(opts, :model)
     prompt = build_implementations_prompt(subtopic, depth)
 
-    try do
-      case call_llm(prompt, model, opts) do
-        {:ok, text} ->
-          parse_implementations(text)
+    case call_llm(prompt, model, opts) do
+      {:ok, text} ->
+        parse_implementations(text)
 
-        {:error, reason} ->
-          Logger.warning(
-            "ConceptExpander: Implementation expansion failed: #{inspect(reason)}"
-          )
-
-          []
-      end
-    rescue
-      e ->
+      {:error, reason} ->
         Logger.warning(
-          "ConceptExpander: Implementation expansion raised: #{Exception.message(e)}"
+          "ConceptExpander: Implementation expansion failed: #{inspect(reason)}"
         )
 
         []
@@ -161,55 +143,37 @@ defmodule EvoGit.Runtime.Evolution.ConceptExpander do
       "ConceptExpander: Expanding sub-topic '#{subtopic}' into implementations..."
     )
 
-    try do
-      case expand_to_implementations(subtopic, opts) do
-        [] ->
-          Logger.warning(
-            "ConceptExpander: No implementations generated for '#{subtopic}'"
-          )
-
-          []
-
-        implementations ->
-          Logger.info(
-            "ConceptExpander: Generated #{length(implementations)} implementations for '#{subtopic}'"
-          )
-
-          domain = slugify_domain(subtopic)
-
-          Enum.flat_map(implementations, fn implementation ->
-            generate_single_fragment(implementation, domain, opts)
-          end)
-      end
-    rescue
-      e ->
+    case expand_to_implementations(subtopic, opts) do
+      [] ->
         Logger.warning(
-          "ConceptExpander: Failed to expand sub-topic '#{subtopic}': #{Exception.message(e)}"
+          "ConceptExpander: No implementations generated for '#{subtopic}'"
         )
 
         []
+
+      implementations ->
+        Logger.info(
+          "ConceptExpander: Generated #{length(implementations)} implementations for '#{subtopic}'"
+        )
+
+        domain = slugify_domain(subtopic)
+
+        Enum.flat_map(implementations, fn implementation ->
+          generate_single_fragment(implementation, domain, opts)
+        end)
     end
   end
 
   defp generate_single_fragment(implementation, domain, opts) do
     Logger.info("ConceptExpander: Generating fragment for: #{implementation}")
 
-    try do
-      case generate_fragment(implementation, domain, opts) do
-        {:ok, fragment} ->
-          [fragment]
+    case generate_fragment(implementation, domain, opts) do
+      {:ok, fragment} ->
+        [fragment]
 
-        {:error, reason} ->
-          Logger.warning(
-            "ConceptExpander: Failed to generate fragment for '#{implementation}': #{inspect(reason)}"
-          )
-
-          []
-      end
-    rescue
-      e ->
+      {:error, reason} ->
         Logger.warning(
-          "ConceptExpander: Fragment generation raised for '#{implementation}': #{Exception.message(e)}"
+          "ConceptExpander: Failed to generate fragment for '#{implementation}': #{inspect(reason)}"
         )
 
         []
@@ -326,20 +290,16 @@ defmodule EvoGit.Runtime.Evolution.ConceptExpander do
   end
 
   defp do_call_llm(prompt, model) do
-    try do
-      alias ReqLLM.Context, as: C
+    alias ReqLLM.Context, as: C
 
-      context = C.new([C.user(prompt)])
+    context = C.new([C.user(prompt)])
 
-      with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
-           {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-           text <- ReqLLM.Response.text(response) do
-        {:ok, text}
-      else
-        {:error, reason} -> {:error, reason}
-      end
-    rescue
-      e -> {:error, Exception.message(e)}
+    with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
+         {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
+         text <- ReqLLM.Response.text(response) do
+      {:ok, text}
+    else
+      {:error, reason} -> {:error, reason}
     end
   end
 end
