@@ -188,13 +188,31 @@ defmodule EvoGit.SystemCheck do
     if enabled and flake_present do
       case EvoGit.Nix.ensure_dev_env() do
         {:ok, _path} ->
-          %{available: available, enabled: enabled, flake_present: flake_present, dev_env_built: true, error: nil}
+          %{
+            available: available,
+            enabled: enabled,
+            flake_present: flake_present,
+            dev_env_built: true,
+            error: nil
+          }
 
         {:error, reason} ->
-          %{available: available, enabled: enabled, flake_present: flake_present, dev_env_built: false, error: reason}
+          %{
+            available: available,
+            enabled: enabled,
+            flake_present: flake_present,
+            dev_env_built: false,
+            error: reason
+          }
       end
     else
-      %{available: available, enabled: enabled, flake_present: flake_present, dev_env_built: false, error: nil}
+      %{
+        available: available,
+        enabled: enabled,
+        flake_present: flake_present,
+        dev_env_built: false,
+        error: nil
+      }
     end
   rescue
     # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.

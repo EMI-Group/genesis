@@ -249,7 +249,8 @@ defmodule EvoGit.Skills do
     end
   end
 
-  defp skill_name(_args), do: ""  # Placeholder, not used
+  # Placeholder, not used
+  defp skill_name(_args), do: ""
 
   @doc """
   Extracts the first ```bash code block from markdown content.
@@ -294,7 +295,11 @@ defmodule EvoGit.Skills do
     result =
       with :ok <- File.write(tmp_file, script),
            :ok <- File.chmod(tmp_file, 0o755) do
-        case System.cmd("bash", [tmp_file], cd: repo_path, stderr_to_stdout: true, parallelism: false) do
+        case System.cmd("bash", [tmp_file],
+               cd: repo_path,
+               stderr_to_stdout: true,
+               parallelism: false
+             ) do
           {output, 0} ->
             "Skill executed successfully:\n#{String.trim(output)}"
 
@@ -319,7 +324,8 @@ defmodule EvoGit.Skills do
 
   Returns `{:ok, file_path}` on success, `{:error, reason}` on failure.
   """
-  @spec add_skill(String.t(), String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  @spec add_skill(String.t(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, String.t()}
   def add_skill(repo_root, content, _description, _params) do
     # Validate the skill content
     case validate_skill_text(content) do
@@ -335,8 +341,11 @@ defmodule EvoGit.Skills do
           {:error, "Skill '#{name}' already exists at #{file_path}"}
         else
           case File.write(file_path, content) do
-            :ok -> {:ok, file_path}
-            {:error, reason} -> {:error, "Failed to write skill file: #{:file.format_error(reason)}"}
+            :ok ->
+              {:ok, file_path}
+
+            {:error, reason} ->
+              {:error, "Failed to write skill file: #{:file.format_error(reason)}"}
           end
         end
 
@@ -738,7 +747,8 @@ defmodule EvoGit.Skills do
 
   Returns `{:ok, count}` where count is the number of files modified.
   """
-  @spec remove_skill_from_all_contexts(String.t(), String.t()) :: {:ok, non_neg_integer()} | {:error, String.t()}
+  @spec remove_skill_from_all_contexts(String.t(), String.t()) ::
+          {:ok, non_neg_integer()} | {:error, String.t()}
   def remove_skill_from_all_contexts(skill_name, repo_root)
       when is_binary(skill_name) and is_binary(repo_root) do
     context_files = find_all_context_files(repo_root)
@@ -824,6 +834,7 @@ defmodule EvoGit.Skills do
           - #{skill_name}
         ---
         """
+
         File.write(context_path, new_content)
 
       {:error, reason} ->
@@ -906,7 +917,7 @@ defmodule EvoGit.Skills do
   end
 
   defp yaml_kv(key, value, _indent) when is_list(value) do
-    "#{key}:" <> Enum.map(value, fn v -> "\n  - #{v}" end) |> Enum.join()
+    ("#{key}:" <> Enum.map(value, fn v -> "\n  - #{v}" end)) |> Enum.join()
   end
 
   defp yaml_kv(key, value, _indent) do

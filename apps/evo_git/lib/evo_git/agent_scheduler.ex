@@ -359,7 +359,9 @@ defmodule EvoGit.AgentScheduler do
     # scheduler crashes. Defensive check: warn if any table is unexpectedly missing.
     for table <- [@agent_table, @sched_table, :evogit_archive_records] do
       if :ets.whereis(table) == :undefined do
-        Logger.warning("AgentScheduler: ETS table #{inspect(table)} is missing — agents may not function correctly")
+        Logger.warning(
+          "AgentScheduler: ETS table #{inspect(table)} is missing — agents may not function correctly"
+        )
       end
     end
 
@@ -457,13 +459,21 @@ defmodule EvoGit.AgentScheduler do
     state = Worktrees.ensure_initialized(state, repo_path)
 
     task_id =
-      spec.opts[:task_id] || (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
+      spec.opts[:task_id] || :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
 
     repo_root = Dispatch.resolve_agent_repo_root(spec, state)
     task_number = Dispatch.next_task_number(repo_root)
 
     {agent_id, state} =
-      Dispatch.register_agent(state, spec, from, _parent_id = nil, _depth = 0, task_id, task_number)
+      Dispatch.register_agent(
+        state,
+        spec,
+        from,
+        _parent_id = nil,
+        _depth = 0,
+        task_id,
+        task_number
+      )
 
     Logger.info(
       "AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id}, number #{task_number})"
@@ -932,7 +942,8 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  defp inject_archive_records({:ok, %EvoGit.Agent.Result{} = res}, records) when is_list(records) do
+  defp inject_archive_records({:ok, %EvoGit.Agent.Result{} = res}, records)
+       when is_list(records) do
     {:ok, %{res | archive_records: records}}
   end
 
@@ -1012,6 +1023,7 @@ defmodule EvoGit.AgentScheduler do
   @spec increment_compression_count(pos_integer()) :: :ok
   def increment_compression_count(agent_id) do
     {:ok, agent_state} = get_agent_state(agent_id)
+
     updated_state = %{
       agent_state
       | compression_count: agent_state.compression_count + 1

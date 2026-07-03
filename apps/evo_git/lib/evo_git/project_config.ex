@@ -123,9 +123,11 @@ defmodule EvoGit.ProjectConfig do
         repos
         |> Enum.flat_map(fn {id_str, config} ->
           case build_foreign_repo(id_str, config) do
-            {:ok, repo} -> [repo]
+            {:ok, repo} ->
+              [repo]
+
             {:error, reason} ->
-              Logger.warning("Skipping foreign repo '#{id_str}': #{reason}")
+              Logger.warning("Failed to parse foreign_repos '#{id_str}': #{reason}")
               []
           end
         end)

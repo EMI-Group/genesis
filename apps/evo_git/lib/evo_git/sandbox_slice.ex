@@ -72,6 +72,7 @@ defmodule EvoGit.SandboxSlice do
     else
       # Load initial resource config from TOML config
       resources = load_config_resources()
+
       state = %{
         slice_active: false,
         resources: resources
@@ -81,7 +82,9 @@ defmodule EvoGit.SandboxSlice do
       state =
         if sandbox_enabled?() do
           case do_create_slice(resources) do
-            :ok -> %{state | slice_active: true}
+            :ok ->
+              %{state | slice_active: true}
+
             {:error, reason} ->
               Logger.warning("SandboxSlice: Failed to create slice on init: #{inspect(reason)}")
               state
@@ -104,6 +107,7 @@ defmodule EvoGit.SandboxSlice do
       case do_create_slice(state.resources) do
         :ok ->
           {:reply, :ok, %{state | slice_active: true}}
+
         {:error, reason} ->
           {:reply, {:error, reason}, state}
       end
@@ -136,6 +140,7 @@ defmodule EvoGit.SandboxSlice do
     if state.slice_active do
       do_stop_slice()
     end
+
     {:reply, :ok, %{state | slice_active: false}}
   end
 
@@ -144,6 +149,7 @@ defmodule EvoGit.SandboxSlice do
     if state.slice_active do
       do_stop_slice()
     end
+
     :ok
   end
 
@@ -170,13 +176,14 @@ defmodule EvoGit.SandboxSlice do
   end
 
   defp do_create_slice(resources) do
-    args = [
-      "--user",
-      "--slice=#{@slice_name}",
-      "--scope",
-      "--collect",
-      "-q"
-    ] ++ ["true"]
+    args =
+      [
+        "--user",
+        "--slice=#{@slice_name}",
+        "--scope",
+        "--collect",
+        "-q"
+      ] ++ ["true"]
 
     case system_cmd("systemd-run", args) do
       {:ok, _output} ->
@@ -185,10 +192,15 @@ defmodule EvoGit.SandboxSlice do
           :ok ->
             Logger.info("SandboxSlice: Created slice '#{@slice_name}' with resource limits")
             :ok
+
           {:error, reason} ->
-            Logger.warning("SandboxSlice: Slice created but failed to set properties: #{inspect(reason)}")
+            Logger.warning(
+              "SandboxSlice: Slice created but failed to set properties: #{inspect(reason)}"
+            )
+
             {:error, reason}
         end
+
       {:error, output} ->
         {:error, String.trim(output)}
     end
@@ -204,6 +216,7 @@ defmodule EvoGit.SandboxSlice do
       {:ok, _output} ->
         Logger.info("SandboxSlice: Updated resource limits on slice '#{@slice_name}'")
         :ok
+
       {:error, output} ->
         Logger.warning("SandboxSlice: Failed to update slice properties: #{String.trim(output)}")
         {:error, String.trim(output)}
@@ -220,6 +233,7 @@ defmodule EvoGit.SandboxSlice do
       {:ok, _output} ->
         Logger.info("SandboxSlice: Stopped and cleaned up slice '#{@slice_name}'")
         :ok
+
       {:error, output} ->
         Logger.warning("SandboxSlice: Failed to stop slice: #{String.trim(output)}")
         :ok
