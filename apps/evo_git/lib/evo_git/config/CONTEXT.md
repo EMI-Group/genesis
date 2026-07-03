@@ -125,7 +125,7 @@ Keys are set as environment variables on load. Only one key needed (matching the
 - `save_user_config/1` writes to `config.toml` and `save_credentials/1` writes to `credentials.toml`. Both create the config directory if needed.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
 - Config directory follows XDG conventions via `EvoGit.Platform.os()`.
-- All file reads are wrapped in try/rescue-safe patterns with Logger warnings on failure.
+- All file reads use `case File.read/1` (non-crashing) with explicit error handling via `with`/`case`, not `try/rescue`.
 - `EvoGit.Defaults` is a backward-compatibility shim that delegates all calls to this module.
 - Model format is `"provider:model"` — provider determines which API key env var is used.
 - `config_status/0` checks: LLM model presence, at least one API key, GitHub username.
