@@ -43,13 +43,7 @@ defmodule EvoGit.Core.ContextNode do
 
       {:ok, []} ->
         # If current path is not ignored, check parent directory recursively
-        parent = Path.dirname(path)
-
-        if parent == "." do
-          false
-        else
-          check_path_ignored(parent, repo_path)
-        end
+        check_path_ignored(Path.dirname(path), repo_path)
 
       _ ->
         false
@@ -74,19 +68,13 @@ defmodule EvoGit.Core.ContextNode do
       raise "normalize_relpath expects a relative path, got absolute: #{inspect(path)}"
     end
 
-    path
-    |> String.trim_leading("/")
-    |> String.trim_trailing("/")
-    |> then(fn
-      "" -> "./"
-      "." -> "./"
-      p ->
-        if String.starts_with?(p, "./") do
-          p
-        else
-          "./" <> p
-        end
-    end)
+    trimmed = String.trim(path, "/")
+
+    cond do
+      trimmed in ["", "."] -> "./"
+      String.starts_with?(trimmed, "./") -> trimmed
+      true -> "./" <> trimmed
+    end
   end
 
   @doc """
@@ -143,7 +131,7 @@ defmodule EvoGit.Core.ContextNode do
           # Path.split("./foo/bar") = [".", "foo", "bar"]
           [_dot | parts] = Path.split(normalized)
           # Build ["./", "./foo", "./foo/bar"]
-          ["./" | Enum.scan(parts, ".", fn part, acc -> acc <> "/" <> part end)]
+          ["./" | Enum.scan(parts, "./", fn part, acc -> Path.join(acc, part) end)]
         end
 
       nodes = Enum.map(paths, &load(&1, repo_path, repo_id))
