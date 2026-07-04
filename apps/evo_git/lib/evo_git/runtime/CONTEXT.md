@@ -31,7 +31,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 3. **Ensure repo**: Calls `Runtime.ensure_repo/1` to `git init` if needed.
 4. **Get HEAD**: `PhyloGraphNode.current_head/1` → current commit SHA.
 5. **Detect mode**: `new_codebase?/1` checks if directory has files beyond `.git`, `README.md`, `.evogit`, `.gitignore`.
-6. **Worktree init script (Mode B only)**: Before spawning the agent, `WorktreeInitScript.generate/2` makes a one-shot LLM call to produce a script that copies deps/build cache into new worktrees. The script is written to `genesis.toml` (`[worktree].script`) via `ProjectConfig.write_worktree_script/2` so the existing per-worktree init-script infra picks it up. NON-FATAL on failure — skipped if no LLM model configured.
+6. **Worktree init script (Mode B only)**: Before spawning the agent, `Genesis` reads `build_system` from opts (selected interactively via CLI or via `--build-system` flag), looks up predefined scripts via `WorktreeInitScript.scripts_for/1`, and writes them to `genesis.toml` as OS-specific variants (`script.linux`, `script.macos`, `script.windows`) via `ProjectConfig.write_worktree_script/2` so the existing per-worktree init-script infra copies deps/build cache into new worktrees. Skipped when no build system is selected or `:none` is chosen.
 7. **Dispatch agent**:
    - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
    - **Mode B (New)** → `CodebaseArchitect` agent (read-write, 3-phase: structure & public API → rough implementation → review & refinement).
