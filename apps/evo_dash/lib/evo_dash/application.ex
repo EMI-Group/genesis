@@ -7,11 +7,13 @@ defmodule EvoDash.Application do
 
   @impl true
   def start(_type, _args) do
+    data_dir = Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir())
+
     children = [
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
-      {EvoDash.Store, data_dir: Path.join(EvoGit.Platform.data_dir(), "tasks.sqlite")},
+      {EvoDash.Store, data_dir: Path.join(data_dir, "tasks.sqlite")},
       EvoDash.TaskRegistry,
       EvoDashWeb.Endpoint
     ]

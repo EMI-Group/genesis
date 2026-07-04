@@ -114,8 +114,9 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def init(opts) do
-    # Allow data_dir to be overridden via opts (for testing), fallback to platform default
-    data_dir = Keyword.get(opts, :data_dir, EvoGit.Platform.data_dir())
+    # Allow data_dir to be overridden via opts (for testing), fallback to config
+    # then platform default. Tests set `config :evo_dash, :data_dir` to a temp dir.
+    data_dir = Keyword.get(opts, :data_dir, Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir()))
     File.mkdir_p!(data_dir)
 
     # The TaskStore is started by the supervisor; here just reference by name.

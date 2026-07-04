@@ -17,3 +17,10 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
+
+# Use a temporary directory for the SQLite database in tests.
+# This is the primary isolation mechanism — it ensures tests NEVER
+# write to the production database (~/.local/share/genesis/tasks.sqlite).
+# The XDG_DATA_HOME redirect in test_helper.exs serves as a belt-and-suspenders
+# fallback, but this config key is the canonical guard.
+config :evo_dash, :data_dir, Path.join(System.tmp_dir!(), "evogit_test_data/genesis")
