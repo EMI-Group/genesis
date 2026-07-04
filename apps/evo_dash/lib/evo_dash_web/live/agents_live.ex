@@ -24,19 +24,20 @@ defmodule EvoDashWeb.AgentsLive do
     config_status = config_status()
 
     socket =
-      socket
-      |> assign(:selected_agent_id, nil)
-      |> assign(:selected_history_entry, nil)
-      |> assign(:selected_objective, nil)
-      |> assign(:show_usage, false)
-      |> assign(:agents, agents)
-      |> assign(:id_to_display, id_to_display)
-      |> assign(:repo_trees, build_repo_trees(agents))
-      |> assign(:config_status, config_status)
-      |> assign(:previous_agent_ids, MapSet.new(agents, & &1.id))
-      |> assign(:previous_statuses, Map.new(agents, fn a -> {a.id, a.status} end))
-      |> assign(:new_agent_ids, MapSet.new())
-      |> assign(:changed_status_ids, MapSet.new())
+      assign(socket,
+        selected_agent_id: nil,
+        selected_history_entry: nil,
+        selected_objective: nil,
+        show_usage: false,
+        agents: agents,
+        id_to_display: id_to_display,
+        repo_trees: build_repo_trees(agents),
+        config_status: config_status,
+        previous_agent_ids: MapSet.new(agents, & &1.id),
+        previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
+        new_agent_ids: MapSet.new(),
+        changed_status_ids: MapSet.new()
+      )
 
     {:ok, socket}
   end
@@ -62,14 +63,15 @@ defmodule EvoDashWeb.AgentsLive do
       Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
 
     {:noreply,
-     socket
-     |> assign(:agents, agents)
-     |> assign(:id_to_display, id_to_display)
-     |> assign(:repo_trees, build_repo_trees(agents))
-     |> assign(:previous_agent_ids, current_ids)
-     |> assign(:previous_statuses, current_statuses)
-     |> assign(:new_agent_ids, new_agent_ids)
-     |> assign(:changed_status_ids, changed_status_ids)}
+     assign(socket,
+       agents: agents,
+       id_to_display: id_to_display,
+       repo_trees: build_repo_trees(agents),
+       previous_agent_ids: current_ids,
+       previous_statuses: current_statuses,
+       new_agent_ids: new_agent_ids,
+       changed_status_ids: changed_status_ids
+     )}
   end
 
   @impl true
@@ -81,11 +83,12 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_event("close_details", _params, socket) do
     {:noreply,
-     socket
-     |> assign(:selected_agent_id, nil)
-     |> assign(:selected_history_entry, nil)
-     |> assign(:selected_objective, nil)
-     |> assign(:show_usage, false)}
+     assign(socket,
+       selected_agent_id: nil,
+       selected_history_entry: nil,
+       selected_objective: nil,
+       show_usage: false
+     )}
   end
 
   @impl true

@@ -45,9 +45,16 @@ defmodule EvoDash.Store.Codec do
     :cache_creation_tokens
   ]
 
+  # Precomputed string versions of @usage_fields for zero-allocation lookups
+  # in decode_usage_map/1 — avoids calling Atom.to_string/1 on every decode.
+  @usage_field_pairs Enum.map(@usage_fields, &{&1, Atom.to_string(&1)})
+
   # Known keys inside the {:ok, data} result map. Used for safe atomization
   # during decode (these are application-controlled, not user input).
   @result_data_fields ~w(commit_sha result tag branch_name pr_url pr_title no_changes usage agent_count archive_records)a
+
+  # Precomputed string set for O(1) membership checks in decode_result_data/1.
+  @result_data_field_strings MapSet.new(@result_data_fields, &Atom.to_string/1)
 
   ## Public — column lists
 
@@ -72,11 +79,11 @@ defmodule EvoDash.Store.Codec do
       encode_result(task.result),
       encode_atom(task.review_status),
       encode_usage(task.usage),
-      Map.get(task, :agent_count),
-      Map.get(task, :base_sha),
-      Map.get(task, :commit_sha),
-      encode_archive(Map.get(task, :archive_metadata)),
-      Map.get(task, :lease_expires_at)
+      task.agent_count,
+      task.base_sha,
+      task.commit_sha,
+      encode_archive(task.archive_metadata),
+      task.lease_expires_at
     ]
   end
 
@@ -412,8 +419,6 @@ defmodule EvoDash.Store.Codec do
   # Only the known keys in `@result_data_fields` are atomized — unknown keys
   # are kept as strings to avoid blind atomization of arbitrary data.
   def decode_result_data(data) when is_map(data) do
-    known_field_strings = MapSet.new(@result_data_fields, &Atom.to_string/1)
-
     Enum.reduce(data, %{}, fn {key, value}, acc ->
       atom_key =
         case key do
@@ -421,7 +426,7 @@ defmodule EvoDash.Store.Codec do
             key
 
           key when is_binary(key) ->
-            if MapSet.member?(known_field_strings, key), do: String.to_atom(key), else: nil
+            if MapSet.member?(@result_data_field_strings, key), do: String.to_atom(key), else: nil
 
           _ ->
             nil
@@ -494,8 +499,8 @@ defmodule EvoDash.Store.Codec do
   # atom-keyed map, only extracting the known usage fields.
   def decode_usage_map(map) when is_map(map) do
     atom_usage =
-      Enum.reduce(@usage_fields, %{}, fn field, acc ->
-        value = Map.get(map, Atom.to_string(field)) || Map.get(map, field)
+      Enum.reduce(@usage_field_pairs, %{}, fn {field, str}, acc ->
+        value = Map.get(map, str) || Map.get(map, field)
         Map.put(acc, field, value)
       end)
 
