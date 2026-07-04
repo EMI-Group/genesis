@@ -31,8 +31,8 @@ defmodule EvoGit.Task do
     sha = phylo_node.current_commit
 
     Logger.info(
-      "Agent starting for #{context_node.path} on #{String.slice(sha, 0, 7)}" <>
-        " (base: #{String.slice(phylo_node.base_commit, 0, 7)})"
+      "Agent starting for #{context_node.path} on #{binary_part(sha, 0, 7)}" <>
+        " (base: #{binary_part(phylo_node.base_commit, 0, 7)})"
     )
 
     prompt =
@@ -53,7 +53,7 @@ defmodule EvoGit.Task do
   Acts as an "Analyst Agent".
   """
   def diagnose(%PhyloGraphNode{current_commit: commit_sha} = phylo_node, objective, _opts \\ []) do
-    Logger.info("Agent diagnosing objective on #{String.slice(commit_sha, 0, 7)}: #{objective}")
+    Logger.info("Agent diagnosing objective on #{binary_part(commit_sha, 0, 7)}: #{objective}")
 
     # Use PhyloGraphNode to get the file tree
     {:ok, files} = PhyloGraphNode.list_files(phylo_node)
@@ -119,7 +119,7 @@ defmodule EvoGit.Task do
     current_sha = phylo_node.current_commit
 
     Logger.info(
-      "Agent resolving conflict between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
+      "Agent resolving conflict between #{binary_part(current_sha, 0, 7)} and #{binary_part(incoming_sha, 0, 7)}"
     )
 
     # 1. Setup
@@ -170,7 +170,7 @@ defmodule EvoGit.Task do
 
         # 5. Commit
         msg =
-          "Agent: Resolved conflicts between #{String.slice(current_sha, 0, 7)} and #{String.slice(incoming_sha, 0, 7)}"
+          "Agent: Resolved conflicts between #{binary_part(current_sha, 0, 7)} and #{binary_part(incoming_sha, 0, 7)}"
 
         case PhyloGraphNode.add_and_commit(phylo_node, msg) do
           {:ok, updated_phylo_node} ->

@@ -184,7 +184,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
   defp format_results(matches, pattern) do
     entries =
       Enum.map(matches, fn commit ->
-        short_hash = String.slice(commit.hash, 0, 7)
+        short_hash = binary_part(commit.hash, 0, 7)
 
         subject =
           commit.body
