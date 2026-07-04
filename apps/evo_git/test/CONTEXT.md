@@ -25,7 +25,7 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 - **`coder_2_test.exs`** — `EvoGit.Agent.CoderTest2`: additional edge-case tests for `build_dynamic_context/1` (root node path, nil inputs, `ArgumentError` recovery).
 
 ### `evo_git/`
-- **`project_config_test.exs`** — `EvoGit.ProjectConfigTest`: tests `ProjectConfig` — `read/1`, `worktree_script/1`, `worktree_script/2` (OS variants), `commands/1`. Validates reading/parsing `genesis.toml`, handling missing files, empty content, invalid TOML, OS-specific script resolution, and command shortcuts.
+- **`project_config_test.exs`** — `EvoGit.ProjectConfigTest`: tests `ProjectConfig` — `read/1`, `worktree_script/1`, `worktree_script/2` (OS variants), `commands/1`, `write_worktree_script/2` (create new genesis.toml, merge into existing, round-trip, replace OS variants, `'''` edge case). Validates reading/parsing `genesis.toml`, handling missing files, empty content, invalid TOML, OS-specific script resolution, and command shortcuts.
 
 ### `evo_git/agent_scheduler/`
 - **`dispatch_test.exs`** — `EvoGit.AgentScheduler.DispatchTest`: tests `Dispatch.resolve_agent_repo_root/2` — worktree path stripping and foreign repo root resolution.

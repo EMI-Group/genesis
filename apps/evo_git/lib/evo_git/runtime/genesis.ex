@@ -6,8 +6,10 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.AgentSpec
   alias EvoGit.Agents.CodebaseArchitect
   alias EvoGit.Agents.ContextExtractor
+  alias EvoGit.ProjectConfig
   alias EvoGit.Runtime
   alias EvoGit.Runtime.Helpers
+  alias EvoGit.Runtime.WorktreeInitScript
   require Logger
 
   def run(objective, opts \\ []) do
@@ -63,6 +65,24 @@ defmodule EvoGit.Runtime.Genesis do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
 
+    # Write a predefined worktree init script to genesis.toml so the existing
+    # per-worktree init-script infrastructure copies deps/build cache into new
+    # worktrees. Skipped when no build system is selected or :none is chosen.
+    build_system_id = Keyword.get(opts, :build_system)
+
+    cond do
+      is_nil(build_system_id) ->
+        Logger.info("Genesis: No build system selected, skipping worktree init script")
+
+      build_system_id == :none ->
+        Logger.info("Genesis: Build system 'none' selected, skipping worktree init script")
+
+      true ->
+        scripts = WorktreeInitScript.scripts_for(build_system_id)
+        ProjectConfig.write_worktree_script(repo_path, scripts)
+        Logger.info("Genesis: Saved worktree init script for #{build_system_id}")
+    end
+
     # Load foreign repos: genesis.toml defaults merged with CLI-provided repos (CLI takes precedence)
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
     cli_repos = Keyword.get(opts, :foreign_repos, [])
@@ -92,5 +112,4 @@ defmodule EvoGit.Runtime.Genesis do
       _ -> if Helpers.new_codebase?(repo_path), do: :new, else: :existing
     end
   end
-
 end

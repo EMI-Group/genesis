@@ -14,6 +14,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 | `EvoGit.Runtime.Genesis` | `genesis.ex` | `run/2` | Stage 1 — Creation/Analysis. Auto-detects mode. Returns `{:ok, %{commit_sha, result, tag, branch_name, pr_url}}` or `{:ok, %{..., no_changes: true}}`. |
 | `EvoGit.Runtime.Evolution` | `evolution.ex` | `run/2` | Stage 2 — Evolutionary Loop. Supports `:simple` and `:complex` modes. Same return shape as Genesis. |
 | `EvoGit.Runtime.PullRequest` | `pull_request.ex` | `try_create/4`, `generate_title/2`, `format_body/2` | Shared PR utilities: LLM-powered title generation, body formatting, push + PR creation via `gh` CLI. |
+| `EvoGit.Runtime.WorktreeInitScript` | `worktree_init_script.ex` | `build_systems/0`, `get_build_system/1`, `scripts_for/1` | Predefined catalog of Worktree Init Scripts for common build systems (Elixir, Node.js, Python, Rust, Go, None). Each entry provides unix (bash) and windows (PowerShell) scripts that copy dependencies/build artifacts from the source repo into new worktrees. Genesis Mode B writes the selected scripts to `genesis.toml` as OS-specific variants (`script.linux`, `script.macos`, `script.windows`) so the existing per-worktree init-script infrastructure picks them up. |
 | `EvoGit.Runtime.SkillExtraction` | `skill_extraction.ex` | `run/1` | Skill Extraction Phase — analyzes a completed PR's changes and distills reusable knowledge into EvoGit skills (`.agents/skills/`). Takes a keyword list of PR context opts (title, objective, summary, commit history, base_sha, commit_sha, user_note). Builds the objective from PR context and spawns a `SkillExtractor` agent. |
 | `EvoGit.Runtime.Evolution.Engine` | `evolution/engine.ex` | `run/5` | Complex Evolution orchestrator — novelty-driven evolution loop with MAP-Elites, LLM crossover/mutation, and solution synthesis. |
 | `EvoGit.Runtime.Evolution.Fragment` | `evolution/fragment.ex` | `new/2`, `extract_structural_features/1`, `to_feature_vector/1`, `summarize/1` | Code fragment data structure with AST feature extraction and feature vector conversion. |
@@ -30,11 +31,12 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 3. **Ensure repo**: Calls `Runtime.ensure_repo/1` to `git init` if needed.
 4. **Get HEAD**: `PhyloGraphNode.current_head/1` → current commit SHA.
 5. **Detect mode**: `new_codebase?/1` checks if directory has files beyond `.git`, `README.md`, `.genesis`, `.gitignore`.
-6. **Dispatch agent**:
+6. **Worktree init script (Mode B only)**: Before spawning the agent, `Genesis` reads `build_system` from opts (selected interactively via CLI or via `--build-system` flag), looks up predefined scripts via `WorktreeInitScript.scripts_for/1`, and writes them to `genesis.toml` as OS-specific variants (`script.linux`, `script.macos`, `script.windows`) via `ProjectConfig.write_worktree_script/2` so the existing per-worktree init-script infra copies deps/build cache into new worktrees. Skipped when no build system is selected or `:none` is chosen.
+7. **Dispatch agent**:
    - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
    - **Mode B (New)** → `CodebaseArchitect` agent (read-write, 3-phase: structure & public API → rough implementation → review & refinement).
-7. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
-8. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `evogit/genesis_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
+8. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
+9. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `evogit/genesis_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
 
 ### `Evolution.run/2` — Step by Step
 

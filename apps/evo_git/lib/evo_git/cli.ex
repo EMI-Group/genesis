@@ -30,7 +30,8 @@ defmodule EvoGit.CLI do
           seeds: [:string, :keep],
           concepts: [:string, :keep],
           starting_commit: :string,
-          archive: :boolean
+          archive: :boolean,
+          build_system: :string
         ],
         aliases: [
           h: :help,
@@ -47,7 +48,8 @@ defmodule EvoGit.CLI do
           s: :pool_size,
           g: :generations,
           S: :seeds,
-          C: :concepts
+          C: :concepts,
+          b: :build_system
         ]
       )
 
@@ -111,6 +113,14 @@ defmodule EvoGit.CLI do
 
           foreign_repos = parse_foreign_repos(opts)
           runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
+
+          runtime_opts =
+            if mode == "new" do
+              build_system = resolve_build_system(opts)
+              Keyword.put(runtime_opts, :build_system, build_system)
+            else
+              runtime_opts
+            end
 
           Genesis.run(prompt || "", runtime_opts)
         else
@@ -443,6 +453,72 @@ defmodule EvoGit.CLI do
   defp genesis_mode_atom(other),
     do: raise(ArgumentError, "invalid genesis mode: #{inspect(other)}")
 
+  # Resolves the build system for Genesis Mode B (new codebase).
+  # If --build-system is provided, converts it to an atom and validates it.
+  # Otherwise, prompts the user interactively (when stdin is a tty).
+  # Returns the atom id (:elixir, :node, :python, :rust, :go, :none).
+  defp resolve_build_system(opts) do
+    case opts[:build_system] do
+      nil ->
+        if stdin_tty?() do
+          prompt_build_system()
+        else
+          :none
+        end
+
+      value when is_binary(value) ->
+        atom = String.to_atom(value)
+
+        if EvoGit.Runtime.WorktreeInitScript.get_build_system(atom) do
+          atom
+        else
+          IO.puts("Warning: Unknown build system '#{value}', defaulting to 'none'.")
+          :none
+        end
+    end
+  end
+
+  defp stdin_tty? do
+    case :io.columns() do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  defp prompt_build_system do
+    alias EvoGit.Runtime.WorktreeInitScript
+
+    build_systems = WorktreeInitScript.build_systems()
+    count = length(build_systems)
+
+    IO.puts(
+      "\nSelect the build system for this project (used to cache dependencies in worktrees):\n"
+    )
+
+    build_systems
+    |> Enum.with_index(1)
+    |> Enum.each(fn {bs, idx} ->
+      IO.puts("  #{idx}. #{bs.name}")
+    end)
+
+    IO.puts("")
+
+    choice = prompt_input("Enter your choice [1-#{count}] (default: #{count}): ")
+
+    case parse_int(choice) do
+      nil ->
+        IO.puts("Invalid choice, defaulting to 'none'.")
+        :none
+
+      n when n >= 1 and n <= count ->
+        Enum.at(build_systems, n - 1).id
+
+      _ ->
+        IO.puts("Out of range, defaulting to 'none'.")
+        :none
+    end
+  end
+
   defp evolution_mode_atom("simple"), do: :simple
   defp evolution_mode_atom("complex"), do: :complex
 
@@ -507,6 +583,9 @@ defmodule EvoGit.CLI do
       -p, --path <path>           Path to the git repository (default: current directory).
       -m, --model <model>         Override the default LLM model.
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).
+      -b, --build-system <name>   Build system for dependency caching in worktrees (genesis 'new'
+                                  mode only). One of: elixir, node, python, rust, go, none.
+                                  If omitted, prompts interactively.
       -R, --foreign-repo <path>
                                   Add a foreign repository for cross-repo operations.
                                   Can be specified multiple times. To assign a custom id,

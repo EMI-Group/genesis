@@ -44,6 +44,30 @@ defmodule EvoGit.ProjectConfig do
   @config_filename "genesis.toml"
   @legacy_config_filename "evogit.toml"
 
+  @top_level_comment """
+  # genesis.toml — EvoGit project configuration file.
+  # This file controls per-project settings for EvoGit agents, including worktree
+  # initialization scripts, foreign repository references, and dashboard commands.
+  # EvoGit agents read this file automatically; most users do not need to edit it.
+  """
+
+  @worktree_comment """
+  # ─── Worktree Init Script ───────────────────────────────────────────────────
+  # This script runs automatically after each new git worktree is created. It
+  # copies dependencies and build artifacts from the source repo into the new
+  # worktree so builds start with a warm cache (avoiding re-download/recompile).
+  #
+  # Environment variables available to the script:
+  #   SOURCE_REPO_PATH      — main repository checkout (where genesis.toml lives)
+  #   SOURCE_WORKTREE_PATH  — parent agent's worktree path
+  #   TARGET_WORKTREE_PATH  — newly created worktree (copy destination)
+  #
+  # WARNING: Do NOT modify or remove this section unless you know what you are
+  # doing. EvoGit manages it automatically based on the build system selected
+  # during project creation. Removing it will cause every new worktree to build
+  # from scratch (much slower).
+  """
+
   @doc """
   Reads and parses `genesis.toml` from the given repo root.
   Falls back to the legacy `evogit.toml` if `genesis.toml` is not found.
@@ -104,6 +128,225 @@ defmodule EvoGit.ProjectConfig do
 
       _ ->
         nil
+    end
+  end
+
+  @doc """
+  Writes (or merges) the worktree init script content into `genesis.toml` at `repo_root`.
+
+  The scripts are written as OS-specific variants under `[worktree]`:
+  `script.linux`, `script.macos` (both from the `:unix` value), and
+  `script.windows` (from the `:windows` value), each as a TOML multi-line literal
+  string (`'''`). They are re-readable by `worktree_script/2`.
+
+  - If `genesis.toml` does not exist, it is created with a top-level comment and
+    an explanatory worktree comment block.
+  - If it exists, all other sections/keys are preserved; only the `[worktree]`
+    script lines are added or updated. Existing `script` / `script.<os>` keys
+    under `[worktree]` are removed so the OS-variant form takes precedence.
+
+  Returns `:ok` on success or `{:error, reason}` on failure.
+
+  ## Note on `'''` escaping
+
+  A TOML multi-line literal string does NOT allow embedding `'''` inside. If the
+  script content contains `'''`, encoding falls back to `TomlElixir`'s standard
+  escaped-string form which handles it correctly.
+  """
+  @spec write_worktree_script(String.t(), %{unix: String.t(), windows: String.t()}) ::
+          :ok | {:error, term()}
+  def write_worktree_script(repo_root, %{unix: unix_script, windows: windows_script})
+      when is_binary(repo_root) and is_binary(unix_script) and is_binary(windows_script) do
+    path = Path.join(repo_root, @config_filename)
+
+    script_lines = [
+      "script.linux = #{encode_multiline_literal_string(unix_script)}",
+      "script.macos = #{encode_multiline_literal_string(unix_script)}",
+      "script.windows = #{encode_multiline_literal_string(windows_script)}"
+    ]
+
+    result =
+      with {:ok, existing} <- read_existing(path) do
+        contents = build_updated_contents(existing, script_lines)
+        File.write(path, contents)
+      end
+
+    case result do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Reads existing genesis.toml contents, returning "" if missing.
+  defp read_existing(path) do
+    case File.read(path) do
+      {:ok, contents} -> {:ok, contents}
+      {:error, :enoent} -> {:ok, ""}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Builds the full updated genesis.toml contents from existing content + the new script lines.
+  # Preserves all non-worktree content and non-script worktree keys.
+  defp build_updated_contents("", script_lines) do
+    worktree_block =
+      String.trim(@worktree_comment) <>
+        "\n\n[worktree]\n" <> Enum.join(script_lines, "\n") <> "\n"
+
+    String.trim(@top_level_comment) <> "\n\n" <> worktree_block
+  end
+
+  defp build_updated_contents(existing, script_lines) do
+    lines = String.split(existing, "\n")
+
+    # Scan the existing content to locate the [worktree] section boundaries:
+    #   - `worktree_start` — index of the `[worktree]` line (nil if absent)
+    #   - `worktree_end`   — index of the line that ENDS the section (next section
+    #     header, or length(lines) if the section runs to EOF)
+    {worktree_start, worktree_end} = locate_worktree_section(lines)
+
+    cond do
+      is_nil(worktree_start) ->
+        # No [worktree] section — append one (preserving all existing content).
+        separator =
+          if existing != "" and not String.ends_with?(existing, "\n"), do: "\n", else: ""
+
+        appended =
+          String.trim_trailing(existing) <>
+            separator <>
+            "\n" <>
+            worktree_comment_with_newlines() <>
+            "[worktree]\n" <> Enum.join(script_lines, "\n") <> "\n"
+
+        maybe_add_top_level_comment(appended)
+
+      worktree_end >= length(lines) ->
+        # Section found and runs to EOF.
+        result = update_worktree_section(lines, worktree_start, script_lines)
+        to_binary_with_top_level_comment(result)
+
+      true ->
+        # Section is bounded by a following section header at worktree_end.
+        result = update_worktree_section(lines, worktree_start, script_lines, worktree_end)
+        to_binary_with_top_level_comment(result)
+    end
+  end
+
+  # Returns the worktree comment block as a string of lines with trailing newlines.
+  defp worktree_comment_with_newlines do
+    String.trim(@worktree_comment)
+    |> String.split("\n")
+    |> Enum.map_join(fn line -> line <> "\n" end)
+  end
+
+  # Joins a list of lines and ensures the top-level comment is present.
+  defp to_binary_with_top_level_comment(lines) when is_list(lines) do
+    joined = Enum.join(lines, "\n") <> "\n"
+    maybe_add_top_level_comment(joined)
+  end
+
+  # Adds the top-level comment to the beginning of the contents if it is not
+  # already present.
+  defp maybe_add_top_level_comment(contents) do
+    comment_first_line = comment_first_line(@top_level_comment)
+
+    if String.starts_with?(String.trim_leading(contents), comment_first_line) do
+      contents
+    else
+      String.trim(@top_level_comment) <> "\n\n" <> String.trim_leading(contents)
+    end
+  end
+
+  # Returns the first non-empty line of a comment string.
+  defp comment_first_line(comment) do
+    comment
+    |> String.trim()
+    |> String.split("\n")
+    |> List.first()
+  end
+
+  # Returns {worktree_start_index, worktree_end_index}.
+  # worktree_start is nil if there is no [worktree] section.
+  # worktree_end is the index of the first line AFTER the section (next header, or
+  # a value >= length(lines) if the section extends to EOF).
+  defp locate_worktree_section(lines) do
+    indexed = Enum.with_index(lines)
+
+    start_idx =
+      Enum.find_value(indexed, fn {line, idx} ->
+        if Regex.match?(~r/^\[worktree\]\s*$/, String.trim(line)), do: idx
+      end)
+
+    case start_idx do
+      nil ->
+        {nil, 0}
+
+      ^start_idx ->
+        end_idx =
+          indexed
+          |> Enum.drop(start_idx + 1)
+          |> Enum.find_value(length(lines), fn {line, idx} ->
+            if Regex.match?(~r/^\[[^\]]/, String.trim(line)), do: idx
+          end)
+
+        {start_idx, end_idx}
+    end
+  end
+
+  # Rebuilds the worktree section in-place (section extends to EOF).
+  # Keeps all non-script key=value lines under [worktree], then appends the new script lines.
+  defp update_worktree_section(lines, start_idx, script_lines) do
+    before = Enum.take(lines, start_idx)
+    section_lines = Enum.drop(lines, start_idx + 1)
+
+    kept = filter_section_keys(section_lines)
+
+    # Section extends to EOF, so nothing trails it.
+    before ++ ["[worktree]"] ++ kept ++ script_lines
+  end
+
+  # Rebuilds the worktree section that is bounded by a following section header at end_idx.
+  defp update_worktree_section(lines, start_idx, script_lines, end_idx) do
+    before = Enum.take(lines, start_idx)
+    section_lines = Enum.slice(lines, (start_idx + 1)..(end_idx - 1)//1)
+    rest = Enum.drop(lines, end_idx)
+
+    kept = filter_section_keys(section_lines)
+
+    before ++ ["[worktree]"] ++ kept ++ script_lines ++ rest
+  end
+
+  # From a list of lines belonging to one TOML section (already stripped of its header),
+  # keep key=value lines up to the first sub-section header, dropping `script` keys
+  # (so the new string-form `script` takes precedence) and blank lines.
+  defp filter_section_keys(section_lines) do
+    section_lines
+    |> Enum.take_while(fn line -> not Regex.match?(~r/^\[[^\]]/, String.trim(line)) end)
+    |> Enum.reject(fn line ->
+      trimmed = String.trim(line)
+      # Drop existing script.* keys so the string form takes precedence.
+      String.starts_with?(trimmed, "script") and
+        Regex.match?(~r/^script[.\s=]/, trimmed)
+    end)
+    |> Enum.reject(fn line -> line == "" end)
+  end
+
+  # Encodes a string as a TOML multi-line literal string ('''...''').
+  # Falls back to TomlElixir's standard (escaped) encoding when the content contains
+  # `'''`, since a multi-line literal string cannot embed that delimiter.
+  defp encode_multiline_literal_string(content) do
+    if String.contains?(content, "'''") do
+      # Fallback: let TomlElixir escape the string safely.
+      with {:ok, toml} <- TomlElixir.encode(%{"script" => content}) do
+        # The encoder writes `script = "..."`; extract just the value.
+        toml
+        |> String.trim()
+        |> String.trim_leading("script = ")
+      else
+        _ -> "'''" <> String.replace(content, "'''", "''") <> "'''"
+      end
+    else
+      "'''" <> content <> "'''"
     end
   end
 

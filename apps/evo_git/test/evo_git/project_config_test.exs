@@ -5,7 +5,10 @@ defmodule EvoGit.ProjectConfigTest do
 
   setup do
     tmp_dir =
-      Path.join(System.tmp_dir!(), "evo_git_project_config_" <> to_string(System.unique_integer()))
+      Path.join(
+        System.tmp_dir!(),
+        "evo_git_project_config_" <> to_string(System.unique_integer())
+      )
 
     File.mkdir_p!(tmp_dir)
 
@@ -250,7 +253,10 @@ defmodule EvoGit.ProjectConfigTest do
       # a non-matching OS returns nil — it does NOT fall back to a separate
       # string script because TOML doesn't allow both forms simultaneously.
       tmp_dir =
-        Path.join(System.tmp_dir!(), "evo_git_project_config_" <> to_string(System.unique_integer()))
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_project_config_" <> to_string(System.unique_integer())
+        )
 
       File.mkdir_p!(tmp_dir)
 
@@ -301,6 +307,158 @@ defmodule EvoGit.ProjectConfigTest do
 
     test "returns empty map when no config file exists", %{tmp_dir: tmp_dir} do
       assert ProjectConfig.commands(tmp_dir) == %{}
+    end
+  end
+
+  describe "write_worktree_script/2" do
+    @scripts %{
+      unix: "#!/bin/bash\ncp -R \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n",
+      windows:
+        "# Copy deps\nCopy-Item -Recurse \"$env:SOURCE_REPO_PATH/deps\" \"$env:TARGET_WORKTREE_PATH/\"\n"
+    }
+
+    test "creates genesis.toml when it does not exist", %{tmp_dir: tmp_dir} do
+      assert ProjectConfig.read(tmp_dir) == nil
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      assert File.exists?(Path.join(tmp_dir, "genesis.toml"))
+    end
+
+    test "writes top-level comment when creating new genesis.toml", %{tmp_dir: tmp_dir} do
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      assert contents =~ "genesis.toml — EvoGit project configuration file."
+      assert contents =~ "EvoGit agents read this file automatically"
+    end
+
+    test "writes worktree section comment block", %{tmp_dir: tmp_dir} do
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      assert contents =~ "Worktree Init Script"
+      assert contents =~ "SOURCE_REPO_PATH"
+      assert contents =~ "TARGET_WORKTREE_PATH"
+      assert contents =~ "WARNING"
+    end
+
+    test "round-trips: written scripts are readable via worktree_script/2", %{tmp_dir: tmp_dir} do
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :windows) == @scripts.windows
+    end
+
+    test "merges into existing genesis.toml preserving other sections", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [commands]
+      dev = "mix test"
+
+      [foreign_repos.original]
+      path = "/Source/original-proj"
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      # The script is readable
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
+
+      # Other sections preserved
+      config = ProjectConfig.read(tmp_dir)
+      assert config["commands"]["dev"] == "mix test"
+      assert config["foreign_repos"]["original"]["path"] == "/Source/original-proj"
+    end
+
+    test "preserves existing non-script keys in [worktree] section", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      timeout = 30
+      verbose = true
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      config = ProjectConfig.read(tmp_dir)
+      assert config["worktree"]["timeout"] == 30
+      assert config["worktree"]["verbose"] == true
+      assert config["worktree"]["script"]["linux"] == @scripts.unix
+    end
+
+    test "updates existing script values", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "genesis.toml"), "[worktree]\nscript = \"old.sh\"\n")
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
+    end
+
+    test "replaces existing single-string script with OS-variant form", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      script.linux = "scripts/setup_linux.sh"
+      script.macos = "scripts/setup_macos.sh"
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      # The OS-variant form now takes precedence
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @scripts.unix
+    end
+
+    test "handles script content containing triple single quotes", %{tmp_dir: tmp_dir} do
+      # Content with ''' — the encoder must fall back to escaped form
+      tricky_scripts = %{
+        unix: "echo hi\n'''\necho there\n",
+        windows: "echo hi\n'''\necho there\n"
+      }
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, tricky_scripts)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == tricky_scripts.unix
+    end
+
+    test "does not duplicate top-level comment when updating existing file", %{tmp_dir: tmp_dir} do
+      # First write creates the file with top-level comment
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      # Second write should not duplicate the top-level comment
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      # Count occurrences of the top-level comment first line
+      first_line = "# genesis.toml — EvoGit project configuration file."
+      count = contents |> String.split("\n") |> Enum.count(&(&1 == first_line))
+
+      assert count == 1
+    end
+
+    test "does not duplicate worktree comment block when updating existing file", %{
+      tmp_dir: tmp_dir
+    } do
+      # First write creates the file with worktree comment block
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      # Second write should not duplicate the worktree comment block
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      # Count occurrences of the comment block header
+      count = contents |> String.split("\n") |> Enum.count(&String.starts_with?(&1, "# ───"))
+
+      assert count == 1
     end
   end
 end
