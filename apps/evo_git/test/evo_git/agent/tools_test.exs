@@ -574,4 +574,88 @@ defmodule EvoGit.Agent.ToolsTest do
       assert result =~ "Unknown tool"
     end
   end
+
+  describe "search_web in schemas" do
+    test "search_web is NOT included in schemas/0 by default (config disabled)" do
+      schemas = Tools.schemas()
+      names = Enum.map(schemas, & &1.name)
+      refute "search_web" in names
+    end
+
+    test "search_web is NOT included in read_only_schemas/0 by default (config disabled)" do
+      schemas = Tools.read_only_schemas()
+      names = Enum.map(schemas, & &1.name)
+      refute "search_web" in names
+    end
+  end
+
+  describe "EvoGit.Config.tools_search_enabled?/0" do
+    test "returns false by default" do
+      refute EvoGit.Config.tools_search_enabled?()
+    end
+
+    test "returns false even when TAVILY_API_KEY is set (config still disabled)" do
+      original_key = System.get_env("TAVILY_API_KEY")
+      System.put_env("TAVILY_API_KEY", "test-key")
+
+      try do
+        refute EvoGit.Config.tools_search_enabled?()
+      after
+        if original_key do
+          System.put_env("TAVILY_API_KEY", original_key)
+        else
+          System.delete_env("TAVILY_API_KEY")
+        end
+      end
+    end
+  end
+
+  describe "WebSearch.execute/3" do
+    test "returns error when API key is missing" do
+      # Ensure no API key is set
+      original_key = System.get_env("TAVILY_API_KEY")
+      System.delete_env("TAVILY_API_KEY")
+
+      try do
+        result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test query"}, nil, nil)
+        assert result =~ "Error: TAVILY_API_KEY environment variable is not set"
+      after
+        if original_key, do: System.put_env("TAVILY_API_KEY", original_key)
+      end
+    end
+
+    test "returns error for missing query argument" do
+      result = EvoGit.Agent.Tools.WebSearch.execute(%{}, nil, nil)
+      assert {:error, msg} = result
+      assert msg =~ "Missing required argument 'query'"
+    end
+
+    test "returns error for invalid search_depth" do
+      result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test", "search_depth" => "deep"}, nil, nil)
+      assert {:error, msg} = result
+      assert msg =~ "Argument 'search_depth' must be 'basic' or 'advanced'"
+    end
+
+    test "returns error for invalid max_results" do
+      result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test", "max_results" => 100}, nil, nil)
+      assert {:error, msg} = result
+      assert msg =~ "Argument 'max_results' must be an integer between 1 and 50"
+    end
+  end
+
+  describe "WebSearch.schema/1" do
+    test "returns a valid tool schema with defaults" do
+      schema = EvoGit.Agent.Tools.WebSearch.schema()
+      assert schema.name == "search_web"
+      assert schema.description =~ "web"
+      assert schema.parameter_schema["properties"]["query"]
+      assert schema.parameter_schema["required"] == ["query"]
+    end
+
+    test "schema/1 accepts opts (ignored for now)" do
+      schema1 = EvoGit.Agent.Tools.WebSearch.schema([])
+      schema2 = EvoGit.Agent.Tools.WebSearch.schema(some: :opts)
+      assert schema1.name == schema2.name
+    end
+  end
 end
