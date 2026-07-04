@@ -230,6 +230,14 @@ defmodule EvoDash.Store do
     reply =
       case Codec.validate_task(task) do
         :ok ->
+          # Diagnostic logging at the ULTIMATE chokepoint: every task write goes
+          # through here. When writing :failed, check the previous status and log
+          # if this is a NEW transition into :failed. This SELECT is ONLY performed
+          # when task.status == :failed (not on every put_task) for efficiency.
+          if task.status == :failed do
+            log_failed_write_if_transition(state.conn, task)
+          end
+
           # Always null the ref before persistence — it is runtime-only.
           task = %{task | ref: nil}
           values = Codec.encode_task(task)
@@ -461,6 +469,66 @@ defmodule EvoDash.Store do
 
   defp pk_column("tasks"), do: "id"
   defp pk_column("projects"), do: "path"
+
+  # Reads only the status column for a task id. Returns the decoded atom status
+  # or nil if the row doesn't exist. Uses the same XqliteNIF.query pattern as
+  # get_task; an absent row returns {:ok, %{rows: []}} so no rescue is needed.
+  # The status is decoded via Codec.decode_atom/1 for consistency with the
+  # existing decode pipeline.
+  defp read_task_status(conn, task_id) do
+    case XqliteNIF.query(conn, "SELECT status FROM tasks WHERE id = ?1", [task_id]) do
+      {:ok, %{rows: [row | _]}} -> Codec.decode_atom(hd(row))
+      {:ok, %{rows: []}} -> nil
+    end
+  end
+
+  # Diagnostic: logs a warning when a put_task is about to write :failed as a NEW
+  # transition (previous status was not :failed). This is the ULTIMATE chokepoint
+  # — it cannot be bypassed regardless of which code path triggers the write.
+  # Only called when task.status == :failed (efficiency: no SELECT on every write).
+  defp log_failed_write_if_transition(conn, %TaskInfo{id: task_id, result: result}) do
+    prev_status = read_task_status(conn, task_id)
+
+    if prev_status != :failed do
+      {:current_stacktrace, trace} = Process.info(self(), :current_stacktrace)
+
+      Logger.warning(
+        "Store: FAILED_WRITE task_id=#{task_id} prev_status=#{inspect(prev_status)} " <>
+          "result=#{inspect(result)}\n" <>
+          "  stacktrace=\n#{format_store_stacktrace(trace)}"
+      )
+    end
+  end
+
+  defp format_store_stacktrace([]), do: "  (no stacktrace available)"
+
+  defp format_store_stacktrace(trace) do
+    Enum.map_join(trace, "\n", fn frame ->
+      "    #{format_store_stacktrace_frame(frame)}"
+    end)
+  end
+
+  defp format_store_stacktrace_frame({module, function, arity, location}) do
+    fun =
+      cond do
+        is_atom(function) and is_integer(arity) -> "#{function}/#{arity}"
+        is_atom(function) and is_list(arity) -> "#{function}/#{length(arity)}"
+        true -> inspect(function)
+      end
+
+    loc =
+      case location do
+        [{file, line} | _] when is_list(file) and is_integer(line) ->
+          " at #{List.to_string(file)}:#{line}"
+
+        _ ->
+          ""
+      end
+
+    "#{inspect(module)}.#{fun}#{loc}"
+  end
+
+  defp format_store_stacktrace_frame(other), do: inspect(other)
 
   ## Private — Count helper
 
