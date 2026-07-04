@@ -58,7 +58,7 @@ Match the artifact to your OS and architecture (filenames encode the target — 
 
 ## 🙏 Acknowledgements
 
-Genesis was born out of the [EvoGit](https://github.com/BillHuang2001/evogit_private) project. Many thanks to everyone who contributed to the original evolutionary framework — this project stands on those foundations.
+Genesis was born out of the [EvoGit](https://github.com/BillHuang2001/evogit) project.
 
 ## 📄 License
 
