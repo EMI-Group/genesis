@@ -5,7 +5,10 @@ defmodule EvoGit.ProjectConfigTest do
 
   setup do
     tmp_dir =
-      Path.join(System.tmp_dir!(), "evo_git_project_config_" <> to_string(System.unique_integer()))
+      Path.join(
+        System.tmp_dir!(),
+        "evo_git_project_config_" <> to_string(System.unique_integer())
+      )
 
     File.mkdir_p!(tmp_dir)
 
@@ -250,7 +253,10 @@ defmodule EvoGit.ProjectConfigTest do
       # a non-matching OS returns nil — it does NOT fall back to a separate
       # string script because TOML doesn't allow both forms simultaneously.
       tmp_dir =
-        Path.join(System.tmp_dir!(), "evo_git_project_config_" <> to_string(System.unique_integer()))
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_project_config_" <> to_string(System.unique_integer())
+        )
 
       File.mkdir_p!(tmp_dir)
 
@@ -301,6 +307,124 @@ defmodule EvoGit.ProjectConfigTest do
 
     test "returns empty map when no config file exists", %{tmp_dir: tmp_dir} do
       assert ProjectConfig.commands(tmp_dir) == %{}
+    end
+  end
+
+  describe "write_worktree_script/2" do
+    @script """
+    #!/bin/bash
+    cp --reflink=auto -r $SOURCE_REPO_PATH/deps $TARGET_WORKTREE_PATH/
+    cp --reflink=auto -r $SOURCE_REPO_PATH/_build $TARGET_WORKTREE_PATH/
+    """
+
+    test "creates genesis.toml when it does not exist", %{tmp_dir: tmp_dir} do
+      assert ProjectConfig.read(tmp_dir) == nil
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+
+      assert File.exists?(Path.join(tmp_dir, "genesis.toml"))
+    end
+
+    test "round-trips: written script is readable via worktree_script/2", %{tmp_dir: tmp_dir} do
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @script
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @script
+    end
+
+    test "merges into existing genesis.toml preserving other sections", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [commands]
+      dev = "mix test"
+
+      [foreign_repos.original]
+      path = "/Source/original-proj"
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+
+      # The script is readable
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @script
+
+      # Other sections preserved
+      config = ProjectConfig.read(tmp_dir)
+      assert config["commands"]["dev"] == "mix test"
+      assert config["foreign_repos"]["original"]["path"] == "/Source/original-proj"
+    end
+
+    test "preserves existing non-script keys in [worktree] section", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      timeout = 30
+      verbose = true
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+
+      config = ProjectConfig.read(tmp_dir)
+      assert config["worktree"]["timeout"] == 30
+      assert config["worktree"]["verbose"] == true
+      assert config["worktree"]["script"] == @script
+    end
+
+    test "updates existing script value", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "genesis.toml"), "[worktree]\nscript = \"old.sh\"\n")
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @script
+    end
+
+    test "replaces existing OS-specific script variants with string form", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [worktree]
+      script.linux = "scripts/setup_linux.sh"
+      script.macos = "scripts/setup_macos.sh"
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+
+      # The string form now takes precedence across all OSes
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @script
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @script
+    end
+
+    test "handles script content containing triple single quotes", %{tmp_dir: tmp_dir} do
+      # Content with ''' — the encoder must fall back to escaped form
+      tricky_script = "echo hi\n'''\necho there\n"
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, tricky_script)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == tricky_script
+    end
+
+    test "round-trips a complex multi-line script", %{tmp_dir: tmp_dir} do
+      complex_script = """
+      #!/bin/bash
+      set -e
+
+      # Copy dependencies
+      if [ -d "$SOURCE_REPO_PATH/deps" ]; then
+        cp --reflink=auto -r $SOURCE_REPO_PATH/deps $TARGET_WORKTREE_PATH/
+      fi
+
+      # Copy build artifacts
+      if [ -d "$SOURCE_REPO_PATH/_build" ]; then
+        cp --reflink=auto -r $SOURCE_REPO_PATH/_build $TARGET_WORKTREE_PATH/
+      fi
+
+      echo "Worktree initialized with build cache"
+      """
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, complex_script)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == complex_script
     end
   end
 end

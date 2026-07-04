@@ -6,8 +6,10 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.AgentSpec
   alias EvoGit.Agents.CodebaseArchitect
   alias EvoGit.Agents.ContextExtractor
+  alias EvoGit.ProjectConfig
   alias EvoGit.Runtime
   alias EvoGit.Runtime.Helpers
+  alias EvoGit.Runtime.WorktreeInitScript
   require Logger
 
   def run(objective, opts \\ []) do
@@ -63,6 +65,21 @@ defmodule EvoGit.Runtime.Genesis do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
 
+    # Generate a worktree init script (LLM one-shot) to speed up builds in new
+    # worktrees by copying deps/build cache. Written to genesis.toml so the existing
+    # per-worktree init-script infrastructure picks it up. NON-FATAL on failure.
+    case WorktreeInitScript.generate(objective, repo_path) do
+      {:ok, script_content} ->
+        ProjectConfig.write_worktree_script(repo_path, script_content)
+        Logger.info("Genesis: Generated and saved worktree init script")
+
+      :skip ->
+        Logger.info("Genesis: Skipping worktree init script generation (no LLM model configured)")
+
+      {:error, reason} ->
+        Logger.warning("Genesis: Failed to generate worktree init script: #{inspect(reason)}")
+    end
+
     # Load foreign repos: genesis.toml defaults merged with CLI-provided repos (CLI takes precedence)
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
     cli_repos = Keyword.get(opts, :foreign_repos, [])
@@ -92,5 +109,4 @@ defmodule EvoGit.Runtime.Genesis do
       _ -> if Helpers.new_codebase?(repo_path), do: :new, else: :existing
     end
   end
-
 end
