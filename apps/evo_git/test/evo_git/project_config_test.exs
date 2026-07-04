@@ -312,7 +312,8 @@ defmodule EvoGit.ProjectConfigTest do
 
   describe "write_worktree_script/2" do
     @scripts %{
-      unix: "#!/bin/bash\ncp -R \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n",
+      linux: "#!/bin/bash\ncp -R \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n",
+      macos: "#!/bin/bash\ncp -cR \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n",
       windows:
         "# Copy deps\nCopy-Item -Recurse \"$env:SOURCE_REPO_PATH/deps\" \"$env:TARGET_WORKTREE_PATH/\"\n"
     }
@@ -348,8 +349,8 @@ defmodule EvoGit.ProjectConfigTest do
     test "round-trips: written scripts are readable via worktree_script/2", %{tmp_dir: tmp_dir} do
       assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
-      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.linux
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @scripts.macos
       assert ProjectConfig.worktree_script(tmp_dir, :windows) == @scripts.windows
     end
 
@@ -367,7 +368,7 @@ defmodule EvoGit.ProjectConfigTest do
       assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
       # The script is readable
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.linux
 
       # Other sections preserved
       config = ProjectConfig.read(tmp_dir)
@@ -389,7 +390,7 @@ defmodule EvoGit.ProjectConfigTest do
       config = ProjectConfig.read(tmp_dir)
       assert config["worktree"]["timeout"] == 30
       assert config["worktree"]["verbose"] == true
-      assert config["worktree"]["script"]["linux"] == @scripts.unix
+      assert config["worktree"]["script"]["linux"] == @scripts.linux
     end
 
     test "updates existing script values", %{tmp_dir: tmp_dir} do
@@ -397,7 +398,7 @@ defmodule EvoGit.ProjectConfigTest do
 
       assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.linux
     end
 
     test "replaces existing single-string script with OS-variant form", %{tmp_dir: tmp_dir} do
@@ -412,20 +413,21 @@ defmodule EvoGit.ProjectConfigTest do
       assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
       # The OS-variant form now takes precedence
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
-      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.linux
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @scripts.macos
     end
 
     test "handles script content containing triple single quotes", %{tmp_dir: tmp_dir} do
       # Content with ''' — the encoder must fall back to escaped form
       tricky_scripts = %{
-        unix: "echo hi\n'''\necho there\n",
+        linux: "echo hi\n'''\necho there\n",
+        macos: "echo hi\n'''\necho there\n",
         windows: "echo hi\n'''\necho there\n"
       }
 
       assert :ok == ProjectConfig.write_worktree_script(tmp_dir, tricky_scripts)
 
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == tricky_scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == tricky_scripts.linux
     end
 
     test "does not duplicate top-level comment when updating existing file", %{tmp_dir: tmp_dir} do

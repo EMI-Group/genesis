@@ -135,9 +135,8 @@ defmodule EvoGit.ProjectConfig do
   Writes (or merges) the worktree init script content into `genesis.toml` at `repo_root`.
 
   The scripts are written as OS-specific variants under `[worktree]`:
-  `script.linux`, `script.macos` (both from the `:unix` value), and
-  `script.windows` (from the `:windows` value), each as a TOML multi-line literal
-  string (`'''`). They are re-readable by `worktree_script/2`.
+  `script.linux`, `script.macos`, and `script.windows`, each as a TOML
+  multi-line literal string (`'''`). They are re-readable by `worktree_script/2`.
 
   - If `genesis.toml` does not exist, it is created with a top-level comment and
     an explanatory worktree comment block.
@@ -153,15 +152,22 @@ defmodule EvoGit.ProjectConfig do
   script content contains `'''`, encoding falls back to `TomlElixir`'s standard
   escaped-string form which handles it correctly.
   """
-  @spec write_worktree_script(String.t(), %{unix: String.t(), windows: String.t()}) ::
-          :ok | {:error, term()}
-  def write_worktree_script(repo_root, %{unix: unix_script, windows: windows_script})
-      when is_binary(repo_root) and is_binary(unix_script) and is_binary(windows_script) do
+  @spec write_worktree_script(String.t(), %{
+          linux: String.t(),
+          macos: String.t(),
+          windows: String.t()
+        }) :: :ok | {:error, term()}
+  def write_worktree_script(
+        repo_root,
+        %{linux: linux_script, macos: macos_script, windows: windows_script}
+      )
+      when is_binary(repo_root) and is_binary(linux_script) and is_binary(macos_script) and
+             is_binary(windows_script) do
     path = Path.join(repo_root, @config_filename)
 
     script_lines = [
-      "script.linux = #{encode_multiline_literal_string(unix_script)}",
-      "script.macos = #{encode_multiline_literal_string(unix_script)}",
+      "script.linux = #{encode_multiline_literal_string(linux_script)}",
+      "script.macos = #{encode_multiline_literal_string(macos_script)}",
       "script.windows = #{encode_multiline_literal_string(windows_script)}"
     ]
 

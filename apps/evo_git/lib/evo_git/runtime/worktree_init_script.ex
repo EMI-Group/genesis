@@ -12,6 +12,15 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
   (`EvoGit.ProjectConfig.worktree_script/2` →
   `EvoGit.AgentScheduler.Worktrees.run_init_script/3`) picks them up.
 
+  ## Platform Variants
+
+  Three platform-specific scripts are provided per build system:
+
+    - **Linux** — uses GNU `cp -R --reflink=auto` (copy-on-write: fast on
+      btrfs/xfs, falls back to a full copy otherwise).
+    - **macOS** — uses BSD `cp -cR` (`-c` = `clonefile`, APFS copy-on-write).
+    - **Windows** — uses PowerShell `Copy-Item -Recurse -Force`.
+
   ## Environment Variables
 
   All scripts receive three environment variables:
@@ -26,14 +35,24 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       id: :elixir,
       name: "Elixir / Erlang (Mix)",
       dirs: ["deps", "_build"],
-      unix_script: """
+      linux_script: """
       #!/bin/bash
       # Copy Elixir dependencies and build artifacts
       if [ -d "$SOURCE_REPO_PATH/deps" ]; then
-        cp -R "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+        cp -R --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
       fi
       if [ -d "$SOURCE_REPO_PATH/_build" ]; then
-        cp -R "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+        cp -R --reflink=auto "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      macos_script: """
+      #!/bin/bash
+      # Copy Elixir dependencies and build artifacts
+      if [ -d "$SOURCE_REPO_PATH/deps" ]; then
+        cp -cR "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+      fi
+      if [ -d "$SOURCE_REPO_PATH/_build" ]; then
+        cp -cR "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -50,11 +69,18 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       id: :node,
       name: "Node.js (npm/yarn)",
       dirs: ["node_modules"],
-      unix_script: """
+      linux_script: """
       #!/bin/bash
       # Copy Node.js dependencies
       if [ -d "$SOURCE_REPO_PATH/node_modules" ]; then
-        cp -R "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
+        cp -R --reflink=auto "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      macos_script: """
+      #!/bin/bash
+      # Copy Node.js dependencies
+      if [ -d "$SOURCE_REPO_PATH/node_modules" ]; then
+        cp -cR "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -68,11 +94,18 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       id: :python,
       name: "Python (venv)",
       dirs: [".venv"],
-      unix_script: """
+      linux_script: """
       #!/bin/bash
       # Copy Python virtual environment
       if [ -d "$SOURCE_REPO_PATH/.venv" ]; then
-        cp -R "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
+        cp -R --reflink=auto "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      macos_script: """
+      #!/bin/bash
+      # Copy Python virtual environment
+      if [ -d "$SOURCE_REPO_PATH/.venv" ]; then
+        cp -cR "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -86,11 +119,18 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       id: :rust,
       name: "Rust (Cargo)",
       dirs: ["target"],
-      unix_script: """
+      linux_script: """
       #!/bin/bash
       # Copy Rust build artifacts
       if [ -d "$SOURCE_REPO_PATH/target" ]; then
-        cp -R "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+        cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      macos_script: """
+      #!/bin/bash
+      # Copy Rust build artifacts
+      if [ -d "$SOURCE_REPO_PATH/target" ]; then
+        cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -104,11 +144,18 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       id: :go,
       name: "Go (modules)",
       dirs: ["vendor"],
-      unix_script: """
+      linux_script: """
       #!/bin/bash
       # Copy Go vendored dependencies
       if [ -d "$SOURCE_REPO_PATH/vendor" ]; then
-        cp -R "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
+        cp -R --reflink=auto "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      macos_script: """
+      #!/bin/bash
+      # Copy Go vendored dependencies
+      if [ -d "$SOURCE_REPO_PATH/vendor" ]; then
+        cp -cR "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -122,7 +169,8 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       id: :none,
       name: "None / Generic",
       dirs: [],
-      unix_script: "# No build artifacts to copy\n",
+      linux_script: "# No build artifacts to copy\n",
+      macos_script: "# No build artifacts to copy\n",
       windows_script: "# No build artifacts to copy\n"
     }
   ]
@@ -134,7 +182,8 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
     - `:id` — atom identifier (`:elixir`, `:node`, `:python`, `:rust`, `:go`, `:none`)
     - `:name` — display name for CLI menus
     - `:dirs` — list of directories the script copies
-    - `:unix_script` — shell script for Linux + macOS
+    - `:linux_script` — shell script for Linux (GNU `cp --reflink=auto`)
+    - `:macos_script` — shell script for macOS (BSD `cp -c`)
     - `:windows_script` — PowerShell script for Windows
   """
   @spec build_systems() :: [map()]
@@ -149,15 +198,16 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
   end
 
   @doc """
-  Returns the unix and windows scripts for the given build system.
+  Returns the linux, macos, and windows scripts for the given build system.
 
   Accepts either a build system map or an atom id.
 
-  Returns `%{unix: script_string, windows: script_string}`.
+  Returns `%{linux: script_string, macos: script_string, windows: script_string}`.
   """
-  @spec scripts_for(atom() | map()) :: %{unix: String.t(), windows: String.t()} | nil
-  def scripts_for(%{unix_script: unix, windows_script: windows}) do
-    %{unix: unix, windows: windows}
+  @spec scripts_for(atom() | map()) ::
+          %{linux: String.t(), macos: String.t(), windows: String.t()} | nil
+  def scripts_for(%{linux_script: linux, macos_script: macos, windows_script: windows}) do
+    %{linux: linux, macos: macos, windows: windows}
   end
 
   def scripts_for(id) when is_atom(id) do

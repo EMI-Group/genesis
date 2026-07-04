@@ -15,7 +15,8 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
       for bs <- WorktreeInitScript.build_systems() do
         assert Map.has_key?(bs, :id)
         assert Map.has_key?(bs, :name)
-        assert Map.has_key?(bs, :unix_script)
+        assert Map.has_key?(bs, :linux_script)
+        assert Map.has_key?(bs, :macos_script)
         assert Map.has_key?(bs, :windows_script)
       end
     end
@@ -87,20 +88,23 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
   end
 
   describe "scripts_for/1" do
-    test "returns unix and windows scripts for a build system map" do
+    test "returns linux, macos, and windows scripts for a build system map" do
       bs = WorktreeInitScript.get_build_system(:elixir)
       scripts = WorktreeInitScript.scripts_for(bs)
 
-      assert Map.has_key?(scripts, :unix)
+      assert Map.has_key?(scripts, :linux)
+      assert Map.has_key?(scripts, :macos)
       assert Map.has_key?(scripts, :windows)
-      assert is_binary(scripts.unix)
+      assert is_binary(scripts.linux)
+      assert is_binary(scripts.macos)
       assert is_binary(scripts.windows)
     end
 
-    test "returns unix and windows scripts for an atom id" do
+    test "returns linux, macos, and windows scripts for an atom id" do
       scripts = WorktreeInitScript.scripts_for(:elixir)
 
-      assert Map.has_key?(scripts, :unix)
+      assert Map.has_key?(scripts, :linux)
+      assert Map.has_key?(scripts, :macos)
       assert Map.has_key?(scripts, :windows)
     end
 
@@ -108,14 +112,36 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
       assert WorktreeInitScript.scripts_for(:unknown) == nil
     end
 
-    test "elixir unix script has bash shebang and copies deps and _build" do
+    test "elixir linux script has bash shebang and copies deps and _build" do
       scripts = WorktreeInitScript.scripts_for(:elixir)
 
-      assert String.starts_with?(scripts.unix, "#!/bin/bash")
-      assert scripts.unix =~ "deps"
-      assert scripts.unix =~ "_build"
-      assert scripts.unix =~ "$SOURCE_REPO_PATH"
-      assert scripts.unix =~ "$TARGET_WORKTREE_PATH"
+      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert scripts.linux =~ "deps"
+      assert scripts.linux =~ "_build"
+      assert scripts.linux =~ "$SOURCE_REPO_PATH"
+      assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "elixir linux script uses GNU cp reflink" do
+      scripts = WorktreeInitScript.scripts_for(:elixir)
+
+      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+    end
+
+    test "elixir macos script has bash shebang and copies deps and _build" do
+      scripts = WorktreeInitScript.scripts_for(:elixir)
+
+      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert scripts.macos =~ "deps"
+      assert scripts.macos =~ "_build"
+      assert scripts.macos =~ "$SOURCE_REPO_PATH"
+      assert scripts.macos =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "elixir macos script uses BSD cp clonefile" do
+      scripts = WorktreeInitScript.scripts_for(:elixir)
+
+      assert scripts.macos =~ ~r/cp -cR/
     end
 
     test "elixir windows script uses PowerShell syntax" do
@@ -127,13 +153,34 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
       assert scripts.windows =~ "_build"
     end
 
-    test "node unix script has bash shebang and copies node_modules" do
+    test "node linux script has bash shebang and copies node_modules" do
       scripts = WorktreeInitScript.scripts_for(:node)
 
-      assert String.starts_with?(scripts.unix, "#!/bin/bash")
-      assert scripts.unix =~ "node_modules"
-      assert scripts.unix =~ "$SOURCE_REPO_PATH"
-      assert scripts.unix =~ "$TARGET_WORKTREE_PATH"
+      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert scripts.linux =~ "node_modules"
+      assert scripts.linux =~ "$SOURCE_REPO_PATH"
+      assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "node linux script uses GNU cp reflink" do
+      scripts = WorktreeInitScript.scripts_for(:node)
+
+      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+    end
+
+    test "node macos script has bash shebang and copies node_modules" do
+      scripts = WorktreeInitScript.scripts_for(:node)
+
+      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert scripts.macos =~ "node_modules"
+      assert scripts.macos =~ "$SOURCE_REPO_PATH"
+      assert scripts.macos =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "node macos script uses BSD cp clonefile" do
+      scripts = WorktreeInitScript.scripts_for(:node)
+
+      assert scripts.macos =~ ~r/cp -cR/
     end
 
     test "node windows script uses PowerShell syntax" do
@@ -144,13 +191,34 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
       assert scripts.windows =~ "node_modules"
     end
 
-    test "python unix script has bash shebang and copies .venv" do
+    test "python linux script has bash shebang and copies .venv" do
       scripts = WorktreeInitScript.scripts_for(:python)
 
-      assert String.starts_with?(scripts.unix, "#!/bin/bash")
-      assert scripts.unix =~ ".venv"
-      assert scripts.unix =~ "$SOURCE_REPO_PATH"
-      assert scripts.unix =~ "$TARGET_WORKTREE_PATH"
+      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert scripts.linux =~ ".venv"
+      assert scripts.linux =~ "$SOURCE_REPO_PATH"
+      assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "python linux script uses GNU cp reflink" do
+      scripts = WorktreeInitScript.scripts_for(:python)
+
+      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+    end
+
+    test "python macos script has bash shebang and copies .venv" do
+      scripts = WorktreeInitScript.scripts_for(:python)
+
+      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert scripts.macos =~ ".venv"
+      assert scripts.macos =~ "$SOURCE_REPO_PATH"
+      assert scripts.macos =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "python macos script uses BSD cp clonefile" do
+      scripts = WorktreeInitScript.scripts_for(:python)
+
+      assert scripts.macos =~ ~r/cp -cR/
     end
 
     test "python windows script uses PowerShell syntax" do
@@ -161,13 +229,34 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
       assert scripts.windows =~ ".venv"
     end
 
-    test "rust unix script has bash shebang and copies target" do
+    test "rust linux script has bash shebang and copies target" do
       scripts = WorktreeInitScript.scripts_for(:rust)
 
-      assert String.starts_with?(scripts.unix, "#!/bin/bash")
-      assert scripts.unix =~ "target"
-      assert scripts.unix =~ "$SOURCE_REPO_PATH"
-      assert scripts.unix =~ "$TARGET_WORKTREE_PATH"
+      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert scripts.linux =~ "target"
+      assert scripts.linux =~ "$SOURCE_REPO_PATH"
+      assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "rust linux script uses GNU cp reflink" do
+      scripts = WorktreeInitScript.scripts_for(:rust)
+
+      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+    end
+
+    test "rust macos script has bash shebang and copies target" do
+      scripts = WorktreeInitScript.scripts_for(:rust)
+
+      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert scripts.macos =~ "target"
+      assert scripts.macos =~ "$SOURCE_REPO_PATH"
+      assert scripts.macos =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "rust macos script uses BSD cp clonefile" do
+      scripts = WorktreeInitScript.scripts_for(:rust)
+
+      assert scripts.macos =~ ~r/cp -cR/
     end
 
     test "rust windows script uses PowerShell syntax" do
@@ -178,13 +267,34 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
       assert scripts.windows =~ "target"
     end
 
-    test "go unix script has bash shebang and copies vendor" do
+    test "go linux script has bash shebang and copies vendor" do
       scripts = WorktreeInitScript.scripts_for(:go)
 
-      assert String.starts_with?(scripts.unix, "#!/bin/bash")
-      assert scripts.unix =~ "vendor"
-      assert scripts.unix =~ "$SOURCE_REPO_PATH"
-      assert scripts.unix =~ "$TARGET_WORKTREE_PATH"
+      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert scripts.linux =~ "vendor"
+      assert scripts.linux =~ "$SOURCE_REPO_PATH"
+      assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "go linux script uses GNU cp reflink" do
+      scripts = WorktreeInitScript.scripts_for(:go)
+
+      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+    end
+
+    test "go macos script has bash shebang and copies vendor" do
+      scripts = WorktreeInitScript.scripts_for(:go)
+
+      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert scripts.macos =~ "vendor"
+      assert scripts.macos =~ "$SOURCE_REPO_PATH"
+      assert scripts.macos =~ "$TARGET_WORKTREE_PATH"
+    end
+
+    test "go macos script uses BSD cp clonefile" do
+      scripts = WorktreeInitScript.scripts_for(:go)
+
+      assert scripts.macos =~ ~r/cp -cR/
     end
 
     test "go windows script uses PowerShell syntax" do
@@ -195,10 +305,16 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
       assert scripts.windows =~ "vendor"
     end
 
-    test "none entry returns a no-op unix script" do
+    test "none entry returns a no-op linux script" do
       scripts = WorktreeInitScript.scripts_for(:none)
 
-      assert scripts.unix =~ ~r/No build artifacts to copy/
+      assert scripts.linux =~ ~r/No build artifacts to copy/
+    end
+
+    test "none entry returns a no-op macos script" do
+      scripts = WorktreeInitScript.scripts_for(:none)
+
+      assert scripts.macos =~ ~r/No build artifacts to copy/
     end
 
     test "none entry returns a no-op windows script" do
