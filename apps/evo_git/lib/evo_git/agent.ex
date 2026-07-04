@@ -559,7 +559,7 @@ defmodule EvoGit.Agent do
         # Find the last assistant message
         last_assistant_idx =
           messages
-          |> Enum.reverse()
+          |> :lists.reverse()
           |> Enum.find_index(&(&1.role == :assistant))
 
         case last_assistant_idx do
