@@ -461,15 +461,7 @@ defmodule EvoDashWeb.Helpers do
   attr(:position, :atom, default: :top)
 
   def tip(assigns) do
-    position_class =
-      case assigns.position do
-        :bottom -> "tooltip-bottom"
-        :left -> "tooltip-left"
-        :right -> "tooltip-right"
-        _ -> "tooltip-top"
-      end
-
-    assigns = assign(assigns, :position_class, position_class)
+    assigns = assign(assigns, :position_class, tip_position_class(assigns.position))
 
     ~H"""
     <span class={["tooltip", @position_class, "cursor-help"]} data-tip={@text}>
@@ -477,6 +469,11 @@ defmodule EvoDashWeb.Helpers do
     </span>
     """
   end
+
+  defp tip_position_class(:bottom), do: "tooltip-bottom"
+  defp tip_position_class(:left), do: "tooltip-left"
+  defp tip_position_class(:right), do: "tooltip-right"
+  defp tip_position_class(_), do: "tooltip-top"
 
   # ---------------------------------------------------------------------------
   # Mode Description Helpers
@@ -504,18 +501,15 @@ defmodule EvoDashWeb.Helpers do
   # Number / Cost Formatting
   # ---------------------------------------------------------------------------
 
+  @thousands_regex ~r/(\d)(?=(\d{3})+$)/
+
   @doc """
   Formats an integer with comma-separated thousands.
   """
   def format_number(n) when is_integer(n), do: format_number(Integer.to_string(n))
 
   def format_number(str) when is_binary(str) do
-    str
-    |> String.reverse()
-    |> String.graphemes()
-    |> Enum.chunk_every(3)
-    |> Enum.join(",")
-    |> String.reverse()
+    Regex.replace(@thousands_regex, str, "\\1,")
   end
 
   def format_number(_), do: "0"
@@ -524,7 +518,7 @@ defmodule EvoDashWeb.Helpers do
   Formats a number as a cost string with 6 decimal places.
   """
   def format_cost(cost) when is_number(cost) do
-    "~.6f" |> :io_lib.format([cost * 1.0]) |> to_string()
+    :erlang.float_to_binary(cost * 1.0, decimals: 6)
   end
 
   def format_cost(_), do: "0.000000"
@@ -537,7 +531,7 @@ defmodule EvoDashWeb.Helpers do
     cached = Map.get(usage, :cached_tokens, 0)
 
     if input > 0 do
-      :io_lib.format("~.1f%", [cached / input * 100.0]) |> to_string()
+      :erlang.float_to_binary(cached / input * 100.0, decimals: 1) <> "%"
     else
       "0.0%"
     end
