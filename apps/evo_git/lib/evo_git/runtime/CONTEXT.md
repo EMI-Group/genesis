@@ -31,11 +31,12 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 3. **Ensure repo**: Calls `Runtime.ensure_repo/1` to `git init` if needed.
 4. **Get HEAD**: `PhyloGraphNode.current_head/1` → current commit SHA.
 5. **Detect mode**: `new_codebase?/1` checks if directory has files beyond `.git`, `README.md`, `.evogit`, `.gitignore`.
-6. **Dispatch agent**:
+6. **Worktree init script (Mode B only)**: Before spawning the agent, `WorktreeInitScript.generate/2` makes a one-shot LLM call to produce a script that copies deps/build cache into new worktrees. The script is written to `genesis.toml` (`[worktree].script`) via `ProjectConfig.write_worktree_script/2` so the existing per-worktree init-script infra picks it up. NON-FATAL on failure — skipped if no LLM model configured.
+7. **Dispatch agent**:
    - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
    - **Mode B (New)** → `CodebaseArchitect` agent (read-write, 3-phase: structure & public API → rough implementation → review & refinement).
-7. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
-8. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `evogit/genesis_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
+8. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
+9. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `evogit/genesis_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
 
 ### `Evolution.run/2` — Step by Step
 
