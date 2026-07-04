@@ -204,7 +204,6 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call(:list_tasks, _from, state) do
     tasks = select_all_tasks(state)
-    log_read_failed(tasks)
     {:reply, tasks, state}
   end
 
@@ -269,7 +268,6 @@ defmodule EvoDash.TaskRegistry do
         task.opts[:path] && Path.expand(task.opts[:path]) == expanded
       end)
 
-    log_read_failed(tasks)
     {:reply, tasks, state}
   end
 
@@ -533,23 +531,6 @@ defmodule EvoDash.TaskRegistry do
 
   defp select_all_tasks(state) do
     EvoDash.Store.safe_select_all_tasks(state.task_store)
-  end
-
-  # Diagnostic: logs any tasks returned with status == :failed from read paths
-  # (list_tasks / list_tasks_by_path). This helps detect :failed values that
-  # appear on the READ side without a corresponding FAILED_TRANSITION log on the
-  # write side. Purely additive — does not alter the returned list.
-  defp log_read_failed(tasks) do
-    Enum.each(tasks, fn
-      %TaskInfo{status: :failed} = task ->
-        Logger.info(
-          "TaskRegistry: READ_FAILED task_id=#{task.id} result=#{inspect(task.result)} " <>
-            "finished_at=#{inspect(task.finished_at)} started_at=#{inspect(task.started_at)}"
-        )
-
-      _ ->
-        :ok
-    end)
   end
 
   defp select_all_projects(state) do
