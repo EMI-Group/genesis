@@ -311,7 +311,11 @@ defmodule EvoGit.ProjectConfigTest do
   end
 
   describe "write_worktree_script/2" do
-    @scripts %{unix: "#!/bin/bash\ncp -R \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n", windows: "# Copy deps\nCopy-Item -Recurse \"$env:SOURCE_REPO_PATH/deps\" \"$env:TARGET_WORKTREE_PATH/\"\n"}
+    @scripts %{
+      unix: "#!/bin/bash\ncp -R \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n",
+      windows:
+        "# Copy deps\nCopy-Item -Recurse \"$env:SOURCE_REPO_PATH/deps\" \"$env:TARGET_WORKTREE_PATH/\"\n"
+    }
 
     test "creates genesis.toml when it does not exist", %{tmp_dir: tmp_dir} do
       assert ProjectConfig.read(tmp_dir) == nil

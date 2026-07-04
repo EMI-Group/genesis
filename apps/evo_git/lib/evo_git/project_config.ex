@@ -212,8 +212,10 @@ defmodule EvoGit.ProjectConfig do
           if existing != "" and not String.ends_with?(existing, "\n"), do: "\n", else: ""
 
         appended =
-          String.trim_trailing(existing) <> separator <>
-            "\n" <> worktree_comment_with_newlines() <>
+          String.trim_trailing(existing) <>
+            separator <>
+            "\n" <>
+            worktree_comment_with_newlines() <>
             "[worktree]\n" <> Enum.join(script_lines, "\n") <> "\n"
 
         maybe_add_top_level_comment(appended)

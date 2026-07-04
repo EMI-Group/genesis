@@ -491,7 +491,9 @@ defmodule EvoGit.CLI do
     build_systems = WorktreeInitScript.build_systems()
     count = length(build_systems)
 
-    IO.puts("\nSelect the build system for this project (used to cache dependencies in worktrees):\n")
+    IO.puts(
+      "\nSelect the build system for this project (used to cache dependencies in worktrees):\n"
+    )
 
     build_systems
     |> Enum.with_index(1)
@@ -516,6 +518,7 @@ defmodule EvoGit.CLI do
         :none
     end
   end
+
   defp evolution_mode_atom("simple"), do: :simple
   defp evolution_mode_atom("complex"), do: :complex
 
