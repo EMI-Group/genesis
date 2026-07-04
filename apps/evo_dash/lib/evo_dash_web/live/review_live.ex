@@ -108,6 +108,7 @@ defmodule EvoDashWeb.ReviewLive do
                         <!-- Action Buttons -->
                         <EvoDashWeb.ReviewComponents.action_buttons
                           branch_exists={@branch_exists}
+                          can_continue={@can_continue}
                           has_pr={@has_pr}
                           pr_url={@pr_url}
                           loading={@action_loading}
@@ -199,6 +200,7 @@ defmodule EvoDashWeb.ReviewLive do
       |> assign(:agent_summary, nil)
       |> assign(:review_status, :open)
       |> assign(:branch_exists, false)
+      |> assign(:can_continue, false)
       |> assign(:has_pr, false)
       |> assign(:pr_url, nil)
       |> assign(:show_extract_modal, false)
@@ -564,6 +566,8 @@ defmodule EvoDashWeb.ReviewLive do
 
         branch_exists = branch_name && repo_path && File.dir?(repo_path) && Review.branch_exists?(repo_path, branch_name)
 
+        can_continue = commit_sha != nil && repo_path != nil && File.dir?(repo_path)
+
         rs = Map.get(task, :review_status)
 
         review_status =
@@ -628,6 +632,7 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:agent_summary, agent_summary)
         |> assign(:review_status, review_status)
         |> assign(:branch_exists, branch_exists || false)
+        |> assign(:can_continue, can_continue || false)
         |> assign(:has_pr, pr_url != nil)
         |> assign(:pr_url, pr_url)
         |> assign(:review_data, review_data)

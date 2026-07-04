@@ -477,6 +477,7 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:has_pr, :boolean, default: false)
   attr(:pr_url, :string, default: nil)
   attr(:loading, :boolean, default: false)
+  attr(:can_continue, :boolean, default: false)
 
   def action_buttons(assigns) do
     ~H"""
@@ -549,6 +550,16 @@ defmodule EvoDashWeb.ReviewComponents do
               <span class="text-sm text-warning font-medium">{gettext("This branch no longer exists. You can dismiss it with Ignore.")}</span>
             </div>
           </div>
+        <% end %>
+        <%= if not @branch_exists and @can_continue do %>
+          <button
+            class="btn btn-outline btn-info rounded-full px-6 gap-2"
+            phx-click="continue"
+            disabled={@loading}
+          >
+            <.icon name="hero-arrow-path" class="size-4.5" />
+            {gettext("Continue from Here")}
+          </button>
         <% end %>
         <button
           class="btn btn-outline btn-warning rounded-full px-6 gap-2"
