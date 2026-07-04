@@ -18,9 +18,9 @@ defmodule EvoGit.Runtime do
       File.mkdir_p!(repo_path)
       Git.init(repo_path)
 
-      # Create .gitignore to ignore .evogit worktrees
+      # Create .gitignore to ignore .genesis worktrees
       gitignore_path = Path.join(repo_path, ".gitignore")
-      File.write!(gitignore_path, "/.evogit\n")
+      File.write!(gitignore_path, "/.genesis\n")
       Git.add(repo_path, ".gitignore")
 
       case Git.commit(repo_path, "Initial commit") do

@@ -2,7 +2,7 @@ defmodule EvoGit.Agent.Tools.SkillWhere do
   @moduledoc """
   Tool for querying which Context Tree nodes have a given skill enabled.
 
-  Searches all CONTEXT.md files in the repository (excluding .evogit/, _build/,
+  Searches all CONTEXT.md files in the repository (excluding .genesis/, _build/,
   deps/, .git/, node_modules/) and returns the node paths where the skill
   appears in the YAML front matter's `skill` list.
   """

@@ -46,7 +46,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       assert branch_name in Git.list_branches(tmp_dir)
 
       # Worktree directories use underscores.
-      workers_dir = Path.join(tmp_dir, ".evogit/workers")
+      workers_dir = Path.join(tmp_dir, ".genesis/workers")
       worktree_path = Path.join(workers_dir, "worker_T1_A42")
       File.mkdir_p!(worktree_path)
       File.write!(Path.join(worktree_path, "placeholder"), "")
@@ -64,7 +64,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       branch_name = "evogit-agent-T12-A345"
       Git.create_branch(tmp_dir, branch_name, base_sha)
 
-      worktree_path = Path.join(tmp_dir, ".evogit/workers/worker_T12_A345")
+      worktree_path = Path.join(tmp_dir, ".genesis/workers/worker_T12_A345")
       File.mkdir_p!(worktree_path)
 
       Worktrees.delete(worktree_path, tmp_dir)
