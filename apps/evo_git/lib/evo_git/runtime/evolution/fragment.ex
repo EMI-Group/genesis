@@ -84,12 +84,11 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
     * `:line_count` — number of lines
     * `:char_count` — string length
   """
-  @spec extract_structural_features(t()) :: map()
+  @spec extract_structural_features(t() | String.t()) :: map()
   def extract_structural_features(%__MODULE__{content: content}) do
     lines = String.split(content, "\n", trim: true)
     line_count = length(lines)
     char_count = String.length(content)
-    non_empty_lines = Enum.reject(lines, &(&1 == ""))
 
     %{
       nesting_depth: compute_nesting_depth(lines),
@@ -97,7 +96,33 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
       control_flow_count: count_matches(content, @ctrl_re),
       comment_density: compute_comment_density(lines),
       import_count: count_matches(content, @import_re),
-      avg_line_length: compute_avg_line_length(non_empty_lines),
+      avg_line_length: compute_avg_line_length(lines),
+      string_literal_count: count_matches(content, @string_literal_re),
+      numeric_literal_count: count_matches(content, @numeric_literal_re),
+      line_count: line_count,
+      char_count: char_count
+    }
+  end
+
+  @doc """
+  Extracts structural features directly from a code string.
+
+  Returns the same map as `extract_structural_features/1` applied to a Fragment struct,
+  but avoids constructing the full struct (UUID + DateTime allocation).
+  """
+  @spec extract_structural_features(String.t()) :: map()
+  def extract_structural_features(content) when is_binary(content) do
+    lines = String.split(content, "\n", trim: true)
+    line_count = length(lines)
+    char_count = String.length(content)
+
+    %{
+      nesting_depth: compute_nesting_depth(lines),
+      function_count: count_matches(content, @func_re),
+      control_flow_count: count_matches(content, @ctrl_re),
+      comment_density: compute_comment_density(lines),
+      import_count: count_matches(content, @import_re),
+      avg_line_length: compute_avg_line_length(lines),
       string_literal_count: count_matches(content, @string_literal_re),
       numeric_literal_count: count_matches(content, @numeric_literal_re),
       line_count: line_count,
