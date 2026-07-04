@@ -116,8 +116,11 @@ defmodule EvoGit.Agent.OutputSanitizer do
   def strip_progress_bars(input) when is_binary(input) do
     input
     |> String.split("\n")
-    |> Enum.map(&handle_carriage_returns/1)
-    |> Enum.reject(&progress_bar_line?/1)
+    |> Enum.reduce([], fn line, acc ->
+      processed = handle_carriage_returns(line)
+      if progress_bar_line?(processed), do: acc, else: [processed | acc]
+    end)
+    |> Enum.reverse()
     |> Enum.join("\n")
   end
 
