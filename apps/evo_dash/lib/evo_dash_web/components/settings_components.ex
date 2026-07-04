@@ -22,7 +22,7 @@ defmodule EvoDashWeb.SettingsComponents do
     ]}>
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
-          <code class="font-mono text-xs font-medium text-base-content/90">{Enum.join(@schema.key_path, ".")}</code>
+          <code class="font-mono text-xs font-medium text-primary">{Enum.join(@schema.key_path, ".")}</code>
           <button
             type="button"
             phx-click="reset_key"
