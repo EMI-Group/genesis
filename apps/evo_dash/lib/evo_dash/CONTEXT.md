@@ -147,6 +147,16 @@ size(store) :: non_neg_integer()                          # total across both ta
 
 **Known reconcile bug (line 561):** When `sched_meta_has_active_agents?` returns TRUE but the wrapper pid is dead/nil, the task is kept as `:running` but is NOT added to `task_refs`. This means: (a) no monitor is set up; (b) the result handler cannot match the task when `{ref, result}` arrives; (c) the DOWN handler cannot match. The task becomes **permanently stuck** at `:running` (or `:finalizing` after the PubSub broadcast) — it can never transition to `:completed` or `:failed` through normal handlers. Only a subsequent registry restart + reconcile can resolve it (and only if the pid becomes alive or sched_meta clears).
 
+**FIXED reconcile bug (commit `93cb3131`):** The reconcile bug above is now FIXED. When `sched_meta_has_active_agents?` returns TRUE but the wrapper pid is dead/nil, `reconcile_task_status` now schedules a periodic recheck via `Process.send_after(self(), {:recheck_task, task_id}, 30_000)`. The `handle_info({:recheck_task, task_id}, state)` handler re-checks if agents are still active; if not, it resolves the task (best-effort result lookup from sched_meta ETS, defaults to `:completed` if no result found). This prevents tasks from being permanently stuck at `:running` after a registry restart with active agents.
+
+### Diagnostic Instrumentation (commit `93cb3131`)
+
+Three layers of diagnostic logging were added to investigate the "task shows `:failed` mid-run without any FAILED_TRANSITION log" bug:
+
+1. **Store chokepoint (`Store: FAILED_WRITE`)**: `handle_call({:put_task, task}, ...)` now logs a `Logger.warning` with prefix `"Store: FAILED_WRITE"` BEFORE the INSERT when writing `:failed` as a NEW transition (previous status was not `:failed`). The SELECT for previous status runs ONLY when `task.status == :failed` (efficiency). This is the ULTIMATE chokepoint — it cannot be bypassed. Helper: `log_failed_write_if_transition/2`, `read_task_status/2`.
+2. **Startup sentinel (`TaskRegistry: INIT_LOGGING_V3`)**: `init/1` logs a warning confirming the running process has the instrumented code, including `task_refs` map size.
+3. **Read-path logging (`TaskRegistry: READ_FAILED`)**: `handle_call(:list_tasks, ...)` and `handle_call({:list_tasks_by_path, path}, ...)` now log any returned task with `status == :failed` along with `result`, `finished_at`, `started_at` via `Logger.info`. Helper: `log_read_failed/1`.
+
 ## Retention & Eviction
 - `cleanup_expired_tasks/1`: removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100). Uses `delete_tasks/2` for batch deletion.
 - Recent projects capped at 10 via `trim_recent_projects/1`.
