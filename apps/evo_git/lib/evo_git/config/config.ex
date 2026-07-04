@@ -558,8 +558,12 @@ defmodule EvoGit.Config do
     
     case get_in(config, [:tools, :search, :enabled]) do
       true ->
-        api_key_env_var =
+        provider = get_in(config, [:tools, :search, :provider]) || :tavily
+        default_env_var =
           get_in(config, [:tools, :search, :tavily, :api_key_env_var]) || "TAVILY_API_KEY"
+
+        api_key_env_var =
+          get_in(config, [:tools, :search, provider, :api_key_env_var]) || default_env_var
         
         key = System.get_env(api_key_env_var)
         key != nil and key != ""
