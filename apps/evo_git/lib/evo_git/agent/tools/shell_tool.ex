@@ -43,6 +43,8 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   # 3 minutes timeout for running complex commands
   @default_timeout 180_000
 
+  @cd_regex ~r/\bcd\s+["']?(\/[^\s"'&;|]+)/
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -228,7 +230,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   end
 
   defp cd_targets(command) do
-    ~r/\bcd\s+["']?(\/[^\s"'&|;]+)/
+    @cd_regex
     |> Regex.scan(command, capture: :all_but_first)
     |> List.flatten()
     |> Enum.uniq()
