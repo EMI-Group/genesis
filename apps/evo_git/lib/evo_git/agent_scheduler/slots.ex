@@ -234,8 +234,16 @@ defmodule EvoGit.AgentScheduler.Slots do
   @spec purge_agents_from_queues(State.t(), MapSet.t(pos_integer())) ::
           {State.t(), [{pos_integer(), atom()}]}
   def purge_agents_from_queues(%State{} = state, agent_ids) do
-    {llm_kept, llm_removed} = partition_llm_waiting(state.llm_waiting, agent_ids)
-    {tool_kept, tool_removed} = partition_tool_waiting(state.tool_waiting, agent_ids)
+    {llm_kept, llm_removed} =
+      partition_waiting(state.llm_waiting, agent_ids, fn
+        {agent_id, _from}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
+        {agent_id, _from, _backoff}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
+      end)
+
+    {tool_kept, tool_removed} =
+      partition_waiting(state.tool_waiting, agent_ids, fn
+        {agent_id, _from}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
+      end)
 
     Enum.each(llm_removed, fn {_agent_id, from, _backoff} ->
       GenServer.reply(from, {:error, :cancelled})
@@ -249,27 +257,21 @@ defmodule EvoGit.AgentScheduler.Slots do
     {state, []}
   end
 
-  # Partitions the LLM waiting queue into kept and removed entries based on agent_ids.
-  defp partition_llm_waiting(waiting, agent_ids) do
-    {kept, removed} =
+  # Partitions a waiting queue into kept and removed entries in a single pass.
+  # The predicate receives (entry, agent_ids) and must return true for entries to keep.
+  defp partition_waiting(waiting, agent_ids, pred_fun) do
+    {kept_rev, removed_rev} =
       waiting
       |> :queue.to_list()
-      |> Enum.split_with(fn
-        {agent_id, _from} -> not MapSet.member?(agent_ids, agent_id)
-        {agent_id, _from, _backoff} -> not MapSet.member?(agent_ids, agent_id)
+      |> Enum.reduce({[], []}, fn entry, {kept_acc, removed_acc} ->
+        if pred_fun.(entry, agent_ids) do
+          {[entry | kept_acc], removed_acc}
+        else
+          {kept_acc, [entry | removed_acc]}
+        end
       end)
 
-    {:queue.from_list(kept), removed}
-  end
-
-  # Partitions the tool waiting queue into kept and removed entries based on agent_ids.
-  defp partition_tool_waiting(waiting, agent_ids) do
-    {kept, removed} =
-      waiting
-      |> :queue.to_list()
-      |> Enum.split_with(fn {agent_id, _from} -> not MapSet.member?(agent_ids, agent_id) end)
-
-    {:queue.from_list(kept), removed}
+    {:queue.from_list(:lists.reverse(kept_rev)), :lists.reverse(removed_rev)}
   end
 
   # --- Private Helpers: LLM Slots ---
@@ -290,33 +292,43 @@ defmodule EvoGit.AgentScheduler.Slots do
     else
       entries = :queue.to_list(state.llm_waiting)
 
-      # Partition into still-in-backoff vs eligible
-      {in_backoff, eligible} =
-        Enum.split_with(entries, fn
-          {_agent_id, _from, backoff_until} -> backoff_until != nil and now < backoff_until
-          {_agent_id, _from} -> false
+      # Single reduce: partition into in_backoff / eligible and track best candidate
+      {in_backoff_rev, eligible_rev, best} =
+        Enum.reduce(entries, {[], [], nil}, fn entry, {in_bo_rev, elig_rev, best_so_far} ->
+          agent_id = entry_agent_id(entry)
+
+          case entry do
+            {_aid, _from, backoff_until} when backoff_until != nil and now < backoff_until ->
+              {[entry | in_bo_rev], elig_rev, best_so_far}
+
+            _ ->
+              new_best = better_entry(best_so_far, entry, agent_id, state)
+              {in_bo_rev, [entry | elig_rev], new_best}
+          end
         end)
 
-      if eligible == [] do
+      if best == nil do
         # All entries in backoff — preserve order and stop
         state = maybe_clear_llm_backoff(state)
-        {%State{state | llm_waiting: :queue.from_list(in_backoff)}, []}
+        {%State{state | llm_waiting: :queue.from_list(:lists.reverse(in_backoff_rev))}, []}
       else
-        # Select best candidate: most recently granted first, then lowest depth
-        best =
-          Enum.min_by(eligible, fn {agent_id, _from, _backoff} ->
-            {-Map.get(state.llm_last_granted, agent_id, 0), depth_of(agent_id)}
-          end)
+        eligible = :lists.reverse(eligible_rev)
+        eligible_without_best = List.delete(eligible, best)
 
         {agent_id, from, _backoff} = best
-        remaining_eligible = List.delete(eligible, best)
 
         GenServer.reply(from, :ok)
         state = maybe_clear_llm_backoff(state)
 
+        # Rebuild queue avoiding ++: prepend eligible items to in_backoff_rev, then reverse
+        queue_rev =
+          Enum.reduce(eligible_without_best, in_backoff_rev, fn item, acc -> [item | acc] end)
+
+        queue_list = :lists.reverse(queue_rev)
+
         state = %State{
           state
-          | llm_waiting: :queue.from_list(remaining_eligible ++ in_backoff),
+          | llm_waiting: :queue.from_list(queue_list),
             llm_holders: MapSet.put(state.llm_holders, agent_id),
             llm_last_granted: Map.put(state.llm_last_granted, agent_id, now)
         }
@@ -325,6 +337,21 @@ defmodule EvoGit.AgentScheduler.Slots do
         {state, [{agent_id, :running} | more]}
       end
     end
+  end
+
+  # Extracts agent_id from a waiting queue entry (2-tuple or 3-tuple).
+  defp entry_agent_id({agent_id, _from}), do: agent_id
+  defp entry_agent_id({agent_id, _from, _backoff}), do: agent_id
+
+  # Compares two eligible entries and returns the better one.
+  # Prefers most-recently-granted first, then lowest depth.
+  defp better_entry(nil, entry, _agent_id, _state), do: entry
+  defp better_entry(best, entry, agent_id, state) do
+    best_agent_id = entry_agent_id(best)
+    best_score = {-Map.get(state.llm_last_granted, best_agent_id, 0), depth_of(best_agent_id)}
+    this_score = {-Map.get(state.llm_last_granted, agent_id, 0), depth_of(agent_id)}
+
+    if this_score < best_score, do: entry, else: best
   end
 
   # Looks up an agent's recursion depth from the scheduler ETS table.
