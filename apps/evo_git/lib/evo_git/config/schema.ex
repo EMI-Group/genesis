@@ -35,7 +35,7 @@ defmodule EvoGit.Config.Schema do
   @type key_path :: [atom()]
 
   @typedoc "Top-level config category"
-  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix
+  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix | :tools
 
   @typedoc "Sub-category for sandbox keys; nil for all other categories"
   @type sub_category :: :resources | :process | nil
@@ -471,6 +471,87 @@ defmodule EvoGit.Config.Schema do
       sub_category: nil,
       description:
         "Optional flake output attribute to use (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\" for `nix print-dev-env`."
+    },
+    # ── Tools ────────────────────────────────────────────────────────────
+    %{
+      key_path: [:tools, :search, :enabled],
+      type: :boolean,
+      default: false,
+      validation: [],
+      category: :tools,
+      sub_category: nil,
+      description:
+        "Enable web search tool for agents. Requires a configured API key."
+    },
+    %{
+      key_path: [:tools, :search, :provider],
+      type: :atom,
+      default: :tavily,
+      validation: [in: [:tavily]],
+      category: :tools,
+      sub_category: nil,
+      description:
+        "Search service provider."
+    },
+    %{
+      key_path: [:tools, :search, :tavily, :api_key_env_var],
+      type: :string,
+      default: "TAVILY_API_KEY",
+      validation: [],
+      category: :tools,
+      sub_category: nil,
+      description:
+        "Environment variable name for the Tavily API key."
+    },
+    %{
+      key_path: [:tools, :search, :tavily, :base_url],
+      type: :string,
+      default: "https://api.tavily.com/search",
+      validation: [],
+      category: :tools,
+      sub_category: nil,
+      description:
+        "Tavily API endpoint URL."
+    },
+    %{
+      key_path: [:tools, :search, :tavily, :search_depth],
+      type: :atom,
+      default: :basic,
+      validation: [in: [:basic, :advanced]],
+      category: :tools,
+      sub_category: nil,
+      description:
+        "Search depth (basic or advanced)."
+    },
+    %{
+      key_path: [:tools, :search, :tavily, :max_results],
+      type: :pos_integer,
+      default: 10,
+      validation: [min: 1, max: 50],
+      category: :tools,
+      sub_category: nil,
+      description:
+        "Maximum number of search results (1-50)."
+    },
+    %{
+      key_path: [:tools, :search, :tavily, :timeout],
+      type: :pos_integer,
+      default: 60000,
+      validation: [],
+      category: :tools,
+      sub_category: nil,
+      description:
+        "Search request timeout in milliseconds."
+    },
+    %{
+      key_path: [:tools, :search, :tavily, :max_bytes],
+      type: :pos_integer,
+      default: 16384,
+      validation: [],
+      category: :tools,
+      sub_category: nil,
+      description:
+        "Maximum output size in bytes."
     }
   ]
 

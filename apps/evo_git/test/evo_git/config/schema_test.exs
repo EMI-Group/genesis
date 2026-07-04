@@ -56,6 +56,16 @@ defmodule EvoGit.Config.SchemaTest do
       # Nix
       assert [:nix, :enabled] in paths
       assert [:nix, :flake_output] in paths
+
+      # Tools
+      assert [:tools, :search, :enabled] in paths
+      assert [:tools, :search, :provider] in paths
+      assert [:tools, :search, :tavily, :api_key_env_var] in paths
+      assert [:tools, :search, :tavily, :base_url] in paths
+      assert [:tools, :search, :tavily, :search_depth] in paths
+      assert [:tools, :search, :tavily, :max_results] in paths
+      assert [:tools, :search, :tavily, :timeout] in paths
+      assert [:tools, :search, :tavily, :max_bytes] in paths
     end
 
     test "every schema has required fields" do
@@ -72,8 +82,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 38 schemas" do
-      assert length(Schema.all_schemas()) == 38
+    test "has exactly 46 schemas" do
+      assert length(Schema.all_schemas()) == 46
     end
   end
 
@@ -126,6 +136,16 @@ defmodule EvoGit.Config.SchemaTest do
       # Nix
       assert defaults.nix.enabled == false
       assert defaults.nix.flake_output == nil
+
+      # Tools
+      assert defaults.tools.search.enabled == false
+      assert defaults.tools.search.provider == :tavily
+      assert defaults.tools.search.tavily.api_key_env_var == "TAVILY_API_KEY"
+      assert defaults.tools.search.tavily.base_url == "https://api.tavily.com/search"
+      assert defaults.tools.search.tavily.search_depth == :basic
+      assert defaults.tools.search.tavily.max_results == 10
+      assert defaults.tools.search.tavily.timeout == 60000
+      assert defaults.tools.search.tavily.max_bytes == 16384
     end
 
     test "llm model has nil default" do
@@ -151,6 +171,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(grouped, :truncation)
       assert Map.has_key?(grouped, :task_history)
       assert Map.has_key?(grouped, :nix)
+      assert Map.has_key?(grouped, :tools)
     end
 
     test "each category has expected count" do
@@ -162,6 +183,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
       assert length(grouped[:nix]) == 2
+      assert length(grouped[:tools]) == 8
     end
 
     test "sandbox schemas include sub_category metadata" do

@@ -653,6 +653,9 @@ defmodule EvoDashWeb.SettingsLive do
       |> maybe_add_kw(:max_turns_root, get_in(file_config, [:scheduler, :max_turns_root]))
       |> maybe_add_kw(:llm_model, get_in(file_config, [:llm, :model]))
 
+    # Note: :tools config (e.g., web_search) is read from EvoGit.Config.resolve()
+    # at execution time — no runtime push needed here.
+
     # Always include LLM generation params (even when empty, to allow clearing)
     llm_gen_params = EvoGit.Config.Schema.llm_generation_params(file_config)
     updates = updates ++ [{:llm_generation_params, llm_gen_params}]

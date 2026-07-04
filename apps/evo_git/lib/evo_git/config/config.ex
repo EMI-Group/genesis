@@ -70,6 +70,16 @@ defmodule EvoGit.Config do
       # When nil, uses the default devShell.
       # flake_output = "devShells.x86_64-linux.default"
 
+      [tools.search]
+      enabled = false   # Enable web search tool for agents
+      # provider = "tavily"           # Search service provider
+      # tavily.api_key_env_var = "TAVILY_API_KEY"  # env var for API key
+      # tavily.base_url = "https://api.tavily.com/search"
+      # tavily.search_depth = "basic"  # "basic" | "advanced"
+      # tavily.max_results = 10        # 1-50
+      # tavily.timeout = 60000         # milliseconds
+      # tavily.max_bytes = 16384       # max output bytes
+
   ## Credentials File Format (credentials.toml)
 
       # API keys as environment variable names — they are set as env vars on load
@@ -341,6 +351,9 @@ defmodule EvoGit.Config do
           "" -> true
           _ -> false
         end
+      end},
+      {:search_api_key, "Web search is enabled but the API key environment variable is not set.", fn ->
+        tools_search_enabled?() == false and get_in(resolved, [:tools, :search, :enabled]) == true
       end}
     ]
 
@@ -531,6 +544,32 @@ defmodule EvoGit.Config do
   @spec credentials_path() :: String.t()
   def credentials_path do
     Path.join(config_dir(), @credentials_filename)
+  end
+
+  @doc """
+  Returns whether the web search tool is enabled and fully configured.
+
+  Checks both the config flag AND that the required API key environment
+  variable is actually set. Both must be true for search to work.
+  """
+  @spec tools_search_enabled?() :: boolean()
+  def tools_search_enabled? do
+    config = resolve()
+    
+    case get_in(config, [:tools, :search, :enabled]) do
+      true ->
+        provider = get_in(config, [:tools, :search, :provider]) || :tavily
+        default_env_var =
+          get_in(config, [:tools, :search, :tavily, :api_key_env_var]) || "TAVILY_API_KEY"
+
+        api_key_env_var =
+          get_in(config, [:tools, :search, provider, :api_key_env_var]) || default_env_var
+        
+        key = System.get_env(api_key_env_var)
+        key != nil and key != ""
+      
+      _ -> false
+    end
   end
 
   # --- Private Helpers ---
