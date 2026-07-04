@@ -155,7 +155,6 @@ Three layers of diagnostic logging were added to investigate the "task shows `:f
 
 1. **Store chokepoint (`Store: FAILED_WRITE`)**: `handle_call({:put_task, task}, ...)` now logs a `Logger.warning` with prefix `"Store: FAILED_WRITE"` BEFORE the INSERT when writing `:failed` as a NEW transition (previous status was not `:failed`). The SELECT for previous status runs ONLY when `task.status == :failed` (efficiency). This is the ULTIMATE chokepoint — it cannot be bypassed. Helper: `log_failed_write_if_transition/2`, `read_task_status/2`.
 2. **Startup sentinel (`TaskRegistry: INIT_LOGGING_V3`)**: `init/1` logs a warning confirming the running process has the instrumented code, including `task_refs` map size.
-3. **Read-path logging (`TaskRegistry: READ_FAILED`)**: `handle_call(:list_tasks, ...)` and `handle_call({:list_tasks_by_path, path}, ...)` now log any returned task with `status == :failed` along with `result`, `finished_at`, `started_at` via `Logger.info`. Helper: `log_read_failed/1`.
 
 ## Retention & Eviction
 - `cleanup_expired_tasks/1`: removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100). Uses `delete_tasks/2` for batch deletion.
