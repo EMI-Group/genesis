@@ -1091,7 +1091,7 @@ defmodule EvoDashWeb.DashboardLive do
   defp new_codebase?(path) do
     files =
       case File.ls(path) do
-        {:ok, items} -> items -- [".git", "README.md", ".evogit", ".gitignore"]
+        {:ok, items} -> items -- [".git", "README.md", ".genesis", ".gitignore"]
         _ -> []
       end
 
