@@ -311,17 +311,19 @@ defmodule EvoGit.AgentScheduler.Slots do
         state = maybe_clear_llm_backoff(state)
         {%State{state | llm_waiting: :queue.from_list(:lists.reverse(in_backoff_rev))}, []}
       else
-        eligible = :lists.reverse(eligible_rev)
-        eligible_without_best = List.delete(eligible, best)
-
         {agent_id, from, _backoff} = best
 
         GenServer.reply(from, :ok)
         state = maybe_clear_llm_backoff(state)
 
-        # Rebuild queue avoiding ++: prepend eligible items to in_backoff_rev, then reverse
+        # Rebuild queue: reverse eligible to forward order, prepend (skipping best) to in_backoff_rev, reverse once
         queue_rev =
-          Enum.reduce(eligible_without_best, in_backoff_rev, fn item, acc -> [item | acc] end)
+          eligible_rev
+          |> :lists.reverse()
+          |> Enum.reduce(in_backoff_rev, fn
+            ^best, acc -> acc
+            item, acc -> [item | acc]
+          end)
 
         queue_list = :lists.reverse(queue_rev)
 

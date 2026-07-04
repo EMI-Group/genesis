@@ -63,20 +63,20 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     if map_size(state.ref_to_agent) > 0 do
       initialized_keys = Map.keys(state.initialized_repos)
 
-      Logger.warning(
+      Logger.warning(fn ->
         "AgentScheduler: Concurrent task targets #{new_root} while " <>
           "#{map_size(state.ref_to_agent)} agent(s) still running (initialized repos: #{inspect(initialized_keys)}) — " <>
           "creating worker directory for new repo"
-      )
+      end)
 
       worker_base = Path.join(new_root, ".genesis/workers")
       File.mkdir_p!(worker_base)
 
       %State{state | initialized_repos: Map.put(state.initialized_repos, new_root, true)}
     else
-      Logger.info(
+      Logger.info(fn ->
         "AgentScheduler: Repo path changed (initialized repos: #{inspect(Map.keys(state.initialized_repos))}), reinitializing for #{new_repo_path}..."
-      )
+      end)
 
       state = teardown_worktrees(state, new_root)
       do_initialize(state, new_root)
