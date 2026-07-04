@@ -18,7 +18,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `run_git` | Execute git commands (disabled in schemas) | Read/Write | Yes |
 | `glob` | File pattern matching | Read | No |
 | `list_dir` | List directory contents | Read | No |
-| `search_web` | Web search via Tavily API | Read | No |
+| `search_web` | Web search via configurable provider (Tavily by default) | Read | No |
 | `search_context` | Search patterns in CONTEXT.md files | Read | Yes |
 | `search_history` | Search git commit history | Read | Yes |
 | `curl` | HTTP requests via curl (disabled in schemas) | Read | No |

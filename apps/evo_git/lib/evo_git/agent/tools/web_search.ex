@@ -53,25 +53,27 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   """
   def schema(_opts) do
     config = EvoGit.Config.resolve()
+    provider = get_in(config, [:tools, :search, :provider]) || :tavily
+    provider_config = get_in(config, [:tools, :search, provider]) || %{}
 
     search_depth =
-      config
-      |> get_in([:tools, :search, :tavily, :search_depth])
+      provider_config
+      |> Map.get(:search_depth)
       |> stringify_default("basic")
 
     max_results =
-      config
-      |> get_in([:tools, :search, :tavily, :max_results])
+      provider_config
+      |> Map.get(:max_results)
       |> Kernel.||(10)
 
     timeout =
-      config
-      |> get_in([:tools, :search, :tavily, :timeout])
+      provider_config
+      |> Map.get(:timeout)
       |> Kernel.||(@default_timeout)
 
     max_bytes =
-      config
-      |> get_in([:tools, :search, :tavily, :max_bytes])
+      provider_config
+      |> Map.get(:max_bytes)
       |> Kernel.||(@default_max_bytes)
 
     ReqLLM.tool(
