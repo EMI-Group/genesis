@@ -104,13 +104,6 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
     }
   end
 
-  @doc """
-  Extracts structural features directly from a code string.
-
-  Returns the same map as `extract_structural_features/1` applied to a Fragment struct,
-  but avoids constructing the full struct (UUID + DateTime allocation).
-  """
-  @spec extract_structural_features(String.t()) :: map()
   def extract_structural_features(content) when is_binary(content) do
     lines = String.split(content, "\n", trim: true)
     line_count = length(lines)
