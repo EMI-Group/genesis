@@ -24,8 +24,11 @@ evo_git-*.tar
 /tmp/
 /apps/evo_git/tmp
 
-# Genesis runtime artifacts
-.evogit/
+# Genesis runtime artifacts.
+# Genesis creates isolated Git worktrees (one per agent) under this directory to
+# carry out its work. These are transient build/scratch artifacts that must never
+# be committed — they duplicate tracked sources and change on every run.
+.genesis/
 
 # Ignore local config files
 *.local.exs

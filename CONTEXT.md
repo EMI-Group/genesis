@@ -67,8 +67,8 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 - Elixir ~> 1.18 required
 - Git CLI only — no libgit2 bindings
 - No source code at root — all code under `./apps/`
-- Every directory must have a CONTEXT.md as its spatial contract
 - Agents commit before delegating subagents (auto-commit fallback enforced)
+- Genesis stores its runtime artifacts (agent worktrees, state) under a `.genesis/` directory at each repo root — not `.evogit/` (the project was renamed from EvoGit to Genesis). This directory must be git-ignored everywhere (root `.gitignore` and the `.gitignore` that Genesis auto-writes into new repos).
 - LLM-generated code runs under platform-appropriate sandboxing (systemd-run on Linux, sandbox-exec on macOS, direct on Windows)
 - No hardcoded model or username — users configure via `~/.config/genesis/config.toml`
 - User config follows XDG conventions
