@@ -4,13 +4,13 @@ defmodule EvoGit.Runtime.GenesisTest do
   alias EvoGit.Runtime.Helpers
 
   describe "new_codebase?/1 auto-detection" do
-    test "returns true for a repo with only .gitignore and .evogit" do
+    test "returns true for a repo with only .gitignore and .genesis" do
       tmp_dir =
         System.tmp_dir!() |> Path.join("evogit-genesis-new-#{System.unique_integer([:positive])}")
 
       File.mkdir_p!(tmp_dir)
-      File.write!(Path.join(tmp_dir, ".gitignore"), "/.evogit\n")
-      File.mkdir_p!(Path.join(tmp_dir, ".evogit"))
+      File.write!(Path.join(tmp_dir, ".gitignore"), "/.genesis\n")
+      File.mkdir_p!(Path.join(tmp_dir, ".genesis"))
 
       assert Helpers.new_codebase?(tmp_dir) == true
 
@@ -35,7 +35,7 @@ defmodule EvoGit.Runtime.GenesisTest do
         |> Path.join("evogit-genesis-files-#{System.unique_integer([:positive])}")
 
       File.mkdir_p!(tmp_dir)
-      File.write!(Path.join(tmp_dir, ".gitignore"), "/.evogit\n")
+      File.write!(Path.join(tmp_dir, ".gitignore"), "/.genesis\n")
       File.write!(Path.join(tmp_dir, "main.py"), "print('hello')")
 
       assert Helpers.new_codebase?(tmp_dir) == false
@@ -43,14 +43,14 @@ defmodule EvoGit.Runtime.GenesisTest do
       File.rm_rf!(tmp_dir)
     end
 
-    test "returns true for a repo with .gitignore, .evogit, and README.md" do
+    test "returns true for a repo with .gitignore, .genesis, and README.md" do
       tmp_dir =
         System.tmp_dir!()
         |> Path.join("evogit-genesis-readme-#{System.unique_integer([:positive])}")
 
       File.mkdir_p!(tmp_dir)
-      File.write!(Path.join(tmp_dir, ".gitignore"), "/.evogit\n")
-      File.mkdir_p!(Path.join(tmp_dir, ".evogit"))
+      File.write!(Path.join(tmp_dir, ".gitignore"), "/.genesis\n")
+      File.mkdir_p!(Path.join(tmp_dir, ".genesis"))
       File.write!(Path.join(tmp_dir, "README.md"), "# Project")
 
       assert Helpers.new_codebase?(tmp_dir) == true

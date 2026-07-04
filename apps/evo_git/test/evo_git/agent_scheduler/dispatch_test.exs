@@ -12,11 +12,11 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
   end
 
   describe "resolve_agent_repo_root/2 with primary repo" do
-    test "strips .evogit/workers suffix from worktree path" do
+    test "strips .genesis/workers suffix from worktree path" do
       spec = %AgentSpec{
         context_node: %ContextNode{path: "./", repo: "/home/user/primary"},
         phylo_node: %PhyloGraphNode{
-          repo: "/home/user/primary/.evogit/workers/worker_T1_A1",
+          repo: "/home/user/primary/.genesis/workers/worker_T1_A1",
           base_commit: "abc123",
           current_commit: "abc123"
         },
@@ -30,11 +30,11 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
       assert Dispatch.resolve_agent_repo_root(spec, state) == "/home/user/primary"
     end
 
-    test "strips .evogit/workers suffix with different worker id" do
+    test "strips .genesis/workers suffix with different worker id" do
       spec = %AgentSpec{
         context_node: %ContextNode{path: "./", repo: "/home/user/myproject"},
         phylo_node: %PhyloGraphNode{
-          repo: "/home/user/myproject/.evogit/workers/worker_T5_A3",
+          repo: "/home/user/myproject/.genesis/workers/worker_T5_A3",
           base_commit: "def456",
           current_commit: "def456"
         },

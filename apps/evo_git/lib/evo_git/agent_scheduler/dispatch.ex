@@ -91,12 +91,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   end
 
   @doc """
-  Computes the next task number by scanning the `.evogit/workers/` directory.
+  Computes the next task number by scanning the `.genesis/workers/` directory.
   Returns max+1 of existing `worker_T<n>_a<m>` entries, or 1 if none/empty.
   """
   @spec next_task_number(String.t()) :: pos_integer()
   def next_task_number(repo_root) do
-    workers_dir = Path.join(repo_root, ".evogit/workers")
+    workers_dir = Path.join(repo_root, ".genesis/workers")
 
     case File.ls(workers_dir) do
       {:ok, entries} ->
@@ -163,7 +163,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     worktree_path =
       Path.join([
         agent_repo_root,
-        ".evogit/workers",
+        ".genesis/workers",
         "worker_T#{meta.task_number}_A#{task_local_id}"
       ])
 
@@ -338,9 +338,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     if spec.repo_id == "primary" do
       # spec.phylo_node.repo is either:
       # - A repo root (e.g., "/home/bill/Source/evoclass") for top-level agents
-      # - A worktree path (e.g., ".../.evogit/workers/worker_T1_A1") for subagents
+      # - A worktree path (e.g., ".../.genesis/workers/worker_T1_A1") for subagents
       # Derive the repo root by stripping the worktree suffix if present.
-      case String.split(spec.phylo_node.repo, "/.evogit/workers/", parts: 2) do
+      case String.split(spec.phylo_node.repo, "/.genesis/workers/", parts: 2) do
         [root, _rest] -> root
         [_] -> spec.phylo_node.repo
       end

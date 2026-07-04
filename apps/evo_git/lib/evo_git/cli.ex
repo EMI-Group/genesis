@@ -174,7 +174,7 @@ defmodule EvoGit.CLI do
   defp dir_empty?(path) do
     case File.ls(path) do
       {:ok, []} -> true
-      {:ok, files} -> Enum.empty?(files -- [".git", ".evogit"])
+      {:ok, files} -> Enum.empty?(files -- [".git", ".genesis"])
       _ -> true
     end
   end

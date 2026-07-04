@@ -780,7 +780,7 @@ defmodule EvoGit.Skills do
     |> Path.join("**/CONTEXT.md")
     |> Path.wildcard()
     |> Enum.reject(fn path ->
-      String.contains?(path, "/.evogit/") or
+      String.contains?(path, "/.genesis/") or
         String.contains?(path, "/.git/") or
         String.contains?(path, "/_build/") or
         String.contains?(path, "/deps/") or

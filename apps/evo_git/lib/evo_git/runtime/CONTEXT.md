@@ -29,7 +29,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 2. **Register foreign repos**: If `foreign_repos` provided, registers them with `AgentScheduler`.
 3. **Ensure repo**: Calls `Runtime.ensure_repo/1` to `git init` if needed.
 4. **Get HEAD**: `PhyloGraphNode.current_head/1` → current commit SHA.
-5. **Detect mode**: `new_codebase?/1` checks if directory has files beyond `.git`, `README.md`, `.evogit`, `.gitignore`.
+5. **Detect mode**: `new_codebase?/1` checks if directory has files beyond `.git`, `README.md`, `.genesis`, `.gitignore`.
 6. **Dispatch agent**:
    - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
    - **Mode B (New)** → `CodebaseArchitect` agent (read-write, 3-phase: structure & public API → rough implementation → review & refinement).

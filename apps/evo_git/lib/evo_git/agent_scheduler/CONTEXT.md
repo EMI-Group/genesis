@@ -54,7 +54,7 @@ There is no global `state.repo_root` fallback — repo root resolution is always
 
 Worktrees are **persistent per-agent** (created on dispatch, reused on retry, deleted on recycle):
 
-1. `ensure_initialized/2` — Creates `.evogit/workers/`, prunes stale worktrees and orphaned branches. Tracks initialized repos in `state.initialized_repos` (`%{String.t() => true}`) to support multiple concurrent tasks targeting different repos. When agents are already running and a new repo comes in, registers it additively in `initialized_repos` without tearing down existing worktrees.
+1. `ensure_initialized/2` — Creates `.genesis/workers/`, prunes stale worktrees and orphaned branches. Tracks initialized repos in `state.initialized_repos` (`%{String.t() => true}`) to support multiple concurrent tasks targeting different repos. When agents are already running and a new repo comes in, registers it additively in `initialized_repos` without tearing down existing worktrees.
 2. `assign_and_prepare_worktree/2` — Cleans worktree, checks out agent branch, binds repo path
 3. `run_init_script/3` — Runs optional init script from `genesis.toml` (primary repo only). Accepts `opts` keyword list with `:source_worktree_path` (parent agent's worktree or repo root for top-level). Sets env vars: `SOURCE_REPO_PATH`, `TARGET_WORKTREE_PATH`, `SOURCE_WORKTREE_PATH`.
 4. `sync_current_commit/2` — Reads HEAD SHA and updates both ETS tables if changed

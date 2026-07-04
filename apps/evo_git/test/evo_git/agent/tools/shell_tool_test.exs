@@ -4,7 +4,7 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
   alias EvoGit.Agent.Tools.ShellTool
 
   @repo_root "/home/user/my-project"
-  @repo_path "/home/user/my-project/.evogit/workers/worker_T1_A1"
+  @repo_path "/home/user/my-project/.genesis/workers/worker_T1_A1"
 
   describe "detect_cd_warnings/3" do
     test "returns nil when no cd in command" do
@@ -14,7 +14,7 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
     end
 
     test "returns warning when cd to another agent's worktree" do
-      other = "/home/user/my-project/.evogit/workers/worker_T2_A3"
+      other = "/home/user/my-project/.genesis/workers/worker_T2_A3"
 
       result =
         ShellTool.detect_cd_warnings("cd #{other}", @repo_path, @repo_root)
@@ -45,7 +45,7 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
     end
 
     test "returns combined warning for multiple problematic cd commands" do
-      other = "/home/user/my-project/.evogit/workers/worker_T2_A3"
+      other = "/home/user/my-project/.genesis/workers/worker_T2_A3"
 
       result =
         ShellTool.detect_cd_warnings(
