@@ -113,38 +113,27 @@ defmodule EvoGit.Agent do
       # --- Public API ---
 
       @doc """
-      Runs the agent asynchronously in a Task, returning the Task struct.
-      """
-      def run_task(query) do
-        Task.async(fn ->
-          run(query)
-        end)
-      end
-
-      @doc """
       Runs the agent synchronously, blocking until it completes.
 
       The agent reads its spatial/temporal state from ETS every turn via
       `load_worktree_path/1`, ensuring it always has the correct worktree path.
       Agent state is synced to ETS every turn for dashboard visibility.
       The dashboard reads the `context` field from `evogit_agent_state` table.
-      """
-      def run(objective, dispatch_ctx \\ nil) do
-        if dispatch_ctx do
-          setup_dispatch_context(dispatch_ctx)
 
-          # The agent process owns git operations. After the agent finishes
-          # (any exit path), commit any pending changes as a best-effort
-          # fallback so the worktree is clean before the scheduler processes
-          # the result. The scheduler never touches git directly.
-          try do
-            do_run(objective)
-          after
-            EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree()
-          end
-        else
-          # Direct call (tests, etc.) — process dict already set by caller
+      The `dispatch_ctx` keyword list is required: it drives worktree setup,
+      retry handling, and process-dict initialization before the agent loop.
+      """
+      def run(objective, dispatch_ctx) do
+        setup_dispatch_context(dispatch_ctx)
+
+        # The agent process owns git operations. After the agent finishes
+        # (any exit path), commit any pending changes as a best-effort
+        # fallback so the worktree is clean before the scheduler processes
+        # the result. The scheduler never touches git directly.
+        try do
           do_run(objective)
+        after
+          EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree()
         end
       end
 
