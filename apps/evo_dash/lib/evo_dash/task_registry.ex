@@ -137,6 +137,10 @@ defmodule EvoDash.TaskRegistry do
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
 
+    Logger.warning(
+      "TaskRegistry: INIT_LOGGING_V3 started, task_refs=#{inspect(map_size(state.task_refs))}"
+    )
+
     {:ok, state}
   end
 
@@ -185,6 +189,7 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def handle_call(:list_tasks, _from, state) do
     tasks = select_all_tasks(state)
+    log_read_failed(tasks)
     {:reply, tasks, state}
   end
 
@@ -249,6 +254,7 @@ defmodule EvoDash.TaskRegistry do
         task.opts[:path] && Path.expand(task.opts[:path]) == expanded
       end)
 
+    log_read_failed(tasks)
     {:reply, tasks, state}
   end
 
@@ -509,6 +515,23 @@ defmodule EvoDash.TaskRegistry do
     EvoDash.Store.safe_select_all_tasks(state.task_store)
   end
 
+  # Diagnostic: logs any tasks returned with status == :failed from read paths
+  # (list_tasks / list_tasks_by_path). This helps detect :failed values that
+  # appear on the READ side without a corresponding FAILED_TRANSITION log on the
+  # write side. Purely additive — does not alter the returned list.
+  defp log_read_failed(tasks) do
+    Enum.each(tasks, fn
+      %TaskInfo{status: :failed} = task ->
+        Logger.info(
+          "TaskRegistry: READ_FAILED task_id=#{task.id} result=#{inspect(task.result)} " <>
+            "finished_at=#{inspect(task.finished_at)} started_at=#{inspect(task.started_at)}"
+        )
+
+      _ ->
+        :ok
+    end)
+  end
+
   defp select_all_projects(state) do
     EvoDash.Store.safe_select_all_projects(state.task_store)
   end
@@ -554,9 +577,18 @@ defmodule EvoDash.TaskRegistry do
         # TaskRegistry restarted but the EvoGit task is still running under
         # AgentScheduler. Keep status as :running. We're already subscribed
         # to the "tasks" PubSub topic from init, so status updates will arrive.
-        Logger.info(
-          "TaskRegistry: keeping task #{task.id} as :running — active agents found in AgentScheduler"
+        #
+        # BUG FIX: Previously this branch returned `{task, state}` unchanged,
+        # meaning the task was NOT added to task_refs and no monitor was set
+        # up. Since the wrapper pid is dead, the {ref, result} handler and the
+        # {:DOWN, ...} handler can never match this task — it becomes
+        # permanently stuck at :running. We now schedule a periodic recheck
+        # so the task is eventually resolved when agents finish.
+        Logger.warning(
+          "TaskRegistry: task #{task.id} has active agents but dead wrapper pid — scheduling recheck"
         )
+
+        Process.send_after(self(), {:recheck_task, task.id}, 30_000)
 
         {%{task | status: :running, ref: nil}, state}
       else
@@ -597,6 +629,35 @@ defmodule EvoDash.TaskRegistry do
         |> :ets.tab2list()
         |> Enum.any?(fn {_id, meta} ->
           Map.get(meta, :task_id) == task_id
+        end)
+    end
+  end
+
+  # Best-effort result lookup from the :evogit_sched_meta ETS table for a given
+  # task_id. Scans all entries for this task and looks for a top-level agent
+  # (parent_id == nil) that has accumulated a result in its sched_meta. The
+  # scheduler stores the final result in the SchedMeta before deleting it, so if
+  # any entry still exists, it may carry the result.
+  #
+  # Returns `{:ok, _}`, `{:error, _}`, `{:exit, _}` if a recognizable result is
+  # found, or `nil` if no result is available. Uses :ets.info/1 for table
+  # existence (non-crashing) per the codebase's ETS convention.
+  defp lookup_sched_meta_result(task_id) do
+    case :ets.info(:evogit_sched_meta) do
+      :undefined ->
+        nil
+
+      _ ->
+        :evogit_sched_meta
+        |> :ets.tab2list()
+        |> Enum.find_value(fn {_id, meta} ->
+          if Map.get(meta, :task_id) == task_id and Map.get(meta, :parent_id) == nil do
+            # Check if this top-level agent has a result in its sub_agent_results
+            # or if result_sent is true. The actual result value isn't stored in
+            # sched_meta (it's delivered via GenServer.reply), so this is a
+            # heuristic check.
+            Map.get(meta, :sub_agent_results) |> Map.values() |> List.first()
+          end
         end)
     end
   end
@@ -1127,6 +1188,85 @@ defmodule EvoDash.TaskRegistry do
     end
 
     {:noreply, state}
+  end
+
+  # Periodic recheck for tasks that had active agents but a dead wrapper pid at
+  # reconcile time. The task could not be added to task_refs (no live process to
+  # monitor), so the normal {ref, result} / {:DOWN, ...} handlers can never fire.
+  # This handler periodically checks if agents are still active:
+  #   - If YES: reschedule another check.
+  #   - If NO: resolve the task. Since the wrapper process is dead, the runtime
+  #     result was delivered via GenServer.reply to a dead process and is lost.
+  #     We check the sched_meta ETS for any remaining entries (which may carry a
+  #     result in sub_agent_results) as a best-effort lookup. If nothing
+  #     definitive is found, we mark the task :completed — the agents finished
+  #     without a recorded failure, so treating it as completed is the least
+  #     surprising outcome.
+  @impl true
+  def handle_info({:recheck_task, task_id}, state) do
+    case task_get(state, task_id) do
+      nil ->
+        # Task was cleaned up from the store — nothing to do.
+        {:noreply, state}
+
+      %TaskInfo{status: status} when status in [:completed, :failed, :cancelled] ->
+        # Task already resolved via another path (e.g. PubSub update) — stop rechecking.
+        {:noreply, state}
+
+      %TaskInfo{} = task ->
+        if sched_meta_has_active_agents?(task_id) do
+          # Agents still active — reschedule another check.
+          Process.send_after(self(), {:recheck_task, task_id}, 30_000)
+          {:noreply, state}
+        else
+          # Agents no longer active. The wrapper process is dead so the runtime
+          # result was lost (delivered via GenServer.reply to a dead process).
+          # Try a best-effort result lookup from the sched_meta ETS table.
+          result = lookup_sched_meta_result(task_id)
+
+          {final_status, final_result} =
+            case result do
+              {:ok, _} = ok ->
+                {:completed, ok}
+
+              {:error, _} = err ->
+                {:failed, err}
+
+              {:exit, _} = exit_val ->
+                {:failed, exit_val}
+
+              nil ->
+                # No definitive result found. Agents finished without a recorded
+                # failure — treat as completed.
+                Logger.warning(
+                  "TaskRegistry: recheck resolved task #{task_id} — no result found, " <>
+                    "marking :completed (agents finished, wrapper was dead)"
+                )
+
+                {:completed, nil}
+            end
+
+          finished_at = DateTime.utc_now()
+
+          updated = %{
+            task
+            | status: final_status,
+              result: final_result,
+              finished_at: finished_at
+          }
+
+          EvoDash.Store.put_task(state.task_store, updated)
+          cleanup_expired_tasks(state)
+
+          Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+
+          Logger.info(
+            "TaskRegistry: recheck resolved task #{task_id} to #{final_status}"
+          )
+
+          {:noreply, state}
+        end
+    end
   end
 
   @impl true
