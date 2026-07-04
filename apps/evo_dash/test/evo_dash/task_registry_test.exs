@@ -1466,4 +1466,190 @@ defmodule EvoDash.TaskRegistryTest do
       end
     end
   end
+
+  describe "lease & heartbeat" do
+    # Helper: restart the TaskRegistry so init/1 re-runs and reconcile_task_status
+    # is invoked. Uses stop_supervised/1 to avoid auto-restart conflicts, then
+    # starts a fresh supervised instance pointing at the same Store + data_dir.
+    defp restart_registry!(root) do
+      :ok = stop_supervised(EvoDash.TaskRegistry)
+
+      {:ok, _} =
+        start_supervised(
+          {TaskRegistry, task_store: EvoDash.Store, data_dir: root, name: EvoDash.TaskRegistry}
+        )
+
+      :ok
+    end
+
+    test "startup reconciliation does NOT mark running task as failed if lease hasn't expired (THE KEY FIX)",
+         %{data_dir: root} do
+      unique = System.unique_integer([:positive])
+
+      # Simulate a foreign instance's task: running, dead/nil pid, valid future lease.
+      task = %TaskInfo{
+        id: "lease_valid_#{unique}",
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: System.system_time(:second) + 300
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      # Restart the registry so init → normalize_tasks → reconcile_task_status runs.
+      restart_registry!(root)
+
+      tasks = TaskRegistry.list_tasks()
+      found = Enum.find(tasks, &(&1.id == "lease_valid_#{unique}"))
+
+      assert found != nil
+      assert found.status == :running,
+             "task with valid lease should remain :running, got #{inspect(found.status)}"
+    end
+
+    test "startup reconciliation DOES mark running task as failed if lease HAS expired",
+         %{data_dir: root} do
+      unique = System.unique_integer([:positive])
+
+      # Simulate a crashed/orphaned task: running, dead/nil pid, expired lease.
+      task = %TaskInfo{
+        id: "lease_expired_#{unique}",
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: System.system_time(:second) - 300
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      # Restart the registry so init → normalize_tasks → reconcile_task_status runs.
+      restart_registry!(root)
+
+      tasks = TaskRegistry.list_tasks()
+      found = Enum.find(tasks, &(&1.id == "lease_expired_#{unique}"))
+
+      assert found != nil
+      assert found.status == :failed,
+             "task with expired lease should be :failed, got #{inspect(found.status)}"
+
+      assert found.lease_expires_at == nil,
+             "failed task should have lease cleared"
+    end
+
+    test "lease cleared when task completes via update_task_status" do
+      unique = System.unique_integer([:positive])
+
+      task = %TaskInfo{
+        id: "lease_complete_#{unique}",
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: System.system_time(:second) + 300
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      # Transition to completed
+      TaskRegistry.update_task_status("lease_complete_#{unique}", :completed, nil)
+
+      # Sync
+      tasks = TaskRegistry.list_tasks()
+      found = Enum.find(tasks, &(&1.id == "lease_complete_#{unique}"))
+
+      assert found != nil
+      assert found.status == :completed
+      assert found.lease_expires_at == nil,
+             "completed task should have lease cleared"
+    end
+
+    test "heartbeat renews lease for owned running tasks" do
+      unique = System.unique_integer([:positive])
+
+      # Insert a running task with a near-expiry lease directly into the store.
+      near_expiry = System.system_time(:second) + 5
+      task = %TaskInfo{
+        id: "lease_heartbeat_#{unique}",
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: near_expiry
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      # Send a heartbeat message directly to the registry process.
+      # Since this task is NOT in task_refs (no owner), it won't have its lease
+      # renewed. But since the lease is still valid (near future), it should NOT
+      # be swept either.
+      send(EvoDash.TaskRegistry, :heartbeat)
+
+      # Sync
+      TaskRegistry.list_tasks()
+
+      found = EvoDash.Store.get_task(EvoDash.Store, "lease_heartbeat_#{unique}")
+      assert found != nil
+      # Lease should be unchanged (not owned, not expired → left alone)
+      assert found.lease_expires_at == near_expiry
+      assert found.status == :running
+    end
+
+    test "heartbeat sweeps expired-lease running tasks we don't own" do
+      unique = System.unique_integer([:positive])
+
+      # Insert a running task with an expired lease, no pid, not owned.
+      task = %TaskInfo{
+        id: "lease_sweep_#{unique}",
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        pid: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: System.system_time(:second) - 300
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      # Send a heartbeat message directly to the registry process.
+      send(EvoDash.TaskRegistry, :heartbeat)
+
+      # Sync
+      TaskRegistry.list_tasks()
+
+      found = EvoDash.Store.get_task(EvoDash.Store, "lease_sweep_#{unique}")
+      assert found != nil
+      assert found.status == :failed,
+             "task with expired lease should be swept to :failed, got #{inspect(found.status)}"
+
+      assert found.lease_expires_at == nil
+    end
+  end
 end
