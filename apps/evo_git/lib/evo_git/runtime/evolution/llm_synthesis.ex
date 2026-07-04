@@ -11,6 +11,10 @@ defmodule EvoGit.Runtime.Evolution.LLMSynthesis do
 
   @max_retries 2
 
+  @elixir_block_re ~r/```elixir\s*\n([\s\S]*?)```/m
+  @generic_block_re ~r/```\s*\n([\s\S]*?)```/m
+  @domain_label_re ~r/^#\s*\[(\S+)\]\s*/u
+
   # ---------------------------------------------------------------------------
   # Public API
   # ---------------------------------------------------------------------------
@@ -254,12 +258,12 @@ defmodule EvoGit.Runtime.Evolution.LLMSynthesis do
   # Made accessible for testing but semantically private.
   def parse_code_block(response) do
     # Try ```elixir ... ``` first, then fall back to ``` ... ```
-    case Regex.run(~r/```elixir\s*\n([\s\S]*?)```/m, response) do
+    case Regex.run(@elixir_block_re, response) do
       [_, raw_code] ->
         {:ok, extract_domain_and_code(raw_code)}
 
       nil ->
-        case Regex.run(~r/```\s*\n([\s\S]*?)```/m, response) do
+        case Regex.run(@generic_block_re, response) do
           [_, raw_code] ->
             {:ok, extract_domain_and_code(raw_code)}
 
@@ -272,7 +276,7 @@ defmodule EvoGit.Runtime.Evolution.LLMSynthesis do
   defp extract_domain_and_code(raw_code) do
     stripped = String.trim(raw_code)
 
-    case Regex.run(~r/^#\s*\[(\S+)\]\s*/u, stripped) do
+    case Regex.run(@domain_label_re, stripped) do
       [prefix, domain] ->
         code = String.trim_leading(stripped, prefix)
         {String.trim(code), domain}
@@ -285,11 +289,11 @@ defmodule EvoGit.Runtime.Evolution.LLMSynthesis do
   defp parse_code_blocks(response) do
     # Find all ```elixir ... ``` blocks, then all ``` ... ``` blocks
     elixir_blocks =
-      Regex.scan(~r/```elixir\s*\n([\s\S]*?)```/m, response)
+      Regex.scan(@elixir_block_re, response)
       |> Enum.map(fn [_, raw_code] -> extract_domain_and_code(raw_code) end)
 
     generic_blocks =
-      Regex.scan(~r/```\s*\n([\s\S]*?)```/m, response)
+      Regex.scan(@generic_block_re, response)
       |> Enum.map(fn [_, raw_code] -> extract_domain_and_code(raw_code) end)
 
     # Prefer elixir-tagged blocks; augment with generic if needed

@@ -490,10 +490,12 @@ defmodule EvoGit.Agent do
         new_turn = state.turn + 1
         compacted_context = tag_context_tail_with_turn(compacted_context, new_turn)
         state = %{state | context: compacted_context, turn: new_turn}
-        sync_context_to_ets(state.agent_id, state.context)
-        sync_turn_to_ets(state.agent_id, state.turn)
-        sync_usage_to_ets(state.agent_id, state.usage)
-        sync_total_tokens_to_ets(state.agent_id, state.total_tokens)
+        AgentScheduler.batch_update_agent(state.agent_id,
+          context: state.context,
+          turn: state.turn,
+          usage: state.usage,
+          total_tokens: state.total_tokens
+        )
 
         # Initialize delegation hints in process dictionary for this turn
         Process.put(:delegation_hints, state.delegation_hints)
@@ -557,7 +559,7 @@ defmodule EvoGit.Agent do
         # Find the last assistant message
         last_assistant_idx =
           messages
-          |> Enum.reverse()
+          |> :lists.reverse()
           |> Enum.find_index(&(&1.role == :assistant))
 
         case last_assistant_idx do

@@ -26,6 +26,10 @@ defmodule EvoGit.Agent.OutputSanitizer do
     "run_git", "search_web", "search_context", "search_history"
   ])
 
+  @ansi_regex ~r/\e\[[0-9;]*[a-zA-Z]|\e\][^\x07]*\x07|\e[()][AB012]|\e\[[0-9;]*m/
+  @progress_bar_regex ~r/^[\s\r]*\[[=\->#*_ ]+\]\s*\d*%?\s*$/
+  @spinner_regex ~r/^[\|\/\-\\]$/
+
   # --- Public API ---
 
   @doc """
@@ -95,7 +99,7 @@ defmodule EvoGit.Agent.OutputSanitizer do
   Non-binary results pass through unchanged.
   """
   def strip_ansi(input) when is_binary(input) do
-    Regex.replace(~r/\e\[[0-9;]*[a-zA-Z]|\e\][^\x07]*\x07|\e[()][AB012]|\e\[[0-9;]*m/, input, "")
+    Regex.replace(@ansi_regex, input, "")
   end
 
   def strip_ansi(input), do: input
@@ -112,8 +116,11 @@ defmodule EvoGit.Agent.OutputSanitizer do
   def strip_progress_bars(input) when is_binary(input) do
     input
     |> String.split("\n")
-    |> Enum.map(&handle_carriage_returns/1)
-    |> Enum.reject(&progress_bar_line?/1)
+    |> Enum.reduce([], fn line, acc ->
+      processed = handle_carriage_returns(line)
+      if progress_bar_line?(processed), do: acc, else: [processed | acc]
+    end)
+    |> Enum.reverse()
     |> Enum.join("\n")
   end
 
@@ -215,9 +222,9 @@ defmodule EvoGit.Agent.OutputSanitizer do
       # Empty or whitespace-only lines
       stripped == "" -> true
       # Pure progress bar: [====>      ] 50%
-      Regex.match?(~r/^[\s\r]*\[[=\->#*_ ]+\]\s*\d*%?\s*$/, stripped) -> true
+      Regex.match?(@progress_bar_regex, stripped) -> true
       # Spinner patterns: | / - \
-      Regex.match?(~r/^[\|\/\-\\]$/, stripped) -> true
+      Regex.match?(@spinner_regex, stripped) -> true
       # Otherwise keep the line
       true -> false
     end

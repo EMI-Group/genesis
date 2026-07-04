@@ -242,8 +242,8 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec get_foreign_repo_commits(pos_integer()) :: %{atom() => String.t()}
   def get_foreign_repo_commits(agent_id) do
-    case :ets.lookup(@sched_table, agent_id) do
-      [{^agent_id, %{foreign_repo_commits: frc}}] when is_map(frc) -> frc
+    case :ets.lookup_element(@sched_table, agent_id, 2) do
+      %{foreign_repo_commits: frc} when is_map(frc) -> frc
       _ -> %{}
     end
   end
@@ -964,15 +964,25 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Updates multiple fields for an agent in a single ETS get+put cycle.
+  Accepts a keyword list of field-value pairs (e.g., `[context: ctx, turn: 5, usage: usage, total_tokens: 100]`).
+  This avoids redundant `:ets.lookup` + `:ets.insert` round-trips when syncing
+  multiple fields per agent turn.
+  """
+  @spec batch_update_agent(pos_integer(), keyword()) :: :ok
+  def batch_update_agent(agent_id, fields) when is_list(fields) do
+    {:ok, agent_state} = get_agent_state(agent_id)
+    updated_state = Kernel.struct!(agent_state, fields)
+    put_agent_state(agent_id, updated_state)
+    :ok
+  end
+
+  @doc """
   Updates the conversation context for an agent in the agent state table.
   """
   @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
   def update_agent_context(agent_id, %ReqLLM.Context{} = context) do
-    {:ok, agent_state} = get_agent_state(agent_id)
-    updated_state = %{agent_state | context: context}
-    put_agent_state(agent_id, updated_state)
-
-    :ok
+    batch_update_agent(agent_id, context: context)
   end
 
   @doc """
@@ -980,11 +990,7 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
   def update_agent_usage(agent_id, %EvoGit.Agent.Usage{} = usage) do
-    {:ok, agent_state} = get_agent_state(agent_id)
-    updated_state = %{agent_state | usage: usage}
-    put_agent_state(agent_id, updated_state)
-
-    :ok
+    batch_update_agent(agent_id, usage: usage)
   end
 
   @doc """
@@ -992,11 +998,7 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_agent_turn(pos_integer(), non_neg_integer()) :: :ok
   def update_agent_turn(agent_id, turn) when is_integer(turn) do
-    {:ok, agent_state} = get_agent_state(agent_id)
-    updated_state = %{agent_state | turn: turn}
-    put_agent_state(agent_id, updated_state)
-
-    :ok
+    batch_update_agent(agent_id, turn: turn)
   end
 
   @doc """
@@ -1007,11 +1009,7 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
   def update_total_tokens(agent_id, total_tokens) when is_integer(total_tokens) do
-    {:ok, agent_state} = get_agent_state(agent_id)
-    updated_state = %{agent_state | total_tokens: total_tokens}
-    put_agent_state(agent_id, updated_state)
-
-    :ok
+    batch_update_agent(agent_id, total_tokens: total_tokens)
   end
 
   @doc """

@@ -45,48 +45,40 @@ defmodule EvoGit.AgentScheduler.Subagents do
     parent = %{parent | status: :waiting}
     Store.put_sched_meta(parent_id, parent)
 
-    # Validate each spec and partition into valid/invalid
-    {valid_specs_with_idx, invalid_results} =
+    # Single reduce: validate, register, and build all collections in one pass
+    {sub_ids_rev, sub_agent_indices, invalid_results, state} =
       specs
       |> Enum.with_index()
-      |> Enum.reduce({[], %{}}, fn {spec, idx}, {valid, invalid} ->
+      |> Enum.reduce({[], %{}, %{}, state}, fn {spec, idx},
+                                                {sub_ids_rev, sub_agent_indices_acc, invalid_acc,
+                                                 state_acc} ->
         case validate_single_subagent(parent_id, parent, spec, parent_agent_state, state) do
           :ok ->
-            {[{spec, idx} | valid], invalid}
+            {sub_id, state_acc} =
+              Dispatch.register_agent(
+                state_acc,
+                spec,
+                _from = nil,
+                parent_id,
+                parent.depth + 1,
+                parent.task_id,
+                parent.task_number
+              )
+
+            {[sub_id | sub_ids_rev], Map.put(sub_agent_indices_acc, sub_id, idx), invalid_acc,
+             state_acc}
 
           {:error, reason} ->
             Logger.warning(
               "AgentScheduler: Subagent #{idx} failed validation: #{inspect(reason)}"
             )
 
-            {valid, Map.put(invalid, idx, {:error, reason})}
+            {sub_ids_rev, sub_agent_indices_acc, Map.put(invalid_acc, idx, {:error, reason}),
+             state_acc}
         end
       end)
 
-    # Reverse to maintain original order
-    valid_specs_with_idx = Enum.reverse(valid_specs_with_idx)
-
-    # Register and spawn valid subagents
-    {idx_to_sub_id, state} =
-      Enum.map_reduce(valid_specs_with_idx, state, fn {spec, idx}, acc ->
-        {sub_id, acc} =
-          Dispatch.register_agent(
-            acc,
-            spec,
-            _from = nil,
-            parent_id,
-            parent.depth + 1,
-            parent.task_id,
-            parent.task_number
-          )
-
-        {{idx, sub_id}, acc}
-      end)
-
-    sub_ids = Enum.map(idx_to_sub_id, fn {_idx, sub_id} -> sub_id end)
-
-    # Build the sub_id -> index mapping
-    sub_agent_indices = Map.new(idx_to_sub_id, fn {idx, sub_id} -> {sub_id, idx} end)
+    sub_ids = :lists.reverse(sub_ids_rev)
 
     # Track pending subagents, pre-failed results, and index mapping on the parent
     Store.put_sched_meta(parent_id, %{

@@ -101,9 +101,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     case File.ls(workers_dir) do
       {:ok, entries} ->
         entries
-        |> Enum.map(&parse_task_number/1)
-        |> Enum.filter(& &1)
-        |> Enum.max(fn -> 0 end)
+        |> Enum.reduce(0, fn entry, max_acc ->
+          case parse_task_number(entry) do
+            nil -> max_acc
+            n -> max(max_acc, n)
+          end
+        end)
         |> Kernel.+(1)
 
       {:error, _} ->
@@ -112,13 +115,11 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   end
 
   defp parse_task_number("worker_T" <> rest) do
-    rest
-    |> String.split("_", parts: 2)
-    |> List.first()
-    |> Integer.parse()
-    |> case do
-      {n, _} -> n
-      :error -> nil
+    with [num_str | _] <- String.split(rest, "_", parts: 2),
+         {n, _} <- Integer.parse(num_str) do
+      n
+    else
+      _ -> nil
     end
   end
 

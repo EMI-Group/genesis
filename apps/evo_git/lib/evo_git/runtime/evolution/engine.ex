@@ -264,7 +264,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     end)
 
     # Update best novelty
-    best = all_scored |> Enum.map(& &1.novelty_score) |> Enum.max(fn -> 0.0 end)
+    best = Enum.reduce(all_scored, 0.0, fn frag, acc -> max(frag.novelty_score, acc) end)
     state = %{state | best_novelty: best}
 
     Logger.info("Evolution Engine: Initialized pool with #{length(all_scored)} fragments (best novelty: #{Float.round(best, 4)})")
@@ -312,7 +312,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
       # 4. Check convergence
       current_best = state.best_novelty
       pool = pool_all(state)
-      pool_best = pool |> Enum.map(& &1.novelty_score) |> Enum.max(fn -> 0.0 end)
+      pool_best = Enum.reduce(pool, 0.0, fn frag, acc -> max(frag.novelty_score, acc) end)
 
       improvement = pool_best - current_best
       stagnation_count =

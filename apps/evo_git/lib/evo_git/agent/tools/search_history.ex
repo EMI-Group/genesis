@@ -146,12 +146,13 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
   end
 
   defp parse_log_output(output, separator) do
-    output
-    |> String.split(separator)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.map(&parse_single_commit/1)
-    |> Enum.reject(&is_nil/1)
+    for part <- String.split(output, separator),
+        trimmed = String.trim(part),
+        trimmed != "",
+        commit = parse_single_commit(trimmed),
+        not is_nil(commit) do
+      commit
+    end
   end
 
   defp filter_git_warnings(output) do
@@ -184,7 +185,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
   defp format_results(matches, pattern) do
     entries =
       Enum.map(matches, fn commit ->
-        short_hash = String.slice(commit.hash, 0, 7)
+        short_hash = binary_part(commit.hash, 0, 7)
 
         subject =
           commit.body
