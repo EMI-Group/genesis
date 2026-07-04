@@ -146,21 +146,22 @@ defmodule EvoDashWeb.SettingsLive do
     schemas_by_category = Schema.schemas_by_category()
 
     socket =
-      socket
-      |> assign(:schemas_by_category, schemas_by_category)
-      |> assign(:active_category, :llm)
-      |> assign(:search_text, "")
-      |> assign(:per_category_errors, %{})
-      |> assign(:scheduler_config, load_scheduler_config())
-      |> assign(:config_status, config_status)
-      |> assign(:file_config, file_config)
-      |> assign(:config_path, config_path)
-      |> assign(:config_file_exists, config_file_exists)
-      |> assign(:llm_providers, EvoGit.Config.LLMCatalog.providers())
-      |> assign(:selected_provider_id, nil)
-      |> assign(:selected_provider_models, [])
-      |> assign(:selected_variant_id, nil)
-      |> assign(:llm_test_status, :idle)
+      assign(socket,
+        schemas_by_category: schemas_by_category,
+        active_category: :llm,
+        search_text: "",
+        per_category_errors: %{},
+        scheduler_config: load_scheduler_config(),
+        config_status: config_status,
+        file_config: file_config,
+        config_path: config_path,
+        config_file_exists: config_file_exists,
+        llm_providers: EvoGit.Config.LLMCatalog.providers(),
+        selected_provider_id: nil,
+        selected_provider_models: [],
+        selected_variant_id: nil,
+        llm_test_status: :idle
+      )
 
     {:ok, socket}
   end
@@ -217,10 +218,11 @@ defmodule EvoDashWeb.SettingsLive do
         socket.assigns.active_category
 
     {:noreply,
-     socket
-     |> assign(:active_category, cat)
-     |> assign(:search_text, "")
-     |> assign(:per_category_errors, %{})}
+     assign(socket,
+       active_category: cat,
+       search_text: "",
+       per_category_errors: %{}
+     )}
   end
 
   @impl true

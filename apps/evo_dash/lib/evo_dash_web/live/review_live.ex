@@ -183,39 +183,41 @@ defmodule EvoDashWeb.ReviewLive do
 
     socket =
       socket
-      |> assign(:config_status, config_status)
-      |> assign(:task_id, task_id)
-      |> assign(:loading, true)
-      |> assign(:error, nil)
-      |> assign(:action_loading, false)
-      |> assign(:selected_file, nil)
-      |> assign(:expanded_files, %{})
-      |> assign(:file_context_levels, %{})
-      |> assign(:review_tab, :conversation)
-      |> assign(:review_data, nil)
-      |> assign(:title, "")
-      |> assign(:task_type, :unknown)
-      |> assign(:branch_name, nil)
-      |> assign(:commit_sha, nil)
-      |> assign(:agent_summary, nil)
-      |> assign(:review_status, :open)
-      |> assign(:branch_exists, false)
-      |> assign(:can_continue, false)
-      |> assign(:has_pr, false)
-      |> assign(:pr_url, nil)
-      |> assign(:show_extract_modal, false)
-      |> assign(:repo_path, nil)
-      |> assign(:base_sha, nil)
-      |> assign(:objective, nil)
-      |> assign(:inspect_commit_sha, params["commit_sha"])
-      |> assign(:commit_data, nil)
-      |> assign(:commit_header, nil)
-      |> assign(:archive_metadata, nil)
-      |> assign(:task_usage, nil)
-      |> assign(:agent_count, nil)
-      |> assign(:task_status, nil)
-      |> assign(:started_at, nil)
-      |> assign(:finished_at, nil)
+      |> assign(
+        config_status: config_status,
+        task_id: task_id,
+        loading: true,
+        error: nil,
+        action_loading: false,
+        selected_file: nil,
+        expanded_files: %{},
+        file_context_levels: %{},
+        review_tab: :conversation,
+        review_data: nil,
+        title: "",
+        task_type: :unknown,
+        branch_name: nil,
+        commit_sha: nil,
+        agent_summary: nil,
+        review_status: :open,
+        branch_exists: false,
+        can_continue: false,
+        has_pr: false,
+        pr_url: nil,
+        show_extract_modal: false,
+        repo_path: nil,
+        base_sha: nil,
+        objective: nil,
+        inspect_commit_sha: params["commit_sha"],
+        commit_data: nil,
+        commit_header: nil,
+        archive_metadata: nil,
+        task_usage: nil,
+        agent_count: nil,
+        task_status: nil,
+        started_at: nil,
+        finished_at: nil
+      )
       |> load_task_data(task_id)
 
     {:ok, socket}
@@ -258,9 +260,10 @@ defmodule EvoDashWeb.ReviewLive do
     target_id = "file-section-#{file_path_to_id(path)}"
 
     socket =
-      socket
-      |> assign(:selected_file, path)
-      |> assign(:review_tab, :files_changed)
+      assign(socket,
+        selected_file: path,
+        review_tab: :files_changed
+      )
       |> push_event("scroll_to_file", %{target_id: target_id})
 
     # Trigger diff loading if file diff is nil
@@ -529,16 +532,17 @@ defmodule EvoDashWeb.ReviewLive do
   defp load_task_data(socket, task_id) do
     case TaskRegistry.get_task(task_id) do
       nil ->
-        socket
-        |> assign(:loading, false)
-        |> assign(:error, gettext("Task not found. It may have been deleted."))
-        |> assign(:repo_path, nil)
-        |> assign(:objective, nil)
-        |> assign(:task_usage, nil)
-        |> assign(:agent_count, nil)
-        |> assign(:task_status, nil)
-        |> assign(:started_at, nil)
-        |> assign(:finished_at, nil)
+        assign(socket,
+          loading: false,
+          error: gettext("Task not found. It may have been deleted."),
+          repo_path: nil,
+          objective: nil,
+          task_usage: nil,
+          agent_count: nil,
+          task_status: nil,
+          started_at: nil,
+          finished_at: nil
+        )
 
       task ->
         result = task.result
@@ -568,7 +572,7 @@ defmodule EvoDashWeb.ReviewLive do
 
         can_continue = commit_sha != nil && repo_path != nil && File.dir?(repo_path)
 
-        rs = Map.get(task, :review_status)
+        rs = task.review_status
 
         review_status =
           cond do
@@ -621,33 +625,34 @@ defmodule EvoDashWeb.ReviewLive do
               []
           end
 
-        socket
-        |> assign(:loading, false)
-        |> assign(:error, nil)
-        |> assign(:title, title)
-        |> assign(:task_type, task.type)
-        |> assign(:branch_name, branch_name)
-        |> assign(:commit_sha, commit_sha)
-        |> assign(:base_sha, base_sha)
-        |> assign(:agent_summary, agent_summary)
-        |> assign(:review_status, review_status)
-        |> assign(:branch_exists, branch_exists || false)
-        |> assign(:can_continue, can_continue || false)
-        |> assign(:has_pr, pr_url != nil)
-        |> assign(:pr_url, pr_url)
-        |> assign(:review_data, review_data)
-        |> assign(:expanded_files, %{})
-        |> assign(:file_context_levels, %{})
-        |> assign(:selected_file, nil)
-        |> assign(:repo_path, repo_path)
-        |> assign(:objective, objective)
-        |> assign(:commits, commits)
-        |> assign(:archive_metadata, Map.get(task, :archive_metadata))
-        |> assign(:task_usage, Map.get(task, :usage))
-        |> assign(:agent_count, Map.get(task, :agent_count))
-        |> assign(:task_status, task.status)
-        |> assign(:started_at, Map.get(task, :started_at))
-        |> assign(:finished_at, Map.get(task, :finished_at))
+        assign(socket,
+          loading: false,
+          error: nil,
+          title: title,
+          task_type: task.type,
+          branch_name: branch_name,
+          commit_sha: commit_sha,
+          base_sha: base_sha,
+          agent_summary: agent_summary,
+          review_status: review_status,
+          branch_exists: branch_exists || false,
+          can_continue: can_continue || false,
+          has_pr: pr_url != nil,
+          pr_url: pr_url,
+          review_data: review_data,
+          expanded_files: %{},
+          file_context_levels: %{},
+          selected_file: nil,
+          repo_path: repo_path,
+          objective: objective,
+          commits: commits,
+          archive_metadata: task.archive_metadata,
+          task_usage: task.usage,
+          agent_count: task.agent_count,
+          task_status: task.status,
+          started_at: task.started_at,
+          finished_at: task.finished_at
+        )
     end
   end
 
@@ -753,10 +758,11 @@ defmodule EvoDashWeb.ReviewLive do
     expanded_files = Map.put(socket.assigns.expanded_files, path, true)
     file_context_levels = Map.put(socket.assigns.file_context_levels, path, context_level)
 
-    socket
-    |> assign(data_key, updated_data)
-    |> assign(:expanded_files, expanded_files)
-    |> assign(:file_context_levels, file_context_levels)
+    assign(socket, [
+      {data_key, updated_data},
+      {:expanded_files, expanded_files},
+      {:file_context_levels, file_context_levels}
+    ])
   end
 
   # Loads commit inspection data (file list) for a specific commit.
@@ -779,13 +785,14 @@ defmodule EvoDashWeb.ReviewLive do
         _ -> nil
       end
 
-    socket
-    |> assign(:inspect_commit_sha, commit_sha)
-    |> assign(:commit_header, commit_header)
-    |> assign(:commit_data, commit_data)
-    |> assign(:expanded_files, %{})
-    |> assign(:file_context_levels, %{})
-    |> assign(:selected_file, nil)
+    assign(socket,
+      inspect_commit_sha: commit_sha,
+      commit_header: commit_header,
+      commit_data: commit_data,
+      expanded_files: %{},
+      file_context_levels: %{},
+      selected_file: nil
+    )
   end
 
   defp file_path_to_id(path) do

@@ -243,16 +243,18 @@ defmodule EvoDashWeb.TasksLive do
 
     socket =
       socket
-      |> assign(:tasks, tasks)
-      |> assign(:project_paths, project_paths)
-      |> assign(:status_filter, "all")
-      |> assign(:project_filter, "all")
-      |> assign(:search_query, "")
-      |> assign(:review_status_filter, "all")
-      |> assign(:expanded_task_ids, MapSet.new())
-      |> assign(:selected_result, nil)
-      |> assign(:selected_options, nil)
-      |> assign(:config_status, config_status)
+      |> assign(
+        tasks: tasks,
+        project_paths: project_paths,
+        status_filter: "all",
+        project_filter: "all",
+        search_query: "",
+        review_status_filter: "all",
+        expanded_task_ids: MapSet.new(),
+        selected_result: nil,
+        selected_options: nil,
+        config_status: config_status
+      )
       |> assign_filtered_tasks()
 
     {:ok, socket}
@@ -325,10 +327,12 @@ defmodule EvoDashWeb.TasksLive do
   def handle_event("reset_filters", _params, socket) do
     {:noreply,
      socket
-     |> assign(:status_filter, "all")
-     |> assign(:project_filter, "all")
-     |> assign(:search_query, "")
-     |> assign(:review_status_filter, "all")
+     |> assign(
+       status_filter: "all",
+       project_filter: "all",
+       search_query: "",
+       review_status_filter: "all"
+     )
      |> assign_filtered_tasks()}
   end
 
