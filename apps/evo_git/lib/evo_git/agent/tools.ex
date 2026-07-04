@@ -37,33 +37,39 @@ defmodule EvoGit.Agent.Tools do
   specially in the agent loop. It is manually injected in available_tools/0.
   """
   def schemas do
-    [
-      FileRead.schema(),
-      FileCreate.schema(),
-      FileWrite.schema(),
-      FileEdit.schema(),
-      MakeDir.schema(),
-      Context.read_schema(),
-      Context.write_schema(),
-      Context.edit_schema(),
-      ShellTool.schema(),
-      Ripgrep.schema(),
-      Glob.schema(),
-      ListDirectory.schema(),
-      WebSearch.schema(),
-      SearchContext.schema(),
-      SearchHistory.schema(),
-      SkillList.schema(),
-      SkillRead.schema(),
-      SkillAdd.schema(),
-      SkillEdit.schema(),
-      SkillRemove.schema(),
-      SkillEnable.schema(),
-      SkillDisable.schema(),
-      SkillWhere.schema(),
-      # Git.schema(),
-      # Curl.schema()
-    ]
+    schemas =
+      [
+        FileRead.schema(),
+        FileCreate.schema(),
+        FileWrite.schema(),
+        FileEdit.schema(),
+        MakeDir.schema(),
+        Context.read_schema(),
+        Context.write_schema(),
+        Context.edit_schema(),
+        ShellTool.schema(),
+        Ripgrep.schema(),
+        Glob.schema(),
+        ListDirectory.schema(),
+        SearchContext.schema(),
+        SearchHistory.schema(),
+        SkillList.schema(),
+        SkillRead.schema(),
+        SkillAdd.schema(),
+        SkillEdit.schema(),
+        SkillRemove.schema(),
+        SkillEnable.schema(),
+        SkillDisable.schema(),
+        SkillWhere.schema(),
+        # Git.schema(),
+        # Curl.schema()
+      ]
+
+    if EvoGit.Config.tools_search_enabled?() do
+      schemas ++ [WebSearch.schema()]
+    else
+      schemas
+    end
   end
 
   @doc """
@@ -71,20 +77,26 @@ defmodule EvoGit.Agent.Tools do
   (CodebaseInvestigator, ContextExtractor).
   """
   def read_only_schemas do
-    [
-      FileRead.schema(),
-      Ripgrep.schema(),
-      Glob.schema(),
-      ListDirectory.schema(),
-      Context.read_schema(),
-      Context.write_schema(),
-      Context.edit_schema(),
-      WebSearch.schema(),
-      Curl.schema(),
-      ShellTool.schema(),
-      SearchContext.schema(),
-      SearchHistory.schema()
-    ]
+    schemas =
+      [
+        FileRead.schema(),
+        Ripgrep.schema(),
+        Glob.schema(),
+        ListDirectory.schema(),
+        Context.read_schema(),
+        Context.write_schema(),
+        Context.edit_schema(),
+        Curl.schema(),
+        ShellTool.schema(),
+        SearchContext.schema(),
+        SearchHistory.schema()
+      ]
+
+    if EvoGit.Config.tools_search_enabled?() do
+      schemas ++ [WebSearch.schema()]
+    else
+      schemas
+    end
   end
 
   @doc """
