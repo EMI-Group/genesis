@@ -18,6 +18,10 @@ defmodule EvoDash.TaskRegistry do
 
   @lease_duration 120
   @heartbeat_interval 60_000
+  # One-shot lease sweep delay: longer than the lease duration so the lease has
+  # definitely expired by the time the sweep fires. The +30 buffer avoids a race
+  # where the owner died right after a renewal.
+  @sweep_after (@lease_duration + 30) * 1000
 
   ## Client API
 
@@ -144,8 +148,12 @@ defmodule EvoDash.TaskRegistry do
       "TaskRegistry: INIT_LOGGING_V3 started, task_refs=#{inspect(map_size(state.task_refs))}"
     )
 
-    # Start the periodic heartbeat timer for lease renewal and expiry sweeps.
+    # Start the periodic heartbeat timer for lease renewal (owned tasks only).
+    # The sweep is NOT periodic — it fires once at startup (via reconcile) and
+    # once more after the lease duration to catch owners that died around our
+    # startup. After that, any new foreign instance does its own pair of checks.
     Process.send_after(self(), :heartbeat, @heartbeat_interval)
+    Process.send_after(self(), :lease_sweep, @sweep_after)
 
     {:ok, state}
   end
@@ -591,13 +599,13 @@ defmodule EvoDash.TaskRegistry do
       if lease_valid?(task.lease_expires_at) do
         # Lease hasn't expired — the owning instance is still alive.
         # Do NOT mark failed. Do NOT add to task_refs (we don't own it).
-        # Schedule a periodic recheck so we clean up if the lease eventually expires.
+        # The one-shot :lease_sweep (scheduled in init) will catch it if the
+        # lease eventually expires — no periodic recheck needed.
         Logger.info(
           "TaskRegistry: task #{task.id} has dead pid but valid lease " <>
-            "(expires_at=#{inspect(task.lease_expires_at)}) — leaving :running, scheduling lease recheck"
+            "(expires_at=#{inspect(task.lease_expires_at)}) — leaving :running for lease sweep"
         )
 
-        Process.send_after(self(), {:recheck_lease, task.id}, 30_000)
         {%{task | status: :running, ref: nil}, state}
       else
         # Lease expired (nil or in the past). Check if AgentScheduler still has
@@ -607,7 +615,7 @@ defmodule EvoDash.TaskRegistry do
             "TaskRegistry: task #{task.id} lease expired but has active agents — scheduling recheck"
           )
 
-          Process.send_after(self(), {:recheck_lease, task.id}, 30_000)
+          Process.send_after(self(), {:recheck_task, task.id}, 30_000)
           {%{task | status: :running, ref: nil}, state}
         else
           # Lease expired AND no active agents — the owner is genuinely gone.
@@ -695,13 +703,12 @@ defmodule EvoDash.TaskRegistry do
 
   defp set_crash_details(task), do: task
 
-  # Shared result-recovery logic used by both handle_info({:recheck_task, _}) and
-  # handle_info({:recheck_lease, _}). The wrapper process is dead so the runtime
-  # result was lost (delivered via GenServer.reply to a dead process). We try a
-  # best-effort result lookup from the sched_meta ETS table. If nothing
-  # definitive is found, we mark the task :completed — agents finished without
-  # a recorded failure, so treating it as completed is the least surprising
-  # outcome.
+  # Shared result-recovery logic used by handle_info({:recheck_task, _}). The
+  # wrapper process is dead so the runtime result was lost (delivered via
+  # GenServer.reply to a dead process). We try a best-effort result lookup from
+  # the sched_meta ETS table. If nothing definitive is found, we mark the task
+  # :completed — agents finished without a recorded failure, so treating it as
+  # completed is the least surprising outcome.
   defp resolve_recheck_task(state, task_id, %TaskInfo{} = task) do
     result = lookup_sched_meta_result(task_id)
 
@@ -1275,17 +1282,14 @@ defmodule EvoDash.TaskRegistry do
     {:noreply, state}
   end
 
-  # Periodic heartbeat handler. Does two things:
-  #   1. Renews leases for ALL tasks this registry owns (in task_refs that are
-  #      running/pending), so that we remain the authoritative owner.
-  #   2. Sweeps ALL running tasks we DON'T own with expired leases and no active
-  #      sched_meta agents, marking them :failed (the owning instance is gone).
-  # Then reschedules itself.
+  # Periodic heartbeat handler. Renews leases for ALL tasks this registry owns
+  # (in task_refs that are running/pending), so that we remain the authoritative
+  # owner. This is purely renewal — no sweeping happens here. Reschedules itself.
   @impl true
   def handle_info(:heartbeat, state) do
     now = System.system_time(:second)
 
-    # 1. Renew leases for owned tasks (those in task_refs).
+    # Renew leases for owned tasks (those in task_refs).
     Enum.each(state.task_refs, fn {task_id, _ref} ->
       case task_get(state, task_id) do
         %TaskInfo{status: s} = task when s in [:running, :pending] ->
@@ -1296,7 +1300,17 @@ defmodule EvoDash.TaskRegistry do
       end
     end)
 
-    # 2. Lease-expiry sweep: find running tasks we DON'T own with expired leases.
+    Process.send_after(self(), :heartbeat, @heartbeat_interval)
+    {:noreply, state}
+  end
+
+  # One-shot lease-expiry sweep handler. Sweeps ALL running tasks we DON'T own
+  # with expired leases and no active sched_meta agents, marking them :failed
+  # (the owning instance is gone). This fires once (scheduled in init after the
+  # lease duration) and does NOT reschedule itself — any new foreign instance
+  # performs its own pair of checks on its own startup.
+  @impl true
+  def handle_info(:lease_sweep, state) do
     owned_ids = MapSet.new(Map.keys(state.task_refs))
 
     # Track whether any task was actually marked failed so we only
@@ -1310,7 +1324,7 @@ defmodule EvoDash.TaskRegistry do
       end)
       |> Enum.reduce(false, fn task, acc ->
         if sched_meta_has_active_agents?(task.id) do
-          # Same VM, agents still active — skip (handled by recheck_lease)
+          # Same VM, agents still active — skip (handled by :recheck_task)
           acc
         else
           log_failed_transition(task.id, :lease_sweep, task.status,
@@ -1336,7 +1350,6 @@ defmodule EvoDash.TaskRegistry do
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     end
 
-    Process.send_after(self(), :heartbeat, @heartbeat_interval)
     {:noreply, state}
   end
 
@@ -1370,51 +1383,6 @@ defmodule EvoDash.TaskRegistry do
           {:noreply, state}
         else
           resolve_recheck_task(state, task_id, task)
-        end
-    end
-  end
-
-  @impl true
-  def handle_info({:recheck_lease, task_id}, state) do
-    case task_get(state, task_id) do
-      nil ->
-        # Task was cleaned up from the store — nothing to do.
-        {:noreply, state}
-
-      %TaskInfo{status: status} when status in [:completed, :failed, :cancelled] ->
-        # Task already resolved via another path — stop rechecking.
-        {:noreply, state}
-
-      %TaskInfo{} = task ->
-        if lease_valid?(task.lease_expires_at) do
-          # Lease still valid — owning instance is alive. Recheck later.
-          Process.send_after(self(), {:recheck_lease, task_id}, 30_000)
-          {:noreply, state}
-        else
-          # Lease expired. Check sched_meta for same-VM agents / result recovery.
-          if sched_meta_has_active_agents?(task_id) do
-            # Same VM, agents still active — try result recovery.
-            resolve_recheck_task(state, task_id, task)
-          else
-            # Lease expired, no active agents — genuinely failed.
-            log_failed_transition(task_id, :recheck_lease, task.status,
-              result: "Lease expired; owning instance gone",
-              extra: [lease_expires_at: inspect(task.lease_expires_at)]
-            )
-
-            updated = %{
-              task
-              | status: :failed,
-                lease_expires_at: nil,
-                finished_at: DateTime.utc_now(),
-                result: "Lease expired; owning instance gone"
-            }
-
-            EvoDash.Store.put_task(state.task_store, updated)
-            cleanup_expired_tasks(state)
-            Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
-            {:noreply, state}
-          end
         end
     end
   end

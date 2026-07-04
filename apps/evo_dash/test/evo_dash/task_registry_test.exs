@@ -1581,11 +1581,11 @@ defmodule EvoDash.TaskRegistryTest do
              "completed task should have lease cleared"
     end
 
-    test "heartbeat renews lease for owned running tasks" do
+    test "heartbeat does NOT sweep expired-lease unowned tasks (renewal only)" do
       unique = System.unique_integer([:positive])
 
-      # Insert a running task with a near-expiry lease directly into the store.
-      near_expiry = System.system_time(:second) + 5
+      # Insert a running task with an EXPIRED lease, no pid, not owned.
+      expired = System.system_time(:second) - 300
       task = %TaskInfo{
         id: "lease_heartbeat_#{unique}",
         type: :genesis,
@@ -1597,15 +1597,14 @@ defmodule EvoDash.TaskRegistryTest do
         finished_at: nil,
         logs: [],
         result: nil,
-        lease_expires_at: near_expiry
+        lease_expires_at: expired
       }
 
       EvoDash.Store.put_task(EvoDash.Store, task)
 
       # Send a heartbeat message directly to the registry process.
-      # Since this task is NOT in task_refs (no owner), it won't have its lease
-      # renewed. But since the lease is still valid (near future), it should NOT
-      # be swept either.
+      # After the refactor, heartbeat ONLY renews owned leases — it does NOT
+      # sweep. So even an expired-lease unowned task must remain :running.
       send(EvoDash.TaskRegistry, :heartbeat)
 
       # Sync
@@ -1613,12 +1612,15 @@ defmodule EvoDash.TaskRegistryTest do
 
       found = EvoDash.Store.get_task(EvoDash.Store, "lease_heartbeat_#{unique}")
       assert found != nil
-      # Lease should be unchanged (not owned, not expired → left alone)
-      assert found.lease_expires_at == near_expiry
-      assert found.status == :running
+      # Lease unchanged and task still :running (no sweep on heartbeat).
+      assert found.status == :running,
+             "heartbeat should NOT sweep expired-lease tasks (sweep is now :lease_sweep), got #{inspect(found.status)}"
+
+      assert found.lease_expires_at == expired,
+             "heartbeat should not modify unowned task's lease"
     end
 
-    test "heartbeat sweeps expired-lease running tasks we don't own" do
+    test "lease_sweep sweeps expired-lease running tasks we don't own" do
       unique = System.unique_integer([:positive])
 
       # Insert a running task with an expired lease, no pid, not owned.
@@ -1638,8 +1640,8 @@ defmodule EvoDash.TaskRegistryTest do
 
       EvoDash.Store.put_task(EvoDash.Store, task)
 
-      # Send a heartbeat message directly to the registry process.
-      send(EvoDash.TaskRegistry, :heartbeat)
+      # Send a lease_sweep message directly to the registry process (one-shot).
+      send(EvoDash.TaskRegistry, :lease_sweep)
 
       # Sync
       TaskRegistry.list_tasks()
