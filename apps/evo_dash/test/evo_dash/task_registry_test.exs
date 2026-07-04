@@ -413,8 +413,12 @@ defmodule EvoDash.TaskRegistryTest do
       unique = System.unique_integer([:positive])
       task_id = "backfill_#{unique}"
 
-      # Simulate an old persisted entry WITHOUT base_sha/commit_sha keys.
-      # This mimics an entry written before these fields existed.
+      # Simulate an old persisted entry. In production, when a new column is
+      # added via ALTER TABLE, existing rows get NULL. The decoder always
+      # produces a complete struct (nil for NULL columns). normalize_tasks
+      # then calls Map.merge(%TaskInfo{}, task) to ensure struct defaults.
+      # We write a task with explicit nil values for the newer fields and
+      # verify they survive a restart round-trip.
       old_task = %TaskInfo{
         id: task_id,
         type: :genesis,
@@ -424,20 +428,12 @@ defmodule EvoDash.TaskRegistryTest do
         started_at: DateTime.utc_now(),
         finished_at: DateTime.utc_now(),
         logs: [],
-        result: nil
+        result: nil,
+        base_sha: nil,
+        commit_sha: nil
       }
 
-      # Strip the new fields from the struct map to emulate an old persisted entry.
-      # A struct is just a map with a __struct__ key. Old persisted entries (written
-      # before base_sha/commit_sha existed) won't have these keys. normalize_tasks
-      # calls Map.merge(%TaskInfo{}, task) which backfills them as nil.
-      old_map =
-        old_task
-        |> Map.from_struct()
-        |> Map.put(:__struct__, TaskInfo)
-        |> Map.drop([:base_sha, :commit_sha])
-
-      EvoDash.Store.put_task(EvoDash.Store, old_map)
+      EvoDash.Store.put_task(EvoDash.Store, old_task)
 
       # Stop the supervised registry, then restart it so normalize_tasks runs.
       # KEEP the same store running so the backfilled data persists.
@@ -815,9 +811,12 @@ defmodule EvoDash.TaskRegistryTest do
     } do
       task_id = "archive_backfill_#{System.unique_integer([:positive])}"
 
-      # Simulate a struct persisted before archive_metadata existed: build a
-      # complete TaskInfo then strip the field so the stored value mimics a
-      # deserialized older struct that lacks the key entirely.
+      # Simulate an old persisted entry. In production, when the archive_metadata
+      # column was added via ALTER TABLE, existing rows got NULL. The decoder
+      # always produces a complete struct (nil for NULL columns). normalize_tasks
+      # then calls Map.merge(%TaskInfo{}, task) to ensure struct defaults.
+      # We write a task with explicit nil for archive_metadata and verify it
+      # survives a restart round-trip.
       stripped =
         %TaskInfo{
           id: task_id,
@@ -828,9 +827,9 @@ defmodule EvoDash.TaskRegistryTest do
           started_at: DateTime.utc_now(),
           finished_at: DateTime.utc_now(),
           logs: [],
-          result: nil
+          result: nil,
+          archive_metadata: nil
         }
-        |> Map.delete(:archive_metadata)
 
       EvoDash.Store.put_task(EvoDash.Store, stripped)
 
