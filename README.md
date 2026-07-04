@@ -1,135 +1,65 @@
-# Genesis 1.0
+<p align="center">
+  <img src="apps/evo_dash/priv/static/images/logo.svg" width="140" alt="Genesis logo">
+</p>
 
-Genesis is a decentralized, evolutionary software development framework powered by AI agents. It treats your codebase as a hierarchical **Context Tree** (spatial dimension) and evolves it through a **Phylogenetic Graph** of Git commits (temporal dimension) — intersecting structural awareness with temporal evolution to achieve architecturally coherent software development.
+<h1 align="center">Genesis</h1>
 
-## Why Genesis?
+<p align="center">
+  Evolutionary software development, powered by AI agents.<br>
+  Give it a goal — it plans, builds, and evolves your codebase autonomously.
+</p>
 
-**Unbounded scale without context limits.** Traditional coding agents hit context window ceilings on large codebases. Genesis solves this through recursive decomposition: each agent operates only within its assigned node, delegating to child agents for subtrees. Subagent context footprints never count against the parent's limits, enabling work on arbitrarily large projects.
+<p align="center">
+  <a href="https://github.com/BillHuang2001/evogit_private/releases"><img src="https://img.shields.io/badge/version-0.4.1-8b5cf6" alt="Version"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20·%20Linux%20·%20Windows-success" alt="Platform">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
+  <img src="https://img.shields.io/badge/built%20with-Elixir-4B275F" alt="Elixir">
+</p>
 
-**Evolutionary, not just generative.** Unlike one-shot code generators, Genesis evolves code through a phylogenetic DAG of Git commits. Partial progress is accepted — a version that passes more tests or implements one more feature is valued, even if other parts remain broken. This mirrors natural selection: gradual, directional improvement.
+---
 
-**Transient agents, persistent architecture.** Agents are ephemeral functions with session-scoped memory; all persistent knowledge lives in the Context Tree and Git history. This means any agent can be instantiated at any point in the codebase's evolution, rolled back, or parallelized without state corruption.
+Genesis reimagines how software gets written. Instead of a single chat that runs out of room, it runs a **team of agents** that recursively split your project into a hierarchy of focused tasks — each agent working only where it should, with its own context and its own clean copy of the code.
 
-**Two evolution modes.** *Simple mode* handles well-defined tasks through top-down planning and hierarchical delegation. *Complex mode* tackles open-ended problems through bottom-up novelty search with quality diversity (MAP-Elites), using cross-domain code exaptation guided by LLM semantic bridging.
+It's evolutionary: every change lands on a branch of the Git history, and partial progress is celebrated. A version that passes more tests or ships one more feature is a step forward — even if other pieces are still in flight.
 
-**Built-in safety.** All LLM-generated code runs under platform-appropriate sandboxing (systemd-run on Linux, sandbox-exec on macOS), with strict spatial-contract enforcement preventing unauthorized cross-boundary modifications.
+### ✨ Highlights
 
-## Installation
+- 🔭 **Scales without limits** — Recursive decomposition keeps every agent's context small, so there's no ceiling on how big a project can get.
+- 🧬 **Evolves, doesn't just generate** — Code grows through a Git DAG where incremental, measurable improvement always wins.
+- 🌳 **Knows its way around** — Every directory carries a semantic contract, so agents always understand the structure they're working in.
+- 🧠 **Stateless by design** — Agents are transient and wake up anywhere in history. No long-lived memory to corrupt, ever.
+- 🔒 **Sandboxed by default** — Generated code runs in your platform's native sandbox (systemd-run, sandbox-exec, or direct).
+- 🖥️ **A real GUI** — A native desktop dashboard to launch tasks, watch the agent tree, review diffs, and tune settings in real time.
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository_url>
-    cd evogit
-    ```
+## 📦 Install
 
-2.  **Install dependencies:**
-    ```bash
-    mix deps.get
-    ```
+Genesis ships as a native desktop app. Grab the installer for your platform from the **[GitHub Releases](https://github.com/BillHuang2001/evogit_private/releases)** page:
 
-3.  **Configure your LLM:**
-    ```bash
-    mix run -e 'EvoGit.CLI.main(System.argv())' -- setup
-    ```
-    This runs a guided wizard that writes your LLM provider, model, and API key to `~/.config/genesis/config.toml`.
+| Platform | Download |
+|----------|----------|
+| **macOS** (Apple Silicon / Intel) | `.dmg` |
+| **Linux** | `.rpm`, `.AppImage`, or `.tar.gz` |
+| **Windows** | `.msi` or `.exe` installer |
 
-## Usage
+Download, run the installer, and launch **Genesis**. That's it.
 
-Genesis is a CLI tool. You can run it using `mix run` to execute the CLI entry point.
+### For AI agents
 
-### Commands
-
-#### 1. Genesis (Creation Phase)
-
-Recursively generates a repository skeleton and implementation based on a high-level prompt.
-
-```bash
-mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<Your Prompt>"
-```
-
-**Options:**
-
-*   `--file`, `-f`: Read the prompt from a file.
-*   `--concurrency`, `-c`: Number of parallel LLM workers (default: 3).
-*   `--tool-concurrency`: Number of parallel tool executions (default: 2).
-*   `--path`, `-p`: Path to the git repository (default: current directory).
-*   `-R <id:>path`: Reference a foreign repository (repeatable). Prefix with `id:` for a custom repo id; otherwise the directory basename is used.
-
-**Examples:**
+To fetch the latest release artifacts programmatically:
 
 ```bash
-# Direct prompt
-mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Create a Phoenix web app for a Todo list"
-
-# From file with custom path
-mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis -f design_doc.md --path /path/to/repo
-
-# Reference a foreign repository
-mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Port this project to Rust" -R original:/Source/legacy-project
+# List the download URLs in the newest release
+curl -s https://api.github.com/repos/BillHuang2001/evogit_private/releases/latest \
+  | grep '"browser_download_url"' \
+  | grep -E '\.(dmg|rpm|AppImage|tar\.gz|msi|exe)"'
 ```
 
-#### 2. Evolution Phase
+Match the artifact to your OS and architecture (filenames encode the target — e.g. `darwin-arm64`, `linux-x64`, `windows-x64`), download it with `curl -L`, then install with the platform-appropriate command (`dpkg -i` / `rpm -i`, mount the `.dmg`, or `msiexec /i`).
 
-Fixes bugs, optimizes performance, or adds features to an existing project.
+## 🙏 Acknowledgements
 
-```bash
-mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<Objective>"
-```
+Genesis was born out of the [EvoGit](https://github.com/BillHuang2001/evogit) project.
 
-**Options:**
+## 📄 License
 
-*   `--mode`, `-d`: Evolution mode — `simple` (default) for well-defined tasks, `complex` for open-ended exploration.
-*   `--path`, `-p`: Path to the git repository (default: current directory).
-*   `--node`, `-n`: Target a specific directory node (default: root).
-*   `-R <id:>path`: Reference a foreign repository (repeatable).
-*   `--concurrency`, `-c`: Number of parallel workers.
-
-**Complex mode flags** (open-ended evolution):
-
-*   `--pool-size`, `-s`: Entropy pool size (default: 30).
-*   `--generations`, `-g`: Maximum evolution generations (default: 10).
-*   `--crossover-rate`: Crossover probability (default: 0.7).
-*   `--mutation-rate`: Mutation probability (default: 0.3).
-*   `-S file`: Seed fragment file(s) (repeatable).
-*   `-C concept`: Concept expansion seeds (repeatable).
-
-**Examples:**
-
-```bash
-# Simple evolution — clear task
-mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Fix the race condition in the worker pool"
-
-# Complex evolution — open-ended optimization
-mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Optimize the rendering pipeline for latency" -d complex
-```
-
-### Configuration Options
-
-*   `--concurrency`, `-c`: Sets the number of concurrent LLM API calls (default: 3).
-*   `--tool-concurrency`: Sets the number of concurrent tool executions (default: 2).
-*   `--retries`, `-r`: Sets the maximum number of crash retries per agent (default: 3).
-*   `--max-turns`, `-t`: Sets the maximum number of iterative loops per agent session.
-*   `--model`, `-m`: Override the LLM model for this session.
-*   `--path`, `-p`: Path to the git repository (default: current directory).
-*   `--help`, `-h`: Show help message.
-
-## Architecture
-
-*   **Spatial Dimension:** The codebase is a tree of Context Nodes. Each directory has a `CONTEXT.md` defining its intent, API, constraints, and a routing table to child nodes.
-*   **Temporal Dimension:** Code evolves via Git commits. Agents branch off, attempt changes, and successful branches are merged.
-*   **Agents:** Transient functions that transform `{commit, node_path}` + `objective` → `new_commit`. Specialized roles include Managers, Executors, Investigators, Architects, and more.
-*   **Scheduler:** Manages a pool of isolated Git worktrees with cooperative multitasking, LLM/tool slot management, and rate-limit backoff.
-
-## Output
-
-Genesis works in `.evogit/workers/` directory using Git worktrees. It commits changes to your repository on isolated branches, optionally creating pull requests for review.
-
-## Dashboard
-
-Genesis includes a web dashboard (`evo_dash`) for real-time visualization of the agent tree, task management, code review, and runtime configuration:
-
-```bash
-mix phx.server
-```
-
-Open `http://localhost:4100` to access the dashboard.
+Genesis is released under the [GNU Affero General Public License v3.0](./LICENSE).
