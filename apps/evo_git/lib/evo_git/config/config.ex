@@ -153,6 +153,28 @@ defmodule EvoGit.Config do
             acc
         end
 
+      # Tools search: convert string enum values to atoms
+      # (e.g., "tavily" -> :tavily, "basic" -> :basic)
+      {:tools, tools_config}, acc when is_map(tools_config) ->
+        search_config = Map.get(tools_config, :search, %{})
+
+        if is_map(search_config) do
+          provider = Map.get(search_config, :provider)
+          new_provider = atomize_if_string(provider, [:tavily])
+          acc = put_in(acc, [:tools, :search, :provider], new_provider)
+
+          tavily_config = Map.get(search_config, :tavily, %{})
+          if is_map(tavily_config) do
+            search_depth = Map.get(tavily_config, :search_depth)
+            new_depth = atomize_if_string(search_depth, [:basic, :advanced])
+            put_in(acc, [:tools, :search, :tavily, :search_depth], new_depth)
+          else
+            acc
+          end
+        else
+          acc
+        end
+
       _, acc ->
         acc
     end)
