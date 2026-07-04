@@ -543,6 +543,9 @@ defmodule EvoDash.TaskRegistry do
     objects = select_all_tasks(state)
 
     Enum.reduce(objects, state, fn %TaskInfo{} = task, acc ->
+      # Backfill safety: Map.merge ensures any newly-added TaskInfo fields
+      # get their default values even if the codec produced a struct missing
+      # them. When task is already a complete %TaskInfo{}, this is a no-op.
       task = Map.merge(%TaskInfo{}, task)
       {task, acc} = reconcile_task_status(task, acc)
       # Persist with ref nulled (ref is runtime-only data)
