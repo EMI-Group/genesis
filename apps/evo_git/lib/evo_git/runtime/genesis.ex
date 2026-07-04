@@ -65,21 +65,23 @@ defmodule EvoGit.Runtime.Genesis do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
 
-    # Generate a worktree init script (LLM one-shot) to speed up builds in new
-    # worktrees by copying deps/build cache. Written to genesis.toml so the existing
-    # per-worktree init-script infrastructure picks it up. NON-FATAL on failure.
-    case WorktreeInitScript.generate(objective, repo_path) do
-      {:ok, script_content} ->
-        ProjectConfig.write_worktree_script(repo_path, script_content)
-        Logger.info("Genesis: Generated and saved worktree init script")
+    # Write a predefined worktree init script to genesis.toml so the existing
+    # per-worktree init-script infrastructure copies deps/build cache into new
+    # worktrees. Skipped when no build system is selected or :none is chosen.
+    build_system_id = Keyword.get(opts, :build_system)
 
-      :skip ->
-        Logger.info("Genesis: Skipping worktree init script generation (no LLM model configured)")
+    cond do
+      is_nil(build_system_id) ->
+        Logger.info("Genesis: No build system selected, skipping worktree init script")
 
-      {:error, reason} ->
-        Logger.warning("Genesis: Failed to generate worktree init script: #{inspect(reason)}")
+      build_system_id == :none ->
+        Logger.info("Genesis: Build system 'none' selected, skipping worktree init script")
+
+      true ->
+        scripts = WorktreeInitScript.scripts_for(build_system_id)
+        ProjectConfig.write_worktree_script(repo_path, scripts)
+        Logger.info("Genesis: Saved worktree init script for #{build_system_id}")
     end
-
     # Load foreign repos: genesis.toml defaults merged with CLI-provided repos (CLI takes precedence)
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
     cli_repos = Keyword.get(opts, :foreign_repos, [])

@@ -311,25 +311,42 @@ defmodule EvoGit.ProjectConfigTest do
   end
 
   describe "write_worktree_script/2" do
-    @script """
-    #!/bin/bash
-    cp --reflink=auto -r $SOURCE_REPO_PATH/deps $TARGET_WORKTREE_PATH/
-    cp --reflink=auto -r $SOURCE_REPO_PATH/_build $TARGET_WORKTREE_PATH/
-    """
+    @scripts %{unix: "#!/bin/bash\ncp -R \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n", windows: "# Copy deps\nCopy-Item -Recurse \"$env:SOURCE_REPO_PATH/deps\" \"$env:TARGET_WORKTREE_PATH/\"\n"}
 
     test "creates genesis.toml when it does not exist", %{tmp_dir: tmp_dir} do
       assert ProjectConfig.read(tmp_dir) == nil
 
-      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
       assert File.exists?(Path.join(tmp_dir, "genesis.toml"))
     end
 
-    test "round-trips: written script is readable via worktree_script/2", %{tmp_dir: tmp_dir} do
-      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+    test "writes top-level comment when creating new genesis.toml", %{tmp_dir: tmp_dir} do
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @script
-      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @script
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      assert contents =~ "genesis.toml — EvoGit project configuration file."
+      assert contents =~ "EvoGit agents read this file automatically"
+    end
+
+    test "writes worktree section comment block", %{tmp_dir: tmp_dir} do
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      assert contents =~ "Worktree Init Script"
+      assert contents =~ "SOURCE_REPO_PATH"
+      assert contents =~ "TARGET_WORKTREE_PATH"
+      assert contents =~ "WARNING"
+    end
+
+    test "round-trips: written scripts are readable via worktree_script/2", %{tmp_dir: tmp_dir} do
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :windows) == @scripts.windows
     end
 
     test "merges into existing genesis.toml preserving other sections", %{tmp_dir: tmp_dir} do
@@ -343,10 +360,10 @@ defmodule EvoGit.ProjectConfigTest do
 
       File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
-      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
       # The script is readable
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @script
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
 
       # Other sections preserved
       config = ProjectConfig.read(tmp_dir)
@@ -363,23 +380,23 @@ defmodule EvoGit.ProjectConfigTest do
 
       File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
-      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
       config = ProjectConfig.read(tmp_dir)
       assert config["worktree"]["timeout"] == 30
       assert config["worktree"]["verbose"] == true
-      assert config["worktree"]["script"] == @script
+      assert config["worktree"]["script"]["linux"] == @scripts.unix
     end
 
-    test "updates existing script value", %{tmp_dir: tmp_dir} do
+    test "updates existing script values", %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "genesis.toml"), "[worktree]\nscript = \"old.sh\"\n")
 
-      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @script
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
     end
 
-    test "replaces existing OS-specific script variants with string form", %{tmp_dir: tmp_dir} do
+    test "replaces existing single-string script with OS-variant form", %{tmp_dir: tmp_dir} do
       toml_content = """
       [worktree]
       script.linux = "scripts/setup_linux.sh"
@@ -388,43 +405,56 @@ defmodule EvoGit.ProjectConfigTest do
 
       File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
 
-      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @script)
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
-      # The string form now takes precedence across all OSes
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @script
-      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @script
+      # The OS-variant form now takes precedence
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == @scripts.unix
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == @scripts.unix
     end
 
     test "handles script content containing triple single quotes", %{tmp_dir: tmp_dir} do
       # Content with ''' — the encoder must fall back to escaped form
-      tricky_script = "echo hi\n'''\necho there\n"
+      tricky_scripts = %{
+        unix: "echo hi\n'''\necho there\n",
+        windows: "echo hi\n'''\necho there\n"
+      }
 
-      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, tricky_script)
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, tricky_scripts)
 
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == tricky_script
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == tricky_scripts.unix
     end
 
-    test "round-trips a complex multi-line script", %{tmp_dir: tmp_dir} do
-      complex_script = """
-      #!/bin/bash
-      set -e
+    test "does not duplicate top-level comment when updating existing file", %{tmp_dir: tmp_dir} do
+      # First write creates the file with top-level comment
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
-      # Copy dependencies
-      if [ -d "$SOURCE_REPO_PATH/deps" ]; then
-        cp --reflink=auto -r $SOURCE_REPO_PATH/deps $TARGET_WORKTREE_PATH/
-      fi
+      # Second write should not duplicate the top-level comment
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
 
-      # Copy build artifacts
-      if [ -d "$SOURCE_REPO_PATH/_build" ]; then
-        cp --reflink=auto -r $SOURCE_REPO_PATH/_build $TARGET_WORKTREE_PATH/
-      fi
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
 
-      echo "Worktree initialized with build cache"
-      """
+      # Count occurrences of the top-level comment first line
+      first_line = "# genesis.toml — EvoGit project configuration file."
+      count = contents |> String.split("\n") |> Enum.count(&(&1 == first_line))
 
-      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, complex_script)
+      assert count == 1
+    end
 
-      assert ProjectConfig.worktree_script(tmp_dir, :linux) == complex_script
+    test "does not duplicate worktree comment block when updating existing file", %{
+      tmp_dir: tmp_dir
+    } do
+      # First write creates the file with worktree comment block
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      # Second write should not duplicate the worktree comment block
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, @scripts)
+
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      # Count occurrences of the comment block header
+      count = contents |> String.split("\n") |> Enum.count(&String.starts_with?(&1, "# ───"))
+
+      assert count == 1
     end
   end
 end

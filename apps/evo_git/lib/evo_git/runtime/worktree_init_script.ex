@@ -1,152 +1,169 @@
 defmodule EvoGit.Runtime.WorktreeInitScript do
   @moduledoc """
-  Generates a "Worktree Init Script" via a one-shot LLM query at the start of
-  Genesis Mode B (new codebase).
+  Predefined catalog of Worktree Init Scripts for common build systems.
 
-  The generated script is written into `genesis.toml` at the repo root under
-  `[worktree].script` so that the existing per-worktree init-script infrastructure
-  (`EvoGit.ProjectConfig.worktree_script/2` → `EvoGit.AgentScheduler.Worktrees.run_init_script/3`)
-  picks it up and runs it on every newly-created worktree. This speeds up builds by
-  copying dependencies, build cache, or build results from the source repo into the
-  new worktree (avoiding re-downloading/recompiling from scratch).
+  Each script runs immediately after a new git worktree is created, copying
+  dependencies and build artifacts from the source repository into the new
+  worktree so builds start with a warm cache (avoiding re-download/recompile).
 
-  This runs BEFORE any agent is spawned, so there is no slot acquisition — it is a
-  single standalone LLM call.
+  The selected scripts are written into `genesis.toml` under `[worktree]` as
+  OS-specific variants (`script.linux`, `script.macos`, `script.windows`) so the
+  existing per-worktree init-script infrastructure
+  (`EvoGit.ProjectConfig.worktree_script/2` →
+  `EvoGit.AgentScheduler.Worktrees.run_init_script/3`) picks them up.
+
+  ## Environment Variables
+
+  All scripts receive three environment variables:
+
+    - `SOURCE_REPO_PATH` — the main repository checkout where `genesis.toml` lives.
+    - `SOURCE_WORKTREE_PATH` — the parent agent's worktree path.
+    - `TARGET_WORKTREE_PATH` — the newly created worktree (copy destination).
   """
 
-  require Logger
-
-  alias EvoGit.Config
+  @build_systems [
+    %{
+      id: :elixir,
+      name: "Elixir / Erlang (Mix)",
+      dirs: ["deps", "_build"],
+      unix_script: """
+      #!/bin/bash
+      # Copy Elixir dependencies and build artifacts
+      if [ -d "$SOURCE_REPO_PATH/deps" ]; then
+        cp -R "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+      fi
+      if [ -d "$SOURCE_REPO_PATH/_build" ]; then
+        cp -R "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      windows_script: """
+      # Copy Elixir dependencies and build artifacts
+      if (Test-Path "$env:SOURCE_REPO_PATH/deps") {
+          Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/deps" "$env:TARGET_WORKTREE_PATH/"
+      }
+      if (Test-Path "$env:SOURCE_REPO_PATH/_build") {
+          Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/_build" "$env:TARGET_WORKTREE_PATH/"
+      }
+      """
+    },
+    %{
+      id: :node,
+      name: "Node.js (npm/yarn)",
+      dirs: ["node_modules"],
+      unix_script: """
+      #!/bin/bash
+      # Copy Node.js dependencies
+      if [ -d "$SOURCE_REPO_PATH/node_modules" ]; then
+        cp -R "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      windows_script: """
+      # Copy Node.js dependencies
+      if (Test-Path "$env:SOURCE_REPO_PATH/node_modules") {
+          Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/node_modules" "$env:TARGET_WORKTREE_PATH/"
+      }
+      """
+    },
+    %{
+      id: :python,
+      name: "Python (venv)",
+      dirs: [".venv"],
+      unix_script: """
+      #!/bin/bash
+      # Copy Python virtual environment
+      if [ -d "$SOURCE_REPO_PATH/.venv" ]; then
+        cp -R "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      windows_script: """
+      # Copy Python virtual environment
+      if (Test-Path "$env:SOURCE_REPO_PATH/.venv") {
+          Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/.venv" "$env:TARGET_WORKTREE_PATH/"
+      }
+      """
+    },
+    %{
+      id: :rust,
+      name: "Rust (Cargo)",
+      dirs: ["target"],
+      unix_script: """
+      #!/bin/bash
+      # Copy Rust build artifacts
+      if [ -d "$SOURCE_REPO_PATH/target" ]; then
+        cp -R "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      windows_script: """
+      # Copy Rust build artifacts
+      if (Test-Path "$env:SOURCE_REPO_PATH/target") {
+          Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/target" "$env:TARGET_WORKTREE_PATH/"
+      }
+      """
+    },
+    %{
+      id: :go,
+      name: "Go (modules)",
+      dirs: ["vendor"],
+      unix_script: """
+      #!/bin/bash
+      # Copy Go vendored dependencies
+      if [ -d "$SOURCE_REPO_PATH/vendor" ]; then
+        cp -R "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
+      fi
+      """,
+      windows_script: """
+      # Copy Go vendored dependencies
+      if (Test-Path "$env:SOURCE_REPO_PATH/vendor") {
+          Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/vendor" "$env:TARGET_WORKTREE_PATH/"
+      }
+      """
+    },
+    %{
+      id: :none,
+      name: "None / Generic",
+      dirs: [],
+      unix_script: "# No build artifacts to copy\n",
+      windows_script: "# No build artifacts to copy\n"
+    }
+  ]
 
   @doc """
-  Generates a worktree init script for the project being created in Genesis Mode B.
+  Returns the list of build system maps.
 
-  Returns:
-    * `{:ok, script_content}` — the generated script content (shell code).
-    * `:skip` — no LLM model is configured; generation was skipped.
-    * `{:error, reason}` — the LLM call failed or returned no usable text.
+  Each map contains:
+    - `:id` — atom identifier (`:elixir`, `:node`, `:python`, `:rust`, `:go`, `:none`)
+    - `:name` — display name for CLI menus
+    - `:dirs` — list of directories the script copies
+    - `:unix_script` — shell script for Linux + macOS
+    - `:windows_script` — PowerShell script for Windows
   """
-  @spec generate(String.t(), String.t()) :: {:ok, String.t()} | :skip | {:error, term()}
-  def generate(objective, _repo_path) do
-    model = Config.resolve([:llm, :model])
+  @spec build_systems() :: [map()]
+  def build_systems, do: @build_systems
 
-    if is_nil(model) or model == "" do
-      Logger.info("WorktreeInitScript: No LLM model configured, skipping generation")
-      :skip
-    else
-      system_prompt = build_system_prompt()
-      user_prompt = build_user_prompt(objective)
-
-      do_generate(system_prompt, user_prompt, model)
-    end
-  end
-
-  defp do_generate(system_prompt, user_prompt, model) do
-    alias ReqLLM.Context, as: C
-
-    context = C.new([C.system(system_prompt), C.user(user_prompt)])
-
-    with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
-         {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
-         {:ok, script} <- extract_script_from_response(response) do
-      {:ok, script}
-    else
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  # Extracts and validates script text from the LLM response.
-  # Returns {:ok, script} for non-empty text, {:error, :empty_response} otherwise.
-  defp extract_script_from_response(response) do
-    case ReqLLM.Response.text(response) do
-      text when is_binary(text) and text != "" -> {:ok, extract_script(text)}
-      _ -> {:error, :empty_response}
-    end
+  @doc """
+  Returns the build system map for the given atom id, or `nil` if not found.
+  """
+  @spec get_build_system(atom()) :: map() | nil
+  def get_build_system(id) when is_atom(id) do
+    Enum.find(@build_systems, fn bs -> bs.id == id end)
   end
 
   @doc """
-  Builds the system prompt describing how worktree init scripts work.
+  Returns the unix and windows scripts for the given build system.
 
-  Made public so the prompt content can be tested without an LLM call.
+  Accepts either a build system map or an atom id.
+
+  Returns `%{unix: script_string, windows: script_string}`.
   """
-  @spec build_system_prompt() :: String.t()
-  def build_system_prompt do
-    """
-    You are an expert DevOps engineer. Your task is to generate a **Worktree Init Script**
-    that runs immediately after a new git worktree is created, copying dependencies, build
-    cache, or build results from a source repository into the new worktree. This avoids
-    re-downloading and recompiling everything from scratch, dramatically speeding up builds.
-
-    ## Environment Variables
-
-    The script receives three environment variables:
-
-    - `$SOURCE_REPO_PATH` — The main repository checkout where `genesis.toml` lives.
-    - `$SOURCE_WORKTREE_PATH` — The parent agent's worktree path. Equals `$SOURCE_REPO_PATH`
-      for top-level agents.
-    - `$TARGET_WORKTREE_PATH` — The newly created worktree where files should be copied TO.
-
-    ## Examples by Ecosystem
-
-    - **Elixir**: `cp --reflink=auto -r $SOURCE_REPO_PATH/deps $TARGET_WORKTREE_PATH/`
-      (also copy `_build` for compiled artifacts)
-    - **Node.js**: `cp --reflink=auto -r $SOURCE_REPO_PATH/node_modules $TARGET_WORKTREE_PATH/`
-    - **Python**: `cp --reflink=auto -r $SOURCE_REPO_PATH/.venv $TARGET_WORKTREE_PATH/`
-    - **Rust**: `cp --reflink=auto -r $SOURCE_REPO_PATH/target $TARGET_WORKTREE_PATH/`
-    - **Go**: `cp --reflink=auto -r $SOURCE_REPO_PATH/vendor $TARGET_WORKTREE_PATH/` (if present)
-
-    ## Guidelines
-
-    - Use `cp --reflink=auto` (Copy-on-Write) for speed and disk efficiency.
-    - Only include the copy commands needed for the detected ecosystem.
-    - Start the script with a `#!/bin/bash` or `#!/bin/sh` shebang.
-    - Keep it simple — just the essential copy commands.
-    - If you are unsure about the ecosystem, output a minimal generic script or nothing.
-
-    ## Output Format
-
-    Output ONLY the script content, optionally wrapped in a ```bash or ```sh code fence.
-    Do not include any explanation or commentary outside the script.
-    """
-    |> String.trim()
+  @spec scripts_for(atom() | map()) :: %{unix: String.t(), windows: String.t()} | nil
+  def scripts_for(%{unix_script: unix, windows_script: windows}) do
+    %{unix: unix, windows: windows}
   end
 
-  @doc """
-  Builds the user prompt containing the genesis objective.
-
-  Made public so it can be referenced in tests.
-  """
-  @spec build_user_prompt(String.t()) :: String.t()
-  def build_user_prompt(objective) do
-    """
-    Generate a worktree init script for a new codebase being created with the following objective:
-
-    #{objective}
-
-    Determine the most likely ecosystem/language from the objective and generate the appropriate
-    copy commands. Output only the script.
-    """
-    |> String.trim()
-  end
-
-  @doc """
-  Extracts the script content from an LLM response.
-
-  If the response contains a code fence (```bash, ```sh, or plain ```),
-  extracts just the code inside. Otherwise returns the trimmed response as-is.
-
-  Made public so the extraction logic can be tested without an LLM call.
-  """
-  @spec extract_script(String.t()) :: String.t()
-  def extract_script(response) when is_binary(response) do
-    cond do
-      match = Regex.run(~r/```(?:bash|sh)?\s*\n([\s\S]*?)```/m, response) ->
-        match |> List.wrap() |> List.last() |> String.trim()
-
-      true ->
-        String.trim(response)
+  def scripts_for(id) when is_atom(id) do
+    case get_build_system(id) do
+      nil -> nil
+      bs -> scripts_for(bs)
     end
   end
-
-  def extract_script(_response), do: ""
 end
