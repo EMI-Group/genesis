@@ -16,6 +16,13 @@ defmodule EvoDash.TaskRegistry do
 
   @max_recent_projects 10
 
+  @lease_duration 120
+  @heartbeat_interval 60_000
+  # One-shot lease sweep delay: longer than the lease duration so the lease has
+  # definitely expired by the time the sweep fires. The +30 buffer avoids a race
+  # where the owner died right after a renewal.
+  @sweep_after (@lease_duration + 30) * 1000
+
   ## Client API
 
   def start_link(opts \\ []) do
@@ -141,6 +148,13 @@ defmodule EvoDash.TaskRegistry do
       "TaskRegistry: INIT_LOGGING_V3 started, task_refs=#{inspect(map_size(state.task_refs))}"
     )
 
+    # Start the periodic heartbeat timer for lease renewal (owned tasks only).
+    # The sweep is NOT periodic — it fires once at startup (via reconcile) and
+    # once more after the lease duration to catch owners that died around our
+    # startup. After that, any new foreign instance does its own pair of checks.
+    Process.send_after(self(), :heartbeat, @heartbeat_interval)
+    Process.send_after(self(), :lease_sweep, @sweep_after)
+
     {:ok, state}
   end
 
@@ -167,7 +181,8 @@ defmodule EvoDash.TaskRegistry do
       started_at: DateTime.utc_now(),
       finished_at: nil,
       logs: [],
-      result: nil
+      result: nil,
+      lease_expires_at: System.system_time(:second) + @lease_duration
     }
 
     # Persist to SQLite with ref nulled (ref is runtime-only data)
@@ -220,7 +235,7 @@ defmodule EvoDash.TaskRegistry do
                 end
 
                 Task.shutdown(task_ref, :brutal_kill)
-                updated = %{task | status: :cancelled, finished_at: DateTime.utc_now()}
+                updated = %{task | status: :cancelled, finished_at: DateTime.utc_now(), lease_expires_at: nil}
                 EvoDash.Store.put_task(state.task_store, updated)
                 cleanup_expired_tasks(state)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
@@ -426,6 +441,11 @@ defmodule EvoDash.TaskRegistry do
                 do: %{updated | archive_metadata: archive_records},
                 else: updated
 
+            updated =
+              if status in [:completed, :failed, :cancelled],
+                do: %{updated | lease_expires_at: nil},
+                else: updated
+
             EvoDash.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
@@ -552,15 +572,16 @@ defmodule EvoDash.TaskRegistry do
 
   # Reconcile a task's status after a registry restart.
   # Running/pending tasks that are still alive (pid exists and Process.alive?/1)
-  # are kept as :running and re-monitored. Dead or pid-less tasks are marked
-  # :failed (they crashed or were orphaned by a VM restart) — UNLESS the
-  # AgentScheduler still has active agents for this task_id, in which case the
-  # task is still genuinely running under a sibling process. Other statuses
-  # are left unchanged.
+  # are kept as :running and re-monitored. Dead or pid-less tasks are evaluated
+  # using lease-based logic: a running task is only marked :failed if its lease
+  # has ACTUALLY expired (not just because the pid is dead/foreign). This prevents
+  # a second BEAM VM instance from incorrectly marking the first instance's
+  # running tasks as :failed. Other statuses are left unchanged.
   defp reconcile_task_status(%TaskInfo{status: status} = task, state)
        when status in [:running, :pending] do
     if task.pid != nil and Process.alive?(task.pid) do
       # Task process is still alive under the sibling TaskSupervisor.
+      # Re-monitor, re-own, renew lease.
       ref = Process.monitor(task.pid)
       # Construct a %Task{} matching the shape of a Task.Supervisor task ref so
       # that the existing pattern matches (%Task{pid:, ref:, owner:}) keep
@@ -569,42 +590,48 @@ defmodule EvoDash.TaskRegistry do
 
       Logger.warning("TaskRegistry: re-monitoring still-running task #{task.id} after restart")
 
-      {%{task | status: :running, ref: nil},
+      now = System.system_time(:second)
+
+      {%{task | status: :running, ref: nil, lease_expires_at: now + @lease_duration},
        %{state | task_refs: Map.put(state.task_refs, task.id, task_ref)}}
     else
-      # Pid is nil or dead. Check if AgentScheduler still has active agents.
-      if sched_meta_has_active_agents?(task.id) do
-        # TaskRegistry restarted but the EvoGit task is still running under
-        # AgentScheduler. Keep status as :running. We're already subscribed
-        # to the "tasks" PubSub topic from init, so status updates will arrive.
-        #
-        # BUG FIX: Previously this branch returned `{task, state}` unchanged,
-        # meaning the task was NOT added to task_refs and no monitor was set
-        # up. Since the wrapper pid is dead, the {ref, result} handler and the
-        # {:DOWN, ...} handler can never match this task — it becomes
-        # permanently stuck at :running. We now schedule a periodic recheck
-        # so the task is eventually resolved when agents finish.
-        Logger.warning(
-          "TaskRegistry: task #{task.id} has active agents but dead wrapper pid — scheduling recheck"
+      # Pid is nil or dead — foreign instance or crashed wrapper.
+      if lease_valid?(task.lease_expires_at) do
+        # Lease hasn't expired — the owning instance is still alive.
+        # Do NOT mark failed. Do NOT add to task_refs (we don't own it).
+        # The one-shot :lease_sweep (scheduled in init) will catch it if the
+        # lease eventually expires — no periodic recheck needed.
+        Logger.info(
+          "TaskRegistry: task #{task.id} has dead pid but valid lease " <>
+            "(expires_at=#{inspect(task.lease_expires_at)}) — leaving :running for lease sweep"
         )
-
-        Process.send_after(self(), {:recheck_task, task.id}, 30_000)
 
         {%{task | status: :running, ref: nil}, state}
       else
-        # No active agents — actual crash / orphan. Mark as failed.
-        prev_status = task.status
+        # Lease expired (nil or in the past). Check if AgentScheduler still has
+        # active agents (same-VM recovery edge case).
+        if sched_meta_has_active_agents?(task.id) do
+          Logger.warning(
+            "TaskRegistry: task #{task.id} lease expired but has active agents — scheduling recheck"
+          )
 
-        log_failed_transition(task.id, :reconcile, prev_status,
-          result: "Process crashed while task was running",
-          extra: [
-            pid_dead_or_nil: true,
-            process_alive: task.pid != nil and Process.alive?(task.pid),
-            sched_meta_has_active_agents: false
-          ]
-        )
+          Process.send_after(self(), {:recheck_task, task.id}, 30_000)
+          {%{task | status: :running, ref: nil}, state}
+        else
+          # Lease expired AND no active agents — the owner is genuinely gone.
+          prev_status = task.status
 
-        {%{task | status: :failed, ref: nil} |> set_crash_details(), state}
+          log_failed_transition(task.id, :reconcile, prev_status,
+            result: "Lease expired; process crashed while task was running",
+            extra: [
+              pid_dead_or_nil: true,
+              lease_expires_at: inspect(task.lease_expires_at),
+              sched_meta_has_active_agents: false
+            ]
+          )
+
+          {%{task | status: :failed, ref: nil, lease_expires_at: nil} |> set_crash_details(), state}
+        end
       end
     end
   end
@@ -662,11 +689,74 @@ defmodule EvoDash.TaskRegistry do
     end
   end
 
+  # Returns true if the lease has not yet expired (is a future timestamp).
+  # nil means no lease → not valid → eligible for cleanup.
+  defp lease_valid?(nil), do: false
+
+  defp lease_valid?(expires_at) do
+    System.system_time(:second) < expires_at
+  end
+
   defp set_crash_details(%{status: :failed, finished_at: nil} = task) do
     %{task | finished_at: DateTime.utc_now(), result: "Process crashed while task was running"}
   end
 
   defp set_crash_details(task), do: task
+
+  # Shared result-recovery logic used by handle_info({:recheck_task, _}). The
+  # wrapper process is dead so the runtime result was lost (delivered via
+  # GenServer.reply to a dead process). We try a best-effort result lookup from
+  # the sched_meta ETS table. If nothing definitive is found, we mark the task
+  # :completed — agents finished without a recorded failure, so treating it as
+  # completed is the least surprising outcome.
+  defp resolve_recheck_task(state, task_id, %TaskInfo{} = task) do
+    result = lookup_sched_meta_result(task_id)
+
+    {final_status, final_result} =
+      case result do
+        {:ok, _} = ok ->
+          {:completed, ok}
+
+        {:error, _} = err ->
+          {:failed, err}
+
+        {:exit, _} = exit_val ->
+          {:failed, exit_val}
+
+        nil ->
+          Logger.warning(
+            "TaskRegistry: recheck resolved task #{task_id} — no result found, " <>
+              "marking :completed (agents finished, wrapper was dead)"
+          )
+
+          {:completed, nil}
+      end
+
+    if final_status == :failed do
+      log_failed_transition(task_id, :recheck_resolve, task.status, result: final_result)
+    end
+
+    finished_at = DateTime.utc_now()
+
+    updated = %{
+      task
+      | status: final_status,
+        result: final_result,
+        finished_at: finished_at,
+        lease_expires_at: nil
+    }
+
+    EvoDash.Store.put_task(state.task_store, updated)
+    cleanup_expired_tasks(state)
+
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+
+    Logger.info(
+      "TaskRegistry: recheck resolved task #{task_id} to #{final_status}"
+    )
+
+    {:noreply, state}
+  end
 
   # --- Failed-Transition Diagnostic Logging ---
   #
@@ -1034,6 +1124,8 @@ defmodule EvoDash.TaskRegistry do
                 else: task.finished_at
 
             updated = %{task | status: status, finished_at: finished_at}
+            updated = if status in [:completed, :failed, :cancelled],
+                       do: %{updated | lease_expires_at: nil}, else: updated
             EvoDash.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
@@ -1190,6 +1282,77 @@ defmodule EvoDash.TaskRegistry do
     {:noreply, state}
   end
 
+  # Periodic heartbeat handler. Renews leases for ALL tasks this registry owns
+  # (in task_refs that are running/pending), so that we remain the authoritative
+  # owner. This is purely renewal — no sweeping happens here. Reschedules itself.
+  @impl true
+  def handle_info(:heartbeat, state) do
+    now = System.system_time(:second)
+
+    # Renew leases for owned tasks (those in task_refs).
+    Enum.each(state.task_refs, fn {task_id, _ref} ->
+      case task_get(state, task_id) do
+        %TaskInfo{status: s} = task when s in [:running, :pending] ->
+          EvoDash.Store.put_task(state.task_store, %{task | lease_expires_at: now + @lease_duration})
+
+        _ ->
+          :ok
+      end
+    end)
+
+    Process.send_after(self(), :heartbeat, @heartbeat_interval)
+    {:noreply, state}
+  end
+
+  # One-shot lease-expiry sweep handler. Sweeps ALL running tasks we DON'T own
+  # with expired leases and no active sched_meta agents, marking them :failed
+  # (the owning instance is gone). This fires once (scheduled in init after the
+  # lease duration) and does NOT reschedule itself — any new foreign instance
+  # performs its own pair of checks on its own startup.
+  @impl true
+  def handle_info(:lease_sweep, state) do
+    owned_ids = MapSet.new(Map.keys(state.task_refs))
+
+    # Track whether any task was actually marked failed so we only
+    # broadcast/cleanup when something changed.
+    changed =
+      select_all_tasks(state)
+      |> Enum.filter(fn task ->
+        task.status == :running and
+          task.id not in owned_ids and
+          not lease_valid?(task.lease_expires_at)
+      end)
+      |> Enum.reduce(false, fn task, acc ->
+        if sched_meta_has_active_agents?(task.id) do
+          # Same VM, agents still active — skip (handled by :recheck_task)
+          acc
+        else
+          log_failed_transition(task.id, :lease_sweep, task.status,
+            result: "Lease expired; owning instance no longer renewing",
+            extra: [lease_expires_at: inspect(task.lease_expires_at)]
+          )
+
+          updated = %{
+            task
+            | status: :failed,
+              lease_expires_at: nil,
+              finished_at: DateTime.utc_now(),
+              result: "Lease expired; owning instance no longer renewing"
+          }
+
+          EvoDash.Store.put_task(state.task_store, updated)
+          true
+        end
+      end)
+
+    if changed do
+      cleanup_expired_tasks(state)
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    end
+
+    {:noreply, state}
+  end
+
   # Periodic recheck for tasks that had active agents but a dead wrapper pid at
   # reconcile time. The task could not be added to task_refs (no live process to
   # monitor), so the normal {ref, result} / {:DOWN, ...} handlers can never fire.
@@ -1219,52 +1382,7 @@ defmodule EvoDash.TaskRegistry do
           Process.send_after(self(), {:recheck_task, task_id}, 30_000)
           {:noreply, state}
         else
-          # Agents no longer active. The wrapper process is dead so the runtime
-          # result was lost (delivered via GenServer.reply to a dead process).
-          # Try a best-effort result lookup from the sched_meta ETS table.
-          result = lookup_sched_meta_result(task_id)
-
-          {final_status, final_result} =
-            case result do
-              {:ok, _} = ok ->
-                {:completed, ok}
-
-              {:error, _} = err ->
-                {:failed, err}
-
-              {:exit, _} = exit_val ->
-                {:failed, exit_val}
-
-              nil ->
-                # No definitive result found. Agents finished without a recorded
-                # failure — treat as completed.
-                Logger.warning(
-                  "TaskRegistry: recheck resolved task #{task_id} — no result found, " <>
-                    "marking :completed (agents finished, wrapper was dead)"
-                )
-
-                {:completed, nil}
-            end
-
-          finished_at = DateTime.utc_now()
-
-          updated = %{
-            task
-            | status: final_status,
-              result: final_result,
-              finished_at: finished_at
-          }
-
-          EvoDash.Store.put_task(state.task_store, updated)
-          cleanup_expired_tasks(state)
-
-          Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
-
-          Logger.info(
-            "TaskRegistry: recheck resolved task #{task_id} to #{final_status}"
-          )
-
-          {:noreply, state}
+          resolve_recheck_task(state, task_id, task)
         end
     end
   end

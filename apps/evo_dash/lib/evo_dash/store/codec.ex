@@ -31,7 +31,7 @@ defmodule EvoDash.Store.Codec do
   alias EvoDash.TaskInfo
   alias EvoDash.RecentProject
 
-  @task_columns ~w(id type status opts pid started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata)
+  @task_columns ~w(id type status opts pid started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at)
   @project_columns ~w(path name last_opened_at)
 
   @usage_fields [
@@ -75,7 +75,8 @@ defmodule EvoDash.Store.Codec do
       Map.get(task, :agent_count),
       Map.get(task, :base_sha),
       Map.get(task, :commit_sha),
-      encode_archive(Map.get(task, :archive_metadata))
+      encode_archive(Map.get(task, :archive_metadata)),
+      Map.get(task, :lease_expires_at)
     ]
   end
 
@@ -105,7 +106,8 @@ defmodule EvoDash.Store.Codec do
       agent_count,
       base_sha,
       commit_sha,
-      archive_metadata
+      archive_metadata,
+      lease_expires_at
     ] = row
 
     %TaskInfo{
@@ -124,7 +126,8 @@ defmodule EvoDash.Store.Codec do
       agent_count: agent_count,
       base_sha: base_sha,
       commit_sha: commit_sha,
-      archive_metadata: decode_archive(archive_metadata)
+      archive_metadata: decode_archive(archive_metadata),
+      lease_expires_at: lease_expires_at
     }
   end
 

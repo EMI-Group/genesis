@@ -739,6 +739,46 @@ defmodule EvoDash.StoreTest do
       end
     end
 
+    test "lease_expires_at integer round-trips" do
+      task = %TaskInfo{
+        id: "rt-lease",
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: 1_234_567_890
+      }
+
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-lease")
+
+      assert %TaskInfo{} = fetched
+      assert fetched.lease_expires_at == 1_234_567_890
+    end
+
+    test "lease_expires_at nil round-trips" do
+      task = %TaskInfo{
+        id: "rt-lease-nil",
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil,
+        lease_expires_at: nil
+      }
+
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-lease-nil")
+
+      assert %TaskInfo{} = fetched
+      assert fetched.lease_expires_at == nil
+    end
+
     test "unknown atom value in DB decodes to nil (never crashes)", %{sqlite_path: sqlite_path} do
       # Simulate the bug: inject a raw string that is not a known atom.
       {:ok, conn} = Xqlite.open(sqlite_path)

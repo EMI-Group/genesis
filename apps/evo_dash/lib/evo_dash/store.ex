@@ -197,6 +197,7 @@ defmodule EvoDash.Store do
     case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal) do
       {:ok, conn} ->
         create_tables(conn)
+        migrate_schema(conn)
 
         {:ok, %{conn: conn, data_dir: data_dir}}
 
@@ -249,8 +250,8 @@ defmodule EvoDash.Store do
               INSERT OR REPLACE INTO tasks
               (id, type, status, opts, pid, started_at, finished_at, logs,
                result, review_status, usage, agent_count, base_sha, commit_sha,
-               archive_metadata)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+               archive_metadata, lease_expires_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
               """,
               values
             )
@@ -418,7 +419,8 @@ defmodule EvoDash.Store do
           agent_count INTEGER,
           base_sha TEXT,
           commit_sha TEXT,
-          archive_metadata TEXT
+          archive_metadata TEXT,
+          lease_expires_at INTEGER
         )
         """,
         []
@@ -452,6 +454,29 @@ defmodule EvoDash.Store do
       )
 
     :ok
+  end
+
+  ## Private — Schema migration
+
+  # Idempotent schema migration: adds the `lease_expires_at` column to the tasks
+  # table if it doesn't already exist (handles databases created before the
+  # column was introduced). Safe to run on every init, including fresh DBs where
+  # CREATE TABLE already includes the column.
+  defp migrate_schema(conn) do
+    columns = existing_columns(conn, "tasks")
+
+    if "lease_expires_at" not in columns do
+      {:ok, _} =
+        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN lease_expires_at INTEGER", [])
+    end
+
+    :ok
+  end
+
+  defp existing_columns(conn, table) do
+    {:ok, %{rows: rows}} = XqliteNIF.query(conn, "PRAGMA table_info(#{table})", [])
+    # PRAGMA table_info returns rows of [cid, name, type, notnull, dflt_value, pk]
+    Enum.map(rows, fn [_cid, name | _] -> name end)
   end
 
   ## Private — SQL builders

@@ -18,7 +18,8 @@ defmodule EvoDash.TaskInfo do
     agent_count: nil,
     base_sha: nil,
     commit_sha: nil,
-    archive_metadata: nil
+    archive_metadata: nil,
+    lease_expires_at: nil
   ]
 
   @type t :: %__MODULE__{
@@ -37,6 +38,7 @@ defmodule EvoDash.TaskInfo do
           agent_count: pos_integer() | nil,
           base_sha: String.t() | nil,
           commit_sha: String.t() | nil,
-          archive_metadata: [map()] | nil
+          archive_metadata: [map()] | nil,
+          lease_expires_at: integer() | nil
         }
 end
