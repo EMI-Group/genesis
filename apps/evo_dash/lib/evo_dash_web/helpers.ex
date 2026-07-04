@@ -527,6 +527,8 @@ defmodule EvoDashWeb.Helpers do
   Formats the cache hit rate as a percentage (cached tokens / input tokens).
   """
   def format_cache_hit_rate(usage) when is_map(usage) do
+    # Map.get with default is used instead of dot access because the guard
+    # accepts is_map/1 (plain maps in addition to EvoGit.Agent.Usage structs).
     input = Map.get(usage, :input_tokens, 0)
     cached = Map.get(usage, :cached_tokens, 0)
 

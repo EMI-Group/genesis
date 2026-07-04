@@ -1042,7 +1042,7 @@ defmodule EvoDashWeb.DashboardLive do
     pending_tasks =
       all_tasks
       |> Enum.filter(fn task ->
-        task.status == :completed and is_nil(Map.get(task, :review_status)) and
+        task.status == :completed and is_nil(task.review_status) and
           show_review_button?(task)
       end)
       |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})

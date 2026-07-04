@@ -257,6 +257,13 @@ defmodule EvoDashWeb.AgentsLive do
       children = find_children(id, sched_metas)
       history = load_agent_history(id)
 
+      total_tokens = agent_state && Map.get(agent_state, :total_tokens, 0)
+      compression_count = agent_state && Map.get(agent_state, :compression_count, 0)
+      compression_threshold = safe_compression_threshold()
+
+      compression_pct =
+        trunc(min(total_tokens / max(compression_threshold, 1) * 100, 100))
+
       %{
         id: id,
         task_local_id: agent_state && agent_state.task_local_id,
@@ -283,9 +290,10 @@ defmodule EvoDashWeb.AgentsLive do
         result_sent: meta.result_sent,
         history: history,
         usage: (agent_state && agent_state.usage) || EvoGit.Agent.Usage.zero(),
-        total_tokens: agent_state && Map.get(agent_state, :total_tokens, 0),
-        compression_count: agent_state && Map.get(agent_state, :compression_count, 0),
-        compression_threshold: safe_compression_threshold()
+        total_tokens: total_tokens,
+        compression_count: compression_count,
+        compression_threshold: compression_threshold,
+        compression_pct: compression_pct
       }
     end)
     |> Enum.sort_by(&{&1.depth, &1.id})
@@ -328,22 +336,22 @@ defmodule EvoDashWeb.AgentsLive do
             ""
         end
 
-      metadata = Map.get(msg, :metadata, %{})
+      metadata = msg.metadata
       turn = Map.get(metadata, :turn, 0)
 
       base_data = %{
         content: content_text,
-        tool_calls: Map.get(msg, :tool_calls),
+        tool_calls: msg.tool_calls,
         metadata: metadata
       }
 
       data =
         case msg.role do
           :tool ->
-            Map.put(base_data, :tool_name, Map.get(msg, :name))
+            Map.put(base_data, :tool_name, msg.name)
 
           :assistant ->
-            Map.put(base_data, :reasoning_details, Map.get(msg, :reasoning_details))
+            Map.put(base_data, :reasoning_details, msg.reasoning_details)
 
           _ ->
             base_data
