@@ -158,40 +158,6 @@ defmodule EvoGit.Core.ContextNode do
     {:error, :invalid_path}
   end
 
-  # Reads the CONTEXT.md contract for a directory node.
-  # Per the design spec, only directories have explicit CONTEXT.md files.
-  # File-level context is handled implicitly by LLMs, not explicitly modeled.
-  @spec read_context(t()) :: {:ok, String.t()} | {:error, term()}
-  defp read_context(%__MODULE__{} = node) do
-    abs_path = Path.expand(node.path, node.repo)
-
-    if File.dir?(abs_path) do
-      contract_path = Path.join(abs_path, "CONTEXT.md")
-      File.read(contract_path)
-    else
-      # Files don't have explicit CONTEXT.md - LLMs handle file-level context naturally
-      {:ok, ""}
-    end
-  end
-
-  # Returns the relative path to the CONTEXT.md file for a directory node.
-  # Per the design spec, only directories have explicit CONTEXT.md files.
-  @spec context_file_path(t()) :: String.t()
-  defp context_file_path(%__MODULE__{} = node) do
-    abs_path = Path.expand(node.path, node.repo)
-
-    if File.dir?(abs_path) do
-      if node.path == "./" do
-        "./CONTEXT.md"
-      else
-        Path.join(node.path, "CONTEXT.md")
-      end
-    else
-      # Files don't have explicit context files
-      nil
-    end
-  end
-
   @doc """
   Builds the string context representation for the AI by traversing the context tree.
   Per the design spec, only directories are included in the explicit context hierarchy.
@@ -214,35 +180,45 @@ defmodule EvoGit.Core.ContextNode do
 
     case hierarchy_nodes(relative_path, repo_path) do
       {:ok, nodes} ->
+        context_max = context_max_bytes()
+
         context_contents =
           nodes
-          # Only include directories in the explicit context hierarchy
-          |> Enum.filter(fn node ->
+          # Only include directories in the explicit context hierarchy.
+          # Compute abs_path once per node and thread it through.
+          |> Enum.flat_map(fn node ->
             abs_path = Path.expand(node.path, node.repo)
-            File.dir?(abs_path)
-          end)
-          |> Enum.map(fn node ->
-            content =
-              case read_context(node) do
-                {:ok, c} -> c
-                _ -> ""
-              end
 
-            file = context_file_path(node)
+            if File.dir?(abs_path) do
+              content =
+                case File.read(Path.join(abs_path, "CONTEXT.md")) do
+                  {:ok, c} -> c
+                  _ -> ""
+                end
 
-            # Strip YAML front matter before presenting to agents
-            display_content = EvoGit.Skills.strip_front_matter(content)
+              file =
+                if node.path == "./" do
+                  "./CONTEXT.md"
+                else
+                  Path.join(node.path, "CONTEXT.md")
+                end
 
-            truncated_content =
-              if byte_size(display_content) > context_max_bytes() do
-                require Logger
-                Logger.warning("Content truncated for file: #{file}")
-                binary_part(display_content, 0, context_max_bytes()) <> "\n... [Content Truncated] ..."
-              else
-                display_content
-              end
+              # Strip YAML front matter before presenting to agents
+              display_content = EvoGit.Skills.strip_front_matter(content)
 
-            "File: #{file}\n```\n#{truncated_content}\n```"
+              truncated_content =
+                if byte_size(display_content) > context_max do
+                  require Logger
+                  Logger.warning("Content truncated for file: #{file}")
+                  binary_part(display_content, 0, context_max) <> "\n... [Content Truncated] ..."
+                else
+                  display_content
+                end
+
+              ["File: #{file}\n```\n#{truncated_content}\n```"]
+            else
+              []
+            end
           end)
           |> Enum.join("\n\n")
 
