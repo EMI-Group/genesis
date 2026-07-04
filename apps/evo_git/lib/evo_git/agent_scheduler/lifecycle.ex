@@ -125,10 +125,10 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   end
 
   defp do_handle_agent_crash(state, agent_id, reason, meta) do
-    Logger.error(
+    Logger.error(fn ->
       "AgentScheduler: Agent #{agent_id} crashed: #{inspect(reason)}. " <>
         "Retry #{meta.retries}/#{state.agent_max_retries}"
-    )
+    end)
 
     if meta.retries < state.agent_max_retries do
       # On retry, keep the persistent worktree - just update retry count and status

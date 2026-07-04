@@ -3,6 +3,8 @@ defmodule EvoGit.Agent.Tools.Shared do
   Shared utility functions for tool implementations.
   """
 
+  @curly_quotes ~r/\x{2018}|\x{2019}|\x{201C}|\x{201D}/u
+
   @doc """
   Safely fetches a required string argument from the args map.
   Returns {:ok, value} or {:error, message} with a helpful error message.
@@ -131,11 +133,12 @@ defmodule EvoGit.Agent.Tools.Shared do
   U+2018 ' → ', U+2019 ' → ', U+201C " → ", U+201D " → "
   """
   def normalize_quotes(str) do
-    str
-    |> String.replace("\u2018", "'")
-    |> String.replace("\u2019", "'")
-    |> String.replace("\u201C", "\"")
-    |> String.replace("\u201D", "\"")
+    String.replace(str, @curly_quotes, fn
+      "\u2018" -> "'"
+      "\u2019" -> "'"
+      "\u201C" -> "\""
+      "\u201D" -> "\""
+    end)
   end
 
   @doc """

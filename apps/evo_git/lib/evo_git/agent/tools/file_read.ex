@@ -130,10 +130,7 @@ defmodule EvoGit.Agent.Tools.FileRead do
     with {:ok, raw_content} <- File.read(file_path) do
       content = strip_bom(raw_content)
 
-      lines =
-        content
-        |> String.split("\n")
-        |> Enum.map(fn line -> String.replace_suffix(line, "\r", "") end)
+      lines = for line <- String.split(content, "\n"), do: String.replace_suffix(line, "\r", "")
 
       total_lines = length(lines)
 
