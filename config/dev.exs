@@ -60,8 +60,8 @@ config :logger, :default_formatter,
   format: "[$level] $message $metadata\n",
   metadata: [:module, :pid, :line, :function]
 
-# Enable SASL/OTP reporting so supervisor restarts are visible
-config :logger, handle_otp_reports: true, handle_sasl_reports: true
+# SASL/OTP supervisor progress reports are disabled to reduce noise.
+# Set handle_otp_reports: true, handle_sasl_reports: true to re-enable.
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
