@@ -184,7 +184,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
         # Detect shell from shebang, default to /bin/sh
         shell =
-          case String.split(script_content, "\n") |> List.first() do
+          case String.split(script_content, "\n", parts: 2) |> List.first() do
             "#!" <> rest -> String.trim(rest)
             _ -> Platform.shell()
           end
@@ -245,8 +245,11 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     branch_name =
       path
       |> Path.basename()
-      |> String.replace_prefix("worker_", "evogit-agent-")
-      |> String.replace("_", "-")
+      |> then(
+        &Regex.replace(~r/^worker_(.+)$/, &1, fn _, rest ->
+          "evogit-agent-" <> String.replace(rest, "_", "-")
+        end)
+      )
 
     case File.rm_rf(path) do
       {:ok, _} ->
