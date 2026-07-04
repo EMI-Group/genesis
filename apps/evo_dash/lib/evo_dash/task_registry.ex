@@ -1299,17 +1299,19 @@ defmodule EvoDash.TaskRegistry do
     # 2. Lease-expiry sweep: find running tasks we DON'T own with expired leases.
     owned_ids = MapSet.new(Map.keys(state.task_refs))
 
-    {changed, _} =
+    # Track whether any task was actually marked failed so we only
+    # broadcast/cleanup when something changed.
+    changed =
       select_all_tasks(state)
       |> Enum.filter(fn task ->
         task.status == :running and
           task.id not in owned_ids and
           not lease_valid?(task.lease_expires_at)
       end)
-      |> Enum.map_reduce(false, fn task, _acc ->
+      |> Enum.reduce(false, fn task, acc ->
         if sched_meta_has_active_agents?(task.id) do
           # Same VM, agents still active — skip (handled by recheck_lease)
-          {task.id, false}
+          acc
         else
           log_failed_transition(task.id, :lease_sweep, task.status,
             result: "Lease expired; owning instance no longer renewing",
@@ -1325,7 +1327,7 @@ defmodule EvoDash.TaskRegistry do
           }
 
           EvoDash.Store.put_task(state.task_store, updated)
-          {task.id, true}
+          true
         end
       end)
 
