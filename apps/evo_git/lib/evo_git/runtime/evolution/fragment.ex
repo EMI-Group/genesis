@@ -36,6 +36,13 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
     inserted_at: nil
   ]
 
+  @func_re ~r/\b(def|defp|function|fn|func|void|class|method|sub|defn)\s+\w/
+  @ctrl_re ~r/\b(if|else|elif|for|while|switch|case|cond|match|try|catch|unless|foreach)\b/
+  @import_re ~r/\b(use|import|require|include|from\s+\w+\s+import|#include|#import)\b/
+  @string_literal_re ~r/"[^"]*"|'[^']*'/
+  @numeric_literal_re ~r/\b\d+\.?\d*\b/
+  @indent_re ~r/^(\s+)/
+
   @doc """
   Creates a new fragment with an auto-generated ID.
 
@@ -86,13 +93,13 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
 
     %{
       nesting_depth: compute_nesting_depth(lines),
-      function_count: count_matches(content, ~r/\b(def|defp|function|fn|func|void|class|method|sub|defn)\s+\w/),
-      control_flow_count: count_matches(content, ~r/\b(if|else|elif|for|while|switch|case|cond|match|try|catch|unless|foreach)\b/),
+      function_count: count_matches(content, @func_re),
+      control_flow_count: count_matches(content, @ctrl_re),
       comment_density: compute_comment_density(lines),
-      import_count: count_matches(content, ~r/\b(use|import|require|include|from\s+\w+\s+import|#include|#import)\b/),
+      import_count: count_matches(content, @import_re),
       avg_line_length: compute_avg_line_length(non_empty_lines),
-      string_literal_count: count_matches(content, ~r/"[^"]*"|'[^']*'/),
-      numeric_literal_count: count_matches(content, ~r/\b\d+\.?\d*\b/),
+      string_literal_count: count_matches(content, @string_literal_re),
+      numeric_literal_count: count_matches(content, @numeric_literal_re),
       line_count: line_count,
       char_count: char_count
     }
@@ -182,7 +189,7 @@ defmodule EvoGit.Runtime.Evolution.Fragment do
   defp compute_nesting_depth(lines) do
     lines
     |> Enum.map(fn line ->
-      case Regex.run(~r/^(\s+)/, line) do
+      case Regex.run(@indent_re, line) do
         [_, spaces] ->
           # Count indentation level: tabs count as 4, spaces count as-is
           spaces

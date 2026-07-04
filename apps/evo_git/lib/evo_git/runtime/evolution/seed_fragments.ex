@@ -11,6 +11,9 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
 
   require Logger
 
+  @blank_line_sep_re ~r/\n\s*\n/
+  @domain_code_re ~r/\[(\w+)\]\s*\n```elixir\s*\n(.*?)```/s
+
   @doc """
   Returns all built-in seed fragments.
 
@@ -141,7 +144,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
   @spec seeds_from_content(String.t()) :: [Fragment.t()]
   def seeds_from_content(content) when is_binary(content) do
     content
-    |> String.split(~r/\n\s*\n/, trim: true)
+    |> String.split(@blank_line_sep_re, trim: true)
     |> Enum.reject(&(String.trim(&1) == ""))
     |> Enum.map(fn fragment_content ->
       Fragment.new(fragment_content, language: "unknown", domain: "user_seed", source: :seed)
@@ -182,9 +185,7 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
   @doc false
   def parse_code_blocks(text) when is_binary(text) do
     # Match patterns like [domain]\n```elixir\n...code...\n```
-    regex = ~r/\[(\w+)\]\s*\n```elixir\s*\n(.*?)```/s
-
-    Regex.scan(regex, text, capture: :all_but_first)
+    Regex.scan(@domain_code_re, text, capture: :all_but_first)
     |> Enum.map(fn [domain_str, code] ->
       Fragment.new(String.trim(code),
         language: "elixir",
