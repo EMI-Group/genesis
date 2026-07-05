@@ -29,6 +29,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 ### Mix Tasks
 
 - `mix translate` — AI-powered POT file translation using `deepseek-v4-flash`; usage: `mix translate <pot_file> <lang1|all> [lang2] ... [--force] [--prefix <prefix>]`
+- `mix migrate_task_pids` — One-time migration to drop the legacy `pid` column from the `tasks` SQLite table. Runs in **dry-run mode by default** (copies the DB to a temp file, runs migration + validation on the copy, reports results, never touches the real DB). Pass `--apply` to modify the real database (requires confirmation prompt). See `lib/mix/tasks/migrate_task_pids.ex`.
 
 ### Routes
 
