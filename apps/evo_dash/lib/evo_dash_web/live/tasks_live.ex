@@ -168,7 +168,7 @@ defmodule EvoDashWeb.TasksLive do
           </div>
         <% else %>
           <%= for {task, idx} <- Enum.with_index(@filtered_tasks) do %>
-            <div class={["relative has-[[open]]:z-30 animate-fade-in-up", animation_delay_class(idx)]}>
+            <div class={["relative z-10 has-[[open]]:z-30 animate-fade-in-up", animation_delay_class(idx)]}>
               <EvoDashWeb.DashboardComponents.task_card
                 task={task}
                 show_details={MapSet.member?(@expanded_task_ids, task.id)}
