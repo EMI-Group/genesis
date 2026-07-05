@@ -14,6 +14,7 @@ defmodule EvoDash.Application do
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
       {EvoDash.Store, data_dir: Path.join(data_dir, "tasks.sqlite")},
+      {Registry, keys: :unique, name: EvoDash.TaskRegistry.ProcessRegistry},
       EvoDash.TaskRegistry,
       EvoDashWeb.Endpoint
     ]

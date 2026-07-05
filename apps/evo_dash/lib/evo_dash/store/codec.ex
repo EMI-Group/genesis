@@ -21,9 +21,6 @@ defmodule EvoDash.Store.Codec do
     * `decode_reason/1` — best-effort atom recovery. `String.to_existing_atom/1`
       has no non-crashing variant; an unknown reason string legitimately stays
       a string (it's a valid alternative representation, not "bad data").
-    * `decode_pid/1` — untrusted DB-stored pid strings. `:erlang.list_to_pid/1`
-      has no non-crashing variant; pid strings are always stale after a VM
-      restart, and returning `nil` is the correct semantic.
   """
 
   require Logger
@@ -31,7 +28,7 @@ defmodule EvoDash.Store.Codec do
   alias EvoDash.TaskInfo
   alias EvoDash.RecentProject
 
-  @task_columns ~w(id type status opts pid started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at)
+  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at)
   @project_columns ~w(path name last_opened_at)
 
   @usage_fields [
@@ -72,7 +69,6 @@ defmodule EvoDash.Store.Codec do
       encode_atom(task.type),
       encode_atom(task.status),
       encode_opts(task.opts),
-      encode_pid(task.pid),
       encode_datetime(task.started_at),
       encode_datetime(task.finished_at),
       encode_logs(task.logs),
@@ -103,7 +99,6 @@ defmodule EvoDash.Store.Codec do
       type,
       status,
       opts,
-      pid,
       started_at,
       finished_at,
       logs,
@@ -123,7 +118,6 @@ defmodule EvoDash.Store.Codec do
       status: decode_atom(status) || :pending,
       opts: decode_opts(opts),
       ref: nil,
-      pid: decode_pid(pid),
       started_at: decode_datetime(started_at),
       finished_at: decode_datetime(finished_at),
       logs: decode_logs(logs),
@@ -526,29 +520,6 @@ defmodule EvoDash.Store.Codec do
   def decode_archive(str) when is_binary(str) do
     case Jason.decode(str) do
       {:ok, value} when is_list(value) -> value
-      _ -> nil
-    end
-  end
-
-  # --- pid ---
-  def encode_pid(nil), do: nil
-
-  def encode_pid(pid) when is_pid(pid) do
-    pid |> :erlang.pid_to_list() |> List.to_string()
-  end
-
-  def decode_pid(nil), do: nil
-
-  # Justified try/rescue: (1) Do we expect this error? Yes — pid strings from a
-  # previous VM run are always stale/invalid after a restart; the DB persists
-  # them across restarts. (2) Is try/rescue cleanest? Yes —
-  # :erlang.list_to_pid/1 has no non-crashing variant; it raises on malformed
-  # input. Returning nil is the correct semantic (no live pid = nil). This is a
-  # legitimate boundary with untrusted persisted data.
-  def decode_pid(str) when is_binary(str) do
-    try do
-      str |> String.to_charlist() |> :erlang.list_to_pid()
-    rescue
       _ -> nil
     end
   end

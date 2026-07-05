@@ -14,6 +14,8 @@ defmodule EvoDash.TaskRegistry do
 
   alias EvoDash.TaskInfo
 
+  @process_registry EvoDash.TaskRegistry.ProcessRegistry
+
   @max_recent_projects 10
 
   @lease_duration 120
@@ -178,7 +180,6 @@ defmodule EvoDash.TaskRegistry do
       status: :running,
       opts: opts,
       ref: task_ref,
-      pid: task_ref.pid,
       started_at: DateTime.utc_now(),
       finished_at: nil,
       logs: [],
@@ -469,12 +470,14 @@ defmodule EvoDash.TaskRegistry do
   Execute a task. This function runs in a separate process under Task.Supervisor.
   """
   def execute_task(:genesis, opts, task_id) do
+    register_task_process(task_id)
     {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id)
     prompt = Keyword.get(opts, :prompt, "")
     EvoGit.Runtime.Genesis.run(prompt, runtime_opts)
   end
 
   def execute_task(:evolve, opts, task_id) do
+    register_task_process(task_id)
     resume_from = Keyword.get(opts, :resume_from)
 
     {objective, runtime_opts} =
@@ -490,6 +493,7 @@ defmodule EvoDash.TaskRegistry do
   end
 
   def execute_task(:extract_skills, opts, task_id) do
+    register_task_process(task_id)
     repo_path = Keyword.fetch!(opts, :path)
     Application.ensure_all_started(:evo_git)
 
@@ -519,6 +523,15 @@ defmodule EvoDash.TaskRegistry do
   end
 
   ## Private Functions
+
+  # Registers the current process (the spawned task process) in the
+  # @process_registry under the task_id key. The Registry automatically
+  # monitors the registered process and removes the entry when it dies,
+  # providing O(1) lookup of "is this task's process alive?" by task_id.
+  # This replaces the previous DB-persisted pid approach.
+  defp register_task_process(task_id) do
+    Registry.register(@process_registry, task_id, :task)
+  end
 
   defp generate_id do
     :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
@@ -556,68 +569,78 @@ defmodule EvoDash.TaskRegistry do
   end
 
   # Reconcile a task's status after a registry restart.
-  # Running/pending tasks that are still alive (pid exists and Process.alive?/1)
-  # are kept as :running and re-monitored. Dead or pid-less tasks are evaluated
+  # Running/pending tasks whose process is still alive in the @process_registry
+  # (i.e. the task process survived under the sibling TaskSupervisor) are kept
+  # as :running and re-monitored. Tasks with no live process are evaluated
   # using lease-based logic: a running task is only marked :failed if its lease
-  # has ACTUALLY expired (not just because the pid is dead/foreign). This prevents
-  # a second BEAM VM instance from incorrectly marking the first instance's
-  # running tasks as :failed. Other statuses are left unchanged.
+  # has ACTUALLY expired (not just because the process is dead/foreign). This
+  # prevents a second BEAM VM instance from incorrectly marking the first
+  # instance's running tasks as :failed. Other statuses are left unchanged.
+  #
+  # The Registry is a sibling under :one_for_one supervision, so it survives
+  # a TaskRegistry restart — meaning Registry.lookup will find task processes
+  # that are still alive after a TaskRegistry crash. After a full VM restart,
+  # both Registry and task processes are gone (lookup returns []), and the
+  # lease/sched_meta logic handles it.
   defp reconcile_task_status(%TaskInfo{status: status} = task, state)
        when status in [:running, :pending] do
-    if task.pid != nil and Process.alive?(task.pid) do
-      # Task process is still alive under the sibling TaskSupervisor.
-      # Re-monitor, re-own, renew lease.
-      ref = Process.monitor(task.pid)
-      # Construct a %Task{} matching the shape of a Task.Supervisor task ref so
-      # that the existing pattern matches (%Task{pid:, ref:, owner:}) keep
-      # working. :mfa is required by the struct but unused for re-monitors.
-      task_ref = %Task{pid: task.pid, ref: ref, owner: self(), mfa: nil}
+    case Registry.lookup(@process_registry, task.id) do
+      [{pid, _}] ->
+        # Task process is still alive under the sibling TaskSupervisor.
+        # Re-monitor, re-own, renew lease.
+        ref = Process.monitor(pid)
+        # Construct a %Task{} matching the shape of a Task.Supervisor task ref
+        # so that the existing pattern matches (%Task{pid:, ref:, owner:}) keep
+        # working. :mfa is required by the struct but unused for re-monitors.
+        task_ref = %Task{pid: pid, ref: ref, owner: self(), mfa: nil}
 
-      Logger.warning("TaskRegistry: re-monitoring still-running task #{task.id} after restart")
+        Logger.warning("TaskRegistry: re-monitoring still-running task #{task.id} after restart")
 
-      now = System.system_time(:second)
+        now = System.system_time(:second)
 
-      {%{task | status: :running, ref: nil, lease_expires_at: now + @lease_duration},
-       %{state | task_refs: Map.put(state.task_refs, task.id, task_ref)}}
-    else
-      # Pid is nil or dead — foreign instance or crashed wrapper.
-      if lease_valid?(task.lease_expires_at) do
-        # Lease hasn't expired — the owning instance is still alive.
-        # Do NOT mark failed. Do NOT add to task_refs (we don't own it).
-        # The one-shot :lease_sweep (scheduled in init) will catch it if the
-        # lease eventually expires — no periodic recheck needed.
-        Logger.info(
-          "TaskRegistry: task #{task.id} has dead pid but valid lease " <>
-            "(expires_at=#{inspect(task.lease_expires_at)}) — leaving :running for lease sweep"
-        )
+        {%{task | status: :running, ref: nil, lease_expires_at: now + @lease_duration},
+         %{state | task_refs: Map.put(state.task_refs, task.id, task_ref)}}
 
-        {%{task | status: :running, ref: nil}, state}
-      else
-        # Lease expired (nil or in the past). Check if AgentScheduler still has
-        # active agents (same-VM recovery edge case).
-        if sched_meta_has_active_agents?(task.id) do
-          Logger.warning(
-            "TaskRegistry: task #{task.id} lease expired but has active agents — scheduling recheck"
+      [] ->
+        # No live task process — foreign instance, crashed wrapper, or full VM
+        # restart (Registry entries are gone).
+        if lease_valid?(task.lease_expires_at) do
+          # Lease hasn't expired — the owning instance is still alive.
+          # Do NOT mark failed. Do NOT add to task_refs (we don't own it).
+          # The one-shot :lease_sweep (scheduled in init) will catch it if the
+          # lease eventually expires — no periodic recheck needed.
+          Logger.info(
+            "TaskRegistry: task #{task.id} has no live process but valid lease " <>
+              "(expires_at=#{inspect(task.lease_expires_at)}) — leaving :running for lease sweep"
           )
 
-          Process.send_after(self(), {:recheck_task, task.id}, 30_000)
           {%{task | status: :running, ref: nil}, state}
         else
-          # Lease expired AND no active agents — the owner is genuinely gone.
-          prev_status = task.status
+          # Lease expired (nil or in the past). Check if AgentScheduler still has
+          # active agents (same-VM recovery edge case).
+          if sched_meta_has_active_agents?(task.id) do
+            Logger.warning(
+              "TaskRegistry: task #{task.id} lease expired but has active agents — scheduling recheck"
+            )
 
-          log_failed_transition(task.id, :reconcile, prev_status,
-            result: "Lease expired; process crashed while task was running",
-            extra: [
-              pid_dead_or_nil: true,
-              lease_expires_at: inspect(task.lease_expires_at),
-              sched_meta_has_active_agents: false
-            ]
-          )
+            Process.send_after(self(), {:recheck_task, task.id}, 30_000)
+            {%{task | status: :running, ref: nil}, state}
+          else
+            # Lease expired AND no active agents — the owner is genuinely gone.
+            prev_status = task.status
 
-          {%{task | status: :failed, ref: nil, lease_expires_at: nil} |> set_crash_details(), state}
+            log_failed_transition(task.id, :reconcile, prev_status,
+              result: "Lease expired; process crashed while task was running",
+              extra: [
+                no_live_process: true,
+                lease_expires_at: inspect(task.lease_expires_at),
+                sched_meta_has_active_agents: false
+              ]
+            )
+
+            {%{task | status: :failed, ref: nil, lease_expires_at: nil} |> set_crash_details(), state}
+          end
         end
-      end
     end
   end
 

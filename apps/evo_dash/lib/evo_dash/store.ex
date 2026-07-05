@@ -409,7 +409,6 @@ defmodule EvoDash.Store do
           type TEXT,
           status TEXT NOT NULL,
           opts TEXT,
-          pid TEXT,
           started_at TEXT,
           finished_at TEXT,
           logs TEXT,
@@ -468,6 +467,25 @@ defmodule EvoDash.Store do
     if "lease_expires_at" not in columns do
       {:ok, _} =
         XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN lease_expires_at INTEGER", [])
+    end
+
+    if "pid" in columns do
+      # SQLite 3.35.0+ supports DROP COLUMN. Older versions don't — if this
+      # fails, the column is simply left unused and ignored by the codec
+      # (which no longer references it), so it's harmless.
+      # Justified try/rescue: (1) Do we expect this error? Yes — older SQLite
+      # versions or locked tables may reject ALTER TABLE DROP COLUMN. (2) Is
+      # try/rescue cleanest? Yes — there is no non-crashing variant for ALTER
+      # TABLE; the failure is benign (unused column persists).
+      try do
+        {:ok, _} = XqliteNIF.execute(conn, "ALTER TABLE tasks DROP COLUMN pid", [])
+      rescue
+        e ->
+          Logger.warning(
+            "Store: could not drop legacy 'pid' column (harmless, codec ignores it): " <>
+              Exception.message(e)
+          )
+      end
     end
 
     :ok
