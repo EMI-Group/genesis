@@ -20,6 +20,13 @@ Environment-based Elixir configuration for the EvoGit umbrella project. Follows 
   - `receive_timeout`: 600_000 ms (10 min) — default HTTP response timeout
   - `metadata_timeout`: 600_000 ms — streaming metadata collection timeout
   - `thinking_timeout`: 1_000_000 ms (~17 min) — extended timeout for reasoning models
+- **`req_llm`** Finch streaming pool in `runtime.exs` (lines 23–42) — **dynamically sized** from `[scheduler] max_concurrency`:
+  - `stream_pool_count`: `max(max_concurrency + 2, 8)` — number of connections in ReqLLM's Finch streaming pool (default max_concurrency=3 → 8 connections, ReqLLM's own default)
+  - `stream_pool_size`: 1 — connections per pool
+  - `stream_pool_protocols`: `[:http1]` — HTTP/1 only (no HTTP/2 multiplexing)
+  - `stream_pool_timeout`: 120_000 ms (2 min) — time to wait for a free pool connection
+  - Runs at boot *before* `:req_llm` starts its Finch pool, sizing it correctly. The `+2` buffer covers auxiliary non-slot-gated LLM calls (context compression, evolution synthesis, novelty metrics).
+  - **Single global pool**: all providers/models share this one Finch pool — there is no per-model or per-provider pool.
 - **`evo_git` sandbox** in `config.exs` (line 58): `sandbox: :auto` (can be overridden by TOML)
 - **No model, provider, or API key config** is set here — those come from TOML (see below)
 
