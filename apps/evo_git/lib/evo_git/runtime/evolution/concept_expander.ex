@@ -12,6 +12,11 @@ defmodule EvoGit.Runtime.Evolution.ConceptExpander do
   @default_concept_breadth 10
   @default_implementation_depth 5
 
+  @numbered_list_re ~r/^\s*\d+\.\s+(.+)$/m
+  @code_block_re ~r/```(?:elixir)?\s*\n(.*?)```/s
+  @non_alnum_re ~r/[^a-z0-9\s]/
+  @whitespace_re ~r/\s+/
+
   @doc """
   Expands a concept into a list of code fragments.
 
@@ -255,13 +260,13 @@ defmodule EvoGit.Runtime.Evolution.ConceptExpander do
   end
 
   defp parse_numbered_list(text) do
-    ~r/^\s*\d+\.\s+(.+)$/m
+    @numbered_list_re
     |> Regex.scan(text)
     |> Enum.map(fn [_, item] -> String.trim(item) end)
   end
 
   defp parse_code(text) do
-    case Regex.run(~r/```(?:elixir)?\s*\n(.*?)```/s, text) do
+    case Regex.run(@code_block_re, text) do
       [_, code] -> String.trim(code)
       _ -> nil
     end
@@ -272,8 +277,8 @@ defmodule EvoGit.Runtime.Evolution.ConceptExpander do
   defp slugify_domain(topic) do
     topic
     |> String.downcase()
-    |> String.replace(~r/[^a-z0-9\s]/, "")
-    |> String.replace(~r/\s+/, "_")
+    |> String.replace(@non_alnum_re, "")
+    |> String.replace(@whitespace_re, "_")
     |> String.slice(0, 40)
   end
 

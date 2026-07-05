@@ -279,8 +279,8 @@
                           </div>
                           <div class="bg-base-200 rounded-lg p-2.5">
                             <div class="text-xs text-base-content/50"><%= gettext("Context") %></div>
-                            <div class="text-sm font-semibold"><%= Map.get(agent, :compression_count, 0) %> (<%= trunc(min(Map.get(agent, :total_tokens, 0) / max(Map.get(agent, :compression_threshold, 100_000), 1) * 100, 100)) %>%)</div>
-                            <progress class="progress progress-primary w-full mt-1" value={trunc(min(Map.get(agent, :total_tokens, 0) / max(Map.get(agent, :compression_threshold, 100_000), 1) * 100, 100))} max="100"></progress>
+                            <div class="text-sm font-semibold"><%= agent.compression_count %> (<%= agent.compression_pct %>%)</div>
+                            <progress class="progress progress-primary w-full mt-1" value={agent.compression_pct} max="100"></progress>
                           </div>
                         </div>
                       </div>

@@ -193,16 +193,21 @@ defmodule EvoGit.Agent.ContextCompression do
   @spec extract_message_content(map()) :: String.t()
   def extract_message_content(msg) do
     msg.content
-    |> Enum.map(fn
-      %{type: :text, text: text} when is_binary(text) -> text
-      %{type: :thinking, text: text} when is_binary(text) -> "[THINKING]\n#{text}"
-      %{type: :image_url} -> "[IMAGE]"
-      %{type: :video_url} -> "[VIDEO]"
-      %{type: :image} -> "[IMAGE]"
-      %{type: :file, filename: filename} -> "[FILE: #{filename}]"
-      _ -> ""
+    |> Enum.reduce([], fn part, acc ->
+      text =
+        case part do
+          %{type: :text, text: text} when is_binary(text) -> text
+          %{type: :thinking, text: text} when is_binary(text) -> "[THINKING]\n#{text}"
+          %{type: :image_url} -> "[IMAGE]"
+          %{type: :video_url} -> "[VIDEO]"
+          %{type: :image} -> "[IMAGE]"
+          %{type: :file, filename: filename} -> "[FILE: #{filename}]"
+          _ -> ""
+        end
+
+      if String.trim(text) == "", do: acc, else: [text | acc]
     end)
-    |> Enum.reject(&(String.trim(&1) == ""))
+    |> Enum.reverse()
     |> Enum.join("\n")
   end
 end

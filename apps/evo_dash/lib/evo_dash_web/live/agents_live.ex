@@ -24,19 +24,20 @@ defmodule EvoDashWeb.AgentsLive do
     config_status = config_status()
 
     socket =
-      socket
-      |> assign(:selected_agent_id, nil)
-      |> assign(:selected_history_entry, nil)
-      |> assign(:selected_objective, nil)
-      |> assign(:show_usage, false)
-      |> assign(:agents, agents)
-      |> assign(:id_to_display, id_to_display)
-      |> assign(:repo_trees, build_repo_trees(agents))
-      |> assign(:config_status, config_status)
-      |> assign(:previous_agent_ids, MapSet.new(agents, & &1.id))
-      |> assign(:previous_statuses, Map.new(agents, fn a -> {a.id, a.status} end))
-      |> assign(:new_agent_ids, MapSet.new())
-      |> assign(:changed_status_ids, MapSet.new())
+      assign(socket,
+        selected_agent_id: nil,
+        selected_history_entry: nil,
+        selected_objective: nil,
+        show_usage: false,
+        agents: agents,
+        id_to_display: id_to_display,
+        repo_trees: build_repo_trees(agents),
+        config_status: config_status,
+        previous_agent_ids: MapSet.new(agents, & &1.id),
+        previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
+        new_agent_ids: MapSet.new(),
+        changed_status_ids: MapSet.new()
+      )
 
     {:ok, socket}
   end
@@ -62,14 +63,15 @@ defmodule EvoDashWeb.AgentsLive do
       Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
 
     {:noreply,
-     socket
-     |> assign(:agents, agents)
-     |> assign(:id_to_display, id_to_display)
-     |> assign(:repo_trees, build_repo_trees(agents))
-     |> assign(:previous_agent_ids, current_ids)
-     |> assign(:previous_statuses, current_statuses)
-     |> assign(:new_agent_ids, new_agent_ids)
-     |> assign(:changed_status_ids, changed_status_ids)}
+     assign(socket,
+       agents: agents,
+       id_to_display: id_to_display,
+       repo_trees: build_repo_trees(agents),
+       previous_agent_ids: current_ids,
+       previous_statuses: current_statuses,
+       new_agent_ids: new_agent_ids,
+       changed_status_ids: changed_status_ids
+     )}
   end
 
   @impl true
@@ -81,11 +83,12 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_event("close_details", _params, socket) do
     {:noreply,
-     socket
-     |> assign(:selected_agent_id, nil)
-     |> assign(:selected_history_entry, nil)
-     |> assign(:selected_objective, nil)
-     |> assign(:show_usage, false)}
+     assign(socket,
+       selected_agent_id: nil,
+       selected_history_entry: nil,
+       selected_objective: nil,
+       show_usage: false
+     )}
   end
 
   @impl true
@@ -254,6 +257,13 @@ defmodule EvoDashWeb.AgentsLive do
       children = find_children(id, sched_metas)
       history = load_agent_history(id)
 
+      total_tokens = agent_state && Map.get(agent_state, :total_tokens, 0)
+      compression_count = agent_state && Map.get(agent_state, :compression_count, 0)
+      compression_threshold = safe_compression_threshold()
+
+      compression_pct =
+        trunc(min(total_tokens / max(compression_threshold, 1) * 100, 100))
+
       %{
         id: id,
         task_local_id: agent_state && agent_state.task_local_id,
@@ -280,9 +290,10 @@ defmodule EvoDashWeb.AgentsLive do
         result_sent: meta.result_sent,
         history: history,
         usage: (agent_state && agent_state.usage) || EvoGit.Agent.Usage.zero(),
-        total_tokens: agent_state && Map.get(agent_state, :total_tokens, 0),
-        compression_count: agent_state && Map.get(agent_state, :compression_count, 0),
-        compression_threshold: safe_compression_threshold()
+        total_tokens: total_tokens,
+        compression_count: compression_count,
+        compression_threshold: compression_threshold,
+        compression_pct: compression_pct
       }
     end)
     |> Enum.sort_by(&{&1.depth, &1.id})
@@ -325,22 +336,22 @@ defmodule EvoDashWeb.AgentsLive do
             ""
         end
 
-      metadata = Map.get(msg, :metadata, %{})
+      metadata = msg.metadata
       turn = Map.get(metadata, :turn, 0)
 
       base_data = %{
         content: content_text,
-        tool_calls: Map.get(msg, :tool_calls),
+        tool_calls: msg.tool_calls,
         metadata: metadata
       }
 
       data =
         case msg.role do
           :tool ->
-            Map.put(base_data, :tool_name, Map.get(msg, :name))
+            Map.put(base_data, :tool_name, msg.name)
 
           :assistant ->
-            Map.put(base_data, :reasoning_details, Map.get(msg, :reasoning_details))
+            Map.put(base_data, :reasoning_details, msg.reasoning_details)
 
           _ ->
             base_data

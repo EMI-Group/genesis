@@ -266,39 +266,44 @@ defmodule EvoDashWeb.DashboardLive do
     config_status = config_status()
 
     socket =
-      socket
-      |> assign(:active_project, nil)
-      |> assign(:active_project_path, nil)
-      |> assign(:show_open_project_form, false)
-      |> assign(:recent_projects, recent_projects)
-      |> assign(:path_suggestions, [])
-      |> assign(:expanded_task_ids, MapSet.new())
-      |> assign(:selected_result, nil)
-      |> assign(:selected_options, nil)
-      |> assign(:show_project_settings, false)
-      |> assign(:project_config, nil)
-      |> assign(:worktree_script, nil)
-      |> assign(:commands, %{})
-      |> assign(:foreign_repos, [])
-      |> assign(:show_add_foreign_repo_form, false)
-      |> assign(:new_repo_id, "")
-      |> assign(:new_repo_path, "")
-      |> assign(:new_repo_description, "")
-      |> assign(:tasks, [])
-      |> assign(
-        :notified_task_ids,
-        TaskRegistry.list_tasks()
-        |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
-        |> Enum.map(& &1.id)
-        |> MapSet.new()
+      assign(socket,
+        active_project: nil,
+        active_project_path: nil,
+        show_open_project_form: false,
+        recent_projects: recent_projects,
+        path_suggestions: [],
+        expanded_task_ids: MapSet.new(),
+        selected_result: nil,
+        selected_options: nil,
+        show_project_settings: false,
+        project_config: nil,
+        worktree_script: nil,
+        commands: %{},
+        foreign_repos: [],
+        show_add_foreign_repo_form: false,
+        new_repo_id: "",
+        new_repo_path: "",
+        new_repo_description: "",
+        tasks: [],
+        notified_task_ids:
+          TaskRegistry.list_tasks()
+          |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+          |> Enum.map(& &1.id)
+          |> MapSet.new()
       )
-      |> assign_form_defaults()
-      |> assign(:show_advanced, false)
-      |> assign(:task_resume_from, "")
-      |> assign_running_and_pending_tasks()
-      |> assign(:config_status, config_status)
-      |> assign(:show_welcome, false)
-      |> assign(:welcome_locale, Gettext.get_locale(EvoDashWeb.Gettext))
+
+    socket = assign_form_defaults(socket)
+
+    socket =
+      assign(socket,
+        show_advanced: false,
+        task_resume_from: "",
+        config_status: config_status,
+        show_welcome: false,
+        welcome_locale: Gettext.get_locale(EvoDashWeb.Gettext)
+      )
+
+    socket = assign_running_and_pending_tasks(socket)
 
     {:ok, socket}
   end
@@ -318,12 +323,14 @@ defmodule EvoDashWeb.DashboardLive do
           tasks = TaskRegistry.list_tasks()
 
           socket
-          |> assign(:active_project, nil)
-          |> assign(:active_project_path, nil)
           |> assign(:tasks, tasks)
           |> assign(
             :notified_task_ids,
             build_notified_task_ids(tasks, socket.assigns.notified_task_ids)
+          )
+          |> assign(
+            active_project: nil,
+            active_project_path: nil
           )
           |> assign_running_and_pending_tasks()
         end
@@ -986,22 +993,22 @@ defmodule EvoDashWeb.DashboardLive do
     foreign_repos = load_foreign_repos(path)
 
     socket
-    |> assign(:active_project, %{path: path, name: name})
-    |> assign(:active_project_path, path)
-    |> assign(:tasks, tasks)
     |> assign(
-      :notified_task_ids,
-      build_notified_task_ids(tasks, socket.assigns.notified_task_ids)
+      active_project: %{path: path, name: name},
+      active_project_path: path,
+      tasks: tasks,
+      notified_task_ids:
+        build_notified_task_ids(tasks, socket.assigns.notified_task_ids),
+      task_mode: mode,
+      task_mode_info: mode_info,
+      show_open_project_form: false,
+      show_project_settings: true,
+      project_config: project_config,
+      worktree_script: worktree_script,
+      commands: commands,
+      foreign_repos: foreign_repos,
+      show_add_foreign_repo_form: false
     )
-    |> assign(:task_mode, mode)
-    |> assign(:task_mode_info, mode_info)
-    |> assign(:show_open_project_form, false)
-    |> assign(:show_project_settings, true)
-    |> assign(:project_config, project_config)
-    |> assign(:worktree_script, worktree_script)
-    |> assign(:commands, commands)
-    |> assign(:foreign_repos, foreign_repos)
-    |> assign(:show_add_foreign_repo_form, false)
     |> assign_running_and_pending_tasks()
     |> maybe_put_flash_mode_info(mode_info)
   end
@@ -1035,7 +1042,7 @@ defmodule EvoDashWeb.DashboardLive do
     pending_tasks =
       all_tasks
       |> Enum.filter(fn task ->
-        task.status == :completed and is_nil(Map.get(task, :review_status)) and
+        task.status == :completed and is_nil(task.review_status) and
           show_review_button?(task)
       end)
       |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
@@ -1058,16 +1065,17 @@ defmodule EvoDashWeb.DashboardLive do
         "genesis_new"
       end
 
-    socket
-    |> assign(:task_prompt, "")
-    |> assign(:task_mode, mode)
-    |> assign(:task_mode_info, "")
-    |> assign(:task_node_path, "")
-    |> assign(:task_seeds, "")
-    |> assign(:task_starting_commit, "")
-    |> assign(:task_resume_from, "")
-    |> assign(:task_archive, false)
-    |> assign(:show_advanced, false)
+    assign(socket,
+      task_prompt: "",
+      task_mode: mode,
+      task_mode_info: "",
+      task_node_path: "",
+      task_seeds: "",
+      task_starting_commit: "",
+      task_resume_from: "",
+      task_archive: false,
+      show_advanced: false
+    )
   end
 
   defp current_tasks(socket) do

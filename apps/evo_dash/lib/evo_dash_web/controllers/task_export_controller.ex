@@ -11,7 +11,7 @@ defmodule EvoDashWeb.TaskExportController do
         |> halt()
 
       task ->
-        archive_metadata = Map.get(task, :archive_metadata) || []
+        archive_metadata = task.archive_metadata || []
 
         if archive_metadata == [] do
           conn

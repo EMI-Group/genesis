@@ -88,7 +88,8 @@ defmodule EvoGit.Core.ForeignRepo do
     root = String.trim_trailing(root, "/")
     abs_path = Path.expand(abs_path)
 
-    if String.starts_with?(abs_path, root <> "/") or abs_path == root do
+    if String.starts_with?(abs_path, root) and
+         (abs_path == root or String.at(abs_path, byte_size(root)) == "/") do
       relative = Path.relative_to(abs_path, root)
       {:ok, normalize_relative(relative)}
     else
@@ -109,8 +110,9 @@ defmodule EvoGit.Core.ForeignRepo do
   def resolve_path(repos, abs_path) when is_list(repos) and is_binary(abs_path) do
     abs_path = Path.expand(abs_path)
 
-    # Check foreign repos first, then primary
-    sorted = Enum.sort_by(repos, fn repo -> if primary?(repo.id), do: 1, else: 0 end)
+    # Check foreign repos first, then primary (split_with avoids O(n log n) sort)
+    {foreign, primary} = Enum.split_with(repos, fn repo -> not primary?(repo.id) end)
+    sorted = foreign ++ primary
 
     Enum.find_value(sorted, {:error, :not_in_any_repo}, fn repo ->
       case normalize_path(repo, abs_path) do

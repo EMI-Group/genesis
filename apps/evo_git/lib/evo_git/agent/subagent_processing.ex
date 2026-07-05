@@ -123,11 +123,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
     # Only delete branches for same-repo subagents
     same_repo_branches =
-      Enum.zip(subagent_specs, results)
-      |> Enum.filter(fn {spec, result} ->
-        spec.repo_id == "primary" and match?({:ok, %Result{branch: _}}, result)
-      end)
-      |> Enum.map(fn {_, {:ok, %Result{branch: branch}}} -> branch end)
+      for {spec, {:ok, %Result{branch: branch}}} <- Enum.zip(subagent_specs, results),
+          spec.repo_id == "primary" do
+        branch
+      end
 
     Enum.each(same_repo_branches, fn branch ->
       Git.delete_branch(repo_path, branch)

@@ -86,8 +86,7 @@ defmodule EvoGit.Runtime.Evolution.NoveltyMetric do
   """
   @spec structural_features(String.t()) :: map()
   def structural_features(content) when is_binary(content) do
-    fragment = Fragment.new(content, domain: "temp")
-    Fragment.extract_structural_features(fragment)
+    Fragment.extract_structural_features(content)
   end
 
   @doc """

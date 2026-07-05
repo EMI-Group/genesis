@@ -5,6 +5,8 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
 
   alias EvoGit.Agent.Tools.Shared
 
+  @bare_numeric_flag_regex ~r/\A-\d+\z/
+
   @doc """
   Returns the tool schema for ReqLLM.
   """
@@ -107,7 +109,7 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
   defp detect_mistakes(arg) do
     cond do
       # Bare numeric flag like -9, -1, -99 (grep syntax, not rg)
-      Regex.match?(~r/\A-\d+\z/, arg) ->
+      Regex.match?(@bare_numeric_flag_regex, arg) ->
         [
           ~s"""
           Tip: ripgrep (rg) doesn't support -<n> numerical shorthand flags (that's grep syntax). To control context lines:

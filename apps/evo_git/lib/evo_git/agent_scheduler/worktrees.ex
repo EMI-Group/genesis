@@ -63,20 +63,20 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     if map_size(state.ref_to_agent) > 0 do
       initialized_keys = Map.keys(state.initialized_repos)
 
-      Logger.warning(
+      Logger.warning(fn ->
         "AgentScheduler: Concurrent task targets #{new_root} while " <>
           "#{map_size(state.ref_to_agent)} agent(s) still running (initialized repos: #{inspect(initialized_keys)}) — " <>
           "creating worker directory for new repo"
-      )
+      end)
 
       worker_base = Path.join(new_root, ".genesis/workers")
       File.mkdir_p!(worker_base)
 
       %State{state | initialized_repos: Map.put(state.initialized_repos, new_root, true)}
     else
-      Logger.info(
+      Logger.info(fn ->
         "AgentScheduler: Repo path changed (initialized repos: #{inspect(Map.keys(state.initialized_repos))}), reinitializing for #{new_repo_path}..."
-      )
+      end)
 
       state = teardown_worktrees(state, new_root)
       do_initialize(state, new_root)
@@ -184,7 +184,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
         # Detect shell from shebang, default to /bin/sh
         shell =
-          case String.split(script_content, "\n") |> List.first() do
+          case String.split(script_content, "\n", parts: 2) |> List.first() do
             "#!" <> rest -> String.trim(rest)
             _ -> Platform.shell()
           end
@@ -245,8 +245,11 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     branch_name =
       path
       |> Path.basename()
-      |> String.replace_prefix("worker_", "evogit-agent-")
-      |> String.replace("_", "-")
+      |> then(
+        &Regex.replace(~r/^worker_(.+)$/, &1, fn _, rest ->
+          "evogit-agent-" <> String.replace(rest, "_", "-")
+        end)
+      )
 
     case File.rm_rf(path) do
       {:ok, _} ->

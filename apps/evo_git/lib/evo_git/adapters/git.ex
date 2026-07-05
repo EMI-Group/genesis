@@ -5,6 +5,10 @@ defmodule EvoGit.Adapters.Git do
 
   @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
 
+  # Compiled regex patterns for parse_repo_url and get_github_username
+  @repo_url_re ~r/https:\/\/github\.com\/[^\/]+\/[^\/\s]+/
+  @gh_username_re ~r/Logged in as ([^\s]+)/
+
   @doc """
   Runs a git command in the given directory.
   Sets LC_ALL=C to ensure locale-independent (English) output for reliable parsing.
@@ -520,7 +524,7 @@ defmodule EvoGit.Adapters.Git do
   end
 
   defp parse_repo_url(output) do
-    case Regex.run(~r/https:\/\/github\.com\/[^\/]+\/[^\/\s]+/, output) do
+    case Regex.run(@repo_url_re, output) do
       [url | _] -> {:ok, url}
       _ -> :error
     end
@@ -529,7 +533,7 @@ defmodule EvoGit.Adapters.Git do
   defp get_github_username do
     case System.cmd("gh", ["auth", "status"]) do
       {output, 0} ->
-        case Regex.run(~r/Logged in as ([^\s]+)/, output) do
+        case Regex.run(@gh_username_re, output) do
           [_, username | _] -> username
           _ -> "unknown"
         end

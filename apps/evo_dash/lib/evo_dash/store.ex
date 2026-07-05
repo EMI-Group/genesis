@@ -697,18 +697,18 @@ defmodule EvoDash.Store do
       {:ok, _} =
         XqliteNIF.execute(conn, "DELETE FROM #{table} WHERE #{pk} = ?1", [id])
 
-      Logger.warning(
-        "Store: quarantined undecodable row " <>
-          "(table=#{table}, id=#{inspect(id)}) → #{quarantine_table}. " <>
-          "Raw data preserved for recovery."
-      )
+      Logger.warning([
+        "Store: quarantined undecodable row ",
+        "(table=#{table}, id=#{inspect(id)}) → #{quarantine_table}. ",
+        "Raw data preserved for recovery."
+      ])
     rescue
       e ->
-        Logger.error(
-          "Store: failed to quarantine undecodable row " <>
-            "(table=#{table}, id=#{inspect(id)}): #{Exception.message(e)}. " <>
-            "Leaving row in place — data NOT destroyed."
-        )
+        Logger.error([
+          "Store: failed to quarantine undecodable row ",
+          "(table=#{table}, id=#{inspect(id)}): #{Exception.message(e)}. ",
+          "Leaving row in place — data NOT destroyed."
+        ])
     end
   end
 end

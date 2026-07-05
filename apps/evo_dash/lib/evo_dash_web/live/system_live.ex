@@ -463,29 +463,26 @@ defmodule EvoDashWeb.SystemLive do
     credentials_path = Path.join(config_dir, "credentials.toml")
 
     socket =
-      socket
-      |> assign(:scheduler_paused, load_paused_state())
-      |> assign(:show_restart_confirm, false)
-      |> assign(:show_stop_confirm, false)
-      |> assign(:system_checks_status, :checking)
-      |> assign(:config_status, nil)
-      |> assign(:tool_check, nil)
-      |> assign(:sandbox_check, nil)
-      |> assign(:supervisor_check, nil)
-      |> assign(:nix_check, nil)
-      |> assign(:config_dir, config_dir)
-      |> assign(:config_path, config_path)
-      |> assign(:credentials_path, credentials_path)
-      |> assign(
-        :config_reference,
-        String.replace(@config_reference, "__CONFIG_PATH__", config_path)
+      assign(socket,
+        scheduler_paused: load_paused_state(),
+        show_restart_confirm: false,
+        show_stop_confirm: false,
+        system_checks_status: :checking,
+        config_status: nil,
+        tool_check: nil,
+        sandbox_check: nil,
+        supervisor_check: nil,
+        nix_check: nil,
+        config_dir: config_dir,
+        config_path: config_path,
+        credentials_path: credentials_path,
+        config_reference:
+          String.replace(@config_reference, "__CONFIG_PATH__", config_path),
+        credentials_reference:
+          String.replace(@credentials_reference, "__CREDENTIALS_PATH__", credentials_path),
+        usage_reference: @usage_reference,
+        faq_content: faq_content(config_path, credentials_path)
       )
-      |> assign(
-        :credentials_reference,
-        String.replace(@credentials_reference, "__CREDENTIALS_PATH__", credentials_path)
-      )
-      |> assign(:usage_reference, @usage_reference)
-      |> assign(:faq_content, faq_content(config_path, credentials_path))
 
     {:ok, socket}
   end
@@ -495,13 +492,14 @@ defmodule EvoDashWeb.SystemLive do
     spawn_system_checks()
 
     socket =
-      socket
-      |> assign(:system_checks_status, :checking)
-      |> assign(:config_status, nil)
-      |> assign(:tool_check, nil)
-      |> assign(:sandbox_check, nil)
-      |> assign(:supervisor_check, nil)
-      |> assign(:nix_check, nil)
+      assign(socket,
+        system_checks_status: :checking,
+        config_status: nil,
+        tool_check: nil,
+        sandbox_check: nil,
+        supervisor_check: nil,
+        nix_check: nil
+      )
 
     {:noreply, socket}
   end

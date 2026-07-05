@@ -16,7 +16,7 @@ defmodule EvoGit.Runtime.Helpers do
     with {:ok, base_sha} <- Git.rev_parse(repo_path) do
       if final_sha && final_sha != base_sha do
         Logger.info(
-          "#{String.capitalize(phase)}: Agent produced changes (#{String.slice(base_sha, 0, 7)} -> #{String.slice(final_sha, 0, 7)})"
+          "#{String.capitalize(phase)}: Agent produced changes (#{binary_part(base_sha, 0, 7)} -> #{binary_part(final_sha, 0, 7)})"
         )
 
         branch_name = generate_branch_name(phase)
@@ -24,7 +24,7 @@ defmodule EvoGit.Runtime.Helpers do
         case Git.create_branch(repo_path, branch_name, final_sha) do
           {:ok, _} ->
             Logger.info(
-              "#{String.capitalize(phase)}: Created branch '#{branch_name}' at #{String.slice(final_sha, 0, 7)}"
+              "#{String.capitalize(phase)}: Created branch '#{branch_name}' at #{binary_part(final_sha, 0, 7)}"
             )
 
             {:ok,
