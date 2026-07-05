@@ -13,7 +13,9 @@ defmodule EvoDashWeb.SettingsLive do
       <%!-- Header --%>
       <div class="mb-6 mt-2">
         <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("Settings")}</h1>
-        <p class="text-sm text-base-content/80 mt-0.5">{gettext("Runtime configuration and file settings")}</p>
+        <p class="text-sm text-base-content/80 mt-0.5">
+          {gettext("Runtime configuration and file settings")}
+        </p>
       </div>
 
       <%!-- Config file path display --%>
@@ -21,7 +23,13 @@ defmodule EvoDashWeb.SettingsLive do
         <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
         <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext("Configuration file")}</span>
         <code class="font-mono text-sm text-base-content/80 flex-1 truncate">{@config_path}</code>
-        <button id="settings-config-path-copy" phx-hook="ClipboardCopy" data-content={@config_path} class="btn btn-ghost btn-sm btn-square" title={gettext("Copy path")}>
+        <button
+          id="settings-config-path-copy"
+          phx-hook="ClipboardCopy"
+          data-content={@config_path}
+          class="btn btn-ghost btn-sm btn-square"
+          title={gettext("Copy path")}
+        >
           <.icon name="hero-clipboard-document" class="size-4" />
         </button>
       </div>
@@ -57,10 +65,14 @@ defmodule EvoDashWeb.SettingsLive do
           <div>
             <h3 class="font-bold text-sm text-error mb-2">{gettext("No LLM Model Configured")}</h3>
             <p class="text-sm font-medium text-error/80 mb-3 leading-relaxed max-w-3xl">
-              {gettext("Agents cannot run until you set a model. Go to the LLM category and fill in the Model field.")}
+              {gettext(
+                "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
+              )}
             </p>
             <div class="flex items-center gap-3 flex-wrap">
-              <span class="text-xs font-bold uppercase tracking-wider text-base-content/70">{gettext("Example model names:")}</span>
+              <span class="text-xs font-bold uppercase tracking-wider text-base-content/70">{gettext(
+                "Example model names:"
+              )}</span>
               <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">anthropic:claude-opus-4-7</span>
               <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">openai:gpt-5.5</span>
             </div>
@@ -81,53 +93,55 @@ defmodule EvoDashWeb.SettingsLive do
       <div class="flex flex-col gap-8">
         <%!-- Two-column sidebar + content layout --%>
         <div class="flex flex-col md:flex-row bg-base-100 rounded-lg border border-base-200 shadow-sm overflow-hidden">
-        <%!-- Sidebar --%>
-        <EvoDashWeb.SettingsComponents.settings_sidebar
-          categories={@schemas_by_category}
-          active_category={@active_category}
-          search_text={@search_text}
-        />
+          <%!-- Sidebar --%>
+          <EvoDashWeb.SettingsComponents.settings_sidebar
+            categories={@schemas_by_category}
+            active_category={@active_category}
+            search_text={@search_text}
+          />
 
-        <%!-- Content area --%>
-        <%= if @search_text != "" do %>
-          <.form
-            for={%{}}
-            phx-submit="save_search"
-            class="flex-1 flex flex-col min-w-0 relative"
-            id="settings-form-search"
-          >
-            <EvoDashWeb.SettingsComponents.search_results
-              categories={@schemas_by_category}
-              search_text={@search_text}
-              file_config={@file_config}
-              errors={all_errors(@per_category_errors)}
-            />
-          </.form>
-        <% else %>
-          <.form
-            for={%{}}
-            phx-submit="save_category"
-            class="flex-1 flex flex-col min-w-0 relative"
-            id={"settings-form-#{@active_category}"}
-          >
-            <input type="hidden" name="category" value={@active_category} />
+          <%!-- Content area --%>
+          <%= if @search_text != "" do %>
+            <.form
+              for={%{}}
+              phx-submit="save_search"
+              class="flex-1 flex flex-col min-w-0 relative"
+              id="settings-form-search"
+            >
+              <EvoDashWeb.SettingsComponents.search_results
+                categories={@schemas_by_category}
+                search_text={@search_text}
+                file_config={@file_config}
+                errors={all_errors(@per_category_errors)}
+              />
+            </.form>
+          <% else %>
+            <.form
+              for={%{}}
+              phx-submit="save_category"
+              class="flex-1 flex flex-col min-w-0 relative"
+              id={"settings-form-#{@active_category}"}
+            >
+              <input type="hidden" name="category" value={@active_category} />
 
-            <EvoDashWeb.SettingsComponents.category_section
-              category={@active_category}
-              schemas={Map.get(@schemas_by_category, @active_category, [])}
-              file_config={@file_config}
-              errors={Map.get(@per_category_errors, @active_category, [])}
-              sandbox_backend={@scheduler_config[:sandbox_backend]}
-              sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
-              llm_providers={@llm_providers}
-              selected_provider_id={@selected_provider_id}
-              selected_provider_models={@selected_provider_models}
-              selected_variant_id={@selected_variant_id}
-              llm_test_status={@llm_test_status}
-            />
-          </.form>
-        <% end %>
-      </div>
+              <EvoDashWeb.SettingsComponents.category_section
+                category={@active_category}
+                schemas={Map.get(@schemas_by_category, @active_category, [])}
+                file_config={@file_config}
+                errors={Map.get(@per_category_errors, @active_category, [])}
+                sandbox_backend={@scheduler_config[:sandbox_backend]}
+                sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
+                llm_providers={@llm_providers}
+                selected_provider_id={@selected_provider_id}
+                selected_provider_models={@selected_provider_models}
+                selected_variant_id={@selected_variant_id}
+                llm_test_status={@llm_test_status}
+                model_profiles={@file_config[:llm][:models] || []}
+                editing_profile_id={@editing_profile_id}
+              />
+            </.form>
+          <% end %>
+        </div>
       </div>
     </EvoDashWeb.Layouts.app>
     """
@@ -160,7 +174,8 @@ defmodule EvoDashWeb.SettingsLive do
         selected_provider_id: nil,
         selected_provider_models: [],
         selected_variant_id: nil,
-        llm_test_status: :idle
+        llm_test_status: :idle,
+        editing_profile_id: nil
       )
 
     {:ok, socket}
@@ -403,7 +418,10 @@ defmodule EvoDashWeb.SettingsLive do
         {:error, reason} ->
           {:noreply,
            socket
-           |> put_flash(:error, gettext("Failed to reset key: %{reason}", reason: inspect(reason)))}
+           |> put_flash(
+             :error,
+             gettext("Failed to reset key: %{reason}", reason: inspect(reason))
+           )}
       end
     end
   end
@@ -454,7 +472,14 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("select_llm_model_shortcut", %{"model_string" => model_string}, socket) do
-    file_config = put_in(socket.assigns.file_config, [:llm, :model], model_string)
+    # Add a new model profile using the selected model string, and mirror it to
+    # the flat [:llm, :model] for backward compatibility (older code paths and
+    # the config-status check still read the flat field).
+    file_config =
+      socket.assigns.file_config
+      |> add_model_profile(model_string)
+      |> mirror_default_model()
+
     persist_file_config(file_config, socket, gettext("Model selected and saved."))
   end
 
@@ -497,9 +522,104 @@ defmodule EvoDashWeb.SettingsLive do
         {:noreply, put_flash(socket, :error, msg)}
 
       {:ok, model_value} ->
-        file_config = put_in(socket.assigns.file_config, [:llm, :model], model_value)
+        # Add a new model profile using the custom model, and mirror it to the
+        # flat [:llm, :model] for backward compatibility.
+        file_config =
+          socket.assigns.file_config
+          |> add_model_profile(model_value)
+          |> mirror_default_model()
+
         persist_file_config(file_config, socket, gettext("Custom model saved."))
     end
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Model Profiles editor events
+  # ───────────────────────────────────────────────────────────────────────────
+
+  @impl true
+  def handle_event("add_model_profile", _params, socket) do
+    # Add the profile to the in-memory file_config (not persisted yet — the
+    # profile has no model until the user fills in the edit form, and persisting
+    # now would fail schema validation). Enter edit mode immediately so the
+    # user can complete the profile, then save.
+    file_config =
+      socket.assigns.file_config
+      |> add_model_profile(nil)
+
+    models = get_in(file_config, [:llm, :models]) || []
+    new_id = models |> List.last() |> profile_id()
+
+    socket =
+      socket
+      |> assign(:file_config, file_config)
+      |> assign(:editing_profile_id, new_id)
+      |> put_flash(:info, gettext("New profile added — fill in the details and save."))
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("edit_model_profile", %{"profile_id" => id}, socket) do
+    {:noreply,
+     assign(socket,
+       editing_profile_id: if(socket.assigns.editing_profile_id == id, do: nil, else: id)
+     )}
+  end
+
+  @impl true
+  def handle_event("cancel_edit_model_profile", _params, socket) do
+    {:noreply, assign(socket, :editing_profile_id, nil)}
+  end
+
+  @impl true
+  def handle_event("save_model_profile", params, socket) do
+    old_id = params["profile_id"]
+    new_id = String.trim(params["profile_id_new"] || "")
+
+    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+
+    cond do
+      new_id == "" ->
+        {:noreply, put_flash(socket, :error, gettext("Profile id cannot be empty."))}
+
+      # Duplicate id check: another profile (with a different old id) already
+      # uses the requested id.
+      id_collision?(models, old_id, new_id) ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("A profile with id \"%{id}\" already exists.", id: new_id)
+         )}
+
+      true ->
+        updated_profile = parse_model_profile_params(params, new_id)
+
+        file_config =
+          socket.assigns.file_config
+          |> update_model_profile(old_id, updated_profile)
+          |> mirror_default_model()
+
+        socket = socket |> assign(:editing_profile_id, nil)
+
+        persist_file_config(file_config, socket, gettext("Model profile saved."))
+    end
+  end
+
+  @impl true
+  def handle_event("delete_model_profile", %{"profile_id" => id}, socket) do
+    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+    new_models = Enum.reject(models, fn p -> profile_id(p) == id end)
+
+    file_config =
+      socket.assigns.file_config
+      |> put_in_model_profiles(new_models)
+      |> mirror_default_model()
+
+    socket = socket |> assign(:editing_profile_id, nil)
+
+    persist_file_config(file_config, socket, gettext("Model profile deleted."))
   end
 
   @impl true
@@ -538,6 +658,145 @@ defmodule EvoDashWeb.SettingsLive do
 
     {:noreply, assign(socket, :llm_test_status, :testing)}
   end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: Model profiles list manipulation
+  #
+  # These operate on file_config maps before they are persisted. The models list
+  # lives at file_config[:llm][:models]. We always normalize to a list of maps
+  # with atom keys.
+  # ───────────────────────────────────────────────────────────────────────────
+
+  defp add_model_profile(file_config, model_value) do
+    models = get_in(file_config, [:llm, :models]) || []
+    id = generate_profile_id(models)
+
+    profile =
+      %{id: id, concurrency: 3}
+      |> maybe_put_profile_model(model_value)
+
+    put_in_model_profiles(file_config, models ++ [profile])
+  end
+
+  # Generates a unique profile id like "profile-2", "profile-3", ... based on
+  # the count of existing profiles whose ids match the "profile-N" pattern.
+  defp generate_profile_id(models) do
+    existing_ids = Enum.map(models, &profile_id/1) |> MapSet.new()
+
+    Stream.iterate(length(models) + 1, &(&1 + 1))
+    |> Stream.map(&"profile-#{&1}")
+    |> Enum.find(fn id -> not MapSet.member?(existing_ids, id) end)
+  end
+
+  # Only include :model key when a non-nil value is given (e.g. from a shortcut).
+  # For "add_model_profile" with nil, we omit it so the user can fill it in.
+  defp maybe_put_profile_model(profile, nil), do: profile
+  defp maybe_put_profile_model(profile, ""), do: profile
+  defp maybe_put_profile_model(profile, model_value), do: Map.put(profile, :model, model_value)
+
+  defp update_model_profile(file_config, old_id, updated_profile) do
+    models = get_in(file_config, [:llm, :models]) || []
+
+    new_models =
+      Enum.map(models, fn profile ->
+        if profile_id(profile) == old_id, do: updated_profile, else: profile
+      end)
+
+    put_in_model_profiles(file_config, new_models)
+  end
+
+  defp put_in_model_profiles(file_config, models) do
+    file_config
+    |> ensure_llm_key()
+    |> put_in([:llm, :models], models)
+  end
+
+  defp ensure_llm_key(file_config) do
+    if is_map(get_in(file_config, [:llm])) do
+      file_config
+    else
+      put_in(file_config, [:llm], %{})
+    end
+  end
+
+  # Mirrors the first profile's model into the flat [:llm, :model] for backward
+  # compatibility (config-status check and older code paths still read it).
+  defp mirror_default_model(file_config) do
+    models = get_in(file_config, [:llm, :models]) || []
+
+    case models do
+      [%{model: model} | _] -> put_in(file_config, [:llm, :model], model)
+      _ -> file_config
+    end
+  end
+
+  # Checks whether the new_id is already used by a profile OTHER than the one
+  # being edited (old_id). Returns true on collision.
+  defp id_collision?(models, old_id, new_id) do
+    Enum.any?(models, fn profile ->
+      pid = profile_id(profile)
+      pid != old_id and pid == new_id
+    end)
+  end
+
+  # Parses the form params for a single profile into a normalized map with atom
+  # keys and correctly-typed values.
+  defp parse_model_profile_params(params, id) do
+    model = String.trim(params["model"] || "")
+
+    profile =
+      %{id: id}
+      |> maybe_put_non_empty(:model, model)
+      |> maybe_put_int(:concurrency, params["concurrency"], 3)
+      |> maybe_put_float(:temperature, params["temperature"])
+      |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])
+      |> maybe_put_int(:max_tokens, params["max_tokens"])
+      |> maybe_put_float(:top_p, params["top_p"])
+      |> maybe_put_int(:top_k, params["top_k"])
+      |> maybe_put_float(:frequency_penalty, params["frequency_penalty"])
+      |> maybe_put_float(:presence_penalty, params["presence_penalty"])
+
+    profile
+  end
+
+  defp maybe_put_non_empty(map, _key, ""), do: map
+  defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put_int(map, key, raw, default) do
+    case parse_int(raw) do
+      nil -> Map.put(map, key, default)
+      int -> Map.put(map, key, int)
+    end
+  end
+
+  defp maybe_put_int(map, key, raw) do
+    case parse_int(raw) do
+      nil -> map
+      int -> Map.put(map, key, int)
+    end
+  end
+
+  defp maybe_put_float(map, key, raw) do
+    case parse_float(raw) do
+      nil -> map
+      float -> Map.put(map, key, float)
+    end
+  end
+
+  defp maybe_put_string(map, _key, ""), do: map
+  defp maybe_put_string(map, _key, nil), do: map
+  defp maybe_put_string(map, key, value), do: Map.put(map, key, value)
+
+  # Safely reads the id from a profile map whether the key is an atom or string
+  # (TOML-parsed profiles may arrive with string keys before normalization).
+  defp profile_id(profile) when is_map(profile) do
+    case Map.get(profile, :id) || Map.get(profile, "id") do
+      nil -> nil
+      id -> to_string(id)
+    end
+  end
+
+  defp profile_id(_), do: nil
 
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config persistence
@@ -653,14 +912,15 @@ defmodule EvoDashWeb.SettingsLive do
       |> maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))
       |> maybe_add_kw(:max_turns, get_in(file_config, [:scheduler, :max_turns]))
       |> maybe_add_kw(:max_turns_root, get_in(file_config, [:scheduler, :max_turns_root]))
-      |> maybe_add_kw(:llm_model, get_in(file_config, [:llm, :model]))
 
     # Note: :tools config (e.g., web_search) is read from EvoGit.Config.resolve()
     # at execution time — no runtime push needed here.
 
-    # Always include LLM generation params (even when empty, to allow clearing)
-    llm_gen_params = EvoGit.Config.Schema.llm_generation_params(file_config)
-    updates = updates ++ [{:llm_generation_params, llm_gen_params}]
+    # LLM model profiles: the scheduler now accepts the full profiles list and
+    # derives the model + generation params from the default profile internally.
+    # We no longer push :llm_model / :llm_generation_params separately.
+    updates =
+      maybe_add_kw(updates, :model_profiles, Schema.model_profiles(file_config))
 
     if updates != [] do
       case EvoGit.AgentScheduler.update_config(updates) do

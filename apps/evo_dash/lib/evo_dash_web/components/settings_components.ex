@@ -33,7 +33,12 @@ defmodule EvoDashWeb.SettingsComponents do
             <.icon name="hero-arrow-path" class="size-3.5" />
           </button>
         </div>
-        <p class="text-xs text-base-content/70 truncate mt-0.5" title={Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}>{Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}</p>
+        <p
+          class="text-xs text-base-content/70 truncate mt-0.5"
+          title={Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}
+        >
+          {Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}
+        </p>
         <p class="text-[11px] text-base-content/70 mt-0.5">
           <span class="uppercase tracking-wider">{gettext("Default")}</span>
           <span class="font-mono">{default_label(@schema.default)}</span>
@@ -64,103 +69,107 @@ defmodule EvoDashWeb.SettingsComponents do
             </div>
           <% else %>
             <%= case @schema.type do %>
-            <% :pos_integer -> %>
-              <input
-                type="number"
-                name={Enum.join(@schema.key_path, ".")}
-                value={input_value(@value)}
-                min={@schema.validation[:min] || 1}
-                max={@schema.validation[:max]}
-                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
-              />
-            <% :non_neg_integer -> %>
-              <input
-                type="number"
-                name={Enum.join(@schema.key_path, ".")}
-                value={input_value(@value)}
-                min={@schema.validation[:min] || 0}
-                max={@schema.validation[:max]}
-                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
-              />
-            <% :integer -> %>
-              <input
-                type="number"
-                name={Enum.join(@schema.key_path, ".")}
-                value={input_value(@value)}
-                min={@schema.validation[:min]}
-                max={@schema.validation[:max]}
-                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
-              />
-            <% :float -> %>
-              <input
-                type="number"
-                step="0.01"
-                name={Enum.join(@schema.key_path, ".")}
-                value={input_value(@value)}
-                min={@schema.validation[:min]}
-                max={@schema.validation[:max]}
-                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
-              />
-            <% :string -> %>
-              <input
-                type="text"
-                name={Enum.join(@schema.key_path, ".")}
-                value={@value || ""}
-                placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                class="input input-bordered input-sm rounded-md w-full font-mono text-base"
-              />
-            <% :atom -> %>
-              <div class="relative w-full sm:w-52">
-                <select
+              <% :pos_integer -> %>
+                <input
+                  type="number"
                   name={Enum.join(@schema.key_path, ".")}
-                  class="select select-bordered select-sm rounded-md w-full font-mono text-base appearance-none pr-8"
-                >
-                  <%= for opt <- @schema.validation[:in] || [] do %>
-                    <option value={to_string(opt)} selected={to_string(@value) == to_string(opt)}>
-                      {to_string(opt)}
-                    </option>
-                  <% end %>
-                </select>
-                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
-                  <.icon name="hero-chevron-down" class="size-4" />
-                </div>
-              </div>
-            <% :boolean -> %>
-              <%!-- Hidden field ensures "false" is submitted when checkbox is unchecked --%>
-              <input type="hidden" name={Enum.join(@schema.key_path, ".")} value="false" />
-              <input
-                type="checkbox"
-                name={Enum.join(@schema.key_path, ".")}
-                value="true"
-                class="toggle toggle-primary toggle-sm"
-                checked={@value in [true, "true"]}
-              />
-            <% :model_spec -> %>
-              <%!-- Editable model field: can be typed manually or set via Quick Setup above --%>
-              <div class="w-full">
+                  value={input_value(@value)}
+                  min={@schema.validation[:min] || 1}
+                  max={@schema.validation[:max]}
+                  placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
+                  class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
+                />
+              <% :non_neg_integer -> %>
+                <input
+                  type="number"
+                  name={Enum.join(@schema.key_path, ".")}
+                  value={input_value(@value)}
+                  min={@schema.validation[:min] || 0}
+                  max={@schema.validation[:max]}
+                  placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
+                  class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
+                />
+              <% :integer -> %>
+                <input
+                  type="number"
+                  name={Enum.join(@schema.key_path, ".")}
+                  value={input_value(@value)}
+                  min={@schema.validation[:min]}
+                  max={@schema.validation[:max]}
+                  placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
+                  class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
+                />
+              <% :float -> %>
+                <input
+                  type="number"
+                  step="0.01"
+                  name={Enum.join(@schema.key_path, ".")}
+                  value={input_value(@value)}
+                  min={@schema.validation[:min]}
+                  max={@schema.validation[:max]}
+                  placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
+                  class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
+                />
+              <% :string -> %>
                 <input
                   type="text"
                   name={Enum.join(@schema.key_path, ".")}
-                  value={model_display(@value)}
-                  placeholder={gettext("e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5")}
+                  value={@value || ""}
+                  placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
                   class="input input-bordered input-sm rounded-md w-full font-mono text-base"
                 />
-                <p class="text-[11px] text-base-content/70 mt-1">{gettext("Type a model string or use Quick Setup above")}</p>
-              </div>
-            <% :model_profiles -> %>
-              <% profiles = @value || [] %>
-              <div class="w-full text-right">
-                <span class="badge badge-primary badge-sm gap-1 font-mono">
-                  <.icon name="hero-cpu-chip" class="size-3" />
-                  {gettext("%{count} model profiles", count: length(profiles))}
-                </span>
-                <p class="text-[11px] text-base-content/70 mt-1">{gettext("Configure via the editor below")}</p>
-              </div>
-          <% end %>
+              <% :atom -> %>
+                <div class="relative w-full sm:w-52">
+                  <select
+                    name={Enum.join(@schema.key_path, ".")}
+                    class="select select-bordered select-sm rounded-md w-full font-mono text-base appearance-none pr-8"
+                  >
+                    <%= for opt <- @schema.validation[:in] || [] do %>
+                      <option value={to_string(opt)} selected={to_string(@value) == to_string(opt)}>
+                        {to_string(opt)}
+                      </option>
+                    <% end %>
+                  </select>
+                  <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
+                    <.icon name="hero-chevron-down" class="size-4" />
+                  </div>
+                </div>
+              <% :boolean -> %>
+                <%!-- Hidden field ensures "false" is submitted when checkbox is unchecked --%>
+                <input type="hidden" name={Enum.join(@schema.key_path, ".")} value="false" />
+                <input
+                  type="checkbox"
+                  name={Enum.join(@schema.key_path, ".")}
+                  value="true"
+                  class="toggle toggle-primary toggle-sm"
+                  checked={@value in [true, "true"]}
+                />
+              <% :model_spec -> %>
+                <%!-- Editable model field: can be typed manually or set via Quick Setup above --%>
+                <div class="w-full">
+                  <input
+                    type="text"
+                    name={Enum.join(@schema.key_path, ".")}
+                    value={model_display(@value)}
+                    placeholder={gettext("e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5")}
+                    class="input input-bordered input-sm rounded-md w-full font-mono text-base"
+                  />
+                  <p class="text-[11px] text-base-content/70 mt-1">
+                    {gettext("Type a model string or use Quick Setup above")}
+                  </p>
+                </div>
+              <% :model_profiles -> %>
+                <% profiles = @value || [] %>
+                <div class="w-full text-right">
+                  <span class="badge badge-primary badge-sm gap-1 font-mono">
+                    <.icon name="hero-cpu-chip" class="size-3" />
+                    {gettext("%{count} model profiles", count: length(profiles))}
+                  </span>
+                  <p class="text-[11px] text-base-content/70 mt-1">
+                    {gettext("Configure via the editor below")}
+                  </p>
+                </div>
+            <% end %>
           <% end %>
         </div>
         <%= if @error do %>
@@ -171,6 +180,335 @@ defmodule EvoDashWeb.SettingsComponents do
         <% end %>
       </div>
     </div>
+    """
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # model_profiles_editor/1 — List editor for [[llm.models]] profiles
+  # ───────────────────────────────────────────────────────────────────────────
+
+  attr(:profiles, :list, default: [])
+  attr(:editing_profile_id, :any, default: nil)
+
+  def model_profiles_editor(assigns) do
+    ~H"""
+    <div class="mb-6 rounded-lg border border-base-200 bg-base-100 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h3 class="text-lg font-bold text-base-content mb-0.5">{gettext("Model Profiles")}</h3>
+          <p class="text-sm text-base-content/80">
+            {gettext(
+              "Configure one or more LLM models. Each profile can have its own concurrency and generation parameters."
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          phx-click="add_model_profile"
+          class="btn btn-primary btn-sm gap-2 shrink-0"
+        >
+          <.icon name="hero-plus" class="size-4" />
+          {gettext("Add Model")}
+        </button>
+      </div>
+
+      <%= if @profiles == [] do %>
+        <div class="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-base-300 rounded-lg">
+          <div class="text-base-content/30 mb-3">
+            <.icon name="hero-cpu-chip" class="size-8" />
+          </div>
+          <p class="text-sm text-base-content/70 font-medium mb-1">
+            {gettext("No model profiles configured")}
+          </p>
+          <p class="text-xs text-base-content/60">
+            {gettext("Add a profile to get started, or use Quick Setup above.")}
+          </p>
+        </div>
+      <% else %>
+        <div class="space-y-3">
+          <%= for profile <- @profiles do %>
+            <% id = profile_id_string(profile) %>
+            <%= if @editing_profile_id == id do %>
+              <.model_profile_edit_form profile={profile} />
+            <% else %>
+              <.model_profile_row profile={profile} />
+            <% end %>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  # ── Read-only summary row for a single profile ──
+
+  attr(:profile, :map, required: true)
+
+  defp model_profile_row(assigns) do
+    ~H"""
+    <div class="flex items-start gap-4 p-4 rounded-lg border border-base-200 bg-base-100 hover:bg-base-200/30 transition-colors">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-1.5">
+          <.icon name="hero-cpu-chip" class="size-4 text-primary shrink-0" />
+          <code class="font-mono text-sm font-bold text-base-content">{profile_id_string(@profile)}</code>
+          <%= if profile_concurrency(@profile) do %>
+            <span class="badge badge-ghost badge-sm gap-1 font-mono text-xs">
+              <.icon name="hero-arrows-right-left" class="size-3" />
+              {gettext("%{n} slots", n: profile_concurrency(@profile))}
+            </span>
+          <% end %>
+        </div>
+        <div class="flex items-center gap-2 mb-1.5">
+          <code class="font-mono text-xs text-primary/80 break-all">{model_display(
+            @profile[:model] || @profile["model"]
+          )}</code>
+        </div>
+        <%= if summary = profile_params_summary(@profile) do %>
+          <p class="text-xs text-base-content/60 font-mono mt-1">{summary}</p>
+        <% end %>
+      </div>
+      <div class="flex items-center gap-1 shrink-0">
+        <button
+          type="button"
+          phx-click="edit_model_profile"
+          phx-value-profile_id={profile_id_string(@profile)}
+          class="btn btn-ghost btn-sm gap-1"
+        >
+          <.icon name="hero-pencil-square" class="size-4" />
+          {gettext("Edit")}
+        </button>
+        <button
+          type="button"
+          phx-click="delete_model_profile"
+          phx-value-profile_id={profile_id_string(@profile)}
+          class="btn btn-ghost btn-sm text-error gap-1"
+          data-confirm={gettext("Delete this model profile?")}
+        >
+          <.icon name="hero-trash" class="size-4" />
+          {gettext("Delete")}
+        </button>
+      </div>
+    </div>
+    """
+  end
+
+  # ── Editable form for a single profile ──
+
+  attr(:profile, :map, required: true)
+
+  defp model_profile_edit_form(assigns) do
+    ~H"""
+    <form
+      phx-submit="save_model_profile"
+      class="p-4 rounded-lg border-2 border-primary/40 bg-base-100 space-y-4"
+    >
+      <input type="hidden" name="profile_id" value={profile_id_string(@profile)} />
+
+      <div class="flex items-center gap-2 mb-1">
+        <.icon name="hero-pencil-square" class="size-5 text-primary" />
+        <h4 class="font-bold text-sm text-base-content">{gettext("Edit Profile")}</h4>
+      </div>
+
+      <%!-- id + model (required fields) ── side by side ── --%>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-semibold text-xs">{gettext("Profile ID")}
+            <span class="text-error">*</span></span>
+          </label>
+          <input
+            type="text"
+            name="profile_id_new"
+            value={profile_id_string(@profile)}
+            placeholder="default"
+            class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+            required
+          />
+          <p class="text-[11px] text-base-content/60 mt-1">
+            {gettext("A unique identifier for this profile")}
+          </p>
+        </div>
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-semibold text-xs">{gettext("Model")}
+            <span class="text-error">*</span></span>
+          </label>
+          <input
+            type="text"
+            name="model"
+            value={model_display(@profile[:model] || @profile["model"])}
+            placeholder={gettext("e.g. anthropic:claude-sonnet-4-6")}
+            class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+            required
+          />
+          <p class="text-[11px] text-base-content/60 mt-1">
+            {gettext("Format: provider:model-name")}
+          </p>
+        </div>
+      </div>
+
+      <%!-- concurrency ── --%>
+      <div class="form-control">
+        <label class="label pb-1">
+          <span class="label-text font-semibold text-xs">{gettext("Concurrency")}</span>
+        </label>
+        <input
+          type="number"
+          name="concurrency"
+          value={profile_concurrency(@profile) || 3}
+          min="1"
+          class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
+        />
+        <p class="text-[11px] text-base-content/60 mt-1">
+          {gettext("Number of parallel LLM request slots")}
+        </p>
+      </div>
+
+      <%!-- Generation params ── collapsible-ish section ── --%>
+      <div class="pt-2">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="h-px bg-base-200 flex-1"></div>
+          <span class="text-xs font-bold uppercase tracking-widest text-base-content/60">{gettext(
+            "Generation Parameters"
+          )}</span>
+          <span class="text-[11px] text-base-content/50">{gettext("optional")}</span>
+          <div class="h-px bg-base-200 flex-1"></div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <%!-- Temperature ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Temperature")}</span>
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              name="temperature"
+              value={profile_param(@profile, :temperature)}
+              min="0"
+              max="2"
+              placeholder={gettext("empty")}
+              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+            />
+          </div>
+          <%!-- Reasoning effort ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Reasoning Effort")}</span>
+            </label>
+            <div class="relative">
+              <select
+                name="reasoning_effort"
+                class="select select-bordered select-sm rounded-md w-full font-mono text-sm appearance-none pr-8"
+              >
+                <option value="" selected={is_nil(profile_param(@profile, :reasoning_effort))}>
+                  {gettext("(provider default)")}
+                </option>
+                <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
+                  <option
+                    value={opt}
+                    selected={to_string(profile_param(@profile, :reasoning_effort)) == opt}
+                  >
+                    {opt}
+                  </option>
+                <% end %>
+              </select>
+              <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
+                <.icon name="hero-chevron-down" class="size-4" />
+              </div>
+            </div>
+          </div>
+          <%!-- Max tokens ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Max Tokens")}</span>
+            </label>
+            <input
+              type="number"
+              name="max_tokens"
+              value={profile_param(@profile, :max_tokens)}
+              min="1"
+              placeholder={gettext("empty")}
+              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+            />
+          </div>
+          <%!-- Top P ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Top P")}</span>
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              name="top_p"
+              value={profile_param(@profile, :top_p)}
+              min="0"
+              max="1"
+              placeholder={gettext("empty")}
+              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+            />
+          </div>
+          <%!-- Top K ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Top K")}</span>
+            </label>
+            <input
+              type="number"
+              name="top_k"
+              value={profile_param(@profile, :top_k)}
+              min="1"
+              placeholder={gettext("empty")}
+              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+            />
+          </div>
+          <%!-- Frequency penalty ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Frequency Penalty")}</span>
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              name="frequency_penalty"
+              value={profile_param(@profile, :frequency_penalty)}
+              min="-2"
+              max="2"
+              placeholder={gettext("empty")}
+              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+            />
+          </div>
+          <%!-- Presence penalty ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Presence Penalty")}</span>
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              name="presence_penalty"
+              value={profile_param(@profile, :presence_penalty)}
+              min="-2"
+              max="2"
+              placeholder={gettext("empty")}
+              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+            />
+          </div>
+        </div>
+      </div>
+
+      <%!-- Action buttons ── --%>
+      <div class="flex items-center justify-end gap-2 pt-2 border-t border-base-200">
+        <button type="button" phx-click="cancel_edit_model_profile" class="btn btn-ghost btn-sm">
+          {gettext("Cancel")}
+        </button>
+        <button type="submit" class="btn btn-primary btn-sm gap-1">
+          <.icon name="hero-check" class="size-4" />
+          {gettext("Save Profile")}
+        </button>
+      </div>
+    </form>
     """
   end
 
@@ -190,6 +528,8 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:selected_provider_models, :list, default: [])
   attr(:selected_variant_id, :atom, default: nil)
   attr(:llm_test_status, :any, default: :idle)
+  attr(:model_profiles, :list, default: [])
+  attr(:editing_profile_id, :any, default: nil)
 
   def category_section(assigns) do
     ~H"""
@@ -200,7 +540,9 @@ defmodule EvoDashWeb.SettingsComponents do
           <div class="text-primary/60">
             <.icon name={category_icon(@category)} class="size-5" />
           </div>
-          <h2 class="text-lg font-bold tracking-tight text-base-content">{category_display_name(@category)}</h2>
+          <h2 class="text-lg font-bold tracking-tight text-base-content">
+            {category_display_name(@category)}
+          </h2>
         </div>
         <p class="text-sm font-medium text-base-content/80">{category_description(@category)}</p>
       </div>
@@ -212,7 +554,9 @@ defmodule EvoDashWeb.SettingsComponents do
             <%!-- LLM Provider Quick Setup --%>
             <div class="mb-8 rounded-lg border border-base-200 bg-base-100 p-5">
               <h3 class="text-lg font-bold text-base-content mb-1">{gettext("Quick Setup")}</h3>
-              <p class="text-sm text-base-content/80 mb-5">{gettext("Select a provider to quickly configure your model and API key.")}</p>
+              <p class="text-sm text-base-content/80 mb-5">
+                {gettext("Select a provider to quickly configure your model and API key.")}
+              </p>
 
               <%!-- Provider buttons --%>
               <div class="flex flex-wrap gap-2 mb-5">
@@ -224,7 +568,8 @@ defmodule EvoDashWeb.SettingsComponents do
                     class={[
                       "btn btn-sm rounded-xl font-semibold transition-all duration-200",
                       @selected_provider_id == provider.id && "btn-primary shadow-md",
-                      @selected_provider_id != provider.id && "btn-ghost bg-base-200/50 hover:bg-base-200"
+                      @selected_provider_id != provider.id &&
+                        "btn-ghost bg-base-200/50 hover:bg-base-200"
                     ]}
                   >
                     {provider.display_name}
@@ -234,10 +579,11 @@ defmodule EvoDashWeb.SettingsComponents do
 
               <%!-- Variant and model shortcuts when provider is selected --%>
               <%= if @selected_provider_id != nil do %>
-                <% provider = Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == @selected_provider_id)) %>
+                <% provider =
+                  Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == @selected_provider_id)) %>
                 <% variants = provider[:variants] %>
                 <% has_variants = is_list(variants) and length(variants) > 0 %>
-                <% show_models = not has_variants or (@selected_variant_id != nil) %>
+                <% show_models = not has_variants or @selected_variant_id != nil %>
                 <% current_model = get_in(@file_config, [:llm, :model]) %>
                 <% show_custom_input = provider[:custom_model] == true %>
                 <% show_model_buttons = show_models and not show_custom_input %>
@@ -248,13 +594,15 @@ defmodule EvoDashWeb.SettingsComponents do
                     ""
                   end %>
                 <% openai_prefill_id =
-                  if is_map(current_model) and (current_model[:provider] == :openai or current_model["provider"] == "openai") do
+                  if is_map(current_model) and
+                       (current_model[:provider] == :openai or current_model["provider"] == "openai") do
                     to_string(current_model[:id] || current_model["id"] || "")
                   else
                     ""
                   end %>
                 <% openai_prefill_base_url =
-                  if is_map(current_model) and (current_model[:provider] == :openai or current_model["provider"] == "openai") do
+                  if is_map(current_model) and
+                       (current_model[:provider] == :openai or current_model["provider"] == "openai") do
                     to_string(current_model[:base_url] || current_model["base_url"] || "")
                   else
                     ""
@@ -263,7 +611,9 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%!-- Variant selection (only if provider has variants) --%>
                 <%= if has_variants do %>
                   <div class="mb-5">
-                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">{gettext("Select a variant:")}</p>
+                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
+                      {gettext("Select a variant:")}
+                    </p>
                     <div class="flex flex-wrap gap-2">
                       <%= for variant <- variants do %>
                         <button
@@ -273,7 +623,8 @@ defmodule EvoDashWeb.SettingsComponents do
                           class={[
                             "btn btn-xs rounded-xl font-medium transition-all duration-200",
                             @selected_variant_id == variant.id && "btn-secondary shadow-md",
-                            @selected_variant_id != variant.id && "btn-ghost bg-secondary/10 hover:bg-secondary/20 text-secondary"
+                            @selected_variant_id != variant.id &&
+                              "btn-ghost bg-secondary/10 hover:bg-secondary/20 text-secondary"
                           ]}
                         >
                           {variant.display_name}
@@ -286,10 +637,16 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%!-- Model shortcuts (show only if no variants needed, or variant selected, and not a custom-model provider) --%>
                 <%= if show_model_buttons do %>
                   <div class="mb-5">
-                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">{gettext("Quick-select a model:")}</p>
+                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
+                      {gettext("Quick-select a model:")}
+                    </p>
                     <div class="flex flex-wrap gap-2">
                       <%= for model <- @selected_provider_models do %>
-                        <% resolved_atom = EvoGit.Config.LLMCatalog.resolve_provider_atom(@selected_provider_id, @selected_variant_id) %>
+                        <% resolved_atom =
+                          EvoGit.Config.LLMCatalog.resolve_provider_atom(
+                            @selected_provider_id,
+                            @selected_variant_id
+                          ) %>
                         <% model_string = "#{resolved_atom}:#{model.id}" %>
                         <button
                           type="button"
@@ -298,7 +655,8 @@ defmodule EvoDashWeb.SettingsComponents do
                           class={[
                             "btn btn-sm rounded-xl font-medium transition-all duration-200",
                             current_model == model_string && "btn-primary shadow-md",
-                            current_model != model_string && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                            current_model != model_string &&
+                              "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
                           ]}
                         >
                           {model.display_name}
@@ -338,9 +696,14 @@ defmodule EvoDashWeb.SettingsComponents do
                         />
                       </div>
                       <div class="bg-warning/5 border border-warning/20 rounded-xl p-3 flex gap-2 items-start">
-                        <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
+                        <.icon
+                          name="hero-exclamation-triangle"
+                          class="size-5 text-warning shrink-0 mt-0.5"
+                        />
                         <p class="text-xs font-medium text-warning/80 leading-relaxed">
-                          {gettext("Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider.")}
+                          {gettext(
+                            "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
+                          )}
                         </p>
                       </div>
                       <button type="submit" class="btn btn-primary btn-sm rounded-xl">
@@ -403,7 +766,8 @@ defmodule EvoDashWeb.SettingsComponents do
                     <% else %>
                       <p class="text-[11px] text-base-content/70 mt-1.5">
                         <%= if prefix = api_key_prefix_hint(provider.id) do %>
-                          {gettext("Enter your API key. It should start with")} <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]"><%= prefix %></code>
+                          {gettext("Enter your API key. It should start with")}
+                          <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]">{prefix}</code>
                         <% else %>
                           {gettext("Enter your API key.")}
                         <% end %>
@@ -417,6 +781,12 @@ defmodule EvoDashWeb.SettingsComponents do
               <% end %>
             </div>
 
+            <%!-- Model Profiles List Editor --%>
+            <.model_profiles_editor
+              profiles={@model_profiles}
+              editing_profile_id={@editing_profile_id}
+            />
+
             <%!-- LLM Connection Test --%>
             <div class="mb-6 bg-base-100 rounded-lg border border-base-200 p-4">
               <div class="flex items-center gap-3 mb-3">
@@ -425,13 +795,17 @@ defmodule EvoDashWeb.SettingsComponents do
                 </div>
                 <div>
                   <h4 class="font-semibold text-sm">{gettext("Connection Test")}</h4>
-                  <p class="text-xs text-base-content/70">{gettext("Verify your LLM configuration is working")}</p>
+                  <p class="text-xs text-base-content/70">
+                    {gettext("Verify your LLM configuration is working")}
+                  </p>
                 </div>
               </div>
               <div class="flex items-center gap-3">
                 <%= case @llm_test_status do %>
                   <% :idle -> %>
-                    <span class="text-sm text-base-content/80">{gettext("Not tested — click to verify LLM connectivity")}</span>
+                    <span class="text-sm text-base-content/80">{gettext(
+                      "Not tested — click to verify LLM connectivity"
+                    )}</span>
                     <button phx-click="test_llm" class="btn btn-primary btn-sm gap-2">
                       <.icon name="hero-signal" class="size-4" />
                       {gettext("Test Connection")}
@@ -443,7 +817,10 @@ defmodule EvoDashWeb.SettingsComponents do
                     <.icon name="hero-check-circle" class="size-5 text-success" />
                     <span class="text-sm text-success font-medium">{gettext("Connected")}</span>
                     <span class="text-xs text-base-content/70">({data.model})</span>
-                    <span class="text-xs text-base-content/70 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(data.response, 50)}"</span>
+                    <span class="text-xs text-base-content/70 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(
+                      data.response,
+                      50
+                    )}"</span>
                     <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
                       <.icon name="hero-arrow-path" class="size-3" />
                       {gettext("Retest")}
@@ -462,7 +839,11 @@ defmodule EvoDashWeb.SettingsComponents do
             <%!-- Help text for other providers --%>
             <div class="mb-6 bg-base-200/30 rounded-lg p-4 border border-base-200">
               <p class="text-xs text-base-content/70 leading-relaxed">
-                {raw(gettext("<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."))}
+                {raw(
+                  gettext(
+                    "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
+                  )
+                )}
               </p>
             </div>
 
@@ -494,7 +875,9 @@ defmodule EvoDashWeb.SettingsComponents do
                           <span class="badge badge-success badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                         </h3>
                         <p class="text-sm font-medium text-success/80 leading-relaxed">
-                          {gettext("Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active.")}
+                          {gettext(
+                            "Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active."
+                          )}
                         </p>
                       </div>
                     </div>
@@ -509,7 +892,9 @@ defmodule EvoDashWeb.SettingsComponents do
                           <span class="badge badge-warning badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                         </h3>
                         <p class="text-sm font-medium text-warning/80 leading-relaxed">
-                          {gettext("Filesystem isolation is active. Note: Resource limits are not available on macOS.")}
+                          {gettext(
+                            "Filesystem isolation is active. Note: Resource limits are not available on macOS."
+                          )}
                         </p>
                       </div>
                     </div>
@@ -524,7 +909,9 @@ defmodule EvoDashWeb.SettingsComponents do
                           <span class="badge badge-error badge-sm text-[10px] uppercase tracking-wider font-bold">Disabled</span>
                         </h3>
                         <p class="text-sm font-medium text-error/80 leading-relaxed">
-                          {gettext("No sandbox support on this platform. Commands will run directly on the host.")}
+                          {gettext(
+                            "No sandbox support on this platform. Commands will run directly on the host."
+                          )}
                         </p>
                       </div>
                     </div>
@@ -548,7 +935,9 @@ defmodule EvoDashWeb.SettingsComponents do
               <%= if resources_schemas != [] do %>
                 <div class="flex items-center gap-4 mb-6 mt-10">
                   <div class="h-px bg-base-200 flex-1"></div>
-                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">{gettext("Resources")}</h3>
+                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
+                    {gettext("Resources")}
+                  </h3>
                   <div class="h-px bg-base-200 flex-1"></div>
                 </div>
 
@@ -578,7 +967,9 @@ defmodule EvoDashWeb.SettingsComponents do
               <%= if process_schemas != [] do %>
                 <div class="flex items-center gap-4 mb-6 mt-10">
                   <div class="h-px bg-base-200 flex-1"></div>
-                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">{gettext("Process Limits")}</h3>
+                  <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
+                    {gettext("Process Limits")}
+                  </h3>
                   <div class="h-px bg-base-200 flex-1"></div>
                 </div>
 
@@ -655,13 +1046,18 @@ defmodule EvoDashWeb.SettingsComponents do
           <div class="text-primary/60">
             <.icon name="hero-magnifying-glass" class="size-5" />
           </div>
-          <h2 class="text-lg font-bold tracking-tight text-base-content">{gettext("Search Results")}</h2>
+          <h2 class="text-lg font-bold tracking-tight text-base-content">
+            {gettext("Search Results")}
+          </h2>
         </div>
         <p class="text-sm font-medium text-base-content/80">
           <%= if @total_matches == 0 do %>
             {gettext("No settings found matching \"%{query}\"", query: @search_text)}
           <% else %>
-            {gettext("%{count} setting(s) matching \"%{query}\"", count: @total_matches, query: @search_text)}
+            {gettext("%{count} setting(s) matching \"%{query}\"",
+              count: @total_matches,
+              query: @search_text
+            )}
           <% end %>
         </p>
       </div>
@@ -684,8 +1080,12 @@ defmodule EvoDashWeb.SettingsComponents do
                   <div class="p-2 bg-primary/10 text-primary rounded-xl">
                     <.icon name={category_icon(category)} class="size-5" />
                   </div>
-                  <h3 class="text-lg font-bold tracking-tight text-base-content">{category_display_name(category)}</h3>
-                  <span class="text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg bg-base-300/50 text-base-content/70">{length(matching)}</span>
+                  <h3 class="text-lg font-bold tracking-tight text-base-content">
+                    {category_display_name(category)}
+                  </h3>
+                  <span class="text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg bg-base-300/50 text-base-content/70">{length(
+                    matching
+                  )}</span>
                   <div class="h-px bg-base-200 flex-1"></div>
                 </div>
                 <div class="rounded-lg border border-base-200 overflow-hidden">
@@ -728,7 +1128,10 @@ defmodule EvoDashWeb.SettingsComponents do
       <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md pb-4 pt-2 -mx-4 px-4">
         <div class="relative group">
           <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
-            <.icon name="hero-magnifying-glass" class="size-4 text-base-content/70 group-focus-within:text-primary transition-colors" />
+            <.icon
+              name="hero-magnifying-glass"
+              class="size-4 text-base-content/70 group-focus-within:text-primary transition-colors"
+            />
           </div>
           <form id="settings-search" class="contents" phx-submit="noop">
             <input
@@ -764,12 +1167,14 @@ defmodule EvoDashWeb.SettingsComponents do
             class={[
               "w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all duration-200 text-sm font-semibold group relative overflow-hidden",
               category == @active_category && "bg-primary text-primary-content",
-              category != @active_category && "hover:bg-base-200/70 text-base-content/90 hover:text-base-content",
-              @search_text != "" and match_count == 0 && "opacity-30"
+              category != @active_category &&
+                "hover:bg-base-200/70 text-base-content/90 hover:text-base-content",
+              (@search_text != "" and match_count == 0) && "opacity-30"
             ]}
           >
             <%= if category == @active_category do %>
-              <div class="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              <div class="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
+              </div>
             <% end %>
             <.icon name={category_icon(category)} class="size-5 shrink-0 relative z-10" />
             <span class="flex-1 relative z-10 tracking-wide">{category_display_name(category)}</span>
@@ -783,7 +1188,8 @@ defmodule EvoDashWeb.SettingsComponents do
               <span class={[
                 "text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg relative z-10 transition-colors",
                 category == @active_category && "bg-primary-content/20 text-primary-content",
-                category != @active_category && "bg-base-300/50 text-base-content/70 group-hover:bg-base-300"
+                category != @active_category &&
+                  "bg-base-300/50 text-base-content/70 group-hover:bg-base-300"
               ]}>{total}</span>
             <% end %>
           </button>
@@ -837,6 +1243,55 @@ defmodule EvoDashWeb.SettingsComponents do
   end
 
   def model_display(value), do: to_string(value)
+
+  # ── Model profile helpers ──
+  # These safely read from profile maps that may have atom OR string keys
+  # (TOML-parsed profiles can arrive with string keys before normalization).
+
+  defp profile_id_string(profile) when is_map(profile) do
+    case Map.get(profile, :id) || Map.get(profile, "id") do
+      nil -> ""
+      id -> to_string(id)
+    end
+  end
+
+  defp profile_id_string(_), do: ""
+
+  defp profile_concurrency(profile) when is_map(profile) do
+    Map.get(profile, :concurrency) || Map.get(profile, "concurrency")
+  end
+
+  defp profile_concurrency(_), do: nil
+
+  defp profile_param(profile, key) when is_map(profile) and is_atom(key) do
+    Map.get(profile, key) || Map.get(profile, Atom.to_string(key))
+  end
+
+  defp profile_param(_, _), do: nil
+
+  # Builds a compact summary string of generation params, e.g.
+  # "temp: 0.7, max_tokens: 4096". Returns nil if no params are set.
+  defp profile_params_summary(profile) when is_map(profile) do
+    parts =
+      [
+        {:temperature, gettext("temp")},
+        {:max_tokens, gettext("max_tokens")},
+        {:reasoning_effort, gettext("reasoning")},
+        {:top_p, gettext("top_p")},
+        {:top_k, gettext("top_k")},
+        {:frequency_penalty, gettext("freq_penalty")},
+        {:presence_penalty, gettext("pres_penalty")}
+      ]
+      |> Enum.map(fn {key, label} ->
+        value = profile_param(profile, key)
+        if is_nil(value), do: nil, else: "#{label}: #{value}"
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    if parts == [], do: nil, else: Enum.join(parts, ", ")
+  end
+
+  defp profile_params_summary(_), do: nil
 
   defp default_label(nil), do: gettext("empty")
   defp default_label(value) when is_atom(value), do: to_string(value)
