@@ -147,10 +147,6 @@ defmodule EvoDash.TaskRegistry do
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
 
-    Logger.warning(
-      "TaskRegistry: INIT_LOGGING_V3 started, task_refs=#{inspect(map_size(state.task_refs))}"
-    )
-
     # Start the periodic heartbeat timer for lease renewal (owned tasks only).
     # The sweep is NOT periodic — it fires once at startup (via reconcile) and
     # once more after the lease duration to catch owners that died around our
