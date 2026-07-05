@@ -12,7 +12,7 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Runtime.WorktreeInitScript
   require Logger
 
-  def run(objective, opts \\ []) do
+  def run(objective, opts \\ []) when is_list(opts) do
     Logger.info("Genesis: Starting with objective: #{objective}")
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
 
@@ -50,7 +50,7 @@ defmodule EvoGit.Runtime.Genesis do
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
-        Helpers.notify_finalizing(opts)
+        Helpers.notify_finalizing(Keyword.get(opts, :task_id))
         Helpers.merge_and_report(repo_path, agent_output, "genesis")
 
       error ->
@@ -95,7 +95,7 @@ defmodule EvoGit.Runtime.Genesis do
          )
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
-        Helpers.notify_finalizing(opts)
+        Helpers.notify_finalizing(Keyword.get(opts, :task_id))
         Helpers.merge_and_report(repo_path, agent_output, "genesis")
 
       error ->

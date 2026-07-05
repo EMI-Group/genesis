@@ -31,7 +31,7 @@ defmodule EvoGit.Runtime.SkillExtraction do
            )
            |> AgentScheduler.run_agent() do
         {:ok, %Result{} = agent_output} ->
-          Helpers.notify_finalizing(opts)
+          Helpers.notify_finalizing(Keyword.get(opts, :task_id))
           Helpers.merge_and_report(repo_path, agent_output, "skill")
 
         error ->

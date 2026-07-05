@@ -8,7 +8,7 @@ defmodule EvoGit.Runtime.Helpers do
   Merges agent output and reports results. Creates a branch if changes were made.
   The `phase` argument should be "genesis" or "evolve" for logging and branch naming.
   """
-  def merge_and_report(repo_path, %Result{} = agent_output, phase) do
+  def merge_and_report(repo_path, %Result{} = agent_output, phase) when is_binary(phase) do
     final_sha = agent_output.commit_sha
     result = agent_output.result
     tag = agent_output.tag
@@ -99,10 +99,10 @@ defmodule EvoGit.Runtime.Helpers do
     end
   end
 
-  def notify_finalizing(opts) do
-    if task_id = Keyword.get(opts, :task_id) do
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
-    end
+  def notify_finalizing(nil), do: :ok
+
+  def notify_finalizing(task_id) when is_binary(task_id) do
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
   end
 
   def generate_branch_name(prefix) do
