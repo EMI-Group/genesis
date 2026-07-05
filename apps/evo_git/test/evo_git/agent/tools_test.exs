@@ -577,36 +577,44 @@ defmodule EvoGit.Agent.ToolsTest do
 
   describe "search_web in schemas" do
     test "search_web is NOT included in schemas/0 by default (config disabled)" do
-      schemas = Tools.schemas()
-      names = Enum.map(schemas, & &1.name)
-      refute "search_web" in names
+      with_isolated_config(fn ->
+        schemas = Tools.schemas()
+        names = Enum.map(schemas, & &1.name)
+        refute "search_web" in names
+      end)
     end
 
     test "search_web is NOT included in read_only_schemas/0 by default (config disabled)" do
-      schemas = Tools.read_only_schemas()
-      names = Enum.map(schemas, & &1.name)
-      refute "search_web" in names
+      with_isolated_config(fn ->
+        schemas = Tools.read_only_schemas()
+        names = Enum.map(schemas, & &1.name)
+        refute "search_web" in names
+      end)
     end
   end
 
   describe "EvoGit.Config.tools_search_enabled?/0" do
     test "returns false by default" do
-      refute EvoGit.Config.tools_search_enabled?()
+      with_isolated_config(fn ->
+        refute EvoGit.Config.tools_search_enabled?()
+      end)
     end
 
     test "returns false even when TAVILY_API_KEY is set (config still disabled)" do
-      original_key = System.get_env("TAVILY_API_KEY")
-      System.put_env("TAVILY_API_KEY", "test-key")
+      with_isolated_config(fn ->
+        original_key = System.get_env("TAVILY_API_KEY")
+        System.put_env("TAVILY_API_KEY", "test-key")
 
-      try do
-        refute EvoGit.Config.tools_search_enabled?()
-      after
-        if original_key do
-          System.put_env("TAVILY_API_KEY", original_key)
-        else
-          System.delete_env("TAVILY_API_KEY")
+        try do
+          refute EvoGit.Config.tools_search_enabled?()
+        after
+          if original_key do
+            System.put_env("TAVILY_API_KEY", original_key)
+          else
+            System.delete_env("TAVILY_API_KEY")
+          end
         end
-      end
+      end)
     end
   end
 
@@ -656,6 +664,28 @@ defmodule EvoGit.Agent.ToolsTest do
       schema1 = EvoGit.Agent.Tools.WebSearch.schema([])
       schema2 = EvoGit.Agent.Tools.WebSearch.schema(some: :opts)
       assert schema1.name == schema2.name
+    end
+  end
+
+  # Runs `fun` with XDG_CONFIG_HOME pointed at a fresh temp directory that
+  # contains NO genesis/config.toml, so tests are isolated from the real user
+  # config. Restores the original value and cleans up afterward.
+  defp with_isolated_config(fun) do
+    original_xdg = System.get_env("XDG_CONFIG_HOME")
+    tmp_xdg = Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    try do
+      fun.()
+    after
+      if original_xdg do
+        System.put_env("XDG_CONFIG_HOME", original_xdg)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_xdg)
     end
   end
 end
