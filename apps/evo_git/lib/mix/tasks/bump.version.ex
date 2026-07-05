@@ -136,7 +136,7 @@ defmodule Mix.Tasks.Bump.Version do
 
       # The lockfile mirrors the package version. Update it in place so the
       # bump doesn't require a `cargo build` to stay consistent. We only touch
-      # the evogit-desktop entry, leaving all dependency entries untouched.
+      # the genesis-desktop entry, leaving all dependency entries untouched.
       sync_cargo_lock(version)
     end
   end
@@ -147,7 +147,7 @@ defmodule Mix.Tasks.Bump.Version do
 
       updated =
         Regex.replace(
-          ~r/(\[\[package\]\]\nname = "evogit-desktop"\nversion = ")[^"]+(")/,
+          ~r/(\[\[package\]\]\nname = "genesis-desktop"\nversion = ")[^"]+(")/,
           contents,
           fn _, prefix, suffix -> prefix <> version <> suffix end
         )
