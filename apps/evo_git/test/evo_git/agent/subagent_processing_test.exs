@@ -232,6 +232,114 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
   end
 
+  describe "build_subagent_specs/3 — model_id inheritance" do
+    alias EvoGit.Agent.LoopState
+    alias EvoGit.AgentSpec
+    alias EvoGit.AgentScheduler.AgentState
+    alias EvoGit.Agents.CodebaseInvestigator
+    alias EvoGit.Core.ContextNode
+    alias EvoGit.Core.PhyloGraphNode
+
+    # A dummy agent module that lists CodebaseInvestigator as a subagent module,
+    # so subagent_module_for/2 can resolve the tool name.
+    defmodule DummyAgentModule do
+      def subagent_modules, do: [CodebaseInvestigator]
+    end
+
+    setup do
+      # Ensure the ETS table exists (app may already create it)
+      if :ets.whereis(:evogit_agent_state) == :undefined do
+        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      end
+
+      agent_id = 99_999
+
+      # Insert a parent AgentState with a specific model_id
+      parent_state = %AgentState{
+        context_node: %ContextNode{path: "./", repo: "/test/repo"},
+        phylo_node: %PhyloGraphNode{repo: "/test/repo", base_commit: "abc123", current_commit: "abc123"},
+        llm_model: "test-model",
+        max_retries: 3,
+        max_depth: 5,
+        model_id: "claude-sonnet"
+      }
+
+      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+
+      # Set the repo_path in the process dictionary
+      previous_repo_path = Process.get(:repo_path)
+      Process.put(:repo_path, "/test/repo")
+
+      on_exit(fn ->
+        :ets.delete(:evogit_agent_state, agent_id)
+        # Restore previous repo_path
+        if previous_repo_path do
+          Process.put(:repo_path, previous_repo_path)
+        else
+          Process.delete(:repo_path)
+        end
+      end)
+
+      %{agent_id: agent_id}
+    end
+
+    test "child spec inherits parent's model_id", %{agent_id: agent_id} do
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: DummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: []
+      }
+
+      call = %{
+        id: "call_1",
+        name: "subagent_codebase_investigator",
+        arguments: %{"path" => "./src", "objective" => "investigate src"}
+      }
+
+      [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert %AgentSpec{} = spec
+      assert spec.model_id == "claude-sonnet"
+    end
+
+    test "child spec inherits default model_id when parent uses default", %{agent_id: agent_id} do
+      # Override the parent state to use the default model_id
+      parent_state = %AgentState{
+        context_node: %ContextNode{path: "./", repo: "/test/repo"},
+        phylo_node: %PhyloGraphNode{repo: "/test/repo", base_commit: "abc123", current_commit: "abc123"},
+        llm_model: "test-model",
+        max_retries: 3,
+        max_depth: 5,
+        model_id: "default"
+      }
+
+      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: DummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: []
+      }
+
+      call = %{
+        id: "call_1",
+        name: "subagent_codebase_investigator",
+        arguments: %{"path" => "./lib", "objective" => "investigate lib"}
+      }
+
+      [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert %AgentSpec{} = spec
+      assert spec.model_id == "default"
+    end
+  end
+
   describe "format_subagent_result/1 with repo_id" do
     test "ok result with repo_id formats the same as without repo_id" do
       agent_result = %Result{
