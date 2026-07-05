@@ -475,7 +475,7 @@ defmodule EvoDashWeb.DashboardComponents do
   def task_card(assigns) do
     ~H"""
     <div class={[
-      "bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-base-200/60 relative group has-[:open]:z-30",
+      "bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-base-200/60 relative group has-[[open]]:z-30",
       task_card_tint(@task)
     ]}>
       <!-- Accent Top Border — clipped by inner wrapper so it respects rounded corners -->
