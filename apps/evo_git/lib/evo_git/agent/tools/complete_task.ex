@@ -15,8 +15,6 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
-  alias EvoGit.AgentScheduler.AgentState
-  alias EvoGit.AgentScheduler.SchedMeta
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -188,10 +186,10 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   defp lookup_task_info(agent_id) do
     {task_id, task_number} =
       case :ets.lookup(:evogit_sched_meta, agent_id) do
-        [{^agent_id, %SchedMeta{task_id: tid, task_number: tn}}] ->
+        [{^agent_id, %{task_id: tid, task_number: tn}}] ->
           {tid, tn}
 
-        [{^agent_id, %SchedMeta{task_id: tid}}] ->
+        [{^agent_id, %{task_id: tid}}] ->
           # Backward compat: task_number may be nil in older entries
           {tid, nil}
 
@@ -201,7 +199,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
 
     task_local_id =
       case :ets.lookup(:evogit_agent_state, agent_id) do
-        [{^agent_id, %AgentState{task_local_id: tlid}}] when is_integer(tlid) -> tlid
+        [{^agent_id, %{task_local_id: tlid}}] when is_integer(tlid) -> tlid
         _ -> 0
       end
 
