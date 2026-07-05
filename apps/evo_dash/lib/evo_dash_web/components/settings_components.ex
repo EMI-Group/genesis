@@ -151,6 +151,15 @@ defmodule EvoDashWeb.SettingsComponents do
                 />
                 <p class="text-[11px] text-base-content/70 mt-1">{gettext("Type a model string or use Quick Setup above")}</p>
               </div>
+            <% :model_profiles -> %>
+              <% profiles = @value || [] %>
+              <div class="w-full text-right">
+                <span class="badge badge-primary badge-sm gap-1 font-mono">
+                  <.icon name="hero-cpu-chip" class="size-3" />
+                  {gettext("%{count} model profiles", count: length(profiles))}
+                </span>
+                <p class="text-[11px] text-base-content/70 mt-1">{gettext("Configure via the editor below")}</p>
+              </div>
           <% end %>
           <% end %>
         </div>
