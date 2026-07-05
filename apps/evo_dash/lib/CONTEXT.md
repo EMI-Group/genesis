@@ -23,7 +23,7 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 | `EvoDash.Store.Codec` | Pure serialization module (no GenServer, no I/O). Encode functions use non-crashing `Jason.encode/1` + `case` (TOTAL encode, never raise — fallback to `inspect/1`). Decode functions raise on bad data (Store's quarantine logic handles recovery). One justified try/rescue remains on decode side: `decode_reason` (best-effort atom recovery via `String.to_existing_atom`). |
 | `EvoDash.TaskInfo` | Struct representing a task in the registry (extracted from nested module) |
 | `EvoDash.RecentProject` | Struct for recently opened projects |
-| `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes. Callbacks have NO try/rescue. On restart, `reconcile_task_status/2` checks `:evogit_sched_meta` ETS (via `:ets.info/1`, non-crashing) for active agents before marking running tasks as failed. |
+| `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes. Uses `EvoDash.TaskRegistry.ProcessRegistry` (Elixir `Registry`, `:unique` keys) to track live task processes by task_id at runtime — task processes self-register via `register_task_process/1` in `execute_task/3`. Callbacks have NO try/rescue. On restart, `reconcile_task_status/2` uses `Registry.lookup/2` to find surviving task processes (the Registry is a sibling under `:one_for_one`, so it survives TaskRegistry restarts), falling back to `:evogit_sched_meta` ETS check (via `:ets.info/1`, non-crashing) for active agents before marking running tasks as failed. PIDs are NOT persisted to the database. |
 
 ### Web Modules (`./evo_dash_web/`)
 
