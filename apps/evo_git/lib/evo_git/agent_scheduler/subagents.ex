@@ -31,7 +31,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
           GenServer.from(),
           State.t()
         ) :: {:noreply, State.t()}
-  def spawn_validated_subagents(parent_id, parent, specs, from, state) do
+  def spawn_validated_subagents(parent_id, %SchedMeta{} = parent, specs, from, %State{} = state) do
     # Get parent agent state for validation context
     {:ok, parent_agent_state} = Store.get_agent_state(parent_id)
 
@@ -114,7 +114,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
           AgentState.t(),
           State.t()
         ) :: :ok | {:error, term()}
-  def validate_single_subagent(parent_id, parent, spec, parent_agent_state, state) do
+  def validate_single_subagent(parent_id, %SchedMeta{} = parent, spec, parent_agent_state, %State{} = state) do
     subagent_depth = parent.depth + 1
 
     with :ok <- validate_subagent_depth(parent_id, subagent_depth, state),
@@ -286,7 +286,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
   (replies to the blocked GenServer.call from the parent agent).
   """
   @spec maybe_resume_parent(State.t(), pos_integer()) :: State.t()
-  def maybe_resume_parent(state, parent_id) do
+  def maybe_resume_parent(%State{} = state, parent_id) do
     {:ok, parent} = Store.get_sched_meta(parent_id)
 
     all_done? = map_size(parent.sub_agent_results) == parent.total_sub_specs
@@ -313,7 +313,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
   while waiting, so no worktree assignment is needed.
   """
   @spec dispatch_ready_parent(State.t(), pos_integer(), SchedMeta.t()) :: State.t()
-  def dispatch_ready_parent(state, agent_id, %{worktree: wt} = meta) do
+  def dispatch_ready_parent(%State{} = state, agent_id, %SchedMeta{worktree: wt} = meta) do
     results = build_ordered_results(meta.sub_agent_results, meta.total_sub_specs)
 
     GenServer.reply(meta.sub_agent_from, results)

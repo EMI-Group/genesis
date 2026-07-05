@@ -24,7 +24,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   Decrements the running count.
   """
   @spec recycle_agent(State.t(), pos_integer()) :: State.t()
-  def recycle_agent(state, agent_id) do
+  def recycle_agent(%State{} = state, agent_id) do
     # Genuine race: the :DOWN completion may race with another cleanup path.
     # If the entry is already gone, return state unchanged.
     with {:ok, meta} <- Store.get_sched_meta(agent_id),
@@ -58,7 +58,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   handle the killed process.
   """
   @spec cancel_agent(State.t(), pos_integer()) :: State.t()
-  def cancel_agent(state, agent_id) do
+  def cancel_agent(%State{} = state, agent_id) do
     case Store.get_sched_meta(agent_id) do
       {:ok, meta} ->
         # Kill the agent's Task process if it has one and is alive
@@ -110,7 +110,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   (for subagents) or replies with an error (for top-level agents).
   """
   @spec handle_agent_crash(State.t(), pos_integer(), term()) :: {:noreply, State.t()}
-  def handle_agent_crash(state, agent_id, reason) do
+  def handle_agent_crash(%State{} = state, agent_id, reason) do
     case Store.get_sched_meta(agent_id) do
       {:ok, meta} ->
         do_handle_agent_crash(state, agent_id, reason, meta)

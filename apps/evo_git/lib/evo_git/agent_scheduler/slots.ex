@@ -343,6 +343,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   # Extracts agent_id from a waiting queue entry (2-tuple or 3-tuple).
   defp entry_agent_id({agent_id, _from}), do: agent_id
   defp entry_agent_id({agent_id, _from, _backoff}), do: agent_id
+  defp entry_agent_id(_), do: nil
 
   # Compares two eligible entries and returns the better one.
   # Prefers most-recently-granted first, then lowest depth.

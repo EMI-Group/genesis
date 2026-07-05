@@ -49,7 +49,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     raise ArgumentError, "repo_path is required for initial AgentScheduler initialization"
   end
 
-  def ensure_initialized(state, repo_path) do
+  def ensure_initialized(%State{initialized: false} = state, repo_path) do
     repo_root = Path.expand(repo_path)
     do_initialize(state, repo_root)
   end
@@ -135,6 +135,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   def assign_and_prepare_worktree(agent_id, wt) do
     {:ok, meta} = Store.get_sched_meta(agent_id)
     {:ok, agent_state} = Store.get_agent_state(agent_id)
+    %AgentState{} = agent_state
     spec = meta.spec
 
     commit_sha = spec.phylo_node.current_commit
