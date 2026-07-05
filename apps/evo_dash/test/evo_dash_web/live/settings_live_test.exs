@@ -113,7 +113,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       # Default for nix.enabled is false, so the checkbox should NOT have 'checked'
       assert html =~ ~s(name="nix.enabled")
-      refute html =~ ~s(name="nix.enabled" value="true" class="toggle toggle-primary toggle-sm" checked)
+
+      refute html =~
+               ~s(name="nix.enabled" value="true" class="toggle toggle-primary toggle-sm" checked)
     end
 
     test "toggle uses DaisyUI toggle classes", %{conn: conn} do
@@ -142,7 +144,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute html =~ "Quick-select a model:"
     end
 
-    test "renders custom model form for OpenAI-Compatible (with base URL and warning)", %{conn: conn} do
+    test "renders custom model form for OpenAI-Compatible (with base URL and warning)", %{
+      conn: conn
+    } do
       {:ok, view, _html} = live(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
@@ -156,7 +160,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute html =~ "Quick-select a model:"
     end
 
-    test "saving OpenRouter custom model stores openrouter: spec and pre-fills on re-render", %{conn: conn} do
+    test "saving OpenRouter custom model stores openrouter: spec and pre-fills on re-render", %{
+      conn: conn
+    } do
       {:ok, view, _html} = live(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
@@ -310,6 +316,278 @@ defmodule EvoDashWeb.SettingsLiveTest do
       html = render_hook(view, "reset_key", %{"key_path" => "nope.nope"})
 
       assert html =~ "Invalid key path."
+    end
+  end
+
+  describe "model profiles editor" do
+    # The assigns/1 helper is defined above (line 229) in the "whitelist safety"
+    # describe block and is module-scoped (defp), so it's available here too.
+
+    defp current_models(view) do
+      get_in(assigns(view).file_config, [:llm, :models]) || []
+    end
+
+    test "renders the editor with Add Model button and empty state", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "llm"})
+
+      assert html =~ "Model Profiles"
+      assert html =~ "Add Model"
+      assert html =~ "No model profiles configured"
+    end
+
+    test "add_model_profile creates a new profile with generated id and enters edit mode", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "add_model_profile", %{})
+
+      assert html =~ "fill in the details and save"
+      [profile] = current_models(view)
+      assert profile.id == "profile-1"
+      assert profile.concurrency == 3
+      # Enters edit mode immediately
+      assert assigns(view).editing_profile_id == "profile-1"
+    end
+
+    test "add_model_profile generates sequential unique ids", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      # Add + save the first profile to persist it
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "model" => "anthropic:claude-sonnet-4-6",
+        "concurrency" => "3"
+      })
+
+      # Add a second profile
+      render_hook(view, "add_model_profile", %{})
+
+      models = current_models(view)
+      ids = Enum.map(models, & &1.id)
+      assert ids == ["profile-1", "profile-2"]
+    end
+
+    test "edit_model_profile toggles the edit form", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+      # add_model_profile already enters edit mode — cancel first
+      render_hook(view, "cancel_edit_model_profile", %{})
+
+      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      assert assigns(view).editing_profile_id == "profile-1"
+      assert html =~ "Edit Profile"
+      assert html =~ ~s(name="profile_id_new")
+    end
+
+    test "edit_model_profile toggles off when clicked again", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+      # add_model_profile enters edit mode for profile-1
+      assert assigns(view).editing_profile_id == "profile-1"
+
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      assert assigns(view).editing_profile_id == nil
+    end
+
+    test "cancel_edit_model_profile clears editing state", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      # add_model_profile enters edit mode for profile-1
+      render_hook(view, "add_model_profile", %{})
+      assert assigns(view).editing_profile_id == "profile-1"
+
+      render_hook(view, "cancel_edit_model_profile", %{})
+
+      assert assigns(view).editing_profile_id == nil
+    end
+
+    test "save_model_profile updates the profile with typed params", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "model" => "anthropic:claude-sonnet-4-6",
+          "concurrency" => "5",
+          "temperature" => "0.7",
+          "max_tokens" => "4096",
+          "reasoning_effort" => "high"
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      assert profile.id == "default"
+      assert profile.model == "anthropic:claude-sonnet-4-6"
+      assert profile.concurrency == 5
+      assert profile.temperature == 0.7
+      assert profile.max_tokens == 4096
+      assert profile.reasoning_effort == "high"
+    end
+
+    test "save_model_profile clears editing state after save", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "model" => "anthropic:claude-sonnet-4-6",
+        "concurrency" => "3"
+      })
+
+      assert assigns(view).editing_profile_id == nil
+    end
+
+    test "save_model_profile rejects empty id", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "  ",
+          "model" => "anthropic:claude-sonnet-4-6",
+          "concurrency" => "3"
+        })
+
+      assert html =~ "Profile id cannot be empty."
+    end
+
+    test "save_model_profile rejects duplicate id", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "model" => "anthropic:claude-sonnet-4-6",
+        "concurrency" => "3"
+      })
+
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-2",
+          "profile_id_new" => "default",
+          "model" => "openai:gpt-5.5",
+          "concurrency" => "5"
+        })
+
+      assert html =~ "already exists"
+    end
+
+    test "save_model_profile keeps same id when unchanged (no false duplicate)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "profile-1",
+          "model" => "anthropic:claude-sonnet-4-6",
+          "concurrency" => "5"
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      assert profile.id == "profile-1"
+      assert profile.concurrency == 5
+    end
+
+    test "delete_model_profile removes the profile", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "model" => "anthropic:claude-sonnet-4-6",
+        "concurrency" => "3"
+      })
+
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-2",
+        "profile_id_new" => "profile-2",
+        "model" => "openai:gpt-5.5",
+        "concurrency" => "3"
+      })
+
+      html = render_hook(view, "delete_model_profile", %{"profile_id" => "profile-1"})
+
+      assert html =~ "Model profile deleted."
+      [profile] = current_models(view)
+      assert profile.id == "profile-2"
+    end
+
+    test "select_llm_model_shortcut adds a profile and mirrors flat model", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html =
+        render_hook(view, "select_llm_model_shortcut", %{
+          "model_string" => "anthropic:claude-sonnet-4-6"
+        })
+
+      assert html =~ "Model selected and saved."
+      models = current_models(view)
+      assert length(models) == 1
+      assert hd(models).model == "anthropic:claude-sonnet-4-6"
+      assert hd(models).concurrency == 3
+      # Flat [:llm, :model] mirrors the default profile
+      assert get_in(assigns(view).file_config, [:llm, :model]) == "anthropic:claude-sonnet-4-6"
+    end
+
+    test "save_custom_model adds a profile for OpenRouter", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html =
+        render_hook(view, "save_custom_model", %{
+          "model_name" => "anthropic/claude-3.5-sonnet",
+          "provider_id" => "openrouter"
+        })
+
+      assert html =~ "Custom model saved."
+      models = current_models(view)
+      assert length(models) == 1
+      assert hd(models).model == "openrouter:anthropic/claude-3.5-sonnet"
+    end
+
+    test "save_custom_model rejects empty name", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html =
+        render_hook(view, "save_custom_model", %{
+          "model_name" => "  ",
+          "provider_id" => "openrouter"
+        })
+
+      assert html =~ "Model name cannot be empty."
+    end
+
+    test "save_custom_model rejects empty base URL for OpenAI-compatible", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html =
+        render_hook(view, "save_custom_model", %{
+          "model_name" => "x",
+          "base_url" => "",
+          "provider_id" => "openai_compatible"
+        })
+
+      assert html =~ "Base URL cannot be empty."
     end
   end
 end
