@@ -31,7 +31,7 @@ defmodule EvoGit.Sandbox.Linux do
   @doc "Runs command via systemd-run."
   @spec run(String.t(), String.t(), [String.t()], String.t() | nil) ::
           {String.t(), non_neg_integer()}
-  def run(cwd, executable, args \\ [], repo_root \\ nil) do
+  def run(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
     if enabled?() do
       ensure_initialized()
       System.cmd("systemd-run", args(cwd, executable, args, repo_root), stderr_to_stdout: true)
@@ -42,7 +42,7 @@ defmodule EvoGit.Sandbox.Linux do
 
   @doc "Generates systemd-run argument list."
   @spec args(String.t(), String.t(), [String.t()], String.t() | nil) :: [String.t()]
-  def args(cwd, executable, args \\ [], repo_root \\ nil) do
+  def args(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
     home = System.user_home!()
 
     # Keep sensitive credentials locked down

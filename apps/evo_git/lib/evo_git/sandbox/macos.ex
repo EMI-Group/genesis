@@ -27,7 +27,7 @@ defmodule EvoGit.Sandbox.MacOS do
   @doc "Runs command via sandbox-exec with a generated SBPL profile."
   @spec run(String.t(), String.t(), [String.t()], String.t() | nil) ::
           {String.t(), non_neg_integer()}
-  def run(cwd, executable, args \\ [], repo_root \\ nil) do
+  def run(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
     if enabled?() do
       resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
       profile = generate_profile(cwd, repo_root)
@@ -57,7 +57,7 @@ defmodule EvoGit.Sandbox.MacOS do
   # - Allow read on: everything (so tools can read system headers, libraries, etc.)
   # - Allow process execution (subprocess exec)
   @doc false
-  def generate_profile(cwd, repo_root \\ nil) do
+  def generate_profile(cwd, repo_root \\ nil) when is_binary(cwd) do
     home = System.user_home!()
 
     # Sensitive directories to explicitly deny write access
