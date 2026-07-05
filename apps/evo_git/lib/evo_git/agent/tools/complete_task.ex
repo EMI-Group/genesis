@@ -163,7 +163,14 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         compression_count: Keyword.get(opts, :compression_count, 0),
         repo_id: Keyword.get(opts, :repo_id),
         repo_root: Keyword.get(opts, :repo_root),
-        completed_at: DateTime.utc_now()
+        completed_at: DateTime.utc_now(),
+        llm_model: Keyword.get(opts, :llm_model),
+        llm_generation_params: Keyword.get(opts, :llm_generation_params, []),
+        compression_threshold: Keyword.get(opts, :compression_threshold),
+        max_turns: Keyword.get(opts, :max_turns),
+        max_retries: Keyword.get(opts, :max_retries),
+        max_agent_depth: Keyword.get(opts, :max_agent_depth),
+        foreign_repos: Keyword.get(opts, :foreign_repos, [])
       })
     end
 
@@ -313,7 +320,19 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       repo_id: data[:repo_id],
       repo_root: data[:repo_root],
       started_at: parse_started_at(Process.get(:evogit_started_at)),
-      completed_at: data[:completed_at]
+      completed_at: data[:completed_at],
+      llm_settings:
+        build_llm_settings(
+          data[:llm_model],
+          data[:llm_generation_params],
+          data[:compression_threshold]
+        ),
+      agent_settings: %{
+        max_turns: data[:max_turns],
+        max_retries: data[:max_retries],
+        max_agent_depth: data[:max_agent_depth]
+      },
+      foreign_repos: format_foreign_repos(data[:foreign_repos])
     }
 
     # Write to the archive records ETS table (if it exists)
@@ -332,5 +351,19 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       {:ok, dt, _offset} -> dt
       _ -> nil
     end
+  end
+
+  defp build_llm_settings(model, generation_params, compression_threshold) do
+    params_map = Map.new(generation_params || [])
+
+    Map.merge(%{model: model, context_compression_threshold: compression_threshold}, params_map)
+  end
+
+  defp format_foreign_repos(nil), do: []
+
+  defp format_foreign_repos(repos) when is_list(repos) do
+    Enum.map(repos, fn repo ->
+      %{id: repo.id, root: repo.root, description: repo.description}
+    end)
   end
 end
