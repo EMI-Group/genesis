@@ -1077,7 +1077,7 @@ defmodule EvoDash.TaskRegistryTest do
       # Spawn a process that will complete normally after a short delay.
       # It registers itself in the Registry so that reconcile_task_status finds
       # it via Registry.lookup and re-monitors it.
-      {:ok, agent_pid} =
+      {:ok, _agent_pid} =
         Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
           Registry.register(EvoDash.TaskRegistry.ProcessRegistry, task_id, :task)
           Process.sleep(50)
@@ -1124,7 +1124,7 @@ defmodule EvoDash.TaskRegistryTest do
       # Spawn a process that will crash (exit abnormally) after a short delay.
       # It registers itself in the Registry so that reconcile_task_status finds
       # it via Registry.lookup and re-monitors it.
-      {:ok, agent_pid} =
+      {:ok, _agent_pid} =
         Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
           Registry.register(EvoDash.TaskRegistry.ProcessRegistry, task_id, :task)
           Process.sleep(50)
