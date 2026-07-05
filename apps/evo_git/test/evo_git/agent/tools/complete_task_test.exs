@@ -221,11 +221,10 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       :ets.insert(:evogit_agent_state, {"agent_123", %{task_local_id: 1}})
 
       result =
-        CompleteTask.complete("agent_123", "Task done", base_commit,
-          base_commit: base_commit
-        )
+        CompleteTask.complete("agent_123", "Task done", base_commit, base_commit: base_commit)
 
-      assert %{result: "Task done", commit_sha: ^base_commit, branch: "evogit-agent-T1-A1"} = result
+      assert %{result: "Task done", commit_sha: ^base_commit, branch: "evogit-agent-T1-A1"} =
+               result
 
       :ets.delete(:evogit_sched_meta, "agent_123")
       :ets.delete(:evogit_agent_state, "agent_123")
@@ -268,9 +267,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      CompleteTask.complete("agent_no_base", "Result text", base_commit,
-        base_commit: nil
-      )
+      CompleteTask.complete("agent_no_base", "Result text", base_commit, base_commit: nil)
 
       # Verify no note was created
       assert :error = Git.get_note(tmp_dir, base_commit, ["--ref=evogit"])
@@ -289,9 +286,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       :ets.insert(:evogit_agent_state, {"agent_ret", %{task_local_id: 3}})
 
       result =
-        CompleteTask.complete("agent_ret", "My findings", base_commit,
-          base_commit: base_commit
-        )
+        CompleteTask.complete("agent_ret", "My findings", base_commit, base_commit: base_commit)
 
       assert is_map(result)
       assert Map.has_key?(result, :result)
@@ -615,7 +610,14 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         archive: true,
         objective: "Test record shape",
         parent_id: "parent_99",
-        depth: 3
+        depth: 3,
+        llm_model: "test:model",
+        llm_generation_params: [temperature: 0.7, reasoning_effort: :medium],
+        compression_threshold: 100_000,
+        max_turns: 128,
+        max_retries: 15,
+        max_agent_depth: 8,
+        foreign_repos: [EvoGit.Core.ForeignRepo.new("ext", "/path/to/ext")]
       )
 
       records = :ets.lookup(:evogit_archive_records, "4")
@@ -640,6 +642,32 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert Map.has_key?(record, :repo_path)
       assert Map.has_key?(record, :repo_id)
       assert Map.has_key?(record, :repo_root)
+
+      # Verify the new nested fields are present
+      assert Map.has_key?(record, :llm_settings)
+      assert Map.has_key?(record, :agent_settings)
+      assert Map.has_key?(record, :foreign_repos)
+
+      # Verify llm_settings structure
+      llm_settings = record.llm_settings
+      assert llm_settings.model == "test:model"
+      assert llm_settings.context_compression_threshold == 100_000
+      assert llm_settings.temperature == 0.7
+      assert llm_settings.reasoning_effort == :medium
+
+      # Verify agent_settings structure
+      agent_settings = record.agent_settings
+      assert agent_settings.max_turns == 128
+      assert agent_settings.max_retries == 15
+      assert agent_settings.max_agent_depth == 8
+
+      # Verify foreign_repos structure
+      foreign_repos = record.foreign_repos
+      assert length(foreign_repos) == 1
+      [repo_entry] = foreign_repos
+      assert repo_entry.id == "ext"
+      assert repo_entry.root == "/path/to/ext"
+      assert repo_entry.description == nil
 
       # Verify values
       assert record.agent_id == "agent_arc4"

@@ -490,6 +490,7 @@ defmodule EvoGit.Agent do
         new_turn = state.turn + 1
         compacted_context = tag_context_tail_with_turn(compacted_context, new_turn)
         state = %{state | context: compacted_context, turn: new_turn}
+
         AgentScheduler.batch_update_agent(state.agent_id,
           context: state.context,
           turn: state.turn,
@@ -663,7 +664,14 @@ defmodule EvoGit.Agent do
             archive: agent_state.archive,
             compression_count: agent_state.compression_count,
             repo_id: agent_state.repo_id,
-            repo_root: agent_state.repo_root
+            repo_root: agent_state.repo_root,
+            llm_model: agent_state.llm_model,
+            llm_generation_params: agent_state.llm_generation_params,
+            max_turns: agent_state.max_turns,
+            max_retries: agent_state.max_retries,
+            max_agent_depth: agent_state.max_depth,
+            foreign_repos: agent_state.foreign_repos,
+            compression_threshold: EvoGit.Defaults.compression_threshold_tokens()
           )
 
         {:complete, final_result}
