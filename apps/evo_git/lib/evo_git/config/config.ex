@@ -279,7 +279,7 @@ defmodule EvoGit.Config do
     end
   end
 
-  defp read_config_file(path) do
+  defp read_config_file(path) when is_binary(path) do
     case File.read(path) do
       {:ok, contents} ->
         case TomlElixir.decode(contents) do
@@ -422,7 +422,7 @@ defmodule EvoGit.Config do
     end
   end
 
-  defp read_credentials_file(path) do
+  defp read_credentials_file(path) when is_binary(path) do
     case File.read(path) do
       {:ok, contents} ->
         case TomlElixir.decode(contents) do
