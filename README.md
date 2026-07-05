@@ -45,16 +45,40 @@ Download, run the installer, and launch **Genesis**. That's it.
 
 ### For AI agents
 
-To fetch the latest release artifacts programmatically:
+#### Install the app
+
+To fetch and install the latest release programmatically:
 
 ```bash
 # List the download URLs in the newest release
 curl -s https://api.github.com/repos/BillHuang2001/evogit_private/releases/latest \
   | grep '"browser_download_url"' \
   | grep -E '\.(dmg|rpm|AppImage|tar\.gz|msi|exe)"'
+
+# Download the artifact matching your OS and architecture
+# (filenames encode the target — e.g. darwin-arm64, linux-x64, windows-x64)
+curl -LO "<download-url>"
+
+# Install based on your platform:
+#   macOS:   open <file>.dmg
+#   Linux:   sudo rpm -i <file>.rpm   OR   tar xzf <file>.tar.gz
+#   Windows: msiexec /i <file>.msi
 ```
 
-Match the artifact to your OS and architecture (filenames encode the target — e.g. `darwin-arm64`, `linux-x64`, `windows-x64`), download it with `curl -L`, then install with the platform-appropriate command (`dpkg -i` / `rpm -i`, mount the `.dmg`, or `msiexec /i`).
+#### Run from source
+
+To clone and run Genesis from source:
+
+```bash
+# Prerequisites: Elixir ~> 1.18 and Erlang/OTP 29
+git clone https://github.com/BillHuang2001/evogit_private.git
+cd evogit_private
+mix deps.get
+mix assets.setup
+mix phx.server
+```
+
+Then open http://localhost:4000 in your browser.
 
 ## 🙏 Acknowledgements
 
