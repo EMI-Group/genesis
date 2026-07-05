@@ -36,7 +36,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           pos_integer() | nil
         ) ::
           {pos_integer(), State.t()}
-  def register_agent(state, spec, from, parent_id, depth, task_id, task_number) do
+  def register_agent(%State{} = state, %AgentSpec{} = spec, from, parent_id, depth, task_id, task_number) do
     id = state.next_agent_id
 
     # Compute per-task local agent ID (display/branch naming only)
@@ -137,7 +137,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   subagents to start up concurrently.
   """
   @spec try_dispatch(State.t(), pos_integer()) :: State.t()
-  def try_dispatch(state, agent_id) do
+  def try_dispatch(%State{} = state, agent_id) do
     # Bail cleanly if either ETS entry is missing — genuine race with cleanup.
     # Returns state unchanged rather than crashing the GenServer.
     with {:ok, meta} <- Store.get_sched_meta(agent_id),
@@ -362,7 +362,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   Drains the agent queue after a resume, dispatching each queued agent.
   """
   @spec dispatch_queued_agents(State.t()) :: State.t()
-  def dispatch_queued_agents(%{queue: queue} = state) do
+  def dispatch_queued_agents(%State{queue: queue} = state) do
     case :queue.out(queue) do
       {{:value, agent_id}, rest_queue} ->
         state = %{state | queue: rest_queue}
@@ -378,9 +378,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   Processes the agent queue, dispatching ready agents and resuming parent agents.
   """
   @spec process_queue(State.t()) :: State.t()
-  def process_queue(%{paused: true} = state), do: state
+  def process_queue(%State{paused: true} = state), do: state
 
-  def process_queue(%{queue: queue} = state) do
+  def process_queue(%State{queue: queue} = state) do
     case :queue.out(queue) do
       {{:value, agent_id}, new_queue} ->
         state = %{state | queue: new_queue}
