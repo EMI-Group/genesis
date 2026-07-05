@@ -41,7 +41,7 @@ Tauri launches the Phoenix app as a sidecar process. The WebView connects to Pho
 
 ## Sidecar Lifecycle
 
-1. Tauri spawns the Burrito-wrapped Elixir binary (`evogit-backend`) with env vars: `PORT=9999`, `PHX_IP=127.0.0.1`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1`
+1. Tauri spawns the Burrito-wrapped Elixir binary (`genesis-backend`) with env vars: `PORT=9999`, `PHX_IP=127.0.0.1`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1`
 2. Tauri polls `http://localhost:9999` until the backend responds (up to 30s)
 3. The WebView window opens, pointing to `http://localhost:9999`
 4. Closing the window hides it to the system tray (backend keeps running); the "Quit" tray menu item kills the sidecar and exits
