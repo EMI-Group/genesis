@@ -74,7 +74,8 @@ defmodule EvoGit.Agent.TurnWarning do
       :critical
   """
   @spec current_positional_level(non_neg_integer(), pos_integer(), :high | :low) :: level() | :none
-  def current_positional_level(turn, max_turns, delegation_level \\ :high) do
+  def current_positional_level(turn, max_turns, delegation_level \\ :high)
+      when is_integer(turn) and is_integer(max_turns) do
     turns_remaining = max_turns - turn
     percent_used = div(turn * 100, max_turns)
 
@@ -98,7 +99,8 @@ defmodule EvoGit.Agent.TurnWarning do
   """
   @spec check_positional(non_neg_integer(), pos_integer(), level() | :none, :high | :low) ::
           {:ok, t()} | :none
-  def check_positional(turn, max_turns, last_level, delegation_level \\ :high) do
+  def check_positional(turn, max_turns, last_level, delegation_level \\ :high)
+      when is_integer(turn) and is_integer(max_turns) do
     level = current_positional_level(turn, max_turns, delegation_level)
 
     if level != :none and level_index(level) > level_index(last_level) do
@@ -119,7 +121,8 @@ defmodule EvoGit.Agent.TurnWarning do
   """
   @spec check_middle(non_neg_integer(), pos_integer(), non_neg_integer(), :high | :low) ::
           {:ok, t()} | :none
-  def check_middle(turn, max_turns, turns_since_subagent, delegation_level \\ :high) do
+  def check_middle(turn, max_turns, turns_since_subagent, delegation_level \\ :high)
+      when is_integer(turn) and is_integer(max_turns) do
     if turn < 1 do
       :none
     else
