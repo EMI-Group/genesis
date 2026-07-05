@@ -2346,264 +2346,264 @@ msgstr "flake.nix"
 #.key_path: scheduler.max_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent LLM API calls. Controls how many agents can make API calls simultaneously. Lower values reduce API rate-limit pressure but slow down overall progress."
-msgstr ""
+msgstr "Số lượng tối đa các lệnh gọi API LLM đồng thời. Kiểm soát số lượng tác nhân có thể gọi API cùng lúc. Giá trị thấp hơn giảm áp lực giới hạn tốc độ API nhưng làm chậm tiến độ tổng thể."
 
 #.key_path: scheduler.max_tool_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent tool executions. Controls how many tool calls (bash, file operations, etc.) can run in parallel. Reduce if you encounter system resource pressure."
-msgstr ""
+msgstr "Số lượng tối đa các lệnh thực thi công cụ đồng thời. Kiểm soát số lượng lệnh gọi công cụ (bash, thao tác tệp, v.v.) có thể chạy song song. Giảm nếu bạn gặp áp lực tài nguyên hệ thống."
 
 #.key_path: scheduler.agent_max_retries
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of crash-retries per agent. When an agent crashes due to an unexpected error, the scheduler will restart it up to this many times. Set to 0 to disable retries."
-msgstr ""
+msgstr "Số lần thử lại tối đa sau sự cố cho mỗi tác nhân. Khi một tác nhân gặp sự cố do lỗi bất ngờ, bộ lập lịch sẽ khởi động lại nó với số lần tối đa này. Đặt thành 0 để tắt tính năng thử lại."
 
 #.key_path: scheduler.max_agent_depth
 #: lib/evo_git/config/schema.ex
 msgid "Maximum subagent recursion depth. Prevents infinite delegation chains. A manager can spawn sub-managers, who can spawn further managers, up to this many levels deep."
-msgstr ""
+msgstr "Độ sâu đệ quy tối đa của tác nhân con. Ngăn chặn chuỗi ủy quyền vô hạn. Một tác nhân quản lý có thể tạo ra các tác nhân quản lý con, các tác nhân này có thể tạo thêm các tác nhân quản lý khác, lên tới số cấp độ sâu này."
 
 #.key_path: scheduler.max_retries
 #: lib/evo_git/config/schema.ex
 msgid "Maximum total LLM API retries across all agents. When the system encounters rate-limit errors or transient API failures, it will retry up to this many times before giving up."
-msgstr ""
+msgstr "Tổng số lần thử lại API LLM tối đa trên tất cả các tác nhân. Khi hệ thống gặp lỗi giới hạn tốc độ hoặc lỗi API tạm thời, nó sẽ thử lại tối đa số lần này trước khi từ bỏ."
 
 #.key_path: scheduler.max_turns
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of agent turns. An agent turn consists of one LLM call followed by tool execution. This limit prevents runaway loops from consuming excessive API credits."
-msgstr ""
+msgstr "Số lượt tác nhân tối đa. Một lượt tác nhân bao gồm một lần gọi LLM và sau đó thực thi công cụ. Giới hạn này ngăn chặn các vòng lặp không kiểm soát tiêu tốn quá nhiều tín dụng API."
 
 #.key_path: scheduler.max_turns_root
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of turns for the root (top-level) agent only. This is separate from `max_turns` which controls sub-agents. The root agent is special because when it exits, the entire task ends — unlike sub-agents which can be respawned by their parent. Use a higher value here if you want the root agent to have more room to complete complex tasks."
-msgstr ""
+msgstr "Số lượt tối đa chỉ dành cho tác nhân gốc (cấp cao nhất). Giá trị này tách biệt với `max_turns` dùng để kiểm soát tác nhân con. Tác nhân gốc đặc biệt vì khi nó thoát, toàn bộ tác vụ kết thúc — không giống như tác nhân con có thể được tác nhân cha tạo lại. Sử dụng giá trị cao hơn ở đây nếu bạn muốn tác nhân gốc có nhiều dư địa hơn để hoàn thành các tác vụ phức tạp."
 
 #.key_path: scheduler.delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
 msgid "Number of write-tool calls to the same child directory before the agent is nudged to spawn a subagent. When an agent edits files in a child directory this many times, a friendly hint is appended to the tool output suggesting it delegate to a subagent at that path. Set to 0 to disable delegation hints."
-msgstr ""
+msgstr "Số lần gọi công cụ ghi vào cùng một thư mục con trước khi tác nhân được nhắc nhở tạo tác nhân con. Khi một tác nhân chỉnh sửa tệp trong một thư mục con đủ số lần này, một gợi ý thân thiện được thêm vào đầu ra công cụ, đề nghị ủy quyền cho tác nhân con tại đường dẫn đó. Đặt thành 0 để tắt gợi ý ủy quyền."
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
 msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr ""
+msgstr "Số lần gọi công cụ đọc (read_file, rg, glob, list_dir) vào cùng một thư mục con trước khi tác nhân được nhắc nhở ủy quyền điều tra cho tác nhân con. Khi một tác nhân cấp cao đọc tệp trong một thư mục con đủ số lần này, một gợi ý được thêm vào đầu ra công cụ, đề nghị tạo một subagent_codebase_investigator tại đường dẫn đó. Đặt thành 0 để tắt gợi ý ủy quyền đọc."
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex
 msgid "Maximum tool execution timeout in milliseconds (hard cap). Any tool timeout requested by an agent is capped at this value to prevent runaway executions."
-msgstr ""
+msgstr "Thời gian chờ thực thi công cụ tối đa tính bằng mili giây (giới hạn cứng). Mọi thời gian chờ công cụ do tác nhân yêu cầu đều bị giới hạn ở giá trị này để ngăn chặn thực thi mất kiểm soát."
 
 #.key_path: scheduler.default_tool_timeout
 #: lib/evo_git/config/schema.ex
 msgid "Default tool execution timeout in milliseconds (used when the agent omits the timeout argument). Normally applies to simple tools that should respond quickly."
-msgstr ""
+msgstr "Thời gian chờ thực thi công cụ mặc định tính bằng mili giây (được sử dụng khi tác nhân bỏ qua đối số thời gian chờ). Thường áp dụng cho các công cụ đơn giản cần phản hồi nhanh."
 
 #.key_path: llm.model
 #: lib/evo_git/config/schema.ex
 msgid "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function. Alternatively, a map may be used for OpenAI-compatible providers: {provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}."
-msgstr ""
+msgstr "Định danh mô hình LLM theo định dạng 'provider:model'. Ví dụ: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. Phần provider xác định khóa API nào được sử dụng. Cài đặt này là bắt buộc để Genesis hoạt động. Ngoài ra, có thể sử dụng một map cho các nhà cung cấp tương thích với OpenAI: {provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}."
 
 #.key_path: llm.compression_threshold_tokens
 #: lib/evo_git/config/schema.ex
 msgid "Token count threshold that triggers context compression. When an agent's accumulated context (system prompt, conversation history, tool outputs) exceeds this token count, older context is compressed to avoid hitting the LLM's context window limit."
-msgstr ""
+msgstr "Ngưỡng số token kích hoạt nén ngữ cảnh. Khi ngữ cảnh tích lũy của tác nhân (lời nhắc hệ thống, lịch sử hội thoại, đầu ra công cụ) vượt quá số token này, ngữ cảnh cũ hơn sẽ được nén để tránh chạm tới giới hạn cửa sổ ngữ cảnh của LLM."
 
 #.key_path: llm.temperature
 #: lib/evo_git/config/schema.ex
 msgid "Controls randomness in LLM responses. Lower values make output more focused and deterministic, while higher values make it more creative and varied. Range: 0.0–2.0. Normally you should leave this unset — modern LLMs perform best with their default temperature and changing it may degrade output quality."
-msgstr ""
+msgstr "Kiểm soát tính ngẫu nhiên trong phản hồi của LLM. Giá trị thấp hơn làm đầu ra tập trung và xác định hơn, trong khi giá trị cao hơn làm nó sáng tạo và đa dạng hơn. Phạm vi: 0.0–2.0. Thông thường bạn nên để trống — các LLM hiện đại hoạt động tốt nhất với nhiệt độ mặc định và thay đổi nó có thể làm giảm chất lượng đầu ra."
 
 #.key_path: llm.max_tokens
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of tokens in the LLM response. Limits the length of generated text. Leave unset to use the provider's default (typically the model's maximum)."
-msgstr ""
+msgstr "Số token tối đa trong phản hồi của LLM. Giới hạn độ dài văn bản được tạo ra. Để trống để sử dụng giá trị mặc định của nhà cung cấp (thường là mức tối đa của mô hình)."
 
 #.key_path: llm.reasoning_effort
 #: lib/evo_git/config/schema.ex
 msgid "Controls how much effort the model spends reasoning before answering. Valid values: none, minimal, low, medium, high, xhigh, default (mapped to atoms in Elixir). Leave unset to use the provider's default."
-msgstr ""
+msgstr "Kiểm soát mức độ nỗ lực mà mô hình dành cho việc suy luận trước khi trả lời. Các giá trị hợp lệ: none, minimal, low, medium, high, xhigh, default (được ánh xạ tới atom trong Elixir). Để trống để sử dụng giá trị mặc định của nhà cung cấp."
 
 #.key_path: llm.top_p
 #: lib/evo_git/config/schema.ex
 msgid "Nucleus sampling threshold. The model considers tokens with top_p probability mass. Range: 0.0–1.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "Ngưỡng lấy mẫu hạt nhân. Mô hình xem xét các token có khối xác suất top_p. Phạm vi: 0.0–1.0. Thông thường bạn nên để trống — các LLM hiện đại hoạt động tốt nhất với giá trị mặc định và thay đổi nó có thể làm giảm chất lượng đầu ra."
 
 #.key_path: llm.top_k
 #: lib/evo_git/config/schema.ex
 msgid "Limits token selection to the K most probable tokens. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "Giới hạn lựa chọn token vào K token có xác suất cao nhất. Thông thường bạn nên để trống — các LLM hiện đại hoạt động tốt nhất với giá trị mặc định và thay đổi nó có thể làm giảm chất lượng đầu ra."
 
 #.key_path: llm.frequency_penalty
 #: lib/evo_git/config/schema.ex
 msgid "Penalizes tokens based on their frequency in the generated text so far. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "Phạt token dựa trên tần suất xuất hiện của chúng trong văn bản đã tạo. Phạm vi: -2.0 đến 2.0. Thông thường bạn nên để trống — các LLM hiện đại hoạt động tốt nhất với giá trị mặc định và thay đổi nó có thể làm giảm chất lượng đầu ra."
 
 #.key_path: llm.presence_penalty
 #: lib/evo_git/config/schema.ex
 msgid "Penalizes tokens that have already appeared in the generated text. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "Phạt token đã xuất hiện trong văn bản được tạo. Phạm vi: -2.0 đến 2.0. Thông thường bạn nên để trống — các LLM hiện đại hoạt động tốt nhất với giá trị mặc định và thay đổi nó có thể làm giảm chất lượng đầu ra."
 
 #.key_path: user.github_username
 #: lib/evo_git/config/schema.ex
 msgid "Your GitHub username. Used when creating pull requests to attribute the PR to your account. Optional but recommended if you plan to use the automated PR creation feature."
-msgstr ""
+msgstr "Tên người dùng GitHub của bạn. Được sử dụng khi tạo pull request để gán PR cho tài khoản của bạn. Không bắt buộc nhưng được khuyến nghị nếu bạn dự định sử dụng tính năng tạo PR tự động."
 
 #.key_path: sandbox.mode
 #: lib/evo_git/config/schema.ex
 msgid "Sandbox execution mode. 'auto' enables sandboxing on supported platforms (Linux with systemd-run, macOS with sandbox-exec) and falls back to direct execution on unsupported platforms. 'enabled' forces sandboxing and fails if unavailable. 'disabled' skips sandboxing entirely."
-msgstr ""
+msgstr "Chế độ thực thi sandbox. 'auto' bật sandbox trên các nền tảng được hỗ trợ (Linux với systemd-run, macOS với sandbox-exec) và quay lại thực thi trực tiếp trên các nền tảng không được hỗ trợ. 'enabled' buộc bật sandbox và báo lỗi nếu không khả dụng. 'disabled' bỏ qua hoàn toàn sandbox."
 
 #.key_path: sandbox.resources.cpu_quota
 #: lib/evo_git/config/schema.ex
 msgid "Aggregate CPU quota for all sandboxed processes combined. Uses systemd CPUQuota format (e.g., '1000%' = 10 CPU cores). This is the total CPU available across the entire sandbox slice."
-msgstr ""
+msgstr "Hạn ngạch CPU tổng hợp cho tất cả các tiến trình trong sandbox. Sử dụng định dạng CPUQuota của systemd (ví dụ: '1000%' = 10 lõi CPU). Đây là tổng CPU khả dụng trên toàn bộ lát cắt sandbox."
 
 #.key_path: sandbox.resources.cpu_weight
 #: lib/evo_git/config/schema.ex
 msgid "CPU allocation weight for the sandbox slice relative to other system workloads (1-10000). Higher values give Genesis processes more CPU time when the system is under contention. Default of 30 provides moderate priority."
-msgstr ""
+msgstr "Trọng số phân bổ CPU cho lát cắt sandbox so với các khối lượng công việc hệ thống khác (1-10000). Giá trị cao hơn cho các tiến trình Genesis nhiều thời gian CPU hơn khi hệ thống đang cạnh tranh. Mặc định là 30 cung cấp mức ưu tiên vừa phải."
 
 #.key_path: sandbox.resources.memory_max
 #: lib/evo_git/config/schema.ex
 msgid "Total memory limit for all sandboxed processes combined. Uses systemd memory format (e.g., '16G', '8G', '512M'). When the aggregate memory usage exceeds this limit, the kernel's OOM killer may terminate processes."
-msgstr ""
+msgstr "Giới hạn bộ nhớ tổng cho tất cả các tiến trình trong sandbox. Sử dụng định dạng bộ nhớ của systemd (ví dụ: '16G', '8G', '512M'). Khi mức sử dụng bộ nhớ tổng hợp vượt quá giới hạn này, trình OOM killer của hạt nhân có thể chấm dứt các tiến trình."
 
 #.key_path: sandbox.resources.tasks_max
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of tasks (processes and threads) allowed across the entire sandbox slice. Prevents fork bombs and runaway process creation from consuming system resources."
-msgstr ""
+msgstr "Số lượng tác vụ tối đa (tiến trình và luồng) được phép trên toàn bộ lát cắt sandbox. Ngăn chặn fork bomb và việc tạo tiến trình mất kiểm soát tiêu tốn tài nguyên hệ thống."
 
 #.key_path: sandbox.process.cpu_quota
 #: lib/evo_git/config/schema.ex
 msgid "Per-process CPU quota for individual tool executions. Uses systemd CPUQuota format (e.g., '800%' = 8 CPU cores). Each tool call (bash, compile, etc.) is limited to this amount of CPU time."
-msgstr ""
+msgstr "Hạn ngạch CPU cho mỗi tiến trình trong các lần thực thi công cụ riêng lẻ. Sử dụng định dạng CPUQuota của systemd (ví dụ: '800%' = 8 lõi CPU). Mỗi lệnh gọi công cụ (bash, compile, v.v.) bị giới hạn ở lượng thời gian CPU này."
 
 #.key_path: sandbox.process.memory_max
 #: lib/evo_git/config/schema.ex
 msgid "Per-process memory limit for individual tool executions. Uses systemd memory format (e.g., '12G', '4G', '512M'). A single tool call that exceeds this limit will be killed."
-msgstr ""
+msgstr "Giới hạn bộ nhớ cho mỗi tiến trình trong các lần thực thi công cụ riêng lẻ. Sử dụng định dạng bộ nhớ của systemd (ví dụ: '12G', '4G', '512M'). Một lệnh gọi công cụ đơn lẻ vượt quá giới hạn này sẽ bị chấm dứt."
 
 #.key_path: sandbox.process.limit_nofile
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of open file descriptors per sandboxed process. Limits how many files a single tool execution can have open simultaneously."
-msgstr ""
+msgstr "Số lượng bộ mô tả tệp mở tối đa cho mỗi tiến trình trong sandbox. Giới hạn số lượng tệp mà một lần thực thi công cụ có thể mở đồng thời."
 
 #.key_path: sandbox.process.oom_score_adjust
 #: lib/evo_git/config/schema.ex
 msgid "OOM killer adjustment score per process (-1000 to 1000). Higher values make processes more likely to be killed when memory is exhausted. Default of 1000 means sandboxed processes are preferentially killed over system processes."
-msgstr ""
+msgstr "Điểm điều chỉnh OOM killer cho mỗi tiến trình (-1000 đến 1000). Giá trị cao hơn làm cho tiến trình có nhiều khả năng bị chấm dứt hơn khi bộ nhớ cạn kiệt. Mặc định là 1000 có nghĩa là các tiến trình trong sandbox bị chấm dứt ưu tiên hơn so với các tiến trình hệ thống."
 
 #.key_path: truncation.tool_output_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum tool output size in bytes before truncation is triggered. When a tool returns output larger than this threshold (default 128 KB), the output is truncated to avoid overwhelming the LLM context window."
-msgstr ""
+msgstr "Kích thước đầu ra công cụ tối đa tính bằng byte trước khi kích hoạt cắt bớt. Khi một công cụ trả về đầu ra lớn hơn ngưỡng này (mặc định 128 KB), đầu ra sẽ bị cắt bớt để tránh làm quá tải cửa sổ ngữ cảnh của LLM."
 
 #.key_path: truncation.tool_output_default_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Default maximum output size in bytes for high-output tools. Used as the default truncation point for tools known to produce large outputs. Most tools use this value unless overridden per-tool."
-msgstr ""
+msgstr "Kích thước đầu ra tối đa mặc định tính bằng byte cho các công cụ có đầu ra lớn. Được sử dụng làm điểm cắt bớt mặc định cho các công cụ được biết là tạo ra đầu ra lớn. Hầu hết các công cụ sử dụng giá trị này trừ khi được ghi đè cho từng công cụ."
 
 #.key_path: truncation.tool_output_truncate_size
 #: lib/evo_git/config/schema.ex
 msgid "Size in bytes to which truncated output is reduced. When a tool's output exceeds the max bytes threshold, it is cut down to this size (default 8 KB). The truncated portion is replaced with a notice indicating how much was removed."
-msgstr ""
+msgstr "Kích thước tính bằng byte mà đầu ra bị cắt bớt được giảm xuống. Khi đầu ra của công cụ vượt quá ngưỡng byte tối đa, nó được cắt xuống kích thước này (mặc định 8 KB). Phần bị cắt được thay thế bằng thông báo cho biết lượng đã bị xóa."
 
 #.key_path: truncation.context_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum size in bytes for CONTEXT.md file content. When reading or writing CONTEXT.md files, content exceeding this limit (default 64 KB) is truncated to prevent context bloat."
-msgstr ""
+msgstr "Kích thước tối đa tính bằng byte cho nội dung tệp CONTEXT.md. Khi đọc hoặc ghi tệp CONTEXT.md, nội dung vượt quá giới hạn này (mặc định 64 KB) sẽ bị cắt bớt để ngăn ngữ cảnh phình to."
 
 #.key_path: task_history.max_tasks
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of recent tasks retained in the dashboard history. Older tasks beyond this limit are automatically purged to manage storage. Each task represents one top-level Genesis run."
-msgstr ""
+msgstr "Số lượng tác vụ gần đây tối đa được lưu trong lịch sử bảng điều khiển. Các tác vụ cũ hơn vượt quá giới hạn này sẽ tự động bị xóa để quản lý dung lượng lưu trữ. Mỗi tác vụ đại diện cho một lần chạy Genesis cấp cao nhất."
 
 #.key_path: task_history.max_age_days
 #: lib/evo_git/config/schema.ex
 msgid "Maximum age in days for retained task history entries. Tasks older than this are automatically purged regardless of the max_tasks limit. Keeps the task history dashboard manageable."
-msgstr ""
+msgstr "Tuổi tối đa tính bằng ngày cho các mục lịch sử tác vụ được giữ lại. Các tác vụ cũ hơn mức này sẽ tự động bị xóa bất kể giới hạn max_tasks. Giúp bảng điều khiển lịch sử tác vụ luôn dễ quản lý."
 
 #.key_path: nix.enabled
 #: lib/evo_git/config/schema.ex
 msgid "When true, enables running all tool calls inside a cached Nix dev environment. The dev env is built once via `nix print-dev-env` and sourced per call. Requires the `nix` binary to be available and a `flake.nix` to exist in the config directory (e.g. ~/.config/genesis/flake.nix). When nix or the flake is unavailable, commands run normally regardless of this setting."
-msgstr ""
+msgstr "Khi bật, cho phép chạy tất cả các lệnh gọi công cụ bên trong môi trường phát triển Nix được lưu cache. Môi trường phát triển được xây dựng một lần qua `nix print-dev-env` và được kích hoạt cho mỗi lần gọi. Yêu cầu tệp nhị phân `nix` phải khả dụng và tệp `flake.nix` phải tồn tại trong thư mục cấu hình (ví dụ: ~/.config/genesis/flake.nix). Khi nix hoặc flake không khả dụng, các lệnh chạy bình thường bất kể cài đặt này."
 
 #.key_path: nix.flake_output
 #: lib/evo_git/config/schema.ex
 msgid "Optional flake output attribute to use (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\" for `nix print-dev-env`."
-msgstr ""
+msgstr "Thuộc tính đầu ra flake tùy chọn để sử dụng (ví dụ: \"devShells.x86_64-linux.default\"). Khi nil, sử dụng devShell mặc định. Được thêm vào URI flake dưới dạng \"#<output>\" cho `nix print-dev-env`."
 
 #.key_path: tools.search.enabled
 #: lib/evo_git/config/schema.ex
 msgid "Enable web search tool for agents. Requires a configured API key."
-msgstr ""
+msgstr "Bật công cụ tìm kiếm web cho các tác nhân. Yêu cầu khóa API đã được cấu hình."
 
 #.key_path: tools.search.provider
 #: lib/evo_git/config/schema.ex
 msgid "Search service provider."
-msgstr ""
+msgstr "Nhà cung cấp dịch vụ tìm kiếm."
 
 #.key_path: tools.search.tavily.api_key_env_var
 #: lib/evo_git/config/schema.ex
 msgid "Environment variable name for the Tavily API key."
-msgstr ""
+msgstr "Tên biến môi trường cho khóa API Tavily."
 
 #.key_path: tools.search.tavily.base_url
 #: lib/evo_git/config/schema.ex
 msgid "Tavily API endpoint URL."
-msgstr ""
+msgstr "URL điểm cuối API Tavily."
 
 #.key_path: tools.search.tavily.search_depth
 #: lib/evo_git/config/schema.ex
 msgid "Search depth (basic or advanced)."
-msgstr ""
+msgstr "Độ sâu tìm kiếm (cơ bản hoặc nâng cao)."
 
 #.key_path: tools.search.tavily.max_results
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of search results (1-50)."
-msgstr ""
+msgstr "Số lượng kết quả tìm kiếm tối đa (1-50)."
 
 #.key_path: tools.search.tavily.timeout
 #: lib/evo_git/config/schema.ex
 msgid "Search request timeout in milliseconds."
-msgstr ""
+msgstr "Thời gian chờ yêu cầu tìm kiếm tính bằng mili giây."
 
 #.key_path: tools.search.tavily.max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum output size in bytes."
-msgstr ""
+msgstr "Kích thước đầu ra tối đa tính bằng byte."
 
 #.key_path: server.listen_ip
 #: lib/evo_git/config/schema.ex
 msgid "IP address the web dashboard binds to. Defaults to loopback (127.0.0.1) for security — only local connections are accepted. Set to \"0.0.0.0\" to accept connections from any network interface."
-msgstr ""
+msgstr "Địa chỉ IP mà bảng điều khiển web liên kết tới. Mặc định là loopback (127.0.0.1) vì lý do bảo mật — chỉ chấp nhận kết nối cục bộ. Đặt thành \"0.0.0.0\" để chấp nhận kết nối từ mọi giao diện mạng."
 
 #.key_path: server.listen_port
 #: lib/evo_git/config/schema.ex
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
-msgstr ""
+msgstr "Cổng mà bảng điều khiển web lắng nghe. Phải nằm trong khoảng từ 1024 đến 65535 (các cổng đặc quyền dưới 1024 không được hỗ trợ vì lý do bảo mật)."
 
 #: lib/evo_dash_web/components/settings_components.ex:875
 #, elixir-autogen, elixir-format
 msgid "Configure external tool integrations such as web search."
-msgstr ""
+msgstr "Cấu hình tích hợp công cụ bên ngoài như tìm kiếm web."
 
 #: lib/evo_dash_web/components/settings_components.ex:878
 #, elixir-autogen, elixir-format
 msgid "Configure the web dashboard listen address and port."
-msgstr ""
+msgstr "Cấu hình địa chỉ và cổng lắng nghe của bảng điều khiển web."
 
 #: lib/evo_dash_web/live/settings_live.ex:385
 #, elixir-autogen, elixir-format
 msgid "Invalid key path."
-msgstr ""
+msgstr "Đường dẫn khóa không hợp lệ."
 
 #: lib/evo_dash_web/components/settings_components.ex:843
 #, elixir-autogen, elixir-format
 msgid "Server"
-msgstr ""
+msgstr "Máy chủ"
 
 #: lib/evo_dash_web/components/settings_components.ex:842
 #, elixir-autogen, elixir-format
 msgid "Tools"
-msgstr ""
+msgstr "Công cụ"

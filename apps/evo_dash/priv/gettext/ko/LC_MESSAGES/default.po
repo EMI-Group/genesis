@@ -2346,264 +2346,264 @@ msgstr "flake.nix"
 #.key_path: scheduler.max_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent LLM API calls. Controls how many agents can make API calls simultaneously. Lower values reduce API rate-limit pressure but slow down overall progress."
-msgstr ""
+msgstr "동시 LLM API 호출의 최대 개수입니다. 여러 에이전트가 동시에 API를 호출할 수 있는 수를 제어합니다. 값을 낮추면 API 속도 제한 부담이 줄어들지만 전체 진행 속도가 느려집니다."
 
 #.key_path: scheduler.max_tool_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent tool executions. Controls how many tool calls (bash, file operations, etc.) can run in parallel. Reduce if you encounter system resource pressure."
-msgstr ""
+msgstr "동시 도구 실행의 최대 개수입니다. bash, 파일 작업 등 여러 도구 호출이 병렬로 실행될 수 있는 수를 제어합니다. 시스템 리소스 부하가 발생하면 값을 줄이세요."
 
 #.key_path: scheduler.agent_max_retries
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of crash-retries per agent. When an agent crashes due to an unexpected error, the scheduler will restart it up to this many times. Set to 0 to disable retries."
-msgstr ""
+msgstr "에이전트당 최대 충돌 재시도 횟수입니다. 예기치 않은 오류로 에이전트가 충돌하면 스케줄러가 이 횟수만큼 재시작합니다. 0으로 설정하면 재시도가 비활성화됩니다."
 
 #.key_path: scheduler.max_agent_depth
 #: lib/evo_git/config/schema.ex
 msgid "Maximum subagent recursion depth. Prevents infinite delegation chains. A manager can spawn sub-managers, who can spawn further managers, up to this many levels deep."
-msgstr ""
+msgstr "최대 하위 에이전트 재귀 깊이입니다. 무한 위임 체인을 방지합니다. 관리자는 하위 관리자를 생성하고, 그 하위 관리자가 다시 관리자를 생성할 수 있는 최대 깊이를 지정합니다."
 
 #.key_path: scheduler.max_retries
 #: lib/evo_git/config/schema.ex
 msgid "Maximum total LLM API retries across all agents. When the system encounters rate-limit errors or transient API failures, it will retry up to this many times before giving up."
-msgstr ""
+msgstr "모든 에이전트의 총 LLM API 재시도 최대 횟수입니다. 시스템이 속도 제한 오류 또는 일시적 API 실패를 만나면 포기하기 전까지 이 횟수만큼 재시도합니다."
 
 #.key_path: scheduler.max_turns
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of agent turns. An agent turn consists of one LLM call followed by tool execution. This limit prevents runaway loops from consuming excessive API credits."
-msgstr ""
+msgstr "에이전트 턴의 최대 개수입니다. 에이전트 턴은 한 번의 LLM 호출 후 도구 실행으로 구성됩니다. 이 제한은 무한 루프가 과도한 API 크레딧을 소모하는 것을 방지합니다."
 
 #.key_path: scheduler.max_turns_root
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of turns for the root (top-level) agent only. This is separate from `max_turns` which controls sub-agents. The root agent is special because when it exits, the entire task ends — unlike sub-agents which can be respawned by their parent. Use a higher value here if you want the root agent to have more room to complete complex tasks."
-msgstr ""
+msgstr "루트(최상위) 에이전트 전용 최대 턴 수입니다. 하위 에이전트를 제어하는 `max_turns`와는 별개입니다. 루트 에이전트는 종료되면 전체 작업이 끝난다는 점에서 특별합니다. 부모에 의해 다시 생성될 수 있는 하위 에이전트와 다릅니다. 복잡한 작업을 완료할 여유를 더 주려면 여기에 더 높은 값을 설정하세요."
 
 #.key_path: scheduler.delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
 msgid "Number of write-tool calls to the same child directory before the agent is nudged to spawn a subagent. When an agent edits files in a child directory this many times, a friendly hint is appended to the tool output suggesting it delegate to a subagent at that path. Set to 0 to disable delegation hints."
-msgstr ""
+msgstr "에이전트가 하위 에이전트를 생성하도록 유도되기 전까지 동일한 하위 디렉토리에 대한 쓰기 도구 호출 횟수입니다. 에이전트가 하위 디렉토리에서 파일을 이 횟수만큼 편집하면, 해당 경로의 하위 에이전트에 위임하라는 안내 힌트가 도구 출력에 추가됩니다. 0으로 설정하면 위임 힌트가 비활성화됩니다."
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
 msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr ""
+msgstr "에이전트가 하위 에이전트에 조사를 위임하도록 유도되기 전까지 동일한 하위 디렉토리에 대한 읽기 도구 호출(read_file, rg, glob, list_dir) 횟수입니다. 상위 에이전트가 하위 디렉토리에서 파일을 이 횟수만큼 읽으면, 해당 경로에 subagent_codebase_investigator를 생성하라는 힌트가 도구 출력에 추가됩니다. 0으로 설정하면 읽기 위임 힌트가 비활성화됩니다."
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex
 msgid "Maximum tool execution timeout in milliseconds (hard cap). Any tool timeout requested by an agent is capped at this value to prevent runaway executions."
-msgstr ""
+msgstr "최대 도구 실행 시간 제한(밀리초, 상한선)입니다. 에이전트가 요청한 모든 도구 타임아웃은 이 값으로 제한되어 실행이 폭주하는 것을 방지합니다."
 
 #.key_path: scheduler.default_tool_timeout
 #: lib/evo_git/config/schema.ex
 msgid "Default tool execution timeout in milliseconds (used when the agent omits the timeout argument). Normally applies to simple tools that should respond quickly."
-msgstr ""
+msgstr "기본 도구 실행 시간 제한(밀리초)입니다. 에이전트가 타임아웃 인수를 생략할 때 사용됩니다. 일반적으로 빠르게 응답해야 하는 간단한 도구에 적용됩니다."
 
 #.key_path: llm.model
 #: lib/evo_git/config/schema.ex
 msgid "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function. Alternatively, a map may be used for OpenAI-compatible providers: {provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}."
-msgstr ""
+msgstr "'provider:model' 형식의 LLM 모델 식별자입니다. 예: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. 제공자(provider) 부분이 사용될 API 키를 결정합니다. 이 설정은 Genesis가 작동하는 데 필수입니다. 또는 OpenAI 호환 제공자의 경우 맵을 사용할 수 있습니다: {provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}"
 
 #.key_path: llm.compression_threshold_tokens
 #: lib/evo_git/config/schema.ex
 msgid "Token count threshold that triggers context compression. When an agent's accumulated context (system prompt, conversation history, tool outputs) exceeds this token count, older context is compressed to avoid hitting the LLM's context window limit."
-msgstr ""
+msgstr "컨텍스트 압축을 트리거하는 토큰 수 임계값입니다. 에이전트의 누적 컨텍스트(시스템 프롬프트, 대화 기록, 도구 출력)가 이 토큰 수를 초과하면 LLM의 컨텍스트 창 제한에 도달하지 않도록 이전 컨텍스트가 압축됩니다."
 
 #.key_path: llm.temperature
 #: lib/evo_git/config/schema.ex
 msgid "Controls randomness in LLM responses. Lower values make output more focused and deterministic, while higher values make it more creative and varied. Range: 0.0–2.0. Normally you should leave this unset — modern LLMs perform best with their default temperature and changing it may degrade output quality."
-msgstr ""
+msgstr "LLM 응답의 무작위성을 제어합니다. 값이 낮을수록 출력이 집중되고 결정론적이며, 값이 높을수록 더 창의적이고 다양해집니다. 범위: 0.0–2.0. 일반적으로 이 값을 설정하지 않은 상태로 두는 것이 좋습니다. 최신 LLM은 기본 temperature에서 최고의 성능을 발휘하며, 변경 시 출력 품질이 저하될 수 있습니다."
 
 #.key_path: llm.max_tokens
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of tokens in the LLM response. Limits the length of generated text. Leave unset to use the provider's default (typically the model's maximum)."
-msgstr ""
+msgstr "LLM 응답의 최대 토큰 수입니다. 생성되는 텍스트의 길이를 제한합니다. 설정하지 않으면 제공자의 기본값(일반적으로 모델의 최대값)이 사용됩니다."
 
 #.key_path: llm.reasoning_effort
 #: lib/evo_git/config/schema.ex
 msgid "Controls how much effort the model spends reasoning before answering. Valid values: none, minimal, low, medium, high, xhigh, default (mapped to atoms in Elixir). Leave unset to use the provider's default."
-msgstr ""
+msgstr "모델이 응답 전 추론에 투자하는 노력의 정도를 제어합니다. 유효한 값: none, minimal, low, medium, high, xhigh, default (Elixir에서 atom으로 매핑됨). 설정하지 않으면 제공자의 기본값이 사용됩니다."
 
 #.key_path: llm.top_p
 #: lib/evo_git/config/schema.ex
 msgid "Nucleus sampling threshold. The model considers tokens with top_p probability mass. Range: 0.0–1.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "핵심 샘플링 임계값입니다. 모델은 top_p 확률 질량을 가진 토큰을 고려합니다. 범위: 0.0–1.0. 일반적으로 이 값을 설정하지 않은 상태로 두는 것이 좋습니다. 최신 LLM은 기본값에서 최고의 성능을 발휘하며, 변경 시 출력 품질이 저하될 수 있습니다."
 
 #.key_path: llm.top_k
 #: lib/evo_git/config/schema.ex
 msgid "Limits token selection to the K most probable tokens. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "토큰 선택을 확률이 가장 높은 K개의 토큰으로 제한합니다. 일반적으로 이 값을 설정하지 않은 상태로 두는 것이 좋습니다. 최신 LLM은 기본값에서 최고의 성능을 발휘하며, 변경 시 출력 품질이 저하될 수 있습니다."
 
 #.key_path: llm.frequency_penalty
 #: lib/evo_git/config/schema.ex
 msgid "Penalizes tokens based on their frequency in the generated text so far. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "지금까지 생성된 텍스트에서의 빈도에 따라 토큰에 패널티를 부과합니다. 범위: -2.0 ~ 2.0. 일반적으로 이 값을 설정하지 않은 상태로 두는 것이 좋습니다. 최신 LLM은 기본값에서 최고의 성능을 발휘하며, 변경 시 출력 품질이 저하될 수 있습니다."
 
 #.key_path: llm.presence_penalty
 #: lib/evo_git/config/schema.ex
 msgid "Penalizes tokens that have already appeared in the generated text. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "이미 생성된 텍스트에 등장한 토큰에 패널티를 부과합니다. 범위: -2.0 ~ 2.0. 일반적으로 이 값을 설정하지 않은 상태로 두는 것이 좋습니다. 최신 LLM은 기본값에서 최고의 성능을 발휘하며, 변경 시 출력 품질이 저하될 수 있습니다."
 
 #.key_path: user.github_username
 #: lib/evo_git/config/schema.ex
 msgid "Your GitHub username. Used when creating pull requests to attribute the PR to your account. Optional but recommended if you plan to use the automated PR creation feature."
-msgstr ""
+msgstr "GitHub 사용자 이름입니다. 풀 리퀘스트를 생성할 때 PR을 계정에 귀속시키는 데 사용됩니다. 자동 PR 생성 기능을 사용할 계획이라면 선택 사항이지만 권장됩니다."
 
 #.key_path: sandbox.mode
 #: lib/evo_git/config/schema.ex
 msgid "Sandbox execution mode. 'auto' enables sandboxing on supported platforms (Linux with systemd-run, macOS with sandbox-exec) and falls back to direct execution on unsupported platforms. 'enabled' forces sandboxing and fails if unavailable. 'disabled' skips sandboxing entirely."
-msgstr ""
+msgstr "샌드박스 실행 모드입니다. 'auto'는 지원되는 플랫폼(Linux의 systemd-run, macOS의 sandbox-exec)에서 샌드박싱을 활성화하고, 지원되지 않는 플랫폼에서는 직접 실행으로 대체됩니다. 'enabled'는 샌드박싱을 강제하며 사용 불가능할 경우 실패합니다. 'disabled'는 샌드박싱을 완전히 건너뜁니다."
 
 #.key_path: sandbox.resources.cpu_quota
 #: lib/evo_git/config/schema.ex
 msgid "Aggregate CPU quota for all sandboxed processes combined. Uses systemd CPUQuota format (e.g., '1000%' = 10 CPU cores). This is the total CPU available across the entire sandbox slice."
-msgstr ""
+msgstr "모든 샌드박스 프로세스의 총 CPU 할당량입니다. systemd CPUQuota 형식을 사용합니다(예: '1000%' = 10 CPU 코어). 전체 샌드박스 슬라이스에서 사용 가능한 총 CPU입니다."
 
 #.key_path: sandbox.resources.cpu_weight
 #: lib/evo_git/config/schema.ex
 msgid "CPU allocation weight for the sandbox slice relative to other system workloads (1-10000). Higher values give Genesis processes more CPU time when the system is under contention. Default of 30 provides moderate priority."
-msgstr ""
+msgstr "다른 시스템 워크로드 대비 샌드박스 슬라이스의 CPU 할당 가중치(1-10000)입니다. 값이 높을수록 시스템 경합 시 Genesis 프로세스에 더 많은 CPU 시간이 할당됩니다. 기본값 30은 중간 우선순위를 제공합니다."
 
 #.key_path: sandbox.resources.memory_max
 #: lib/evo_git/config/schema.ex
 msgid "Total memory limit for all sandboxed processes combined. Uses systemd memory format (e.g., '16G', '8G', '512M'). When the aggregate memory usage exceeds this limit, the kernel's OOM killer may terminate processes."
-msgstr ""
+msgstr "모든 샌드박스 프로세스의 총 메모리 제한입니다. systemd 메모리 형식을 사용합니다(예: '16G', '8G', '512M'). 총 메모리 사용량이 이 제한을 초과하면 커널의 OOM 킬러가 프로세스를 종료할 수 있습니다."
 
 #.key_path: sandbox.resources.tasks_max
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of tasks (processes and threads) allowed across the entire sandbox slice. Prevents fork bombs and runaway process creation from consuming system resources."
-msgstr ""
+msgstr "전체 샌드박스 슬라이스에서 허용되는 최대 작업(프로세스 및 스레드) 수입니다. 포크 폭탄 및 폭주하는 프로세스 생성이 시스템 리소스를 소비하는 것을 방지합니다."
 
 #.key_path: sandbox.process.cpu_quota
 #: lib/evo_git/config/schema.ex
 msgid "Per-process CPU quota for individual tool executions. Uses systemd CPUQuota format (e.g., '800%' = 8 CPU cores). Each tool call (bash, compile, etc.) is limited to this amount of CPU time."
-msgstr ""
+msgstr "개별 도구 실행의 프로세스당 CPU 할당량입니다. systemd CPUQuota 형식을 사용합니다(예: '800%' = 8 CPU 코어). 각 도구 호출(bash, 컴파일 등)은 이 CPU 시간으로 제한됩니다."
 
 #.key_path: sandbox.process.memory_max
 #: lib/evo_git/config/schema.ex
 msgid "Per-process memory limit for individual tool executions. Uses systemd memory format (e.g., '12G', '4G', '512M'). A single tool call that exceeds this limit will be killed."
-msgstr ""
+msgstr "개별 도구 실행의 프로세스당 메모리 제한입니다. systemd 메모리 형식을 사용합니다(예: '12G', '4G', '512M'). 이 제한을 초과하는 단일 도구 호출은 종료됩니다."
 
 #.key_path: sandbox.process.limit_nofile
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of open file descriptors per sandboxed process. Limits how many files a single tool execution can have open simultaneously."
-msgstr ""
+msgstr "샌드박스 프로세스당 최대 열린 파일 디스크립터 수입니다. 단일 도구 실행이 동시에 열 수 있는 파일 수를 제한합니다."
 
 #.key_path: sandbox.process.oom_score_adjust
 #: lib/evo_git/config/schema.ex
 msgid "OOM killer adjustment score per process (-1000 to 1000). Higher values make processes more likely to be killed when memory is exhausted. Default of 1000 means sandboxed processes are preferentially killed over system processes."
-msgstr ""
+msgstr "프로세스당 OOM 킬러 조정 점수(-1000 ~ 1000)입니다. 값이 높을수록 메모리 소진 시 프로세스가 종료될 가능성이 높아집니다. 기본값 1000은 샌드박스 프로세스가 시스템 프로세스보다 우선적으로 종료됨을 의미합니다."
 
 #.key_path: truncation.tool_output_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum tool output size in bytes before truncation is triggered. When a tool returns output larger than this threshold (default 128 KB), the output is truncated to avoid overwhelming the LLM context window."
-msgstr ""
+msgstr "출력 잘림이 트리거되기 전 최대 도구 출력 크기(바이트)입니다. 도구가 이 임계값(기본값 128KB)보다 큰 출력을 반환하면 LLM 컨텍스트 창이 과부하되는 것을 방지하기 위해 출력이 잘립니다."
 
 #.key_path: truncation.tool_output_default_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Default maximum output size in bytes for high-output tools. Used as the default truncation point for tools known to produce large outputs. Most tools use this value unless overridden per-tool."
-msgstr ""
+msgstr "출력량이 많은 도구의 기본 최대 출력 크기(바이트)입니다. 대량 출력을 생성하는 것으로 알려진 도구의 기본 잘림 지점으로 사용됩니다. 도구별로 재정의되지 않는 한 대부분의 도구가 이 값을 사용합니다."
 
 #.key_path: truncation.tool_output_truncate_size
 #: lib/evo_git/config/schema.ex
 msgid "Size in bytes to which truncated output is reduced. When a tool's output exceeds the max bytes threshold, it is cut down to this size (default 8 KB). The truncated portion is replaced with a notice indicating how much was removed."
-msgstr ""
+msgstr "잘린 출력이 줄어드는 크기(바이트)입니다. 도구의 출력이 최대 바이트 임계값을 초과하면 이 크기(기본값 8KB)로 줄어듭니다. 잘린 부분은 제거된 양을 표시하는 메시지로 대체됩니다."
 
 #.key_path: truncation.context_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum size in bytes for CONTEXT.md file content. When reading or writing CONTEXT.md files, content exceeding this limit (default 64 KB) is truncated to prevent context bloat."
-msgstr ""
+msgstr "CONTEXT.md 파일 콘텐츠의 최대 크기(바이트)입니다. CONTEXT.md 파일을 읽거나 쓸 때 이 제한(기본값 64KB)을 초과하는 콘텐츠는 컨텍스트 비대화를 방지하기 위해 잘립니다."
 
 #.key_path: task_history.max_tasks
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of recent tasks retained in the dashboard history. Older tasks beyond this limit are automatically purged to manage storage. Each task represents one top-level Genesis run."
-msgstr ""
+msgstr "대시보드 기록에 보관되는 최근 작업의 최대 개수입니다. 이 제한을 초과하는 오래된 작업은 저장 공간 관리를 위해 자동으로 삭제됩니다. 각 작업은 하나의 최상위 Genesis 실행을 나타냅니다."
 
 #.key_path: task_history.max_age_days
 #: lib/evo_git/config/schema.ex
 msgid "Maximum age in days for retained task history entries. Tasks older than this are automatically purged regardless of the max_tasks limit. Keeps the task history dashboard manageable."
-msgstr ""
+msgstr "보관된 작업 기록 항목의 최대 보관 일수입니다. 이보다 오래된 작업은 max_tasks 제한과 관계없이 자동으로 삭제됩니다. 작업 기록 대시보드를 관리 가능한 상태로 유지합니다."
 
 #.key_path: nix.enabled
 #: lib/evo_git/config/schema.ex
 msgid "When true, enables running all tool calls inside a cached Nix dev environment. The dev env is built once via `nix print-dev-env` and sourced per call. Requires the `nix` binary to be available and a `flake.nix` to exist in the config directory (e.g. ~/.config/genesis/flake.nix). When nix or the flake is unavailable, commands run normally regardless of this setting."
-msgstr ""
+msgstr "true로 설정하면 모든 도구 호출이 캐시된 Nix 개발 환경 내에서 실행됩니다. 개발 환경은 `nix print-dev-env`를 통해 한 번 빌드되고 호출 시마다 소싱됩니다. `nix` 바이너리를 사용할 수 있어야 하며 config 디렉토리(예: ~/.config/genesis/flake.nix)에 `flake.nix`가 존재해야 합니다. nix 또는 flake를 사용할 수 없는 경우 이 설정과 관계없이 명령이 정상적으로 실행됩니다."
 
 #.key_path: nix.flake_output
 #: lib/evo_git/config/schema.ex
 msgid "Optional flake output attribute to use (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\" for `nix print-dev-env`."
-msgstr ""
+msgstr "사용할 선택적 flake 출력 속성입니다(예: \"devShells.x86_64-linux.default\"). nil인 경우 기본 devShell을 사용합니다. `nix print-dev-env`를 위해 flake URI에 \"#<output>\"으로 추가됩니다."
 
 #.key_path: tools.search.enabled
 #: lib/evo_git/config/schema.ex
 msgid "Enable web search tool for agents. Requires a configured API key."
-msgstr ""
+msgstr "에이전트의 웹 검색 도구를 활성화합니다. 구성된 API 키가 필요합니다."
 
 #.key_path: tools.search.provider
 #: lib/evo_git/config/schema.ex
 msgid "Search service provider."
-msgstr ""
+msgstr "검색 서비스 제공자입니다."
 
 #.key_path: tools.search.tavily.api_key_env_var
 #: lib/evo_git/config/schema.ex
 msgid "Environment variable name for the Tavily API key."
-msgstr ""
+msgstr "Tavily API 키의 환경 변수 이름입니다."
 
 #.key_path: tools.search.tavily.base_url
 #: lib/evo_git/config/schema.ex
 msgid "Tavily API endpoint URL."
-msgstr ""
+msgstr "Tavily API 엔드포인트 URL입니다."
 
 #.key_path: tools.search.tavily.search_depth
 #: lib/evo_git/config/schema.ex
 msgid "Search depth (basic or advanced)."
-msgstr ""
+msgstr "검색 깊이(basic 또는 advanced)입니다."
 
 #.key_path: tools.search.tavily.max_results
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of search results (1-50)."
-msgstr ""
+msgstr "최대 검색 결과 수(1-50)입니다."
 
 #.key_path: tools.search.tavily.timeout
 #: lib/evo_git/config/schema.ex
 msgid "Search request timeout in milliseconds."
-msgstr ""
+msgstr "검색 요청 시간 제한(밀리초)입니다."
 
 #.key_path: tools.search.tavily.max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum output size in bytes."
-msgstr ""
+msgstr "최대 출력 크기(바이트)입니다."
 
 #.key_path: server.listen_ip
 #: lib/evo_git/config/schema.ex
 msgid "IP address the web dashboard binds to. Defaults to loopback (127.0.0.1) for security — only local connections are accepted. Set to \"0.0.0.0\" to accept connections from any network interface."
-msgstr ""
+msgstr "웹 대시보드가 바인딩되는 IP 주소입니다. 보안상 기본값은 루프백(127.0.0.1)으로, 로컬 연결만 허용됩니다. 모든 네트워크 인터페이스의 연결을 허용하려면 \"0.0.0.0\"으로 설정하세요."
 
 #.key_path: server.listen_port
 #: lib/evo_git/config/schema.ex
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
-msgstr ""
+msgstr "웹 대시보드가 수신 대기하는 포트입니다. 1024에서 65535 사이여야 합니다(보안상의 이유로 1024 미만의 권한 있는 포트는 지원되지 않습니다)."
 
 #: lib/evo_dash_web/components/settings_components.ex:875
 #, elixir-autogen, elixir-format
 msgid "Configure external tool integrations such as web search."
-msgstr ""
+msgstr "웹 검색 등 외부 도구 연동을 구성합니다."
 
 #: lib/evo_dash_web/components/settings_components.ex:878
 #, elixir-autogen, elixir-format
 msgid "Configure the web dashboard listen address and port."
-msgstr ""
+msgstr "웹 대시보드 수신 주소와 포트를 구성합니다."
 
 #: lib/evo_dash_web/live/settings_live.ex:385
 #, elixir-autogen, elixir-format
 msgid "Invalid key path."
-msgstr ""
+msgstr "올바르지 않은 키 경로입니다."
 
 #: lib/evo_dash_web/components/settings_components.ex:843
 #, elixir-autogen, elixir-format
 msgid "Server"
-msgstr ""
+msgstr "서버"
 
 #: lib/evo_dash_web/components/settings_components.ex:842
 #, elixir-autogen, elixir-format
 msgid "Tools"
-msgstr ""
+msgstr "도구"

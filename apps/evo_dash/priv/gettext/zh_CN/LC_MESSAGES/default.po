@@ -2346,264 +2346,264 @@ msgstr "flake.nix"
 #.key_path: scheduler.max_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent LLM API calls. Controls how many agents can make API calls simultaneously. Lower values reduce API rate-limit pressure but slow down overall progress."
-msgstr ""
+msgstr "最大并发 LLM API 调用数。控制可同时进行 API 调用的代理数量。降低该值可减少 API 速率限制压力，但会拖慢整体进度。"
 
 #.key_path: scheduler.max_tool_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent tool executions. Controls how many tool calls (bash, file operations, etc.) can run in parallel. Reduce if you encounter system resource pressure."
-msgstr ""
+msgstr "最大并发工具执行数。控制可并行运行的工具调用（bash、文件操作等）数量。如遇到系统资源压力，请减小此值。"
 
 #.key_path: scheduler.agent_max_retries
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of crash-retries per agent. When an agent crashes due to an unexpected error, the scheduler will restart it up to this many times. Set to 0 to disable retries."
-msgstr ""
+msgstr "每个代理的最大崩溃重试次数。当代理因意外错误崩溃时，调度器将重启该代理至多此次数。设为 0 以禁用重试。"
 
 #.key_path: scheduler.max_agent_depth
 #: lib/evo_git/config/schema.ex
 msgid "Maximum subagent recursion depth. Prevents infinite delegation chains. A manager can spawn sub-managers, who can spawn further managers, up to this many levels deep."
-msgstr ""
+msgstr "最大子代理递归深度。防止无限委托链。一个管理者可以创建子管理者，子管理者又可以创建更深层的管理者，最多可达此层级数。"
 
 #.key_path: scheduler.max_retries
 #: lib/evo_git/config/schema.ex
 msgid "Maximum total LLM API retries across all agents. When the system encounters rate-limit errors or transient API failures, it will retry up to this many times before giving up."
-msgstr ""
+msgstr "所有代理的最大 LLM API 总重试次数。当系统遇到速率限制错误或临时 API 故障时，将重试至多此次数后放弃。"
 
 #.key_path: scheduler.max_turns
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of agent turns. An agent turn consists of one LLM call followed by tool execution. This limit prevents runaway loops from consuming excessive API credits."
-msgstr ""
+msgstr "最大代理轮次。一个代理轮次包含一次 LLM 调用及随后的工具执行。此限制可防止失控循环消耗过多的 API 额度。"
 
 #.key_path: scheduler.max_turns_root
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of turns for the root (top-level) agent only. This is separate from `max_turns` which controls sub-agents. The root agent is special because when it exits, the entire task ends — unlike sub-agents which can be respawned by their parent. Use a higher value here if you want the root agent to have more room to complete complex tasks."
-msgstr ""
+msgstr "仅限根级（顶层）代理的最大轮次数。此值与控制子代理的 `max_turns` 分开设置。根代理是特殊的，因为当其退出时整个任务结束——与可由父代理重新生成的子代理不同。如果您希望根代理有更多空间完成复杂任务，请在此处设置较高的值。"
 
 #.key_path: scheduler.delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
 msgid "Number of write-tool calls to the same child directory before the agent is nudged to spawn a subagent. When an agent edits files in a child directory this many times, a friendly hint is appended to the tool output suggesting it delegate to a subagent at that path. Set to 0 to disable delegation hints."
-msgstr ""
+msgstr "在提示代理创建子代理前，对同一子目录的写入工具调用次数。当代理对某子目录进行此次数的文件编辑后，工具输出末尾会附加一条友好提示，建议将该目录委托给子代理。设为 0 以禁用委托提示。"
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
 msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr ""
+msgstr "在提示代理将调查工作委托给子代理前，对同一子目录的读取工具调用（read_file、rg、glob、list_dir）次数。当高级代理对某子目录进行此次数的文件读取后，工具输出末尾会附加一条提示，建议在该路径创建子代理 subagent_codebase_investigator。设为 0 以禁用读取委托提示。"
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex
 msgid "Maximum tool execution timeout in milliseconds (hard cap). Any tool timeout requested by an agent is capped at this value to prevent runaway executions."
-msgstr ""
+msgstr "最大工具执行超时时间（毫秒，硬上限）。代理请求的任何工具超时时间均不能超过此值，以防止失控执行。"
 
 #.key_path: scheduler.default_tool_timeout
 #: lib/evo_git/config/schema.ex
 msgid "Default tool execution timeout in milliseconds (used when the agent omits the timeout argument). Normally applies to simple tools that should respond quickly."
-msgstr ""
+msgstr "默认工具执行超时时间（毫秒，当代理省略 timeout 参数时使用）。通常适用于应快速响应的简单工具。"
 
 #.key_path: llm.model
 #: lib/evo_git/config/schema.ex
 msgid "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function. Alternatively, a map may be used for OpenAI-compatible providers: {provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}."
-msgstr ""
+msgstr "LLM 模型标识符，格式为 'provider:model'。示例：'anthropic:claude-sonnet-4-20250514'、'google:gemini-2.0-flash-exp'、'zai:glm-5.1'。提供者（provider）部分决定使用哪个 API 密钥。此设置是 Genesis 运行所必需的。也可为兼容 OpenAI 的提供者使用映射：{provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}。"
 
 #.key_path: llm.compression_threshold_tokens
 #: lib/evo_git/config/schema.ex
 msgid "Token count threshold that triggers context compression. When an agent's accumulated context (system prompt, conversation history, tool outputs) exceeds this token count, older context is compressed to avoid hitting the LLM's context window limit."
-msgstr ""
+msgstr "触发上下文压缩的 Token 数量阈值。当代理积累的上下文（系统提示、对话历史、工具输出）超过此 Token 数时，较早的上下文将被压缩，以避免触及 LLM 的上下文窗口限制。"
 
 #.key_path: llm.temperature
 #: lib/evo_git/config/schema.ex
 msgid "Controls randomness in LLM responses. Lower values make output more focused and deterministic, while higher values make it more creative and varied. Range: 0.0–2.0. Normally you should leave this unset — modern LLMs perform best with their default temperature and changing it may degrade output quality."
-msgstr ""
+msgstr "控制 LLM 回复的随机性。较低的值使输出更集中和确定，较高的值则更具创造性和多样性。范围：0.0–2.0。通常建议不设置此值——现代 LLM 在其默认温度下表现最佳，更改该值可能降低输出质量。"
 
 #.key_path: llm.max_tokens
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of tokens in the LLM response. Limits the length of generated text. Leave unset to use the provider's default (typically the model's maximum)."
-msgstr ""
+msgstr "LLM 回复中的最大 Token 数量。限制生成文本的长度。留空则使用提供者的默认值（通常为模型的最大值）。"
 
 #.key_path: llm.reasoning_effort
 #: lib/evo_git/config/schema.ex
 msgid "Controls how much effort the model spends reasoning before answering. Valid values: none, minimal, low, medium, high, xhigh, default (mapped to atoms in Elixir). Leave unset to use the provider's default."
-msgstr ""
+msgstr "控制模型在回答前投入多少推理精力。有效值：none、minimal、low、medium、high、xhigh、default（在 Elixir 中映射为原子）。留空则使用提供者的默认值。"
 
 #.key_path: llm.top_p
 #: lib/evo_git/config/schema.ex
 msgid "Nucleus sampling threshold. The model considers tokens with top_p probability mass. Range: 0.0–1.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "核采样阈值。模型考虑概率质量累计到 top_p 的 Token。范围：0.0–1.0。通常建议不设置此值——现代 LLM 在其默认值下表现最佳，更改该值可能降低输出质量。"
 
 #.key_path: llm.top_k
 #: lib/evo_git/config/schema.ex
 msgid "Limits token selection to the K most probable tokens. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "将 Token 选择限制为概率最高的 K 个 Token。通常建议不设置此值——现代 LLM 在其默认值下表现最佳，更改该值可能降低输出质量。"
 
 #.key_path: llm.frequency_penalty
 #: lib/evo_git/config/schema.ex
 msgid "Penalizes tokens based on their frequency in the generated text so far. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "根据 Token 在已生成文本中的出现频率对其进行惩罚。范围：-2.0 到 2.0。通常建议不设置此值——现代 LLM 在其默认值下表现最佳，更改该值可能降低输出质量。"
 
 #.key_path: llm.presence_penalty
 #: lib/evo_git/config/schema.ex
 msgid "Penalizes tokens that have already appeared in the generated text. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
-msgstr ""
+msgstr "对已在生成文本中出现过的 Token 进行惩罚。范围：-2.0 到 2.0。通常建议不设置此值——现代 LLM 在其默认值下表现最佳，更改该值可能降低输出质量。"
 
 #.key_path: user.github_username
 #: lib/evo_git/config/schema.ex
 msgid "Your GitHub username. Used when creating pull requests to attribute the PR to your account. Optional but recommended if you plan to use the automated PR creation feature."
-msgstr ""
+msgstr "您的 GitHub 用户名。用于在创建拉取请求时将该 PR 归属于您的账户。可选，但如果您计划使用自动创建 PR 功能，建议填写。"
 
 #.key_path: sandbox.mode
 #: lib/evo_git/config/schema.ex
 msgid "Sandbox execution mode. 'auto' enables sandboxing on supported platforms (Linux with systemd-run, macOS with sandbox-exec) and falls back to direct execution on unsupported platforms. 'enabled' forces sandboxing and fails if unavailable. 'disabled' skips sandboxing entirely."
-msgstr ""
+msgstr "沙盒执行模式。'auto' 在支持的平台（Linux 使用 systemd-run，macOS 使用 sandbox-exec）上启用沙盒，并在不支持的平台上回退为直接执行。'enabled' 强制启用沙盒，不可用时则失败。'disabled' 完全跳过沙盒。"
 
 #.key_path: sandbox.resources.cpu_quota
 #: lib/evo_git/config/schema.ex
 msgid "Aggregate CPU quota for all sandboxed processes combined. Uses systemd CPUQuota format (e.g., '1000%' = 10 CPU cores). This is the total CPU available across the entire sandbox slice."
-msgstr ""
+msgstr "所有沙盒进程的合计 CPU 配额。使用 systemd CPUQuota 格式（例如 '1000%' = 10 个 CPU 核心）。这是整个沙盒分片可用的总 CPU 资源。"
 
 #.key_path: sandbox.resources.cpu_weight
 #: lib/evo_git/config/schema.ex
 msgid "CPU allocation weight for the sandbox slice relative to other system workloads (1-10000). Higher values give Genesis processes more CPU time when the system is under contention. Default of 30 provides moderate priority."
-msgstr ""
+msgstr "沙盒分片相对于其他系统工作负载的 CPU 分配权重（1-10000）。当系统资源争用时，较高的值可为 Genesis 进程分配更多 CPU 时间。默认值 30 提供中等优先级。"
 
 #.key_path: sandbox.resources.memory_max
 #: lib/evo_git/config/schema.ex
 msgid "Total memory limit for all sandboxed processes combined. Uses systemd memory format (e.g., '16G', '8G', '512M'). When the aggregate memory usage exceeds this limit, the kernel's OOM killer may terminate processes."
-msgstr ""
+msgstr "所有沙盒进程的合计内存限制。使用 systemd 内存格式（例如 '16G'、'8G'、'512M'）。当合计内存使用超过此限制时，内核的 OOM 终结器可能会终止进程。"
 
 #.key_path: sandbox.resources.tasks_max
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of tasks (processes and threads) allowed across the entire sandbox slice. Prevents fork bombs and runaway process creation from consuming system resources."
-msgstr ""
+msgstr "整个沙盒分片中允许的最大任务数（进程和线程）。防止 fork 炸弹和失控进程创建消耗系统资源。"
 
 #.key_path: sandbox.process.cpu_quota
 #: lib/evo_git/config/schema.ex
 msgid "Per-process CPU quota for individual tool executions. Uses systemd CPUQuota format (e.g., '800%' = 8 CPU cores). Each tool call (bash, compile, etc.) is limited to this amount of CPU time."
-msgstr ""
+msgstr "单个工具执行的每进程 CPU 配额。使用 systemd CPUQuota 格式（例如 '800%' = 8 个 CPU 核心）。每次工具调用（bash、编译等）限制为此 CPU 时间量。"
 
 #.key_path: sandbox.process.memory_max
 #: lib/evo_git/config/schema.ex
 msgid "Per-process memory limit for individual tool executions. Uses systemd memory format (e.g., '12G', '4G', '512M'). A single tool call that exceeds this limit will be killed."
-msgstr ""
+msgstr "单个工具执行的每进程内存限制。使用 systemd 内存格式（例如 '12G'、'4G'、'512M'）。超过此限制的单个工具调用将被终止。"
 
 #.key_path: sandbox.process.limit_nofile
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of open file descriptors per sandboxed process. Limits how many files a single tool execution can have open simultaneously."
-msgstr ""
+msgstr "每个沙盒进程的最大打开文件描述符数量。限制单个工具执行可同时打开的文件数。"
 
 #.key_path: sandbox.process.oom_score_adjust
 #: lib/evo_git/config/schema.ex
 msgid "OOM killer adjustment score per process (-1000 to 1000). Higher values make processes more likely to be killed when memory is exhausted. Default of 1000 means sandboxed processes are preferentially killed over system processes."
-msgstr ""
+msgstr "每个进程的 OOM 终结器调整分数（-1000 到 1000）。值越高，进程在内存耗尽时越可能被终止。默认值 1000 意味着沙盒进程优先于系统进程被终止。"
 
 #.key_path: truncation.tool_output_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum tool output size in bytes before truncation is triggered. When a tool returns output larger than this threshold (default 128 KB), the output is truncated to avoid overwhelming the LLM context window."
-msgstr ""
+msgstr "触发截断前的最大工具输出大小（字节）。当工具返回的输出超过此阈值（默认 128 KB）时，输出将被截断，以避免使 LLM 上下文窗口过载。"
 
 #.key_path: truncation.tool_output_default_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Default maximum output size in bytes for high-output tools. Used as the default truncation point for tools known to produce large outputs. Most tools use this value unless overridden per-tool."
-msgstr ""
+msgstr "高输出工具的默认最大输出大小（字节）。用作已知会产生大量输出的工具的默认截断点。大多数工具使用此值，除非按工具单独覆盖。"
 
 #.key_path: truncation.tool_output_truncate_size
 #: lib/evo_git/config/schema.ex
 msgid "Size in bytes to which truncated output is reduced. When a tool's output exceeds the max bytes threshold, it is cut down to this size (default 8 KB). The truncated portion is replaced with a notice indicating how much was removed."
-msgstr ""
+msgstr "截断后输出缩减到的字节大小。当工具输出超过最大字节阈值时，将被缩减至此大小（默认 8 KB）。被截断的部分将替换为一条说明移除量的通知。"
 
 #.key_path: truncation.context_max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum size in bytes for CONTEXT.md file content. When reading or writing CONTEXT.md files, content exceeding this limit (default 64 KB) is truncated to prevent context bloat."
-msgstr ""
+msgstr "CONTEXT.md 文件内容的最大字节大小。在读取或写入 CONTEXT.md 文件时，超过此限制（默认 64 KB）的内容将被截断，以防止上下文膨胀。"
 
 #.key_path: task_history.max_tasks
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of recent tasks retained in the dashboard history. Older tasks beyond this limit are automatically purged to manage storage. Each task represents one top-level Genesis run."
-msgstr ""
+msgstr "仪表盘历史记录中保留的最大最近任务数。超出此限制的较旧任务将自动清除以管理存储。每个任务代表一次顶层的 Genesis 运行。"
 
 #.key_path: task_history.max_age_days
 #: lib/evo_git/config/schema.ex
 msgid "Maximum age in days for retained task history entries. Tasks older than this are automatically purged regardless of the max_tasks limit. Keeps the task history dashboard manageable."
-msgstr ""
+msgstr "保留任务历史记录的最大天数（天）。超过此天数的任务将自动清除，不受 max_tasks 限制的影响。保持任务历史仪表盘易于管理。"
 
 #.key_path: nix.enabled
 #: lib/evo_git/config/schema.ex
 msgid "When true, enables running all tool calls inside a cached Nix dev environment. The dev env is built once via `nix print-dev-env` and sourced per call. Requires the `nix` binary to be available and a `flake.nix` to exist in the config directory (e.g. ~/.config/genesis/flake.nix). When nix or the flake is unavailable, commands run normally regardless of this setting."
-msgstr ""
+msgstr "启用后，所有工具调用将在缓存的 Nix 开发环境中运行。该开发环境通过 `nix print-dev-env` 构建一次，每次调用时加载。需要 `nix` 二进制文件可用，且配置目录（如 ~/.config/genesis/flake.nix）中存在 `flake.nix`。当 nix 或 flake 不可用时，命令将正常运行，不受此设置影响。"
 
 #.key_path: nix.flake_output
 #: lib/evo_git/config/schema.ex
 msgid "Optional flake output attribute to use (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\" for `nix print-dev-env`."
-msgstr ""
+msgstr "可选使用的 flake 输出属性（例如 \"devShells.x86_64-linux.default\"）。为 nil 时使用默认的开发 shell。作为 \"#<output>\" 附加到 flake URI 后，用于 `nix print-dev-env`。"
 
 #.key_path: tools.search.enabled
 #: lib/evo_git/config/schema.ex
 msgid "Enable web search tool for agents. Requires a configured API key."
-msgstr ""
+msgstr "为代理启用网络搜索工具。需要已配置的 API 密钥。"
 
 #.key_path: tools.search.provider
 #: lib/evo_git/config/schema.ex
 msgid "Search service provider."
-msgstr ""
+msgstr "搜索服务提供商。"
 
 #.key_path: tools.search.tavily.api_key_env_var
 #: lib/evo_git/config/schema.ex
 msgid "Environment variable name for the Tavily API key."
-msgstr ""
+msgstr "Tavily API 密钥的环境变量名称。"
 
 #.key_path: tools.search.tavily.base_url
 #: lib/evo_git/config/schema.ex
 msgid "Tavily API endpoint URL."
-msgstr ""
+msgstr "Tavily API 端点 URL。"
 
 #.key_path: tools.search.tavily.search_depth
 #: lib/evo_git/config/schema.ex
 msgid "Search depth (basic or advanced)."
-msgstr ""
+msgstr "搜索深度（basic 或 advanced）。"
 
 #.key_path: tools.search.tavily.max_results
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of search results (1-50)."
-msgstr ""
+msgstr "最大搜索结果数（1-50）。"
 
 #.key_path: tools.search.tavily.timeout
 #: lib/evo_git/config/schema.ex
 msgid "Search request timeout in milliseconds."
-msgstr ""
+msgstr "搜索请求超时时间（毫秒）。"
 
 #.key_path: tools.search.tavily.max_bytes
 #: lib/evo_git/config/schema.ex
 msgid "Maximum output size in bytes."
-msgstr ""
+msgstr "最大输出大小（字节）。"
 
 #.key_path: server.listen_ip
 #: lib/evo_git/config/schema.ex
 msgid "IP address the web dashboard binds to. Defaults to loopback (127.0.0.1) for security — only local connections are accepted. Set to \"0.0.0.0\" to accept connections from any network interface."
-msgstr ""
+msgstr "Web 仪表盘的绑定 IP 地址。出于安全考虑默认为回环地址（127.0.0.1）——仅接受本地连接。设置为 \"0.0.0.0\" 以接受来自任何网络接口的连接。"
 
 #.key_path: server.listen_port
 #: lib/evo_git/config/schema.ex
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
-msgstr ""
+msgstr "Web 仪表盘的监听端口。必须在 1024 到 65535 之间（出于安全原因，不支持 1024 以下的特权端口）。"
 
 #: lib/evo_dash_web/components/settings_components.ex:875
 #, elixir-autogen, elixir-format
 msgid "Configure external tool integrations such as web search."
-msgstr ""
+msgstr "配置外部工具集成，如网页搜索等功能。"
 
 #: lib/evo_dash_web/components/settings_components.ex:878
 #, elixir-autogen, elixir-format
 msgid "Configure the web dashboard listen address and port."
-msgstr ""
+msgstr "配置网页仪表盘的监听地址和端口。"
 
 #: lib/evo_dash_web/live/settings_live.ex:385
 #, elixir-autogen, elixir-format
 msgid "Invalid key path."
-msgstr ""
+msgstr "无效的键路径。"
 
 #: lib/evo_dash_web/components/settings_components.ex:843
 #, elixir-autogen, elixir-format
 msgid "Server"
-msgstr ""
+msgstr "服务器"
 
 #: lib/evo_dash_web/components/settings_components.ex:842
 #, elixir-autogen, elixir-format
 msgid "Tools"
-msgstr ""
+msgstr "工具"
