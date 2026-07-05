@@ -42,9 +42,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
           state :: LoopState.t(),
           opts :: keyword()
         ) :: {list(), String.t() | nil}
-  def process_subagent_calls([], _state, _opts), do: {[], nil}
+  def process_subagent_calls([], _state, opts) when is_list(opts), do: {[], nil}
 
-  def process_subagent_calls(indexed_calls, state, opts) do
+  def process_subagent_calls(indexed_calls, state, opts) when is_list(opts) do
     sync_commit_fn = Keyword.fetch!(opts, :sync_commit_fn)
 
     # Validate calls: separate valid from those missing required 'path' argument.
@@ -160,7 +160,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
           state :: LoopState.t(),
           foreign_repo_commits :: %{String.t() => String.t()}
         ) :: [AgentSpec.t() | {:error, {map(), non_neg_integer(), String.t()}}]
-  def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{}) do
+  def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{})
+      when is_list(indexed_calls) and is_map(foreign_repo_commits) do
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
     repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
@@ -401,7 +402,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   # Separates indexed subagent calls into valid (have a path) and invalid (missing path).
   # Invalid calls get immediate error results to feed back to the LLM.
-  defp split_valid_subagent_calls(indexed_calls) do
+  defp split_valid_subagent_calls(indexed_calls) when is_list(indexed_calls) do
     Enum.reduce(indexed_calls, {[], []}, fn {call, index} = indexed_call,
                                             {valid_acc, invalid_acc} ->
       raw_path = Map.get(call.arguments, "path")
