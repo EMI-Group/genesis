@@ -251,27 +251,34 @@ defmodule Mix.Tasks.Translate do
       provider_options: [thinking: %{type: "disabled"}]
     ]
 
-    case ReqLLM.generate_object(@model, prompt, schema, opts) do
-      {:ok, response} ->
-        parsed = ReqLLM.Response.object(response)
-        translations = parsed["translations"] || []
+    case ReqLLM.stream_object(@model, prompt, schema, opts) do
+      {:ok, stream_resp} ->
+        case ReqLLM.StreamResponse.process_stream(stream_resp) do
+          {:ok, response} ->
+            parsed = ReqLLM.Response.object(response)
+            translations = parsed["translations"] || []
 
-        valid_translations =
-          Enum.filter(translations, fn t ->
-            if validate_interpolations(t["msgid"], t["msgstr"]) do
-              true
-            else
-              Mix.shell().info(
-                "  ⚠️ Invalid translation for '#{t["msgid"]}': missing interpolations. Discarding."
-              )
+            valid_translations =
+              Enum.filter(translations, fn t ->
+                if validate_interpolations(t["msgid"], t["msgstr"]) do
+                  true
+                else
+                  Mix.shell().info(
+                    "  ⚠️ Invalid translation for '#{t["msgid"]}': missing interpolations. Discarding."
+                  )
 
-              false
-            end
-          end)
+                  false
+                end
+              end)
 
-        {:ok, valid_translations}
+            {:ok, valid_translations}
 
-      error ->
+          {:error, reason} ->
+            Mix.shell().error("LLM Stream Error: #{inspect(reason)}")
+            {:error, reason}
+        end
+
+      {:error, error} ->
         Mix.shell().error("LLM Error: #{inspect(error)}")
         {:error, error}
     end
