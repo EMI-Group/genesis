@@ -467,7 +467,7 @@ defmodule EvoDash.TaskRegistry do
   """
   def execute_task(:genesis, opts, task_id) do
     register_task_process(task_id)
-    {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id)
+    {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id, :genesis)
     prompt = Keyword.get(opts, :prompt, "")
     EvoGit.Runtime.Genesis.run(prompt, runtime_opts)
   end
@@ -481,7 +481,7 @@ defmodule EvoDash.TaskRegistry do
         apply_resume_context(opts, task_id, String.trim(resume_from))
       else
         objective = Keyword.get(opts, :objective, "")
-        {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id)
+        {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id, :evolve)
         {objective, runtime_opts}
       end
 
@@ -954,7 +954,7 @@ defmodule EvoDash.TaskRegistry do
       if is_nil(prev_task) do
         # Previous task not found — run with the original objective.
         objective = Keyword.get(opts_without_resume, :objective, "")
-        {_input_arg, runtime_opts} = build_common_runtime_opts(opts_without_resume, task_id)
+        {_input_arg, runtime_opts} = build_common_runtime_opts(opts_without_resume, task_id, :evolve)
         {objective, runtime_opts}
       else
         context_block = build_resume_context_block(prev_task)
@@ -974,7 +974,7 @@ defmodule EvoDash.TaskRegistry do
             opts_without_resume
           end
 
-        {_input_arg, runtime_opts} = build_common_runtime_opts(opts_with_commit, task_id)
+        {_input_arg, runtime_opts} = build_common_runtime_opts(opts_with_commit, task_id, :evolve)
         {objective, runtime_opts}
       end
 
@@ -1047,7 +1047,7 @@ defmodule EvoDash.TaskRegistry do
   defp extract_result_summary({:exit, reason}), do: "Exited: #{inspect(reason)}"
   defp extract_result_summary(_), do: nil
 
-  defp build_common_runtime_opts(opts, task_id) do
+  defp build_common_runtime_opts(opts, task_id, task_type) do
     repo_path = Keyword.fetch!(opts, :path)
     mode = Keyword.get(opts, :mode, "simple")
     node_path = Keyword.get(opts, :node_path)
@@ -1056,7 +1056,7 @@ defmodule EvoDash.TaskRegistry do
 
     runtime_opts = [
       repo_path: repo_path,
-      mode: evolution_mode_atom(mode),
+      mode: mode_atom(task_type, mode),
       task_id: task_id
     ]
 
@@ -1100,6 +1100,19 @@ defmodule EvoDash.TaskRegistry do
 
   defp evolution_mode_atom(other),
     do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
+
+  defp genesis_mode_atom("new"), do: :new
+  defp genesis_mode_atom("existing"), do: :existing
+
+  defp genesis_mode_atom(other),
+    do: raise(ArgumentError, "invalid genesis mode: #{inspect(other)}")
+
+  # Dispatches to the correct mode resolver based on the task type, mirroring
+  # the core CLI (apps/evo_git/lib/evo_git/cli.ex) which has separate
+  # genesis_mode_atom/1 (new/existing) and evolution_mode_atom/1 (simple/complex)
+  # functions.
+  defp mode_atom(:genesis, mode), do: genesis_mode_atom(mode)
+  defp mode_atom(:evolve, mode), do: evolution_mode_atom(mode)
 
   ## GenServer Info Handlers
 
