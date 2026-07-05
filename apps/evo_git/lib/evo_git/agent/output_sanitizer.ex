@@ -86,7 +86,7 @@ defmodule EvoGit.Agent.OutputSanitizer do
     end
   end
 
-  def ensure_utf8(result), do: {result, nil}
+  def ensure_utf8(result) when not is_binary(result), do: {result, nil}
 
   @doc """
   Strip ANSI escape sequences from a string.
@@ -102,7 +102,7 @@ defmodule EvoGit.Agent.OutputSanitizer do
     Regex.replace(@ansi_regex, input, "")
   end
 
-  def strip_ansi(input), do: input
+  def strip_ansi(input) when not is_binary(input), do: input
 
   @doc """
   Strip progress bar artifacts from CLI output.
@@ -124,7 +124,7 @@ defmodule EvoGit.Agent.OutputSanitizer do
     |> Enum.join("\n")
   end
 
-  def strip_progress_bars(input), do: input
+  def strip_progress_bars(input) when not is_binary(input), do: input
 
   @doc """
   Truncate output that exceeds the configured threshold.
@@ -179,7 +179,7 @@ defmodule EvoGit.Agent.OutputSanitizer do
     end
   end
 
-  def truncate(result, _tool_name, _tool_args), do: {result, nil}
+  def truncate(result, _tool_name, _tool_args) when not is_binary(result), do: {result, nil}
 
   # --- Private Helpers ---
 

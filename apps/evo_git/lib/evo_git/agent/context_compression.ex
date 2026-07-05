@@ -51,7 +51,7 @@ defmodule EvoGit.Agent.ContextCompression do
   The updated state map (either compressed or unchanged).
   """
   @spec compress_if_needed(LoopState.t(), keyword()) :: LoopState.t()
-  def compress_if_needed(state, opts \\ []) do
+  def compress_if_needed(%LoopState{} = state, opts \\ []) do
     threshold = EvoGit.Defaults.compression_threshold_tokens() || 100_000
     agent_id = Keyword.fetch!(opts, :agent_id)
     llm_model = Keyword.fetch!(opts, :llm_model)
@@ -154,7 +154,7 @@ defmodule EvoGit.Agent.ContextCompression do
   Formats a list of messages into a readable string for compression.
   """
   @spec format_messages_for_compression([map()]) :: String.t()
-  def format_messages_for_compression(messages) do
+  def format_messages_for_compression(messages) when is_list(messages) do
     messages
     |> Enum.map(&format_single_message/1)
     |> Enum.join("\n\n")
@@ -191,8 +191,8 @@ defmodule EvoGit.Agent.ContextCompression do
   Extracts text content from a message's content parts.
   """
   @spec extract_message_content(map()) :: String.t()
-  def extract_message_content(msg) do
-    msg.content
+  def extract_message_content(%{content: content} = _msg) do
+    content
     |> Enum.reduce([], fn part, acc ->
       text =
         case part do

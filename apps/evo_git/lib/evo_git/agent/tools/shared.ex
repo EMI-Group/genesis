@@ -25,7 +25,7 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
-  def fetch_string_arg(_args, _key), do: {:error, "Arguments must be a map/object"}
+  def fetch_string_arg(args, _key) when not is_map(args), do: {:error, "Arguments must be a map/object"}
 
   @doc """
   Safely fetches a required array argument from the args map.
@@ -44,7 +44,7 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
-  def fetch_array_arg(_args, _key), do: {:error, "Arguments must be a map/object"}
+  def fetch_array_arg(args, _key) when not is_map(args), do: {:error, "Arguments must be a map/object"}
 
   @doc """
   Safely fetches an optional string argument from the args map.
@@ -104,7 +104,7 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
-  def validate_string_array(_), do: {:error, "The arguments must be an array"}
+  def validate_string_array(array) when not is_list(array), do: {:error, "The arguments must be an array"}
 
   @doc """
   Converts a value to a string binary if possible.
@@ -260,7 +260,7 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
-  def validate_file_scope(_expanded_path, _node_path, _repo_path) do
+  def validate_file_scope(_expanded_path, node_path, _repo_path) when not is_binary(node_path) do
     # If no node_path assigned, allow all (backward compatibility)
     :ok
   end
