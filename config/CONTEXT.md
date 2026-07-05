@@ -11,7 +11,7 @@ Environment-based Elixir configuration for the EvoGit umbrella project. Follows 
 | `dev.exs` | Dev overrides — port 4100, code reloader, asset watchers, debug errors | Compile |
 | `test.exs` | Test overrides — port 4002, server disabled, warning-level logger | Compile |
 | `prod.exs` | Production overrides — static cache manifest, info-level logger | Compile |
-| `runtime.exs` | Secrets & dynamic config — `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`, `PHX_SERVER`, `PHX_IP`; desktop-mode detection via compile-time `:desktop_release` flag (from `evogit_desktop` release in `mix.exs`) OR `EVOGIT_DESKTOP` env var (sets `localhost`/`http`/`check_origin: false` for Tauri WebView). Desktop bind address defaults to loopback (127.0.0.1) for security; `PHX_IP` env var overrides (e.g. `0.0.0.0` for remote access) | Runtime |
+| `runtime.exs` | Secrets & dynamic config — `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`, `PHX_SERVER`, `PHX_IP`; desktop-mode detection via compile-time `:desktop_release` flag (from `genesis_desktop` release in `mix.exs`) OR `EVOGIT_DESKTOP` env var (sets `localhost`/`http`/`check_origin: false` for Tauri WebView). Desktop bind address defaults to loopback (127.0.0.1) for security; `PHX_IP` env var overrides (e.g. `0.0.0.0` for remote access) | Runtime |
 
 ## LLM-Related Configuration
 

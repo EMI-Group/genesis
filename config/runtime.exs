@@ -63,7 +63,7 @@ if config_env() == :prod do
   # Detect desktop mode from two independent signals so detection is robust
   # against env var forwarding issues through the Burrito Zig wrapper:
   #   1. The compile-time `:desktop_release` flag baked into sys.config by the
-  #      evogit_desktop release definition in mix.exs (loaded before
+  #      genesis_desktop release definition in mix.exs (loaded before
   #      runtime.exs evaluates).
   #   2. The EVOGIT_DESKTOP env var set by the Tauri sidecar (sidecar.rs).
   desktop_mode =
