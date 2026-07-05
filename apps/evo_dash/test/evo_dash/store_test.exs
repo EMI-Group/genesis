@@ -36,7 +36,6 @@ defmodule EvoDash.StoreTest do
         status: :completed,
         opts: [path: "/tmp/test", mode: "simple"],
         ref: nil,
-        pid: nil,
         started_at: ~U[2026-06-26 07:19:44Z],
         finished_at: ~U[2026-06-26 08:00:00Z],
         logs: [],

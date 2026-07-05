@@ -886,18 +886,22 @@ defmodule EvoDash.TaskRegistryTest do
 
   describe "restart reconciliation (normalize_tasks liveness check)" do
     # These tests verify that when the TaskRegistry GenServer restarts, running
-    # tasks whose processes are still alive (under the sibling TaskSupervisor)
-    # are NOT marked failed — they are re-monitored. Dead/nil-pid tasks are
-    # marked failed as before.
+    # tasks whose processes are still alive (registered in the ProcessRegistry
+    # and under the sibling TaskSupervisor) are NOT marked failed — they are
+    # re-monitored. Tasks with no live process and an expired lease are marked
+    # failed. Tasks with no live process but active sched_meta agents stay
+    # :running (same-VM recovery).
 
     test "a running task with a live PID survives a registry restart (stays :running)",
          %{data_dir: data_dir} do
       task_id = "restart_live_#{System.unique_integer([:positive])}"
 
       # Spawn a long-running process that stays alive (simulating a task worker
-      # that outlives the registry restart).
+      # that outlives the registry restart). It registers itself in the Registry
+      # so that reconcile_task_status finds it via Registry.lookup.
       {:ok, agent_pid} =
         Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          Registry.register(EvoDash.TaskRegistry.ProcessRegistry, task_id, :task)
           Process.sleep(:infinity)
         end)
 
@@ -907,7 +911,6 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: agent_pid,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
@@ -939,37 +942,23 @@ defmodule EvoDash.TaskRegistryTest do
          %{data_dir: data_dir} do
       task_id = "restart_dead_#{System.unique_integer([:positive])}"
 
-      # Spawn and immediately kill a process so the PID is dead.
-      {:ok, agent_pid} =
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          :ok
-        end)
-
-      # Wait for the process to exit (it returns immediately).
-      ref = Process.monitor(agent_pid)
-
-      receive do
-        {:DOWN, ^ref, :process, ^agent_pid, _} -> :ok
-      after
-        1_000 -> flunk("process did not exit")
-      end
-
+      # No process is spawned — there is no live process registered in the
+      # Registry. The expired lease ensures that after Registry.lookup returns
+      # [], the lease check fails and the task is marked :failed.
       task = %TaskInfo{
         id: task_id,
         type: :genesis,
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: agent_pid,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
-        result: nil
+        result: nil,
+        lease_expires_at: System.system_time(:second) - 300
       }
 
       EvoDash.Store.put_task(EvoDash.Store, task)
-
-      refute Process.alive?(agent_pid)
 
       stop_supervised(EvoDash.TaskRegistry)
 
@@ -987,18 +976,19 @@ defmodule EvoDash.TaskRegistryTest do
          %{data_dir: data_dir} do
       task_id = "restart_nilpid_#{System.unique_integer([:positive])}"
 
-      # pid is nil (e.g. written before the pid field existed, or never started).
+      # No live process is registered in the Registry. The expired lease
+      # ensures the task is marked :failed after Registry.lookup returns [].
       task = %TaskInfo{
         id: task_id,
         type: :genesis,
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: nil,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
-        result: nil
+        result: nil,
+        lease_expires_at: System.system_time(:second) - 300
       }
 
       EvoDash.Store.put_task(EvoDash.Store, task)
@@ -1019,37 +1009,23 @@ defmodule EvoDash.TaskRegistryTest do
          %{data_dir: data_dir} do
       task_id = "restart_ets_#{System.unique_integer([:positive])}"
 
-      # Spawn and immediately kill a process so the PID is dead.
-      {:ok, agent_pid} =
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          :ok
-        end)
-
-      # Wait for the process to exit.
-      ref = Process.monitor(agent_pid)
-
-      receive do
-        {:DOWN, ^ref, :process, ^agent_pid, _} -> :ok
-      after
-        1_000 -> flunk("process did not exit")
-      end
-
+      # No process is spawned — there is no live process registered in the
+      # Registry. The expired lease makes the lease check fail, but the ETS
+      # sched_meta check below keeps the task :running (same-VM recovery).
       task = %TaskInfo{
         id: task_id,
         type: :genesis,
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: agent_pid,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
-        result: nil
+        result: nil,
+        lease_expires_at: System.system_time(:second) - 300
       }
 
       EvoDash.Store.put_task(EvoDash.Store, task)
-
-      refute Process.alive?(agent_pid)
 
       # Set up the :evogit_sched_meta ETS table with a fake active agent for
       # this task_id. This simulates AgentScheduler still running the task
@@ -1099,8 +1075,11 @@ defmodule EvoDash.TaskRegistryTest do
       task_id = "restart_down_normal_#{System.unique_integer([:positive])}"
 
       # Spawn a process that will complete normally after a short delay.
+      # It registers itself in the Registry so that reconcile_task_status finds
+      # it via Registry.lookup and re-monitors it.
       {:ok, agent_pid} =
         Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          Registry.register(EvoDash.TaskRegistry.ProcessRegistry, task_id, :task)
           Process.sleep(50)
           :ok
         end)
@@ -1111,7 +1090,6 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: agent_pid,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
@@ -1144,8 +1122,11 @@ defmodule EvoDash.TaskRegistryTest do
       task_id = "restart_down_crash_#{System.unique_integer([:positive])}"
 
       # Spawn a process that will crash (exit abnormally) after a short delay.
+      # It registers itself in the Registry so that reconcile_task_status finds
+      # it via Registry.lookup and re-monitors it.
       {:ok, agent_pid} =
         Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          Registry.register(EvoDash.TaskRegistry.ProcessRegistry, task_id, :task)
           Process.sleep(50)
           exit(:boom)
         end)
@@ -1156,7 +1137,6 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: agent_pid,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
@@ -1492,7 +1472,6 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: nil,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
@@ -1524,7 +1503,6 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: nil,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
@@ -1557,7 +1535,6 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: nil,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
@@ -1591,7 +1568,6 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: nil,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
@@ -1629,7 +1605,6 @@ defmodule EvoDash.TaskRegistryTest do
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        pid: nil,
         started_at: DateTime.utc_now(),
         finished_at: nil,
         logs: [],
