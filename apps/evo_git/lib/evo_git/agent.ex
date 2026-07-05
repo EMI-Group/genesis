@@ -35,7 +35,7 @@ defmodule EvoGit.Agent do
   Extracts the tool name from a tool schema struct.
   """
   def tool_name(%{name: name}), do: name
-  def tool_name(_), do: nil
+  def tool_name(_other), do: nil
 
   @doc """
   Determines whether the agent loop should trigger turn-limit recovery.
@@ -266,6 +266,7 @@ defmodule EvoGit.Agent do
       # --- Internal Execution Logic ---
 
       defp sync_current_commit_after_tools(state) do
+        %LoopState{} = state
         repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
         case Git.rev_parse(repo_path) do
@@ -284,6 +285,7 @@ defmodule EvoGit.Agent do
 
       # Syncs current commit and returns the SHA (for use in completion)
       defp sync_and_get_current_commit(state) do
+        %LoopState{} = state
         repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
         current_sha =
@@ -305,6 +307,7 @@ defmodule EvoGit.Agent do
       # Checks and sends turn-limit warnings via the adaptive TurnWarning module.
       # See EvoGit.Agent.TurnWarning for threshold logic and message generation.
       defp check_limit_warnings(state) do
+        %LoopState{} = state
         case EvoGit.Agent.TurnWarning.check_positional(
                state.turn,
                state.max_turns,
@@ -337,6 +340,7 @@ defmodule EvoGit.Agent do
       end
 
       defp loop(state) do
+        %LoopState{} = state
         context_before = state.context
 
         state =
@@ -364,6 +368,7 @@ defmodule EvoGit.Agent do
       end
 
       defp trigger_recovery(state, reason) do
+        %LoopState{} = state
         objective =
           case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
             {:ok, agent_state}
@@ -403,6 +408,7 @@ defmodule EvoGit.Agent do
       end
 
       defp do_turn(state) do
+        %LoopState{} = state
         context = state.context
         tools = effective_tools(state)
 
@@ -599,7 +605,8 @@ defmodule EvoGit.Agent do
 
       defp process_tool_calls([], _state), do: {:error, :protocol_violation}
 
-      defp process_tool_calls(tool_calls, state) do
+      defp process_tool_calls(tool_calls, state) when is_list(tool_calls) and tool_calls != [] do
+        %LoopState{} = state
         complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
 
         if complete_call do
@@ -610,6 +617,7 @@ defmodule EvoGit.Agent do
       end
 
       defp handle_complete_call(complete_call, state, tool_calls) do
+        %LoopState{} = state
         # Check if git status validation is enabled (default: true)
         check_git_status =
           Map.get(complete_call.arguments, "check_git_status") != false
@@ -640,6 +648,7 @@ defmodule EvoGit.Agent do
       end
 
       defp do_complete(complete_call, state) do
+        %LoopState{} = state
         # Sync the current commit before completing
         commit_sha = sync_and_get_current_commit(state)
 
@@ -678,6 +687,7 @@ defmodule EvoGit.Agent do
       end
 
       defp process_regular_tool_calls(tool_calls, state) do
+        %LoopState{} = state
         # 1. Index: Attach index to each call
         indexed_calls = Enum.with_index(tool_calls)
 
@@ -725,6 +735,7 @@ defmodule EvoGit.Agent do
       end
 
       defp process_standard_calls(indexed_calls, state) do
+        %LoopState{} = state
         repo_root =
           Process.get(:evogit_repo_root) || raise "evogit_repo_root not in process dictionary"
 
@@ -1452,6 +1463,7 @@ defmodule EvoGit.Agent do
       end
 
       defp effective_tools(state) do
+        %LoopState{} = state
         skill_schemas = Map.get(state, :skill_schemas, [])
         all_tools = available_tools() ++ skill_schemas
 
@@ -1469,6 +1481,7 @@ defmodule EvoGit.Agent do
       end
 
       defp at_max_depth?(state) do
+        %LoopState{} = state
         {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
         state.depth >= agent_state.max_depth
       end
