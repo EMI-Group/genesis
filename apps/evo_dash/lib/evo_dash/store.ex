@@ -248,10 +248,10 @@ defmodule EvoDash.Store do
               state.conn,
               """
               INSERT OR REPLACE INTO tasks
-              (id, type, status, opts, pid, started_at, finished_at, logs,
+              (id, type, status, opts, started_at, finished_at, logs,
                result, review_status, usage, agent_count, base_sha, commit_sha,
                archive_metadata, lease_expires_at)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
               """,
               values
             )
