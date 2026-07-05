@@ -42,6 +42,17 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | `GET /system` | `SystemLive` | System page: scheduler controls (pause/resume), system controls (restart/stop the Erlang VM), system self-check, plus usage guides and references (example config, CLI usage, FAQ, credentials) |
 | `/dashboard` | Phoenix.LiveDashboard | Built-in metrics/telemetry dashboard |
 
+### Multi-Model LLM Support
+
+The dashboard supports the core runtime's **multi-model** architecture (`[[llm.models]]` array-of-tables config format). Each model profile has its own id, model, concurrency slots, and generation params.
+
+- **Settings page model profiles editor** (`SettingsLive` + `SettingsComponents.model_profiles_editor/1`): A list-based editor in the LLM category that lets users add/edit/delete model profiles. Each profile row shows id, model, concurrency, and a gen-params summary; expanding it reveals inputs for all fields (temperature, reasoning_effort, max_tokens, top_p, top_k, frequency_penalty, presence_penalty). The Quick Setup provider shortcuts and custom model form now **add a new profile** to the list instead of replacing a single model (backward-compat: `[:llm, :model]` is mirrored to the first/default profile). Events: `add_model_profile`, `edit_model_profile`, `save_model_profile`, `delete_model_profile`, `cancel_edit_model_profile`. Duplicate profile ids are rejected.
+- **Runtime update**: `update_runtime_from_file_config/2` pushes `:model_profiles` (via `Schema.model_profiles/1`) to `EvoGit.AgentScheduler.update_config/1` instead of the legacy `:llm_model` + `:llm_generation_params`.
+- **Per-task model selection** (`DashboardLive` + `DashboardComponents.task_form/1`): A model dropdown in the task form (populated from `Schema.model_profiles/1`, defaults to the first profile). The selected `:model_id` is threaded through `task_submit` → `build_common_runtime_opts/3` → runtime opts → core scheduler. Event: `select_model`.
+- **Welcome modal**: `show_welcome` now checks `model_profiles == []` instead of a single `[:llm, :model]`.
+- **System page**: The example config reference and FAQ use the `[[llm.models]]` format.
+- **Flat fields kept**: The flat `[:llm, :model]`, `[:llm, :temperature]`, etc. schema cards remain visible for backward compat / direct editing. The `setting_card/1` component has a `:model_profiles` clause (read-only badge showing profile count).
+
 ### Task Archive Feature
 
 When a task is started with the **archive** option enabled (checkbox in the task form), the core runtime collects per-agent metadata (`archive_records`) and EvoDash stores it in `TaskInfo.archive_metadata`. Archived tasks display the agent parent-child tree, per-agent details (objective, return message, start/end commits, token usage, archive refs), and provide JSON export.
