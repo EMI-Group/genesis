@@ -1,8 +1,7 @@
 <p align="center">
-  <img src="apps/evo_dash/priv/static/images/logo.svg" width="140" alt="Genesis logo">
+  <img src="apps/evo_dash/priv/static/images/logo.svg" height="48" alt="Genesis" style="vertical-align: middle;">
+  <span style="font-size: 2.5em; font-weight: bold; vertical-align: middle; margin-left: 12px;">Genesis</span>
 </p>
-
-<h1 align="center">Genesis</h1>
 
 <p align="center">
   Evolutionary software development, powered by AI agents.<br>
