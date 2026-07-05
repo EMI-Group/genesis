@@ -75,7 +75,7 @@ defmodule EvoGit.ProjectConfig do
   Logs a warning if the file exists but cannot be parsed.
   """
   @spec read(String.t()) :: map() | nil
-  def read(repo_root) do
+  def read(repo_root) when is_binary(repo_root) do
     path = Path.join(repo_root, @config_filename)
 
     if File.exists?(path) do
@@ -111,12 +111,12 @@ defmodule EvoGit.ProjectConfig do
   When called without `os`, uses `Platform.os/0` for automatic OS detection.
   """
   @spec worktree_script(String.t()) :: String.t() | nil
-  def worktree_script(repo_root) do
+  def worktree_script(repo_root) when is_binary(repo_root) do
     worktree_script(repo_root, EvoGit.Platform.os())
   end
 
   @spec worktree_script(String.t(), atom()) :: String.t() | nil
-  def worktree_script(repo_root, os) do
+  def worktree_script(repo_root, os) when is_binary(repo_root) and is_atom(os) do
     os_key = Atom.to_string(os)
 
     case read(repo_root) do
@@ -366,7 +366,7 @@ defmodule EvoGit.ProjectConfig do
   - `description` (optional) - human-readable description of the repo
   """
   @spec foreign_repos(String.t()) :: [EvoGit.Core.ForeignRepo.t()]
-  def foreign_repos(repo_root) do
+  def foreign_repos(repo_root) when is_binary(repo_root) do
     case read(repo_root) do
       %{"foreign_repos" => repos} when is_map(repos) ->
         repos
@@ -413,7 +413,7 @@ defmodule EvoGit.ProjectConfig do
       %{"dev" => "npm run dev", "test" => "mix test"}
   """
   @spec commands(String.t()) :: %{String.t() => String.t()}
-  def commands(repo_root) do
+  def commands(repo_root) when is_binary(repo_root) do
     case read(repo_root) do
       %{"commands" => cmds} when is_map(cmds) ->
         cmds
