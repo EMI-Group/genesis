@@ -5,7 +5,7 @@ defmodule Mix.Tasks.Gettext.ExtractSchemaDescriptions do
 
   @requirements ["app.config"]
 
-  @pot_file "apps/evo_dash/priv/gettext/default.pot"
+  @pot_file Path.join([__DIR__, "..", "..", "..", "priv", "gettext", "default.pot"]) |> Path.expand()
   @schema_source "lib/evo_git/config/schema.ex"
 
   @impl Mix.Task
@@ -14,8 +14,20 @@ defmodule Mix.Tasks.Gettext.ExtractSchemaDescriptions do
 
     schemas = EvoGit.Config.Schema.all_schemas()
 
-    # Read existing POT file
-    {:ok, pot} = Expo.PO.parse_file(@pot_file)
+    # Read existing POT file; start from an empty pot if it does not exist yet
+    # (e.g. on a first run before `gettext.extract` has created it).
+    pot =
+      case Expo.PO.parse_file(@pot_file) do
+        {:ok, parsed} ->
+          parsed
+
+        {:error, _reason} ->
+          Mix.shell().info(
+            "No existing POT file found at #{@pot_file}; creating a new one with schema descriptions."
+          )
+
+          %Expo.Messages{messages: [], headers: []}
+      end
 
     # Build set of existing msgids for idempotency
     existing_msgids =
@@ -55,13 +67,9 @@ defmodule Mix.Tasks.Gettext.ExtractSchemaDescriptions do
 
       File.write!(@pot_file, Expo.PO.compose(updated_pot))
 
-      Mix.shell().info(
-        "Added #{new_count} new schema description(s) to #{@pot_file}"
-      )
+      Mix.shell().info("Added #{new_count} new schema description(s) to #{@pot_file}")
     else
-      Mix.shell().info(
-        "No new schema descriptions to add — all already present in #{@pot_file}"
-      )
+      Mix.shell().info("No new schema descriptions to add — all already present in #{@pot_file}")
     end
 
     :ok

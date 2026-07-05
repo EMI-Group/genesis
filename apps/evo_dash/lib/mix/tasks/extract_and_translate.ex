@@ -12,10 +12,14 @@ defmodule Mix.Tasks.Gettext.ExtractAndTranslate do
 
     Mix.shell().info("\n=== Step 2/2: Translating to all languages ===")
 
-    translate_args = ["apps/evo_dash/priv/gettext/default.pot", "all" | args]
+    translate_args = [pot_file(), "all" | args]
     Mix.Task.rerun("translate", translate_args)
 
     Mix.shell().info("\nFull i18n pipeline complete.")
     :ok
+  end
+
+  defp pot_file do
+    Path.join([__DIR__, "..", "..", "..", "priv", "gettext", "default.pot"]) |> Path.expand()
   end
 end
