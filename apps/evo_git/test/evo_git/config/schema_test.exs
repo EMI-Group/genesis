@@ -66,6 +66,10 @@ defmodule EvoGit.Config.SchemaTest do
       assert [:tools, :search, :tavily, :max_results] in paths
       assert [:tools, :search, :tavily, :timeout] in paths
       assert [:tools, :search, :tavily, :max_bytes] in paths
+
+      # Server
+      assert [:server, :listen_ip] in paths
+      assert [:server, :listen_port] in paths
     end
 
     test "every schema has required fields" do
@@ -82,8 +86,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 46 schemas" do
-      assert length(Schema.all_schemas()) == 46
+    test "has exactly 48 schemas" do
+      assert length(Schema.all_schemas()) == 48
     end
   end
 
@@ -146,6 +150,10 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.tools.search.tavily.max_results == 10
       assert defaults.tools.search.tavily.timeout == 60000
       assert defaults.tools.search.tavily.max_bytes == 16384
+
+      # Server
+      assert defaults.server.listen_ip == "127.0.0.1"
+      assert defaults.server.listen_port == 4000
     end
 
     test "llm model has nil default" do
@@ -171,6 +179,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(grouped, :truncation)
       assert Map.has_key?(grouped, :task_history)
       assert Map.has_key?(grouped, :nix)
+      assert Map.has_key?(grouped, :server)
       assert Map.has_key?(grouped, :tools)
     end
 
@@ -183,6 +192,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
       assert length(grouped[:nix]) == 2
+      assert length(grouped[:server]) == 2
       assert length(grouped[:tools]) == 8
     end
 

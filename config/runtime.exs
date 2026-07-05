@@ -54,7 +54,11 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
-  port = String.to_integer(System.get_env("PORT") || "4000")
+  port =
+    case System.get_env("PORT") do
+      nil -> EvoGit.Config.resolve([:server, :listen_port])
+      port_str -> String.to_integer(port_str)
+    end
 
   # Detect desktop mode from two independent signals so detection is robust
   # against env var forwarding issues through the Burrito Zig wrapper:
@@ -68,24 +72,21 @@ if config_env() == :prod do
 
   # Bind address for the desktop server. Defaults to loopback (localhost only)
   # so the dashboard is never exposed to the network without explicit opt-in.
-  # Users can override by setting PHX_IP (e.g. PHX_IP=0.0.0.0 for remote access).
+  # Priority: PHX_IP env var → config.toml [server] listen_ip → loopback default.
+  desktop_ip_str =
+    System.get_env("PHX_IP") || EvoGit.Config.resolve([:server, :listen_ip])
+
   desktop_ip =
-    case System.get_env("PHX_IP") do
-      nil ->
+    case :inet.parse_address(String.to_charlist(desktop_ip_str)) do
+      {:ok, ip} ->
+        ip
+
+      {:error, _} ->
+        IO.warn(
+          "Invalid listen IP #{inspect(desktop_ip_str)}, falling back to loopback (127.0.0.1)"
+        )
+
         {127, 0, 0, 1}
-
-      ip_str ->
-        case :inet.parse_address(String.to_charlist(ip_str)) do
-          {:ok, ip} ->
-            ip
-
-          {:error, _} ->
-            IO.warn(
-              "Invalid PHX_IP value #{inspect(ip_str)}, falling back to loopback (127.0.0.1)"
-            )
-
-            {127, 0, 0, 1}
-        end
     end
 
   if desktop_mode do

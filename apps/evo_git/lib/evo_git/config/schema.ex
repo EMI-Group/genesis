@@ -35,7 +35,7 @@ defmodule EvoGit.Config.Schema do
   @type key_path :: [atom()]
 
   @typedoc "Top-level config category"
-  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix | :tools
+  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix | :server | :tools
 
   @typedoc "Sub-category for sandbox keys; nil for all other categories"
   @type sub_category :: :resources | :process | nil
@@ -552,6 +552,27 @@ defmodule EvoGit.Config.Schema do
       sub_category: nil,
       description:
         "Maximum output size in bytes."
+    },
+    # ── Server ─────────────────────────────────────────────────────────
+    %{
+      key_path: [:server, :listen_ip],
+      type: :string,
+      default: "127.0.0.1",
+      validation: [],
+      category: :server,
+      sub_category: nil,
+      description:
+        "IP address the web dashboard binds to. Defaults to loopback (127.0.0.1) for security — only local connections are accepted. Set to \"0.0.0.0\" to accept connections from any network interface."
+    },
+    %{
+      key_path: [:server, :listen_port],
+      type: :pos_integer,
+      default: 4000,
+      validation: [min: 1024, max: 65535],
+      category: :server,
+      sub_category: nil,
+      description:
+        "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
     }
   ]
 
