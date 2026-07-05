@@ -48,7 +48,8 @@ When a task is started with the **archive** option enabled (checkbox in the task
 
 - **Opt-in**: When archive is not enabled, the UI is identical to current (no archive sections shown).
 - **`TaskInfo.archive_metadata`**: `[map()] | nil` — list of per-agent records (backfill-safe via `Map.merge(%TaskInfo{}, task)` in `normalize_tasks/1`).
-- **Threading**: `:archive` opt → `build_common_runtime_opts/2` → runtime opts → core runtime. On completion, `archive_records` extracted from result map → `update_task_status/4` → `do_handle_update_status/5` → persisted.
+- **Threading**: `:archive` opt → `build_common_runtime_opts/3` → runtime opts → core runtime. On completion, `archive_records` extracted from result map → `update_task_status/4` → `do_handle_update_status/5` → persisted.
+- **Mode resolution**: `build_common_runtime_opts/3` dispatches mode strings to atoms via `mode_atom/2` based on `task_type` — `:genesis` tasks use `genesis_mode_atom/1` (`"new"`/`"existing"` → `:new`/`:existing`), `:evolve` tasks use `evolution_mode_atom/1` (`"simple"`/`"complex"` → `:simple`/`:complex`). This mirrors the core CLI's separate resolvers (`apps/evo_git/lib/evo_git/cli.ex`).
 - **JSON export**: `GET /tasks/:task_id/export` → `TaskExportController` normalizes structs to plain maps and serves a downloadable JSON file.
 - **i18n**: All archive UI strings use gettext.
 
