@@ -134,8 +134,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
   def assign_and_prepare_worktree(agent_id, wt) do
     {:ok, meta} = Store.get_sched_meta(agent_id)
-    {:ok, agent_state} = Store.get_agent_state(agent_id)
-    %AgentState{} = agent_state
+    {:ok, %AgentState{} = agent_state} = Store.get_agent_state(agent_id)
     spec = meta.spec
 
     commit_sha = spec.phylo_node.current_commit
