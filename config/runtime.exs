@@ -21,19 +21,35 @@ if System.get_env("PHX_SERVER") do
 end
 
 # ── ReqLLM HTTP Connection Pool ─────────────────────────────────────
-# Dynamically size the ReqLLM Finch streaming pool based on the user's
-# configured LLM concurrency (config.toml → [scheduler] max_concurrency).
+# Dynamically size the ReqLLM Finch streaming pool to handle the **total
+# LLM parallelism** across all configured model profiles. Each model gets
+# its own concurrency slot pool (config.toml → [[llm.models]] → concurrency),
+# so the HTTP connection pool must be sized to the SUM of all per-model
+# concurrencies — otherwise concurrent stream_text/3 calls queue waiting
+# for a free connection when multiple models are active simultaneously.
+#
 # This runs before :req_llm starts its Finch pool, so the pool is sized
 # correctly at boot.
 #
-# ReqLLM defaults to stream_pool_count: 8 with HTTP/1-only pools. When
-# max_concurrency exceeds that, the default pool becomes a bottleneck:
-# concurrent stream_text/3 calls queue waiting for a free connection.
-# We size the pool to match the configured concurrency plus a small buffer
-# for auxiliary (non-slot-gated) LLM calls (context compression, evolution
-# synthesis, etc.).
-max_concurrency = EvoGit.Config.resolve([:scheduler, :max_concurrency])
-stream_pool_count = max(max_concurrency + 2, 8)
+# ReqLLM defaults to stream_pool_count: 8 with HTTP/1-only pools. We add
+# a small buffer (+2) on top of the summed concurrency for auxiliary
+# (non-slot-gated) LLM calls (context compression, evolution synthesis,
+# novelty metrics, etc.).
+_resolved = EvoGit.Config.resolve()
+_total_concurrency =
+  case EvoGit.Config.Schema.model_profiles(_resolved) do
+    [] ->
+      # No model profiles configured (fresh install / legacy single-model
+      # config with flat [llm] fields). Fall back to scheduler.max_concurrency.
+      EvoGit.Config.resolve([:scheduler, :max_concurrency])
+
+    profiles ->
+      profiles
+      |> Enum.map(fn profile -> Map.get(profile, :concurrency, 3) end)
+      |> Enum.sum()
+  end
+
+stream_pool_count = max(_total_concurrency + 2, 8)
 
 config :req_llm,
   stream_pool_count: stream_pool_count,
