@@ -50,7 +50,7 @@ defmodule EvoGit.Core.ContextNode do
     end
   end
 
-  defp check_path_ignored(_, _), do: false
+  defp check_path_ignored(_, _) when true, do: false
 
   @doc """
   Normalizes a relative path to canonical "./foo/bar" format.
@@ -174,7 +174,7 @@ defmodule EvoGit.Core.ContextNode do
           nodes
           # Only include directories in the explicit context hierarchy.
           # Compute abs_path once per node and thread it through.
-          |> Enum.flat_map(fn node ->
+          |> Enum.flat_map(fn %__MODULE__{} = node ->
             abs_path = Path.expand(node.path, node.repo)
 
             if File.dir?(abs_path) do

@@ -9,7 +9,7 @@ defmodule EvoGit.Runtime.Evolution do
   alias EvoGit.Runtime.Helpers
   require Logger
 
-  def run(objective, opts \\ []) do
+  def run(objective, opts \\ []) when is_list(opts) do
     mode = Keyword.get(opts, :mode, :simple)
     node_path = Keyword.get(opts, :node_path, "./")
     starting_commit = Keyword.get(opts, :starting_commit)
@@ -55,7 +55,7 @@ defmodule EvoGit.Runtime.Evolution do
          )
          |> AgentScheduler.run_agent() do
       {:ok, %Result{} = agent_output} ->
-        Helpers.notify_finalizing(opts)
+        Helpers.notify_finalizing(Keyword.get(opts, :task_id))
         Helpers.merge_and_report(repo_path, agent_output, "evolve")
 
       error ->
@@ -69,7 +69,7 @@ defmodule EvoGit.Runtime.Evolution do
 
     case EvoGit.Runtime.Evolution.Engine.run(objective, repo_path, current_sha, node_path, opts) do
       {:ok, _result_map} = success ->
-        Helpers.notify_finalizing(opts)
+        Helpers.notify_finalizing(Keyword.get(opts, :task_id))
         success
 
       error ->

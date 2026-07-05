@@ -88,7 +88,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
   # ── State Construction ────────────────────────────────────────────
 
-  defp build_state(objective, repo_path, current_sha, node_path, opts) do
+  defp build_state(objective, repo_path, current_sha, node_path, opts) when is_list(opts) do
     evo_config = get_evolution_config()
 
     %__MODULE__{
@@ -184,7 +184,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
   # ── Phase 1: Initialization ───────────────────────────────────────
 
-  defp initialize(state) do
+  defp initialize(%__MODULE__{} = state) do
     Logger.info("Evolution Engine: Initializing entropy pool")
 
     # 1. Load user seeds (if provided) or fall back to built-in seeds
@@ -274,7 +274,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
   # ── Phase 2: Evolution Loop ───────────────────────────────────────
 
-  defp evolution_loop(state) do
+  defp evolution_loop(%__MODULE__{} = state) do
     cond do
       state.generation >= state.max_generations ->
         Logger.info("Evolution Engine: Reached max generations (#{state.max_generations})")
@@ -447,7 +447,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
   # ── Phase 3: Synthesize Solution ──────────────────────────────────
 
-  defp synthesize_solution(state) do
+  defp synthesize_solution(%__MODULE__{} = state) do
     Logger.info("Evolution Engine: Synthesizing final solution")
 
     # Gather top fragments from pool and all MAP-Elites elites
@@ -521,7 +521,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
   # ── Phase 4: Apply Solution ───────────────────────────────────────
 
-  defp apply_solution(state, solution) do
+  defp apply_solution(%__MODULE__{} = state, solution) do
     Logger.info("Evolution Engine: Applying synthesized solution via Manager agent")
 
     phylo_node = PhyloGraphNode.new(state.repo_path, state.base_sha)
@@ -553,7 +553,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
     case AgentScheduler.run_agent(spec) do
       {:ok, %Result{} = agent_output} ->
-        Helpers.notify_finalizing(state.opts)
+        Helpers.notify_finalizing(Keyword.get(state.opts, :task_id))
         Helpers.merge_and_report(state.repo_path, agent_output, "evolve")
 
       {:error, reason} = err ->
