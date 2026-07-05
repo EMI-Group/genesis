@@ -98,7 +98,7 @@ This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, and `Cargo.lock` in one
 The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds native desktop app installers on every GitHub release. The build process uses a **Tauri + Burrito** architecture:
 
 - **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
-- **Build process**: Burrito-wrapped Elixir release (`mix release evogit_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers
+- **Build process**: Burrito-wrapped Elixir release (`mix release genesis_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers
 - **Job structure**: Two jobs — `build-unix` (matrix: macOS arm64/x64 + Linux x64/arm64) and `build-windows` (matrix: x86_64 + ARM64). macOS and Linux share a common Unix step sequence; Windows is separate (bash shell, MinGit).
 - **macOS**: Builds ARM64 (`macos-14`) and x86_64 (`macos-15-intel`) → `.dmg` / `.app` bundles
 - **Linux**: Builds x86_64 (`ubuntu-24.04`) and ARM64 (`ubuntu-24.04-arm`) → `.rpm` / AppImage / `.tar.gz` portable archive (AppImage excluded on ARM64 — `appimagetool`/`linuxdeploy` are x86_64-only). The `.deb` package was removed in favor of AppImage + tarball. Flatpak is not built — Tauri v2 has no native Flatpak bundle target (documented in the workflow).
@@ -125,8 +125,8 @@ nix develop
 #   1. mix deps.get && mix assets.setup && mix assets.deploy
 #   2. cargo install tauri-cli --version "^2.0"   (first time only)
 #   3. ./nix/bundle-vendor.sh                      (vendor binaries)
-#   4. MIX_ENV=prod mix release evogit_desktop      (Burrito release)
-#   5. cp burrito_out/evogit_desktop_* desktop/src-tauri/sidecars/evogit-backend-<rust-target>
+#   4. MIX_ENV=prod mix release genesis_desktop      (Burrito release)
+#   5. cp burrito_out/genesis_desktop_* desktop/src-tauri/sidecars/genesis-backend-<rust-target>
 #   6. cd desktop/src-tauri && cargo tauri build    (native desktop app)
 ```
 

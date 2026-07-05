@@ -9,13 +9,13 @@ defmodule EvoGit.Umbrella.MixProject do
       deps: deps(),
       listeners: [Phoenix.CodeReloader],
       releases: [
-        evogit: [
+        genesis: [
           applications: [
             evo_git: :permanent,
             evo_dash: :permanent
           ]
         ],
-        evogit_desktop: [
+        genesis_desktop: [
           applications: [
             evo_git: :permanent,
             evo_dash: :permanent
