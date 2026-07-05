@@ -8,7 +8,7 @@ msgid_plural "%{count} children"
 msgstr[0] "%{count} 个子节点"
 msgstr[1] "%{count} 个子节点"
 
-#: lib/evo_dash_web/live/tasks_live.ex:145
+#: lib/evo_dash_web/live/tasks_live.ex:151
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
 msgid_plural "%{count} tasks found"
@@ -35,7 +35,7 @@ msgstr "%{count}分钟前"
 msgid "%{count}s ago"
 msgstr "%{count}秒前"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:621
+#: lib/evo_dash_web/live/dashboard_live.ex:628
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
 msgstr "%{type} 任务已启动，ID：%{id}"
@@ -65,7 +65,7 @@ msgstr "<无文本内容>"
 msgid "Active Tasks"
 msgstr "进行中的任务"
 
-#: lib/evo_dash_web/live/tasks_live.ex:107
+#: lib/evo_dash_web/live/tasks_live.ex:113
 #, elixir-autogen, elixir-format
 msgid "Active filters:"
 msgstr "已启用筛选："
@@ -119,13 +119,13 @@ msgstr "所有项目"
 msgid "All Statuses"
 msgstr "所有状态"
 
-#: lib/evo_dash_web/helpers.ex:366
+#: lib/evo_dash_web/helpers.ex:363
 #: lib/evo_dash_web/live/system_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "All configured"
 msgstr "全部已配置"
 
-#: lib/evo_dash_web/helpers.ex:367
+#: lib/evo_dash_web/helpers.ex:364
 #, elixir-autogen, elixir-format
 msgid "All critical configuration values are set"
 msgstr "所有关键配置值均已设置"
@@ -155,7 +155,7 @@ msgstr "浏览目录"
 #: lib/evo_dash_web/components/dashboard_components.ex:120
 #: lib/evo_dash_web/components/dashboard_components.ex:452
 #: lib/evo_dash_web/components/dashboard_components.ex:565
-#: lib/evo_dash_web/components/review_components.ex:609
+#: lib/evo_dash_web/components/review_components.ex:620
 #: lib/evo_dash_web/live/system_live.ex:410
 #: lib/evo_dash_web/live/system_live.ex:440
 #, elixir-autogen, elixir-format
@@ -167,7 +167,7 @@ msgstr "取消"
 msgid "Cancelled"
 msgstr "已取消"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:803
+#: lib/evo_dash_web/live/dashboard_live.ex:810
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "无法移除主仓库。"
@@ -182,23 +182,23 @@ msgstr "聊天历史 / 会话记忆"
 msgid "Children"
 msgstr "子节点"
 
-#: lib/evo_dash_web/live/tasks_live.ex:178
+#: lib/evo_dash_web/live/tasks_live.ex:184
 #, elixir-autogen, elixir-format
 msgid "Clear History"
 msgstr "清空历史"
 
-#: lib/evo_dash_web/live/tasks_live.ex:177
+#: lib/evo_dash_web/live/tasks_live.ex:183
 #, elixir-autogen, elixir-format
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "是否清空所有已完成的任务历史？此操作不可撤销。"
 
-#: lib/evo_dash_web/helpers.ex:434
+#: lib/evo_dash_web/helpers.ex:431
 #: lib/evo_dash_web/live/agents_live.html.heex:564
 #: lib/evo_dash_web/live/agents_live.html.heex:588
 #: lib/evo_dash_web/live/dashboard_live.ex:163
 #: lib/evo_dash_web/live/dashboard_live.ex:184
-#: lib/evo_dash_web/live/tasks_live.ex:194
-#: lib/evo_dash_web/live/tasks_live.ex:215
+#: lib/evo_dash_web/live/tasks_live.ex:200
+#: lib/evo_dash_web/live/tasks_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr "关闭"
@@ -210,8 +210,8 @@ msgstr "关闭"
 msgid "Completed"
 msgstr "已完成"
 
-#: lib/evo_dash_web/live/settings_live.ex:261
-#: lib/evo_dash_web/live/settings_live.ex:326
+#: lib/evo_dash_web/live/settings_live.ex:272
+#: lib/evo_dash_web/live/settings_live.ex:337
 #, elixir-autogen, elixir-format
 msgid "Configuration saved successfully."
 msgstr "配置已成功保存。"
@@ -264,8 +264,8 @@ msgstr "删除此任务？"
 msgid "Depth"
 msgstr "深度"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:453
-#: lib/evo_dash_web/live/dashboard_live.ex:472
+#: lib/evo_dash_web/live/dashboard_live.ex:460
+#: lib/evo_dash_web/live/dashboard_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
 msgstr "目录不存在：%{path}"
@@ -301,20 +301,20 @@ msgstr "执行任务"
 msgid "Failed"
 msgstr "失败"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:661
-#: lib/evo_dash_web/live/tasks_live.ex:428
+#: lib/evo_dash_web/live/dashboard_live.ex:668
+#: lib/evo_dash_web/live/tasks_live.ex:438
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr "取消任务失败：%{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:278
-#: lib/evo_dash_web/live/settings_live.ex:346
-#: lib/evo_dash_web/live/settings_live.ex:533
+#: lib/evo_dash_web/live/settings_live.ex:289
+#: lib/evo_dash_web/live/settings_live.ex:357
+#: lib/evo_dash_web/live/settings_live.ex:571
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "保存配置失败：%{reason}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:636
+#: lib/evo_dash_web/live/dashboard_live.ex:643
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "启动任务失败：%{reason}"
@@ -334,19 +334,19 @@ msgstr "出于安全考虑，无法在此页面编辑凭据。请直接在系统
 msgid "Foreign Repositories"
 msgstr "外部仓库"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:790
+#: lib/evo_dash_web/live/dashboard_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "外部仓库“%{repo_id}”注册成功。"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:817
+#: lib/evo_dash_web/live/dashboard_live.ex:824
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "外部仓库“%{repo_id}”移除成功。"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:580
 #: lib/evo_dash_web/live/dashboard_live.ex:178
-#: lib/evo_dash_web/live/tasks_live.ex:209
+#: lib/evo_dash_web/live/tasks_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "Full Objective"
 msgstr "完整目标"
@@ -361,14 +361,14 @@ msgstr "隐藏详情"
 msgid "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
 msgstr "credentials.toml 中的密钥在启动时作为环境变量加载。您也可以直接通过环境变量设置 API 密钥（例如 GOOGLE_API_KEY）。"
 
-#: lib/evo_dash_web/helpers.ex:388
-#: lib/evo_dash_web/live/system_live.ex:803
+#: lib/evo_dash_web/helpers.ex:385
+#: lib/evo_dash_web/live/system_live.ex:795
 #, elixir-autogen, elixir-format
 msgid "LLM Model"
 msgstr "LLM 模型"
 
 #: lib/evo_dash_web/components/layouts.ex:176
-#: lib/evo_dash_web/helpers.ex:373
+#: lib/evo_dash_web/helpers.ex:370
 #: lib/evo_dash_web/live/settings_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "Missing Configuration"
@@ -392,7 +392,7 @@ msgstr "未找到 CONTEXT.md — 已选择现有代码库模式"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:1074
 #: lib/evo_dash_web/components/dashboard_components.ex:1227
-#: lib/evo_dash_web/components/review_components.ex:1043
+#: lib/evo_dash_web/components/review_components.ex:1089
 #, elixir-autogen, elixir-format
 msgid "No Changes"
 msgstr "无变更"
@@ -407,12 +407,12 @@ msgstr "当前没有注册的 Agent"
 msgid "No history recorded yet"
 msgstr "暂无记录历史"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:549
+#: lib/evo_dash_web/live/dashboard_live.ex:556
 #, elixir-autogen, elixir-format
 msgid "No project selected. Please open a project first."
 msgstr "未选择项目。请先打开一个项目。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:154
+#: lib/evo_dash_web/live/tasks_live.ex:160
 #, elixir-autogen, elixir-format
 msgid "No tasks found"
 msgstr "未找到任务"
@@ -424,7 +424,7 @@ msgstr "暂无任务"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:209
 #: lib/evo_dash_web/live/agents_live.html.heex:230
-#: lib/evo_dash_web/live/system_live.ex:800
+#: lib/evo_dash_web/live/system_live.ex:792
 #, elixir-autogen, elixir-format
 msgid "None"
 msgstr "无"
@@ -445,7 +445,7 @@ msgid "Objective"
 msgstr "目标"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:117
-#: lib/evo_dash_web/components/review_components.ex:1039
+#: lib/evo_dash_web/components/review_components.ex:1085
 #, elixir-autogen, elixir-format
 msgid "Open"
 msgstr "打开"
@@ -475,12 +475,12 @@ msgstr "父节点"
 msgid "Path"
 msgstr "路径"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:749
+#: lib/evo_dash_web/live/dashboard_live.ex:756
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "路径不能为空。"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:752
+#: lib/evo_dash_web/live/dashboard_live.ex:759
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute (start with /)."
 msgstr "路径必须是绝对路径（以 / 开头）。"
@@ -496,9 +496,9 @@ msgstr "暂停调度器"
 msgid "Pending"
 msgstr "等待中"
 
-#: lib/evo_dash_web/live/agents_live.ex:151
-#: lib/evo_dash_web/live/agents_live.ex:152
-#: lib/evo_dash_web/live/agents_live.ex:153
+#: lib/evo_dash_web/live/agents_live.ex:154
+#: lib/evo_dash_web/live/agents_live.ex:155
+#: lib/evo_dash_web/live/agents_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Primary Repo"
 msgstr "主仓库"
@@ -513,12 +513,12 @@ msgstr "项目根目录"
 msgid "Project Settings"
 msgstr "项目设置"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:765
+#: lib/evo_dash_web/live/dashboard_live.ex:772
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "仓库“%{id}”已注册。"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:809
+#: lib/evo_dash_web/live/dashboard_live.ex:816
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "未找到仓库“%{id}”。"
@@ -528,23 +528,23 @@ msgstr "未找到仓库“%{id}”。"
 msgid "Repo ID"
 msgstr "仓库 ID"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:746
+#: lib/evo_dash_web/live/dashboard_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "仓库 ID 不能为空。"
 
-#: lib/evo_dash_web/live/agents_live.ex:162
-#: lib/evo_dash_web/live/agents_live.ex:166
+#: lib/evo_dash_web/live/agents_live.ex:165
+#: lib/evo_dash_web/live/agents_live.ex:169
 #, elixir-autogen, elixir-format
 msgid "Repo: %{repo_id}"
 msgstr "仓库：%{repo_id}"
 
-#: lib/evo_dash_web/live/tasks_live.ex:98
+#: lib/evo_dash_web/live/tasks_live.ex:104
 #, elixir-autogen, elixir-format
 msgid "Reset"
 msgstr "重置"
 
-#: lib/evo_dash_web/live/tasks_live.ex:96
+#: lib/evo_dash_web/live/tasks_live.ex:102
 #, elixir-autogen, elixir-format
 msgid "Reset all filters"
 msgstr "重置所有筛选条件"
@@ -603,17 +603,17 @@ msgstr "调度器运行中"
 msgid "Scheduler Paused"
 msgstr "调度器已暂停"
 
-#: lib/evo_dash_web/live/system_live.ex:526
+#: lib/evo_dash_web/live/system_live.ex:524
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "调度器已暂停。正在运行的智能体会继续执行，但不会分配新的槽位或智能体。"
 
-#: lib/evo_dash_web/live/system_live.ex:517
+#: lib/evo_dash_web/live/system_live.ex:515
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "调度器已恢复。正在分配新的智能体和槽位。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:84
+#: lib/evo_dash_web/live/tasks_live.ex:89
 #, elixir-autogen, elixir-format
 msgid "Search by task ID, prompt, or objective..."
 msgstr "按任务 ID、提示词或目标搜索…"
@@ -679,7 +679,7 @@ msgid "Task Mode"
 msgstr "任务模式"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:157
-#: lib/evo_dash_web/live/tasks_live.ex:188
+#: lib/evo_dash_web/live/tasks_live.ex:194
 #, elixir-autogen, elixir-format
 msgid "Task Result"
 msgstr "任务结果"
@@ -690,7 +690,7 @@ msgstr "任务结果"
 msgid "Tasks"
 msgstr "任务"
 
-#: lib/evo_dash_web/live/tasks_live.ex:159
+#: lib/evo_dash_web/live/tasks_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "从仪表盘启动任务后，任务将显示在此处。"
@@ -723,7 +723,7 @@ msgstr "工具调用 (%{count})"
 msgid "Tool Result: %{name}"
 msgstr "工具结果: %{name}"
 
-#: lib/evo_dash_web/live/tasks_live.ex:157
+#: lib/evo_dash_web/live/tasks_live.ex:163
 #, elixir-autogen, elixir-format
 msgid "Try adjusting your filters or search query."
 msgstr "请尝试调整筛选条件或搜索内容。"
@@ -734,13 +734,13 @@ msgid "Turn %{turn}"
 msgstr "第 %{turn} 轮"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:980
-#: lib/evo_dash_web/components/review_components.ex:1044
+#: lib/evo_dash_web/components/review_components.ex:1090
 #: lib/evo_dash_web/helpers.ex:289
 #, elixir-autogen, elixir-format
 msgid "Unknown"
 msgstr "未知"
 
-#: lib/evo_dash_web/live/agents_live.ex:168
+#: lib/evo_dash_web/live/agents_live.ex:171
 #, elixir-autogen, elixir-format
 msgid "Unknown Repo"
 msgstr "未知仓库"
@@ -796,7 +796,7 @@ msgstr "工作树"
 msgid "Worktree Init Script"
 msgstr "工作树初始化脚本"
 
-#: lib/evo_dash_web/helpers.ex:440
+#: lib/evo_dash_web/helpers.ex:437
 #: lib/evo_dash_web/live/agents_live.html.heex:569
 #: lib/evo_dash_web/live/agents_live.html.heex:593
 #: lib/evo_dash_web/live/dashboard_live.ex:167
@@ -839,7 +839,7 @@ msgid_plural "%{count} commits"
 msgstr[0] "%{count} 次提交"
 msgstr[1] "%{count} 次提交"
 
-#: lib/evo_dash_web/components/review_components.ex:661
+#: lib/evo_dash_web/components/review_components.ex:672
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
@@ -873,13 +873,13 @@ msgstr "用作基准的 Git 提交 SHA、分支名或标签。默认为 HEAD。"
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "此仓库的唯一标识符（例如 'original'、'upstream'）"
 
-#: lib/evo_dash_web/helpers.ex:389
-#: lib/evo_dash_web/live/system_live.ex:804
+#: lib/evo_dash_web/helpers.ex:386
+#: lib/evo_dash_web/live/system_live.ex:796
 #, elixir-autogen, elixir-format
 msgid "API Key"
 msgstr "API 密钥"
 
-#: lib/evo_dash_web/live/settings_live.ex:470
+#: lib/evo_dash_web/live/settings_live.ex:508
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "API 密钥不能为空。"
@@ -889,7 +889,7 @@ msgstr "API 密钥不能为空。"
 msgid "API key is already set"
 msgstr "API 密钥已设置"
 
-#: lib/evo_dash_web/live/settings_live.ex:479
+#: lib/evo_dash_web/live/settings_live.ex:517
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "API 密钥已成功保存。"
@@ -899,7 +899,7 @@ msgstr "API 密钥已成功保存。"
 msgid "Absolute path to the repository root on this machine"
 msgstr "此机器上仓库根目录的绝对路径"
 
-#: lib/evo_dash_web/components/review_components.ex:486
+#: lib/evo_dash_web/components/review_components.ex:487
 #, elixir-autogen, elixir-format
 msgid "Actions"
 msgstr "操作"
@@ -949,12 +949,12 @@ msgstr "在设置模型之前，智能体无法运行。请前往 LLM 类别并�
 msgid "All Reviews"
 msgstr "所有审核"
 
-#: lib/evo_dash_web/live/system_live.ex:691
+#: lib/evo_dash_web/live/system_live.ex:683
 #, elixir-autogen, elixir-format
 msgid "All healthy"
 msgstr "全部正常"
 
-#: lib/evo_dash_web/helpers.ex:499
+#: lib/evo_dash_web/helpers.ex:493
 #, elixir-autogen, elixir-format
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "分析现有代码库并为其生成 CONTEXT.md 空间合约"
@@ -984,32 +984,32 @@ msgstr "更改"
 msgid "Change language"
 msgstr "切换语言"
 
-#: lib/evo_dash_web/components/review_components.ex:635
+#: lib/evo_dash_web/components/review_components.ex:646
 #, elixir-autogen, elixir-format
 msgid "Changed Files"
 msgstr "已更改文件"
 
-#: lib/evo_dash_web/live/review_live.ex:332
+#: lib/evo_dash_web/live/review_live.ex:337
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "变更已成功合并！分支 %{branch} 已删除。"
 
-#: lib/evo_dash_web/live/review_live.ex:367
+#: lib/evo_dash_web/live/review_live.ex:372
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "变更已驳回。分支 %{branch} 已删除。"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:869
+#: lib/evo_dash_web/live/dashboard_live.ex:878
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "命令“%{command}”执行完成：\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:877
+#: lib/evo_dash_web/live/dashboard_live.ex:886
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "命令“%{command}”执行失败（退出码 %{code}）：\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:844
+#: lib/evo_dash_web/live/dashboard_live.ex:851
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "未找到命令：%{command}"
@@ -1035,12 +1035,12 @@ msgstr "配置"
 msgid "Configure and execute a task above to get started."
 msgstr "在上方配置并执行一个任务以开始使用。"
 
-#: lib/evo_dash_web/components/settings_components.ex:865
+#: lib/evo_dash_web/components/settings_components.ex:869
 #, elixir-autogen, elixir-format
 msgid "Configure output truncation limits for tool and context windows."
 msgstr "配置工具和上下文窗口的输出截断限制。"
 
-#: lib/evo_dash_web/components/settings_components.ex:856
+#: lib/evo_dash_web/components/settings_components.ex:860
 #, elixir-autogen, elixir-format
 msgid "Configure the language model provider and token compression."
 msgstr "配置语言模型提供商和令牌压缩。"
@@ -1060,24 +1060,25 @@ msgstr "已连接"
 msgid "Context tree detected — Evolution mode selected"
 msgstr "检测到上下文树 — 已选择演进模式"
 
-#: lib/evo_dash_web/components/review_components.ex:514
+#: lib/evo_dash_web/components/review_components.ex:515
+#: lib/evo_dash_web/components/review_components.ex:561
 #, elixir-autogen, elixir-format
 msgid "Continue from Here"
 msgstr "从此处继续"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:978
 #: lib/evo_dash_web/live/tasks_live.ex:73
-#: lib/evo_dash_web/live/tasks_live.ex:132
+#: lib/evo_dash_web/live/tasks_live.ex:138
 #, elixir-autogen, elixir-format
 msgid "Continued"
 msgstr "继续"
 
-#: lib/evo_dash_web/live/review_live.ex:398
+#: lib/evo_dash_web/live/review_live.ex:403
 #, elixir-autogen, elixir-format
 msgid "Continuing from branch %{branch} at %{sha}"
 msgstr "从分支 %{branch}（%{sha}）继续"
 
-#: lib/evo_dash_web/components/settings_components.ex:853
+#: lib/evo_dash_web/components/settings_components.ex:857
 #, elixir-autogen, elixir-format
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr "控制代理并发、重试行为和深度限制。"
@@ -1092,12 +1093,12 @@ msgstr "对话"
 msgid "Copy agent summary"
 msgstr "复制 AI 摘要"
 
-#: lib/evo_dash_web/live/review_live.ex:164
+#: lib/evo_dash_web/live/review_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Could not load diff data. The branch may have been modified externally."
 msgstr "无法加载差异数据。分支可能在外部被修改过。"
 
-#: lib/evo_dash_web/components/review_components.ex:525
+#: lib/evo_dash_web/components/review_components.ex:526
 #, elixir-autogen, elixir-format
 msgid "Create GitHub PR"
 msgstr "创建 GitHub PR"
@@ -1107,7 +1108,7 @@ msgstr "创建 GitHub PR"
 msgid "Create New Codebase"
 msgstr "创建新代码库"
 
-#: lib/evo_dash_web/helpers.ex:493
+#: lib/evo_dash_web/helpers.ex:487
 #, elixir-autogen, elixir-format
 msgid "Creates a brand new codebase from scratch in an empty directory using your prompt."
 msgstr "在空目录中使用您的提示从零开始创建全新的代码库"
@@ -1174,12 +1175,12 @@ msgstr "请输入你的 API 密钥。"
 msgid "Enter your API key. It should start with"
 msgstr "请输入你的 API 密钥。应以"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:888
+#: lib/evo_dash_web/live/dashboard_live.ex:897
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "运行“%{command}”时出错：%{error}"
 
-#: lib/evo_dash_web/live/system_live.ex:726
+#: lib/evo_dash_web/live/system_live.ex:718
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
 msgstr "EvoX Genesis 将您的代码库建模为层次化的上下文树。每个目录都有一个 CONTEXT.md 文件，作为空间契约——记录其用途、API 接口、约束条件及子目录路由。代理读取这些文件以理解代码库结构，并将任务路由到相应的子目录。"
@@ -1209,28 +1210,28 @@ msgstr "示例模型名称："
 msgid "Execution Logs"
 msgstr "执行日志"
 
-#: lib/evo_dash_web/live/review_live.ex:443
+#: lib/evo_dash_web/live/review_live.ex:448
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "创建拉取请求失败。请确保已安装 'gh' 命令行工具并完成身份验证。"
 
-#: lib/evo_dash_web/live/review_live.ex:683
-#: lib/evo_dash_web/live/review_live.ex:710
+#: lib/evo_dash_web/live/review_live.ex:693
+#: lib/evo_dash_web/live/review_live.ex:720
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "加载 %{path} 的差异失败：%{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:376
+#: lib/evo_dash_web/live/review_live.ex:381
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes: %{reason}"
 msgstr "驳回变更失败：%{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:388
+#: lib/evo_dash_web/live/settings_live.ex:406
 #, elixir-autogen, elixir-format
 msgid "Failed to reset key: %{reason}"
 msgstr "重置密钥失败：%{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:486
+#: lib/evo_dash_web/live/settings_live.ex:524
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "保存 API 密钥失败：%{reason}"
@@ -1276,33 +1277,33 @@ msgstr "完整"
 msgid "Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active."
 msgstr "完全沙盒已启用：文件系统隔离、资源限制和系统调用过滤均已激活。"
 
-#: lib/evo_dash_web/live/system_live.ex:730
+#: lib/evo_dash_web/live/system_live.ex:722
 #, elixir-autogen, elixir-format
 msgid "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
 msgstr "Genesis 对大多数设置使用内置默认值，因此并非严格需要配置文件。然而，运行任务需要 LLM 模型和对应的 API 密钥。此页面顶部的配置状态指示器会显示是否已设置所有关键值。您也可以从设置页面查看。"
 
-#: lib/evo_dash_web/helpers.ex:390
-#: lib/evo_dash_web/live/system_live.ex:805
+#: lib/evo_dash_web/helpers.ex:387
+#: lib/evo_dash_web/live/system_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "GitHub Username"
 msgstr "GitHub 用户名"
 
-#: lib/evo_dash_web/live/system_live.ex:716
+#: lib/evo_dash_web/live/system_live.ex:708
 #, elixir-autogen, elixir-format
 msgid "How do I change the LLM model?"
 msgstr "如何更改 LLM 模型？"
 
-#: lib/evo_dash_web/live/system_live.ex:733
+#: lib/evo_dash_web/live/system_live.ex:725
 #, elixir-autogen, elixir-format
 msgid "How do I configure sandbox resources?"
 msgstr "如何配置沙箱资源？"
 
-#: lib/evo_dash_web/live/system_live.ex:711
+#: lib/evo_dash_web/live/system_live.ex:703
 #, elixir-autogen, elixir-format
 msgid "How do I set my API key?"
 msgstr "如何设置我的 API 密钥？"
 
-#: lib/evo_dash_web/live/system_live.ex:725
+#: lib/evo_dash_web/live/system_live.ex:717
 #, elixir-autogen, elixir-format
 msgid "How does the context tree work?"
 msgstr "上下文树是如何工作的？"
@@ -1327,7 +1328,7 @@ msgstr "LLM 连接"
 msgid "Light theme"
 msgstr "浅色主题"
 
-#: lib/evo_dash_web/components/review_components.ex:817
+#: lib/evo_dash_web/components/review_components.ex:828
 #, elixir-autogen, elixir-format
 msgid "Loading diff..."
 msgstr "正在加载差异..."
@@ -1337,40 +1338,40 @@ msgstr "正在加载差异..."
 msgid "Loading review data..."
 msgstr "正在加载审查数据…"
 
-#: lib/evo_dash_web/components/settings_components.ex:868
+#: lib/evo_dash_web/components/settings_components.ex:872
 #, elixir-autogen, elixir-format
 msgid "Manage how many past tasks are retained and for how long."
 msgstr "管理保留多少历史任务及其保留时长。"
 
-#: lib/evo_dash_web/components/settings_components.ex:862
+#: lib/evo_dash_web/components/settings_components.ex:866
 #, elixir-autogen, elixir-format
 msgid "Manage sandbox isolation, resource limits, and process constraints."
 msgstr "管理沙盒隔离、资源限制和进程约束。"
 
-#: lib/evo_dash_web/components/review_components.ex:497
+#: lib/evo_dash_web/components/review_components.ex:498
 #, elixir-autogen, elixir-format
 msgid "Merge Changes"
 msgstr "合并更改"
 
-#: lib/evo_dash_web/live/review_live.ex:343
+#: lib/evo_dash_web/live/review_live.ex:348
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
 msgstr "合并冲突！请手动解决。%{details}"
 
-#: lib/evo_dash_web/live/review_live.ex:351
+#: lib/evo_dash_web/live/review_live.ex:356
 #, elixir-autogen, elixir-format
 msgid "Merge failed: %{reason}"
 msgstr "合并失败：%{reason}"
 
-#: lib/evo_dash_web/components/review_components.ex:493
+#: lib/evo_dash_web/components/review_components.ex:494
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into the current branch?"
 msgstr "将这些更改合并到当前分支？"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:976
-#: lib/evo_dash_web/components/review_components.ex:1040
+#: lib/evo_dash_web/components/review_components.ex:1086
 #: lib/evo_dash_web/live/tasks_live.ex:71
-#: lib/evo_dash_web/live/tasks_live.ex:130
+#: lib/evo_dash_web/live/tasks_live.ex:136
 #, elixir-autogen, elixir-format
 msgid "Merged"
 msgstr "已合并"
@@ -1380,7 +1381,7 @@ msgstr "已合并"
 msgid "No LLM Model Configured"
 msgstr "未配置 LLM 模型"
 
-#: lib/evo_dash_web/live/review_live.ex:139
+#: lib/evo_dash_web/live/review_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "No diff data available for this review."
 msgstr "此审查暂无差异数据。"
@@ -1395,7 +1396,7 @@ msgstr "无 genesis.toml — 使用全局默认值"
 msgid "No foreign repositories registered"
 msgstr "未注册外部仓库"
 
-#: lib/evo_dash_web/components/settings_components.ex:896
+#: lib/evo_dash_web/components/settings_components.ex:906
 #, elixir-autogen, elixir-format
 msgid "No prefix (hexadecimal)"
 msgstr "无前缀（十六进制）"
@@ -1427,7 +1428,7 @@ msgstr "打开项目以开始使用"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:110
 #: lib/evo_dash_web/live/tasks_live.ex:70
-#: lib/evo_dash_web/live/tasks_live.ex:129
+#: lib/evo_dash_web/live/tasks_live.ex:135
 #, elixir-autogen, elixir-format
 msgid "Pending Review"
 msgstr "待审查"
@@ -1458,7 +1459,7 @@ msgstr "项目"
 msgid "Prompt"
 msgstr "提示词"
 
-#: lib/evo_dash_web/live/review_live.ex:434
+#: lib/evo_dash_web/live/review_live.ex:439
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "拉取请求已创建：%{title}"
@@ -1488,20 +1489,20 @@ msgstr "重新检查"
 msgid "Recent"
 msgstr "最近"
 
-#: lib/evo_dash_web/components/review_components.ex:506
+#: lib/evo_dash_web/components/review_components.ex:507
 #, elixir-autogen, elixir-format
 msgid "Reject Changes"
 msgstr "拒绝更改"
 
-#: lib/evo_dash_web/components/review_components.ex:502
+#: lib/evo_dash_web/components/review_components.ex:503
 #, elixir-autogen, elixir-format
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "拒绝并删除这些更改？此操作不可撤销。"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:977
-#: lib/evo_dash_web/components/review_components.ex:1041
+#: lib/evo_dash_web/components/review_components.ex:1087
 #: lib/evo_dash_web/live/tasks_live.ex:72
-#: lib/evo_dash_web/live/tasks_live.ex:131
+#: lib/evo_dash_web/live/tasks_live.ex:137
 #, elixir-autogen, elixir-format
 msgid "Rejected"
 msgstr "已拒绝"
@@ -1511,7 +1512,7 @@ msgstr "已拒绝"
 msgid "Required Tools"
 msgstr "必需工具"
 
-#: lib/evo_dash_web/live/settings_live.ex:383
+#: lib/evo_dash_web/live/settings_live.ex:401
 #, elixir-autogen, elixir-format
 msgid "Reset %{key} to default."
 msgstr "将 %{key} 重置为默认值。"
@@ -1551,7 +1552,7 @@ msgstr "重试"
 msgid "Review"
 msgstr "审查"
 
-#: lib/evo_dash_web/live/review_live.ex:563
+#: lib/evo_dash_web/live/review_live.ex:569
 #, elixir-autogen, elixir-format
 msgid "Review Changes"
 msgstr "审查变更"
@@ -1577,12 +1578,12 @@ msgstr "运行时配置与文件设置"
 msgid "Sandbox"
 msgstr "沙盒"
 
-#: lib/evo_dash_web/live/system_live.ex:722
+#: lib/evo_dash_web/live/system_live.ex:714
 #, elixir-autogen, elixir-format
 msgid "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
 msgstr "沙箱模式控制 EvoX Genesis 如何隔离 LLM 生成的代码。在 Linux 上，它使用 systemd-run 实现完整沙箱化（文件系统隔离、资源限制、系统调用过滤）。在 macOS 上，它仅使用 sandbox-exec 进行文件系统隔离。\"auto\" 为您的平台启用相应的后端。\"enabled\" 强制开启沙箱。\"disabled\" 完全关闭沙箱——请谨慎使用。资源限制（仅限 Linux）可在 config.toml 的 [sandbox.resources] 和 [sandbox.process] 下配置。"
 
-#: lib/evo_dash_web/live/system_live.ex:734
+#: lib/evo_dash_web/live/system_live.ex:726
 #, elixir-autogen, elixir-format
 msgid "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
 msgstr "沙箱资源限制可在 config.toml 的 [sandbox.resources] 部分（聚合限制）和 [sandbox.process] 部分（单进程限制）中设置。资源限制仅在使用 systemd-run 的 Linux 上可用。在 macOS 上，sandbox-exec 仅提供文件系统隔离。您可以从仪表盘的设置页面调整相关设置。"
@@ -1617,7 +1618,7 @@ msgstr "选择变体："
 msgid "Set"
 msgstr "设置"
 
-#: lib/evo_dash_web/components/settings_components.ex:859
+#: lib/evo_dash_web/components/settings_components.ex:863
 #, elixir-autogen, elixir-format
 msgid "Set your user identity for Git commits and collaboration."
 msgstr "设置用于 Git 提交和协作的用户身份。"
@@ -1648,7 +1649,7 @@ msgstr "系统状态与健康概览"
 msgid "System theme"
 msgstr "系统主题"
 
-#: lib/evo_dash_web/live/review_live.ex:532
+#: lib/evo_dash_web/live/review_live.ex:537
 #, elixir-autogen, elixir-format
 msgid "Task not found. It may have been deleted."
 msgstr "未找到任务。它可能已被删除。"
@@ -1678,18 +1679,18 @@ msgstr "截断"
 msgid "User"
 msgstr "用户"
 
-#: lib/evo_dash_web/helpers.ex:502
+#: lib/evo_dash_web/helpers.ex:496
 #, elixir-autogen, elixir-format
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr "使用单个自顶向下代理根据您的目标修改代码库"
 
-#: lib/evo_dash_web/live/settings_live.ex:291
-#: lib/evo_dash_web/live/settings_live.ex:361
+#: lib/evo_dash_web/live/settings_live.ex:302
+#: lib/evo_dash_web/live/settings_live.ex:372
 #, elixir-autogen, elixir-format
 msgid "Validation failed. Please fix the errors below."
 msgstr "验证失败。请修复以下错误。"
 
-#: lib/evo_dash_web/components/review_components.ex:531
+#: lib/evo_dash_web/components/review_components.ex:532
 #, elixir-autogen, elixir-format
 msgid "View GitHub PR"
 msgstr "查看 GitHub PR"
@@ -1699,12 +1700,12 @@ msgstr "查看 GitHub PR"
 msgid "View system metrics, processes, and application telemetry"
 msgstr "查看系统指标、进程和应用遥测数据"
 
-#: lib/evo_dash_web/live/system_live.ex:729
+#: lib/evo_dash_web/live/system_live.ex:721
 #, elixir-autogen, elixir-format
 msgid "What happens if my config is missing?"
 msgstr "如果配置文件缺失会怎样？"
 
-#: lib/evo_dash_web/live/system_live.ex:721
+#: lib/evo_dash_web/live/system_live.ex:713
 #, elixir-autogen, elixir-format
 msgid "What is sandbox mode?"
 msgstr "什么是沙箱模式？"
@@ -1878,39 +1879,39 @@ msgstr "%{count} 个智能体"
 msgid "Agents Spawned"
 msgstr "已生成的智能体"
 
-#: lib/evo_dash_web/components/review_components.ex:587
+#: lib/evo_dash_web/components/review_components.ex:598
 #, elixir-autogen, elixir-format
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "分析此 PR 中的变更，将可复用的知识提炼为 EvoGit 技能。智能体将检查 diff，识别有价值的模式，并在 .agents/skills/ 目录下创建技能文件。"
 
-#: lib/evo_dash_web/components/review_components.ex:542
-#: lib/evo_dash_web/components/review_components.ex:583
-#: lib/evo_dash_web/components/review_components.ex:613
+#: lib/evo_dash_web/components/review_components.ex:543
+#: lib/evo_dash_web/components/review_components.ex:594
+#: lib/evo_dash_web/components/review_components.ex:624
 #, elixir-autogen, elixir-format
 msgid "Extract Skills"
 msgstr "提取技能"
 
-#: lib/evo_dash_web/live/review_live.ex:505
+#: lib/evo_dash_web/live/review_live.ex:510
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "技能提取启动失败：%{reason}"
 
-#: lib/evo_dash_web/components/review_components.ex:594
+#: lib/evo_dash_web/components/review_components.ex:605
 #, elixir-autogen, elixir-format
 msgid "Optional: Note for the skill extraction agent"
 msgstr "可选：给技能提取智能体的说明"
 
-#: lib/evo_dash_web/components/review_components.ex:603
+#: lib/evo_dash_web/components/review_components.ex:614
 #, elixir-autogen, elixir-format
 msgid "Provide specific instructions on what knowledge should be captured as skills."
 msgstr "提供具体说明，指明哪些知识应被捕获为技能。"
 
-#: lib/evo_dash_web/live/review_live.ex:495
+#: lib/evo_dash_web/live/review_live.ex:500
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "技能提取任务已启动，您可以在仪表盘上查看其进度。"
 
-#: lib/evo_dash_web/components/review_components.ex:600
+#: lib/evo_dash_web/components/review_components.ex:611
 #, elixir-autogen, elixir-format
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "例如：重点关注此 PR 中发现的部署工作流和数据库迁移模式。"
@@ -1925,12 +1926,12 @@ msgstr "智能体总数（含子智能体）"
 msgid "Back to Review"
 msgstr "返回审阅"
 
-#: lib/evo_dash_web/live/review_live.ex:766
+#: lib/evo_dash_web/live/review_live.ex:777
 #, elixir-autogen, elixir-format
 msgid "Commit details"
 msgstr "提交详情"
 
-#: lib/evo_dash_web/live/review_live.ex:315
+#: lib/evo_dash_web/live/review_live.ex:320
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "上下文展开失败：%{reason}"
@@ -1984,7 +1985,7 @@ msgstr "确定重启系统？"
 msgid "System Control"
 msgstr "系统控制"
 
-#: lib/evo_dash_web/live/system_live.ex:559
+#: lib/evo_dash_web/live/system_live.ex:557
 #, elixir-autogen, elixir-format
 msgid "System is restarting. Please wait while the Erlang VM comes back up."
 msgstr "系统正在重启，请等待 Erlang 虚拟机重新启动。"
@@ -2022,7 +2023,7 @@ msgstr "确定停止系统？"
 msgid "System"
 msgstr "系统"
 
-#: lib/evo_dash_web/live/system_live.ex:590
+#: lib/evo_dash_web/live/system_live.ex:588
 #, elixir-autogen, elixir-format
 msgid "System is stopping. The Erlang VM will shut down and must be started again manually."
 msgstr "系统正在停止，Erlang 虚拟机将关闭，需手动重新启动。"
@@ -2037,28 +2038,28 @@ msgstr "虚拟机将停止，需手动重新启动。所有内存中的运行时
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "这将优雅地关闭 Erlang 虚拟机，所有应用将按顺序停止。"
 
-#: lib/evo_dash_web/components/review_components.ex:560
+#: lib/evo_dash_web/components/review_components.ex:571
 #, elixir-autogen, elixir-format
 msgid "Ignore"
 msgstr "忽略"
 
-#: lib/evo_dash_web/components/review_components.ex:556
+#: lib/evo_dash_web/components/review_components.ex:567
 #, elixir-autogen, elixir-format
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "忽略此审核？它将从待审核列表中移除。"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:979
-#: lib/evo_dash_web/components/review_components.ex:1042
+#: lib/evo_dash_web/components/review_components.ex:1088
 #, elixir-autogen, elixir-format
 msgid "Ignored"
 msgstr "已忽略"
 
-#: lib/evo_dash_web/live/review_live.ex:414
+#: lib/evo_dash_web/live/review_live.ex:419
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "已忽略并关闭评审。"
 
-#: lib/evo_dash_web/components/review_components.ex:549
+#: lib/evo_dash_web/components/review_components.ex:550
 #, elixir-autogen, elixir-format
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "此分支已不存在。你可以点击\"忽略\"将其关闭。"
@@ -2104,7 +2105,7 @@ msgstr "已归档的代理详情"
 msgid "Base URL"
 msgstr "基础 URL"
 
-#: lib/evo_dash_web/live/settings_live.ex:439
+#: lib/evo_dash_web/live/settings_live.ex:481
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "基础 URL 不能为空。"
@@ -2125,17 +2126,17 @@ msgstr "上下文"
 msgid "Cost"
 msgstr "成本"
 
-#: lib/evo_dash_web/live/system_live.ex:712
+#: lib/evo_dash_web/live/system_live.ex:704
 #, elixir-autogen, elixir-format
 msgid "Create a credentials.toml file at %{path} with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
 msgstr "在 %{path} 下创建 credentials.toml 文件并填入你的 API 密钥。只需一个密钥即可——请设置与你的 LLM 提供商相匹配的那个（例如，Google Gemini 对应 GOOGLE_API_KEY）。此外，你也可以直接将 API 密钥设为环境变量（例如：export GOOGLE_API_KEY=AIza...）。"
 
-#: lib/evo_dash_web/live/settings_live.ex:459
+#: lib/evo_dash_web/live/settings_live.ex:501
 #, elixir-autogen, elixir-format
 msgid "Custom model saved."
 msgstr "自定义模型已保存。"
 
-#: lib/evo_dash_web/live/system_live.ex:717
+#: lib/evo_dash_web/live/system_live.ex:709
 #, elixir-autogen, elixir-format
 msgid "Edit your config.toml file at %{path} and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard."
 msgstr "编辑 %{path} 下的 config.toml 文件，在 [llm] 部分设置 model 字段（例如：model = \"anthropic:claude-sonnet-4-20250514\"）。你也可以直接在仪表盘的设置页面中临时切换模型。"
@@ -2148,7 +2149,7 @@ msgstr "结束提交"
 
 #: lib/evo_dash_web/components/dashboard_components.ex:770
 #: lib/evo_dash_web/components/review_components.ex:198
-#: lib/evo_dash_web/live/review_live.ex:117
+#: lib/evo_dash_web/live/review_live.ex:118
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "导出 JSON"
@@ -2164,12 +2165,12 @@ msgstr "语言"
 msgid "Model Name"
 msgstr "模型名称"
 
-#: lib/evo_dash_web/live/settings_live.ex:435
+#: lib/evo_dash_web/live/settings_live.ex:477
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "模型名称不能为空。"
 
-#: lib/evo_dash_web/live/settings_live.ex:416
+#: lib/evo_dash_web/live/settings_live.ex:458
 #, elixir-autogen, elixir-format
 msgid "Model selected and saved."
 msgstr "模型已选择并保存。"
@@ -2179,7 +2180,7 @@ msgstr "模型已选择并保存。"
 msgid "No archive data available for this task"
 msgstr "此任务无存档数据可用"
 
-#: lib/evo_dash_web/live/review_live.ex:154
+#: lib/evo_dash_web/live/review_live.ex:155
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "此任务没有可用的存档代理数据。"
@@ -2216,8 +2217,8 @@ msgstr "Token 与成本"
 msgid "Type a model string or use Quick Setup above"
 msgstr "输入模型字符串或使用上方的快速设置"
 
-#: lib/evo_dash_web/live/settings_live.ex:432
-#: lib/evo_dash_web/live/settings_live.ex:463
+#: lib/evo_dash_web/live/settings_live.ex:437
+#: lib/evo_dash_web/live/settings_live.ex:474
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "未知提供商。"
@@ -2282,12 +2283,12 @@ msgstr "任务类型"
 msgid "(provider default)"
 msgstr "（使用提供商默认值）"
 
-#: lib/evo_dash_web/components/settings_components.ex:871
+#: lib/evo_dash_web/components/settings_components.ex:881
 #, elixir-autogen, elixir-format
 msgid "Configure Nix develop environment integration for tool calls."
 msgstr "配置 Nix 开发环境集成以支持工具调用。"
 
-#: lib/evo_dash_web/components/settings_components.ex:842
+#: lib/evo_dash_web/components/settings_components.ex:844
 #, elixir-autogen, elixir-format
 msgid "Nix"
 msgstr "Nix"
@@ -2341,3 +2342,268 @@ msgstr "Nix 环境"
 #, elixir-autogen, elixir-format
 msgid "flake.nix"
 msgstr "flake.nix"
+
+#.key_path: scheduler.max_concurrency
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of concurrent LLM API calls. Controls how many agents can make API calls simultaneously. Lower values reduce API rate-limit pressure but slow down overall progress."
+msgstr ""
+
+#.key_path: scheduler.max_tool_concurrency
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of concurrent tool executions. Controls how many tool calls (bash, file operations, etc.) can run in parallel. Reduce if you encounter system resource pressure."
+msgstr ""
+
+#.key_path: scheduler.agent_max_retries
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of crash-retries per agent. When an agent crashes due to an unexpected error, the scheduler will restart it up to this many times. Set to 0 to disable retries."
+msgstr ""
+
+#.key_path: scheduler.max_agent_depth
+#: lib/evo_git/config/schema.ex
+msgid "Maximum subagent recursion depth. Prevents infinite delegation chains. A manager can spawn sub-managers, who can spawn further managers, up to this many levels deep."
+msgstr ""
+
+#.key_path: scheduler.max_retries
+#: lib/evo_git/config/schema.ex
+msgid "Maximum total LLM API retries across all agents. When the system encounters rate-limit errors or transient API failures, it will retry up to this many times before giving up."
+msgstr ""
+
+#.key_path: scheduler.max_turns
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of agent turns. An agent turn consists of one LLM call followed by tool execution. This limit prevents runaway loops from consuming excessive API credits."
+msgstr ""
+
+#.key_path: scheduler.max_turns_root
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of turns for the root (top-level) agent only. This is separate from `max_turns` which controls sub-agents. The root agent is special because when it exits, the entire task ends — unlike sub-agents which can be respawned by their parent. Use a higher value here if you want the root agent to have more room to complete complex tasks."
+msgstr ""
+
+#.key_path: scheduler.delegation_hint_threshold
+#: lib/evo_git/config/schema.ex
+msgid "Number of write-tool calls to the same child directory before the agent is nudged to spawn a subagent. When an agent edits files in a child directory this many times, a friendly hint is appended to the tool output suggesting it delegate to a subagent at that path. Set to 0 to disable delegation hints."
+msgstr ""
+
+#.key_path: scheduler.read_delegation_hint_threshold
+#: lib/evo_git/config/schema.ex
+msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
+msgstr ""
+
+#.key_path: scheduler.max_tool_timeout
+#: lib/evo_git/config/schema.ex
+msgid "Maximum tool execution timeout in milliseconds (hard cap). Any tool timeout requested by an agent is capped at this value to prevent runaway executions."
+msgstr ""
+
+#.key_path: scheduler.default_tool_timeout
+#: lib/evo_git/config/schema.ex
+msgid "Default tool execution timeout in milliseconds (used when the agent omits the timeout argument). Normally applies to simple tools that should respond quickly."
+msgstr ""
+
+#.key_path: llm.model
+#: lib/evo_git/config/schema.ex
+msgid "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function. Alternatively, a map may be used for OpenAI-compatible providers: {provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}."
+msgstr ""
+
+#.key_path: llm.compression_threshold_tokens
+#: lib/evo_git/config/schema.ex
+msgid "Token count threshold that triggers context compression. When an agent's accumulated context (system prompt, conversation history, tool outputs) exceeds this token count, older context is compressed to avoid hitting the LLM's context window limit."
+msgstr ""
+
+#.key_path: llm.temperature
+#: lib/evo_git/config/schema.ex
+msgid "Controls randomness in LLM responses. Lower values make output more focused and deterministic, while higher values make it more creative and varied. Range: 0.0–2.0. Normally you should leave this unset — modern LLMs perform best with their default temperature and changing it may degrade output quality."
+msgstr ""
+
+#.key_path: llm.max_tokens
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of tokens in the LLM response. Limits the length of generated text. Leave unset to use the provider's default (typically the model's maximum)."
+msgstr ""
+
+#.key_path: llm.reasoning_effort
+#: lib/evo_git/config/schema.ex
+msgid "Controls how much effort the model spends reasoning before answering. Valid values: none, minimal, low, medium, high, xhigh, default (mapped to atoms in Elixir). Leave unset to use the provider's default."
+msgstr ""
+
+#.key_path: llm.top_p
+#: lib/evo_git/config/schema.ex
+msgid "Nucleus sampling threshold. The model considers tokens with top_p probability mass. Range: 0.0–1.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
+msgstr ""
+
+#.key_path: llm.top_k
+#: lib/evo_git/config/schema.ex
+msgid "Limits token selection to the K most probable tokens. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
+msgstr ""
+
+#.key_path: llm.frequency_penalty
+#: lib/evo_git/config/schema.ex
+msgid "Penalizes tokens based on their frequency in the generated text so far. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
+msgstr ""
+
+#.key_path: llm.presence_penalty
+#: lib/evo_git/config/schema.ex
+msgid "Penalizes tokens that have already appeared in the generated text. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
+msgstr ""
+
+#.key_path: user.github_username
+#: lib/evo_git/config/schema.ex
+msgid "Your GitHub username. Used when creating pull requests to attribute the PR to your account. Optional but recommended if you plan to use the automated PR creation feature."
+msgstr ""
+
+#.key_path: sandbox.mode
+#: lib/evo_git/config/schema.ex
+msgid "Sandbox execution mode. 'auto' enables sandboxing on supported platforms (Linux with systemd-run, macOS with sandbox-exec) and falls back to direct execution on unsupported platforms. 'enabled' forces sandboxing and fails if unavailable. 'disabled' skips sandboxing entirely."
+msgstr ""
+
+#.key_path: sandbox.resources.cpu_quota
+#: lib/evo_git/config/schema.ex
+msgid "Aggregate CPU quota for all sandboxed processes combined. Uses systemd CPUQuota format (e.g., '1000%' = 10 CPU cores). This is the total CPU available across the entire sandbox slice."
+msgstr ""
+
+#.key_path: sandbox.resources.cpu_weight
+#: lib/evo_git/config/schema.ex
+msgid "CPU allocation weight for the sandbox slice relative to other system workloads (1-10000). Higher values give Genesis processes more CPU time when the system is under contention. Default of 30 provides moderate priority."
+msgstr ""
+
+#.key_path: sandbox.resources.memory_max
+#: lib/evo_git/config/schema.ex
+msgid "Total memory limit for all sandboxed processes combined. Uses systemd memory format (e.g., '16G', '8G', '512M'). When the aggregate memory usage exceeds this limit, the kernel's OOM killer may terminate processes."
+msgstr ""
+
+#.key_path: sandbox.resources.tasks_max
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of tasks (processes and threads) allowed across the entire sandbox slice. Prevents fork bombs and runaway process creation from consuming system resources."
+msgstr ""
+
+#.key_path: sandbox.process.cpu_quota
+#: lib/evo_git/config/schema.ex
+msgid "Per-process CPU quota for individual tool executions. Uses systemd CPUQuota format (e.g., '800%' = 8 CPU cores). Each tool call (bash, compile, etc.) is limited to this amount of CPU time."
+msgstr ""
+
+#.key_path: sandbox.process.memory_max
+#: lib/evo_git/config/schema.ex
+msgid "Per-process memory limit for individual tool executions. Uses systemd memory format (e.g., '12G', '4G', '512M'). A single tool call that exceeds this limit will be killed."
+msgstr ""
+
+#.key_path: sandbox.process.limit_nofile
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of open file descriptors per sandboxed process. Limits how many files a single tool execution can have open simultaneously."
+msgstr ""
+
+#.key_path: sandbox.process.oom_score_adjust
+#: lib/evo_git/config/schema.ex
+msgid "OOM killer adjustment score per process (-1000 to 1000). Higher values make processes more likely to be killed when memory is exhausted. Default of 1000 means sandboxed processes are preferentially killed over system processes."
+msgstr ""
+
+#.key_path: truncation.tool_output_max_bytes
+#: lib/evo_git/config/schema.ex
+msgid "Maximum tool output size in bytes before truncation is triggered. When a tool returns output larger than this threshold (default 128 KB), the output is truncated to avoid overwhelming the LLM context window."
+msgstr ""
+
+#.key_path: truncation.tool_output_default_max_bytes
+#: lib/evo_git/config/schema.ex
+msgid "Default maximum output size in bytes for high-output tools. Used as the default truncation point for tools known to produce large outputs. Most tools use this value unless overridden per-tool."
+msgstr ""
+
+#.key_path: truncation.tool_output_truncate_size
+#: lib/evo_git/config/schema.ex
+msgid "Size in bytes to which truncated output is reduced. When a tool's output exceeds the max bytes threshold, it is cut down to this size (default 8 KB). The truncated portion is replaced with a notice indicating how much was removed."
+msgstr ""
+
+#.key_path: truncation.context_max_bytes
+#: lib/evo_git/config/schema.ex
+msgid "Maximum size in bytes for CONTEXT.md file content. When reading or writing CONTEXT.md files, content exceeding this limit (default 64 KB) is truncated to prevent context bloat."
+msgstr ""
+
+#.key_path: task_history.max_tasks
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of recent tasks retained in the dashboard history. Older tasks beyond this limit are automatically purged to manage storage. Each task represents one top-level Genesis run."
+msgstr ""
+
+#.key_path: task_history.max_age_days
+#: lib/evo_git/config/schema.ex
+msgid "Maximum age in days for retained task history entries. Tasks older than this are automatically purged regardless of the max_tasks limit. Keeps the task history dashboard manageable."
+msgstr ""
+
+#.key_path: nix.enabled
+#: lib/evo_git/config/schema.ex
+msgid "When true, enables running all tool calls inside a cached Nix dev environment. The dev env is built once via `nix print-dev-env` and sourced per call. Requires the `nix` binary to be available and a `flake.nix` to exist in the config directory (e.g. ~/.config/genesis/flake.nix). When nix or the flake is unavailable, commands run normally regardless of this setting."
+msgstr ""
+
+#.key_path: nix.flake_output
+#: lib/evo_git/config/schema.ex
+msgid "Optional flake output attribute to use (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\" for `nix print-dev-env`."
+msgstr ""
+
+#.key_path: tools.search.enabled
+#: lib/evo_git/config/schema.ex
+msgid "Enable web search tool for agents. Requires a configured API key."
+msgstr ""
+
+#.key_path: tools.search.provider
+#: lib/evo_git/config/schema.ex
+msgid "Search service provider."
+msgstr ""
+
+#.key_path: tools.search.tavily.api_key_env_var
+#: lib/evo_git/config/schema.ex
+msgid "Environment variable name for the Tavily API key."
+msgstr ""
+
+#.key_path: tools.search.tavily.base_url
+#: lib/evo_git/config/schema.ex
+msgid "Tavily API endpoint URL."
+msgstr ""
+
+#.key_path: tools.search.tavily.search_depth
+#: lib/evo_git/config/schema.ex
+msgid "Search depth (basic or advanced)."
+msgstr ""
+
+#.key_path: tools.search.tavily.max_results
+#: lib/evo_git/config/schema.ex
+msgid "Maximum number of search results (1-50)."
+msgstr ""
+
+#.key_path: tools.search.tavily.timeout
+#: lib/evo_git/config/schema.ex
+msgid "Search request timeout in milliseconds."
+msgstr ""
+
+#.key_path: tools.search.tavily.max_bytes
+#: lib/evo_git/config/schema.ex
+msgid "Maximum output size in bytes."
+msgstr ""
+
+#.key_path: server.listen_ip
+#: lib/evo_git/config/schema.ex
+msgid "IP address the web dashboard binds to. Defaults to loopback (127.0.0.1) for security — only local connections are accepted. Set to \"0.0.0.0\" to accept connections from any network interface."
+msgstr ""
+
+#.key_path: server.listen_port
+#: lib/evo_git/config/schema.ex
+msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:875
+#, elixir-autogen, elixir-format
+msgid "Configure external tool integrations such as web search."
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:878
+#, elixir-autogen, elixir-format
+msgid "Configure the web dashboard listen address and port."
+msgstr ""
+
+#: lib/evo_dash_web/live/settings_live.ex:385
+#, elixir-autogen, elixir-format
+msgid "Invalid key path."
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:843
+#, elixir-autogen, elixir-format
+msgid "Server"
+msgstr ""
+
+#: lib/evo_dash_web/components/settings_components.ex:842
+#, elixir-autogen, elixir-format
+msgid "Tools"
+msgstr ""
