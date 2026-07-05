@@ -13,7 +13,7 @@ defmodule EvoGit.Adapters.Git do
   Runs a git command in the given directory.
   Sets LC_ALL=C to ensure locale-independent (English) output for reliable parsing.
   """
-  def run(args, cd) do
+  def run(args, cd) when is_list(args) do
     if cd && not File.dir?(cd) do
       {:error, :enoent, "Repository path does not exist: #{cd}"}
     else
@@ -46,11 +46,12 @@ defmodule EvoGit.Adapters.Git do
   defp handle_git_command_result({output, code}, _args, _cd),
     do: {:error, code, String.trim(output)}
 
-  def init(path) do
+  def init(path) when is_binary(path) do
     run(["init"], path)
   end
 
-  def add_worktree(repo_path, worktree_path, base_sha, branch_name \\ nil) do
+  def add_worktree(repo_path, worktree_path, base_sha, branch_name \\ nil)
+       when is_binary(repo_path) and is_binary(worktree_path) and is_binary(base_sha) do
     if branch_name && branch_exists?(repo_path, branch_name) do
       # Branch already exists (previous session crashed) — force-delete and recreate
       System.cmd(EvoGit.Executable.resolve("git"), ["branch", "-D", branch_name], cd: repo_path)
@@ -66,32 +67,32 @@ defmodule EvoGit.Adapters.Git do
     run(args, repo_path)
   end
 
-  def prune_worktrees(repo_path) do
+  def prune_worktrees(repo_path) when is_binary(repo_path) do
     run(["worktree", "prune"], repo_path)
   end
 
-  def checkout(path, sha) do
+  def checkout(path, sha) when is_binary(path) and is_binary(sha) do
     run(["checkout", sha], path)
   end
 
-  def reset_hard(path, sha \\ "HEAD") do
+  def reset_hard(path, sha \\ "HEAD") when is_binary(path) and is_binary(sha) do
     run(["reset", "--hard", sha], path)
   end
 
-  def clean(path) do
+  def clean(path) when is_binary(path) do
     run(["clean", "-fd"], path)
   end
 
-  def add(path, files \\ ".") do
+  def add(path, files \\ ".") when is_binary(path) and is_binary(files) do
     run(["add", files], path)
   end
 
-  def commit(path, message) do
+  def commit(path, message) when is_binary(path) and is_binary(message) do
     full_message = message <> @co_author_trailer
     run(["commit", "-m", full_message], path)
   end
 
-  def merge(path, commit_sha) do
+  def merge(path, commit_sha) when is_binary(path) and is_binary(commit_sha) do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge", commit_sha],
            cd: path,
            stderr_to_stdout: true
@@ -102,7 +103,7 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
-  def merge_no_commit(path, commit_sha) do
+  def merge_no_commit(path, commit_sha) when is_binary(path) and is_binary(commit_sha) do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge", "--no-commit", commit_sha],
            cd: path,
            stderr_to_stdout: true
@@ -113,7 +114,7 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
-  def merge_octopus(path, commit_shas) when is_list(commit_shas) do
+  def merge_octopus(path, commit_shas) when is_binary(path) and is_list(commit_shas) do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge" | commit_shas],
            cd: path,
            stderr_to_stdout: true
@@ -124,11 +125,11 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
-  def merge_base(path, commit_a, commit_b) do
+  def merge_base(path, commit_a, commit_b) when is_binary(path) and is_binary(commit_a) and is_binary(commit_b) do
     run(["merge-base", commit_a, commit_b], path)
   end
 
-  def conflict_files(path) do
+  def conflict_files(path) when is_binary(path) do
     # Returns list of files with conflicts
     case run(["diff", "--name-only", "--diff-filter=U"], path) do
       {:ok, output} ->
@@ -140,11 +141,11 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
-  def status(path) do
+  def status(path) when is_binary(path) do
     run(["status", "--porcelain"], path)
   end
 
-  def rev_parse(path, rev \\ "HEAD") do
+  def rev_parse(path, rev \\ "HEAD") when is_binary(path) and is_binary(rev) do
     run(["rev-parse", rev], path)
   end
 
@@ -152,18 +153,19 @@ defmodule EvoGit.Adapters.Git do
   Updates or creates a git ref to point at a specific commit SHA.
   Used for creating archive refs that protect commits from garbage collection.
   """
-  def update_ref(repo_path, ref_name, sha) do
+  def update_ref(repo_path, ref_name, sha)
+       when is_binary(repo_path) and is_binary(ref_name) and is_binary(sha) do
     run(["update-ref", ref_name, sha], repo_path)
   end
 
   @doc """
   Deletes a git ref.
   """
-  def delete_ref(repo_path, ref_name) do
+  def delete_ref(repo_path, ref_name) when is_binary(repo_path) and is_binary(ref_name) do
     run(["update-ref", "-d", ref_name], repo_path)
   end
 
-  def check_ignore(path, files) when is_list(files) do
+  def check_ignore(path, files) when is_binary(path) and is_list(files) do
     # git check-ignore returns 0 if any matches, 1 if none.
     # We want the list of ignored files.
     case System.cmd(EvoGit.Executable.resolve("git"), ["check-ignore" | files],
@@ -179,39 +181,43 @@ defmodule EvoGit.Adapters.Git do
   @doc """
   Returns the commit log.
   """
-  def log(path, args \\ []) do
+  def log(path, args \\ []) when is_binary(path) and is_list(args) do
     run(["log" | args], path)
   end
 
   @doc """
   Returns the commit history for a specific file.
   """
-  def file_history(path, file_path, args \\ []) do
+  def file_history(path, file_path, args \\ [])
+       when is_binary(path) and is_binary(file_path) and is_list(args) do
     run(["log" | args] ++ ["--", file_path], path)
   end
 
   @doc """
   Shows the content of an object (commit, tree, blob, etc.).
   """
-  def show(path, args) when is_list(args) do
+  def show(path, args) when is_binary(path) and is_list(args) do
     run(["show" | args], path)
   end
 
-  def show(path, object_name) when is_binary(object_name) do
+  def show(path, object_name) when is_binary(path) and is_binary(object_name) do
     run(["show", object_name], path)
   end
 
   @doc """
   Returns the diff between two commits.
   """
-  def diff(path, commit_a, commit_b, args \\ []) do
+  def diff(path, commit_a, commit_b, args \\ [])
+       when is_binary(path) and is_binary(commit_a) and is_binary(commit_b) and is_list(args) do
     run(["diff" | args] ++ [commit_a, commit_b], path)
   end
 
   @doc """
   Returns the diff for a specific file between two commits.
   """
-  def file_diff(path, file_path, commit_a, commit_b, args \\ []) do
+  def file_diff(path, file_path, commit_a, commit_b, args \\ [])
+       when is_binary(path) and is_binary(file_path) and is_binary(commit_a) and
+              is_binary(commit_b) and is_list(args) do
     run(["diff" | args] ++ [commit_a, commit_b, "--", file_path], path)
   end
 
@@ -219,7 +225,8 @@ defmodule EvoGit.Adapters.Git do
   Returns a short diff stat between two commits.
   Shows files changed, insertions, and deletions.
   """
-  def diff_stat(path, commit_a, commit_b) do
+  def diff_stat(path, commit_a, commit_b)
+       when is_binary(path) and is_binary(commit_a) and is_binary(commit_b) do
     run(["diff", "--stat", commit_a, commit_b], path)
   end
 
@@ -228,7 +235,8 @@ defmodule EvoGit.Adapters.Git do
   Outputs `additions\tdeletions\tfilepath` per line with exact counts (no terminal-width scaling).
   Binary files show `-` for additions and deletions.
   """
-  def diff_numstat(path, commit_a, commit_b) do
+  def diff_numstat(path, commit_a, commit_b)
+       when is_binary(path) and is_binary(commit_a) and is_binary(commit_b) do
     run(["diff", "--numstat", commit_a, commit_b], path)
   end
 
@@ -240,7 +248,8 @@ defmodule EvoGit.Adapters.Git do
     " 89 files changed, 18628 insertions(+)"
   (deletions are omitted when 0).
   """
-  def diff_shortstat(path, commit_a, commit_b) do
+  def diff_shortstat(path, commit_a, commit_b)
+       when is_binary(path) and is_binary(commit_a) and is_binary(commit_b) do
     run(["diff", "--shortstat", commit_a, commit_b], path)
   end
 
@@ -252,7 +261,9 @@ defmodule EvoGit.Adapters.Git do
 
   The force option (if true) adds `-f` after the `add` subcommand.
   """
-  def add_note(path, object, message, args \\ [], force \\ false) do
+  def add_note(path, object, message, args \\ [], force \\ false)
+       when is_binary(path) and is_binary(object) and is_binary(message) and
+              is_list(args) and is_boolean(force) do
     force_flag = if force, do: ["-f"], else: []
     run(["notes" | args] ++ ["add" | force_flag] ++ ["-m", message, object], path)
   end
@@ -263,7 +274,8 @@ defmodule EvoGit.Adapters.Git do
   Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the
   subcommand so that `--ref` is recognised by git.
   """
-  def remove_note(path, object, args \\ []) do
+  def remove_note(path, object, args \\ [])
+       when is_binary(path) and is_binary(object) and is_list(args) do
     run(["notes" | args] ++ ["remove", object], path)
   end
 
@@ -273,7 +285,8 @@ defmodule EvoGit.Adapters.Git do
   Extra args (e.g. `["--ref=evogit"]`) are placed between `notes` and the
   subcommand so that `--ref` is recognised by git.
   """
-  def show_note(path, object, args \\ []) do
+  def show_note(path, object, args \\ [])
+       when is_binary(path) and is_binary(object) and is_list(args) do
     run(["notes" | args] ++ ["show", object], path)
   end
 
@@ -281,7 +294,8 @@ defmodule EvoGit.Adapters.Git do
   Gets the parsed note content for a given object as a map.
   Returns {:ok, metadata_map} or :error if note doesn't exist or is invalid JSON.
   """
-  def get_note(path, object, args \\ []) do
+  def get_note(path, object, args \\ [])
+       when is_binary(path) and is_binary(object) and is_list(args) do
     case run(["notes" | args] ++ ["show", object], path) do
       {:ok, note_content} ->
         case Jason.decode(note_content) do
@@ -297,28 +311,29 @@ defmodule EvoGit.Adapters.Git do
   @doc """
   Lists all notes.
   """
-  def list_notes(path, args \\ []) do
+  def list_notes(path, args \\ []) when is_binary(path) and is_list(args) do
     run(["notes", "list" | args], path)
   end
 
   @doc """
   Creates a tag on a specific commit.
   """
-  def tag(path, tag_name, commit_sha \\ "HEAD") do
+  def tag(path, tag_name, commit_sha \\ "HEAD")
+       when is_binary(path) and is_binary(tag_name) and is_binary(commit_sha) do
     run(["tag", tag_name, commit_sha], path)
   end
 
   @doc """
   Deletes a tag.
   """
-  def delete_tag(path, tag_name) do
+  def delete_tag(path, tag_name) when is_binary(path) and is_binary(tag_name) do
     run(["tag", "-d", tag_name], path)
   end
 
   @doc """
   Deletes a branch.
   """
-  def delete_branch(path, branch_name) do
+  def delete_branch(path, branch_name) when is_binary(path) and is_binary(branch_name) do
     run(["branch", "-D", branch_name], path)
   end
 
@@ -329,7 +344,7 @@ defmodule EvoGit.Adapters.Git do
   or surrounding whitespace). When `pattern` is `nil`, all local branches
   are listed.
   """
-  def list_branches(repo_root, pattern \\ nil) do
+  def list_branches(repo_root, pattern \\ nil) when is_binary(repo_root) do
     args = if pattern, do: ["branch", "--list", pattern], else: ["branch", "--list"]
 
     case run(args, repo_root) do
@@ -348,7 +363,8 @@ defmodule EvoGit.Adapters.Git do
 
   Uses `git branch <name> <sha>`.
   """
-  def create_branch(repo_path, branch_name, commit_sha) do
+  def create_branch(repo_path, branch_name, commit_sha)
+       when is_binary(repo_path) and is_binary(branch_name) and is_binary(commit_sha) do
     run(["branch", branch_name, commit_sha], repo_path)
   end
 
@@ -357,7 +373,7 @@ defmodule EvoGit.Adapters.Git do
 
   Uses `git rev-parse --abbrev-ref HEAD`.
   """
-  def current_branch(repo_path) do
+  def current_branch(repo_path) when is_binary(repo_path) do
     run(["rev-parse", "--abbrev-ref", "HEAD"], repo_path)
   end
 
@@ -366,7 +382,7 @@ defmodule EvoGit.Adapters.Git do
 
   Uses `git show-ref --verify --quiet refs/heads/<branch_name>` and checks the exit code.
   """
-  def branch_exists?(repo_path, branch_name) do
+  def branch_exists?(repo_path, branch_name) when is_binary(repo_path) and is_binary(branch_name) do
     if not File.dir?(repo_path) do
       false
     else
@@ -396,7 +412,8 @@ defmodule EvoGit.Adapters.Git do
   Returns `true` if the branch has unique commits, `false` otherwise.
   Uses `git merge-base --is-ancestor` to check ancestry.
   """
-  def branch_has_unique_commits?(repo_path, branch, base) do
+  def branch_has_unique_commits?(repo_path, branch, base)
+       when is_binary(repo_path) and is_binary(branch) and is_binary(base) do
     # Check if branch tip is an ancestor of base (meaning branch has no unique commits)
     case System.cmd(
            EvoGit.Executable.resolve("git"),
@@ -418,7 +435,7 @@ defmodule EvoGit.Adapters.Git do
 
   Returns `{:ok, output}` on success, `{:conflict, output}` or `{:error, code, output}` on failure.
   """
-  def push_branch(repo_path, branch_name) do
+  def push_branch(repo_path, branch_name) when is_binary(repo_path) and is_binary(branch_name) do
     run(["push", "-u", "origin", branch_name], repo_path)
   end
 
@@ -428,7 +445,9 @@ defmodule EvoGit.Adapters.Git do
   Uses `gh pr create --head <head> --base <base> --title <title> --body <body>`.
   Returns `{:ok, pr_url}` on success, `{:error, code, output}` on failure.
   """
-  def create_pull_request(repo_path, head_branch, base_branch, title, body) do
+  def create_pull_request(repo_path, head_branch, base_branch, title, body)
+       when is_binary(repo_path) and is_binary(head_branch) and is_binary(base_branch) and
+              is_binary(title) and is_binary(body) do
     case System.cmd(
            "gh",
            [
@@ -456,7 +475,7 @@ defmodule EvoGit.Adapters.Git do
 
   Returns `true` if origin remote exists, `false` otherwise.
   """
-  def has_origin_remote?(repo_path) do
+  def has_origin_remote?(repo_path) when is_binary(repo_path) do
     case System.cmd(EvoGit.Executable.resolve("git"), ["remote", "get-url", "origin"],
            cd: repo_path,
            stderr_to_stdout: true
@@ -472,7 +491,7 @@ defmodule EvoGit.Adapters.Git do
   Uses `gh repo create` with the current directory name as the repo name.
   Returns `{:ok, repo_url}` on success, `{:error, code, output}` on failure.
   """
-  def create_origin_remote(repo_path) do
+  def create_origin_remote(repo_path) when is_binary(repo_path) do
     dir_name = Path.basename(repo_path)
 
     case System.cmd(
@@ -506,7 +525,7 @@ defmodule EvoGit.Adapters.Git do
 
   Returns `{:ok, branch_name}` or `{:error, reason}`.
   """
-  def origin_default_branch(repo_path) do
+  def origin_default_branch(repo_path) when is_binary(repo_path) do
     case System.cmd(
            EvoGit.Executable.resolve("git"),
            ["symbolic-ref", "refs/remotes/origin/HEAD"],
