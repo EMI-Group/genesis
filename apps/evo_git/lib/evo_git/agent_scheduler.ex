@@ -443,17 +443,17 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call(:get_max_depth, _from, state) do
+  def handle_call(:get_max_depth, _from, %State{} = state) do
     {:reply, state.max_depth, state}
   end
 
   @impl true
-  def handle_call({:run_agent, _spec}, _from, %{llm_model: nil} = state) do
+  def handle_call({:run_agent, _spec}, _from, %State{llm_model: nil} = state) do
     Logger.warning("AgentScheduler: Rejecting agent spawn — LLM model not configured")
     {:reply, {:error, :llm_not_configured}, state}
   end
 
-  def handle_call({:run_agent, spec}, from, state) do
+  def handle_call({:run_agent, spec}, from, %State{} = state) do
     # Extract repo_path from the spec's phylo_node
     repo_path = spec.phylo_node.repo
     state = Worktrees.ensure_initialized(state, repo_path)
@@ -490,7 +490,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:cancel_task_agents, caller_pid}, _from, state) do
+  def handle_call({:cancel_task_agents, caller_pid}, _from, %State{} = state) do
     # 1. Scan :evogit_sched_meta ETS to find top-level agent whose meta.from contains caller_pid
     #    The meta.from is a GenServer.from() tuple: {pid, ref} where pid is the calling process
     top_level_agent =
@@ -575,7 +575,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:update_config, opts}, _from, state) do
+  def handle_call({:update_config, opts}, _from, %State{} = state) do
     # Validate llm_model if being updated
     if Keyword.has_key?(opts, :llm_model) do
       new_model = Keyword.get(opts, :llm_model)
@@ -591,7 +591,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call(:get_config, _from, state) do
+  def handle_call(:get_config, _from, %State{} = state) do
     config = %{
       max_concurrency: state.max_concurrency,
       max_tool_concurrency: state.max_tool_concurrency,
@@ -614,7 +614,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:get_config, key}, _from, state) do
+  def handle_call({:get_config, key}, _from, %State{} = state) do
     value =
       case key do
         :max_concurrency -> state.max_concurrency
@@ -669,12 +669,12 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call(:paused?, _from, state) do
+  def handle_call(:paused?, _from, %State{} = state) do
     {:reply, state.paused, state}
   end
 
   @impl true
-  def handle_call({:spawn_sub_agents, parent_id, specs}, from, state) do
+  def handle_call({:spawn_sub_agents, parent_id, specs}, from, %State{} = state) do
     if state.paused do
       {:reply, {:error, :scheduler_paused}, state}
     else
@@ -688,7 +688,7 @@ defmodule EvoGit.AgentScheduler do
   # --- LLM and Tool Slot Management (delegated to Slots module) ---
 
   @impl true
-  def handle_call({:request_llm_slot, agent_id}, from, state) do
+  def handle_call({:request_llm_slot, agent_id}, from, %State{} = state) do
     case Slots.handle_request_llm_slot(agent_id, from, state) do
       {:reply, :ok, new_state, status_updates} ->
         apply_status_updates(status_updates)
@@ -701,14 +701,14 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:release_llm_slot, agent_id}, _from, state) do
+  def handle_call({:release_llm_slot, agent_id}, _from, %State{} = state) do
     {:reply, :ok, new_state, status_updates} = Slots.handle_release_llm_slot(agent_id, state)
     apply_status_updates(status_updates)
     {:reply, :ok, new_state}
   end
 
   @impl true
-  def handle_call({:report_llm_error, agent_id, error_type}, _from, state) do
+  def handle_call({:report_llm_error, agent_id, error_type}, _from, %State{} = state) do
     {:reply, :ok, new_state, status_updates} =
       Slots.handle_report_llm_error(agent_id, error_type, state)
 
@@ -717,7 +717,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:request_tool_slot, agent_id}, from, state) do
+  def handle_call({:request_tool_slot, agent_id}, from, %State{} = state) do
     case Slots.handle_request_tool_slot(agent_id, from, state) do
       {:reply, :ok, new_state, status_updates} ->
         apply_status_updates(status_updates)
@@ -730,7 +730,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:release_tool_slot, agent_id}, _from, state) do
+  def handle_call({:release_tool_slot, agent_id}, _from, %State{} = state) do
     {:reply, :ok, new_state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
     apply_status_updates(status_updates)
     {:reply, :ok, new_state}
@@ -790,7 +790,7 @@ defmodule EvoGit.AgentScheduler do
 
   # Retry LLM waiting queue after backoff expiry (delegated to Slots module)
   @impl true
-  def handle_info(:retry_llm_waiting, state) do
+  def handle_info(:retry_llm_waiting, %State{} = state) do
     {:noreply, state, status_updates} = Slots.handle_retry_llm_waiting(state)
     apply_status_updates(status_updates)
     {:noreply, state}
@@ -798,7 +798,7 @@ defmodule EvoGit.AgentScheduler do
 
   # Task returned a result
   @impl true
-  def handle_info({ref, result}, state) when is_reference(ref) do
+  def handle_info({ref, result}, %State{} = state) when is_reference(ref) do
     case Map.get(state.ref_to_agent, ref) do
       nil ->
         {:noreply, state}
@@ -842,7 +842,7 @@ defmodule EvoGit.AgentScheduler do
 
   # Task process exited (monitor :DOWN).
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %State{} = state) do
     case Map.pop(state.ref_to_agent, ref) do
       {nil, _} ->
         {:noreply, state}
@@ -878,7 +878,7 @@ defmodule EvoGit.AgentScheduler do
 
   # --- Config Helpers ---
 
-  defp maybe_update(state, key, opts) do
+  defp maybe_update(%State{} = state, key, opts) do
     case Keyword.fetch(opts, key) do
       {:ok, value} -> struct(state, [{key, value}])
       :error -> state
@@ -901,7 +901,7 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  defp put_sched_meta(agent_id, meta) do
+  defp put_sched_meta(agent_id, %SchedMeta{} = meta) do
     :ets.insert(@sched_table, {agent_id, meta})
     EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
   end
