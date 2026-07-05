@@ -18,7 +18,7 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 
 | Module | Purpose |
 |--------|---------|
-| `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → Store → TaskRegistry → Endpoint) |
+| `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → Store → Registry → TaskRegistry → Endpoint) |
 | `EvoDash.Store` | SQLite-backed persistent store (single GenServer holding one xqlite connection; column-based `tasks`/`projects` tables with JSON encoding, explicit WAL+NORMAL durability PRAGMAs, graceful connection close in `terminate/2`). Delegates ALL serialization to `EvoDash.Store.Codec`. Callbacks have NO try/rescue — crashes propagate to supervisor for restart. Localized try/rescue only in: `terminate/2` (shutdown safety), quarantine/integrity-check helpers (deliberate data-recovery boundaries). |
 | `EvoDash.Store.Codec` | Pure serialization module (no GenServer, no I/O). Encode functions use non-crashing `Jason.encode/1` + `case` (TOTAL encode, never raise — fallback to `inspect/1`). Decode functions raise on bad data (Store's quarantine logic handles recovery). Two justified try/rescue remain on decode side: `decode_reason` (best-effort atom recovery via `String.to_existing_atom`), `decode_pid` (untrusted DB pid strings via `:erlang.list_to_pid`). |
 | `EvoDash.TaskInfo` | Struct representing a task in the registry (extracted from nested module) |
