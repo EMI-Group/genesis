@@ -8,248 +8,284 @@ defmodule EvoDashWeb.DashboardLive do
   """
   use EvoDashWeb, :live_view
   alias EvoDash.TaskRegistry
+  alias EvoGit.Config.Schema
   alias EvoGit.Core.ForeignRepo
 
   @impl true
   def render(assigns) do
     ~H"""
     <%= if @live_action == :system_dashboard do %>
-      <EvoDashWeb.Layouts.app flash={@flash} current_page={:phx_dashboard} config_status={@config_status}>
+      <EvoDashWeb.Layouts.app
+        flash={@flash}
+        current_page={:phx_dashboard}
+        config_status={@config_status}
+      >
         <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
           <div class="bg-info/15 text-info p-3 rounded-xl">
             <.icon name="hero-chart-bar" class="size-6" />
           </div>
           <div>
             <h1 class="text-xl font-bold">{gettext("System Dashboard")}</h1>
-            <p class="text-sm text-base-content/60">{gettext("Phoenix LiveDashboard — system metrics, processes, and application telemetry")}</p>
+            <p class="text-sm text-base-content/60">
+              {gettext("Phoenix LiveDashboard — system metrics, processes, and application telemetry")}
+            </p>
           </div>
         </div>
         <iframe
           src={~p"/phoenix/dashboard/home"}
           class="w-full rounded-xl"
-          style={"min-height: calc(100vh - 200px); border: none;"}
+          style="min-height: calc(100vh - 200px); border: none;"
           title="Phoenix LiveDashboard"
-        >
-        </iframe>
+        ></iframe>
       </EvoDashWeb.Layouts.app>
     <% else %>
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
-      <div id="dashboard-root" phx-hook="StatePersistence" data-project={@active_project_path} data-task-mode={@task_mode}>
-        <div id="welcome-check" phx-hook="WelcomeCheck" class="hidden"></div>
-        <div id="browser-notifications" phx-hook="BrowserNotifications">
-        <!-- Project Selector (always visible) -->
-        <EvoDashWeb.DashboardComponents.project_selector
-          active_project={@active_project}
-          recent_projects={@recent_projects}
-          show_open_form={@show_open_project_form}
-          path_suggestions={@path_suggestions}
-        />
+      <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
+        <div
+          id="dashboard-root"
+          phx-hook="StatePersistence"
+          data-project={@active_project_path}
+          data-task-mode={@task_mode}
+        >
+          <div id="welcome-check" phx-hook="WelcomeCheck" class="hidden"></div>
+          <div id="browser-notifications" phx-hook="BrowserNotifications">
+            <!-- Project Selector (always visible) -->
+            <EvoDashWeb.DashboardComponents.project_selector
+              active_project={@active_project}
+              recent_projects={@recent_projects}
+              show_open_form={@show_open_project_form}
+              path_suggestions={@path_suggestions}
+            />
 
-        <!-- Task Form (always visible, disabled when no project) -->
-        <div class="mt-6 mb-6 animate-fade-in-up animation-delay-100">
-          <EvoDashWeb.DashboardComponents.task_form
-            prompt={@task_prompt}
-            mode={@task_mode}
-            mode_info={@task_mode_info}
-            node_path={@task_node_path}
-            seeds={@task_seeds}
-            starting_commit={@task_starting_commit}
-            resume_from={@task_resume_from}
-            show_advanced={@show_advanced}
-            disabled={is_nil(@active_project)}
-            archive={@task_archive}
-          />
-        </div>
-
-        <!-- Project Settings (always in DOM, collapsible) -->
-        <div class="mb-6 animate-fade-in-up animation-delay-200">
-          <EvoDashWeb.DashboardComponents.project_settings_panel
-            active_project={@active_project_path}
-            show={@show_project_settings}
-            project_config={@project_config}
-            worktree_script={@worktree_script}
-            commands={@commands}
-            foreign_repos={@foreign_repos}
-            show_add_foreign_repo={@show_add_foreign_repo_form}
-            new_repo_id={@new_repo_id}
-            new_repo_path={@new_repo_path}
-            new_repo_description={@new_repo_description}
-          />
-        </div>
-
-        <!-- Running Tasks Section -->
-        <%= if @running_tasks != [] do %>
-          <div class="mt-6 animate-fade-in-up">
-            <div class="flex items-center gap-2 mb-4">
-              <div class="bg-success/15 text-success p-2 rounded-lg">
-                <.icon name="hero-play-circle" class="size-5" />
-              </div>
-              <h2 class="text-lg font-semibold text-base-content/80">{gettext("Active Tasks")}</h2>
-              <span class="badge badge-success">{length(@running_tasks)}</span>
+            <!-- Task Form (always visible, disabled when no project) -->
+            <div class="mt-6 mb-6 animate-fade-in-up animation-delay-100">
+              <EvoDashWeb.DashboardComponents.task_form
+                prompt={@task_prompt}
+                mode={@task_mode}
+                mode_info={@task_mode_info}
+                node_path={@task_node_path}
+                seeds={@task_seeds}
+                starting_commit={@task_starting_commit}
+                resume_from={@task_resume_from}
+                show_advanced={@show_advanced}
+                disabled={is_nil(@active_project)}
+                archive={@task_archive}
+                model_profiles={@model_profiles}
+                selected_model_id={@selected_model_id}
+              />
             </div>
-            <div class="space-y-3">
-              <%= for task <- Enum.sort_by(@running_tasks, & &1.started_at, {:asc, DateTime}) do %>
-                <div class={["relative z-10 has-[[open]]:z-30 rounded-2xl", if(task.status == :finalizing, do: "animate-pulse-glow-warning", else: "animate-pulse-glow")]}>
-                  <EvoDashWeb.DashboardComponents.task_card
-                    task={task}
-                    show_details={MapSet.member?(@expanded_task_ids, task.id)}
-                  />
+
+            <!-- Project Settings (always in DOM, collapsible) -->
+            <div class="mb-6 animate-fade-in-up animation-delay-200">
+              <EvoDashWeb.DashboardComponents.project_settings_panel
+                active_project={@active_project_path}
+                show={@show_project_settings}
+                project_config={@project_config}
+                worktree_script={@worktree_script}
+                commands={@commands}
+                foreign_repos={@foreign_repos}
+                show_add_foreign_repo={@show_add_foreign_repo_form}
+                new_repo_id={@new_repo_id}
+                new_repo_path={@new_repo_path}
+                new_repo_description={@new_repo_description}
+              />
+            </div>
+
+            <!-- Running Tasks Section -->
+            <%= if @running_tasks != [] do %>
+              <div class="mt-6 animate-fade-in-up">
+                <div class="flex items-center gap-2 mb-4">
+                  <div class="bg-success/15 text-success p-2 rounded-lg">
+                    <.icon name="hero-play-circle" class="size-5" />
+                  </div>
+                  <h2 class="text-lg font-semibold text-base-content/80">
+                    {gettext("Active Tasks")}
+                  </h2>
+                  <span class="badge badge-success">{length(@running_tasks)}</span>
                 </div>
-              <% end %>
-            </div>
-          </div>
-        <% end %>
+                <div class="space-y-3">
+                  <%= for task <- Enum.sort_by(@running_tasks, & &1.started_at, {:asc, DateTime}) do %>
+                    <div class={[
+                      "relative z-10 has-[[open]]:z-30 rounded-2xl",
+                      if(task.status == :finalizing,
+                        do: "animate-pulse-glow-warning",
+                        else: "animate-pulse-glow"
+                      )
+                    ]}>
+                      <EvoDashWeb.DashboardComponents.task_card
+                        task={task}
+                        show_details={MapSet.member?(@expanded_task_ids, task.id)}
+                      />
+                    </div>
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
 
-        <!-- Pending Review Tasks Section -->
-        <%= if @pending_tasks != [] do %>
-          <div class="mt-6 animate-fade-in-up animation-delay-100">
-            <div class="flex items-center gap-2 mb-4">
-              <div class="bg-warning/15 text-warning p-2 rounded-lg">
-                <.icon name="hero-exclamation-circle" class="size-5" />
+            <!-- Pending Review Tasks Section -->
+            <%= if @pending_tasks != [] do %>
+              <div class="mt-6 animate-fade-in-up animation-delay-100">
+                <div class="flex items-center gap-2 mb-4">
+                  <div class="bg-warning/15 text-warning p-2 rounded-lg">
+                    <.icon name="hero-exclamation-circle" class="size-5" />
+                  </div>
+                  <h2 class="text-lg font-semibold text-base-content/80">
+                    {gettext("Pending Review")}
+                  </h2>
+                  <span class="badge badge-ghost">{length(@pending_tasks)}</span>
+                </div>
+                <div class="space-y-3">
+                  <%= for task <- @pending_tasks do %>
+                    <EvoDashWeb.DashboardComponents.task_card
+                      task={task}
+                      show_details={MapSet.member?(@expanded_task_ids, task.id)}
+                    />
+                  <% end %>
+                </div>
               </div>
-              <h2 class="text-lg font-semibold text-base-content/80">{gettext("Pending Review")}</h2>
-              <span class="badge badge-ghost">{length(@pending_tasks)}</span>
-            </div>
-            <div class="space-y-3">
-              <%= for task <- @pending_tasks do %>
-                <EvoDashWeb.DashboardComponents.task_card
-                  task={task}
-                  show_details={MapSet.member?(@expanded_task_ids, task.id)}
-                />
-              <% end %>
-            </div>
-          </div>
-        <% end %>
+            <% end %>
 
-        <!-- Empty State -->
-        <%= if @running_tasks == [] and @pending_tasks == [] do %>
-          <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
-            <div class="animate-float">
-              <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
-            </div>
-            <p class="text-base font-medium">{gettext("No tasks yet")}</p>
-            <p class="text-sm mt-1">
-              <%= if @active_project do %>
-                {gettext("Configure and execute a task above to get started.")}
-              <% else %>
-                {gettext("Open a project to get started.")}
-              <% end %>
-            </p>
-          </div>
-        <% end %>
+            <!-- Empty State -->
+            <%= if @running_tasks == [] and @pending_tasks == [] do %>
+              <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
+                <div class="animate-float">
+                  <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
+                </div>
+                <p class="text-base font-medium">{gettext("No tasks yet")}</p>
+                <p class="text-sm mt-1">
+                  <%= if @active_project do %>
+                    {gettext("Configure and execute a task above to get started.")}
+                  <% else %>
+                    {gettext("Open a project to get started.")}
+                  <% end %>
+                </p>
+              </div>
+            <% end %>
 
-        <!-- View All Tasks Link -->
-        <%= if @running_tasks != [] or @pending_tasks != [] do %>
-          <div class="mt-4 text-center animate-fade-in-up animation-delay-200">
-            <.link navigate={~p"/tasks"} class="btn btn-ghost gap-2 hover-lift">
-              <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext("View Full Task History")}
-              <.icon name="hero-arrow-right" class="size-4" />
-            </.link>
-          </div>
-        <% end %>
+            <!-- View All Tasks Link -->
+            <%= if @running_tasks != [] or @pending_tasks != [] do %>
+              <div class="mt-4 text-center animate-fade-in-up animation-delay-200">
+                <.link navigate={~p"/tasks"} class="btn btn-ghost gap-2 hover-lift">
+                  <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext(
+                    "View Full Task History"
+                  )}
+                  <.icon name="hero-arrow-right" class="size-4" />
+                </.link>
+              </div>
+            <% end %>
 
-        <!-- Full Result Modal -->
-        <%= if @selected_result do %>
-          <div class="modal modal-open bg-black/50">
-            <div class="modal-box w-11/12 max-w-5xl">
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                {gettext("Task Result")}
-              </h3>
-              <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
-                {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
-              </div>
-              <div class="modal-action">
-                <button class="btn" phx-click="close_result_modal">{gettext("Close")}</button>
-              </div>
-            </div>
-            <div class="modal-backdrop" phx-click="close_result_modal">
-              <button class="cursor-default">{gettext("close")}</button>
-            </div>
-          </div>
-        <% end %>
-
-        <!-- Full Options Modal -->
-        <%= if @selected_options do %>
-          <div class="modal modal-open bg-black/50">
-            <div class="modal-box w-11/12 max-w-5xl">
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-                {gettext("Full Objective")}
-              </h3>
-              <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
-              </div>
-              <div class="modal-action">
-                <button class="btn" phx-click="close_options_modal">{gettext("Close")}</button>
-              </div>
-            </div>
-            <div class="modal-backdrop" phx-click="close_options_modal">
-              <button class="cursor-default">{gettext("close")}</button>
-            </div>
-          </div>
-        <% end %>
-      </div>
-      </div>
-      <%= if @show_welcome do %>
-        <div class="modal modal-open bg-black/50" id="welcome-modal">
-          <div class="modal-box max-w-lg">
-            <div class="flex items-center gap-3 mb-4">
-              <div class="bg-primary/15 text-primary p-3 rounded-xl">
-                <.icon name="hero-sparkles" class="size-6" />
-              </div>
-              <h3 class="font-bold text-lg">{gettext("Welcome to EvoGit!")}</h3>
-            </div>
-            <p class="text-sm text-base-content/70 leading-relaxed mb-6">
-              {gettext("EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?")}
-            </p>
-            <div class="mb-4">
-              <div class="text-xs font-medium text-base-content/50 mb-1.5">{gettext("Language")}</div>
-              <details class="dropdown">
-                <summary class="btn btn-sm btn-outline gap-2 w-full justify-between">
-                  <span class="flex items-center gap-2">
-                    <.icon name="hero-language" class="size-4" />
-                    {Enum.find_value(EvoDashWeb.Layouts.supported_languages(), "English", fn {code, name} ->
-                      if code == @welcome_locale, do: name
-                    end)}
-                  </span>
-                  <.icon name="hero-chevron-down" class="size-4 opacity-60" />
-                </summary>
-                <div class="dropdown-content mt-1 z-50 w-full rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
-                  <div class="max-h-48 overflow-y-auto flex flex-col gap-0.5">
-                    <button
-                      :for={{code, name} <- EvoDashWeb.Layouts.supported_languages()}
-                      class={[
-                        "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-                        @welcome_locale == code && "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
-                        @welcome_locale != code && "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-                      ]}
-                      phx-click="set_welcome_language"
-                      phx-value-locale={code}
-                    >
-                      <span class="flex-1 text-left">{name}</span>
-                      <.icon :if={@welcome_locale == code} name="hero-check-solid" class="size-4 text-indigo-500 shrink-0" />
-                    </button>
+            <!-- Full Result Modal -->
+            <%= if @selected_result do %>
+              <div class="modal modal-open bg-black/50">
+                <div class="modal-box w-11/12 max-w-5xl">
+                  <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                    <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+                    {gettext("Task Result")}
+                  </h3>
+                  <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+                    {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
+                  </div>
+                  <div class="modal-action">
+                    <button class="btn" phx-click="close_result_modal">{gettext("Close")}</button>
                   </div>
                 </div>
-              </details>
-            </div>
-            <div class="modal-action">
-              <button class="btn btn-ghost" phx-click="dismiss_welcome">
-                {gettext("Skip")}
-              </button>
-              <button class="btn btn-primary gap-2" phx-click="welcome_configure_llm">
-                <.icon name="hero-sparkles" class="size-4" />
-                {gettext("Configure LLM")}
-              </button>
-            </div>
-          </div>
-          <div class="modal-backdrop" phx-click="dismiss_welcome">
-            <button class="cursor-default">{gettext("close")}</button>
+                <div class="modal-backdrop" phx-click="close_result_modal">
+                  <button class="cursor-default">{gettext("close")}</button>
+                </div>
+              </div>
+            <% end %>
+
+            <!-- Full Options Modal -->
+            <%= if @selected_options do %>
+              <div class="modal modal-open bg-black/50">
+                <div class="modal-box w-11/12 max-w-5xl">
+                  <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                    <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+                    {gettext("Full Objective")}
+                  </h3>
+                  <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+                    <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+                  </div>
+                  <div class="modal-action">
+                    <button class="btn" phx-click="close_options_modal">{gettext("Close")}</button>
+                  </div>
+                </div>
+                <div class="modal-backdrop" phx-click="close_options_modal">
+                  <button class="cursor-default">{gettext("close")}</button>
+                </div>
+              </div>
+            <% end %>
           </div>
         </div>
-      <% end %>
-    </EvoDashWeb.Layouts.app>
+        <%= if @show_welcome do %>
+          <div class="modal modal-open bg-black/50" id="welcome-modal">
+            <div class="modal-box max-w-lg">
+              <div class="flex items-center gap-3 mb-4">
+                <div class="bg-primary/15 text-primary p-3 rounded-xl">
+                  <.icon name="hero-sparkles" class="size-6" />
+                </div>
+                <h3 class="font-bold text-lg">{gettext("Welcome to EvoGit!")}</h3>
+              </div>
+              <p class="text-sm text-base-content/70 leading-relaxed mb-6">
+                {gettext(
+                  "EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?"
+                )}
+              </p>
+              <div class="mb-4">
+                <div class="text-xs font-medium text-base-content/50 mb-1.5">
+                  {gettext("Language")}
+                </div>
+                <details class="dropdown">
+                  <summary class="btn btn-sm btn-outline gap-2 w-full justify-between">
+                    <span class="flex items-center gap-2">
+                      <.icon name="hero-language" class="size-4" />
+                      {Enum.find_value(EvoDashWeb.Layouts.supported_languages(), "English", fn {code,
+                                                                                                name} ->
+                        if code == @welcome_locale, do: name
+                      end)}
+                    </span>
+                    <.icon name="hero-chevron-down" class="size-4 opacity-60" />
+                  </summary>
+                  <div class="dropdown-content mt-1 z-50 w-full rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
+                    <div class="max-h-48 overflow-y-auto flex flex-col gap-0.5">
+                      <button
+                        :for={{code, name} <- EvoDashWeb.Layouts.supported_languages()}
+                        class={[
+                          "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                          @welcome_locale == code &&
+                            "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
+                          @welcome_locale != code &&
+                            "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                        ]}
+                        phx-click="set_welcome_language"
+                        phx-value-locale={code}
+                      >
+                        <span class="flex-1 text-left">{name}</span>
+                        <.icon
+                          :if={@welcome_locale == code}
+                          name="hero-check-solid"
+                          class="size-4 text-indigo-500 shrink-0"
+                        />
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              </div>
+              <div class="modal-action">
+                <button class="btn btn-ghost" phx-click="dismiss_welcome">
+                  {gettext("Skip")}
+                </button>
+                <button class="btn btn-primary gap-2" phx-click="welcome_configure_llm">
+                  <.icon name="hero-sparkles" class="size-4" />
+                  {gettext("Configure LLM")}
+                </button>
+              </div>
+            </div>
+            <div class="modal-backdrop" phx-click="dismiss_welcome">
+              <button class="cursor-default">{gettext("close")}</button>
+            </div>
+          </div>
+        <% end %>
+      </EvoDashWeb.Layouts.app>
     <% end %>
     """
   end
@@ -264,6 +300,8 @@ defmodule EvoDashWeb.DashboardLive do
     recent_projects = TaskRegistry.list_recent_projects()
 
     config_status = config_status()
+
+    {model_profiles, selected_model_id} = load_model_profiles()
 
     socket =
       assign(socket,
@@ -285,6 +323,8 @@ defmodule EvoDashWeb.DashboardLive do
         new_repo_path: "",
         new_repo_description: "",
         tasks: [],
+        model_profiles: model_profiles,
+        selected_model_id: selected_model_id,
         notified_task_ids:
           TaskRegistry.list_tasks()
           |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
@@ -403,7 +443,11 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("show_welcome", _params, socket) do
-    {:noreply, assign(socket, :show_welcome, true)}
+    # Only show the welcome modal if no model profile is configured.
+    # If at least one [[llm.models]] profile (or legacy [llm].model) is set,
+    # the user has already configured their LLM and doesn't need the onboarding.
+    show = socket.assigns.model_profiles == []
+    {:noreply, assign(socket, :show_welcome, show)}
   end
 
   @impl true
@@ -488,6 +532,11 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:task_mode, mode)
      |> maybe_persist_state()}
+  end
+
+  @impl true
+  def handle_event("select_model", %{"model_id" => id}, socket) do
+    {:noreply, assign(socket, :selected_model_id, id)}
   end
 
   @impl true
@@ -609,6 +658,15 @@ defmodule EvoDashWeb.DashboardLive do
         if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
 
       opts = if archive, do: Keyword.put(opts, :archive, true), else: opts
+
+      # Thread the selected model profile id into opts (if non-nil/non-empty).
+      # The runtime uses this to select which [[llm.models]] profile to use.
+      selected_model_id = socket.assigns[:selected_model_id]
+
+      opts =
+        if is_binary(selected_model_id) and selected_model_id != "",
+          do: Keyword.put(opts, :model_id, selected_model_id),
+          else: opts
 
       resume_from = params["resume_from"]
 
@@ -997,8 +1055,7 @@ defmodule EvoDashWeb.DashboardLive do
       active_project: %{path: path, name: name},
       active_project_path: path,
       tasks: tasks,
-      notified_task_ids:
-        build_notified_task_ids(tasks, socket.assigns.notified_task_ids),
+      notified_task_ids: build_notified_task_ids(tasks, socket.assigns.notified_task_ids),
       task_mode: mode,
       task_mode_info: mode_info,
       show_open_project_form: false,
@@ -1084,6 +1141,22 @@ defmodule EvoDashWeb.DashboardLive do
     else
       TaskRegistry.list_tasks()
     end
+  end
+
+  # Loads available model profiles from the resolved config and selects the
+  # default (first) profile. Returns {profiles, selected_id}. If no profiles
+  # are configured, returns {[], nil}.
+  defp load_model_profiles do
+    config = EvoGit.Config.resolve()
+    profiles = Schema.model_profiles(config)
+
+    selected_id =
+      case Schema.default_model_profile(config) do
+        {:ok, profile} -> Map.get(profile, :id)
+        {:error, :not_found} -> nil
+      end
+
+    {profiles, selected_id}
   end
 
   defp detect_mode(path) do
