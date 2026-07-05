@@ -105,6 +105,14 @@ defmodule EvoGit.Config do
 
   # --- Public API ---
 
+  # Test-only helpers to access private pipeline steps. Underscore-prefixed
+  # to signal they are internal and not part of the public contract.
+  @doc false
+  def __atomize_enum_values__(config), do: atomize_enum_values(config)
+
+  @doc false
+  def __migrate_llm_models__(config), do: migrate_llm_models(config)
+
   @doc """
   Returns the fully merged configuration map (defaults + user config).
 
@@ -117,6 +125,7 @@ defmodule EvoGit.Config do
       defaults()
       |> deep_merge(atomize_keys(user_config()))
       |> atomize_enum_values()
+      |> migrate_llm_models()
 
     case EvoGit.Config.Schema.validate(config) do
       {:ok, _validated} ->
@@ -146,14 +155,38 @@ defmodule EvoGit.Config do
         new_mode = atomize_if_string(mode, [:auto, :enabled, :disabled])
         put_in(acc, [:sandbox, :mode], new_mode)
 
-      # LLM model: if the model is a map, ensure its :provider value is an atom.
-      # After TOML decode + atomize_keys, keys are atoms but the provider VALUE
-      # may still be a string (e.g. "openai"). req_llm requires an atom provider.
+      # LLM model normalization:
+      # 1. Flat [llm].model map → normalize provider atom
+      # 2. [[llm.models]] → normalize model maps in each profile
       {:llm, llm_config}, acc when is_map(llm_config) ->
-        case Map.get(llm_config, :model) do
-          model when is_map(model) ->
-            normalized = normalize_model_map(model)
-            put_in(acc, [:llm, :model], normalized)
+        # Normalize the flat model map (backward compat)
+        acc =
+          case Map.get(llm_config, :model) do
+            model when is_map(model) ->
+              normalized = normalize_model_map(model)
+              put_in(acc, [:llm, :model], normalized)
+
+            _ ->
+              acc
+          end
+
+        # Normalize each profile's model map in the models list
+        case Map.get(llm_config, :models) do
+          models when is_list(models) ->
+            normalized_models =
+              Enum.map(models, fn profile when is_map(profile) ->
+                profile = normalize_profile_keys(profile)
+
+                case Map.get(profile, :model) do
+                  model when is_map(model) ->
+                    Map.put(profile, :model, normalize_model_map(model))
+
+                  _ ->
+                    profile
+                end
+              end)
+
+            put_in(acc, [:llm, :models], normalized_models)
 
           _ ->
             acc
@@ -183,6 +216,81 @@ defmodule EvoGit.Config do
 
       _, acc ->
         acc
+    end)
+  end
+
+  # Migrates old flat [llm] config into the models list format.
+  #
+  # If config.llm.models already exists (new format), it is used directly.
+  # If config.llm.model is set but models is empty/absent (old flat format),
+  # a single "default" profile is created from the flat fields.
+  #
+  # This always ensures config.llm.models is present after resolution.
+  defp migrate_llm_models(config) when is_map(config) do
+    llm = Map.get(config, :llm, %{})
+    existing_models = Map.get(llm, :models, [])
+
+    models =
+      cond do
+        # New format: models list already has profiles
+        is_list(existing_models) and existing_models != [] ->
+          existing_models
+
+        # Old flat format: migrate model into a single "default" profile
+        true ->
+          flat_model = Map.get(llm, :model)
+
+          if flat_model == nil or flat_model == "" do
+            # No model configured at all — keep empty list
+            []
+          else
+            # Build default profile from flat fields.
+            # Concurrency comes from scheduler.max_concurrency (the old global limit).
+            scheduler = Map.get(config, :scheduler, %{})
+            concurrency = Map.get(scheduler, :max_concurrency, 3)
+
+            profile =
+              %{
+                id: "default",
+                model: flat_model,
+                concurrency: concurrency
+              }
+              |> maybe_put_gen_param(:temperature, Map.get(llm, :temperature))
+              |> maybe_put_gen_param(:max_tokens, Map.get(llm, :max_tokens))
+              |> maybe_put_gen_param(:reasoning_effort, Map.get(llm, :reasoning_effort))
+              |> maybe_put_gen_param(:top_p, Map.get(llm, :top_p))
+              |> maybe_put_gen_param(:top_k, Map.get(llm, :top_k))
+              |> maybe_put_gen_param(:frequency_penalty, Map.get(llm, :frequency_penalty))
+              |> maybe_put_gen_param(:presence_penalty, Map.get(llm, :presence_penalty))
+
+            [profile]
+          end
+      end
+
+    # Ensure the flat [llm].model mirrors the default profile's model for
+    # backward compatibility (Config.resolve([:llm, :model]) still works).
+    llm =
+      case models do
+        [%{model: default_model} | _] ->
+          Map.put(llm, :model, default_model)
+
+        _ ->
+          llm
+      end
+
+    put_in(config, [:llm], Map.put(llm, :models, models))
+  end
+
+  defp maybe_put_gen_param(map, _key, nil), do: map
+  defp maybe_put_gen_param(map, key, value), do: Map.put(map, key, value)
+
+  # Atomizes the string keys of a model profile map.
+  # atomize_keys recurses into map values but NOT list elements, so profiles
+  # inside the models list may still have string keys after the initial pass.
+  defp normalize_profile_keys(profile) when is_map(profile) do
+    Map.new(profile, fn
+      {key, value} when is_binary(key) -> {safe_atomize(key), value}
+      {key, value} -> {key, value}
     end)
   end
 
@@ -363,11 +471,19 @@ defmodule EvoGit.Config do
 
     checks = [
       {:llm_model, "LLM model is not configured. Set [llm] model in config.toml.", fn ->
-        case get_in(resolved, [:llm, :model]) do
-          nil -> true
-          "" -> true
-          _ -> false
-        end
+        # Check that at least one model profile has a non-nil/non-empty model
+        profiles = EvoGit.Config.Schema.model_profiles(resolved)
+
+        has_model =
+          Enum.any?(profiles, fn profile ->
+            case Map.get(profile, :model) do
+              nil -> false
+              "" -> false
+              _ -> true
+            end
+          end)
+
+        not has_model
       end},
       {:api_key, "No API key found. Add keys to credentials.toml or set environment variables.", fn ->
         providers = EvoGit.Config.LLMCatalog.known_env_vars()

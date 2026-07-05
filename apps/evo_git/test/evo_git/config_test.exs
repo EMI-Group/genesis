@@ -187,4 +187,200 @@ defmodule EvoGit.ConfigTest do
       end
     end
   end
+
+  describe "model profiles resolution" do
+    test "defaults produce empty models list" do
+      # Use defaults directly (no user config merge) to verify no models by default
+      config = Config.__migrate_llm_models__(Config.defaults())
+      models = EvoGit.Config.Schema.model_profiles(config)
+      assert models == []
+    end
+
+    test "flat config migrates into single default profile" do
+      # Simulate what resolve does with a flat config
+      flat_config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :temperature], 0.5)
+
+      # Use the private migration via a direct call to resolve's pipeline
+      # We test the end-to-end behavior by checking that resolve produces models
+      config =
+        flat_config
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      models = EvoGit.Config.Schema.model_profiles(config)
+      assert length(models) == 1
+      profile = hd(models)
+      assert profile.id == "default"
+      assert profile.model == "anthropic:claude-sonnet-4"
+      assert profile.concurrency == 3
+      assert profile.temperature == 0.5
+    end
+
+    test "flat config migration picks up scheduler max_concurrency" do
+      flat_config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:scheduler, :max_concurrency], 8)
+
+      config =
+        flat_config
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      profile = hd(EvoGit.Config.Schema.model_profiles(config))
+      assert profile.concurrency == 8
+    end
+
+    test "flat config migration includes generation params" do
+      flat_config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :max_tokens], 8192)
+        |> put_in([:llm, :reasoning_effort], "high")
+        |> put_in([:llm, :top_p], 0.9)
+        |> put_in([:llm, :frequency_penalty], 0.5)
+        |> put_in([:llm, :presence_penalty], 0.3)
+
+      config =
+        flat_config
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      profile = hd(EvoGit.Config.Schema.model_profiles(config))
+      assert profile.max_tokens == 8192
+      assert profile.reasoning_effort == "high"
+      assert profile.top_p == 0.9
+      assert profile.frequency_penalty == 0.5
+      assert profile.presence_penalty == 0.3
+    end
+
+    test "flat config migration omits nil generation params" do
+      flat_config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+
+      config =
+        flat_config
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      profile = hd(EvoGit.Config.Schema.model_profiles(config))
+      # Only id, model, concurrency should be present — no nil gen params
+      refute Map.has_key?(profile, :temperature)
+      refute Map.has_key?(profile, :max_tokens)
+    end
+
+    test "no model configured produces empty models list" do
+      flat_config = Config.defaults()
+
+      config =
+        flat_config
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      assert EvoGit.Config.Schema.model_profiles(config) == []
+    end
+
+    test "existing models list is used directly (not migrated)" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :models], [
+          %{id: "fast", model: "google:gemini-flash", temperature: 0.3},
+          %{id: "reasoning", model: "anthropic:claude-sonnet-4", reasoning_effort: "high"}
+        ])
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      models = EvoGit.Config.Schema.model_profiles(config)
+      assert length(models) == 2
+      assert Enum.at(models, 0).id == "fast"
+      assert Enum.at(models, 1).id == "reasoning"
+    end
+
+    test "config_status reports missing model when no profiles" do
+      # Test the Schema.model_profiles + has_model logic directly since
+      # Config.resolve() reads the real config file in this environment.
+      resolved = Config.__migrate_llm_models__(Config.defaults())
+      profiles = EvoGit.Config.Schema.model_profiles(resolved)
+
+      has_model =
+        Enum.any?(profiles, fn profile ->
+          case Map.get(profile, :model) do
+            nil -> false
+            "" -> false
+            _ -> true
+          end
+        end)
+
+      assert has_model == false
+    end
+  end
+
+  describe "backward compat: Config.resolve([:llm, :model])" do
+    test "returns the default profile's model after migration" do
+      flat_config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+
+      config =
+        flat_config
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      # The flat [llm].model should mirror the default profile's model
+      assert get_in(config, [:llm, :model]) == "anthropic:claude-sonnet-4"
+    end
+
+    test "returns first profile's model when using new format" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :models], [
+          %{id: "default", model: "google:gemini-flash"},
+          %{id: "reasoning", model: "anthropic:claude-sonnet-4"}
+        ])
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      # [llm].model mirrors the first/default profile's model
+      assert get_in(config, [:llm, :model]) == "google:gemini-flash"
+    end
+  end
+
+  describe "model map normalization in profiles" do
+    test "provider string is atomized in each profile's model map" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :models], [
+          %{"id" => "default", "model" => %{"provider" => "openai", "id" => "my-model"}}
+        ])
+        |> Config.__atomize_enum_values__()
+
+      models = EvoGit.Config.Schema.model_profiles(config)
+      profile = hd(models)
+      assert profile.id == "default"
+      assert is_map(profile.model)
+      assert profile.model.provider == :openai
+      assert profile.model.id == "my-model"
+    end
+
+    test "multiple profiles each get normalized model maps" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :models], [
+          %{"id" => "a", "model" => %{"provider" => "openai", "id" => "m1"}},
+          %{"id" => "b", "model" => "anthropic:claude-sonnet-4"}
+        ])
+        |> Config.__atomize_enum_values__()
+
+      models = EvoGit.Config.Schema.model_profiles(config)
+      [p1, p2] = models
+      assert p1.id == "a"
+      assert p1.model.provider == :openai
+      assert p2.id == "b"
+      assert p2.model == "anthropic:claude-sonnet-4"
+    end
+  end
 end

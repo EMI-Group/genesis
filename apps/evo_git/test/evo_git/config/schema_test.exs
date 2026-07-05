@@ -28,6 +28,7 @@ defmodule EvoGit.Config.SchemaTest do
       # LLM
       assert [:llm, :model] in paths
       assert [:llm, :compression_threshold_tokens] in paths
+      assert [:llm, :models] in paths
 
       # User
       assert [:user, :github_username] in paths
@@ -86,8 +87,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 48 schemas" do
-      assert length(Schema.all_schemas()) == 48
+    test "has exactly 49 schemas" do
+      assert length(Schema.all_schemas()) == 49
     end
   end
 
@@ -186,7 +187,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "each category has expected count" do
       grouped = Schema.schemas_by_category()
       assert length(grouped[:scheduler]) == 11
-      assert length(grouped[:llm]) == 9
+      assert length(grouped[:llm]) == 10
       assert length(grouped[:user]) == 1
       assert length(grouped[:sandbox]) == 9
       assert length(grouped[:truncation]) == 4
@@ -384,6 +385,169 @@ defmodule EvoGit.Config.SchemaTest do
     test "nil is still accepted" do
       config = put_in(Schema.defaults(), [:llm, :model], nil)
       assert {:ok, _} = Schema.validate(config)
+    end
+  end
+
+  describe "model_profiles type for [:llm, :models]" do
+    test "the schema entry for [:llm, :models] has type: :model_profiles" do
+      entry =
+        Enum.find(Schema.all_schemas(), &(&1.key_path == [:llm, :models]))
+
+      assert entry != nil
+      assert entry.type == :model_profiles
+      assert entry.default == []
+    end
+
+    test "accepts an empty list" do
+      config = put_in(Schema.defaults(), [:llm, :models], [])
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts a single valid profile" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{id: "default", model: "anthropic:claude-sonnet-4"}
+      ])
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts multiple valid profiles" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{id: "default", model: "anthropic:claude-sonnet-4", concurrency: 5},
+        %{id: "fast", model: "google:gemini-flash", temperature: 0.5}
+      ])
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts a map-model profile" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{id: "openai-custom", model: %{provider: "openai", id: "my-model", base_url: "https://x"}}
+      ])
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "rejects a profile missing id" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{model: "anthropic:claude-sonnet-4"}
+      ])
+      assert {:error, errors} = Schema.validate(config)
+      assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :id]))
+    end
+
+    test "rejects a profile with empty id" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{id: "", model: "anthropic:claude-sonnet-4"}
+      ])
+      assert {:error, errors} = Schema.validate(config)
+      assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :id]))
+    end
+
+    test "rejects a profile missing model" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{id: "default"}
+      ])
+      assert {:error, errors} = Schema.validate(config)
+      assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :model]))
+    end
+
+    test "rejects a non-list value" do
+      config = put_in(Schema.defaults(), [:llm, :models], "not-a-list")
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "rejects a profile that is not a map" do
+      config = put_in(Schema.defaults(), [:llm, :models], ["not-a-map"])
+      assert {:error, _} = Schema.validate(config)
+    end
+  end
+
+  describe "model_profiles/1" do
+    test "returns the list of profiles from config" do
+      config = %{llm: %{models: [%{id: "default", model: "x:y"}, %{id: "fast", model: "a:b"}]}}
+      profiles = Schema.model_profiles(config)
+      assert length(profiles) == 2
+      assert Enum.at(profiles, 0).id == "default"
+      assert Enum.at(profiles, 1).id == "fast"
+    end
+
+    test "returns empty list when no models key" do
+      config = %{llm: %{}}
+      assert Schema.model_profiles(config) == []
+    end
+
+    test "returns empty list when no llm key" do
+      config = %{}
+      assert Schema.model_profiles(config) == []
+    end
+  end
+
+  describe "get_model_profile/2" do
+    test "returns {:ok, profile} when found" do
+      config = %{llm: %{models: [%{id: "default", model: "x:y"}, %{id: "fast", model: "a:b"}]}}
+
+      assert {:ok, profile} = Schema.get_model_profile(config, "fast")
+      assert profile.id == "fast"
+      assert profile.model == "a:b"
+    end
+
+    test "returns {:error, :not_found} when id not present" do
+      config = %{llm: %{models: [%{id: "default", model: "x:y"}]}}
+      assert {:error, :not_found} = Schema.get_model_profile(config, "nonexistent")
+    end
+
+    test "returns {:error, :not_found} when no profiles" do
+      config = %{llm: %{}}
+      assert {:error, :not_found} = Schema.get_model_profile(config, "default")
+    end
+  end
+
+  describe "default_model_profile/1" do
+    test "returns the first profile" do
+      config = %{llm: %{models: [%{id: "first", model: "x:y"}, %{id: "second", model: "a:b"}]}}
+      assert {:ok, profile} = Schema.default_model_profile(config)
+      assert profile.id == "first"
+    end
+
+    test "returns {:error, :not_found} when empty" do
+      config = %{llm: %{models: []}}
+      assert {:error, :not_found} = Schema.default_model_profile(config)
+    end
+  end
+
+  describe "llm_generation_params/1 with model profile" do
+    test "extracts params from a profile map" do
+      profile = %{id: "default", temperature: 0.7, max_tokens: 4096}
+      params = Schema.llm_generation_params(profile)
+      assert Keyword.get(params, :temperature) == 0.7
+      assert Keyword.get(params, :max_tokens) == 4096
+    end
+
+    test "filters nil params from profile" do
+      profile = %{id: "default", temperature: 0.7, max_tokens: nil}
+      params = Schema.llm_generation_params(profile)
+      assert Keyword.get(params, :temperature) == 0.7
+      refute Keyword.has_key?(params, :max_tokens)
+    end
+
+    test "converts reasoning_effort from string to atom in profile" do
+      profile = %{id: "default", reasoning_effort: "high"}
+      params = Schema.llm_generation_params(profile)
+      assert Keyword.get(params, :reasoning_effort) == :high
+    end
+
+    test "returns empty list for profile with no gen params" do
+      profile = %{id: "default", model: "x:y"}
+      assert Schema.llm_generation_params(profile) == []
+    end
+
+    test "delegates to default profile when given a config map" do
+      config = %{llm: %{models: [%{id: "default", temperature: 0.9}]}}
+      params = Schema.llm_generation_params(config)
+      assert Keyword.get(params, :temperature) == 0.9
+    end
+
+    test "returns empty list when no profiles in config" do
+      config = %{llm: %{models: []}}
+      assert Schema.llm_generation_params(config) == []
     end
   end
 end
