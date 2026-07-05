@@ -5,20 +5,31 @@ defmodule EvoGit.AgentScheduler.Slots do
   Provides pure functions that operate on the scheduler state map
   to manage concurrent LLM call and tool execution slots.
 
+  ## Per-Model LLM Slot Pools
+
+  LLM slots are organized into **per-model pools**. Each model profile gets
+  its own concurrency limit, holder set, waiting queue, and backoff timer.
+  The agent's `model_id` (read from ETS via `AgentState`) determines which
+  pool it belongs to.
+
+  The key benefit: a rate-limit on one provider no longer blocks agents
+  using a different model. Backoff is scoped per-model.
+
   ## Slot Tracking
 
-  Slots are tracked as `MapSet`s of agent IDs (`llm_holders` / `tool_holders`).
+  Slots are tracked as `MapSet`s of agent IDs (`llm_holders[model_id]` / `tool_holders`).
   Available capacity is derived: `capacity - map_size(holders)`. This makes
   leaks impossible by construction — when an agent dies, it is removed from
   the holder sets in `release_agent_slots/2`, restoring the slot automatically.
 
   ## Slot Types
 
-  - **LLM slots** — Controls how many agents can make concurrent LLM calls.
-    Includes a global backoff mechanism for rate limit errors (60-second cooldown).
+  - **LLM slots** — Controls how many agents can make concurrent LLM calls,
+    per-model. Includes a per-model backoff mechanism for rate limit errors
+    (60-second cooldown).
 
   - **Tool slots** — Controls how many agents can execute tools concurrently.
-    Simple semaphore without backoff.
+    Simple semaphore without backoff (shared across all agents regardless of model).
 
   Both slot types use blocking calls — agents wait in queues when no slots
   are available and are granted slots via `GenServer.reply/2` when freed.
@@ -39,42 +50,79 @@ defmodule EvoGit.AgentScheduler.Slots do
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
           | {:noreply, State.t(), [{pos_integer(), atom()}]}
 
+  # --- Model ID Resolution ---
+
+  @doc """
+  Resolves the model_id for an agent by reading its AgentState from ETS.
+
+  Falls back to the state's default model_id if the agent has no explicit
+  model_id or is not found in ETS.
+  """
+  @spec resolve_model_id(pos_integer(), State.t()) :: String.t()
+  def resolve_model_id(agent_id, %State{} = state) do
+    case :ets.lookup_element(:evogit_agent_state, agent_id, 2, nil) do
+      nil ->
+        State.default_model_id(state)
+
+      agent_state ->
+        case Map.get(agent_state, :model_id) do
+          nil -> State.default_model_id(state)
+          "" -> State.default_model_id(state)
+          model_id -> model_id
+        end
+    end
+  end
+
   # --- LLM Slot Management ---
 
   @doc """
   Handles an LLM slot request.
 
+  Resolves the agent's model_id from ETS, then checks the per-model pool.
   Returns `{:reply, :ok, state, status_updates}` if a slot is immediately available,
   or `{:noreply, state, status_updates}` if the agent must wait (no slots or in backoff).
   """
   @spec handle_request_llm_slot(pos_integer(), GenServer.from(), State.t()) :: slot_result()
   def handle_request_llm_slot(agent_id, from, %State{} = state) do
+    model_id = resolve_model_id(agent_id, state)
+
     if state.paused do
-      llm_waiting = :queue.in({agent_id, from, nil}, state.llm_waiting)
-      {:noreply, %State{state | llm_waiting: llm_waiting}, [{agent_id, :blocked}]}
+      waiting = State.waiting_for(state, model_id)
+      waiting = :queue.in({agent_id, from, nil}, waiting)
+      state = State.update_waiting(state, model_id, waiting)
+      {:noreply, state, [{agent_id, :blocked}]}
     else
-      do_handle_request_llm_slot(agent_id, from, state)
+      do_handle_request_llm_slot(agent_id, from, state, model_id)
     end
   end
 
-  defp do_handle_request_llm_slot(agent_id, from, %State{} = state) do
+  defp do_handle_request_llm_slot(agent_id, from, %State{} = state, model_id) do
     now = System.monotonic_time(:millisecond)
+    backoff = State.backoff_for(state, model_id)
+    holders = State.holders_for(state, model_id)
+    concurrency = State.concurrency_for(state, model_id)
 
-    if state.llm_backoff_until && now < state.llm_backoff_until do
-      llm_waiting = :queue.in({agent_id, from, state.llm_backoff_until}, state.llm_waiting)
-      {:noreply, %State{state | llm_waiting: llm_waiting}, [{agent_id, :blocked}]}
+    if backoff && now < backoff do
+      waiting = State.waiting_for(state, model_id)
+      waiting = :queue.in({agent_id, from, backoff}, waiting)
+      state = State.update_waiting(state, model_id, waiting)
+      {:noreply, state, [{agent_id, :blocked}]}
     else
-      if MapSet.size(state.llm_holders) < state.max_concurrency do
-        state = %State{
+      if MapSet.size(holders) < concurrency do
+        state =
           state
-          | llm_holders: MapSet.put(state.llm_holders, agent_id),
-            llm_last_granted: Map.put(state.llm_last_granted, agent_id, now)
-        }
+          |> State.update_holders(model_id, MapSet.put(holders, agent_id))
+          |> State.update_last_granted(
+            model_id,
+            Map.put(State.last_granted_for(state, model_id), agent_id, now)
+          )
 
         {:reply, :ok, state, []}
       else
-        llm_waiting = :queue.in({agent_id, from, nil}, state.llm_waiting)
-        {:noreply, %State{state | llm_waiting: llm_waiting}, [{agent_id, :blocked}]}
+        waiting = State.waiting_for(state, model_id)
+        waiting = :queue.in({agent_id, from, nil}, waiting)
+        state = State.update_waiting(state, model_id, waiting)
+        {:noreply, state, [{agent_id, :blocked}]}
       end
     end
   end
@@ -82,13 +130,15 @@ defmodule EvoGit.AgentScheduler.Slots do
   @doc """
   Handles an LLM slot release.
 
-  Removes the agent from the holder set and grants pending requests.
-  Returns `{:reply, :ok, state, status_updates}`.
+  Removes the agent from the per-model holder set and grants pending requests
+  for that model. Returns `{:reply, :ok, state, status_updates}`.
   """
   @spec handle_release_llm_slot(pos_integer(), State.t()) ::
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
   def handle_release_llm_slot(agent_id, %State{} = state) do
-    state = %State{state | llm_holders: MapSet.delete(state.llm_holders, agent_id)}
+    model_id = resolve_model_id(agent_id, state)
+    holders = State.holders_for(state, model_id)
+    state = State.update_holders(state, model_id, MapSet.delete(holders, agent_id))
     {state, unblocked} = grant_pending_llm_slots(state)
     {:reply, :ok, state, unblocked}
   end
@@ -96,24 +146,35 @@ defmodule EvoGit.AgentScheduler.Slots do
   @doc """
   Handles an LLM error report.
 
-  Rate-limit errors trigger a 60-second global backoff, re-queuing all waiting
-  agents with the backoff timestamp. Other error types are no-ops.
-  Returns `{:reply, :ok, state, status_updates}`.
+  Rate-limit errors trigger a **per-model** 60-second backoff, re-queuing all
+  waiting agents for that model with the backoff timestamp. Other error types
+  are no-ops. Returns `{:reply, :ok, state, status_updates}`.
+
+  This is the key win of per-model pools: a rate-limit on one provider
+  no longer blocks agents using a different model.
   """
   @spec handle_report_llm_error(pos_integer(), atom(), State.t()) ::
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
-  def handle_report_llm_error(_agent_id, :rate_limit, %State{} = state) do
+  def handle_report_llm_error(agent_id, :rate_limit, %State{} = state) do
+    model_id = resolve_model_id(agent_id, state)
     backoff_until = System.monotonic_time(:millisecond) + 60_000
 
     Logger.warning(
-      "AgentScheduler: LLM rate limit detected, global backoff until #{backoff_until}"
+      "AgentScheduler: LLM rate limit detected for model '#{model_id}', " <>
+        "per-model backoff until #{backoff_until}"
     )
 
-    llm_waiting = update_waiting_with_backoff(state.llm_waiting, backoff_until)
+    waiting = State.waiting_for(state, model_id)
+    waiting = update_waiting_with_backoff(waiting, backoff_until)
+
+    state =
+      state
+      |> State.update_waiting(model_id, waiting)
+      |> State.update_backoff(model_id, backoff_until)
 
     Process.send_after(self(), :retry_llm_waiting, 65_000)
 
-    {:reply, :ok, %State{state | llm_backoff_until: backoff_until, llm_waiting: llm_waiting}, []}
+    {:reply, :ok, state, []}
   end
 
   def handle_report_llm_error(_agent_id, _error_type, %State{} = state) do
@@ -123,7 +184,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   @doc """
   Handles the retry_llm_waiting timer.
 
-  Grants pending LLM slots after a backoff period expires.
+  Grants pending LLM slots for all models whose backoff has expired.
   Returns `{:noreply, state, status_updates}`.
   """
   @spec handle_retry_llm_waiting(State.t()) :: {:noreply, State.t(), [{pos_integer(), atom()}]}
@@ -180,22 +241,36 @@ defmodule EvoGit.AgentScheduler.Slots do
   Releases all slots held by an agent and purges it from waiting queues.
 
   Called on agent death (`:DOWN` handler) to prevent slot leaks. Removes
-  the agent from both LLM and tool holder sets, then grants any newly-
-  available slots to pending waiters. Also purges the agent from both
-  waiting queues (a crashed agent waiting for a slot must be removed or
-  it would consume a granted slot as a dead process).
+  the agent from both the per-model LLM holder set(s) and the tool holder
+  set, then grants any newly-available slots to pending waiters. Also
+  purges the agent from all waiting queues (LLM per-model + tool).
 
   Returns `{state, status_updates}`.
   """
   @spec release_agent_slots(State.t(), pos_integer()) :: {State.t(), [{pos_integer(), atom()}]}
   def release_agent_slots(%State{} = state, agent_id) do
-    # Remove from holder sets
+    # Remove from tool holders
     state = %State{
       state
-      | llm_holders: MapSet.delete(state.llm_holders, agent_id),
-        tool_holders: MapSet.delete(state.tool_holders, agent_id),
-        llm_last_granted: Map.delete(state.llm_last_granted, agent_id)
+      | tool_holders: MapSet.delete(state.tool_holders, agent_id)
     }
+
+    # Remove from LLM holders across ALL model pools (an agent may have been
+    # registered with any model; we don't know which pool without ETS, but
+    # the agent is dead so ETS may be gone — scan all pools).
+    state =
+      Enum.reduce(State.all_model_ids(state), state, fn model_id, acc_state ->
+        holders = State.holders_for(acc_state, model_id)
+
+        if MapSet.member?(holders, agent_id) do
+          acc_state = State.update_holders(acc_state, model_id, MapSet.delete(holders, agent_id))
+
+          last_granted = State.last_granted_for(acc_state, model_id)
+          State.update_last_granted(acc_state, model_id, Map.delete(last_granted, agent_id))
+        else
+          acc_state
+        end
+      end)
 
     # Purge from waiting queues (in case the agent was blocked, not holding)
     {state, _} = purge_agents_from_queues(state, MapSet.new([agent_id]))
@@ -222,7 +297,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   end
 
   @doc """
-  Purges agents from both LLM and tool waiting queues.
+  Purges agents from both LLM (per-model) and tool waiting queues.
 
   Replies `{:error, :cancelled}` to each purged agent's blocked GenServer.from
   so their waiting calls unblock cleanly. Returns the updated state with
@@ -233,27 +308,40 @@ defmodule EvoGit.AgentScheduler.Slots do
   @spec purge_agents_from_queues(State.t(), MapSet.t(pos_integer())) ::
           {State.t(), [{pos_integer(), atom()}]}
   def purge_agents_from_queues(%State{} = state, agent_ids) do
-    {llm_kept, llm_removed} =
-      partition_waiting(state.llm_waiting, agent_ids, fn
-        {agent_id, _from}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
-        {agent_id, _from, _backoff}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
-      end)
+    # Purge from all LLM model pools
+    %State{} = state = purge_llm_waiting_queues(state, agent_ids)
 
+    # Purge from tool waiting queue
     {tool_kept, tool_removed} =
       partition_waiting(state.tool_waiting, agent_ids, fn
         {agent_id, _from}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
       end)
 
-    Enum.each(llm_removed, fn {_agent_id, from, _backoff} ->
-      GenServer.reply(from, {:error, :cancelled})
-    end)
-
     Enum.each(tool_removed, fn {_agent_id, from} ->
       GenServer.reply(from, {:error, :cancelled})
     end)
 
-    state = %State{state | llm_waiting: llm_kept, tool_waiting: tool_kept}
+    state = %State{state | tool_waiting: tool_kept}
     {state, []}
+  end
+
+  defp purge_llm_waiting_queues(%State{} = state, agent_ids) do
+    Enum.reduce(State.all_model_ids(state), state, fn model_id, %State{} = acc_state ->
+      waiting = State.waiting_for(acc_state, model_id)
+
+      {kept, removed} =
+        partition_waiting(waiting, agent_ids, fn
+          {agent_id, _from}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
+          {agent_id, _from, _backoff}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
+        end)
+
+      Enum.each(removed, fn
+        {_agent_id, from} -> GenServer.reply(from, {:error, :cancelled})
+        {_agent_id, from, _backoff} -> GenServer.reply(from, {:error, :cancelled})
+      end)
+
+      State.update_waiting(acc_state, model_id, kept)
+    end)
   end
 
   # Partitions a waiting queue into kept and removed entries in a single pass.
@@ -275,21 +363,38 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   # --- Private Helpers: LLM Slots ---
 
-  # Grants pending LLM slots that are no longer in backoff.
-  # Uses holder sets: grants while map_size(holders) < capacity.
+  # Grants pending LLM slots across all model pools, clearing expired backoffs.
   # Returns {state, unblocked} where unblocked is a list of {agent_id, :running}.
   defp grant_pending_llm_slots(%State{} = state) do
-    grant_llm_from_queue(state)
-  end
-
-  defp grant_llm_from_queue(%State{} = state) do
     now = System.monotonic_time(:millisecond)
 
-    if MapSet.size(state.llm_holders) >= state.max_concurrency or
-         :queue.is_empty(state.llm_waiting) do
+    # First, clear expired backoffs for all models
+    state =
+      Enum.reduce(State.all_model_ids(state), state, fn model_id, acc_state ->
+        maybe_clear_model_backoff(acc_state, model_id, now)
+      end)
+
+    # Then grant from each model pool
+    Enum.reduce(State.all_model_ids(state), {state, []}, fn model_id, {acc_state, acc_updates} ->
+      {new_state, updates} = grant_llm_from_queue(acc_state, model_id)
+      {new_state, acc_updates ++ updates}
+    end)
+  end
+
+  # Grants pending LLM slots for a single model pool.
+  # Uses holder sets: grants while map_size(holders) < capacity.
+  # The recency/depth prioritization stays the same, just scoped to this model's queue.
+  # Returns {state, unblocked} where unblocked is a list of {agent_id, :running}.
+  defp grant_llm_from_queue(%State{} = state, model_id) do
+    now = System.monotonic_time(:millisecond)
+    holders = State.holders_for(state, model_id)
+    concurrency = State.concurrency_for(state, model_id)
+    waiting = State.waiting_for(state, model_id)
+
+    if MapSet.size(holders) >= concurrency or :queue.is_empty(waiting) do
       {state, []}
     else
-      entries = :queue.to_list(state.llm_waiting)
+      entries = :queue.to_list(waiting)
 
       # Single reduce: partition into in_backoff / eligible and track best candidate
       {in_backoff_rev, eligible_rev, best} =
@@ -301,20 +406,26 @@ defmodule EvoGit.AgentScheduler.Slots do
               {[entry | in_bo_rev], elig_rev, best_so_far}
 
             _ ->
-              new_best = better_entry(best_so_far, entry, agent_id, state)
+              new_best = better_entry(best_so_far, entry, agent_id, state, model_id)
               {in_bo_rev, [entry | elig_rev], new_best}
           end
         end)
 
       if best == nil do
         # All entries in backoff — preserve order and stop
-        state = maybe_clear_llm_backoff(state)
-        {%State{state | llm_waiting: :queue.from_list(:lists.reverse(in_backoff_rev))}, []}
+        {%State{
+           state
+           | llm_waiting:
+               Map.put(
+                 state.llm_waiting,
+                 model_id,
+                 :queue.from_list(:lists.reverse(in_backoff_rev))
+               )
+         }, []}
       else
         {agent_id, from, _backoff} = best
 
         GenServer.reply(from, :ok)
-        state = maybe_clear_llm_backoff(state)
 
         # Rebuild queue: reverse eligible to forward order, prepend (skipping best) to in_backoff_rev, reverse once
         queue_rev =
@@ -327,14 +438,16 @@ defmodule EvoGit.AgentScheduler.Slots do
 
         queue_list = :lists.reverse(queue_rev)
 
-        state = %State{
+        state =
           state
-          | llm_waiting: :queue.from_list(queue_list),
-            llm_holders: MapSet.put(state.llm_holders, agent_id),
-            llm_last_granted: Map.put(state.llm_last_granted, agent_id, now)
-        }
+          |> State.update_waiting(model_id, :queue.from_list(queue_list))
+          |> State.update_holders(model_id, MapSet.put(holders, agent_id))
+          |> State.update_last_granted(
+            model_id,
+            Map.put(State.last_granted_for(state, model_id), agent_id, now)
+          )
 
-        {state, more} = grant_llm_from_queue(state)
+        {state, more} = grant_llm_from_queue(state, model_id)
         {state, [{agent_id, :running} | more]}
       end
     end
@@ -347,11 +460,14 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   # Compares two eligible entries and returns the better one.
   # Prefers most-recently-granted first, then lowest depth.
-  defp better_entry(nil, entry, _agent_id, _state), do: entry
-  defp better_entry(best, entry, agent_id, state) do
+  defp better_entry(nil, entry, _agent_id, _state, _model_id), do: entry
+
+  defp better_entry(best, entry, agent_id, state, model_id) do
     best_agent_id = entry_agent_id(best)
-    best_score = {-Map.get(state.llm_last_granted, best_agent_id, 0), depth_of(best_agent_id)}
-    this_score = {-Map.get(state.llm_last_granted, agent_id, 0), depth_of(agent_id)}
+    last_granted = State.last_granted_for(state, model_id)
+
+    best_score = {-Map.get(last_granted, best_agent_id, 0), depth_of(best_agent_id)}
+    this_score = {-Map.get(last_granted, agent_id, 0), depth_of(agent_id)}
 
     if this_score < best_score, do: entry, else: best
   end
@@ -366,15 +482,21 @@ defmodule EvoGit.AgentScheduler.Slots do
     end
   end
 
-  # Clears the global LLM backoff if it has expired
-  defp maybe_clear_llm_backoff(%State{llm_backoff_until: backoff_until} = state) do
-    now = System.monotonic_time(:millisecond)
+  # Clears a per-model backoff if it has expired.
+  defp maybe_clear_model_backoff(%State{} = state, model_id, now) do
+    case State.backoff_for(state, model_id) do
+      nil ->
+        state
 
-    if backoff_until && now >= backoff_until do
-      Logger.info("AgentScheduler: LLM global backoff expired, resuming normal operations")
-      %State{state | llm_backoff_until: nil}
-    else
-      state
+      backoff when now >= backoff ->
+        Logger.info(
+          "AgentScheduler: LLM backoff expired for model '#{model_id}', resuming normal operations"
+        )
+
+        State.update_backoff(state, model_id, nil)
+
+      _backoff ->
+        state
     end
   end
 

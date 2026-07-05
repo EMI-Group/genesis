@@ -380,14 +380,54 @@ defmodule EvoGit.AgentScheduler do
     max_retries = Map.get(scheduler_config, :max_retries, 15)
     max_turns = Map.get(scheduler_config, :max_turns, 128)
     max_turns_root = Map.get(scheduler_config, :max_turns_root, 128)
-    llm_model = Map.get(config, :llm, %{}) |> Map.get(:model)
-    llm_generation_params = EvoGit.Config.Schema.llm_generation_params(config)
+
+    # Load model profiles from config (Step 2: per-model slot pools).
+    # Each profile becomes its own slot pool. Falls back to a single
+    # legacy profile derived from the flat llm.model / scheduler.max_concurrency
+    # config keys when no [[llm.models]] profiles are configured.
+    raw_model_profiles = EvoGit.Config.Schema.model_profiles(config)
+
+    model_profiles =
+      case raw_model_profiles do
+        [] ->
+          # Legacy path: build a single "default" profile from flat config
+          legacy_model = Map.get(config, :llm, %{}) |> Map.get(:model)
+
+          [
+            %{
+              id: "default",
+              model: legacy_model,
+              concurrency: max_concurrency
+            }
+          ]
+
+        profiles ->
+          profiles
+      end
+
+    # Build per-model pool state from profiles
+    pool_state = State.from_model_profiles(model_profiles)
+
+    # Override default model/params from flat config if profiles don't specify them.
+    # The flat llm.model still serves as the default model string.
+    default_model =
+      case List.first(model_profiles) do
+        %{model: model} when model != nil -> model
+        _ -> Map.get(config, :llm, %{}) |> Map.get(:model)
+      end
+
+    default_params =
+      case List.first(model_profiles) do
+        nil -> EvoGit.Config.Schema.llm_generation_params(config)
+        profile -> EvoGit.Config.Schema.llm_generation_params(profile)
+      end
+
     sandbox_mode = Map.get(sandbox_config, :mode)
     sandbox_resources = Map.get(sandbox_config, :resources)
     sandbox_process_resources = Map.get(sandbox_config, :process)
 
-    # Warn (but don't crash) if llm_model is not configured
-    unless llm_model do
+    # Warn (but don't crash) if no model is configured at all
+    unless default_model do
       Logger.warning("""
       AgentScheduler: LLM model not configured. Agent execution will be unavailable until configured.
       Please set llm.model in your config file:
@@ -407,38 +447,39 @@ defmodule EvoGit.AgentScheduler do
     end
 
     # Allow opts to override (for backward compat with CLI --flags)
-    max_concurrency = Keyword.get(opts, :max_concurrency, max_concurrency)
     max_tool_concurrency = Keyword.get(opts, :max_tool_concurrency, max_tool_concurrency)
     agent_max_retries = Keyword.get(opts, :agent_max_retries, agent_max_retries)
     max_depth = Keyword.get(opts, :max_depth, max_depth)
     max_retries = Keyword.get(opts, :max_retries, max_retries)
     max_turns = Keyword.get(opts, :max_turns, max_turns)
     max_turns_root = Keyword.get(opts, :max_turns_root, max_turns_root)
-    llm_model = Keyword.get(opts, :llm_model, llm_model)
-    llm_generation_params = Keyword.get(opts, :llm_generation_params, llm_generation_params)
+
+    # Apply flat-config overrides on top of profile-derived state
+    default_model = Keyword.get(opts, :llm_model, default_model)
+    default_params = Keyword.get(opts, :llm_generation_params, default_params)
+    max_concurrency = Keyword.get(opts, :max_concurrency, pool_state.max_concurrency)
 
     {:ok,
      %State{
-       initialized: false,
-       initialized_repos: %{},
-       max_concurrency: max_concurrency,
-       agent_max_retries: agent_max_retries,
-       max_depth: max_depth,
-       llm_model: llm_model,
-       llm_generation_params: llm_generation_params,
-       max_retries: max_retries,
-       max_turns: max_turns,
-       max_turns_root: max_turns_root,
-       next_agent_id: 1,
-       ref_to_agent: %{},
-       queue: :queue.new(),
-       llm_waiting: :queue.new(),
-       llm_backoff_until: nil,
-       tool_waiting: :queue.new(),
-       max_tool_concurrency: max_tool_concurrency,
-       sandbox_mode: sandbox_mode,
-       sandbox_resources: sandbox_resources,
-       sandbox_process_resources: sandbox_process_resources
+       pool_state
+       | initialized: false,
+         initialized_repos: %{},
+         max_concurrency: max_concurrency,
+         agent_max_retries: agent_max_retries,
+         max_depth: max_depth,
+         llm_model: default_model,
+         llm_generation_params: default_params,
+         max_retries: max_retries,
+         max_turns: max_turns,
+         max_turns_root: max_turns_root,
+         next_agent_id: 1,
+         ref_to_agent: %{},
+         queue: :queue.new(),
+         tool_waiting: :queue.new(),
+         max_tool_concurrency: max_tool_concurrency,
+         sandbox_mode: sandbox_mode,
+         sandbox_resources: sandbox_resources,
+         sandbox_process_resources: sandbox_process_resources
      }}
   end
 
@@ -448,7 +489,17 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:run_agent, _spec}, _from, %State{llm_model: nil} = state) do
+  def handle_call({:run_agent, _spec}, _from, %State{model_profiles: []} = state) do
+    Logger.warning("AgentScheduler: Rejecting agent spawn — no model profiles configured")
+    {:reply, {:error, :llm_not_configured}, state}
+  end
+
+  def handle_call(
+        {:run_agent, _spec},
+        _from,
+        %State{llm_model: nil, model_profiles: profiles} = state
+      )
+      when profiles == [] or profiles == nil do
     Logger.warning("AgentScheduler: Rejecting agent spawn — LLM model not configured")
     {:reply, {:error, :llm_not_configured}, state}
   end
@@ -626,6 +677,8 @@ defmodule EvoGit.AgentScheduler do
         :max_turns_root -> state.max_turns_root
         :llm_model -> state.llm_model
         :llm_generation_params -> state.llm_generation_params
+        :model_profiles -> state.model_profiles
+        :model_concurrency -> state.model_concurrency
         :paused -> state.paused
         :sandbox_mode -> state.sandbox_mode
         :sandbox_resources -> state.sandbox_resources
@@ -739,6 +792,41 @@ defmodule EvoGit.AgentScheduler do
   # --- Private Helpers ---
 
   defp do_update_config(opts, %State{} = state) do
+    # Reload model profiles from config if model_profiles is being updated,
+    # or if llm_model is being updated (backward compat: updates default profile)
+    state =
+      if Keyword.has_key?(opts, :model_profiles) do
+        profiles = Keyword.get(opts, :model_profiles)
+        pool_state = State.from_model_profiles(profiles)
+        # Merge non-LLM fields from the old state
+        %State{
+          pool_state
+          | initialized: state.initialized,
+            initialized_repos: state.initialized_repos,
+            agent_max_retries: Keyword.get(opts, :agent_max_retries, state.agent_max_retries),
+            max_depth: Keyword.get(opts, :max_depth, state.max_depth),
+            max_retries: Keyword.get(opts, :max_retries, state.max_retries),
+            max_turns: Keyword.get(opts, :max_turns, state.max_turns),
+            max_turns_root: Keyword.get(opts, :max_turns_root, state.max_turns_root),
+            next_agent_id: state.next_agent_id,
+            ref_to_agent: state.ref_to_agent,
+            queue: state.queue,
+            task_local_counters: state.task_local_counters,
+            task_agent_counts: state.task_agent_counts,
+            paused: state.paused,
+            tool_holders: state.tool_holders,
+            tool_waiting: state.tool_waiting,
+            max_tool_concurrency:
+              Keyword.get(opts, :max_tool_concurrency, state.max_tool_concurrency),
+            sandbox_mode: Keyword.get(opts, :sandbox_mode, state.sandbox_mode),
+            sandbox_resources: Keyword.get(opts, :sandbox_resources, state.sandbox_resources),
+            sandbox_process_resources:
+              Keyword.get(opts, :sandbox_process_resources, state.sandbox_process_resources)
+        }
+      else
+        state
+      end
+
     # Apply all field updates
     state =
       state

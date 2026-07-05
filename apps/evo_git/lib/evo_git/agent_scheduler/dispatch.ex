@@ -36,7 +36,15 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           pos_integer() | nil
         ) ::
           {pos_integer(), State.t()}
-  def register_agent(%State{} = state, %AgentSpec{} = spec, from, parent_id, depth, task_id, task_number) do
+  def register_agent(
+        %State{} = state,
+        %AgentSpec{} = spec,
+        from,
+        parent_id,
+        depth,
+        task_id,
+        task_number
+      ) do
     id = state.next_agent_id
 
     # Compute per-task local agent ID (display/branch naming only)
@@ -57,11 +65,17 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # Resolve repo root from the spec's own data (avoids reading shared mutable state)
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
+    # Resolve the model profile for this agent from spec.model_id,
+    # falling back to the default profile from state.model_profiles.
+    {resolved_model_id, resolved_model, resolved_params} =
+      resolve_model_for_agent(state, spec.model_id)
+
     Store.put_agent_state(id, %AgentState{
       context_node: spec.context_node,
       phylo_node: nil,
-      llm_model: state.llm_model,
-      llm_generation_params: state.llm_generation_params,
+      llm_model: resolved_model,
+      llm_generation_params: resolved_params,
+      model_id: resolved_model_id,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
       max_turns: if(is_nil(parent_id), do: state.max_turns_root, else: state.max_turns),
@@ -322,6 +336,55 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         Logger.warning(
           "Agent: Auto-commit fallback failed (best-effort, ignoring): #{inspect(error)}"
         )
+    end
+  end
+
+  # --- Model Profile Resolution ---
+
+  @doc """
+  Resolves the model profile for an agent based on the spec's `model_id`.
+
+  If `model_id` is nil or empty, uses the default profile from `state.model_profiles`.
+  If the requested `model_id` is not found in the profiles, falls back to the default.
+
+  Returns `{model_id, model_spec, generation_params}`.
+  """
+  @spec resolve_model_for_agent(State.t(), String.t() | nil) ::
+          {String.t(), ReqLLM.model_input(), keyword()}
+  def resolve_model_for_agent(%State{} = state, model_id) do
+    profiles = state.model_profiles
+
+    profile =
+      cond do
+        # Explicit model_id provided and found
+        model_id != nil and model_id != "" ->
+          case Enum.find(profiles, fn p -> Map.get(p, :id) == model_id end) do
+            nil ->
+              Logger.warning(
+                "AgentScheduler: Model profile '#{model_id}' not found, falling back to default"
+              )
+
+              List.first(profiles)
+
+            found ->
+              found
+          end
+
+        # No model_id — use default profile
+        true ->
+          List.first(profiles)
+      end
+
+    case profile do
+      nil ->
+        # No profiles configured at all — use state's backward-compat values
+        {State.default_model_id(state), state.llm_model, state.llm_generation_params}
+
+      profile ->
+        resolved_id = Map.get(profile, :id, "default")
+        model = Map.get(profile, :model, state.llm_model)
+        params = EvoGit.Config.Schema.llm_generation_params(profile)
+        {resolved_id, model, params}
     end
   end
 
