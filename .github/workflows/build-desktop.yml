@@ -166,7 +166,7 @@ jobs:
         # --overwrite is required: when _build/ is cache-restored, mix detects
         # an existing assembled release and skips the Burrito.wrap/1 step,
         # leaving burrito_out/ empty. This forces a fresh wrap every run.
-        run: MIX_ENV=prod mix release evogit_desktop --overwrite
+        run: MIX_ENV=prod mix release genesis_desktop --overwrite
 
       - name: Locate Burrito binary
         run: |
@@ -177,7 +177,7 @@ jobs:
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          cp burrito_out/evogit_desktop_${{ matrix.burrito_target }} "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}"
+          cp burrito_out/genesis_desktop_${{ matrix.burrito_target }} "${SIDECAR_DIR}/genesis-backend-${{ matrix.rust_target }}"
           chmod +x "${SIDECAR_DIR}/"*
 
           echo "Sidecar binaries:"
@@ -199,7 +199,7 @@ jobs:
         if: startsWith(matrix.runner, 'ubuntu')
         run: |
           cd desktop/src-tauri/target/${{ matrix.rust_target }}/release
-          tar -czf /tmp/evogit-desktop-${{ matrix.rust_target }}.tar.gz evogit-desktop
+          tar -czf /tmp/genesis-desktop-${{ matrix.rust_target }}.tar.gz genesis-desktop
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
@@ -210,7 +210,7 @@ jobs:
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/*.app
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/appimage/*.AppImage
-            /tmp/evogit-desktop-*.tar.gz
+            /tmp/genesis-desktop-*.tar.gz
 
       # NOTE on Flatpak: Tauri v2 does not have a native Flatpak bundle target.
       # Producing a Flatpak requires a flatpak-builder manifest (YAML) declaring
@@ -220,7 +220,7 @@ jobs:
       # rather than direct GitHub release downloads. See:
       #   https://v2.tauri.app/distribute/  (no flatpak target listed)
       #   https://docs.flatpak.org/  (flatpak-builder documentation)
-      # To add Flatpak support in the future: create a com.evogit.desktop.yaml
+      # To add Flatpak support in the future: create a com.genesis.desktop.yaml
       # manifest and add a `flatpak-builder --force-clean build-dir manifest.yaml`
       # step here, then upload the resulting .flatpak bundle.
 
@@ -345,7 +345,7 @@ jobs:
         # --overwrite is required: when _build/ is cache-restored, mix detects
         # an existing assembled release and skips the Burrito.wrap/1 step,
         # leaving burrito_out/ empty. This forces a fresh wrap every run.
-        run: MIX_ENV=prod mix release evogit_desktop --overwrite
+        run: MIX_ENV=prod mix release genesis_desktop --overwrite
 
       - name: Locate Burrito binary
         shell: bash
@@ -358,7 +358,7 @@ jobs:
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-          cp burrito_out/evogit_desktop_windows_x64.exe "${SIDECAR_DIR}/evogit-backend-${{ matrix.rust_target }}.exe"
+          cp burrito_out/genesis_desktop_windows_x64.exe "${SIDECAR_DIR}/genesis-backend-${{ matrix.rust_target }}.exe"
 
           echo "Sidecar binaries:"
           ls -la "${SIDECAR_DIR}/"

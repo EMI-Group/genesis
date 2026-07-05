@@ -1,7 +1,7 @@
 //! Sidecar lifecycle management.
 //!
 //! This module spawns the Burrito-wrapped Elixir release binary
-//! (`evogit-backend`) as a child process, surfaces its output to the console,
+//! (`genesis-backend`) as a child process, surfaces its output to the console,
 //! and polls its HTTP endpoint until it is ready to serve requests.
 
 use std::thread;
@@ -16,7 +16,7 @@ use tauri_plugin_shell::ShellExt;
 /// This is safe for local, single-user desktop usage only and must NEVER be
 /// used for a real, internet-facing deployment.
 const SECRET_KEY_BASE: &str =
-    "EvoGitDesktopLocalSecretKeyBaseDoNotUseInProduction2025abcdef1234567890";
+    "GenesisDesktopLocalSecretKeyBaseDoNotUseInProduction2025abcdef1234567890";
 
 /// Interval between readiness polls.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -55,12 +55,12 @@ fn sidecar_env() -> Vec<(String, String)> {
 pub fn start(app: &App) -> Result<CommandChild, Box<dyn std::error::Error>> {
     let (mut rx, child) = app
         .shell()
-        .sidecar("evogit-backend")?
+        .sidecar("genesis-backend")?
         .envs(sidecar_env())
         .spawn()?;
 
     println!(
-        "[desktop] spawned evogit-backend sidecar (pid {})",
+        "[desktop] spawned genesis-backend sidecar (pid {})",
         child.pid()
     );
 

@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Genesis",
   "version": "0.5.0",
-  "identifier": "com.evogit.desktop",
+  "identifier": "com.genesis.desktop",
   "build": {
     "beforeDevCommand": "",
     "devUrl": "http://localhost:9999",
@@ -41,12 +41,12 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "sidecars/evogit-backend"
+      "sidecars/genesis-backend"
     ],
-    "publisher": "EvoGit",
-    "copyright": "Copyright © 2025 EvoGit. All rights reserved.",
+    "publisher": "Genesis",
+    "copyright": "Copyright © 2025 Genesis. All rights reserved.",
     "category": "DeveloperTool",
     "shortDescription": "Evolutionary software development with AI agents",
-    "longDescription": "EvoGit is an evolutionary software development framework where AI agents create, analyze, and modify codebases."
+    "longDescription": "Genesis is an evolutionary software development framework where AI agents create, analyze, and modify codebases."
   }
 }
