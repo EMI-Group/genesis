@@ -74,7 +74,7 @@ defmodule EvoGit.CLI do
       |> maybe_put(:max_retries, opts[:retries])
       |> maybe_put(:max_turns, opts[:max_turns])
       |> maybe_put(:max_turns_root, opts[:max_turns_root])
-      |> maybe_put(:llm_model, opts[:model])
+      |> maybe_put_model_override(opts[:model])
 
     if scheduler_opts != [] do
       Logger.info("Applying session-level config overrides: #{inspect(scheduler_opts)}")
@@ -82,8 +82,62 @@ defmodule EvoGit.CLI do
     end
   end
 
+  # Parses the -m/--model CLI flag value into scheduler override opts.
+  #
+  # The flag accepts two formats:
+  #   1. A bare model string (e.g., "anthropic:claude-sonnet-4-20250514")
+  #      → overrides the default profile's model. Passes `{:llm_model, model}`
+  #      to update_config (backward-compatible).
+  #   2. An "id:model" prefixed string (e.g., "fast:anthropic:claude-haiku")
+  #      → targets a specific profile by id. Currently only the default
+  #      profile's model is live in AgentScheduler, so the id prefix is
+  #      passed as `:model_id` for the runtime to bind to a specific profile.
+  defp maybe_put_model_override(keyword, nil), do: keyword
+
+  defp maybe_put_model_override(keyword, model_flag) do
+    {model_id, model_string} = parse_model_flag(model_flag)
+
+    keyword
+    |> maybe_put(:llm_model, model_string)
+    |> maybe_put(:model_id, model_id)
+  end
+
+  # Parses the -m flag value into {model_id :: String.t() | nil, model_string :: String.t()}.
+  #
+  # "id:provider:model" → {"id", "provider:model"} (two colons = id prefix present)
+  # "provider:model"     → {nil, "provider:model"} (one colon = bare model string)
+  # A bare string with no colon is treated as a model string with nil id.
+  @spec parse_model_flag(String.t()) :: {String.t() | nil, String.t()}
+  def parse_model_flag(value) when is_binary(value) do
+    parts = String.split(value, ":", parts: 3)
+
+    case parts do
+      # Three parts: "id:provider:model"
+      [id, provider, model] when id != "" and provider != "" and model != "" ->
+        {id, "#{provider}:#{model}"}
+
+      # Everything else is treated as a bare model string (no id prefix)
+      _ ->
+        {nil, value}
+    end
+  end
+
+  @doc false
+  # Public test wrapper for parse_model_flag/1
+  def do_parse_model_flag(value), do: parse_model_flag(value)
+
   defp maybe_put(keyword, _key, nil), do: keyword
   defp maybe_put(keyword, key, val), do: Keyword.put(keyword, key, val)
+
+  # Passes model_id into runtime_opts when -m uses "id:provider:model" syntax.
+  # A bare model string (no id prefix) passes model_id as nil — the default
+  # profile (already overridden via update_config) is used.
+  defp maybe_put_model_id(keyword, nil), do: keyword
+
+  defp maybe_put_model_id(keyword, model_flag) do
+    {model_id, _model_string} = parse_model_flag(model_flag)
+    maybe_put(keyword, :model_id, model_id)
+  end
 
   defp dispatch(["genesis" | rest], opts) do
     mode = opts[:mode] || "new"
@@ -110,6 +164,8 @@ defmodule EvoGit.CLI do
             mode: genesis_mode_atom(mode),
             archive: opts[:archive] == true
           ]
+
+          runtime_opts = maybe_put_model_id(runtime_opts, opts[:model])
 
           foreign_repos = parse_foreign_repos(opts)
           runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
@@ -160,6 +216,8 @@ defmodule EvoGit.CLI do
 
         runtime_opts = Keyword.put(runtime_opts, :starting_commit, opts[:starting_commit])
         runtime_opts = Keyword.put(runtime_opts, :archive, opts[:archive] == true)
+
+        runtime_opts = maybe_put_model_id(runtime_opts, opts[:model])
 
         Evolution.run(objective, runtime_opts)
       else
@@ -331,15 +389,15 @@ defmodule EvoGit.CLI do
   end
 
   defp save_setup_result(model_string, env_var, api_key) do
-    # Save model to config.toml
+    # Save model to config.toml using the [[llm.models]] array format
     existing_config = EvoGit.Config.user_config()
 
-    # Build atom-keyed config with the model set
+    # Build atom-keyed config with the model added as a profile
     config =
       existing_config
       |> atomize_config_keys()
       |> ensure_llm_section()
-      |> put_in([:llm, :model], model_string)
+      |> add_model_profile(model_string)
 
     case EvoGit.Config.save_user_config(config) do
       :ok ->
@@ -412,8 +470,49 @@ defmodule EvoGit.CLI do
   end
 
   defp ensure_llm_section(config) do
-    Map.put_new(config, :llm, %{model: nil})
+    llm = Map.get(config, :llm, %{})
+    Map.put(config, :llm, Map.put_new(llm, :models, []))
   end
+
+  # Adds a model string to the [[llm.models]] array.
+  #
+  # If a profile with the id "default" already exists, its model is updated.
+  # Otherwise a new "default" profile is created/appended. This keeps the
+  # setup wizard simple — it always operates on the default profile.
+  # Each profile gets its own concurrency setting (defaults to 3).
+  defp add_model_profile(config, model_string) do
+    llm = Map.get(config, :llm, %{})
+    models = Map.get(llm, :models, [])
+
+    updated_models =
+      case models do
+        [] ->
+          # No profiles yet — create the default profile
+          [%{id: "default", model: model_string, concurrency: 3}]
+
+        existing ->
+          case Enum.find_index(existing, fn p -> Map.get(p, :id) == "default" end) do
+            nil ->
+              # Profiles exist but none is "default" — append a new one
+              existing ++ [%{id: "default", model: model_string, concurrency: 3}]
+
+            idx ->
+              # Update the existing default profile's model
+              List.update_at(existing, idx, fn p ->
+                Map.put(p, :model, model_string)
+              end)
+          end
+      end
+
+    llm = Map.put(llm, :models, updated_models)
+    # Mirror the default profile's model to llm.model for backward compat
+    llm = Map.put(llm, :model, model_string)
+    Map.put(config, :llm, llm)
+  end
+
+  @doc false
+  # Public test wrapper for add_model_profile/2
+  def do_add_model_profile(config, model_string), do: add_model_profile(config, model_string)
 
   defp get_input(rest, opts) do
     cond do
@@ -581,7 +680,9 @@ defmodule EvoGit.CLI do
       -r, --retries <n>           Set max retries for failed agents.
       -t, --max-turns <n>         Set max turns per agent (default: 128).
       -p, --path <path>           Path to the git repository (default: current directory).
-      -m, --model <model>         Override the default LLM model.
+      -m, --model <model>         Override the LLM model (default profile).
+                                  Format: "provider:model" (e.g. "anthropic:claude-sonnet-4-20250514")
+                                  or "id:provider:model" to target a specific profile by id.
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).
       -b, --build-system <name>   Build system for dependency caching in worktrees (genesis 'new'
                                   mode only). One of: elixir, node, python, rust, go, none.
@@ -621,10 +722,12 @@ defmodule EvoGit.CLI do
           echo 'GOOGLE_API_KEY = "YOUR_API_KEY_HERE"' > credentials.toml
 
         Step 3: Create config.toml with your LLM model and username
-          echo '[llm]'                                  > config.toml
-          echo 'model = "your-model-name"'              >> config.toml
-          echo '[user]'                                 >> config.toml
-          echo 'github_username = "your-username"'      >> config.toml
+          echo '[[llm.models]]'                           > config.toml
+          echo 'id = "default"'                            >> config.toml
+          echo 'model = "provider:model-name"'             >> config.toml
+          echo 'concurrency = 3'                           >> config.toml
+          echo '[user]'                                    >> config.toml
+          echo 'github_username = "your-username"'         >> config.toml
 
         Step 4: Run Genesis!
           evogit genesis "your prompt"
