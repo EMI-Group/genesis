@@ -75,7 +75,7 @@ fn main() {
                             if let Ok(mut guard) = handle.lock() {
                                 if let Some(child) = guard.take() {
                                     let _ = child.kill();
-                                    println!("[desktop] evogit-backend sidecar terminated");
+                                    println!("[desktop] genesis-backend sidecar terminated");
                                 }
                             }
                         }

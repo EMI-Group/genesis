@@ -2,7 +2,7 @@
 
 ## Intent
 
-The Rust source for the EvoGit Tauri v2 desktop shell. It launches the Burrito-wrapped Phoenix backend as a sidecar, manages a native WebView window, and provides a **system tray** for background operation. The backend binds to `127.0.0.1` by default (configurable via `EVOGIT_BIND`).
+The Rust source for the Genesis Tauri v2 desktop shell. It launches the Burrito-wrapped Phoenix backend as a sidecar, manages a native WebView window, and provides a **system tray** for background operation. The backend binds to `127.0.0.1` by default (configurable via `EVOGIT_BIND`).
 
 ## API Surface
 
@@ -35,5 +35,5 @@ The Rust source for the EvoGit Tauri v2 desktop shell. It launches the Burrito-w
 - Tauri v2 — API differs significantly from v1 (tray builder, menu, window events all changed).
 - The `tray-icon` Cargo feature must be enabled for system tray support.
 - `capabilities/default.json` does NOT need a tray permission — tray icons are managed from Rust, not the frontend JS API.
-- The sidecar binary (`sidecars/evogit-backend-{target-triple}`) must exist before `cargo tauri build`.
+- The sidecar binary (`sidecars/genesis-backend-{target-triple}`) must exist before `cargo tauri build`.
 - The desktop shell contains NO Elixir code — only Rust.

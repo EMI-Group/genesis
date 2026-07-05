@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for the EvoGit desktop shell: shell access for the Phoenix backend sidecar and the dialog directory picker.",
+  "description": "Default capabilities for the Genesis desktop shell: shell access for the Phoenix backend sidecar and the dialog directory picker.",
   "windows": ["main"],
   "permissions": [
     "core:default",
