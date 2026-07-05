@@ -111,10 +111,10 @@ defmodule EvoGit.Core.ForeignRepo do
     abs_path = Path.expand(abs_path)
 
     # Check foreign repos first, then primary (split_with avoids O(n log n) sort)
-    {foreign, primary} = Enum.split_with(repos, fn repo -> not primary?(repo.id) end)
+    {foreign, primary} = Enum.split_with(repos, fn %__MODULE__{id: id} -> not primary?(id) end)
     sorted = foreign ++ primary
 
-    Enum.find_value(sorted, {:error, :not_in_any_repo}, fn repo ->
+    Enum.find_value(sorted, {:error, :not_in_any_repo}, fn %__MODULE__{} = repo ->
       case normalize_path(repo, abs_path) do
         {:ok, rel_path} -> {:ok, repo.id, rel_path}
         {:error, :not_in_repo} -> nil
