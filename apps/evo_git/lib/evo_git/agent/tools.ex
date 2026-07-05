@@ -117,113 +117,114 @@ defmodule EvoGit.Agent.Tools do
   # Compile-time tool name for dispatch (matches ShellTool's compile-time @tool_name)
   @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
 
-  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil) do
+  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil) when is_map(args) do
     execute_tool(tool_name, args, repo_path, repo_root, node_path)
   end
 
   # Tool execution dispatch
 
-  defp execute_tool("read_file", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("read_file", args, repo_path, repo_root, _node_path) when is_map(args) do
     FileRead.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("create_files", args, repo_path, repo_root, node_path) do
+  defp execute_tool("create_files", args, repo_path, repo_root, node_path) when is_map(args) do
     FileCreate.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("write_file", args, repo_path, repo_root, node_path) do
+  defp execute_tool("write_file", args, repo_path, repo_root, node_path) when is_map(args) do
     FileWrite.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("edit_file", args, repo_path, repo_root, node_path) do
+  defp execute_tool("edit_file", args, repo_path, repo_root, node_path) when is_map(args) do
     FileEdit.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("make_dir", args, repo_path, repo_root, node_path) do
+  defp execute_tool("make_dir", args, repo_path, repo_root, node_path) when is_map(args) do
     MakeDir.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("read_context", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("read_context", args, repo_path, repo_root, _node_path) when is_map(args) do
     Context.execute_read(args, repo_path, repo_root)
   end
 
-  defp execute_tool("write_context", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("write_context", args, repo_path, repo_root, _node_path) when is_map(args) do
     Context.execute_write(args, repo_path, repo_root)
   end
 
-  defp execute_tool("edit_context", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("edit_context", args, repo_path, repo_root, _node_path) when is_map(args) do
     Context.execute_edit(args, repo_path, repo_root)
   end
 
-  defp execute_tool(@shell_tool_name, args, repo_path, repo_root, _node_path) do
+  defp execute_tool(@shell_tool_name, args, repo_path, repo_root, _node_path) when is_map(args) do
     ShellTool.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("rg", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("rg", args, repo_path, repo_root, _node_path) when is_map(args) do
     Ripgrep.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("run_git", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("run_git", args, repo_path, repo_root, _node_path) when is_map(args) do
     Git.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("glob", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("glob", args, repo_path, repo_root, _node_path) when is_map(args) do
     Glob.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("list_dir", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("list_dir", args, repo_path, repo_root, _node_path) when is_map(args) do
     ListDirectory.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("search_web", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("search_web", args, repo_path, repo_root, _node_path) when is_map(args) do
     WebSearch.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("curl", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("curl", args, repo_path, repo_root, _node_path) when is_map(args) do
     Curl.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("search_context", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("search_context", args, repo_path, repo_root, _node_path) when is_map(args) do
     SearchContext.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("search_history", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("search_history", args, repo_path, repo_root, _node_path) when is_map(args) do
     SearchHistory.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("skill_list", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("skill_list", args, repo_path, repo_root, _node_path) when is_map(args) do
     SkillList.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("skill_read", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("skill_read", args, repo_path, repo_root, _node_path) when is_map(args) do
     SkillRead.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("skill_add", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("skill_add", args, repo_path, repo_root, _node_path) when is_map(args) do
     SkillAdd.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("skill_edit", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("skill_edit", args, repo_path, repo_root, _node_path) when is_map(args) do
     SkillEdit.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("skill_remove", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("skill_remove", args, repo_path, repo_root, _node_path) when is_map(args) do
     SkillRemove.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("skill_enable", args, repo_path, repo_root, node_path) do
+  defp execute_tool("skill_enable", args, repo_path, repo_root, node_path) when is_map(args) do
     SkillEnable.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("skill_disable", args, repo_path, repo_root, node_path) do
+  defp execute_tool("skill_disable", args, repo_path, repo_root, node_path) when is_map(args) do
     SkillDisable.execute(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("skill_where", args, repo_path, repo_root, _node_path) do
+  defp execute_tool("skill_where", args, repo_path, repo_root, _node_path) when is_map(args) do
     SkillWhere.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool(unknown_tool, args, repo_path, repo_root, _node_path) do
+  defp execute_tool(unknown_tool, args, repo_path, repo_root, _node_path)
+       when is_binary(unknown_tool) and is_map(args) do
     # Try dynamic skill execution — skills are loaded from .agents/skills/
     # and injected as tool schemas at agent startup
     if repo_root && is_binary(repo_root) do
