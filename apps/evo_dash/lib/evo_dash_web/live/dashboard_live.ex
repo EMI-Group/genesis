@@ -89,7 +89,7 @@ defmodule EvoDashWeb.DashboardLive do
             </div>
             <div class="space-y-3">
               <%= for task <- Enum.sort_by(@running_tasks, & &1.started_at, {:asc, DateTime}) do %>
-                <div class={["relative has-[[open]]:z-30 rounded-2xl", if(task.status == :finalizing, do: "animate-pulse-glow-warning", else: "animate-pulse-glow")]}>
+                <div class={["relative z-10 has-[[open]]:z-30 rounded-2xl", if(task.status == :finalizing, do: "animate-pulse-glow-warning", else: "animate-pulse-glow")]}>
                   <EvoDashWeb.DashboardComponents.task_card
                     task={task}
                     show_details={MapSet.member?(@expanded_task_ids, task.id)}
