@@ -15,6 +15,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
+  alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -124,7 +126,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     - `:usage` - The cumulative `EvoGit.Agent.Usage.t()` for this agent run
   """
   @spec complete(pos_integer(), String.t(), String.t(), keyword()) :: Result.t()
-  def complete(agent_id, result, commit_sha, opts \\ []) do
+  def complete(agent_id, result, commit_sha, opts \\ []) when is_list(opts) do
     base_commit = Keyword.get(opts, :base_commit)
     parent_id = Keyword.get(opts, :parent_id)
     depth = Keyword.get(opts, :depth, 0)
@@ -186,10 +188,10 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   defp lookup_task_info(agent_id) do
     {task_id, task_number} =
       case :ets.lookup(:evogit_sched_meta, agent_id) do
-        [{^agent_id, %{task_id: tid, task_number: tn}}] ->
+        [{^agent_id, %SchedMeta{task_id: tid, task_number: tn}}] ->
           {tid, tn}
 
-        [{^agent_id, %{task_id: tid}}] ->
+        [{^agent_id, %SchedMeta{task_id: tid}}] ->
           # Backward compat: task_number may be nil in older entries
           {tid, nil}
 
@@ -199,14 +201,14 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
 
     task_local_id =
       case :ets.lookup(:evogit_agent_state, agent_id) do
-        [{^agent_id, %{task_local_id: tlid}}] when is_integer(tlid) -> tlid
+        [{^agent_id, %AgentState{task_local_id: tlid}}] when is_integer(tlid) -> tlid
         _ -> 0
       end
 
     {task_id, task_number, task_local_id}
   end
 
-  defp add_metadata_note(repo_path, commit_sha, metadata) do
+  defp add_metadata_note(repo_path, commit_sha, metadata) when is_map(metadata) do
     note_content = Jason.encode!(metadata, pretty: true)
 
     # Use a notes ref specific to evogit to avoid conflicts with user's notes
@@ -295,7 +297,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
          base_commit,
          final_commit,
          data
-       ) do
+       )
+       when is_map(data) do
     ref_start = "refs/genesis/archive/T#{task_id}-A#{task_local_id}-start"
     ref_final = "refs/genesis/archive/T#{task_id}-A#{task_local_id}-final"
 
@@ -353,7 +356,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     end
   end
 
-  defp build_llm_settings(model, generation_params, compression_threshold) do
+  defp build_llm_settings(model, generation_params, compression_threshold)
+       when is_list(generation_params) or is_nil(generation_params) do
     params_map = Map.new(generation_params || [])
 
     Map.merge(%{model: model, context_compression_threshold: compression_threshold}, params_map)
