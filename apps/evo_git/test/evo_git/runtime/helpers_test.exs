@@ -168,12 +168,12 @@ defmodule EvoGit.Runtime.HelpersTest do
   # notify_finalizing/1
   # ==========================================================================
   describe "notify_finalizing/1" do
-    test "does not crash with :task_id key" do
-      assert Helpers.notify_finalizing(task_id: "t123") in [:ok, nil]
+    test "does not crash with a task_id string" do
+      assert Helpers.notify_finalizing("t123") in [:ok, nil]
     end
 
-    test "does not crash without :task_id key" do
-      assert Helpers.notify_finalizing([]) in [:ok, nil]
+    test "does not crash with nil" do
+      assert Helpers.notify_finalizing(nil) in [:ok, nil]
     end
   end
 
