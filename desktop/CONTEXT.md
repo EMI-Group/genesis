@@ -50,13 +50,13 @@ Tauri launches the Phoenix app as a sidecar process. The WebView connects to Pho
 
 ```bash
 # Build the Burrito-wrapped Elixir release (produces the sidecar binary)
-MIX_ENV=prod mix release evogit_desktop
+MIX_ENV=prod mix release genesis_desktop
 
 # Build the Tauri app (bundles the sidecar + produces native installers)
 cd src-tauri && cargo tauri build
 ```
 
-The Tauri config references the sidecar at `externalBin: ["sidecars/evogit-backend"]`. Tauri appends the platform triple automatically (e.g., `evogit-backend-aarch64-apple-darwin`).
+The Tauri config references the sidecar at `externalBin: ["sidecars/genesis-backend"]`. Tauri appends the platform triple automatically (e.g., `genesis-backend-aarch64-apple-darwin`).
 
 ## Constraints
 
@@ -66,4 +66,4 @@ The Tauri config references the sidecar at `externalBin: ["sidecars/evogit-backe
 - The desktop shell contains NO Elixir code — only Rust
 - `withGlobalTauri: true` — the webview gets `window.__TAURI__` API without npm imports
 - Requires Rust toolchain + Zig (for Burrito cross-compilation) to build
-- The sidecar binary must be placed at `src-tauri/sidecars/evogit-backend-{target-triple}` before `cargo tauri build`
+- The sidecar binary must be placed at `src-tauri/sidecars/genesis-backend-{target-triple}` before `cargo tauri build`
