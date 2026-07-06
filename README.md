@@ -1,6 +1,6 @@
 <p align="center">
-  <img src="apps/evo_dash/priv/static/images/logo.svg" height="48" alt="Genesis" style="vertical-align: middle;">
-  <span style="font-size: 2.5em; font-weight: bold; vertical-align: middle; margin-left: 12px;">Genesis</span>
+  <img src="apps/evo_dash/priv/static/images/logo.svg" height="44" alt="Genesis" style="vertical-align: middle;">
+  <span style="font-size: 2.75em; font-weight: bold; vertical-align: middle; margin-left: 12px;">Genesis</span>
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/BillHuang2001/evogit_private/releases"><img src="https://img.shields.io/badge/version-0.4.1-8b5cf6" alt="Version"></a>
+  <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.4.1-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20·%20Linux%20·%20Windows-success" alt="Platform">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
   <img src="https://img.shields.io/badge/built%20with-Elixir-4B275F" alt="Elixir">
@@ -32,7 +32,7 @@ It's evolutionary: every change lands on a branch of the Git history, and partia
 
 ## 📦 Install
 
-Genesis ships as a native desktop app. Grab the installer for your platform from the **[GitHub Releases](https://github.com/BillHuang2001/evogit_private/releases)** page:
+Genesis ships as a native desktop app. Grab the installer for your platform from the **[GitHub Releases](https://github.com/BillHuang2001/genesis/releases)** page:
 
 | Platform | Download |
 |----------|----------|
@@ -50,7 +50,7 @@ To fetch and install the latest release programmatically:
 
 ```bash
 # List the download URLs in the newest release
-curl -s https://api.github.com/repos/BillHuang2001/evogit_private/releases/latest \
+curl -s https://api.github.com/repos/BillHuang2001/genesis/releases/latest \
   | grep '"browser_download_url"' \
   | grep -E '\.(dmg|rpm|AppImage|tar\.gz|msi|exe)"'
 
@@ -70,8 +70,14 @@ To clone and run Genesis from source:
 
 ```bash
 # Prerequisites: Elixir ~> 1.18 and Erlang/OTP 29
-git clone https://github.com/BillHuang2001/evogit_private.git
-cd evogit_private
+
+# Install Elixir and Erlang (choose one):
+#   - asdf:    https://asdf-vm.com  →  asdf plugin add erlang && asdf plugin add elixir
+#   - mise:    https://mise.jdx.dev →  mise use erlang@29 elixir@1.20
+#   - Official: https://elixir-lang.org/install.html
+
+git clone https://github.com/BillHuang2001/genesis.git
+cd genesis
 mix deps.get
 mix assets.setup
 mix phx.server
