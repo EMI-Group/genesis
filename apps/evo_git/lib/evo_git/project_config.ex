@@ -92,14 +92,7 @@ defmodule EvoGit.ProjectConfig do
   end
 
   defp read_config_file(path) do
-    case File.read(path) do
-      {:ok, contents} ->
-        parse_toml(contents, path)
-
-      {:error, reason} ->
-        Logger.warning("Failed to read #{path}: #{inspect(reason)}")
-        nil
-    end
+    EvoGit.Config.read_toml_file(path, nil, description: "project config")
   end
 
   @doc """
@@ -422,17 +415,6 @@ defmodule EvoGit.ProjectConfig do
 
       _ ->
         %{}
-    end
-  end
-
-  defp parse_toml(contents, path) do
-    case TomlElixir.decode(contents) do
-      {:ok, config} ->
-        config
-
-      {:error, reason} ->
-        Logger.warning("Failed to parse #{path}: #{inspect(reason)}")
-        nil
     end
   end
 end

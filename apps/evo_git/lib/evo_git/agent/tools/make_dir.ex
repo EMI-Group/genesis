@@ -4,7 +4,6 @@ defmodule EvoGit.Agent.Tools.MakeDir do
   """
 
   alias EvoGit.Agent.Tools.Shared
-  alias EvoGit.Adapters.Git
 
   @keep_file_options ~w(CONTEXT.md .gitkeep none)
 
@@ -167,8 +166,7 @@ defmodule EvoGit.Agent.Tools.MakeDir do
     end
   end
 
-  defp mkdir_if_needed(path, true), do: File.mkdir_p(path)
-  defp mkdir_if_needed(path, false), do: File.mkdir(path)
+  defp mkdir_if_needed(path, parents), do: Shared.mkdir_if_needed(path, parents)
 
   defp create_keep_file(_path, "none"), do: :ok
 
@@ -190,25 +188,7 @@ defmodule EvoGit.Agent.Tools.MakeDir do
         end
       end)
 
-    # Skip git add if no keep files were created
-    if files_to_add == [] do
-      {:ok, "No keep files to commit"}
-    else
-      case Git.run(["add" | files_to_add], repo_path) do
-        {:ok, _output} ->
-          commit_message = "Create director#{if(length(paths) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}"
-          case Git.commit(repo_path, commit_message) do
-            {:ok, _} -> {:ok, "Commit successful"}
-            {:error, _, _} = error -> {:error, error}
-            {:conflict, _} = conflict -> {:error, conflict}
-          end
-
-        {:error, _, _} = error ->
-          {:error, "git add failed: #{inspect(error)}"}
-
-        {:conflict, output} ->
-          {:error, "git add conflict: #{output}"}
-      end
-    end
+    commit_message = "Create director#{if(length(paths) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}"
+    Shared.do_git_commit(repo_path, files_to_add, commit_message)
   end
 end

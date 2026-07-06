@@ -185,26 +185,13 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   end
 
   defp lookup_task_info(agent_id) do
-    {task_id, task_number} =
-      case :ets.lookup(:evogit_sched_meta, agent_id) do
-        [{^agent_id, %{task_id: tid, task_number: tn}}] ->
-          {tid, tn}
+    case EvoGit.AgentScheduler.Store.get_task_info(agent_id) do
+      {:ok, task_id, task_number, task_local_id} ->
+        {task_id, task_number, task_local_id}
 
-        [{^agent_id, %{task_id: tid}}] ->
-          # Backward compat: task_number may be nil in older entries
-          {tid, nil}
-
-        _ ->
-          {0, nil}
-      end
-
-    task_local_id =
-      case :ets.lookup(:evogit_agent_state, agent_id) do
-        [{^agent_id, %{task_local_id: tlid}}] when is_integer(tlid) -> tlid
-        _ -> 0
-      end
-
-    {task_id, task_number, task_local_id}
+      {:error, :not_found} ->
+        {0, nil, 0}
+    end
   end
 
   defp add_metadata_note(repo_path, commit_sha, metadata) when is_map(metadata) do

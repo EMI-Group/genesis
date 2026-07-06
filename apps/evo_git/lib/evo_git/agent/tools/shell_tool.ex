@@ -183,7 +183,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
 
   @doc false
   def detect_cd_warnings(command, repo_path, repo_root) do
-    worktree_base = Path.join([repo_root, ".genesis", "workers"])
+    worktree_base = EvoGit.AgentScheduler.Worktrees.workers_dir(repo_root)
 
     command
     |> cd_targets()
