@@ -88,6 +88,37 @@ defmodule EvoDashWeb.Helpers do
   def task_type_icon(:evolve), do: "hero-arrow-path"
 
   # ---------------------------------------------------------------------------
+  # Review Status Helpers
+  # ---------------------------------------------------------------------------
+
+  @doc "Returns DaisyUI badge class for review status."
+  def review_status_badge(:open), do: "badge-warning"
+  def review_status_badge(:merged), do: "badge-success"
+  def review_status_badge(:rejected), do: "badge-error"
+  def review_status_badge(:continued), do: "badge-info"
+  def review_status_badge(:ignored), do: "badge-ghost"
+  def review_status_badge(:no_changes), do: "badge-ghost"
+  def review_status_badge(_), do: "badge-ghost"
+
+  @doc "Returns heroicon name for review status."
+  def review_status_icon(:open), do: "hero-clock"
+  def review_status_icon(:merged), do: "hero-check-circle"
+  def review_status_icon(:rejected), do: "hero-x-circle"
+  def review_status_icon(:continued), do: "hero-arrow-path"
+  def review_status_icon(:ignored), do: "hero-eye-slash"
+  def review_status_icon(:no_changes), do: "hero-information-circle"
+  def review_status_icon(_), do: "hero-question-mark-circle"
+
+  @doc "Returns localized label for review status."
+  def review_status_label(:open), do: gettext("Open")
+  def review_status_label(:merged), do: gettext("Merged")
+  def review_status_label(:rejected), do: gettext("Rejected")
+  def review_status_label(:continued), do: gettext("Continued")
+  def review_status_label(:ignored), do: gettext("Ignored")
+  def review_status_label(:no_changes), do: gettext("No Changes")
+  def review_status_label(_), do: gettext("Unknown")
+
+  # ---------------------------------------------------------------------------
   # Datetime Formatting
   # ---------------------------------------------------------------------------
 
