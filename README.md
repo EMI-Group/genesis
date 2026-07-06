@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.4.1-8b5cf6" alt="Version"></a>
+  <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.5.2-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20·%20Linux%20·%20Windows-success" alt="Platform">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
   <img src="https://img.shields.io/badge/built%20with-Elixir-4B275F" alt="Elixir">
@@ -75,6 +75,11 @@ To clone and run Genesis from source:
 #   - asdf:    https://asdf-vm.com  →  asdf plugin add erlang && asdf plugin add elixir
 #   - mise:    https://mise.jdx.dev →  mise use erlang@29 elixir@1.20
 #   - Official: https://elixir-lang.org/install.html
+#   - Or via your system package manager:
+#       macOS (Homebrew):  brew install elixir
+#       Ubuntu/Debian:     sudo apt install elixir erlang-dev
+#       Arch:              sudo pacman -S elixir
+#       Fedora:            sudo dnf install elixir
 
 git clone https://github.com/BillHuang2001/genesis.git
 cd genesis
