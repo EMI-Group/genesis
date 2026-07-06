@@ -80,7 +80,7 @@ jobs:
         if: startsWith(matrix.runner, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev mold
 
       - name: Fix ImageOS for ARM partner runners
         # The GitHub-hosted ARM partner runner reports ImageOS as
@@ -116,6 +116,10 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
+      - name: Configure mold linker (Linux)
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> $GITHUB_ENV
+
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
         with:
@@ -127,8 +131,18 @@ jobs:
           workspaces: desktop/src-tauri -> target
           key: ${{ matrix.rust_target }}
 
+      - name: Cache Tauri CLI binary
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-${{ runner.os }}-${{ runner.arch }}-v2
+
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2.0"
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall tauri-cli --version "^2.0" --no-confirm
 
       - name: Install dependencies
         run: mix deps.get
@@ -295,8 +309,18 @@ jobs:
           workspaces: desktop/src-tauri -> target
           key: ${{ matrix.rust_target }}
 
+      - name: Cache Tauri CLI binary
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-${{ runner.os }}-${{ runner.arch }}-v2
+
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2.0"
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall tauri-cli --version "^2.0" --no-confirm
 
       - name: Install dependencies
         run: mix deps.get
