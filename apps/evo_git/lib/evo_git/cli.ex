@@ -461,8 +461,13 @@ defmodule EvoGit.CLI do
   defp atomize_config_keys(value), do: value
 
   # Returns the existing atom for `key`, or the original string if the atom
-  # does not exist. Uses a rescue because String.to_existing_atom/1 has no
-  # non-throwing variant (no {:ok, _} | :error tuple form).
+  # does not exist.
+  #
+  # Justified: String.to_existing_atom/1 has no non-throwing variant
+  # (no {:ok, _} | :error tuple form). It is deliberately used (instead of
+  # String.to_atom/1) to avoid atom-table exhaustion from arbitrary
+  # user-supplied config keys. When the atom doesn't already exist, we
+  # return the original string.
   defp safe_to_existing_atom(key) when is_binary(key) do
     String.to_existing_atom(key)
   rescue
