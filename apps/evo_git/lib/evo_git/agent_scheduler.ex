@@ -1024,12 +1024,7 @@ defmodule EvoGit.AgentScheduler do
   Returns the context or nil if not set.
   """
   @spec get_agent_context(pos_integer()) :: ReqLLM.Context.t() | nil
-  def get_agent_context(agent_id) do
-    case get_agent_state(agent_id) do
-      {:ok, %{context: context}} -> context
-      _ -> nil
-    end
-  end
+  def get_agent_context(agent_id), do: Store.get_agent_context(agent_id)
 
   @doc """
   Updates multiple fields for an agent in a single ETS get+put cycle.
@@ -1038,36 +1033,25 @@ defmodule EvoGit.AgentScheduler do
   multiple fields per agent turn.
   """
   @spec batch_update_agent(pos_integer(), keyword()) :: :ok
-  def batch_update_agent(agent_id, fields) when is_list(fields) do
-    {:ok, agent_state} = get_agent_state(agent_id)
-    updated_state = Kernel.struct!(agent_state, fields)
-    Store.put_agent_state(agent_id, updated_state)
-    :ok
-  end
+  def batch_update_agent(agent_id, fields), do: Store.batch_update_agent(agent_id, fields)
 
   @doc """
   Updates the conversation context for an agent in the agent state table.
   """
   @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
-  def update_agent_context(agent_id, %ReqLLM.Context{} = context) do
-    batch_update_agent(agent_id, context: context)
-  end
+  def update_agent_context(agent_id, context), do: Store.update_agent_context(agent_id, context)
 
   @doc """
   Updates the cumulative usage for an agent in the agent state table.
   """
   @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
-  def update_agent_usage(agent_id, %EvoGit.Agent.Usage{} = usage) do
-    batch_update_agent(agent_id, usage: usage)
-  end
+  def update_agent_usage(agent_id, usage), do: Store.update_agent_usage(agent_id, usage)
 
   @doc """
   Updates the current turn for an agent in the agent state table.
   """
   @spec update_agent_turn(pos_integer(), non_neg_integer()) :: :ok
-  def update_agent_turn(agent_id, turn) when is_integer(turn) do
-    batch_update_agent(agent_id, turn: turn)
-  end
+  def update_agent_turn(agent_id, turn), do: Store.update_agent_turn(agent_id, turn)
 
   @doc """
   Updates the cumulative token count for an agent in the agent state table.
@@ -1076,9 +1060,7 @@ defmodule EvoGit.AgentScheduler do
   progress. Reset to 0 on each context compression.
   """
   @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
-  def update_total_tokens(agent_id, total_tokens) when is_integer(total_tokens) do
-    batch_update_agent(agent_id, total_tokens: total_tokens)
-  end
+  def update_total_tokens(agent_id, total_tokens), do: Store.update_total_tokens(agent_id, total_tokens)
 
   @doc """
   Increments the compression count for an agent in the agent state table.
@@ -1087,16 +1069,5 @@ defmodule EvoGit.AgentScheduler do
   an agent's context has been compressed.
   """
   @spec increment_compression_count(pos_integer()) :: :ok
-  def increment_compression_count(agent_id) do
-    {:ok, agent_state} = get_agent_state(agent_id)
-
-    updated_state = %{
-      agent_state
-      | compression_count: agent_state.compression_count + 1
-    }
-
-    Store.put_agent_state(agent_id, updated_state)
-
-    :ok
-  end
+  def increment_compression_count(agent_id), do: Store.increment_compression_count(agent_id)
 end
