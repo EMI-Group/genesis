@@ -324,7 +324,8 @@ defmodule EvoDashWeb.DashboardComponents do
           </label>
           <textarea
             name="prompt"
-            phx-change="update_prompt"
+            id="prompt"
+            phx-update="ignore"
             class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
             placeholder={
               if String.starts_with?(@mode, "evolve") do

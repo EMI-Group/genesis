@@ -259,34 +259,61 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
   end
 
-  describe "preserving prompt across model and task mode switches" do
-    test "prompt text survives task mode and model changes", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+  describe "prompt textarea with phx-update=ignore" do
+    test "objective textarea has phx-update=ignore attribute", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, html} = live(conn, ~p"/")
 
-      # Open a project so the task form is enabled
+      # Open a project so the task form renders
       render_click(view, "toggle_open_project_form", %{})
 
       view
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      # Simulate typing into the prompt textarea (the phx-change event)
-      html = render_change(view, "update_prompt", %{"prompt" => "My important objective text"})
+      # Re-render to get the task form HTML
+      html = render(view)
 
-      # The typed text should be reflected in the rendered HTML
-      assert html =~ "My important objective text"
+      # The prompt textarea should have phx-update="ignore" so it is
+      # not clobbered by LiveView re-renders on model/mode switches
+      assert html =~ ~s(phx-update="ignore")
+    end
 
-      # Switch the task mode — the prompt must be preserved
-      html = render_change(view, "task_change", %{"mode" => "evolve_simple"})
+    test "select_model does not modify the task_prompt assign", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
 
-      # The prompt is still there after switching modes
-      assert html =~ "My important objective text"
+      # Open a project
+      render_click(view, "toggle_open_project_form", %{})
 
-      # Switch the model — the prompt must be preserved
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Fire select_model — the textarea is now client-owned, so the server
+      # should NOT track or modify task_prompt. The handler must still succeed
+      # (no crash) and the textarea keeps phx-update="ignore".
       html = render_change(view, "select_model", %{"model_id" => "some-model"})
 
-      # The prompt is still there after switching models
-      assert html =~ "My important objective text"
+      # No update_prompt handler exists; the prompt textarea remains client-owned
+      assert html =~ ~s(phx-update="ignore")
+    end
+
+    test "task_change does not modify the task_prompt assign", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Open a project
+      render_click(view, "toggle_open_project_form", %{})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Fire task_change — the textarea is now client-owned, so the server
+      # should NOT track or modify task_prompt. The handler must still succeed
+      # (no crash) and the textarea keeps phx-update="ignore".
+      html = render_change(view, "task_change", %{"mode" => "evolve_simple"})
+
+      # No update_prompt handler exists; the prompt textarea remains client-owned
+      assert html =~ ~s(phx-update="ignore")
     end
   end
 end

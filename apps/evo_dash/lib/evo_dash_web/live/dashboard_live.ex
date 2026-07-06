@@ -535,16 +535,8 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("update_prompt", %{"prompt" => prompt}, socket) do
-    {:noreply, assign(socket, :task_prompt, prompt)}
-  end
-
-  @impl true
   def handle_event("select_model", %{"model_id" => id}, socket) do
-    {:noreply,
-     socket
-     |> assign(:selected_model_id, id)
-     |> maybe_persist_state()}
+    {:noreply, assign(socket, :selected_model_id, id)}
   end
 
   @impl true

@@ -174,6 +174,12 @@ const StatePersistence = {
       try {
         const state = JSON.parse(saved);
         this.pushEvent("restore_state", state);
+        // Directly restore the prompt textarea value in the DOM since
+        // phx-update="ignore" prevents the server from setting it during re-renders
+        const promptEl = this.el.querySelector('[name="prompt"]');
+        if (promptEl && state.task_prompt) {
+          promptEl.value = state.task_prompt;
+        }
       } catch (e) {}
     }
 
