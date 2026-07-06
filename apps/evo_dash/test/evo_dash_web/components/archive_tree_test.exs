@@ -135,10 +135,10 @@ defmodule EvoDashWeb.ArchiveTreeTest do
     end
   end
 
-  describe "DashboardComponents.archive_tree with string keys" do
+  describe "ArchiveComponents.archive_tree with string keys" do
     test "renders without hanging and shows agent ids" do
       html =
-        render_component(&EvoDashWeb.DashboardComponents.archive_tree/1,
+        render_component(&EvoDashWeb.ArchiveComponents.archive_tree/1,
           agents: @string_key_archive
         )
         |> rendered_to_string()
@@ -148,10 +148,10 @@ defmodule EvoDashWeb.ArchiveTreeTest do
     end
   end
 
-  describe "DashboardComponents.archive_tree — cycle safety" do
+  describe "ArchiveComponents.archive_tree — cycle safety" do
     test "terminates on cyclic data without infinite recursion" do
       html =
-        render_component(&EvoDashWeb.DashboardComponents.archive_tree/1,
+        render_component(&EvoDashWeb.ArchiveComponents.archive_tree/1,
           agents: @cyclic_archive
         )
         |> rendered_to_string()
@@ -160,10 +160,10 @@ defmodule EvoDashWeb.ArchiveTreeTest do
     end
   end
 
-  describe "DashboardComponents.archive_details with string keys" do
+  describe "ArchiveComponents.archive_details with string keys" do
     test "renders the archive section with agent ids" do
       html =
-        render_component(&EvoDashWeb.DashboardComponents.archive_details/1,
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
           archive_metadata: @string_key_archive,
           task_id: "test-task"
         )

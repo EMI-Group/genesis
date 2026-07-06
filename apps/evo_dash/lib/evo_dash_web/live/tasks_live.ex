@@ -170,7 +170,7 @@ defmodule EvoDashWeb.TasksLive do
         <% else %>
           <%= for {task, idx} <- Enum.with_index(@filtered_tasks) do %>
             <div class={["relative z-10 has-[[open]]:z-30 animate-fade-in-up", animation_delay_class(idx)]}>
-              <EvoDashWeb.DashboardComponents.task_card
+              <EvoDashWeb.TaskCardComponents.task_card
                 task={task}
                 show_details={MapSet.member?(@expanded_task_ids, task.id)}
               />
@@ -193,7 +193,7 @@ defmodule EvoDashWeb.TasksLive do
             <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
             {gettext("Task Result")}
           </:title>
-          {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
+          {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
         </EvoDashWeb.Helpers.modal>
       <% end %>
 
