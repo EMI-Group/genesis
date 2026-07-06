@@ -476,6 +476,18 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
         Conflicting files:
         #{conflict_files_list}
+
+        You have two options to handle this:
+
+        1. **Resolve conflicts manually** — Edit the conflicting files to resolve the merge
+           conflicts, then stage the resolved files with `git add <file>` and complete the
+           merge with `git commit --no-edit` (or `git merge --continue`).
+
+        2. **Abort the merge** — If the conflicts are too complex or not worth resolving,
+           run `git merge --abort` to revert to the pre-merge state. You can then re-plan
+           your approach to avoid the conflicting changes.
+
+        Choose the option that best fits the situation and report the outcome.
         """
 
       {:error, code, output} ->
