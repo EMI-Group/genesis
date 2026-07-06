@@ -211,7 +211,7 @@ defmodule EvoGit.Agent.TurnWarning do
     [WARNING] Turn #{w.turn}/#{w.max_turns} — only #{w.turns_remaining} #{turn_word(w.turns_remaining)} remaining.
 
     You are approaching the end of your turn budget. Shift focus to wrapping up:
-    1. Commit any uncommitted changes you have made
+    1. Commit any uncommitted changes NOW — uncommitted changes will be LOST when your process terminates. Committing is the only way to preserve your work.
     2. If critical work remains, delegate it to subagents for parallel completion
     3. Prepare to call complete_task with a clear status report
 
@@ -223,8 +223,8 @@ defmodule EvoGit.Agent.TurnWarning do
     """
     [URGENT] Turn #{w.turn}/#{w.max_turns} — only #{w.turns_remaining} #{turn_word(w.turns_remaining)} remaining!
 
-    You are about to hit the turn limit. Call complete_task IMMEDIATELY.
-    Do not start any new work. Commit if needed, then complete with your best answer.
+    You are about to hit the turn limit. Do not start any new work.
+    Commit any uncommitted changes IMMEDIATELY — uncommitted work will be LOST when your process terminates. Then call complete_task with your best answer.
     """
   end
 

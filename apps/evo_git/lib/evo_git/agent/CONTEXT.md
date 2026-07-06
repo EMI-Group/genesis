@@ -26,7 +26,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 |---|---|
 | `EvoGit.Agent.ContextCompression` | Compresses chat history when `total_tokens` exceeds threshold |
 | `EvoGit.Agent.SubagentProcessing` | Spawns subagents, resolves cross-repo paths, merges results via octopus merge, formats results for LLM context |
-| `EvoGit.Agent.TurnWarning` | Adaptive turn-budget warning system — 3 positional categories (beginning/end/critical) that scale with max_turns, plus a periodic middle reminder based on turns since last subagent delegation. The `:beginning` delegation-strategy warning fires at ~15% of budget (min turn 3); the `:middle` reminder fires every 8 turns (`:high`) / 24 turns (`:low`). Low-level agents (Executor, TaskScheduler, etc.) skip the `:beginning` warning entirely and have a 3x longer middle reminder interval |
+| `EvoGit.Agent.TurnWarning` | Adaptive turn-budget warning system — 3 positional categories (beginning/end/critical) that scale with max_turns, plus a periodic middle reminder based on turns since last subagent delegation. The `:beginning` delegation-strategy warning fires at ~15% of budget (min turn 3); the `:middle` reminder fires every 15 turns (`:high`) / 45 turns (`:low`). Low-level agents (Executor, TaskScheduler, etc.) skip the `:beginning` warning entirely and have a 3x longer middle reminder interval |
 
 ### Tool Library (`EvoGit.Agent.Tools`)
 | Component | Role |
