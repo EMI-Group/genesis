@@ -14,6 +14,11 @@ defmodule EvoDash.TaskRegistry do
 
   alias EvoDash.TaskInfo
 
+  alias EvoDash.TaskRegistry.Cleanup
+  alias EvoDash.TaskRegistry.Diagnostics
+  alias EvoDash.TaskRegistry.Lease
+  alias EvoDash.TaskRegistry.TaskExecutor
+
   @process_registry EvoDash.TaskRegistry.ProcessRegistry
 
   @max_recent_projects 10
@@ -33,7 +38,7 @@ defmodule EvoDash.TaskRegistry do
   end
 
   def start_task(task_type, opts) do
-    task_id = generate_id()
+    task_id = TaskExecutor.generate_id()
     GenServer.call(__MODULE__, {:start_task, task_id, task_type, opts})
   end
 
@@ -56,7 +61,7 @@ defmodule EvoDash.TaskRegistry do
   defp update_task_status_with_caller(task_id, status, result, opts) do
     GenServer.cast(
       __MODULE__,
-      {:update_status, task_id, status, result, opts, {self(), capture_stacktrace(5)}}
+      {:update_status, task_id, status, result, opts, {self(), Diagnostics.capture_stacktrace(5)}}
     )
   end
 
@@ -148,7 +153,7 @@ defmodule EvoDash.TaskRegistry do
     state = normalize_tasks(state)
 
     # Cleanup expired tasks on startup
-    cleanup_expired_tasks(state)
+    Cleanup.cleanup_expired_tasks(state.task_store)
 
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
@@ -171,7 +176,7 @@ defmodule EvoDash.TaskRegistry do
     task_ref =
       Task.Supervisor.async_nolink(
         EvoDash.TaskSupervisor,
-        __MODULE__,
+        TaskExecutor,
         :execute_task,
         [task_type, opts, task_id]
       )
@@ -248,7 +253,7 @@ defmodule EvoDash.TaskRegistry do
                 }
 
                 EvoDash.Store.put_task(state.task_store, updated)
-                cleanup_expired_tasks(state)
+                Cleanup.cleanup_expired_tasks(state.task_store)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
               else
@@ -303,7 +308,7 @@ defmodule EvoDash.TaskRegistry do
 
     EvoDash.Store.delete_tasks(state.task_store, task_ids)
 
-    cleanup_expired_tasks(state)
+    Cleanup.cleanup_expired_tasks(state.task_store)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:reply, :ok, state}
   end
@@ -430,7 +435,7 @@ defmodule EvoDash.TaskRegistry do
           else
             # Log any transition INTO :failed that isn't already :failed.
             if status == :failed and task.status != :failed do
-              log_failed_transition(task_id, :update_status_cast, task.status,
+              Diagnostics.log_failed_transition(task_id, :update_status_cast, task.status,
                 result: result,
                 caller_info: caller_info
               )
@@ -459,7 +464,7 @@ defmodule EvoDash.TaskRegistry do
             EvoDash.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
-              cleanup_expired_tasks(state)
+              Cleanup.cleanup_expired_tasks(state.task_store)
               %{state | task_refs: Map.delete(state.task_refs, task_id)}
             else
               state
@@ -472,79 +477,6 @@ defmodule EvoDash.TaskRegistry do
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     state
-  end
-
-  ## Public Task Functions
-
-  @doc """
-  Execute a task. This function runs in a separate process under Task.Supervisor.
-  """
-  def execute_task(:genesis, opts, task_id) do
-    register_task_process(task_id)
-    {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id, :genesis)
-    prompt = Keyword.get(opts, :prompt, "")
-    EvoGit.Runtime.Genesis.run(prompt, runtime_opts)
-  end
-
-  def execute_task(:evolve, opts, task_id) do
-    register_task_process(task_id)
-    resume_from = Keyword.get(opts, :resume_from)
-
-    {objective, runtime_opts} =
-      if is_binary(resume_from) and String.trim(resume_from) != "" do
-        apply_resume_context(opts, task_id, String.trim(resume_from))
-      else
-        objective = Keyword.get(opts, :objective, "")
-        {_input_arg, runtime_opts} = build_common_runtime_opts(opts, task_id, :evolve)
-        {objective, runtime_opts}
-      end
-
-    EvoGit.Runtime.Evolution.run(objective, runtime_opts)
-  end
-
-  def execute_task(:extract_skills, opts, task_id) do
-    register_task_process(task_id)
-    repo_path = Keyword.fetch!(opts, :path)
-    Application.ensure_all_started(:evo_git)
-
-    runtime_opts = [repo_path: repo_path, task_id: task_id]
-
-    # Pass through PR context keys to the runtime
-    pr_context_keys = [
-      :pr_title,
-      :pr_objective,
-      :pr_summary,
-      :pr_commit_history,
-      :base_sha,
-      :commit_sha,
-      :user_note,
-      :foreign_repos
-    ]
-
-    runtime_opts =
-      Enum.reduce(pr_context_keys, runtime_opts, fn key, acc ->
-        case Keyword.get(opts, key) do
-          nil -> acc
-          value -> Keyword.put(acc, key, value)
-        end
-      end)
-
-    EvoGit.Runtime.SkillExtraction.run(runtime_opts)
-  end
-
-  ## Private Functions
-
-  # Registers the current process (the spawned task process) in the
-  # @process_registry under the task_id key. The Registry automatically
-  # monitors the registered process and removes the entry when it dies,
-  # providing O(1) lookup of "is this task's process alive?" by task_id.
-  # This replaces the previous DB-persisted pid approach.
-  defp register_task_process(task_id) do
-    Registry.register(@process_registry, task_id, :task)
-  end
-
-  defp generate_id do
-    :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
   end
 
   # --- TaskStore Read Helpers ---
@@ -614,7 +546,7 @@ defmodule EvoDash.TaskRegistry do
       [] ->
         # No live task process — foreign instance, crashed wrapper, or full VM
         # restart (Registry entries are gone).
-        if lease_valid?(task.lease_expires_at) do
+        if Lease.lease_valid?(task.lease_expires_at) do
           # Lease hasn't expired — the owning instance is still alive.
           # Do NOT mark failed. Do NOT add to task_refs (we don't own it).
           # The one-shot :lease_sweep (scheduled in init) will catch it if the
@@ -628,7 +560,7 @@ defmodule EvoDash.TaskRegistry do
         else
           # Lease expired (nil or in the past). Check if AgentScheduler still has
           # active agents (same-VM recovery edge case).
-          if sched_meta_has_active_agents?(task.id) do
+          if Lease.sched_meta_has_active_agents?(task.id) do
             Logger.warning(
               "TaskRegistry: task #{task.id} lease expired but has active agents — scheduling recheck"
             )
@@ -639,7 +571,7 @@ defmodule EvoDash.TaskRegistry do
             # Lease expired AND no active agents — the owner is genuinely gone.
             prev_status = task.status
 
-            log_failed_transition(task.id, :reconcile, prev_status,
+            Diagnostics.log_failed_transition(task.id, :reconcile, prev_status,
               result: "Lease expired; process crashed while task was running",
               extra: [
                 no_live_process: true,
@@ -648,7 +580,7 @@ defmodule EvoDash.TaskRegistry do
               ]
             )
 
-            {%{task | status: :failed, ref: nil, lease_expires_at: nil} |> set_crash_details(),
+            {%{task | status: :failed, ref: nil, lease_expires_at: nil} |> Lease.set_crash_details(),
              state}
           end
         end
@@ -659,69 +591,6 @@ defmodule EvoDash.TaskRegistry do
     {%{task | ref: nil}, state}
   end
 
-  # Checks the :evogit_sched_meta ETS table for active agents belonging to the
-  # given task_id. The table stores {id, %SchedMeta{task_id: ..., status: ...}}.
-  # Terminal agents are removed from the table, so ANY entry for this task_id
-  # means agents are still active. Returns false if the table doesn't exist.
-  # Uses :ets.info/1 which returns :undefined for missing/nonexistent tables
-  # (non-crashing) — no try/rescue needed.
-  defp sched_meta_has_active_agents?(task_id) do
-    case :ets.info(:evogit_sched_meta) do
-      :undefined ->
-        false
-
-      _ ->
-        :evogit_sched_meta
-        |> :ets.tab2list()
-        |> Enum.any?(fn {_id, meta} ->
-          Map.get(meta, :task_id) == task_id
-        end)
-    end
-  end
-
-  # Best-effort result lookup from the :evogit_sched_meta ETS table for a given
-  # task_id. Scans all entries for this task and looks for a top-level agent
-  # (parent_id == nil) that has accumulated a result in its sched_meta. The
-  # scheduler stores the final result in the SchedMeta before deleting it, so if
-  # any entry still exists, it may carry the result.
-  #
-  # Returns `{:ok, _}`, `{:error, _}`, `{:exit, _}` if a recognizable result is
-  # found, or `nil` if no result is available. Uses :ets.info/1 for table
-  # existence (non-crashing) per the codebase's ETS convention.
-  defp lookup_sched_meta_result(task_id) do
-    case :ets.info(:evogit_sched_meta) do
-      :undefined ->
-        nil
-
-      _ ->
-        :evogit_sched_meta
-        |> :ets.tab2list()
-        |> Enum.find_value(fn {_id, meta} ->
-          if Map.get(meta, :task_id) == task_id and Map.get(meta, :parent_id) == nil do
-            # Check if this top-level agent has a result in its sub_agent_results
-            # or if result_sent is true. The actual result value isn't stored in
-            # sched_meta (it's delivered via GenServer.reply), so this is a
-            # heuristic check.
-            Map.get(meta, :sub_agent_results) |> Map.values() |> List.first()
-          end
-        end)
-    end
-  end
-
-  # Returns true if the lease has not yet expired (is a future timestamp).
-  # nil means no lease → not valid → eligible for cleanup.
-  defp lease_valid?(nil), do: false
-
-  defp lease_valid?(expires_at) do
-    System.system_time(:second) < expires_at
-  end
-
-  defp set_crash_details(%{status: :failed, finished_at: nil} = task) do
-    %{task | finished_at: DateTime.utc_now(), result: "Process crashed while task was running"}
-  end
-
-  defp set_crash_details(task), do: task
-
   # Shared result-recovery logic used by handle_info({:recheck_task, _}). The
   # wrapper process is dead so the runtime result was lost (delivered via
   # GenServer.reply to a dead process). We try a best-effort result lookup from
@@ -729,7 +598,7 @@ defmodule EvoDash.TaskRegistry do
   # :completed — agents finished without a recorded failure, so treating it as
   # completed is the least surprising outcome.
   defp resolve_recheck_task(state, task_id, %TaskInfo{} = task) do
-    result = lookup_sched_meta_result(task_id)
+    result = Lease.lookup_sched_meta_result(task_id)
 
     {final_status, final_result} =
       case result do
@@ -752,7 +621,7 @@ defmodule EvoDash.TaskRegistry do
       end
 
     if final_status == :failed do
-      log_failed_transition(task_id, :recheck_resolve, task.status, result: final_result)
+      Diagnostics.log_failed_transition(task_id, :recheck_resolve, task.status, result: final_result)
     end
 
     finished_at = DateTime.utc_now()
@@ -766,170 +635,13 @@ defmodule EvoDash.TaskRegistry do
     }
 
     EvoDash.Store.put_task(state.task_store, updated)
-    cleanup_expired_tasks(state)
+    Cleanup.cleanup_expired_tasks(state.task_store)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
     Logger.info("TaskRegistry: recheck resolved task #{task_id} to #{final_status}")
 
     {:noreply, state}
-  end
-
-  # --- Failed-Transition Diagnostic Logging ---
-  #
-  # When a task transitions to :failed from an unexpected path, it's hard to
-  # determine which code path triggered it. Every site that can set a task to
-  # :failed calls log_failed_transition/4 with a consistent, greppable prefix
-  # ("TaskRegistry: FAILED_TRANSITION") so occurrences can be diagnosed.
-
-  @failed_transition_prefix "TaskRegistry: FAILED_TRANSITION"
-
-  # Logs a consistent, greppable warning whenever a task transitions to :failed.
-  #
-  # ## Parameters
-  #   - `task_id`     — the task being marked failed
-  #   - `source`      — an atom identifying the code path (e.g. :result_handler,
-  #                     :down_handler, :reconcile, :task_status_pubsub,
-  #                     :update_status_cast)
-  #   - `prev_status` — the status BEFORE transitioning to :failed (may be nil
-  #                     if the task couldn't be found)
-  #   - `opts`        — keyword list of extra context:
-  #       * `:result`       — the result/reason value, if any
-  #       * `:extra`        — a keyword list of additional diagnostic fields
-  #       * `:caller_info`  — `{pid, stacktrace}` captured at the call site (for
-  #                           cast-based transitions via update_task_status/4)
-  #
-  # The log captures a short stacktrace of the CURRENT process at the point of
-  # transition, so the user can see WHO triggered it. For cast-based transitions
-  # (where the actual setter is the GenServer, not the original caller), the
-  # caller's pid + stacktrace are included via `caller_info`.
-  defp log_failed_transition(task_id, source, prev_status, opts) do
-    result = Keyword.get(opts, :result)
-    extra = Keyword.get(opts, :extra, [])
-    caller_info = Keyword.get(opts, :caller_info)
-
-    # Current stacktrace (the GenServer process for most paths).
-    stacktrace = format_stacktrace(capture_stacktrace(5))
-
-    # Caller info (captured in the caller's process for cast-based transitions).
-    caller_str =
-      case caller_info do
-        {caller_pid, caller_stack} when is_pid(caller_pid) ->
-          "caller_pid=#{inspect(caller_pid)} caller_stack=\n#{format_stacktrace(caller_stack)}"
-
-        _ ->
-          "caller_pid=N/A (same-process transition)"
-      end
-
-    extra_str =
-      case extra do
-        [] -> ""
-        fields -> " " <> Enum.map_join(fields, " ", fn {k, v} -> "#{k}=#{inspect(v)}" end)
-      end
-
-    Logger.warning(
-      "#{@failed_transition_prefix} task_id=#{task_id} source=#{source} " <>
-        "prev_status=#{inspect(prev_status)} result=#{inspect(result)}#{extra_str}\n" <>
-        "  current_stacktrace=\n#{stacktrace}\n" <>
-        "  #{caller_str}"
-    )
-  end
-
-  # Captures up to `n` frames of the current process stacktrace, skipping the
-  # internal logging helper frames (capture_stacktrace/log_failed_transition) so
-  # the first visible frame is the actual handler that triggered the transition.
-  # GenServer dispatch frames are also skipped. Returns a list of stacktrace
-  # entries. Note: we keep __MODULE__ frames because those are the handlers
-  # (handle_info/handle_cast/reconcile_task_status) that identify the caller.
-  defp capture_stacktrace(n) do
-    {:current_stacktrace, trace} = Process.info(self(), :current_stacktrace)
-
-    trace
-    |> Enum.drop_while(fn
-      {Process, :info, _, _} ->
-        true
-
-      {mod, fun, _, _}
-      when mod == __MODULE__ and fun in [:capture_stacktrace, :log_failed_transition] ->
-        true
-
-      {:gen_server, _, _, _} ->
-        true
-
-      _ ->
-        false
-    end)
-    |> Enum.take(n)
-  end
-
-  # Formats a stacktrace (list of {module, function, arity_or_file_info, location})
-  # into a readable, indented string, one frame per line.
-  defp format_stacktrace([]), do: "  (no stacktrace available)"
-
-  defp format_stacktrace(trace) do
-    Enum.map_join(trace, "\n", fn frame ->
-      "    #{format_stacktrace_frame(frame)}"
-    end)
-  end
-
-  defp format_stacktrace_frame({module, function, arity, location}) do
-    loc = format_location(location)
-    fun = format_function(function, arity)
-    "#{inspect(module)}.#{fun}#{loc}"
-  end
-
-  defp format_stacktrace_frame(other), do: "    #{inspect(other)}"
-
-  defp format_function(name, arity) when is_atom(name) and is_integer(arity),
-    do: "#{name}/#{arity}"
-
-  defp format_function(name, args) when is_atom(name) and is_list(args),
-    do: "#{name}(#{length(args)})"
-
-  defp format_function(other, _), do: inspect(other)
-
-  defp format_location([{file, line} | _]) when is_list(file) and is_integer(line),
-    do: " at #{List.to_string(file)}:#{line}"
-
-  defp format_location(_), do: ""
-
-  defp task_history_config do
-    defaults = %{max_tasks: 100, max_age_days: 14}
-    config = EvoGit.Config.resolve()[:task_history] || %{}
-    Map.merge(defaults, config)
-  end
-
-  defp cleanup_expired_tasks(state) do
-    config = task_history_config()
-    max_age_days = config.max_age_days
-    max_tasks = config.max_tasks
-    cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
-
-    all_tasks = select_all_tasks(state)
-
-    # Partition: age-expired finished tasks vs everything else
-    {age_expired, remaining} =
-      Enum.split_with(all_tasks, fn task ->
-        task.finished_at != nil and DateTime.compare(task.finished_at, cutoff) == :lt
-      end)
-
-    age_expired_keys = Enum.map(age_expired, fn task -> task.id end)
-
-    # From remaining finished tasks, enforce max_tasks limit (keep newest)
-    over_limit_keys =
-      remaining
-      |> Enum.filter(&(&1.finished_at != nil))
-      |> Enum.sort_by(& &1.finished_at, {:desc, DateTime})
-      |> Enum.drop(max_tasks)
-      |> Enum.map(fn task -> task.id end)
-
-    all_keys = age_expired_keys ++ over_limit_keys
-
-    if all_keys != [] do
-      EvoDash.Store.delete_tasks(state.task_store, all_keys)
-    end
-
-    :ok
   end
 
   # --- Recent Projects ---
@@ -950,196 +662,6 @@ defmodule EvoDash.TaskRegistry do
     end
   end
 
-  # --- Task Execution Helpers ---
-
-  # Builds the objective and runtime_opts for an evolve task that resumes from
-  # a previous task. Injects the previous task's context (commits, objective,
-  # result) into the new objective and sets :starting_commit to the previous
-  # task's end commit. Falls back gracefully if the previous task can't be
-  # found or has no useful data.
-  defp apply_resume_context(opts, task_id, resume_from_id) do
-    # Strip :resume_from so it never leaks into the runtime opts.
-    opts_without_resume = Keyword.delete(opts, :resume_from)
-
-    prev_task = get_task(resume_from_id)
-
-    {objective, runtime_opts} =
-      if is_nil(prev_task) do
-        # Previous task not found — run with the original objective.
-        objective = Keyword.get(opts_without_resume, :objective, "")
-
-        {_input_arg, runtime_opts} =
-          build_common_runtime_opts(opts_without_resume, task_id, :evolve)
-
-        {objective, runtime_opts}
-      else
-        context_block = build_resume_context_block(prev_task)
-
-        objective = Keyword.get(opts_without_resume, :objective, "")
-
-        objective =
-          if context_block != "", do: context_block <> "\n\n" <> objective, else: objective
-
-        # The previous task's commit_sha takes priority as :starting_commit.
-        prev_commit_sha = prev_task.commit_sha
-
-        opts_with_commit =
-          if is_binary(prev_commit_sha) and prev_commit_sha != "" do
-            Keyword.put(opts_without_resume, :starting_commit, prev_commit_sha)
-          else
-            opts_without_resume
-          end
-
-        {_input_arg, runtime_opts} = build_common_runtime_opts(opts_with_commit, task_id, :evolve)
-        {objective, runtime_opts}
-      end
-
-    {objective, runtime_opts}
-  end
-
-  defp build_resume_context_block(%TaskInfo{} = prev_task) do
-    base_sha = prev_task.base_sha
-    commit_sha = prev_task.commit_sha
-
-    commits_line =
-      cond do
-        is_binary(base_sha) and base_sha != "" and is_binary(commit_sha) and commit_sha != "" ->
-          "#{base_sha}..#{commit_sha}"
-
-        is_binary(commit_sha) and commit_sha != "" ->
-          commit_sha
-
-        true ->
-          nil
-      end
-
-    old_objective =
-      case prev_task.opts do
-        opts when is_list(opts) -> Keyword.get(opts, :objective) || Keyword.get(opts, :prompt)
-        _ -> nil
-      end
-
-    agent_response = extract_result_summary(prev_task.result)
-
-    parts = []
-
-    parts =
-      if commits_line do
-        parts ++ ["Previous task commits: #{commits_line}"]
-      else
-        parts
-      end
-
-    parts =
-      if is_binary(old_objective) and old_objective != "" do
-        parts ++ ["Previous task objective: #{old_objective}"]
-      else
-        parts
-      end
-
-    parts =
-      if is_binary(agent_response) and agent_response != "" do
-        parts ++ ["Previous task result:", agent_response]
-      else
-        parts
-      end
-
-    if parts == [] do
-      ""
-    else
-      "--- Previous Task Context ---\n" <>
-        Enum.join(parts, "\n") <> "\n--- End Previous Task Context ---"
-    end
-  end
-
-  defp build_resume_context_block(_), do: ""
-
-  defp extract_result_summary({:ok, %{result: summary}}) when is_binary(summary), do: summary
-
-  defp extract_result_summary({:ok, %{result: summary}}) when is_atom(summary),
-    do: to_string(summary)
-
-  defp extract_result_summary({:error, reason}), do: "Error: #{inspect(reason)}"
-  defp extract_result_summary({:exit, reason}), do: "Exited: #{inspect(reason)}"
-  defp extract_result_summary(_), do: nil
-
-  defp build_common_runtime_opts(opts, task_id, task_type) do
-    repo_path = Keyword.fetch!(opts, :path)
-    mode = Keyword.get(opts, :mode, "simple")
-    node_path = Keyword.get(opts, :node_path)
-
-    Application.ensure_all_started(:evo_git)
-
-    runtime_opts = [
-      repo_path: repo_path,
-      mode: mode_atom(task_type, mode),
-      task_id: task_id
-    ]
-
-    runtime_opts =
-      if node_path, do: Keyword.put(runtime_opts, :node_path, node_path), else: runtime_opts
-
-    seed_content = Keyword.get(opts, :seed_content)
-
-    runtime_opts =
-      if seed_content,
-        do: Keyword.put(runtime_opts, :seed_content, seed_content),
-        else: runtime_opts
-
-    starting_commit = Keyword.get(opts, :starting_commit)
-
-    runtime_opts =
-      if starting_commit,
-        do: Keyword.put(runtime_opts, :starting_commit, starting_commit),
-        else: runtime_opts
-
-    # Foreign repos are passed through opts from the dashboard (per-task scoping)
-    foreign_repos = Keyword.get(opts, :foreign_repos)
-
-    runtime_opts =
-      if foreign_repos,
-        do: Keyword.put(runtime_opts, :foreign_repos, foreign_repos),
-        else: runtime_opts
-
-    archive = Keyword.get(opts, :archive)
-
-    runtime_opts =
-      if archive,
-        do: Keyword.put(runtime_opts, :archive, archive),
-        else: runtime_opts
-
-    # Per-task model selection: threads the selected model profile id into
-    # the runtime opts so the scheduler uses that profile for this task.
-    # If nil/empty, the runtime falls back to the default (first) profile.
-    model_id = Keyword.get(opts, :model_id)
-
-    runtime_opts =
-      if model_id && model_id != "",
-        do: Keyword.put(runtime_opts, :model_id, model_id),
-        else: runtime_opts
-
-    {nil, runtime_opts}
-  end
-
-  defp evolution_mode_atom("simple"), do: :simple
-  defp evolution_mode_atom("complex"), do: :complex
-
-  defp evolution_mode_atom(other),
-    do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
-
-  defp genesis_mode_atom("new"), do: :new
-  defp genesis_mode_atom("existing"), do: :existing
-
-  defp genesis_mode_atom(other),
-    do: raise(ArgumentError, "invalid genesis mode: #{inspect(other)}")
-
-  # Dispatches to the correct mode resolver based on the task type, mirroring
-  # the core CLI (apps/evo_git/lib/evo_git/cli.ex) which has separate
-  # genesis_mode_atom/1 (new/existing) and evolution_mode_atom/1 (simple/complex)
-  # functions.
-  defp mode_atom(:genesis, mode), do: genesis_mode_atom(mode)
-  defp mode_atom(:evolve, mode), do: evolution_mode_atom(mode)
-
   ## GenServer Info Handlers
 
   @impl true
@@ -1158,7 +680,7 @@ defmodule EvoDash.TaskRegistry do
             # Log any transition INTO :failed. The core runtime normally only
             # broadcasts :finalizing on this topic, so :failed here is unexpected.
             if status == :failed do
-              log_failed_transition(task_id, :task_status_pubsub, task.status, result: nil)
+              Diagnostics.log_failed_transition(task_id, :task_status_pubsub, task.status, result: nil)
             end
 
             finished_at =
@@ -1176,7 +698,7 @@ defmodule EvoDash.TaskRegistry do
             EvoDash.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
-              cleanup_expired_tasks(state)
+              Cleanup.cleanup_expired_tasks(state.task_store)
               %{state | task_refs: Map.delete(state.task_refs, task_id)}
             else
               state
@@ -1228,7 +750,7 @@ defmodule EvoDash.TaskRegistry do
             nil -> nil
           end
 
-        log_failed_transition(task_id, :result_handler, prev_status, result: result)
+        Diagnostics.log_failed_transition(task_id, :result_handler, prev_status, result: result)
       end
 
       task_usage =
@@ -1293,7 +815,7 @@ defmodule EvoDash.TaskRegistry do
           # If so, the wrapper crashed but the real work is still ongoing — do NOT
           # mark as failed. The task will complete normally when the scheduler
           # eventually finishes and the result arrives via a different mechanism.
-          if sched_meta_has_active_agents?(task_id) do
+          if Lease.sched_meta_has_active_agents?(task_id) do
             Logger.info(
               "TaskRegistry: Task #{task_id} still has active agents in AgentScheduler — keeping as :running despite wrapper crash"
             )
@@ -1307,7 +829,7 @@ defmodule EvoDash.TaskRegistry do
                 nil -> nil
               end
 
-            log_failed_transition(task_id, :down_handler, prev_status,
+            Diagnostics.log_failed_transition(task_id, :down_handler, prev_status,
               result: "Task process exited: #{inspect(reason)}",
               extra: [
                 pid: inspect(pid),
@@ -1370,14 +892,14 @@ defmodule EvoDash.TaskRegistry do
       |> Enum.filter(fn task ->
         task.status == :running and
           task.id not in owned_ids and
-          not lease_valid?(task.lease_expires_at)
+          not Lease.lease_valid?(task.lease_expires_at)
       end)
       |> Enum.reduce(false, fn task, acc ->
-        if sched_meta_has_active_agents?(task.id) do
+        if Lease.sched_meta_has_active_agents?(task.id) do
           # Same VM, agents still active — skip (handled by :recheck_task)
           acc
         else
-          log_failed_transition(task.id, :lease_sweep, task.status,
+          Diagnostics.log_failed_transition(task.id, :lease_sweep, task.status,
             result: "Lease expired; owning instance no longer renewing",
             extra: [lease_expires_at: inspect(task.lease_expires_at)]
           )
@@ -1396,7 +918,7 @@ defmodule EvoDash.TaskRegistry do
       end)
 
     if changed do
-      cleanup_expired_tasks(state)
+      Cleanup.cleanup_expired_tasks(state.task_store)
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     end
 
@@ -1427,7 +949,7 @@ defmodule EvoDash.TaskRegistry do
         {:noreply, state}
 
       %TaskInfo{} = task ->
-        if sched_meta_has_active_agents?(task_id) do
+        if Lease.sched_meta_has_active_agents?(task_id) do
           # Agents still active — reschedule another check.
           Process.send_after(self(), {:recheck_task, task_id}, 30_000)
           {:noreply, state}
