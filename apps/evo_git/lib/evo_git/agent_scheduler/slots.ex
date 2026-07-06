@@ -45,6 +45,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   require Logger
 
   alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.Store
 
   @type slot_result ::
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
@@ -60,16 +61,15 @@ defmodule EvoGit.AgentScheduler.Slots do
   """
   @spec resolve_model_id(pos_integer(), State.t()) :: String.t()
   def resolve_model_id(agent_id, %State{} = state) do
-    case :ets.lookup_element(:evogit_agent_state, agent_id, 2, nil) do
+    case Store.get_model_id(agent_id) do
       nil ->
         State.default_model_id(state)
 
-      agent_state ->
-        case Map.get(agent_state, :model_id) do
-          nil -> State.default_model_id(state)
-          "" -> State.default_model_id(state)
-          model_id -> model_id
-        end
+      "" ->
+        State.default_model_id(state)
+
+      model_id ->
+        model_id
     end
   end
 
@@ -472,13 +472,12 @@ defmodule EvoGit.AgentScheduler.Slots do
     if this_score < best_score, do: entry, else: best
   end
 
-  # Looks up an agent's recursion depth from the scheduler ETS table.
-  # Uses :ets.lookup_element/4 to avoid wrapping in list and tuple overhead.
+  # Looks up an agent's recursion depth from the scheduler ETS table via Store.
   # Returns a large default if not found so unknown agents sort last.
   defp depth_of(agent_id) do
-    case :ets.lookup_element(:evogit_sched_meta, agent_id, 2, nil) do
+    case Store.depth_of(agent_id) do
       nil -> 999
-      meta -> meta.depth
+      depth -> depth
     end
   end
 
