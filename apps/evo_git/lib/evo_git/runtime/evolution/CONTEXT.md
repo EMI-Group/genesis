@@ -3,6 +3,10 @@
 ## Intent
 Implements the open-ended evolution engine for Mode B (Complex Evolution). Uses novelty search, quality diversity (MAP-Elites), and LLM-powered semantic crossover to discover creative solutions. The engine maintains a pool of cross-domain code fragments ("genetic material"), iteratively evolves them through crossover and mutation, synthesizes a solution from the most novel fragments, and applies it via a Manager agent.
 
+## Routing Table
+
+- `./seed_fragments/` → Seed fragment generation, LLM helpers, and built-in fragment generators
+
 ## API Surface
 
 ### Modules
@@ -11,7 +15,9 @@ Implements the open-ended evolution engine for Mode B (Complex Evolution). Uses 
 |--------|------|------------|-------------|
 | `EvoGit.Runtime.Evolution.Engine` | `engine.ex` | `run/5` | Main orchestrator. Runs the full evolution loop: initialize → evolve → synthesize → apply. Called from `Evolution.run_complex_mode/5`. Returns `{:ok, %{commit_sha, result, tag, branch_name, pr_url}}` or `{:error, reason}`. |
 | `EvoGit.Runtime.Evolution.Fragment` | `fragment.ex` | `new/2`, `extract_structural_features/1`, `to_feature_vector/1`, `summarize/1` | Core data structure — a code fragment with structural features, behavioral profile, novelty score, and lineage tracking. AST-based feature extraction for Elixir code. |
-| `EvoGit.Runtime.Evolution.SeedFragments` | `seed_fragments.ex` | `all/0`, `by_category/1`, `random/1`, `generate_with_llm/3` | 15 built-in cross-domain Elixir code fragments (physics, game dev, data pipelines, HTTP, graph algorithms, etc.) plus LLM-powered generation of additional diverse fragments. |
+| `EvoGit.Runtime.Evolution.SeedFragments` | `seed_fragments.ex` | `all/0`, `by_category/1`, `random/1`, `generate_with_llm/3`, `load_user_seeds/1`, `seeds_from_content/1` | Public entry point for seed fragment access, generation, and loading. Delegates generators to `SeedFragments.Generators` and LLM helpers to `SeedFragments.LLM`. |
+| `EvoGit.Runtime.Evolution.SeedFragments.Generators` | `seed_fragments/generators.ex` | `physics_fragment/0` ... `event_emitter_fragment/0` (15 total), `infer_language/1` | Fragment generator functions — one per domain. Pure data functions with no inter-dependencies. |
+| `EvoGit.Runtime.Evolution.SeedFragments.LLM` | `seed_fragments/llm.ex` | `build_generation_prompt/2`, `parse_code_blocks/1` | LLM prompt construction and response parsing for fragment generation. |
 | `EvoGit.Runtime.Evolution.EntropyPool` | `entropy_pool.ex` | `start_link/1`, `insert/1`, `insert_all/1`, `get/1`, `all/0`, `size/0`, `select_novel/1`, `select_random/1`, `evict_most_redundant/0`, `update_fragment/1`, `clear/0`, `stop/0` | ETS-backed GenServer storing Fragment structs. Supports novelty-ranked selection, random sampling, and automatic eviction of redundant fragments when pool exceeds `max_size`. |
 | `EvoGit.Runtime.Evolution.MapElites` | `map_elites.ex` | `start_link/1`, `insert/1`, `get_elites/0`, `get_elite/1`, `all_fragments/0`, `size/0`, `descriptor_for/1`, `clear/0`, `stop/0` | MAP-Elites quality diversity archive. Grid indexed by behavior descriptors (complexity × paradigm). Retains only the most novel fragment per cell. |
 | `EvoGit.Runtime.Evolution.NoveltyMetric` | `novelty_metric.ex` | `novelty_score/3`, `distance/2`, `batch_novelty_scores/3`, `structural_features/1`, `behavioral_profile/2`, `most_redundant/1` | Novelty search scoring via k-nearest-neighbor distance in feature space. Includes LLM-based behavioral profiling and pure AST structural analysis. |

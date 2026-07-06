@@ -62,6 +62,10 @@ defmodule EvoGit.AgentScheduler.State do
   - `tool_waiting` — FIFO queue of `{agent_id, from}` pairs blocked on a tool slot
   """
 
+  require Logger
+  alias EvoGit.AgentScheduler.Lifecycle
+  alias EvoGit.AgentScheduler.Slots
+
   @enforce_keys []
   defstruct initialized: false,
             initialized_repos: %{},
@@ -286,5 +290,110 @@ defmodule EvoGit.AgentScheduler.State do
   @spec all_model_ids(t()) :: [String.t()]
   def all_model_ids(%__MODULE__{} = state) do
     Map.keys(state.model_concurrency)
+  end
+
+  # --- Config Update ---
+
+  @doc """
+  Updates the scheduler state with the given runtime configuration options.
+
+  Returns a GenServer reply tuple `{:reply, :ok, state}`.
+  """
+  @spec do_update_config(keyword(), t()) :: {:reply, :ok, t()}
+  def do_update_config(opts, %__MODULE__{} = state) do
+    # Reload model profiles from config if model_profiles is being updated,
+    # or if llm_model is being updated (backward compat: updates default profile)
+    state =
+      if Keyword.has_key?(opts, :model_profiles) do
+        profiles = Keyword.get(opts, :model_profiles)
+        pool_state = from_model_profiles(profiles)
+        # Merge non-LLM fields from the old state
+        %__MODULE__{
+          pool_state
+          | initialized: state.initialized,
+            initialized_repos: state.initialized_repos,
+            agent_max_retries: Keyword.get(opts, :agent_max_retries, state.agent_max_retries),
+            max_depth: Keyword.get(opts, :max_depth, state.max_depth),
+            max_retries: Keyword.get(opts, :max_retries, state.max_retries),
+            max_turns: Keyword.get(opts, :max_turns, state.max_turns),
+            max_turns_root: Keyword.get(opts, :max_turns_root, state.max_turns_root),
+            next_agent_id: state.next_agent_id,
+            ref_to_agent: state.ref_to_agent,
+            queue: state.queue,
+            task_local_counters: state.task_local_counters,
+            task_agent_counts: state.task_agent_counts,
+            paused: state.paused,
+            tool_holders: state.tool_holders,
+            tool_waiting: state.tool_waiting,
+            max_tool_concurrency:
+              Keyword.get(opts, :max_tool_concurrency, state.max_tool_concurrency),
+            sandbox_mode: Keyword.get(opts, :sandbox_mode, state.sandbox_mode),
+            sandbox_resources: Keyword.get(opts, :sandbox_resources, state.sandbox_resources),
+            sandbox_process_resources:
+              Keyword.get(opts, :sandbox_process_resources, state.sandbox_process_resources)
+        }
+      else
+        state
+      end
+
+    # Apply all field updates
+    state =
+      state
+      |> maybe_update(:max_concurrency, opts)
+      |> maybe_update(:agent_max_retries, opts)
+      |> maybe_update(:max_depth, opts)
+      |> maybe_update(:llm_model, opts)
+      |> maybe_update(:max_retries, opts)
+      |> maybe_update(:max_turns, opts)
+      |> maybe_update(:max_turns_root, opts)
+      |> maybe_update(:max_tool_concurrency, opts)
+      |> maybe_update(:sandbox_mode, opts)
+      |> maybe_update(:sandbox_resources, opts)
+      |> maybe_update(:sandbox_process_resources, opts)
+      |> maybe_update(:llm_generation_params, opts)
+
+    # Propagate sandbox resource changes to the live slice (Linux only)
+    state =
+      if Keyword.has_key?(opts, :sandbox_resources) and EvoGit.Platform.linux?() do
+        resources = Keyword.get(opts, :sandbox_resources)
+
+        case EvoGit.SandboxSlice.update_resources(resources) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Failed to update sandbox slice resources: #{inspect(reason)}")
+        end
+
+        state
+      else
+        state
+      end
+
+    # Grant any newly-available slots to waiting agents
+    {state, status_updates} = Slots.grant_pending_on_resume(state)
+    Lifecycle.apply_status_updates(status_updates)
+
+    Logger.info(
+      "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
+        "max_tool_concurrency: #{state.max_tool_concurrency}, " <>
+        "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
+    )
+
+    EvoGit.AgentScheduler.PubSub.broadcast_config_updated()
+
+    {:reply, :ok, state}
+  end
+
+  @doc """
+  Conditionally updates a single field in the state struct from the given opts keyword list.
+  If the key is not present in opts, returns the state unchanged.
+  """
+  @spec maybe_update(t(), atom(), keyword()) :: t()
+  def maybe_update(%__MODULE__{} = state, key, opts) do
+    case Keyword.fetch(opts, key) do
+      {:ok, value} -> struct(state, [{key, value}])
+      :error -> state
+    end
   end
 end
