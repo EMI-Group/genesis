@@ -5,6 +5,8 @@ defmodule EvoGit.SystemCheck do
   Provides safe, structured diagnostic data about configuration, tool availability,
   sandbox capabilities, supervisor health, and LLM connectivity. All public functions
   are wrapped in try/rescue so they never crash the LiveView caller process.
+  `run_all_checks/0` delegates to individually-protected functions and does not
+  have its own rescue — each called function is already crash-safe.
   """
 
   require Logger
@@ -236,6 +238,10 @@ defmodule EvoGit.SystemCheck do
   Returns `%{config: map(), tools: map(), sandbox: map(), supervisor: map(), nix: map()}`.
   """
   @spec run_all_checks() :: map()
+  # No try/rescue needed here: each called function (config_check/0, tool_check/0,
+  # sandbox_check/0, supervisor_check/0, nix_check/0) is individually crash-safe
+  # with its own rescue at the centralized exception boundary. A second layer
+  # would only mask bugs in the rescue blocks themselves.
   def run_all_checks do
     %{
       config: config_check(),
@@ -244,11 +250,6 @@ defmodule EvoGit.SystemCheck do
       supervisor: supervisor_check(),
       nix: nix_check()
     }
-  rescue
-    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
-    e ->
-      Logger.warning("SystemCheck run_all_checks failed: #{Exception.message(e)}")
-      %{error: Exception.message(e)}
   end
 
   # ---------------------------------------------------------------------------
