@@ -18,7 +18,8 @@ defmodule EvoDash.TaskInfo do
     base_sha: nil,
     commit_sha: nil,
     archive_metadata: nil,
-    lease_expires_at: nil
+    lease_expires_at: nil,
+    model_id: nil
   ]
 
   @type t :: %__MODULE__{
@@ -37,6 +38,7 @@ defmodule EvoDash.TaskInfo do
           base_sha: String.t() | nil,
           commit_sha: String.t() | nil,
           archive_metadata: [map()] | nil,
-          lease_expires_at: integer() | nil
+          lease_expires_at: integer() | nil,
+          model_id: String.t() | nil
         }
 end
