@@ -40,7 +40,7 @@ defmodule EvoDashWeb.SettingsLive do
       <% end %>
 
       <%!-- Config Status Warning --%>
-      <%= if not @config_status.ok? do %>
+      <%= if @config_status && not @config_status.ok? do %>
         <div class="mb-4 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
           <div>
