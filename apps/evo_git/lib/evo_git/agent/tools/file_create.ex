@@ -4,7 +4,6 @@ defmodule EvoGit.Agent.Tools.FileCreate do
   """
 
   alias EvoGit.Agent.Tools.Shared
-  alias EvoGit.Adapters.Git
 
   @doc """
   Returns the tool schema for ReqLLM.

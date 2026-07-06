@@ -4,7 +4,6 @@ defmodule EvoGit.Agent.Tools.MakeDir do
   """
 
   alias EvoGit.Agent.Tools.Shared
-  alias EvoGit.Adapters.Git
 
   @keep_file_options ~w(CONTEXT.md .gitkeep none)
 
