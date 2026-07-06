@@ -113,6 +113,12 @@ defmodule EvoGit.Config do
   @doc false
   def __migrate_llm_models__(config), do: migrate_llm_models(config)
 
+  @doc false
+  def __strip_flat_llm_fields__(config), do: strip_flat_llm_fields(config)
+
+  @doc false
+  def __stringify_keys__(config), do: stringify_keys(config)
+
   @doc """
   Returns the fully merged configuration map (defaults + user config).
 
@@ -429,12 +435,71 @@ defmodule EvoGit.Config do
 
         with :ok <- File.mkdir_p(dir),
              config = Map.delete(config, :evolution),
+             config = strip_flat_llm_fields(config),
              string_config = stringify_keys(config),
              {:ok, toml} <- TomlElixir.encode(string_config) do
           File.write(path, toml)
         else
           {:error, reason} -> {:error, reason}
         end
+    end
+  end
+
+  # Strips flat LLM generation-parameter fields from the config before writing
+  # to disk, but ONLY when `llm.models` is present and non-empty. This ensures
+  # the saved TOML uses the multi-model `[[llm.models]]` format exclusively and
+  # does not carry redundant flat `[llm].model` / `.temperature` / etc. mirrors
+  # that `migrate_llm_models/1` adds for backward-compat API access.
+  #
+  # This operates on the resolved config (atom-keyed) but is defensive about
+  # string keys too. It returns a NEW map; it never mutates the caller's config.
+  #
+  # Fields stripped (only when models is non-empty):
+  #   :model, :temperature, :max_tokens, :reasoning_effort,
+  #   :top_p, :top_k, :frequency_penalty, :presence_penalty
+  #
+  # Fields KEPT in llm: :models, :compression_threshold_tokens, and anything else.
+  @flat_llm_gen_param_keys ~w(model temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty)a
+
+  defp strip_flat_llm_fields(config) when is_map(config) do
+    llm = get_key(config, :llm)
+
+    case llm do
+      llm when is_map(llm) ->
+        models = get_key(llm, :models)
+
+        if is_list(models) and models != [] do
+          stripped_llm =
+            Enum.reduce(@flat_llm_gen_param_keys, llm, fn key, acc ->
+              acc
+              |> Map.delete(key)
+              |> Map.delete(Atom.to_string(key))
+            end)
+
+          put_key(config, :llm, stripped_llm)
+        else
+          config
+        end
+
+      _ ->
+        config
+    end
+  end
+
+  # Reads a key from a map, checking both the atom and string forms.
+  defp get_key(map, key) when is_map(map) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
+  end
+
+  # Puts a key into a map, preserving the original key type when possible.
+  defp put_key(map, key, value) do
+    if Map.has_key?(map, Atom.to_string(key)) and not Map.has_key?(map, key) do
+      Map.put(map, Atom.to_string(key), value)
+    else
+      Map.put(map, key, value)
     end
   end
 
@@ -445,6 +510,10 @@ defmodule EvoGit.Config do
     end)
     |> Enum.reject(fn {_k, v} -> v == nil end)
     |> Map.new()
+  end
+
+  defp stringify_keys(list) when is_list(list) do
+    Enum.map(list, &stringify_keys/1)
   end
 
   defp stringify_keys(nil), do: nil
