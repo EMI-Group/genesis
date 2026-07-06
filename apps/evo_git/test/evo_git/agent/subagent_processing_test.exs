@@ -5,6 +5,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   alias EvoGit.Agent.SubagentProcessing
   alias EvoGit.Core.ForeignRepo
 
+  alias EvoGit.Agent.Usage
+
   describe "resolve_subagent_path/3" do
     setup do
       foreign_repos = [
@@ -360,6 +362,164 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert result =~ "abc123"
       assert result =~ "# Result"
       assert result =~ "# Final Commit"
+    end
+  end
+
+  describe "accumulate_subagent_usages/1" do
+    test "returns zero usage for empty list" do
+      assert SubagentProcessing.accumulate_subagent_usages([]) == Usage.zero()
+    end
+
+    test "accumulates a single subagent's usage correctly" do
+      usage = %Usage{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        input_cost: 0.01,
+        output_cost: 0.02,
+        total_cost: 0.03,
+        cached_tokens: 20,
+        cache_creation_tokens: 5
+      }
+
+      result = %Result{result: "done", commit_sha: "abc123", usage: usage}
+
+      accumulated = SubagentProcessing.accumulate_subagent_usages([{:ok, result}])
+
+      assert accumulated.input_tokens == 100
+      assert accumulated.output_tokens == 50
+      assert accumulated.total_tokens == 150
+      assert accumulated.input_cost == 0.01
+      assert accumulated.output_cost == 0.02
+      assert accumulated.total_cost == 0.03
+      assert accumulated.cached_tokens == 20
+      assert accumulated.cache_creation_tokens == 5
+    end
+
+    test "sums usages from multiple subagents" do
+      usage1 = %Usage{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        input_cost: 0.01,
+        output_cost: 0.02,
+        total_cost: 0.03,
+        cached_tokens: 10,
+        cache_creation_tokens: 2
+      }
+
+      usage2 = %Usage{
+        input_tokens: 200,
+        output_tokens: 100,
+        total_tokens: 300,
+        input_cost: 0.02,
+        output_cost: 0.04,
+        total_cost: 0.06,
+        cached_tokens: 15,
+        cache_creation_tokens: 3
+      }
+
+      result1 = %Result{result: "done1", commit_sha: "abc", usage: usage1}
+      result2 = %Result{result: "done2", commit_sha: "def", usage: usage2}
+
+      accumulated =
+        SubagentProcessing.accumulate_subagent_usages([{:ok, result1}, {:ok, result2}])
+
+      assert accumulated.input_tokens == 300
+      assert accumulated.output_tokens == 150
+      assert accumulated.total_tokens == 450
+      assert accumulated.input_cost == 0.03
+      assert accumulated.output_cost == 0.06
+      assert accumulated.total_cost == 0.09
+      assert accumulated.cached_tokens == 25
+      assert accumulated.cache_creation_tokens == 5
+    end
+
+    test "skips {:error, _} results gracefully" do
+      usage = %Usage{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        input_cost: 0.01,
+        output_cost: 0.02,
+        total_cost: 0.03,
+        cached_tokens: 0,
+        cache_creation_tokens: 0
+      }
+
+      ok_result = %Result{result: "ok", commit_sha: "abc", usage: usage}
+      error_result = {:error, :some_reason}
+
+      accumulated =
+        SubagentProcessing.accumulate_subagent_usages([{:ok, ok_result}, error_result])
+
+      # Only the ok result's usage should be counted
+      assert accumulated.input_tokens == 100
+      assert accumulated.output_tokens == 50
+      assert accumulated.total_tokens == 150
+    end
+
+    test "handles nil usage in Result gracefully" do
+      result_with_nil_usage = %Result{result: "done", commit_sha: "abc123", usage: nil}
+
+      accumulated =
+        SubagentProcessing.accumulate_subagent_usages([{:ok, result_with_nil_usage}])
+
+      # Should return zero usage, not crash
+      assert accumulated == Usage.zero()
+    end
+
+    test "handles mixed nil and valid usages" do
+      valid_usage = %Usage{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        input_cost: 0.01,
+        output_cost: 0.02,
+        total_cost: 0.03,
+        cached_tokens: 0,
+        cache_creation_tokens: 0
+      }
+
+      ok_with_usage = %Result{result: "ok", commit_sha: "abc", usage: valid_usage}
+      ok_with_nil = %Result{result: "nil", commit_sha: "def", usage: nil}
+      error = {:error, :some_error}
+
+      accumulated =
+        SubagentProcessing.accumulate_subagent_usages([
+          {:ok, ok_with_usage},
+          {:ok, ok_with_nil},
+          error
+        ])
+
+      # Only the valid usage should be counted
+      assert accumulated.input_tokens == 100
+      assert accumulated.output_tokens == 50
+      assert accumulated.total_tokens == 150
+    end
+
+    test "preserves cached_tokens and cache_creation_tokens" do
+      usage = %Usage{
+        input_tokens: 500,
+        output_tokens: 200,
+        total_tokens: 700,
+        input_cost: 0.05,
+        output_cost: 0.04,
+        total_cost: 0.09,
+        cached_tokens: 300,
+        cache_creation_tokens: 50
+      }
+
+      result = %Result{result: "done", commit_sha: "abc", usage: usage}
+
+      accumulated = SubagentProcessing.accumulate_subagent_usages([{:ok, result}])
+
+      assert accumulated.cached_tokens == 300
+      assert accumulated.cache_creation_tokens == 50
+
+      # Also verify the cache hit rate calculation still works
+      # (cached_tokens / input_tokens * 100 = 300/500 * 100 = 60.0)
+      assert_in_delta Usage.cache_hit_rate(accumulated), 60.0, 0.01
     end
   end
 end
