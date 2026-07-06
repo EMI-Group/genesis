@@ -5,6 +5,7 @@ defmodule EvoDashWeb.SettingsLive do
   """
   use EvoDashWeb, :live_view
   alias EvoGit.Config.Schema
+  alias EvoDash.SettingsUtils
 
   @impl true
   def render(assigns) do
@@ -762,21 +763,21 @@ defmodule EvoDashWeb.SettingsLive do
   defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
 
   defp maybe_put_int(map, key, raw, default) do
-    case parse_int(raw) do
+    case SettingsUtils.parse_int(raw) do
       nil -> Map.put(map, key, default)
       int -> Map.put(map, key, int)
     end
   end
 
   defp maybe_put_int(map, key, raw) do
-    case parse_int(raw) do
+    case SettingsUtils.parse_int(raw) do
       nil -> map
       int -> Map.put(map, key, int)
     end
   end
 
   defp maybe_put_float(map, key, raw) do
-    case parse_float(raw) do
+    case SettingsUtils.parse_float(raw) do
       nil -> map
       float -> Map.put(map, key, float)
     end
@@ -852,11 +853,11 @@ defmodule EvoDashWeb.SettingsLive do
     {category_config, emptied_paths} = params_to_category_config(params, category, schemas)
 
     # Deep merge into file_config
-    merged = deep_merge(file_config, category_config)
+    merged = SettingsUtils.deep_merge(file_config, category_config)
 
     # Delete keys that were explicitly emptied
     Enum.reduce(emptied_paths, merged, fn key_path, acc ->
-      deep_delete(acc, key_path)
+      SettingsUtils.deep_delete(acc, key_path)
     end)
   end
 
@@ -880,16 +881,16 @@ defmodule EvoDashWeb.SettingsLive do
             :explicitly_empty
 
           schema.type in [:pos_integer, :non_neg_integer, :integer] ->
-            parse_int(value)
+            SettingsUtils.parse_int(value)
 
           schema.type == :float ->
-            parse_float(value)
+            SettingsUtils.parse_float(value)
 
           schema.type in [:string, :model_spec] ->
             value
 
           schema.type == :atom ->
-            parse_atom(value, schema)
+            SettingsUtils.parse_atom(value, schema)
         end
 
       cond do
@@ -900,7 +901,7 @@ defmodule EvoDashWeb.SettingsLive do
           {config_acc, emptied_acc}
 
         true ->
-          {deep_put(config_acc, schema.key_path, parsed), emptied_acc}
+          {SettingsUtils.deep_put(config_acc, schema.key_path, parsed), emptied_acc}
       end
     end)
   end
@@ -908,16 +909,16 @@ defmodule EvoDashWeb.SettingsLive do
   defp update_runtime_from_file_config(file_config, socket) do
     updates =
       []
-      |> maybe_add_kw(:max_concurrency, get_in(file_config, [:scheduler, :max_concurrency]))
-      |> maybe_add_kw(
+      |> SettingsUtils.maybe_add_kw(:max_concurrency, get_in(file_config, [:scheduler, :max_concurrency]))
+      |> SettingsUtils.maybe_add_kw(
         :max_tool_concurrency,
         get_in(file_config, [:scheduler, :max_tool_concurrency])
       )
-      |> maybe_add_kw(:agent_max_retries, get_in(file_config, [:scheduler, :agent_max_retries]))
-      |> maybe_add_kw(:max_agent_depth, get_in(file_config, [:scheduler, :max_agent_depth]))
-      |> maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))
-      |> maybe_add_kw(:max_turns, get_in(file_config, [:scheduler, :max_turns]))
-      |> maybe_add_kw(:max_turns_root, get_in(file_config, [:scheduler, :max_turns_root]))
+      |> SettingsUtils.maybe_add_kw(:agent_max_retries, get_in(file_config, [:scheduler, :agent_max_retries]))
+      |> SettingsUtils.maybe_add_kw(:max_agent_depth, get_in(file_config, [:scheduler, :max_agent_depth]))
+      |> SettingsUtils.maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))
+      |> SettingsUtils.maybe_add_kw(:max_turns, get_in(file_config, [:scheduler, :max_turns]))
+      |> SettingsUtils.maybe_add_kw(:max_turns_root, get_in(file_config, [:scheduler, :max_turns_root]))
 
     # Note: :tools config (e.g., web_search) is read from EvoGit.Config.resolve()
     # at execution time — no runtime push needed here.
@@ -926,7 +927,7 @@ defmodule EvoDashWeb.SettingsLive do
     # derives the model + generation params from the default profile internally.
     # We no longer push :llm_model / :llm_generation_params separately.
     updates =
-      maybe_add_kw(updates, :model_profiles, Schema.model_profiles(file_config))
+      SettingsUtils.maybe_add_kw(updates, :model_profiles, Schema.model_profiles(file_config))
 
     if updates != [] do
       case EvoGit.AgentScheduler.update_config(updates) do
@@ -981,38 +982,6 @@ defmodule EvoDashWeb.SettingsLive do
     Enum.flat_map(per_category_errors, fn {_cat, errors} -> errors end)
   end
 
-  defp parse_int(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, ""} -> int
-      _ -> nil
-    end
-  end
-
-  defp parse_int(_), do: nil
-
-  defp parse_float(value) when is_binary(value) do
-    case Float.parse(value) do
-      {float, ""} -> float
-      _ -> nil
-    end
-  end
-
-  defp parse_float(_), do: nil
-
-  defp parse_atom(value, schema) when is_binary(value) and value != "" do
-    # Convert a form string to an atom using a whitelist derived from the
-    # schema validation (`[in: [...]]`), avoiding String.to_atom/to_existing_atom
-    # on untrusted input (atom-table exhaustion / crashes). Unknown values
-    # return nil so downstream validation can report them.
-    allowed_atoms = schema[:validation][:in] || []
-
-    Enum.find_value(allowed_atoms, fn atom ->
-      if Atom.to_string(atom) == value, do: atom
-    end)
-  end
-
-  defp parse_atom(_, _), do: nil
-
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: untrusted-string → atom whitelists
   #
@@ -1039,50 +1008,4 @@ defmodule EvoDashWeb.SettingsLive do
       variants -> Map.new(variants, fn v -> {Atom.to_string(v.id), v.id} end)
     end
   end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: map operations
-  # ───────────────────────────────────────────────────────────────────────────
-
-  defp deep_put(map, [key], value) do
-    Map.put(map, key, value)
-  end
-
-  defp deep_put(map, [key | rest], value) do
-    existing = Map.get(map, key, %{})
-    Map.put(map, key, deep_put(existing, rest, value))
-  end
-
-  defp deep_merge(map1, map2) when is_map(map1) and is_map(map2) do
-    Map.merge(map1, map2, fn _key, v1, v2 ->
-      if is_map(v1) and is_map(v2) do
-        deep_merge(v1, v2)
-      else
-        v2
-      end
-    end)
-  end
-
-  defp deep_delete(map, [key]) do
-    Map.delete(map, key)
-  end
-
-  defp deep_delete(map, [key | rest]) do
-    case Map.get(map, key) do
-      nested when is_map(nested) ->
-        updated = deep_delete(nested, rest)
-
-        if updated == %{} do
-          Map.delete(map, key)
-        else
-          Map.put(map, key, updated)
-        end
-
-      _ ->
-        map
-    end
-  end
-
-  defp maybe_add_kw(list, _key, nil), do: list
-  defp maybe_add_kw(list, key, value), do: Keyword.put(list, key, value)
 end
