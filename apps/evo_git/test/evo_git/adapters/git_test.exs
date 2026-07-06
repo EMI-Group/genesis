@@ -241,4 +241,59 @@ defmodule EvoGit.Adapters.GitTest do
       assert {:ok, ^second_sha} = Git.rev_parse(tmp_dir, ref_name)
     end
   end
+
+  describe "GIT_EDITOR configuration" do
+    test "true executable is resolved to a non-nil path ending in 'true'", %{tmp_dir: tmp_dir} do
+      # The resolved `true` path is memoized via :persistent_term; clear the cache
+      # so we exercise the real resolution path regardless of test ordering.
+      :persistent_term.erase({EvoGit.Adapters.Git, :true_path})
+
+      # Trigger git_env() resolution by invoking run/2, which populates the cache.
+      {:ok, _} = Git.run(["status", "--porcelain"], tmp_dir)
+
+      resolved = :persistent_term.get({EvoGit.Adapters.Git, :true_path}, nil)
+      assert is_binary(resolved)
+      assert String.ends_with?(resolved, "true")
+    end
+
+    test "run/2 wires GIT_EDITOR so git reports a no-op editor", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      # `git var GIT_EDITOR` prints the editor git would launch. With GIT_EDITOR
+      # set to the `true` executable, this resolves to a path/name ending in
+      # "true" (a no-op), proving the env is passed through to the git subprocess.
+      assert {:ok, editor} = Git.run(["var", "GIT_EDITOR"], tmp_dir)
+      assert String.ends_with?(editor, "true")
+    end
+
+    test "merge does not block on an interactive editor", %{tmp_dir: tmp_dir} do
+      # Two divergent branches that would both modify the same file. A merge that
+      # completes without conflict should NOT open an editor. This exercises the
+      # merge path with GIT_EDITOR wired in.
+      File.write!(Path.join(tmp_dir, "a.txt"), "initial\n")
+      Git.add(tmp_dir, "a.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, base} = Git.rev_parse(tmp_dir, "HEAD")
+
+      # Create a second branch with a non-conflicting change.
+      Git.create_branch(tmp_dir, "feature", base)
+      File.write!(Path.join(tmp_dir, "b.txt"), "feature\n")
+      Git.add(tmp_dir, "b.txt")
+      Git.commit(tmp_dir, "Feature commit")
+
+      # Back to main, merge the feature branch (fast-forward not possible due
+      # to being on the branch — create a divergent commit on main first).
+      Git.checkout(tmp_dir, "master")
+      File.write!(Path.join(tmp_dir, "c.txt"), "main\n")
+      Git.add(tmp_dir, "c.txt")
+      Git.commit(tmp_dir, "Main commit")
+
+      # Resolve the feature branch SHA and merge it.
+      {:ok, feature_sha} = Git.rev_parse(tmp_dir, "feature")
+      assert {:ok, _} = Git.merge(tmp_dir, feature_sha)
+    end
+  end
 end
