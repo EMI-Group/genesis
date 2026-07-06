@@ -213,12 +213,7 @@ defmodule EvoGit.AgentScheduler do
   Called by agent processes every turn.
   """
   @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t()} | :error
-  def get_agent_state(agent_id) do
-    case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %AgentState{} = agent_state}] -> {:ok, agent_state}
-      [] -> :error
-    end
-  end
+  def get_agent_state(agent_id), do: Store.get_agent_state(agent_id)
 
   @doc """
   Updates the phylo_node for the given agent in the agent state table.
@@ -226,14 +221,9 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_phylo_node(pos_integer(), PhyloGraphNode.t()) :: :ok | :error
   def update_phylo_node(agent_id, %PhyloGraphNode{} = phylo_node) do
-    case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %AgentState{} = agent_state}] ->
-        :ets.insert(@agent_table, {agent_id, %AgentState{agent_state | phylo_node: phylo_node}})
-        :ok
-
-      [] ->
-        :error
-    end
+    {:ok, agent_state} = Store.get_agent_state(agent_id)
+    updated = %{agent_state | phylo_node: phylo_node}
+    Store.put_agent_state(agent_id, updated)
   end
 
   @doc """
@@ -243,10 +233,8 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec get_foreign_repo_commits(pos_integer()) :: %{atom() => String.t()}
   def get_foreign_repo_commits(agent_id) do
-    case :ets.lookup_element(@sched_table, agent_id, 2) do
-      %{foreign_repo_commits: frc} when is_map(frc) -> frc
-      _ -> %{}
-    end
+    {:ok, meta} = Store.get_sched_meta(agent_id)
+    meta.foreign_repo_commits
   end
 
   @doc """
@@ -546,7 +534,7 @@ defmodule EvoGit.AgentScheduler do
     # 1. Scan :evogit_sched_meta ETS to find top-level agent whose meta.from contains caller_pid
     #    The meta.from is a GenServer.from() tuple: {pid, ref} where pid is the calling process
     top_level_agent =
-      :ets.tab2list(@sched_table)
+      Store.list_sched_meta()
       |> Enum.find(fn
         {_id, %SchedMeta{depth: 0, from: {pid, _}}} -> pid == caller_pid
         _ -> false
@@ -563,7 +551,7 @@ defmodule EvoGit.AgentScheduler do
 
         # 2. Find ALL agents with this task_id
         agent_ids =
-          :ets.tab2list(@sched_table)
+          Store.list_sched_meta()
           |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
           |> Enum.map(fn {id, _meta} -> id end)
 
@@ -607,7 +595,7 @@ defmodule EvoGit.AgentScheduler do
         # 6. Cancel agents in reverse depth order (leaf subagents first, then parents)
         #    Sort by depth descending so deepest agents are cancelled first
         sorted_agents =
-          :ets.tab2list(@sched_table)
+          Store.list_sched_meta()
           |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
           |> Enum.sort_by(fn {_id, %SchedMeta{depth: d}} -> d end, :desc)
           |> Enum.map(fn {id, _meta} -> id end)
