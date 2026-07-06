@@ -20,6 +20,12 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   # --- Initialization ---
 
   @doc """
+  Returns the path to the workers directory for a given repo root.
+  """
+  @spec workers_dir(String.t()) :: String.t()
+  def workers_dir(repo_root), do: Path.join(repo_root, ".genesis/workers")
+
+  @doc """
   Ensures the worktree pool is initialized for the given repo path.
 
   Handles the following cases:
@@ -69,7 +75,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
           "creating worker directory for new repo"
       end)
 
-      worker_base = Path.join(new_root, ".genesis/workers")
+      worker_base = workers_dir(new_root)
       File.mkdir_p!(worker_base)
 
       %State{state | initialized_repos: Map.put(state.initialized_repos, new_root, true)}
@@ -84,7 +90,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   end
 
   defp do_initialize(%State{} = state, repo_root) do
-    worker_base = Path.join(repo_root, ".genesis/workers")
+    worker_base = workers_dir(repo_root)
 
     Logger.info("AgentScheduler: Initializing worktree directory at #{worker_base}")
 
@@ -112,7 +118,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @spec teardown_worktrees(State.t(), String.t()) :: State.t()
 
   def teardown_worktrees(%State{} = state, repo_root) when is_binary(repo_root) do
-    worker_base = Path.join(repo_root, ".genesis/workers")
+    worker_base = workers_dir(repo_root)
     File.rm_rf!(worker_base)
     Git.prune_worktrees(repo_root)
     %State{state | initialized: false}

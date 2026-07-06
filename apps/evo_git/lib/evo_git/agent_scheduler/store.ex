@@ -87,6 +87,52 @@ defmodule EvoGit.AgentScheduler.Store do
   # --- ETS Helpers (Agent History Table) ---
 
   @doc """
+  Returns all entries from the scheduler metadata table as a list of
+  `{agent_id, %SchedMeta{}}` tuples.
+  """
+  @spec list_sched_meta() :: [{pos_integer(), SchedMeta.t()}]
+  def list_sched_meta, do: :ets.tab2list(@sched_table)
+
+  @doc """
+  Looks up task identification info for an agent from both ETS tables.
+  Returns `{:ok, task_id, task_number, task_local_id}` or `{:error, :not_found}`.
+  """
+  @spec get_task_info(pos_integer()) ::
+          {:ok, binary(), pos_integer() | nil, pos_integer()} | {:error, :not_found}
+  def get_task_info(agent_id) do
+    with {:ok, meta} <- get_sched_meta(agent_id),
+         {:ok, agent_state} <- get_agent_state(agent_id) do
+      {:ok, meta.task_id, meta.task_number, agent_state.task_local_id}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Reads the model_id from the agent state table for the given agent.
+  Returns the model_id string or `nil` if the agent is not found.
+  """
+  @spec get_model_id(pos_integer()) :: String.t() | nil
+  def get_model_id(agent_id) do
+    case :ets.lookup_element(@agent_table, agent_id, 2, nil) do
+      nil -> nil
+      agent_state -> Map.get(agent_state, :model_id)
+    end
+  end
+
+  @doc """
+  Looks up the recursion depth for the given agent from the scheduler metadata table.
+  Returns the depth integer or `nil` if the agent is not found.
+  """
+  @spec depth_of(pos_integer()) :: non_neg_integer() | nil
+  def depth_of(agent_id) do
+    case :ets.lookup_element(@sched_table, agent_id, 2, nil) do
+      nil -> nil
+      meta -> meta.depth
+    end
+  end
+
+  @doc """
   Gets the conversation context for an agent from the agent state table.
   Returns the context or nil if not set.
   """

@@ -110,7 +110,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   """
   @spec next_task_number(String.t()) :: pos_integer()
   def next_task_number(repo_root) do
-    workers_dir = Path.join(repo_root, ".genesis/workers")
+    workers_dir = Worktrees.workers_dir(repo_root)
 
     case File.ls(workers_dir) do
       {:ok, entries} ->
