@@ -63,6 +63,21 @@ defmodule EvoGit.Agent.Tools.RipgrepTest do
     end
   end
 
+  describe "execute/4 - double-encoded array recovery" do
+    test "JSON-encoded string array is auto-parsed and executes successfully", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "sample.ex"), "defmodule Foo do\n  def bar, do: :ok\nend\n")
+
+      encoded_args = Jason.encode!(["defmodule", "."])
+
+      result = Tools.execute("rg", %{"args" => encoded_args}, tmp_dir, tmp_dir)
+
+      # Recovery succeeds — the tool runs and finds the match (NOT an array error).
+      assert result =~ "Command executed successfully"
+      assert result =~ "defmodule Foo"
+      refute result =~ "must be an array"
+    end
+  end
+
   describe "execute/4 - normal operation" do
     test "normal search still works without hint text", %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "sample.ex"), "defmodule Foo do\n  def bar, do: :ok\nend\n")

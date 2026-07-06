@@ -400,7 +400,12 @@ defmodule EvoGit.Agent.ToolsTest do
       result =
         Tools.execute(
           "edit_context",
-          %{"dir_path" => "lib", "old_string" => "Some content here", "new_string" => "Updated content", "commit" => false},
+          %{
+            "dir_path" => "lib",
+            "old_string" => "Some content here",
+            "new_string" => "Updated content",
+            "commit" => false
+          },
           tmp_dir
         )
 
@@ -438,7 +443,12 @@ defmodule EvoGit.Agent.ToolsTest do
       result =
         Tools.execute(
           "edit_context",
-          %{"dir_path" => "lib", "old_string" => "hello", "new_string" => "hi", "commit" => false},
+          %{
+            "dir_path" => "lib",
+            "old_string" => "hello",
+            "new_string" => "hi",
+            "commit" => false
+          },
           tmp_dir
         )
 
@@ -559,7 +569,12 @@ defmodule EvoGit.Agent.ToolsTest do
       result =
         Tools.execute(
           "edit_context",
-          %{"dir_path" => "lib", "old_string" => "world", "new_string" => "elixir   \n\n", "commit" => false},
+          %{
+            "dir_path" => "lib",
+            "old_string" => "world",
+            "new_string" => "elixir   \n\n",
+            "commit" => false
+          },
           tmp_dir
         )
 
@@ -572,6 +587,43 @@ defmodule EvoGit.Agent.ToolsTest do
     test "returns error for unknown tool", %{tmp_dir: tmp_dir} do
       result = Tools.execute("unknown_tool", %{}, tmp_dir)
       assert result =~ "Unknown tool"
+    end
+  end
+
+  describe "execute/4 - whole args as JSON string fallback" do
+    test "recovers when entire args object is a JSON-encoded string", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "test.txt")
+      File.write!(file_path, "hello world")
+
+      # The model double-encodes the WHOLE arguments object as a string.
+      encoded = Jason.encode!(%{"file_path" => "test.txt"})
+
+      result = Tools.execute("read_file", encoded, tmp_dir)
+
+      # Recovery succeeds — the tool reads the file normally.
+      assert result =~ "hello world"
+      refute result =~ "JSON-encoded string"
+    end
+
+    test "returns a helpful string error when the string does not decode to a map", %{
+      tmp_dir: tmp_dir
+    } do
+      result = Tools.execute("read_file", "not-json", tmp_dir)
+
+      assert is_binary(result)
+      assert result =~ "JSON-encoded string instead of a JSON object"
+      assert result =~ "Pass the arguments as a real JSON object"
+    end
+
+    test "returns a helpful string error when the string decodes to a non-map", %{
+      tmp_dir: tmp_dir
+    } do
+      encoded = Jason.encode!(["not", "an", "object"])
+
+      result = Tools.execute("read_file", encoded, tmp_dir)
+
+      assert is_binary(result)
+      assert result =~ "JSON-encoded string instead of a JSON object"
     end
   end
 
@@ -639,13 +691,21 @@ defmodule EvoGit.Agent.ToolsTest do
     end
 
     test "returns error for invalid search_depth" do
-      result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test", "search_depth" => "deep"}, nil, nil)
+      result =
+        EvoGit.Agent.Tools.WebSearch.execute(
+          %{"query" => "test", "search_depth" => "deep"},
+          nil,
+          nil
+        )
+
       assert {:error, msg} = result
       assert msg =~ "Argument 'search_depth' must be 'basic' or 'advanced'"
     end
 
     test "returns error for invalid max_results" do
-      result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test", "max_results" => 100}, nil, nil)
+      result =
+        EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test", "max_results" => 100}, nil, nil)
+
       assert {:error, msg} = result
       assert msg =~ "Argument 'max_results' must be an integer between 1 and 50"
     end
@@ -672,7 +732,10 @@ defmodule EvoGit.Agent.ToolsTest do
   # config. Restores the original value and cleans up afterward.
   defp with_isolated_config(fun) do
     original_xdg = System.get_env("XDG_CONFIG_HOME")
-    tmp_xdg = Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
+
+    tmp_xdg =
+      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(tmp_xdg)
     System.put_env("XDG_CONFIG_HOME", tmp_xdg)
 

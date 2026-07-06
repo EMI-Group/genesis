@@ -25,7 +25,8 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
-  def fetch_string_arg(args, _key) when not is_map(args), do: {:error, "Arguments must be a map/object"}
+  def fetch_string_arg(args, _key) when not is_map(args),
+    do: {:error, "Arguments must be a map/object"}
 
   @doc """
   Safely fetches a required array argument from the args map.
@@ -36,6 +37,18 @@ defmodule EvoGit.Agent.Tools.Shared do
       {:ok, value} when is_list(value) ->
         validate_string_array(value)
 
+      # Recovery: some LLMs (e.g. DeepSeek) double-encode an array argument as a
+      # JSON string like "[\"-n\", \"foo\", \".\"]" instead of a real array. Try
+      # to transparently decode it before failing.
+      {:ok, value} when is_binary(value) ->
+        case Jason.decode(value) do
+          {:ok, decoded} when is_list(decoded) ->
+            validate_string_array(decoded)
+
+          _ ->
+            {:error, format_array_arg_error(key, value)}
+        end
+
       {:ok, value} ->
         {:error, "Argument '#{key}' must be an array, got: #{inspect(value)}"}
 
@@ -44,7 +57,8 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
-  def fetch_array_arg(args, _key) when not is_map(args), do: {:error, "Arguments must be a map/object"}
+  def fetch_array_arg(args, _key) when not is_map(args),
+    do: {:error, "Arguments must be a map/object"}
 
   @doc """
   Safely fetches an optional string argument from the args map.
@@ -104,7 +118,8 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
-  def validate_string_array(array) when not is_list(array), do: {:error, "The arguments must be an array"}
+  def validate_string_array(array) when not is_list(array),
+    do: {:error, "The arguments must be an array"}
 
   @doc """
   Converts a value to a string binary if possible.
@@ -114,6 +129,14 @@ defmodule EvoGit.Agent.Tools.Shared do
   def to_string_binary(value) when is_float(value), do: {:ok, Float.to_string(value)}
   def to_string_binary(value) when is_atom(value), do: {:ok, Atom.to_string(value)}
   def to_string_binary(_), do: :error
+
+  defp format_array_arg_error(key, value) do
+    "Argument '#{key}' must be an array. " <>
+      "It was received as a JSON-encoded string (\"[...]\"), which cannot be used directly. " <>
+      "Pass a real JSON array of strings instead, " <>
+      "e.g. [\"-n\", \"pattern\", \"path\"], not \"[\\\"-n\\\", \\\"pattern\\\", \\\"path\\\"]\". " <>
+      "Received: #{inspect(value)}"
+  end
 
   @doc """
   Expands a file path relative to a repository path.
@@ -196,8 +219,12 @@ defmodule EvoGit.Agent.Tools.Shared do
       |> String.trim_leading("/")
       |> String.trim_trailing("/")
       |> then(fn
-        "" -> "./"
-        "." -> "./"
+        "" ->
+          "./"
+
+        "." ->
+          "./"
+
         p ->
           if String.starts_with?(p, "./") do
             p
@@ -301,6 +328,7 @@ defmodule EvoGit.Agent.Tools.Shared do
   Returns {:ok, boolean} or {:error, message}.
   """
   def validate_replace_all(value) when is_boolean(value), do: {:ok, value}
+
   def validate_replace_all(value),
     do: {:error, "Argument 'replace_all' must be a boolean, got: #{inspect(value)}"}
 

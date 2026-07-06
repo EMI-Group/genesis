@@ -60,7 +60,7 @@ defmodule EvoGit.Agent.Tools do
         SkillRemove.schema(),
         SkillEnable.schema(),
         SkillDisable.schema(),
-        SkillWhere.schema(),
+        SkillWhere.schema()
         # Git.schema(),
         # Curl.schema()
       ]
@@ -117,8 +117,25 @@ defmodule EvoGit.Agent.Tools do
   # Compile-time tool name for dispatch (matches ShellTool's compile-time @tool_name)
   @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
 
-  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil) when is_map(args) do
+  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
+
+  def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
     execute_tool(tool_name, args, repo_path, repo_root, node_path)
+  end
+
+  # Fallback: some LLMs double-encode the ENTIRE arguments object as a JSON
+  # string (e.g. "{\"args\": [...]}") instead of a real JSON object. Try to
+  # transparently decode it before failing, so the tool call proceeds normally.
+  def execute(tool_name, args, repo_path, repo_root, node_path) when is_binary(args) do
+    case Jason.decode(args) do
+      {:ok, decoded} when is_map(decoded) ->
+        execute_tool(tool_name, decoded, repo_path, repo_root, node_path)
+
+      _ ->
+        "Error: tool arguments were received as a JSON-encoded string instead of a JSON object. " <>
+          "Pass the arguments as a real JSON object, " <>
+          "e.g. {\"args\": [\"-n\", \"pattern\"]}, not a string."
+    end
   end
 
   # Tool execution dispatch

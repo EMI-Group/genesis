@@ -108,4 +108,55 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       assert Shared.validate_file_scope(expanded, nil, repo_path) == :ok
     end
   end
+
+  describe "fetch_array_arg/2" do
+    test "returns a real list unchanged" do
+      assert Shared.fetch_array_arg(%{"args" => ["-n", "foo", "."]}, "args") ==
+               {:ok, ["-n", "foo", "."]}
+    end
+
+    test "recovers a JSON-encoded string array transparently" do
+      encoded = Jason.encode!(["-n", "foo", "."])
+      assert Shared.fetch_array_arg(%{"args" => encoded}, "args") == {:ok, ["-n", "foo", "."]}
+    end
+
+    test "recovers a JSON-encoded array containing integers (coerced to strings)" do
+      encoded = Jason.encode!(["-n", 123, "."])
+      assert Shared.fetch_array_arg(%{"args" => encoded}, "args") == {:ok, ["-n", "123", "."]}
+    end
+
+    test "returns error for a non-JSON string" do
+      result = Shared.fetch_array_arg(%{"args" => "not-json"}, "args")
+      assert {:error, message} = result
+      assert message =~ "must be an array"
+    end
+
+    test "returns error for a JSON string that decodes to a map, not a list" do
+      encoded = Jason.encode!(%{"key" => 1})
+      result = Shared.fetch_array_arg(%{"args" => encoded}, "args")
+      assert {:error, message} = result
+      assert message =~ "must be an array"
+    end
+
+    test "error message explains the double-encoding problem and is actionable" do
+      encoded = Jason.encode!(["-n", "foo", "."])
+      result = Shared.fetch_array_arg(%{"args" => encoded <> "}"}, "args")
+      assert {:error, message} = result
+      assert message =~ "must be an array"
+      assert message =~ "JSON-encoded string"
+      assert message =~ "Pass a real JSON array"
+    end
+
+    test "returns error for a non-binary, non-list value" do
+      result = Shared.fetch_array_arg(%{"args" => 42}, "args")
+      assert {:error, message} = result
+      assert message =~ "must be an array"
+    end
+
+    test "returns error for a missing key" do
+      result = Shared.fetch_array_arg(%{}, "args")
+      assert {:error, message} = result
+      assert message =~ "Missing required argument"
+    end
+  end
 end
