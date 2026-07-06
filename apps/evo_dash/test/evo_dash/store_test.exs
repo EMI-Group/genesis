@@ -43,7 +43,8 @@ defmodule EvoDash.StoreTest do
         review_status: :ignored,
         agent_count: 5,
         base_sha: "abc123",
-        commit_sha: "def456"
+        commit_sha: "def456",
+        model_id: "gpt-4o"
       }
 
       :ok = Store.put_task(Store, task)
@@ -57,6 +58,7 @@ defmodule EvoDash.StoreTest do
       assert fetched.agent_count == 5
       assert fetched.base_sha == "abc123"
       assert fetched.commit_sha == "def456"
+      assert fetched.model_id == "gpt-4o"
       assert fetched.ref == nil
     end
 
