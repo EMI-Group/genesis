@@ -13,7 +13,7 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 | `user_config/0` | Reads and returns parsed `config.toml`, or `%{}` if not found |
 | `save_user_config/1` | Persists a config map to `config.toml`. Creates config directory if needed. Returns `:ok` or `{:error, reason}`. |
 | `save_credentials/1` | Merges and persists API key map to `credentials.toml`. Sets env vars. Returns `:ok` or `{:error, reason}`. |
-| `config_status/0` | Returns diagnostic map with `:missing`, `:warnings`, and `:ok?`. Checks LLM model, API key presence, and GitHub username. |
+| `config_status/0` | Returns diagnostic map with `:missing`, `:warnings`, and `:ok?`. Checks LLM model presence and API key presence. GitHub username is **optional** — it is NOT checked here (a missing username does not affect `:ok?`, `:missing`, or `:warnings`). |
 | `credentials/0` | Reads `credentials.toml`, sets each key-value pair as an env var, returns parsed map |
 | `defaults/0` | Returns built-in application defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode) |
 | `config_path/0` | Returns the full path to `config.toml` |
