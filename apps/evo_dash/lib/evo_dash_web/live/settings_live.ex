@@ -5,7 +5,8 @@ defmodule EvoDashWeb.SettingsLive do
   """
   use EvoDashWeb, :live_view
   alias EvoGit.Config.Schema
-  alias EvoDash.SettingsUtils
+  alias EvoDashWeb.SettingsLive.ConfigIO
+  alias EvoDashWeb.SettingsLive.ModelProfileHelpers
 
   @impl true
   def render(assigns) do
@@ -113,7 +114,7 @@ defmodule EvoDashWeb.SettingsLive do
                 categories={@schemas_by_category}
                 search_text={@search_text}
                 file_config={@file_config}
-                errors={all_errors(@per_category_errors)}
+                errors={ConfigIO.all_errors(@per_category_errors)}
               />
             </.form>
           <% else %>
@@ -156,7 +157,7 @@ defmodule EvoDashWeb.SettingsLive do
     config_status = config_status()
     config_path = EvoGit.Config.config_path()
     config_file_exists = File.exists?(config_path)
-    file_config = load_file_config()
+    file_config = ConfigIO.load_file_config()
     schemas_by_category = Schema.schemas_by_category()
 
     socket =
@@ -165,7 +166,7 @@ defmodule EvoDashWeb.SettingsLive do
         active_category: :llm,
         search_text: "",
         per_category_errors: %{},
-        scheduler_config: load_scheduler_config(),
+        scheduler_config: ConfigIO.load_scheduler_config(),
         config_status: config_status,
         file_config: file_config,
         config_path: config_path,
@@ -187,7 +188,7 @@ defmodule EvoDashWeb.SettingsLive do
     # built from the existing schemas_by_category map (atom keys). Stringify
     # the keys so we compare string-to-string — no String.to_existing_atom on
     # untrusted input, fully crash-safe for unknown values.
-    category_str_to_atom = category_str_to_atom(socket.assigns.schemas_by_category)
+    category_str_to_atom = ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category)
 
     category =
       case params["category"] do
@@ -210,7 +211,7 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_info({:scheduler_config_updated}, socket) do
-    {:noreply, assign(socket, :scheduler_config, load_scheduler_config())}
+    {:noreply, assign(socket, :scheduler_config, ConfigIO.load_scheduler_config())}
   end
 
   @impl true
@@ -229,7 +230,7 @@ defmodule EvoDashWeb.SettingsLive do
     # Whitelist lookup: validate the client-supplied category string against the
     # known schema category atoms. Unknown value → nil → keep current category.
     cat =
-      Map.get(category_str_to_atom(socket.assigns.schemas_by_category), cat_str) ||
+      Map.get(ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category), cat_str) ||
         socket.assigns.active_category
 
     {:noreply,
@@ -256,7 +257,7 @@ defmodule EvoDashWeb.SettingsLive do
     category =
       case params["category"] do
         cat_str when is_binary(cat_str) ->
-          Map.get(category_str_to_atom(socket.assigns.schemas_by_category), cat_str)
+          Map.get(ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category), cat_str)
 
         _ ->
           nil
@@ -268,13 +269,13 @@ defmodule EvoDashWeb.SettingsLive do
 
     # Build config from params and merge into full file_config
     config =
-      build_config_from_category_params(params, category, schemas, socket.assigns.file_config)
+      ConfigIO.build_config_from_category_params(params, category, schemas, socket.assigns.file_config)
 
     case Schema.validate(config) do
       {:ok, _validated} ->
         case EvoGit.Config.save_user_config(config) do
           :ok ->
-            file_config = load_file_config()
+            file_config = ConfigIO.load_file_config()
             config_status = config_status()
             config_file_exists = File.exists?(socket.assigns.config_path)
 
@@ -289,7 +290,7 @@ defmodule EvoDashWeb.SettingsLive do
             # Update runtime scheduler when LLM or scheduler categories change
             socket =
               if category in [:scheduler, :llm] do
-                update_runtime_from_file_config(file_config, socket)
+                ConfigIO.update_runtime_from_file_config(file_config, socket)
               else
                 socket
               end
@@ -328,7 +329,7 @@ defmodule EvoDashWeb.SettingsLive do
       |> Enum.filter(&EvoDashWeb.SettingsComponents.schema_matches?(&1, search_text))
 
     config =
-      build_config_from_category_params(
+      ConfigIO.build_config_from_category_params(
         params,
         nil,
         all_matching_schemas,
@@ -339,7 +340,7 @@ defmodule EvoDashWeb.SettingsLive do
       {:ok, _validated} ->
         case EvoGit.Config.save_user_config(config) do
           :ok ->
-            file_config = load_file_config()
+            file_config = ConfigIO.load_file_config()
             config_status = config_status()
             config_file_exists = File.exists?(socket.assigns.config_path)
 
@@ -357,7 +358,7 @@ defmodule EvoDashWeb.SettingsLive do
                    all_matching_schemas,
                    &(List.first(&1.key_path) in [:scheduler, :llm])
                  ) do
-                update_runtime_from_file_config(file_config, socket)
+                ConfigIO.update_runtime_from_file_config(file_config, socket)
               else
                 socket
               end
@@ -390,8 +391,8 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("reset_key", %{"key_path" => path_str}, socket) do
-    key_path = parse_key_path(path_str, socket.assigns.schemas_by_category)
-    schema = find_schema(key_path, socket.assigns.schemas_by_category)
+    key_path = ConfigIO.parse_key_path(path_str, socket.assigns.schemas_by_category)
+    schema = ConfigIO.find_schema(key_path, socket.assigns.schemas_by_category)
 
     # An unknown or stale key_path / schema means untrusted client input did not
     # resolve to a known setting — surface a friendly flash instead of crashing
@@ -403,7 +404,7 @@ defmodule EvoDashWeb.SettingsLive do
 
       case EvoGit.Config.save_user_config(config) do
         :ok ->
-          file_config = load_file_config()
+          file_config = ConfigIO.load_file_config()
           config_status = config_status()
           config_file_exists = File.exists?(socket.assigns.config_path)
 
@@ -431,7 +432,7 @@ defmodule EvoDashWeb.SettingsLive do
     # Whitelist lookup: validate the client-supplied provider id against the
     # known LLMCatalog providers. Unknown value → nil → clear selection and
     # surface a friendly flash error instead of crashing.
-    provider = Map.get(provider_by_id_str(), id_str)
+    provider = Map.get(ConfigIO.provider_by_id_str(), id_str)
 
     if provider do
       provider_id = provider.id
@@ -464,7 +465,7 @@ defmodule EvoDashWeb.SettingsLive do
     variant_id =
       case socket.assigns.selected_provider_id do
         nil -> nil
-        provider_atom -> Map.get(variant_id_by_str(provider_atom), variant_id_str)
+        provider_atom -> Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
       end
 
     {:noreply, assign(socket, :selected_variant_id, variant_id)}
@@ -477,8 +478,8 @@ defmodule EvoDashWeb.SettingsLive do
     # the config-status check still read the flat field).
     file_config =
       socket.assigns.file_config
-      |> add_model_profile(model_string)
-      |> mirror_default_model()
+      |> ModelProfileHelpers.add_model_profile(model_string)
+      |> ModelProfileHelpers.mirror_default_model()
 
     persist_file_config(file_config, socket, gettext("Model selected and saved."))
   end
@@ -491,7 +492,7 @@ defmodule EvoDashWeb.SettingsLive do
 
     # Build a whitelist map keyed by the string form of each provider's atom id,
     # so untrusted POST data is matched without String.to_existing_atom.
-    provider = Map.get(provider_by_id_str(), provider_id_str)
+    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
 
     result =
       cond do
@@ -526,8 +527,8 @@ defmodule EvoDashWeb.SettingsLive do
         # flat [:llm, :model] for backward compatibility.
         file_config =
           socket.assigns.file_config
-          |> add_model_profile(model_value)
-          |> mirror_default_model()
+          |> ModelProfileHelpers.add_model_profile(model_value)
+          |> ModelProfileHelpers.mirror_default_model()
 
         persist_file_config(file_config, socket, gettext("Custom model saved."))
     end
@@ -545,10 +546,10 @@ defmodule EvoDashWeb.SettingsLive do
     # user can complete the profile, then save.
     file_config =
       socket.assigns.file_config
-      |> add_model_profile(nil)
+      |> ModelProfileHelpers.add_model_profile(nil)
 
     models = get_in(file_config, [:llm, :models]) || []
-    new_id = models |> List.last() |> profile_id()
+    new_id = models |> List.last() |> ModelProfileHelpers.profile_id()
 
     socket =
       socket
@@ -585,7 +586,7 @@ defmodule EvoDashWeb.SettingsLive do
 
       # Duplicate id check: another profile (with a different old id) already
       # uses the requested id.
-      id_collision?(models, old_id, new_id) ->
+      ModelProfileHelpers.id_collision?(models, old_id, new_id) ->
         {:noreply,
          put_flash(
            socket,
@@ -594,12 +595,12 @@ defmodule EvoDashWeb.SettingsLive do
          )}
 
       true ->
-        updated_profile = parse_model_profile_params(params, new_id)
+        updated_profile = ModelProfileHelpers.parse_model_profile_params(params, new_id)
 
         file_config =
           socket.assigns.file_config
-          |> update_model_profile(old_id, updated_profile)
-          |> mirror_default_model()
+          |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
+          |> ModelProfileHelpers.mirror_default_model()
 
         socket = socket |> assign(:editing_profile_id, nil)
 
@@ -610,12 +611,12 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("delete_model_profile", %{"profile_id" => id}, socket) do
     models = get_in(socket.assigns.file_config, [:llm, :models]) || []
-    new_models = Enum.reject(models, fn p -> profile_id(p) == id end)
+    new_models = Enum.reject(models, fn p -> ModelProfileHelpers.profile_id(p) == id end)
 
     file_config =
       socket.assigns.file_config
-      |> put_in_model_profiles(new_models)
-      |> mirror_default_model()
+      |> ModelProfileHelpers.put_in_model_profiles(new_models)
+      |> ModelProfileHelpers.mirror_default_model()
 
     socket = socket |> assign(:editing_profile_id, nil)
 
@@ -660,145 +661,6 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: Model profiles list manipulation
-  #
-  # These operate on file_config maps before they are persisted. The models list
-  # lives at file_config[:llm][:models]. We always normalize to a list of maps
-  # with atom keys.
-  # ───────────────────────────────────────────────────────────────────────────
-
-  defp add_model_profile(file_config, model_value) do
-    models = get_in(file_config, [:llm, :models]) || []
-    id = generate_profile_id(models)
-
-    profile =
-      %{id: id, concurrency: 3}
-      |> maybe_put_profile_model(model_value)
-
-    put_in_model_profiles(file_config, models ++ [profile])
-  end
-
-  # Generates a unique profile id like "profile-2", "profile-3", ... based on
-  # the count of existing profiles whose ids match the "profile-N" pattern.
-  defp generate_profile_id(models) do
-    existing_ids = Enum.map(models, &profile_id/1) |> MapSet.new()
-
-    Stream.iterate(length(models) + 1, &(&1 + 1))
-    |> Stream.map(&"profile-#{&1}")
-    |> Enum.find(fn id -> not MapSet.member?(existing_ids, id) end)
-  end
-
-  # Only include :model key when a non-nil value is given (e.g. from a shortcut).
-  # For "add_model_profile" with nil, we omit it so the user can fill it in.
-  defp maybe_put_profile_model(profile, nil), do: profile
-  defp maybe_put_profile_model(profile, ""), do: profile
-  defp maybe_put_profile_model(profile, model_value), do: Map.put(profile, :model, model_value)
-
-  defp update_model_profile(file_config, old_id, updated_profile) do
-    models = get_in(file_config, [:llm, :models]) || []
-
-    new_models =
-      Enum.map(models, fn profile ->
-        if profile_id(profile) == old_id, do: updated_profile, else: profile
-      end)
-
-    put_in_model_profiles(file_config, new_models)
-  end
-
-  defp put_in_model_profiles(file_config, models) do
-    file_config
-    |> ensure_llm_key()
-    |> put_in([:llm, :models], models)
-  end
-
-  defp ensure_llm_key(file_config) do
-    if is_map(get_in(file_config, [:llm])) do
-      file_config
-    else
-      put_in(file_config, [:llm], %{})
-    end
-  end
-
-  # Mirrors the first profile's model into the flat [:llm, :model] for backward
-  # compatibility (config-status check and older code paths still read it).
-  defp mirror_default_model(file_config) do
-    models = get_in(file_config, [:llm, :models]) || []
-
-    case models do
-      [%{model: model} | _] -> put_in(file_config, [:llm, :model], model)
-      _ -> file_config
-    end
-  end
-
-  # Checks whether the new_id is already used by a profile OTHER than the one
-  # being edited (old_id). Returns true on collision.
-  defp id_collision?(models, old_id, new_id) do
-    Enum.any?(models, fn profile ->
-      pid = profile_id(profile)
-      pid != old_id and pid == new_id
-    end)
-  end
-
-  # Parses the form params for a single profile into a normalized map with atom
-  # keys and correctly-typed values.
-  defp parse_model_profile_params(params, id) do
-    model = String.trim(params["model"] || "")
-
-    profile =
-      %{id: id}
-      |> maybe_put_non_empty(:model, model)
-      |> maybe_put_int(:concurrency, params["concurrency"], 3)
-      |> maybe_put_float(:temperature, params["temperature"])
-      |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])
-      |> maybe_put_int(:max_tokens, params["max_tokens"])
-      |> maybe_put_float(:top_p, params["top_p"])
-      |> maybe_put_int(:top_k, params["top_k"])
-      |> maybe_put_float(:frequency_penalty, params["frequency_penalty"])
-      |> maybe_put_float(:presence_penalty, params["presence_penalty"])
-
-    profile
-  end
-
-  defp maybe_put_non_empty(map, _key, ""), do: map
-  defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
-
-  defp maybe_put_int(map, key, raw, default) do
-    case SettingsUtils.parse_int(raw) do
-      nil -> Map.put(map, key, default)
-      int -> Map.put(map, key, int)
-    end
-  end
-
-  defp maybe_put_int(map, key, raw) do
-    case SettingsUtils.parse_int(raw) do
-      nil -> map
-      int -> Map.put(map, key, int)
-    end
-  end
-
-  defp maybe_put_float(map, key, raw) do
-    case SettingsUtils.parse_float(raw) do
-      nil -> map
-      float -> Map.put(map, key, float)
-    end
-  end
-
-  defp maybe_put_string(map, _key, ""), do: map
-  defp maybe_put_string(map, _key, nil), do: map
-  defp maybe_put_string(map, key, value), do: Map.put(map, key, value)
-
-  # Safely reads the id from a profile map whether the key is an atom or string
-  # (TOML-parsed profiles may arrive with string keys before normalization).
-  defp profile_id(profile) when is_map(profile) do
-    case Map.get(profile, :id) || Map.get(profile, "id") do
-      nil -> nil
-      id -> to_string(id)
-    end
-  end
-
-  defp profile_id(_), do: nil
-
-  # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config persistence
   # ───────────────────────────────────────────────────────────────────────────
 
@@ -808,7 +670,7 @@ defmodule EvoDashWeb.SettingsLive do
 
     case EvoGit.Config.save_user_config(file_config) do
       :ok ->
-        file_config = load_file_config()
+        file_config = ConfigIO.load_file_config()
         config_status = config_status()
         config_file_exists = File.exists?(socket.assigns.config_path)
 
@@ -820,7 +682,7 @@ defmodule EvoDashWeb.SettingsLive do
           |> assign(:per_category_errors, %{})
           |> put_flash(:info, success_msg)
 
-        {:noreply, update_runtime_from_file_config(file_config, socket)}
+        {:noreply, ConfigIO.update_runtime_from_file_config(file_config, socket)}
 
       {:error, reason} ->
         {:noreply,
@@ -829,183 +691,6 @@ defmodule EvoDashWeb.SettingsLive do
            :error,
            gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
          )}
-    end
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: Config loading
-  # ───────────────────────────────────────────────────────────────────────────
-
-  defp load_file_config do
-    EvoGit.Config.resolve()
-  end
-
-  defp load_scheduler_config do
-    EvoGit.AgentScheduler.get_config()
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: Config building from params
-  # ───────────────────────────────────────────────────────────────────────────
-
-  defp build_config_from_category_params(params, category, schemas, file_config) do
-    # Build a nested map from flat params for this category
-    {category_config, emptied_paths} = params_to_category_config(params, category, schemas)
-
-    # Deep merge into file_config
-    merged = SettingsUtils.deep_merge(file_config, category_config)
-
-    # Delete keys that were explicitly emptied
-    Enum.reduce(emptied_paths, merged, fn key_path, acc ->
-      SettingsUtils.deep_delete(acc, key_path)
-    end)
-  end
-
-  defp params_to_category_config(params, _category, schemas) do
-    # Skip :model_profiles type schemas entirely. These schemas (e.g. [:llm, :models])
-    # are managed by dedicated event handlers (save_model_profile, delete_model_profile,
-    # add_model_profile) and have no corresponding flat form field. If processed here,
-    # they'd parse as :explicitly_empty (no matching form param) and get queued for
-    # deletion via deep_delete, wiping the entire models list on every save_category.
-    schemas = Enum.reject(schemas, &(&1.type == :model_profiles))
-
-    Enum.reduce(schemas, {%{}, []}, fn schema, {config_acc, emptied_acc} ->
-      value = Map.get(params, Enum.join(schema.key_path, "."))
-
-      parsed =
-        cond do
-          schema.type == :boolean ->
-            value == "true"
-
-          is_nil(value) or value == "" ->
-            :explicitly_empty
-
-          schema.type in [:pos_integer, :non_neg_integer, :integer] ->
-            SettingsUtils.parse_int(value)
-
-          schema.type == :float ->
-            SettingsUtils.parse_float(value)
-
-          schema.type in [:string, :model_spec] ->
-            value
-
-          schema.type == :atom ->
-            SettingsUtils.parse_atom(value, schema)
-        end
-
-      cond do
-        parsed == :explicitly_empty ->
-          {config_acc, [schema.key_path | emptied_acc]}
-
-        is_nil(parsed) ->
-          {config_acc, emptied_acc}
-
-        true ->
-          {SettingsUtils.deep_put(config_acc, schema.key_path, parsed), emptied_acc}
-      end
-    end)
-  end
-
-  defp update_runtime_from_file_config(file_config, socket) do
-    updates =
-      []
-      |> SettingsUtils.maybe_add_kw(:max_concurrency, get_in(file_config, [:scheduler, :max_concurrency]))
-      |> SettingsUtils.maybe_add_kw(
-        :max_tool_concurrency,
-        get_in(file_config, [:scheduler, :max_tool_concurrency])
-      )
-      |> SettingsUtils.maybe_add_kw(:agent_max_retries, get_in(file_config, [:scheduler, :agent_max_retries]))
-      |> SettingsUtils.maybe_add_kw(:max_agent_depth, get_in(file_config, [:scheduler, :max_agent_depth]))
-      |> SettingsUtils.maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))
-      |> SettingsUtils.maybe_add_kw(:max_turns, get_in(file_config, [:scheduler, :max_turns]))
-      |> SettingsUtils.maybe_add_kw(:max_turns_root, get_in(file_config, [:scheduler, :max_turns_root]))
-
-    # Note: :tools config (e.g., web_search) is read from EvoGit.Config.resolve()
-    # at execution time — no runtime push needed here.
-
-    # LLM model profiles: the scheduler now accepts the full profiles list and
-    # derives the model + generation params from the default profile internally.
-    # We no longer push :llm_model / :llm_generation_params separately.
-    updates =
-      SettingsUtils.maybe_add_kw(updates, :model_profiles, Schema.model_profiles(file_config))
-
-    if updates != [] do
-      case EvoGit.AgentScheduler.update_config(updates) do
-        :ok ->
-          socket
-          |> assign(:scheduler_config, load_scheduler_config())
-
-        {:error, _msg} ->
-          socket
-      end
-    else
-      socket
-    end
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: parsing
-  # ───────────────────────────────────────────────────────────────────────────
-
-  defp parse_key_path(path_str, schemas_by_category) when is_binary(path_str) do
-    # Build a whitelist of valid atom segments (string form -> atom) from every
-    # known schema key_path, then validate each segment of the parsed path
-    # against it. This avoids String.to_existing_atom/to_atom on untrusted
-    # client input (atom-table exhaustion / ArgumentError crashes). Returns nil
-    # when any segment is unknown so the caller can surface a friendly error
-    # instead of crashing.
-    valid_segment_str_to_atom =
-      schemas_by_category
-      |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
-      |> Enum.flat_map(fn schema -> schema.key_path end)
-      |> Enum.uniq()
-      |> Map.new(fn atom -> {Atom.to_string(atom), atom} end)
-
-    segments = String.split(path_str, ".")
-
-    if Enum.all?(segments, &Map.has_key?(valid_segment_str_to_atom, &1)) do
-      Enum.map(segments, &Map.fetch!(valid_segment_str_to_atom, &1))
-    else
-      nil
-    end
-  end
-
-  defp find_schema(nil, _schemas_by_category), do: nil
-
-  defp find_schema(key_path, schemas_by_category) do
-    schemas_by_category
-    |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
-    |> Enum.find(&(&1.key_path == key_path))
-  end
-
-  defp all_errors(per_category_errors) do
-    Enum.flat_map(per_category_errors, fn {_cat, errors} -> errors end)
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: untrusted-string → atom whitelists
-  #
-  # Each helper builds a map keyed by the *string* form of a known atom, so
-  # client-supplied (untrusted) values can be validated via Map.get/2 without
-  # ever calling String.to_existing_atom/1 or String.to_atom/1. Unknown values
-  # resolve to nil so callers can surface a friendly default instead of crashing
-  # with an ArgumentError (or risking atom-table exhaustion via to_atom/1).
-  # ───────────────────────────────────────────────────────────────────────────
-
-  defp category_str_to_atom(schemas_by_category) do
-    Map.new(schemas_by_category, fn {cat_atom, _schemas} ->
-      {Atom.to_string(cat_atom), cat_atom}
-    end)
-  end
-
-  defp provider_by_id_str do
-    Map.new(EvoGit.Config.LLMCatalog.providers(), fn p -> {Atom.to_string(p.id), p} end)
-  end
-
-  defp variant_id_by_str(provider_atom) when is_atom(provider_atom) do
-    case EvoGit.Config.LLMCatalog.provider_variants(provider_atom) do
-      nil -> %{}
-      variants -> Map.new(variants, fn v -> {Atom.to_string(v.id), v.id} end)
     end
   end
 end
