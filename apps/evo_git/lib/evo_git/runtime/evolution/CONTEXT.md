@@ -3,6 +3,10 @@
 ## Intent
 Implements the open-ended evolution engine for Mode B (Complex Evolution). Uses novelty search, quality diversity (MAP-Elites), and LLM-powered semantic crossover to discover creative solutions. The engine maintains a pool of cross-domain code fragments ("genetic material"), iteratively evolves them through crossover and mutation, synthesizes a solution from the most novel fragments, and applies it via a Manager agent.
 
+## Routing Table
+
+- `./seed_fragments/` → Seed fragment generation, LLM helpers, and built-in fragment generators
+
 ## API Surface
 
 ### Modules
