@@ -1229,10 +1229,11 @@ defmodule EvoDashWeb.DashboardComponents do
   defp task_card_tint(_), do: ""
 
   # ---------------------------------------------------------------------------
-  # Public helpers — render_options/1
+  # Public helpers — render_options/2
   # ---------------------------------------------------------------------------
 
-  def render_options(opts) do
+  def render_options(opts, render_opts \\ []) do
+    truncate = Keyword.get(render_opts, :truncate, true)
     primary_text = opts[:prompt] || opts[:objective] || ""
     mode = opts[:mode] || ""
     path = opts[:path] || ""
@@ -1240,7 +1241,8 @@ defmodule EvoDashWeb.DashboardComponents do
     assigns = %{
       primary_text: primary_text,
       mode: mode,
-      path: path
+      path: path,
+      truncate: truncate
     }
 
     ~H"""
@@ -1250,7 +1252,11 @@ defmodule EvoDashWeb.DashboardComponents do
           <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Objective")}
         </h5>
         <div class="text-sm whitespace-pre-wrap break-words">
-          {String.slice(@primary_text, 0, 300)}{if String.length(@primary_text) > 300, do: "..."}
+          <%= if @truncate do %>
+            {String.slice(@primary_text, 0, 300)}{if String.length(@primary_text) > 300, do: "..."}
+          <% else %>
+            {@primary_text}
+          <% end %>
         </div>
       </div>
       <div class="flex flex-wrap gap-2 text-xs">
@@ -1272,292 +1278,254 @@ defmodule EvoDashWeb.DashboardComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # Public helpers — render_result/1
-  # ---------------------------------------------------------------------------
-
-  def render_result({:ok, %{result: result} = data}) when is_binary(result) do
-    render_result(data)
-  end
-
-  def render_result({:error, reason}) do
-    assigns = %{reason: inspect(reason, limit: 100)}
-
-    ~H"""
-    <div class="bg-error/10 border border-error/20 p-3 rounded-lg">
-      <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
-        <.icon name="hero-x-circle" class="size-3" /> {gettext("Error")}
-      </h5>
-      <pre class="text-xs text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
-    </div>
-    """
-  end
-
-  def render_result({:exit, reason}) do
-    assigns = %{reason: inspect(reason, limit: 100)}
-
-    ~H"""
-    <div class="bg-error/10 border border-error/20 p-3 rounded-lg">
-      <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
-        <.icon name="hero-x-circle" class="size-3" /> {gettext("Crashed")}
-      </h5>
-      <pre class="text-xs text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
-    </div>
-    """
-  end
-
-  def render_result(%{result: result, no_changes: true} = _data) when is_binary(result) do
-    assigns = %{result: result}
-
-    ~H"""
-    <div class="space-y-3">
-      <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
-        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
-        </h5>
-        <div class="text-sm whitespace-pre-wrap break-words">
-          {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
-        </div>
-      </div>
-      <div class="bg-warning/10 border border-warning/20 p-3 rounded-lg">
-        <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
-        </h5>
-        <p class="text-sm text-warning">
-          {gettext("The agent completed without making any changes to the codebase.")}
-        </p>
-      </div>
-    </div>
-    """
-  end
-
-  def render_result(%{result: result, commit_sha: commit_sha} = data) when is_binary(result) do
-    assigns = %{
-      result: result,
-      commit_sha: commit_sha,
-      tag: Map.get(data, :tag),
-      branch_name: Map.get(data, :branch_name),
-      pr_url: Map.get(data, :pr_url)
-    }
-
-    ~H"""
-    <div class="space-y-3">
-      <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
-        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
-        </h5>
-        <div class="text-sm whitespace-pre-wrap break-words">
-          {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
-        </div>
-      </div>
-      <div class="flex flex-wrap gap-2 text-xs">
-        <%= if @commit_sha do %>
-          <span class="badge badge-ghost font-mono">
-            <.icon name="hero-code-bracket" class="size-3 mr-1" />
-            {String.slice(@commit_sha, 0..7)}
-          </span>
-        <% end %>
-        <%= if @tag do %>
-          <span class="badge badge-ghost font-mono">
-            <.icon name="hero-tag" class="size-3 mr-1" />
-            {@tag}
-          </span>
-        <% end %>
-        <%= if @branch_name do %>
-          <span class="badge badge-primary font-mono">
-            <.icon name="hero-code-bracket-square" class="size-3 mr-1" />
-            {@branch_name}
-          </span>
-        <% end %>
-        <%= if @pr_url do %>
-          <a
-            href={@pr_url}
-            target="_blank"
-            class="badge badge-success font-mono hover:opacity-80 transition-opacity"
-          >
-            <.icon name="hero-arrow-top-right-on-square" class="size-3 mr-1" />
-            {gettext("View PR")}
-          </a>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
-  def render_result(result) do
-    assigns = %{result: inspect(result, pretty: true)}
-
-    ~H"""
-    <pre class="text-xs bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner"><%= @result %></pre>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # Public helpers — render_options_full/1 (no truncation, for modal use)
+  # Public helpers — render_options_full/1 (thin wrapper for backward compat)
   # ---------------------------------------------------------------------------
 
   def render_options_full(opts) do
-    primary_text = opts[:prompt] || opts[:objective] || ""
-    mode = opts[:mode] || ""
-    path = opts[:path] || ""
-
-    assigns = %{
-      primary_text: primary_text,
-      mode: mode,
-      path: path
-    }
-
-    ~H"""
-    <div class="space-y-3">
-      <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
-        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Objective")}
-        </h5>
-        <div class="text-sm whitespace-pre-wrap break-words">
-          {@primary_text}
-        </div>
-      </div>
-      <div class="flex flex-wrap gap-2 text-xs">
-        <%= if @mode != "" do %>
-          <span class="badge badge-primary font-mono">
-            <.icon name="hero-cog-6-tooth" class="size-3 mr-1" />
-            {@mode}
-          </span>
-        <% end %>
-        <%= if @path != "" do %>
-          <span class="badge badge-ghost font-mono">
-            <.icon name="hero-folder" class="size-3 mr-1" />
-            {@path}
-          </span>
-        <% end %>
-      </div>
-    </div>
-    """
+    render_options(opts, truncate: false)
   end
 
   # ---------------------------------------------------------------------------
-  # Public helpers — render_result_full/1 (no truncation, for modal use)
+  # Public helpers — render_result/2
   # ---------------------------------------------------------------------------
 
-  def render_result_full({:ok, %{result: result} = data}) when is_binary(result) do
-    render_result_full(data)
+  def render_result(data) do
+    render_result(data, [])
   end
 
-  def render_result_full({:error, reason}) do
-    assigns = %{reason: inspect(reason)}
+  def render_result({:ok, %{result: result} = data}, opts) when is_binary(result) do
+    render_result(data, opts)
+  end
+
+  def render_result({:error, reason}, opts) do
+    truncate = Keyword.get(opts, :truncate, true)
+    limit = if truncate, do: 100, else: :infinity
+    size_class = if truncate, do: "text-xs", else: "text-sm"
+    wrapper_class = if truncate,
+      do: "bg-error/10 border border-error/20 p-3 rounded-lg",
+      else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    assigns = %{reason: inspect(reason, limit: limit), size_class: size_class, wrapper_class: wrapper_class}
 
     ~H"""
-    <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+    <div class={@wrapper_class}>
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
         <.icon name="hero-x-circle" class="size-3" /> {gettext("Error")}
       </h5>
-      <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
+      <pre class={["whitespace-pre-wrap break-words", @size_class]}><%= @reason %></pre>
     </div>
     """
   end
 
-  def render_result_full({:exit, reason}) do
-    assigns = %{reason: inspect(reason)}
+  def render_result({:exit, reason}, opts) do
+    truncate = Keyword.get(opts, :truncate, true)
+    limit = if truncate, do: 100, else: :infinity
+    size_class = if truncate, do: "text-xs", else: "text-sm"
+    wrapper_class = if truncate,
+      do: "bg-error/10 border border-error/20 p-3 rounded-lg",
+      else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    assigns = %{reason: inspect(reason, limit: limit), size_class: size_class, wrapper_class: wrapper_class}
 
     ~H"""
-    <div class="bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+    <div class={@wrapper_class}>
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
         <.icon name="hero-x-circle" class="size-3" /> {gettext("Crashed")}
       </h5>
-      <pre class="text-sm text-error whitespace-pre-wrap break-words"><%= @reason %></pre>
+      <pre class={["whitespace-pre-wrap break-words", @size_class]}><%= @reason %></pre>
     </div>
     """
   end
 
-  def render_result_full(%{result: result, no_changes: true} = _data) when is_binary(result) do
-    assigns = %{result: result}
+  def render_result(%{result: result, no_changes: true} = _data, opts) when is_binary(result) do
+    truncate = Keyword.get(opts, :truncate, true)
+
+    assigns = %{
+      result: result,
+      truncate: truncate
+    }
 
     ~H"""
-    <div class="space-y-4">
-      <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-        <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
-        </h5>
-        <p class="text-sm text-warning">
-          {gettext("The agent completed without making any changes to the codebase.")}
-        </p>
-      </div>
-      <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
-        </h5>
-        <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
-      </div>
+    <div class={if @truncate, do: "space-y-3", else: "space-y-4"}>
+      <%= if @truncate do %>
+        <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
+          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
+          </h5>
+          <div class="text-sm whitespace-pre-wrap break-words">
+            {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
+          </div>
+        </div>
+        <div class="bg-warning/10 border border-warning/20 p-3 rounded-lg">
+          <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
+            <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
+          </h5>
+          <p class="text-sm text-warning">
+            {gettext("The agent completed without making any changes to the codebase.")}
+          </p>
+        </div>
+      <% else %>
+        <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+          <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
+            <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
+          </h5>
+          <p class="text-sm text-warning">
+            {gettext("The agent completed without making any changes to the codebase.")}
+          </p>
+        </div>
+        <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
+          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
+          </h5>
+          <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
+        </div>
+      <% end %>
     </div>
     """
   end
 
-  def render_result_full(%{result: result, commit_sha: commit_sha} = data)
+  def render_result(%{result: result, commit_sha: commit_sha} = data, opts)
       when is_binary(result) do
+    truncate = Keyword.get(opts, :truncate, true)
+
     assigns = %{
       result: result,
       commit_sha: commit_sha,
       tag: Map.get(data, :tag),
       branch_name: Map.get(data, :branch_name),
-      pr_url: Map.get(data, :pr_url)
+      pr_url: Map.get(data, :pr_url),
+      truncate: truncate
     }
 
     ~H"""
-    <div class="space-y-4">
-      <div class="flex flex-wrap gap-2 mb-4">
-        <%= if @branch_name do %>
-          <span class="badge badge-primary font-mono text-sm">
-            <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
-            {@branch_name}
-          </span>
-        <% end %>
-        <%= if @commit_sha do %>
-          <span class="badge badge-ghost font-mono text-sm">
-            <.icon name="hero-code-bracket" class="size-4 mr-1" />
-            {String.slice(@commit_sha, 0..7)}
-          </span>
-        <% end %>
-        <%= if @tag do %>
-          <span class="badge badge-ghost font-mono text-sm">
-            <.icon name="hero-tag" class="size-4 mr-1" />
-            {@tag}
-          </span>
-        <% end %>
-        <%= if @pr_url do %>
-          <a
-            href={@pr_url}
-            target="_blank"
-            class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity"
-          >
-            <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
-            {gettext("View PR")}
-          </a>
+    <div class={if @truncate, do: "space-y-3", else: "space-y-4"}>
+      <%= if !@truncate do %>
+        <div class="flex flex-wrap gap-2 mb-4">
+          <%= if @branch_name do %>
+            <span class="badge badge-primary font-mono text-sm">
+              <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
+              {@branch_name}
+            </span>
+          <% end %>
+          <%= if @commit_sha do %>
+            <span class="badge badge-ghost font-mono text-sm">
+              <.icon name="hero-code-bracket" class="size-4 mr-1" />
+              {String.slice(@commit_sha, 0..7)}
+            </span>
+          <% end %>
+          <%= if @tag do %>
+            <span class="badge badge-ghost font-mono text-sm">
+              <.icon name="hero-tag" class="size-4 mr-1" />
+              {@tag}
+            </span>
+          <% end %>
+          <%= if @pr_url do %>
+            <a
+              href={@pr_url}
+              target="_blank"
+              class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity"
+            >
+              <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
+              {gettext("View PR")}
+            </a>
+          <% end %>
+        </div>
+      <% end %>
+      <div class={if @truncate,
+        do: "bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner",
+        else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"}>
+        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
+        </h5>
+        <%= if @truncate do %>
+          <div class="text-sm whitespace-pre-wrap break-words">
+            {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
+          </div>
+        <% else %>
+          <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
         <% end %>
       </div>
-      <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-        <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
-      </div>
+      <%= if @truncate do %>
+        <div class="flex flex-wrap gap-2 text-xs">
+          <%= if @commit_sha do %>
+            <span class="badge badge-ghost font-mono">
+              <.icon name="hero-code-bracket" class="size-3 mr-1" />
+              {String.slice(@commit_sha, 0..7)}
+            </span>
+          <% end %>
+          <%= if @tag do %>
+            <span class="badge badge-ghost font-mono">
+              <.icon name="hero-tag" class="size-3 mr-1" />
+              {@tag}
+            </span>
+          <% end %>
+          <%= if @branch_name do %>
+            <span class="badge badge-primary font-mono">
+              <.icon name="hero-code-bracket-square" class="size-3 mr-1" />
+              {@branch_name}
+            </span>
+          <% end %>
+          <%= if @pr_url do %>
+            <a
+              href={@pr_url}
+              target="_blank"
+              class="badge badge-success font-mono hover:opacity-80 transition-opacity"
+            >
+              <.icon name="hero-arrow-top-right-on-square" class="size-3 mr-1" />
+              {gettext("View PR")}
+            </a>
+          <% end %>
+        </div>
+      <% end %>
     </div>
     """
   end
 
-  def render_result_full(%{result: result}) do
-    assigns = %{result: inspect(result, limit: :infinity)}
+  def render_result(%{result: result}, opts) do
+    truncate = Keyword.get(opts, :truncate, true)
+    limit = if truncate, do: 100, else: :infinity
+    size_class = if truncate, do: "text-xs", else: "text-sm"
+    inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
+    wrapper_class = if truncate,
+      do: "bg-base-100 p-3 rounded-lg border border-base-200",
+      else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    assigns = %{
+      result: inspect(result, inspect_opts),
+      size_class: size_class,
+      wrapper_class: wrapper_class
+    }
 
     ~H"""
-    <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-      <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
-    </div>
+    <pre class={["overflow-x-auto", @size_class, @wrapper_class]}><%= @result %></pre>
     """
   end
 
-  def render_result_full(result) do
-    assigns = %{result: inspect(result, pretty: true, limit: :infinity)}
+  def render_result(result, opts) do
+    truncate = Keyword.get(opts, :truncate, true)
+    size_class = if truncate, do: "text-xs", else: "text-sm"
+    inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
+    wrapper_class = if truncate,
+      do: "bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner",
+      else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    assigns = %{
+      result: inspect(result, inspect_opts),
+      size_class: size_class,
+      wrapper_class: wrapper_class
+    }
 
     ~H"""
-    <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-      <pre class="text-sm overflow-x-auto"><%= @result %></pre>
-    </div>
+    <pre class={["overflow-x-auto", @size_class, @wrapper_class]}><%= @result %></pre>
     """
+  end
+
+  # ---------------------------------------------------------------------------
+  # Public helpers — render_result_full/1 (thin wrappers for backward compat)
+  # ---------------------------------------------------------------------------
+
+  def render_result_full(assigns) do
+    render_result(assigns, truncate: false)
   end
 
   defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
