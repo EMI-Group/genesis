@@ -349,6 +349,236 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
+  describe "save_user_config/1 LLM format (multi-model)" do
+    test "strip_flat_llm_fields removes flat gen params when models is non-empty" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :temperature], 0.5)
+        |> put_in([:llm, :max_tokens], 8192)
+        |> put_in([:llm, :reasoning_effort], "high")
+        |> put_in([:llm, :top_p], 0.9)
+        |> put_in([:llm, :top_k], 40)
+        |> put_in([:llm, :frequency_penalty], 0.5)
+        |> put_in([:llm, :presence_penalty], 0.3)
+        |> put_in([:llm, :models], [
+          %{id: "default", model: "anthropic:claude-sonnet-4", temperature: 0.5}
+        ])
+
+      stripped = Config.__strip_flat_llm_fields__(config)
+
+      llm = stripped.llm
+      # Flat gen params removed
+      refute Map.has_key?(llm, :model)
+      refute Map.has_key?(llm, :temperature)
+      refute Map.has_key?(llm, :max_tokens)
+      refute Map.has_key?(llm, :reasoning_effort)
+      refute Map.has_key?(llm, :top_p)
+      refute Map.has_key?(llm, :top_k)
+      refute Map.has_key?(llm, :frequency_penalty)
+      refute Map.has_key?(llm, :presence_penalty)
+      # models preserved
+      assert length(llm.models) == 1
+      # compression_threshold_tokens preserved
+      assert Map.has_key?(llm, :compression_threshold_tokens)
+    end
+
+    test "strip_flat_llm_fields does NOT mutate the original config" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :temperature], 0.5)
+        |> put_in([:llm, :models], [
+          %{id: "default", model: "anthropic:claude-sonnet-4", temperature: 0.5}
+        ])
+
+      _stripped = Config.__strip_flat_llm_fields__(config)
+
+      # Original config still has the flat fields
+      assert config.llm.model == "anthropic:claude-sonnet-4"
+      assert config.llm.temperature == 0.5
+    end
+
+    test "strip_flat_llm_fields leaves flat fields when models is empty" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :temperature], 0.5)
+        |> put_in([:llm, :models], [])
+
+      stripped = Config.__strip_flat_llm_fields__(config)
+
+      # Flat fields preserved since models is empty
+      assert stripped.llm.model == "anthropic:claude-sonnet-4"
+      assert stripped.llm.temperature == 0.5
+    end
+
+    test "strip_flat_llm_fields leaves flat fields when models is absent" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :temperature], 0.5)
+        |> put_in([:llm, :models], nil)
+
+      stripped = Config.__strip_flat_llm_fields__(config)
+
+      assert stripped.llm.model == "anthropic:claude-sonnet-4"
+      assert stripped.llm.temperature == 0.5
+    end
+
+    test "strip_flat_llm_fields does not crash when llm is absent" do
+      config = %{scheduler: %{max_concurrency: 3}}
+
+      stripped = Config.__strip_flat_llm_fields__(config)
+
+      assert stripped == config
+    end
+
+    test "strip_flat_llm_fields handles string keys defensively" do
+      config =
+        %{
+          llm: %{
+            "model" => "anthropic:claude-sonnet-4",
+            "temperature" => 0.5,
+            "models" => [%{id: "default", model: "anthropic:claude-sonnet-4"}],
+            "compression_threshold_tokens" => 100_000
+          }
+        }
+
+      stripped = Config.__strip_flat_llm_fields__(config)
+
+      llm = stripped.llm
+      refute Map.has_key?(llm, "model")
+      refute Map.has_key?(llm, "temperature")
+      assert length(Map.get(llm, "models")) == 1
+      assert Map.has_key?(llm, "compression_threshold_tokens")
+    end
+
+    test "stringify_keys recurses into list elements (model profiles)" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :models], [
+          %{id: "default", model: "anthropic:claude-sonnet-4", temperature: 0.5},
+          %{id: "fast", model: "google:gemini-flash", top_p: 0.9}
+        ])
+
+      stringified = Config.__stringify_keys__(config)
+
+      models = get_in(stringified, ["llm", "models"])
+      assert is_list(models)
+      [p1, p2] = models
+      # Keys inside profile maps are now strings
+      assert p1["id"] == "default"
+      assert p1["model"] == "anthropic:claude-sonnet-4"
+      assert p1["temperature"] == 0.5
+      assert p2["id"] == "fast"
+      assert p2["top_p"] == 0.9
+    end
+
+    test "full round-trip: multi-model config encodes/decodes as [[llm.models]]" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :compression_threshold_tokens], 100_000)
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :temperature], 0.5)
+        |> put_in([:llm, :max_tokens], 8192)
+        |> put_in([:llm, :models], [
+          %{
+            id: "default",
+            model: "anthropic:claude-sonnet-4",
+            temperature: 0.5,
+            max_tokens: 8192
+          },
+          %{
+            id: "fast",
+            model: "google:gemini-flash",
+            temperature: 0.3,
+            top_p: 0.9
+          }
+        ])
+
+      # Simulate the save_user_config pipeline (minus the filesystem write)
+      pipeline =
+        config
+        |> Map.delete(:evolution)
+        |> Config.__strip_flat_llm_fields__()
+        |> Config.__stringify_keys__()
+
+      assert {:ok, toml} = TomlElixir.encode(pipeline)
+      assert {:ok, decoded} = TomlElixir.decode(toml)
+
+      llm = decoded["llm"]
+
+      # Contains [[llm.models]] with both profiles
+      models = llm["models"]
+      assert is_list(models)
+      assert length(models) == 2
+
+      [p1, p2] = models
+      assert p1["id"] == "default"
+      assert p1["model"] == "anthropic:claude-sonnet-4"
+      assert p2["id"] == "fast"
+      assert p2["model"] == "google:gemini-flash"
+
+      # Does NOT contain flat model / gen params under [llm]
+      refute Map.has_key?(llm, "model")
+      refute Map.has_key?(llm, "temperature")
+      refute Map.has_key?(llm, "max_tokens")
+      refute Map.has_key?(llm, "reasoning_effort")
+      refute Map.has_key?(llm, "top_p")
+      refute Map.has_key?(llm, "top_k")
+      refute Map.has_key?(llm, "frequency_penalty")
+      refute Map.has_key?(llm, "presence_penalty")
+
+      # compression_threshold_tokens IS preserved
+      assert llm["compression_threshold_tokens"] == 100_000
+    end
+
+    test "full round-trip: empty models preserves flat fields (no stripping)" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :temperature], 0.5)
+        |> put_in([:llm, :models], [])
+
+      pipeline =
+        config
+        |> Map.delete(:evolution)
+        |> Config.__strip_flat_llm_fields__()
+        |> Config.__stringify_keys__()
+
+      assert {:ok, toml} = TomlElixir.encode(pipeline)
+      assert {:ok, decoded} = TomlElixir.decode(toml)
+
+      llm = decoded["llm"]
+      # Flat fields preserved since models is empty
+      assert llm["model"] == "anthropic:claude-sonnet-4"
+      assert llm["temperature"] == 0.5
+    end
+
+    test "full round-trip: config with no llm.models does not crash" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :models], nil)
+
+      pipeline =
+        config
+        |> Map.delete(:evolution)
+        |> Config.__strip_flat_llm_fields__()
+        |> Config.__stringify_keys__()
+
+      assert {:ok, toml} = TomlElixir.encode(pipeline)
+      assert {:ok, decoded} = TomlElixir.decode(toml)
+
+      llm = decoded["llm"]
+      # No models key after nil is rejected by stringify_keys
+      refute Map.has_key?(llm, "models")
+      # Flat fields preserved
+      assert llm["model"] == "anthropic:claude-sonnet-4"
+    end
+  end
+
   describe "model map normalization in profiles" do
     test "provider string is atomized in each profile's model map" do
       config =
