@@ -926,9 +926,9 @@ defmodule EvoDashWeb.DashboardComponents do
                         "Agents Spawned"
                       )}
                     </span>
-                    <%= if @task.opts[:model_id] do %>
+                    <%= if @task.model_id do %>
                       <span class="text-xs font-medium text-base-content/50">
-                        {gettext("Model")}: {@task.opts[:model_id]}
+                        {gettext("Model")}: {@task.model_id}
                       </span>
                     <% end %>
                   </h4>
