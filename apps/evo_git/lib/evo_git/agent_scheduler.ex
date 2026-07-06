@@ -49,6 +49,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Slots
   alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
@@ -732,7 +733,7 @@ defmodule EvoGit.AgentScheduler do
       {:reply, {:error, :scheduler_paused}, state}
     else
       state = Worktrees.ensure_initialized(state)
-      {:ok, parent} = get_sched_meta(parent_id)
+      {:ok, parent} = Store.get_sched_meta(parent_id)
 
       Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
     end
@@ -892,9 +893,9 @@ defmodule EvoGit.AgentScheduler do
         {:noreply, state}
 
       agent_id ->
-        case get_sched_meta(agent_id) do
+        case Store.get_sched_meta(agent_id) do
           {:ok, meta} ->
-            put_sched_meta(agent_id, %{meta | result_sent: true})
+            Store.put_sched_meta(agent_id, %{meta | result_sent: true})
 
             if meta.parent_id do
               Subagents.store_sub_result(meta.parent_id, agent_id, result)
@@ -944,7 +945,7 @@ defmodule EvoGit.AgentScheduler do
         {state, slot_status} = Slots.release_agent_slots(state, agent_id)
         apply_status_updates(slot_status)
 
-        case get_sched_meta(agent_id) do
+        case Store.get_sched_meta(agent_id) do
           {:ok, meta} ->
             if reason == :normal or meta.result_sent do
               state = Lifecycle.recycle_agent(state, agent_id)
@@ -973,38 +974,17 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  # --- ETS Helpers (Agent State Table) ---
-
-  defp put_agent_state(agent_id, agent_state) do
-    :ets.insert(@agent_table, {agent_id, agent_state})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-  end
-
-  # --- ETS Helpers (Scheduler Metadata Table) ---
-
-  defp get_sched_meta(agent_id) do
-    case :ets.lookup(@sched_table, agent_id) do
-      [{^agent_id, %SchedMeta{} = meta}] -> {:ok, meta}
-      [] -> :error
-    end
-  end
-
-  defp put_sched_meta(agent_id, %SchedMeta{} = meta) do
-    :ets.insert(@sched_table, {agent_id, meta})
-    EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
-  end
-
   # Applies a list of {agent_id, status} updates to the ETS SchedMeta table.
   # Used by slot management to reflect blocked/running status in the dashboard.
   defp apply_status_updates(status_updates) do
     Enum.each(status_updates, fn {agent_id, new_status} ->
-      case get_sched_meta(agent_id) do
+      case Store.get_sched_meta(agent_id) do
         {:ok, meta} ->
           # Only update running agents to blocked (don't overwrite :waiting or :ready)
           # and only restore to :running from :blocked
           if (new_status == :blocked and meta.status == :running) or
                (new_status == :running and meta.status == :blocked) do
-            put_sched_meta(agent_id, %{meta | status: new_status})
+            Store.put_sched_meta(agent_id, %{meta | status: new_status})
           end
 
         :error ->
@@ -1061,7 +1041,7 @@ defmodule EvoGit.AgentScheduler do
   def batch_update_agent(agent_id, fields) when is_list(fields) do
     {:ok, agent_state} = get_agent_state(agent_id)
     updated_state = Kernel.struct!(agent_state, fields)
-    put_agent_state(agent_id, updated_state)
+    Store.put_agent_state(agent_id, updated_state)
     :ok
   end
 
@@ -1115,7 +1095,7 @@ defmodule EvoGit.AgentScheduler do
       | compression_count: agent_state.compression_count + 1
     }
 
-    put_agent_state(agent_id, updated_state)
+    Store.put_agent_state(agent_id, updated_state)
 
     :ok
   end
