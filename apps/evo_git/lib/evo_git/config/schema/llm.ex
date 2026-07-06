@@ -44,6 +44,9 @@ defmodule EvoGit.Config.Schema.LLM do
   @doc """
   Returns the list of model profiles from a resolved config map.
 
+  Defensive against malformed config: if `:llm` is not a map (e.g. user wrote
+  `llm = "claude"` — a scalar — instead of a `[llm]` table), returns `[]`.
+
   ## Example
 
       iex> Schema.LLM.model_profiles(%{llm: %{models: [%{id: "default", model: "x:y"}]}})
@@ -51,9 +54,9 @@ defmodule EvoGit.Config.Schema.LLM do
   """
   @spec model_profiles(map()) :: [map()]
   def model_profiles(config) when is_map(config) do
-    config
-    |> Map.get(:llm, %{})
-    |> Map.get(:models, [])
+    llm = Map.get(config, :llm)
+    models = if is_map(llm), do: Map.get(llm, :models), else: nil
+    if is_list(models), do: models, else: []
   end
 
   @doc """

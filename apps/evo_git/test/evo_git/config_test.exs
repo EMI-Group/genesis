@@ -613,4 +613,120 @@ defmodule EvoGit.ConfigTest do
       assert p2.model == "anthropic:claude-sonnet-4"
     end
   end
+
+  describe "github_username is not required (config_status/0)" do
+    # Bug fix: config_status/0 no longer includes :github_username in its
+    # checks list. The github username is purely informational and must not
+    # surface as a missing-config warning. These tests only assert that
+    # :github_username is absent — :llm_model may legitimately be in :missing
+    # in the test env (no model configured), which is fine.
+    test ":github_username is not in the :missing list" do
+      status = Config.config_status()
+      assert :github_username not in status.missing
+    end
+
+    test ":github_username is not in the :warnings list" do
+      status = Config.config_status()
+      assert :github_username not in status.warnings
+    end
+
+    test "the string 'github' does not appear in any warning message" do
+      status = Config.config_status()
+
+      for warning <- status.warnings do
+        refute String.contains?(String.downcase(warning), "github"),
+               "unexpected github reference in warning: #{inspect(warning)}"
+      end
+    end
+  end
+
+  describe "resolve pipeline robustness against malformed config types" do
+    # Bug fix: the defaults() |> deep_merge(user) |> atomize_enum_values()
+    # |> migrate_llm_models() pipeline was hardened so it never raises on
+    # type-mismatched user config (e.g. user wrote `llm = "claude"` — a
+    # scalar — instead of a `[llm]` table). These tests exercise each
+    # defensive guard via the Config.__*__ test helpers.
+
+    test "deep_merge keeps base map when override is a non-map type mismatch" do
+      base = %{llm: %{model: "default", concurrency: 3}}
+      # A string where a [llm] table is expected — a type error.
+      override = %{llm: "claude"}
+      result = Config.__deep_merge__(base, override)
+
+      assert is_map(result.llm)
+      # The string override must NOT have replaced the map default.
+      assert result.llm.model == "default"
+      assert result.llm.concurrency == 3
+    end
+
+    test "migrate_llm_models does not crash and returns a map when :llm is a string" do
+      config = %{llm: "claude", scheduler: "oops"}
+      result = Config.__migrate_llm_models__(config)
+      assert is_map(result)
+    end
+
+    test "atomize_enum_values replaces non-map model profiles with %{}" do
+      config = %{llm: %{models: ["not-a-map", %{id: "ok"}]}}
+      result = Config.__atomize_enum_values__(config)
+
+      assert is_map(result)
+      models = result.llm.models
+      assert is_list(models)
+      assert length(models) == 2
+      assert Enum.at(models, 0) == %{}
+      assert Enum.at(models, 1).id == "ok"
+    end
+
+    test "Schema.model_profiles returns [] for non-map :llm" do
+      assert EvoGit.Config.Schema.model_profiles(%{llm: "string"}) == []
+      assert EvoGit.Config.Schema.model_profiles(%{llm: nil}) == []
+    end
+
+    test "Schema.model_profiles returns [] when models is not a list" do
+      assert EvoGit.Config.Schema.model_profiles(%{llm: %{models: "not-a-list"}}) == []
+    end
+
+    test "Schema.validate does not raise on string sections" do
+      result1 = EvoGit.Config.Schema.validate(%{llm: "string"})
+      assert match?({_, _}, result1)
+
+      result2 = EvoGit.Config.Schema.validate(%{scheduler: "string"})
+      assert match?({_, _}, result2)
+
+      result3 = EvoGit.Config.Schema.validate(%{tools: "string"})
+      assert match?({_, _}, result3)
+    end
+
+    test "end-to-end pipeline (defaults + malformed override) never crashes" do
+      malformed_override = %{llm: "claude", scheduler: "oops", tools: "string"}
+
+      # Simulate resolve/0 minus the disk read: defaults |> deep_merge
+      # |> atomize_enum_values |> migrate_llm_models
+      config =
+        Config.defaults()
+        |> Config.__deep_merge__(malformed_override)
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      assert is_map(config)
+      # The type-mismatched overrides must not have replaced the map defaults.
+      assert is_map(config.llm)
+      assert is_map(config.scheduler)
+    end
+  end
+
+  describe "config_status/0 structural integrity" do
+    test "returns the full result map without raising in the test env" do
+      status = Config.config_status()
+
+      assert Map.has_key?(status, :ok?)
+      assert Map.has_key?(status, :missing)
+      assert Map.has_key?(status, :warnings)
+      assert Map.has_key?(status, :validation_errors)
+      assert is_boolean(status.ok?)
+      assert is_list(status.missing)
+      assert is_list(status.warnings)
+      assert is_list(status.validation_errors)
+    end
+  end
 end

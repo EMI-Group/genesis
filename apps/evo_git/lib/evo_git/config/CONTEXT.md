@@ -13,7 +13,7 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 | `user_config/0` | Reads and returns parsed `config.toml`, or `%{}` if not found |
 | `save_user_config/1` | Persists a config map to `config.toml`. Creates config directory if needed. Returns `:ok` or `{:error, reason}`. |
 | `save_credentials/1` | Merges and persists API key map to `credentials.toml`. Sets env vars. Returns `:ok` or `{:error, reason}`. |
-| `config_status/0` | Returns diagnostic map with `:missing`, `:warnings`, and `:ok?`. Checks LLM model, API key presence, and GitHub username. |
+| `config_status/0` | Returns diagnostic map with `:missing`, `:warnings`, and `:ok?`. Checks LLM model presence and API key presence. GitHub username is **optional** — it is NOT checked here (a missing username does not affect `:ok?`, `:missing`, or `:warnings`). |
 | `credentials/0` | Reads `credentials.toml`, sets each key-value pair as an env var, returns parsed map |
 | `defaults/0` | Returns built-in application defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode) |
 | `config_path/0` | Returns the full path to `config.toml` |
@@ -129,4 +129,5 @@ Keys are set as environment variables on load. Only one key needed (matching the
 - All file reads use `case File.read/1` (non-crashing) with explicit error handling via `with`/`case`, not `try/rescue`.
 - `EvoGit.Defaults` is a backward-compatibility shim that delegates all calls to this module.
 - Model format is `"provider:model"` — provider determines which API key env var is used.
-- `config_status/0` checks: LLM model presence, at least one API key, GitHub username.
+- `config_status/0` checks: LLM model presence, at least one API key. GitHub username is **optional** — a missing username does NOT appear in `:missing`/`:warnings` or make `:ok?` false.
+- **Crash resilience (untrusted user config boundary)**: The `resolve/0` → `config_status()` pipeline MUST NEVER raise on any user-provided config content, including valid TOML with wrong value types (e.g. `llm = "string"` instead of a `[llm]` table). `deep_merge/2` discards type-mismatched user values (keeping the default map). `migrate_llm_models/1`, `atomize_enum_values/1`, `Schema.model_profiles/1`, and `Schema.validate/1` all guard against non-map structures. `Schema.validate/1` uses `safe_get_in` (not `get_in`) to avoid Access-behaviour crashes on non-map intermediate values. Bad config produces `validation_errors` but does not crash the caller — the user must always be able to boot the app and access the settings page.
