@@ -261,7 +261,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
   describe "prompt textarea with phx-update=ignore" do
     test "objective textarea has phx-update=ignore attribute", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/")
 
       # Open a project so the task form renders
       render_click(view, "toggle_open_project_form", %{})
