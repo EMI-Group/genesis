@@ -22,6 +22,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Result
+  alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ForeignRepo
@@ -41,8 +42,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
           indexed_calls :: [{map(), non_neg_integer()}],
           state :: LoopState.t(),
           opts :: keyword()
-        ) :: {list(), String.t() | nil}
-  def process_subagent_calls([], _state, opts) when is_list(opts), do: {[], nil}
+        ) :: {list(), String.t() | nil, Usage.t()}
+  def process_subagent_calls([], _state, opts) when is_list(opts), do: {[], nil, Usage.zero()}
 
   def process_subagent_calls(indexed_calls, state, opts) when is_list(opts) do
     sync_commit_fn = Keyword.fetch!(opts, :sync_commit_fn)
@@ -82,7 +83,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
         end)
 
       all_results = error_results ++ path_error_results ++ Enum.reverse(invalid_results)
-      {all_results, nil}
+      {all_results, nil, Usage.zero()}
     else
       {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
       parent_commit = agent_state.phylo_node.current_commit
@@ -154,9 +155,12 @@ defmodule EvoGit.Agent.SubagentProcessing do
           process_subagent_result(call, index, result, state)
         end)
 
+      # Accumulate subagent usages for task-level token tracking
+      subagent_usage = accumulate_subagent_usages(results)
+
       all_results = indexed_results ++ path_error_results ++ Enum.reverse(invalid_results)
 
-      {all_results, merge_message}
+      {all_results, merge_message, subagent_usage}
     end
   end
 
@@ -417,6 +421,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   def format_subagent_result(text) when is_binary(text), do: text
   def format_subagent_result(other), do: inspect(other)
+
+  @doc false
+  def accumulate_subagent_usages(results) do
+    Enum.reduce(results, Usage.zero(), fn
+      {:ok, %Result{usage: %Usage{} = usage}}, acc -> Usage.add(acc, usage)
+      _, acc -> acc
+    end)
+  end
 
   # --- Private Helpers ---
 

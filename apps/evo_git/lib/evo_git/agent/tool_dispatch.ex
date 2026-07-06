@@ -185,7 +185,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       {:complete, final_result} ->
         {:ok, final_result}
 
-      {:continue, tool_responses} ->
+      {:continue, tool_responses, subagent_usage} ->
         if EvoGit.Agent.grace_period_continue_failed?(state) do
           {:error, :recovery_failed}
         else
@@ -209,15 +209,23 @@ defmodule EvoGit.Agent.ToolDispatch do
           tagged_tool_responses =
             Enum.map(tool_responses, &EvoGit.Agent.ContextBuilder.tag_message_turn(&1, state.turn))
 
+          # Accumulate subagent usage into the parent agent's cumulative usage
+          usage = if subagent_usage, do: Usage.add(state.usage, subagent_usage), else: state.usage
+
           state = %{
             state
             | context: ReqLLM.Context.append(state.context, tagged_tool_responses),
               delegation_hints: updated_hints,
               read_delegation_hints: updated_read_hints,
-              turns_since_subagent: new_turns_since
+              turns_since_subagent: new_turns_since,
+              usage: usage
           }
 
           EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
+
+          # Sync accumulated subagent usage to ETS
+          AgentScheduler.batch_update_agent(state.agent_id, usage: state.usage)
+
           loop_fn.(state)
         end
 
@@ -329,7 +337,7 @@ defmodule EvoGit.Agent.ToolDispatch do
               tool_result(tool_call_id, call.name, warning_msg)
             end)
 
-          {:continue, tool_responses}
+          {:continue, tool_responses, nil}
 
         {:clean, _} ->
           do_complete(complete_call, state)
@@ -391,7 +399,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     # 4. Batch: Process each batch
     indexed_standard_results = process_standard_calls(indexed_standard_calls, state)
 
-    {indexed_subagent_results, merge_message} =
+    {indexed_subagent_results, merge_message, subagent_usage} =
       EvoGit.Agent.SubagentProcessing.process_subagent_calls(
         indexed_subagent_calls,
         state,
@@ -422,7 +430,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         all_results
       end
 
-    {:continue, all_results}
+    {:continue, all_results, subagent_usage}
   end
 
   @doc false
