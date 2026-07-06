@@ -3,6 +3,7 @@ defmodule EvoDashWeb.ReviewComponents do
   Components for the code review page — GitHub PR-style tab layout with split diff viewer.
   """
   use EvoDashWeb, :html
+  alias EvoDashWeb.ArchiveHelpers
 
   # ---------------------------------------------------------------------------
   # review_header/1 — Page header with PR title, badges, and metadata
@@ -180,7 +181,7 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:task_id, :string, default: nil)
 
   def archive_review_section(assigns) do
-    tree = build_archive_tree(assigns.archive_metadata)
+    tree = ArchiveHelpers.build_archive_tree_for_review(assigns.archive_metadata)
 
     assigns = assign(assigns, :archive_tree, tree)
 
@@ -976,97 +977,6 @@ defmodule EvoDashWeb.ReviewComponents do
     |> String.replace(~r{[^a-zA-Z0-9_-]}, "-")
     |> String.trim("-")
   end
-
-  # Build a nested tree from a flat list of archive metadata maps.
-  # Groups agents by parent_id; roots are those with nil parent_id.
-  # Returns [{agent, [{child, [...]}, ...]}, ...].
-  #
-  # The input maps may have either atom keys (in-memory) or string keys (after
-  # a DB round-trip through Jason.decode). We normalize to atom keys first so
-  # both the tree-building and the HEEx renderers work uniformly. A visited-set
-  # guard makes the recursion bounded and total — it can never infinite-loop on
-  # cyclic or malformed data.
-  defp build_archive_tree(agents) do
-    agents = Enum.map(agents, &normalize_agent_keys/1)
-
-    by_parent =
-      Enum.group_by(
-        agents,
-        fn agent ->
-          case agent_key(agent, :parent_id) do
-            nil -> nil
-            id when is_binary(id) -> id
-            _ -> nil
-          end
-        end
-      )
-
-    build_children = fn parent_id, visited, recurse ->
-      (by_parent[parent_id] || [])
-      |> Enum.filter(fn agent ->
-        id = agent_key(agent, :agent_id)
-        id not in [nil, ""] and not MapSet.member?(visited, id)
-      end)
-      |> Enum.map(fn agent ->
-        id = agent_key(agent, :agent_id)
-        {agent, recurse.(id, MapSet.put(visited, id), recurse)}
-      end)
-    end
-
-    build_children.(nil, MapSet.new(), build_children)
-  end
-
-  # Read a value from an agent map regardless of whether keys are atoms or strings.
-  defp agent_key(agent, key) when is_atom(key) do
-    case Map.fetch(agent, key) do
-      {:ok, v} -> v
-      :error -> Map.get(agent, Atom.to_string(key))
-    end
-  end
-
-  # Normalize an agent map's top-level string keys to atoms so that both
-  # tree-building and the HEEx renderers (which use atom-key access) work
-  # uniformly. Only known keys (in the whitelist below) are converted; unknown
-  # string keys are left as-is. This avoids both dynamic atom creation and the
-  # try/rescue around String.to_existing_atom/1.
-  #
-  # The data originates from the runtime archive_records (in-memory, atom keys)
-  # or after a DB round-trip through Jason.decode (string keys). The whitelist
-  # enumerates every key actually consumed by the tree-building and rendering
-  # code in this module.
-  @known_agent_keys %{
-    "agent_id" => :agent_id,
-    "parent_id" => :parent_id,
-    "depth" => :depth,
-    "started_at" => :started_at,
-    "completed_at" => :completed_at,
-    "objective" => :objective,
-    "result" => :result,
-    "base_commit" => :base_commit,
-    "final_commit" => :final_commit,
-    "archive_ref_start" => :archive_ref_start,
-    "archive_ref_final" => :archive_ref_final,
-    "branch_name" => :branch_name,
-    "usage" => :usage,
-    "input_tokens" => :input_tokens,
-    "output_tokens" => :output_tokens,
-    "total_tokens" => :total_tokens,
-    "cost" => :cost,
-    "model" => :model,
-    "spec" => :spec
-  }
-
-  defp normalize_agent_keys(agent) when is_map(agent) do
-    Map.new(agent, fn
-      {key, value} when is_atom(key) ->
-        {key, value}
-
-      {key, value} when is_binary(key) ->
-        {Map.get(@known_agent_keys, key, key), value}
-    end)
-  end
-
-  defp normalize_agent_keys(agent), do: agent
 
   defp review_status_badge(:open), do: "badge-warning"
   defp review_status_badge(:merged), do: "badge-success"

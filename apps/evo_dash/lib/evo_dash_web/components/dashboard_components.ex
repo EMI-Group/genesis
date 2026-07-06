@@ -5,6 +5,7 @@ defmodule EvoDashWeb.DashboardComponents do
   """
   use EvoDashWeb, :html
   alias EvoGit.Core.ForeignRepo
+  alias EvoDashWeb.ArchiveHelpers
 
   # ---------------------------------------------------------------------------
   # project_selector/1 — Project selection bar
@@ -1040,7 +1041,7 @@ defmodule EvoDashWeb.DashboardComponents do
   attr(:agents, :list, required: true)
 
   def archive_tree(assigns) do
-    roots = build_archive_tree(assigns.agents)
+    roots = ArchiveHelpers.build_archive_tree(assigns.agents)
     assigns = assign(assigns, :roots, roots)
 
     ~H"""
@@ -1581,91 +1582,4 @@ defmodule EvoDashWeb.DashboardComponents do
        when is_binary(branch) and branch != "", do: true
 
   defp show_review_button?(_), do: false
-
-  # ---------------------------------------------------------------------------
-  # Private helpers — archive tree construction
-  # ---------------------------------------------------------------------------
-
-  defp build_archive_tree(agents) when is_list(agents) do
-    agents = Enum.map(agents, &normalize_agent_keys/1)
-    by_parent = Enum.group_by(agents, &agent_key(&1, :parent_id))
-
-    by_parent
-    |> Map.get(nil, [])
-    |> Enum.filter(&(agent_key(&1, :agent_id) not in [nil, ""]))
-    |> Enum.map(fn agent -> build_archive_node(agent, by_parent, MapSet.new()) end)
-  end
-
-  defp build_archive_node(agent, by_parent, visited) do
-    id = agent_key(agent, :agent_id)
-
-    children =
-      if id in [nil, ""] do
-        []
-      else
-        new_visited = MapSet.put(visited, id)
-
-        by_parent
-        |> Map.get(id, [])
-        |> Enum.filter(fn child ->
-          child_id = agent_key(child, :agent_id)
-          child_id not in [nil, ""] and not MapSet.member?(new_visited, child_id)
-        end)
-        |> Enum.map(fn child -> build_archive_node(child, by_parent, new_visited) end)
-      end
-
-    %{agent: agent, children: children}
-  end
-
-  # Read a value from an agent map regardless of whether keys are atoms or strings.
-  defp agent_key(agent, key) when is_atom(key) do
-    case Map.fetch(agent, key) do
-      {:ok, v} -> v
-      :error -> Map.get(agent, Atom.to_string(key))
-    end
-  end
-
-  # Normalize an agent map's top-level string keys to atoms so that both
-  # tree-building and the HEEx renderers (which use atom-key access) work
-  # uniformly. Only known keys (in the whitelist below) are converted; unknown
-  # string keys are left as-is. This avoids both dynamic atom creation and the
-  # try/rescue around String.to_existing_atom/1.
-  #
-  # The data originates from the runtime archive_records (in-memory, atom keys)
-  # or after a DB round-trip through Jason.decode (string keys). The whitelist
-  # enumerates every key actually consumed by the tree-building and rendering
-  # code in this module.
-  @known_agent_keys %{
-    "agent_id" => :agent_id,
-    "parent_id" => :parent_id,
-    "depth" => :depth,
-    "started_at" => :started_at,
-    "completed_at" => :completed_at,
-    "objective" => :objective,
-    "result" => :result,
-    "base_commit" => :base_commit,
-    "final_commit" => :final_commit,
-    "archive_ref_start" => :archive_ref_start,
-    "archive_ref_final" => :archive_ref_final,
-    "branch_name" => :branch_name,
-    "usage" => :usage,
-    "input_tokens" => :input_tokens,
-    "output_tokens" => :output_tokens,
-    "total_tokens" => :total_tokens,
-    "cost" => :cost,
-    "model" => :model,
-    "spec" => :spec
-  }
-
-  defp normalize_agent_keys(agent) when is_map(agent) do
-    Map.new(agent, fn
-      {key, value} when is_atom(key) ->
-        {key, value}
-
-      {key, value} when is_binary(key) ->
-        {Map.get(@known_agent_keys, key, key), value}
-    end)
-  end
-
-  defp normalize_agent_keys(agent), do: agent
 end
