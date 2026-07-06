@@ -246,12 +246,12 @@ defmodule EvoGit.Adapters.GitTest do
     test "true executable is resolved to a non-nil path ending in 'true'", %{tmp_dir: tmp_dir} do
       # The resolved `true` path is memoized via :persistent_term; clear the cache
       # so we exercise the real resolution path regardless of test ordering.
-      :persistent_term.erase({EvoGit.Adapters.Git, :true_path})
+      :persistent_term.erase({EvoGit.GitEnv, :true_path})
 
       # Trigger git_env() resolution by invoking run/2, which populates the cache.
       {:ok, _} = Git.run(["status", "--porcelain"], tmp_dir)
 
-      resolved = :persistent_term.get({EvoGit.Adapters.Git, :true_path}, nil)
+      resolved = :persistent_term.get({EvoGit.GitEnv, :true_path}, nil)
       assert is_binary(resolved)
       assert String.ends_with?(resolved, "true")
     end

@@ -9,10 +9,6 @@ defmodule EvoGit.Adapters.Git do
   @repo_url_re ~r/https:\/\/github\.com\/[^\/]+\/[^\/\s]+/
   @gh_username_re ~r/Logged in as ([^\s]+)/
 
-  # :persistent_term key caching the resolved path to the `true` executable.
-  # Resolving it scans PATH, so we memoize once for the VM's lifetime.
-  @true_path_key {__MODULE__, :true_path}
-
   @doc """
   Runs a git command in the given directory.
   Sets LC_ALL=C to ensure locale-independent (English) output for reliable parsing,
@@ -26,68 +22,9 @@ defmodule EvoGit.Adapters.Git do
       System.cmd(EvoGit.Executable.resolve("git"), args,
         cd: cd,
         stderr_to_stdout: true,
-        env: git_env()
+        env: EvoGit.GitEnv.git_env()
       )
       |> handle_git_command_result(args, cd)
-    end
-  end
-
-  # Returns the environment map shared by every git invocation.
-  defp git_env do
-    %{"LC_ALL" => "C", "GIT_EDITOR" => resolve_true_executable()}
-  end
-
-  # Resolves the `true` executable path, memoized via :persistent_term.
-  # System.find_executable/1 does NOT raise (returns nil), so no try/rescue.
-  defp resolve_true_executable do
-    case :persistent_term.get(@true_path_key, nil) do
-      nil ->
-        path = do_resolve_true_executable()
-        :persistent_term.put(@true_path_key, path)
-        path
-
-      path ->
-        path
-    end
-  end
-
-  defp do_resolve_true_executable do
-    case System.find_executable("true") do
-      path when is_binary(path) ->
-        path
-
-      nil ->
-        # Windows: `true` is bundled with git-for-windows in its usr/bin dir.
-        # Try to derive it from the git installation root; otherwise fall back
-        # to the bare name "true" (git will still find it on PATH in most shells).
-        case :os.type() do
-          {:win32, _} ->
-            case derive_windows_true_exe() do
-              nil -> "true"
-              path -> path
-            end
-
-          _ ->
-            "true"
-        end
-    end
-  end
-
-  # Derives true.exe relative to the resolved git executable on Windows.
-  # git-for-windows layout: <git_root>/cmd/git.exe and <git_root>/usr/bin/true.exe.
-  defp derive_windows_true_exe do
-    case System.find_executable("git") do
-      git_path when is_binary(git_path) ->
-        true_path =
-          git_path
-          |> Path.dirname()
-          |> Path.dirname()
-          |> Path.join(Path.join(["usr", "bin", "true.exe"]))
-
-        if File.exists?(true_path), do: true_path, else: nil
-
-      nil ->
-        nil
     end
   end
 
@@ -121,7 +58,7 @@ defmodule EvoGit.Adapters.Git do
       # Branch already exists (previous session crashed) — force-delete and recreate
       System.cmd(EvoGit.Executable.resolve("git"), ["branch", "-D", branch_name],
         cd: repo_path,
-        env: git_env()
+        env: EvoGit.GitEnv.git_env()
       )
     end
 
@@ -164,7 +101,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge", commit_sha],
            cd: path,
            stderr_to_stdout: true,
-           env: git_env()
+           env: EvoGit.GitEnv.git_env()
          ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
@@ -176,7 +113,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge", "--no-commit", commit_sha],
            cd: path,
            stderr_to_stdout: true,
-           env: git_env()
+           env: EvoGit.GitEnv.git_env()
          ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
@@ -188,7 +125,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge" | commit_shas],
            cd: path,
            stderr_to_stdout: true,
-           env: git_env()
+           env: EvoGit.GitEnv.git_env()
          ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
@@ -243,7 +180,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["check-ignore" | files],
            cd: path,
            stderr_to_stdout: true,
-           env: git_env()
+           env: EvoGit.GitEnv.git_env()
          ) do
       {output, 0} -> {:ok, String.split(output, "\n", trim: true)}
       {_output, 1} -> {:ok, []}
@@ -464,7 +401,7 @@ defmodule EvoGit.Adapters.Git do
              EvoGit.Executable.resolve("git"),
              ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
              cd: repo_path,
-             env: git_env()
+             env: EvoGit.GitEnv.git_env()
            ) do
         {_output, 0} -> true
         {_output, _code} -> false
@@ -495,7 +432,7 @@ defmodule EvoGit.Adapters.Git do
            ["merge-base", "--is-ancestor", branch, base],
            cd: repo_path,
            stderr_to_stdout: true,
-           env: git_env()
+           env: EvoGit.GitEnv.git_env()
          ) do
       # branch is ancestor of base, no unique commits
       {_output, 0} -> false
@@ -555,7 +492,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["remote", "get-url", "origin"],
            cd: repo_path,
            stderr_to_stdout: true,
-           env: git_env()
+           env: EvoGit.GitEnv.git_env()
          ) do
       {_output, 0} -> true
       {_output, _} -> false
@@ -608,7 +545,7 @@ defmodule EvoGit.Adapters.Git do
            ["symbolic-ref", "refs/remotes/origin/HEAD"],
            cd: repo_path,
            stderr_to_stdout: true,
-           env: git_env()
+           env: EvoGit.GitEnv.git_env()
          ) do
       {output, 0} ->
         branch = output |> String.trim() |> String.split("/") |> List.last()

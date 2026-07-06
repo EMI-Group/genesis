@@ -169,4 +169,62 @@ defmodule EvoGit.Sandbox.LinuxTest do
     # real nix install, because active?/0 gates on enabled?/0 (config + binary
     # + flake). The wrap_command/2 output itself is tested in nix_test.exs.
   end
+
+  describe "args/4 — GIT_EDITOR injection for git commands" do
+    test "includes --setenv=LC_ALL=C for a git executable" do
+      args = Linux.args(System.tmp_dir!(), "/usr/bin/git", ["status"], nil)
+
+      assert Enum.any?(args, &(&1 == "--setenv=LC_ALL=C")),
+             "expected --setenv=LC_ALL=C for git, got: #{inspect(args)}"
+    end
+
+    test "includes --setenv=GIT_EDITOR=<true path> for a git executable" do
+      args = Linux.args(System.tmp_dir!(), "/usr/bin/git", ["status"], nil)
+
+      assert Enum.any?(args, &String.starts_with?(&1, "--setenv=GIT_EDITOR=")),
+             "expected a --setenv=GIT_EDITOR=... entry for git, got: #{inspect(args)}"
+    end
+
+    test "GIT_EDITOR value ends in 'true'" do
+      args = Linux.args(System.tmp_dir!(), "/usr/bin/git", ["status"], nil)
+
+      editor_arg = Enum.find(args, &String.starts_with?(&1, "--setenv=GIT_EDITOR="))
+      assert editor_arg != nil
+
+      value = String.replace_prefix(editor_arg, "--setenv=GIT_EDITOR=", "")
+      assert String.ends_with?(value, "true")
+    end
+
+    test "injects git env for a bare 'git' executable name" do
+      args = Linux.args(System.tmp_dir!(), "git", ["merge", "--continue"], nil)
+
+      assert Enum.any?(args, &(&1 == "--setenv=LC_ALL=C"))
+      assert Enum.any?(args, &String.starts_with?(&1, "--setenv=GIT_EDITOR="))
+    end
+
+    test "does NOT inject git env for a non-git executable (rg)" do
+      args = Linux.args(System.tmp_dir!(), "/usr/bin/rg", ["pattern"], nil)
+
+      refute Enum.any?(args, &(&1 == "--setenv=LC_ALL=C")),
+             "did not expect --setenv=LC_ALL=C for rg, got: #{inspect(args)}"
+
+      refute Enum.any?(args, &String.starts_with?(&1, "--setenv=GIT_EDITOR=")),
+             "did not expect --setenv=GIT_EDITOR for rg, got: #{inspect(args)}"
+    end
+
+    test "does NOT inject git env for /usr/bin/env" do
+      args = Linux.args(System.tmp_dir!(), "/usr/bin/env", [], nil)
+
+      refute Enum.any?(args, &(&1 == "--setenv=LC_ALL=C"))
+      refute Enum.any?(args, &String.starts_with?(&1, "--setenv=GIT_EDITOR="))
+    end
+
+    test "still forwards PATH and HOME alongside git env for git commands" do
+      args = Linux.args(System.tmp_dir!(), "/usr/bin/git", ["status"], nil)
+
+      assert Enum.any?(args, &String.starts_with?(&1, "--setenv=PATH="))
+      assert Enum.any?(args, &String.starts_with?(&1, "--setenv=HOME="))
+      assert Enum.any?(args, &(&1 == "--setenv=LC_ALL=C"))
+    end
+  end
 end

@@ -39,14 +39,32 @@ defmodule EvoGit.Sandbox.MacOS do
           {executable, args}
         end
 
+      # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
+      # automated operations that may open an interactive editor (e.g.
+      # `git merge --continue`, rebase, am, commit) never block. Detection
+      # uses the ORIGINAL executable param (before nix wrapping) since the
+      # nix-wrapped exec is `{"bash", ["-c", ...]}`.
+      git_env =
+        if EvoGit.GitEnv.git_command?(executable),
+          do: EvoGit.GitEnv.git_env_list(),
+          else: []
+
       # sandbox-exec -p <profile> -- <executable> <args...>
       System.cmd("sandbox-exec", ["-p", profile, "--", exec | exec_args],
         cd: cwd,
         stderr_to_stdout: true,
-        env: [{"TMPDIR", resolved_tmpdir}]
+        env: [{"TMPDIR", resolved_tmpdir} | git_env]
       )
     else
-      System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
+      if EvoGit.GitEnv.git_command?(executable) do
+        System.cmd(executable, args,
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: EvoGit.GitEnv.git_env_list()
+        )
+      else
+        System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
+      end
     end
   end
 

@@ -31,6 +31,19 @@ defmodule EvoGit.Sandbox.None do
         {executable, args}
       end
 
-    System.cmd(exec, exec_args, cd: cwd, stderr_to_stdout: true)
+    # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
+    # automated operations that may open an interactive editor (e.g.
+    # `git merge --continue`, rebase, am, commit) never block. Detection uses
+    # the ORIGINAL executable param (before nix wrapping) since the nix-wrapped
+    # exec is `{"bash", ["-c", ...]}`.
+    if EvoGit.GitEnv.git_command?(executable) do
+      System.cmd(exec, exec_args,
+        cd: cwd,
+        stderr_to_stdout: true,
+        env: EvoGit.GitEnv.git_env_list()
+      )
+    else
+      System.cmd(exec, exec_args, cd: cwd, stderr_to_stdout: true)
+    end
   end
 end
