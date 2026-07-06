@@ -50,7 +50,7 @@ defmodule EvoDashWeb.DashboardLive do
           <div id="welcome-check" phx-hook="WelcomeCheck" class="hidden"></div>
           <div id="browser-notifications" phx-hook="BrowserNotifications">
             <!-- Project Selector (always visible) -->
-            <EvoDashWeb.DashboardComponents.project_selector
+            <EvoDashWeb.ProjectComponents.project_selector
               active_project={@active_project}
               recent_projects={@recent_projects}
               show_open_form={@show_open_project_form}
@@ -59,7 +59,7 @@ defmodule EvoDashWeb.DashboardLive do
 
             <!-- Task Form (always visible, disabled when no project) -->
             <div class="mt-6 mb-6 animate-fade-in-up animation-delay-100">
-              <EvoDashWeb.DashboardComponents.task_form
+              <EvoDashWeb.TaskFormComponents.task_form
                 prompt={@task_prompt}
                 mode={@task_mode}
                 mode_info={@task_mode_info}
@@ -77,7 +77,7 @@ defmodule EvoDashWeb.DashboardLive do
 
             <!-- Project Settings (always in DOM, collapsible) -->
             <div class="mb-6 animate-fade-in-up animation-delay-200">
-              <EvoDashWeb.DashboardComponents.project_settings_panel
+              <EvoDashWeb.ProjectComponents.project_settings_panel
                 active_project={@active_project_path}
                 show={@show_project_settings}
                 project_config={@project_config}
@@ -112,7 +112,7 @@ defmodule EvoDashWeb.DashboardLive do
                         else: "animate-pulse-glow"
                       )
                     ]}>
-                      <EvoDashWeb.DashboardComponents.task_card
+                      <EvoDashWeb.TaskCardComponents.task_card
                         task={task}
                         show_details={MapSet.member?(@expanded_task_ids, task.id)}
                       />
@@ -136,7 +136,7 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
                 <div class="space-y-3">
                   <%= for task <- @pending_tasks do %>
-                    <EvoDashWeb.DashboardComponents.task_card
+                    <EvoDashWeb.TaskCardComponents.task_card
                       task={task}
                       show_details={MapSet.member?(@expanded_task_ids, task.id)}
                     />
@@ -181,7 +181,7 @@ defmodule EvoDashWeb.DashboardLive do
                   <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
                   {gettext("Task Result")}
                 </:title>
-                {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
+                {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
               </EvoDashWeb.Helpers.modal>
             <% end %>
 
