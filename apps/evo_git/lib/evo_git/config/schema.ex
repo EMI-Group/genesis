@@ -155,7 +155,12 @@ defmodule EvoGit.Config.Schema do
   def validate(config) when is_map(config) do
     errors =
       Enum.flat_map(Definitions.schemas(), fn schema ->
-        case get_in(config, schema.key_path) do
+        # Use safe_get_in instead of get_in: get_in uses the Access
+        # behaviour, which crashes (ArgumentError) if an intermediate value
+        # is a non-map/non-Access type (e.g. `scheduler = "string"` instead
+        # of a `[scheduler]` table). safe_get_in returns nil for any
+        # non-traversable path, so the type check below catches the error.
+        case safe_get_in(config, schema.key_path) do
           nil ->
             []
 
@@ -354,6 +359,23 @@ defmodule EvoGit.Config.Schema do
   end
 
   # ── Private: Helpers ────────────────────────────────────────────────
+
+  # Safe nested-map accessor. Unlike Kernel.get_in/2 (which uses the Access
+  # behaviour and raises ArgumentError on non-map intermediate values like
+  # strings or integers), this traverses the path only through actual maps,
+  # returning nil if any step is not a map. This is necessary because user
+  # config may contain type-mismatched values (e.g. `scheduler = "x"` instead
+  # of a `[scheduler]` table) and validation must not crash on them.
+  defp safe_get_in(map, []), do: map
+
+  defp safe_get_in(map, [key | rest]) when is_map(map) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> safe_get_in(value, rest)
+      :error -> nil
+    end
+  end
+
+  defp safe_get_in(_non_map, _path), do: nil
 
   defp error(key_path, message, value, rule) do
     %ValidationError{

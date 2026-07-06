@@ -119,6 +119,9 @@ defmodule EvoGit.Config do
   @doc false
   def __stringify_keys__(config), do: stringify_keys(config)
 
+  @doc false
+  def __deep_merge__(base, override), do: deep_merge(base, override)
+
   @doc """
   Returns the fully merged configuration map (defaults + user config).
 
@@ -176,20 +179,26 @@ defmodule EvoGit.Config do
               acc
           end
 
-        # Normalize each profile's model map in the models list
+        # Normalize each profile's model map in the models list.
+        # Defensive: skip non-map entries (e.g. `models = "foo"`) — the
+        # schema validator reports the type error.
         case Map.get(llm_config, :models) do
           models when is_list(models) ->
             normalized_models =
-              Enum.map(models, fn profile when is_map(profile) ->
-                profile = normalize_profile_keys(profile)
+              Enum.map(models, fn
+                profile when is_map(profile) ->
+                  profile = normalize_profile_keys(profile)
 
-                case Map.get(profile, :model) do
-                  model when is_map(model) ->
-                    Map.put(profile, :model, normalize_model_map(model))
+                  case Map.get(profile, :model) do
+                    model when is_map(model) ->
+                      Map.put(profile, :model, normalize_model_map(model))
 
-                  _ ->
-                    profile
-                end
+                    _ ->
+                      profile
+                  end
+
+                _non_map_profile ->
+                  %{}
               end)
 
             put_in(acc, [:llm, :models], normalized_models)
@@ -232,8 +241,15 @@ defmodule EvoGit.Config do
   # a single "default" profile is created from the flat fields.
   #
   # This always ensures config.llm.models is present after resolution.
+  #
+  # Defensive against malformed config: if `:llm` or `:scheduler` is not a map
+  # (e.g. user wrote `llm = "claude"` — a scalar — instead of a `[llm]` table),
+  # we treat it as an empty section. The deep_merge in resolve/0 already
+  # discards such type mismatches at the top level, but this guard provides
+  # defense-in-depth for direct/test callers.
   defp migrate_llm_models(config) when is_map(config) do
-    llm = Map.get(config, :llm, %{})
+    raw_llm = Map.get(config, :llm, %{})
+    llm = if is_map(raw_llm), do: raw_llm, else: %{}
     existing_models = Map.get(llm, :models, [])
 
     models =
@@ -252,7 +268,8 @@ defmodule EvoGit.Config do
           else
             # Build default profile from flat fields.
             # Concurrency comes from scheduler.max_concurrency (the old global limit).
-            scheduler = Map.get(config, :scheduler, %{})
+            raw_scheduler = Map.get(config, :scheduler, %{})
+            scheduler = if is_map(raw_scheduler), do: raw_scheduler, else: %{}
             concurrency = Map.get(scheduler, :max_concurrency, 3)
 
             profile =
@@ -568,15 +585,12 @@ defmodule EvoGit.Config do
         providers = EvoGit.Config.LLMCatalog.known_env_vars()
         Enum.all?(providers, fn p -> System.get_env(p) == nil end)
       end},
-      {:github_username, "GitHub username is not configured. Set [user] github_username in config.toml.", fn ->
-        case get_in(resolved, [:user, :github_username]) do
-          nil -> true
-          "" -> true
-          _ -> false
-        end
-      end},
       {:search_api_key, "Web search is enabled but the API key environment variable is not set.", fn ->
-        tools_search_enabled?() == false and get_in(resolved, [:tools, :search, :enabled]) == true
+        # Use get_in_path (safe accessor) instead of get_in: if a user wrote
+        # `tools = "string"` instead of a [tools] table, get_in would crash
+        # because strings don't implement Access.
+        tools_search_enabled?() == false and
+          get_in_path(resolved, [:tools, :search, :enabled]) == true
       end}
     ]
 
@@ -787,16 +801,33 @@ defmodule EvoGit.Config do
 
   # Deep merges two maps. `override` values take precedence.
   # Only merges maps; non-map values in `override` replace defaults.
+  #
+  # Type-mismatch safety: if the override value is a non-map but the default
+  # value at that key is a map (e.g. user wrote `llm = "claude"` — a string —
+  # instead of a `[llm]` table), the user value is a type error. We discard it
+  # and keep the default (the schema validator will report the error). This
+  # prevents the downstream pipeline from crashing on `Map.get/3` against a
+  # string. The reverse — user has a map where a default is a leaf — is fine
+  # and uses the user value.
   defp deep_merge(base, override) when is_map(base) and is_map(override) do
     Map.merge(base, override, fn _key, base_val, override_val ->
-      if is_map(base_val) and is_map(override_val) do
-        deep_merge(base_val, override_val)
-      else
-        override_val
+      cond do
+        is_map(base_val) and is_map(override_val) ->
+          deep_merge(base_val, override_val)
+
+        is_map(base_val) and not is_map(override_val) ->
+          # Type mismatch: default is a map but user gave a leaf value
+          # (e.g. `llm = "x"` instead of `[llm]`). Keep the default — the
+          # wrong user value would crash downstream map operations.
+          base_val
+
+        true ->
+          override_val
       end
     end)
   end
 
+  defp deep_merge(base, _override) when is_map(base), do: base
   defp deep_merge(_base, override), do: override
 
   # Recursively converts string keys to atom keys in a map.
