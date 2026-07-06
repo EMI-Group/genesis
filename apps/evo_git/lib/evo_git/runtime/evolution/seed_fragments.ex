@@ -505,10 +505,9 @@ defmodule EvoGit.Runtime.Evolution.SeedFragments do
         end
 
         defp parse_body(body) do
-          try do
-            {:ok, Jason.decode!(body)}
-          rescue
-            _ -> {:error, :invalid_json}
+          case Jason.decode(body) do
+            {:ok, _} = ok -> ok
+            {:error, _} -> {:error, :invalid_json}
           end
         end
 
