@@ -230,10 +230,13 @@ defmodule EvoGit.Sandbox.Linux do
   end
 
   defp get_process_resources do
-    # AgentScheduler.get_config/0 is a GenServer.call that exits (noproc/
-    # timeout) if the scheduler isn't running — e.g. during early init or
-    # tests. We catch that exit specifically. Config.resolve never raises
-    # and returns nil for missing keys, so it needs no protection.
+    # JUSTIFIED try/catch: AgentScheduler.get_config/0 is a GenServer.call
+    # that exits the caller (noproc/timeout) when the scheduler isn't
+    # running — e.g. during early init or tests. GenServer.call has no
+    # non-raising variant (it exits the process, it doesn't return an
+    # error tuple), so try/catch is the correct way to guard this.
+    # Config.resolve never raises and returns nil for missing keys, so it
+    # needs no protection.
     scheduler_config =
       try do
         EvoGit.AgentScheduler.get_config()

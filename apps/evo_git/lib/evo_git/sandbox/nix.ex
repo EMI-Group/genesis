@@ -144,12 +144,17 @@ defmodule EvoGit.Nix do
   def build_dev_env do
     do_build_dev_env()
   rescue
-    # KEPT: do_build_dev_env calls System.cmd("nix", ...) which raises
-    # ErlangError (not {:error, _}) when the nix binary is missing, plus
-    # File.mkdir_p!/File.write! which raise on I/O failures. System.cmd has
-    # no non-raising variant for "binary not found", so converting these
-    # raises into {:error, reason} is the cleanest option. The function's
-    # @spec promises {:ok, _} | {:error, _} — it must never raise.
+    # JUSTIFIED rescue: System.cmd("nix", ...) raises ErlangError (not
+    # {:error, _}) when the nix binary is missing from PATH. System.cmd
+    # has no non-raising variant for "binary not found". Although
+    # enabled?/0 pre-checks with System.find_executable("nix"), there is
+    # a TOCTOU race between the check and the call. Converting this raise
+    # to {:error, reason} satisfies this function's @spec contract (it
+    # must never raise), provides a clean error that callers can inspect,
+    # and gracefully disables nix for the rest of the session.
+    #
+    # All I/O errors (File.mkdir_p, File.write) are handled explicitly in
+    # do_build_dev_env/0 via non-bang variants and a with chain.
     e ->
       reason = "nix print-dev-env failed: #{Exception.message(e)}"
       put_state({:failed, reason})
@@ -244,11 +249,17 @@ defmodule EvoGit.Nix do
 
     if exit_code == 0 do
       path = cache_path()
-      File.mkdir_p!(Platform.data_dir())
-      File.write!(path, output)
-      write_flake_hash()
-      put_state({:built, path})
-      {:ok, path}
+
+      with :ok <- File.mkdir_p(Platform.data_dir()),
+           :ok <- File.write(path, output),
+           :ok <- write_flake_hash() do
+        put_state({:built, path})
+        {:ok, path}
+      else
+        {:error, reason} ->
+          put_state({:failed, "I/O error: #{inspect(reason)}"})
+          {:error, "I/O error: #{inspect(reason)}"}
+      end
     else
       reason = "nix print-dev-env failed (exit #{exit_code}): #{String.trim(output)}"
       put_state({:failed, reason})
@@ -282,8 +293,8 @@ defmodule EvoGit.Nix do
 
   defp write_flake_hash do
     case flake_hash() do
-      {:ok, hash} -> File.write!(hash_path(), hash)
-      _ -> :ok
+      {:ok, hash} -> File.write(hash_path(), hash)
+      {:error, _} = error -> error
     end
   end
 
