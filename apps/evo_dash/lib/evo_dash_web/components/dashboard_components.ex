@@ -1483,7 +1483,6 @@ defmodule EvoDashWeb.DashboardComponents do
 
   def render_result(%{result: result}, opts) do
     truncate = Keyword.get(opts, :truncate, true)
-    limit = if truncate, do: 100, else: :infinity
     size_class = if truncate, do: "text-xs", else: "text-sm"
     inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
     wrapper_class = if truncate,
