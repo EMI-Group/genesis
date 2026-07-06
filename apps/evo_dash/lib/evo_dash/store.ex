@@ -187,6 +187,22 @@ defmodule EvoDash.Store do
     GenServer.call(store, :size)
   end
 
+  @doc """
+  Attempts to recover rows from the quarantine tables back into the live tables.
+
+  Reads all rows from `tasks_quarantine` and `projects_quarantine`, decodes
+  the stored JSON column data, and tries to re-decode each row through the
+  Codec. Rows that now decode successfully (e.g. after a codec bugfix) are
+  INSERT OR REPLACE'd back into the live table and deleted from quarantine.
+  Rows that still fail to decode are left in quarantine untouched.
+
+  Returns `{:ok, recovered_count}` where `recovered_count` is the total number
+  of rows successfully recovered across both quarantine tables.
+  """
+  def recover_quarantine(store \\ __MODULE__) do
+    GenServer.call(store, :recover_quarantine)
+  end
+
   ## GenServer callbacks
 
   @impl true
@@ -394,6 +410,12 @@ defmodule EvoDash.Store do
   @impl true
   def handle_call(:integrity_check, _from, state) do
     reply = do_integrity_check(state.conn)
+    {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_call(:recover_quarantine, _from, state) do
+    reply = do_recover_quarantine(state.conn)
     {:reply, reply, state}
   end
 
@@ -664,6 +686,100 @@ defmodule EvoDash.Store do
       error ->
         Logger.error("integrity_check failed: #{inspect(error)}")
         {:error, error}
+    end
+  end
+
+  ## Private — Quarantine recovery
+
+  defp do_recover_quarantine(conn) do
+    tasks_recovered =
+      recover_table_quarantine(conn, "tasks", Codec.task_columns(), &Codec.decode_task/1)
+
+    projects_recovered =
+      recover_table_quarantine(conn, "projects", Codec.project_columns(), &Codec.decode_project/1)
+
+    total = tasks_recovered + projects_recovered
+
+    if total > 0 do
+      Logger.info("Store: recovered #{total} rows from quarantine (#{tasks_recovered} tasks, #{projects_recovered} projects)")
+    end
+
+    {:ok, total}
+  end
+
+  # Reads rows from a quarantine table, attempts to decode each via `decoder`,
+  # and moves successfully decoded rows back into the live `table`. Rows that
+  # still fail to decode are left in quarantine.
+  defp recover_table_quarantine(conn, table, columns, decoder) do
+    quarantine_table = "#{table}_quarantine"
+
+    case XqliteNIF.query(conn, "SELECT id, data FROM #{quarantine_table}", []) do
+      {:ok, %{rows: rows}} ->
+        Enum.reduce(rows, 0, fn [id, data], acc ->
+          case Jason.decode(data) do
+            {:ok, map} when is_map(map) ->
+              # Reconstruct the row list in column order from the JSON map.
+              row = Enum.map(columns, &Map.get(map, &1))
+
+              # Justified try/rescue — data-recovery boundary. The decoder raises
+              # by design on bad data; rows that still fail to decode must stay
+              # in quarantine rather than crashing the entire recovery sweep.
+              try do
+                decoder.(row)
+
+                col_names = Enum.join(columns, ", ")
+
+                placeholders =
+                  columns
+                  |> Enum.with_index(1)
+                  |> Enum.map(fn {_, i} -> "?#{i}" end)
+                  |> Enum.join(", ")
+
+                {:ok, _} =
+                  XqliteNIF.execute(
+                    conn,
+                    "INSERT OR REPLACE INTO #{table} (#{col_names}) VALUES (#{placeholders})",
+                    row
+                  )
+
+                {:ok, _} =
+                  XqliteNIF.execute(
+                    conn,
+                    "DELETE FROM #{quarantine_table} WHERE id = ?1",
+                    [id]
+                  )
+
+                Logger.info(
+                  "Store: recovered row from #{quarantine_table} " <>
+                    "(id=#{inspect(id)}) → #{table}"
+                )
+
+                acc + 1
+              rescue
+                e ->
+                  Logger.warning(
+                    "Store: row in #{quarantine_table} (id=#{inspect(id)}) still fails decode, " <>
+                      "leaving in quarantine: #{Exception.message(e)}"
+                  )
+
+                  acc
+              end
+
+            {:error, _} ->
+              Logger.warning(
+                "Store: failed to parse JSON data in #{quarantine_table} " <>
+                  "(id=#{inspect(id)}), leaving in quarantine"
+              )
+
+              acc
+
+            _ ->
+              acc
+          end
+        end)
+
+      _ ->
+        0
     end
   end
 
