@@ -138,8 +138,7 @@ defmodule EvoGit.Agent.Tools.FileCreate do
     end
   end
 
-  defp mkdir_if_needed(path, true), do: File.mkdir_p(path)
-  defp mkdir_if_needed(path, false), do: File.mkdir(path)
+  defp mkdir_if_needed(path, parents), do: Shared.mkdir_if_needed(path, parents)
 
   defp perform_create_file(path) do
     case File.write(path, "") do
@@ -149,30 +148,10 @@ defmodule EvoGit.Agent.Tools.FileCreate do
   end
 
   defp do_commit(repo_path, paths) do
-    # Stage the files we created, not any other dirty files in the workspace
     files_to_add = paths
+    commit_message =
+      "Create file#{if(length(paths) == 1, do: "", else: "s")}: #{Enum.join(paths, ", ")}"
 
-    # Skip git add if no files to commit
-    if files_to_add == [] do
-      {:ok, "No files to commit"}
-    else
-      case Git.run(["add" | files_to_add], repo_path) do
-        {:ok, _output} ->
-          commit_message =
-            "Create file#{if(length(paths) == 1, do: "", else: "s")}: #{Enum.join(paths, ", ")}"
-
-          case Git.commit(repo_path, commit_message) do
-            {:ok, _} -> {:ok, "Commit successful"}
-            {:error, _, _} = error -> {:error, error}
-            {:conflict, _} = conflict -> {:error, conflict}
-          end
-
-        {:error, _, _} = error ->
-          {:error, "git add failed: #{inspect(error)}"}
-
-        {:conflict, output} ->
-          {:error, "git add conflict: #{output}"}
-      end
-    end
+    Shared.do_git_commit(repo_path, files_to_add, commit_message)
   end
 end
