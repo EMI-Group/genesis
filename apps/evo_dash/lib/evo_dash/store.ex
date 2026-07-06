@@ -250,8 +250,8 @@ defmodule EvoDash.Store do
               INSERT OR REPLACE INTO tasks
               (id, type, status, opts, started_at, finished_at, logs,
                result, review_status, usage, agent_count, base_sha, commit_sha,
-               archive_metadata, lease_expires_at)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+               archive_metadata, lease_expires_at, model_id)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
               """,
               values
             )
@@ -419,7 +419,8 @@ defmodule EvoDash.Store do
           base_sha TEXT,
           commit_sha TEXT,
           archive_metadata TEXT,
-          lease_expires_at INTEGER
+          lease_expires_at INTEGER,
+          model_id TEXT
         )
         """,
         []
@@ -467,6 +468,11 @@ defmodule EvoDash.Store do
     if "lease_expires_at" not in columns do
       {:ok, _} =
         XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN lease_expires_at INTEGER", [])
+    end
+
+    if "model_id" not in columns do
+      {:ok, _} =
+        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN model_id TEXT", [])
     end
 
     if "pid" in columns do

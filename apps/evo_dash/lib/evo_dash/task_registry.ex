@@ -186,7 +186,8 @@ defmodule EvoDash.TaskRegistry do
       finished_at: nil,
       logs: [],
       result: nil,
-      lease_expires_at: System.system_time(:second) + @lease_duration
+      lease_expires_at: System.system_time(:second) + @lease_duration,
+      model_id: Keyword.get(opts, :model_id)
     }
 
     # Persist to SQLite with ref nulled (ref is runtime-only data)
