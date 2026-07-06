@@ -602,9 +602,10 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # --- Private Helpers ---
+  # --- Shared Helpers ---
 
-  defp subagent_module_for(tool_name, subagent_mods) do
+  @doc false
+  def subagent_module_for(tool_name, subagent_mods) do
     Enum.find(subagent_mods, fn mod -> mod.subagent_tool_name() == tool_name end)
   end
 end
