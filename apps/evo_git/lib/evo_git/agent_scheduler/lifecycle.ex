@@ -100,6 +100,30 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     end
   end
 
+  # --- Status Updates ---
+
+  @doc """
+  Applies a list of `{agent_id, status}` updates to the ETS SchedMeta table.
+  Used by slot management to reflect blocked/running status in the dashboard.
+  """
+  @spec apply_status_updates([{pos_integer(), atom()}]) :: :ok
+  def apply_status_updates(status_updates) do
+    Enum.each(status_updates, fn {agent_id, new_status} ->
+      case Store.get_sched_meta(agent_id) do
+        {:ok, meta} ->
+          # Only update running agents to blocked (don't overwrite :waiting or :ready)
+          # and only restore to :running from :blocked
+          if (new_status == :blocked and meta.status == :running) or
+               (new_status == :running and meta.status == :blocked) do
+            Store.put_sched_meta(agent_id, %{meta | status: new_status})
+          end
+
+        :error ->
+          :ok
+      end
+    end)
+  end
+
   # --- Crash Handling ---
 
   @doc """

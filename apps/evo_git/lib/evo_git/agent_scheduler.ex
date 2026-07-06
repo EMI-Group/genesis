@@ -600,7 +600,7 @@ defmodule EvoGit.AgentScheduler do
         state =
           Enum.reduce(cancel_set, state, fn agent_id, acc_state ->
             {acc_state, slot_status} = Slots.release_agent_slots(acc_state, agent_id)
-            apply_status_updates(slot_status)
+            Lifecycle.apply_status_updates(slot_status)
             acc_state
           end)
 
@@ -635,10 +635,10 @@ defmodule EvoGit.AgentScheduler do
       unless new_model do
         {:reply, {:error, "llm_model cannot be nil"}, state}
       else
-        do_update_config(opts, state)
+        State.do_update_config(opts, state)
       end
     else
-      do_update_config(opts, state)
+      State.do_update_config(opts, state)
     end
   end
 
@@ -713,7 +713,7 @@ defmodule EvoGit.AgentScheduler do
 
       state = struct(state, paused: false)
       {state, status_updates} = Slots.grant_pending_on_resume(state)
-      apply_status_updates(status_updates)
+      Lifecycle.apply_status_updates(status_updates)
       state = Dispatch.dispatch_queued_agents(state)
       EvoGit.AgentScheduler.PubSub.broadcast_config_updated()
       {:reply, :ok, state}
@@ -745,11 +745,11 @@ defmodule EvoGit.AgentScheduler do
   def handle_call({:request_llm_slot, agent_id}, from, %State{} = state) do
     case Slots.handle_request_llm_slot(agent_id, from, state) do
       {:reply, :ok, new_state, status_updates} ->
-        apply_status_updates(status_updates)
+        Lifecycle.apply_status_updates(status_updates)
         {:reply, :ok, new_state}
 
       {:noreply, new_state, status_updates} ->
-        apply_status_updates(status_updates)
+        Lifecycle.apply_status_updates(status_updates)
         {:noreply, new_state}
     end
   end
@@ -757,7 +757,7 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:release_llm_slot, agent_id}, _from, %State{} = state) do
     {:reply, :ok, new_state, status_updates} = Slots.handle_release_llm_slot(agent_id, state)
-    apply_status_updates(status_updates)
+    Lifecycle.apply_status_updates(status_updates)
     {:reply, :ok, new_state}
   end
 
@@ -766,7 +766,7 @@ defmodule EvoGit.AgentScheduler do
     {:reply, :ok, new_state, status_updates} =
       Slots.handle_report_llm_error(agent_id, error_type, state)
 
-    apply_status_updates(status_updates)
+    Lifecycle.apply_status_updates(status_updates)
     {:reply, :ok, new_state}
   end
 
@@ -774,11 +774,11 @@ defmodule EvoGit.AgentScheduler do
   def handle_call({:request_tool_slot, agent_id}, from, %State{} = state) do
     case Slots.handle_request_tool_slot(agent_id, from, state) do
       {:reply, :ok, new_state, status_updates} ->
-        apply_status_updates(status_updates)
+        Lifecycle.apply_status_updates(status_updates)
         {:reply, :ok, new_state}
 
       {:noreply, new_state, status_updates} ->
-        apply_status_updates(status_updates)
+        Lifecycle.apply_status_updates(status_updates)
         {:noreply, new_state}
     end
   end
@@ -786,102 +786,15 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call({:release_tool_slot, agent_id}, _from, %State{} = state) do
     {:reply, :ok, new_state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
-    apply_status_updates(status_updates)
+    Lifecycle.apply_status_updates(status_updates)
     {:reply, :ok, new_state}
-  end
-
-  # --- Private Helpers ---
-
-  defp do_update_config(opts, %State{} = state) do
-    # Reload model profiles from config if model_profiles is being updated,
-    # or if llm_model is being updated (backward compat: updates default profile)
-    state =
-      if Keyword.has_key?(opts, :model_profiles) do
-        profiles = Keyword.get(opts, :model_profiles)
-        pool_state = State.from_model_profiles(profiles)
-        # Merge non-LLM fields from the old state
-        %State{
-          pool_state
-          | initialized: state.initialized,
-            initialized_repos: state.initialized_repos,
-            agent_max_retries: Keyword.get(opts, :agent_max_retries, state.agent_max_retries),
-            max_depth: Keyword.get(opts, :max_depth, state.max_depth),
-            max_retries: Keyword.get(opts, :max_retries, state.max_retries),
-            max_turns: Keyword.get(opts, :max_turns, state.max_turns),
-            max_turns_root: Keyword.get(opts, :max_turns_root, state.max_turns_root),
-            next_agent_id: state.next_agent_id,
-            ref_to_agent: state.ref_to_agent,
-            queue: state.queue,
-            task_local_counters: state.task_local_counters,
-            task_agent_counts: state.task_agent_counts,
-            paused: state.paused,
-            tool_holders: state.tool_holders,
-            tool_waiting: state.tool_waiting,
-            max_tool_concurrency:
-              Keyword.get(opts, :max_tool_concurrency, state.max_tool_concurrency),
-            sandbox_mode: Keyword.get(opts, :sandbox_mode, state.sandbox_mode),
-            sandbox_resources: Keyword.get(opts, :sandbox_resources, state.sandbox_resources),
-            sandbox_process_resources:
-              Keyword.get(opts, :sandbox_process_resources, state.sandbox_process_resources)
-        }
-      else
-        state
-      end
-
-    # Apply all field updates
-    state =
-      state
-      |> maybe_update(:max_concurrency, opts)
-      |> maybe_update(:agent_max_retries, opts)
-      |> maybe_update(:max_depth, opts)
-      |> maybe_update(:llm_model, opts)
-      |> maybe_update(:max_retries, opts)
-      |> maybe_update(:max_turns, opts)
-      |> maybe_update(:max_turns_root, opts)
-      |> maybe_update(:max_tool_concurrency, opts)
-      |> maybe_update(:sandbox_mode, opts)
-      |> maybe_update(:sandbox_resources, opts)
-      |> maybe_update(:sandbox_process_resources, opts)
-      |> maybe_update(:llm_generation_params, opts)
-
-    # Propagate sandbox resource changes to the live slice (Linux only)
-    state =
-      if Keyword.has_key?(opts, :sandbox_resources) and EvoGit.Platform.linux?() do
-        resources = Keyword.get(opts, :sandbox_resources)
-
-        case EvoGit.SandboxSlice.update_resources(resources) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning("Failed to update sandbox slice resources: #{inspect(reason)}")
-        end
-
-        state
-      else
-        state
-      end
-
-    # Grant any newly-available slots to waiting agents
-    {state, status_updates} = Slots.grant_pending_on_resume(state)
-    apply_status_updates(status_updates)
-
-    Logger.info(
-      "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
-        "max_tool_concurrency: #{state.max_tool_concurrency}, " <>
-        "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
-    )
-
-    EvoGit.AgentScheduler.PubSub.broadcast_config_updated()
-
-    {:reply, :ok, state}
   end
 
   # Retry LLM waiting queue after backoff expiry (delegated to Slots module)
   @impl true
   def handle_info(:retry_llm_waiting, %State{} = state) do
     {:noreply, state, status_updates} = Slots.handle_retry_llm_waiting(state)
-    apply_status_updates(status_updates)
+    Lifecycle.apply_status_updates(status_updates)
     {:noreply, state}
   end
 
@@ -943,7 +856,7 @@ defmodule EvoGit.AgentScheduler do
         # This makes slot leaks impossible by construction — the holder sets
         # are cleaned up regardless of exit path.
         {state, slot_status} = Slots.release_agent_slots(state, agent_id)
-        apply_status_updates(slot_status)
+        Lifecycle.apply_status_updates(slot_status)
 
         case Store.get_sched_meta(agent_id) do
           {:ok, meta} ->
@@ -965,33 +878,6 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
-  # --- Config Helpers ---
-
-  defp maybe_update(%State{} = state, key, opts) do
-    case Keyword.fetch(opts, key) do
-      {:ok, value} -> struct(state, [{key, value}])
-      :error -> state
-    end
-  end
-
-  # Applies a list of {agent_id, status} updates to the ETS SchedMeta table.
-  # Used by slot management to reflect blocked/running status in the dashboard.
-  defp apply_status_updates(status_updates) do
-    Enum.each(status_updates, fn {agent_id, new_status} ->
-      case Store.get_sched_meta(agent_id) do
-        {:ok, meta} ->
-          # Only update running agents to blocked (don't overwrite :waiting or :ready)
-          # and only restore to :running from :blocked
-          if (new_status == :blocked and meta.status == :running) or
-               (new_status == :running and meta.status == :blocked) do
-            Store.put_sched_meta(agent_id, %{meta | status: new_status})
-          end
-
-        :error ->
-          :ok
-      end
-    end)
-  end
 
   defp inject_agent_count({:ok, %EvoGit.Agent.Result{} = res}, agent_count) do
     {:ok, %{res | agent_count: agent_count}}
