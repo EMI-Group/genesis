@@ -80,7 +80,7 @@ jobs:
         if: startsWith(matrix.runner, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev mold
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev
 
       - name: Fix ImageOS for ARM partner runners
         # The GitHub-hosted ARM partner runner reports ImageOS as
@@ -115,10 +115,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
-
-      - name: Configure mold linker (Linux)
-        if: startsWith(matrix.runner, 'ubuntu')
-        run: echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> $GITHUB_ENV
 
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
