@@ -36,6 +36,7 @@ end
 # (non-slot-gated) LLM calls (context compression, evolution synthesis,
 # novelty metrics, etc.).
 resolved = EvoGit.Config.resolve()
+
 total_concurrency =
   case EvoGit.Config.Schema.model_profiles(resolved) do
     [] ->

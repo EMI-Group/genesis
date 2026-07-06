@@ -56,8 +56,7 @@ config :evo_dash, EvoDashWeb.Endpoint,
 config :evo_dash, dev_routes: true
 
 # Do not include metadata or timestamps in development logs to keep output clean
-config :logger, :default_formatter,
-  format: "[$level] $message\n"
+config :logger, :default_formatter, format: "[$level] $message\n"
 
 # SASL/OTP supervisor progress reports are disabled to reduce noise.
 # Set handle_otp_reports: true, handle_sasl_reports: true to re-enable.
