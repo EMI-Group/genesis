@@ -89,7 +89,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     max_retries = agent_state.max_retries
     llm_gen_opts = agent_state.llm_generation_params
 
-    {:ok, response, llm_duration} =
+    {:ok, response, _llm_duration} =
       AgentScheduler.with_llm_slot(state.agent_id, fn ->
         retry with:
                 exponential_backoff(1_000)
@@ -116,7 +116,7 @@ defmodule EvoGit.Agent.ToolDispatch do
           end
         end
         |> case do
-          {:ok, response, llm_duration} = result ->
+          {:ok, _response, _llm_duration} = result ->
             result
 
           {:error, reason} ->
