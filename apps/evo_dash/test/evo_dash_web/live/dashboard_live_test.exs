@@ -258,4 +258,35 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "No foreign repositories registered"
     end
   end
+
+  describe "preserving prompt across model and task mode switches" do
+    test "prompt text survives task mode and model changes", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Open a project so the task form is enabled
+      render_click(view, "toggle_open_project_form", %{})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Simulate typing into the prompt textarea (the phx-change event)
+      html = render_change(view, "update_prompt", %{"prompt" => "My important objective text"})
+
+      # The typed text should be reflected in the rendered HTML
+      assert html =~ "My important objective text"
+
+      # Switch the task mode — the prompt must be preserved
+      html = render_change(view, "task_change", %{"mode" => "evolve_simple"})
+
+      # The prompt is still there after switching modes
+      assert html =~ "My important objective text"
+
+      # Switch the model — the prompt must be preserved
+      html = render_change(view, "select_model", %{"model_id" => "some-model"})
+
+      # The prompt is still there after switching models
+      assert html =~ "My important objective text"
+    end
+  end
 end
