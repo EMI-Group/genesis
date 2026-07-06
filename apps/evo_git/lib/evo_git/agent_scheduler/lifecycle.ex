@@ -11,6 +11,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentScheduler.Slots
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentScheduler.Dispatch
   alias EvoGit.AgentScheduler.Subagents
@@ -227,4 +228,131 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
       end
     end
   end
+
+  # --- Task Result Handling ---
+
+  @doc """
+  Handles a task result from an agent's Task process.
+  Stores the result for subagents or replies to the top-level caller.
+  """
+  @spec handle_task_result(reference(), term(), State.t()) :: {:noreply, State.t()}
+  def handle_task_result(ref, result, %State{} = state) do
+    case Map.get(state.ref_to_agent, ref) do
+      nil ->
+        {:noreply, state}
+
+      agent_id ->
+        case Store.get_sched_meta(agent_id) do
+          {:ok, meta} ->
+            Store.put_sched_meta(agent_id, %{meta | result_sent: true})
+
+            if meta.parent_id do
+              Subagents.store_sub_result(meta.parent_id, agent_id, result)
+              state = Subagents.maybe_resume_parent(state, meta.parent_id)
+              {:noreply, state}
+            else
+              agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
+              result = inject_agent_count(result, agent_count)
+
+              # Collect archive records for this task and inject into result
+              archive_records = collect_archive_records(meta.task_id)
+              result = inject_archive_records(result, archive_records)
+
+              GenServer.reply(meta.from, result)
+
+              state = %{
+                state
+                | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)
+              }
+
+              {:noreply, state}
+            end
+
+          :error ->
+            Logger.warning(
+              "AgentScheduler: result for agent #{agent_id} but no sched_meta found. Ignoring."
+            )
+
+            {:noreply, state}
+        end
+    end
+  end
+
+  @doc """
+  Handles a :DOWN monitor message for a crashed or completed agent Task process.
+  Releases slots, cleans up worktrees on normal exit, and triggers crash recovery
+  on abnormal exit.
+  """
+  @spec handle_agent_down(reference(), pid(), term(), State.t()) :: {:noreply, State.t()}
+  def handle_agent_down(ref, _pid, reason, %State{} = state) do
+    case Map.pop(state.ref_to_agent, ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {agent_id, ref_to_agent} ->
+        state = %{state | ref_to_agent: ref_to_agent}
+
+        # Release any slots held by the dead agent and purge from queues.
+        # This makes slot leaks impossible by construction — the holder sets
+        # are cleaned up regardless of exit path.
+        {state, slot_status} = Slots.release_agent_slots(state, agent_id)
+        apply_status_updates(slot_status)
+
+        case Store.get_sched_meta(agent_id) do
+          {:ok, meta} ->
+            if reason == :normal or meta.result_sent do
+              state = recycle_agent(state, agent_id)
+              state = Dispatch.process_queue(state)
+              {:noreply, state}
+            else
+              handle_agent_crash(state, agent_id, reason)
+            end
+
+          :error ->
+            Logger.warning(
+              "AgentScheduler: :DOWN for agent #{agent_id} but no sched_meta found. Slots already released, ignoring."
+            )
+
+            {:noreply, state}
+        end
+    end
+  end
+
+  # --- Result Helpers ---
+
+  @doc """
+  Injects the agent count into a successful `%EvoGit.Agent.Result{}` tuple.
+  Non-success results pass through unchanged.
+  """
+  def inject_agent_count({:ok, %EvoGit.Agent.Result{} = res}, agent_count) do
+    {:ok, %{res | agent_count: agent_count}}
+  end
+
+  def inject_agent_count(result, _agent_count), do: result
+
+  @doc """
+  Collects all archive records for the given task ID from the
+  `:evogit_archive_records` ETS table.
+  """
+  def collect_archive_records(task_id) do
+    case :ets.whereis(:evogit_archive_records) do
+      :undefined ->
+        []
+
+      _tid ->
+        :ets.lookup(:evogit_archive_records, task_id)
+        |> Enum.map(fn {_task_id, record} -> record end)
+    end
+  end
+
+  @doc """
+  Injects archive records into a successful `%EvoGit.Agent.Result{}` tuple.
+  Non-success results pass through unchanged.
+  """
+  def inject_archive_records({:ok, %EvoGit.Agent.Result{} = res}, records)
+       when is_list(records) do
+    {:ok, %{res | archive_records: records}}
+  end
+
+  def inject_archive_records(result, _records), do: result
 end
