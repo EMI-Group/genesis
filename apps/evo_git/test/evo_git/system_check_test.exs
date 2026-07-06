@@ -320,7 +320,8 @@ defmodule EvoGit.SystemCheckTest do
     end
 
     test "does not raise" do
-      # run_all_checks/0 is wrapped in a rescue clause and must always return a map
+      # run_all_checks/0 delegates to individually crash-safe functions (each has
+      # its own rescue at the centralized exception boundary) and must always return a map
       result = SystemCheck.run_all_checks()
       assert is_map(result)
     end
