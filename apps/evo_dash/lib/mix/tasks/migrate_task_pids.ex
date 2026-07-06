@@ -88,6 +88,9 @@ defmodule Mix.Tasks.MigrateTaskPids do
       # Copy the DB to a temp location, including -wal / -shm sidecars.
       tmp_path = make_temp_copy(source_db_path)
 
+      # Justified try/after — resource cleanup. Ensures the temp copy files are
+      # always removed even if the migration fails. No rescue needed because
+      # errors should propagate naturally.
       try do
         Mix.shell().info("📋 Source DB : #{source_db_path}")
         Mix.shell().info("📋 Temp copy : #{tmp_path}")
@@ -141,6 +144,9 @@ defmodule Mix.Tasks.MigrateTaskPids do
 
     case XqliteNIF.open(db_path) do
       {:ok, conn} ->
+        # Justified try/after — resource cleanup. Ensures the SQLite connection
+        # is always closed. No rescue needed because errors should propagate
+        # to the caller.
         try do
           do_migration(conn, label)
         after
