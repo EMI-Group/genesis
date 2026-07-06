@@ -375,23 +375,33 @@ defmodule EvoGit.Agent do
               nil
           end
 
+        # Safety net: auto-commit any uncommitted work before entering the grace
+        # period, so it is preserved even if the agent fails to commit during its
+        # single recovery turn. We only commit when there are actually changes
+        # (non-empty porcelain status); a clean workspace is a no-op. Git errors
+        # are allowed to propagate (crash) — this is best-effort salvage, not
+        # error-masking.
+        maybe_recovery_auto_commit(state)
+
         warning_msg =
           if objective do
             """
             You have exceeded the execution limit (#{reason}).
-            You MUST call `#{@complete_tool}` immediately with your best answer.
+            Your priority is to call `#{@complete_tool}` NOW with your best answer.
+
+            If you have critical uncommitted changes, commit them first, then immediately call `#{@complete_tool}`. Your already-committed work is safe.
 
             Your original objective was:
             #{objective}
 
             Your report MUST summarize the status of this ENTIRE objective, not just your most recent sub-task.
-            Do not call any other tools.
             """
           else
             """
             You have exceeded the execution limit (#{reason}).
-            You MUST call `#{@complete_tool}` immediately with your best answer explaining the situation.
-            Do not call any other tools.
+            Your priority is to call `#{@complete_tool}` NOW with your best answer explaining the situation.
+
+            If you have critical uncommitted changes, commit them first, then immediately call `#{@complete_tool}`. Your already-committed work is safe.
             """
           end
 
@@ -400,6 +410,30 @@ defmodule EvoGit.Agent do
 
         state = %{state | context: new_context, in_grace_period: true}
         loop(state)
+      end
+
+      # Best-effort auto-commit of any uncommitted work just before the grace
+      # period, as a safety net so work is not lost if the agent fails to commit
+      # during its single recovery turn. Only commits when the workspace is dirty
+      # (non-empty porcelain status); a clean workspace is a silent no-op. Git
+      # errors propagate (crash) rather than being swallowed — this is salvage,
+      # not error-masking. No try/rescue per repo conventions.
+      defp maybe_recovery_auto_commit(%LoopState{} = state) do
+        repo_path = Process.get(:repo_path)
+
+        if repo_path do
+          case Git.status(repo_path) do
+            {:ok, ""} ->
+              :ok
+
+            {:ok, _status_output} ->
+              {:ok, _} = Git.add(repo_path, ".")
+              {:ok, _} = Git.commit(repo_path, "auto-commit: turn-limit recovery")
+              :ok
+          end
+        else
+          :ok
+        end
       end
 
       defp do_turn(%LoopState{} = state) do
@@ -609,15 +643,21 @@ defmodule EvoGit.Agent do
         end
       end
 
-      defp handle_complete_call(complete_call, %LoopState{} = state, tool_calls) do
-        # Skip the dirty-workspace check when explicitly disabled OR during grace period
-        # (during recovery, the agent is forced to complete — blocking it on a dirty
-        # workspace guarantees recovery failure since it can't call any other tools).
+      defp handle_complete_call(complete_call, %LoopState{in_grace_period: grace} = state, tool_calls) do
+        # Check if git status validation is enabled (default: true).
+        # During the grace period, skip the dirty workspace check entirely: the
+        # agent gets exactly one recovery turn, and a dirty workspace would return
+        # {:continue, ...} → grace_period_continue_failed?/1 → :recovery_failed.
+        # That deadlocks the agent (it can neither commit nor complete). The
+        # priority during the grace turn is salvaging whatever is already
+        # committed — the :end/:critical warnings already prompted a commit.
         check_git_status =
           not state.in_grace_period and
             Map.get(complete_call.arguments, "check_git_status") != false
 
-        if check_git_status do
+        if grace or not check_git_status do
+          do_complete(complete_call, state)
+        else
           repo_path = Process.get(:repo_path)
 
           case CompleteTask.check_workspace_dirty(repo_path) do
@@ -637,8 +677,6 @@ defmodule EvoGit.Agent do
             {:clean, _} ->
               do_complete(complete_call, state)
           end
-        else
-          do_complete(complete_call, state)
         end
       end
 
