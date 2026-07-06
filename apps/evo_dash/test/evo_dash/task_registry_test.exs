@@ -430,7 +430,8 @@ defmodule EvoDash.TaskRegistryTest do
         logs: [],
         result: nil,
         base_sha: nil,
-        commit_sha: nil
+        commit_sha: nil,
+        model_id: nil
       }
 
       EvoDash.Store.put_task(EvoDash.Store, old_task)
@@ -449,6 +450,42 @@ defmodule EvoDash.TaskRegistryTest do
       assert fetched != nil
       assert fetched.base_sha == nil
       assert fetched.commit_sha == nil
+      assert fetched.model_id == nil
+    end
+
+    test "normalize_tasks backfills model_id to nil for older structs", %{
+      data_dir: data_dir
+    } do
+      task_id = "model_backfill_#{System.unique_integer([:positive])}"
+
+      stripped =
+        %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil,
+          model_id: nil
+        }
+
+      EvoDash.Store.put_task(EvoDash.Store, stripped)
+
+      # Restart the registry to trigger normalize_tasks on init.
+      stop_supervised(TaskRegistry)
+
+      start_supervised!(
+        {TaskRegistry,
+         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+      )
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert %TaskInfo{} = fetched
+      assert Map.has_key?(fetched, :model_id)
+      assert fetched.model_id == nil
     end
   end
 

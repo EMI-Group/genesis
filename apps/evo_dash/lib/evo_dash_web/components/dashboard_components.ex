@@ -922,10 +922,17 @@ defmodule EvoDashWeb.DashboardComponents do
 
               <%= if Map.get(@task, :agent_count) do %>
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                  <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
-                    <.icon name="hero-user-group" class="size-4.5 text-primary" /> {gettext(
-                      "Agents Spawned"
-                    )}
+                  <h4 class="text-sm font-bold flex items-center justify-between gap-2 mb-4">
+                    <span class="flex items-center gap-2">
+                      <.icon name="hero-user-group" class="size-4.5 text-primary" /> {gettext(
+                        "Agents Spawned"
+                      )}
+                    </span>
+                    <%= if @task.model_id do %>
+                      <span class="text-xs font-medium text-base-content/50">
+                        {gettext("Model")}: {@task.model_id}
+                      </span>
+                    <% end %>
                   </h4>
                   <div class="flex items-center gap-3">
                     <span class="text-2xl font-bold text-primary">{format_number(@task.agent_count)}</span>
