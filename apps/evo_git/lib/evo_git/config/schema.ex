@@ -41,7 +41,7 @@ defmodule EvoGit.Config.Schema do
   @type sub_category :: :resources | :process | nil
 
   @typedoc "Supported config value types"
-  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :float | :atom | :boolean | :model_spec
+  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :float | :atom | :boolean | :model_spec | :model_profiles
 
   @typedoc "A single config key's full schema metadata"
   @type schema_map :: %{
@@ -286,6 +286,16 @@ defmodule EvoGit.Config.Schema do
       sub_category: nil,
       description:
         "Penalizes tokens that have already appeared in the generated text. Range: -2.0 to 2.0. Normally you should leave this unset — modern LLMs perform best with their default value and changing it may degrade output quality."
+    },
+    %{
+      key_path: [:llm, :models],
+      type: :model_profiles,
+      default: [],
+      validation: [],
+      category: :llm,
+      sub_category: nil,
+      description:
+        "Array of model profiles, each defining an LLM model and its generation parameters. Each profile is a TOML table: id (required string), model (required, same format as [llm].model), concurrency (default 3), and optional generation params (temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty). When absent, the flat [llm] fields are migrated into a single 'default' profile during resolution."
     },
     # ── User ───────────────────────────────────────────────────────────
     %{
@@ -744,6 +754,26 @@ defmodule EvoGit.Config.Schema do
     end
   end
 
+  defp type_errors(key_path, :model_profiles, value) do
+    cond do
+      is_list(value) ->
+        # Validate each profile in the list
+        value
+        |> Enum.with_index()
+        |> Enum.flat_map(fn {profile, idx} ->
+          path = key_path ++ [idx]
+          validate_model_profile(path, profile)
+        end)
+
+      is_map(value) ->
+        # A single table without array brackets — normalize to single-element list
+        validate_model_profile(key_path, value)
+
+      true ->
+        [error(key_path, "must be a list of model profiles, got #{inspect(value)}", value, :model_profiles)]
+    end
+  end
+
   defp type_errors(key_path, :float, value) do
     if is_float(value) or is_integer(value) do
       []
@@ -769,6 +799,41 @@ defmodule EvoGit.Config.Schema do
   end
 
   # ── Private: Rule Validation ────────────────────────────────────────
+
+  defp validate_model_profile(path, profile) when is_map(profile) do
+    id = Map.get(profile, :id) || Map.get(profile, "id")
+    model = Map.get(profile, :model) || Map.get(profile, "model")
+
+    errors = []
+
+    errors =
+      if is_binary(id) and id != "" do
+        errors
+      else
+        [error(path ++ [:id], "profile must have a non-empty 'id' string, got #{inspect(id)}", id, :string) | errors]
+      end
+
+    model_errors =
+      cond do
+        is_nil(model) ->
+          [error(path ++ [:model], "profile must have a 'model' field", nil, :model_spec)]
+
+        is_binary(model) ->
+          []
+
+        is_map(model) ->
+          type_errors(path ++ [:model], :model_spec, model)
+
+        true ->
+          type_errors(path ++ [:model], :model_spec, model)
+      end
+
+    errors ++ model_errors
+  end
+
+  defp validate_model_profile(path, profile) do
+    [error(path, "profile must be a map/table, got #{inspect(profile)}", profile, :model_profiles)]
+  end
 
   defp rule_errors(key_path, validation, value) do
     Enum.flat_map(validation, fn
@@ -810,27 +875,104 @@ defmodule EvoGit.Config.Schema do
   end
 
   @doc """
-  Extracts LLM generation parameters from a config map, filtering out nil values.
+  Extracts LLM generation parameters, filtering out nil values.
 
   Returns a keyword list suitable for passing to `ReqLLM.stream_text/3`.
 
+  Accepts either:
+  - A **model profile map** (e.g. `%{id: "default", temperature: 0.7, ...}`) —
+    extracts params directly from the profile.
+  - A **resolved config map** (e.g. `%{llm: %{temperature: 0.7, ...}}`) —
+    delegates to the default model profile.
+
   ## Example
 
-      iex> Schema.llm_generation_params(%{llm: %{temperature: 0.7, max_tokens: 4096, model: "anthropic:claude-sonnet-4"}})
+      iex> Schema.llm_generation_params(%{id: "default", temperature: 0.7, max_tokens: 4096})
       [temperature: 0.7, max_tokens: 4096]
+
+      iex> Schema.llm_generation_params(%{llm: %{models: [%{id: "default", temperature: 0.7}]}})
+      [temperature: 0.7]
   """
   @spec llm_generation_params(map()) :: keyword()
   def llm_generation_params(config) when is_map(config) do
-    llm_config = Map.get(config, :llm, %{})
+    cond do
+      # Model profile map: has an :id key (profiles always have id)
+      Map.has_key?(config, :id) ->
+        profile_generation_params(config)
 
+      # Resolved config map: delegate to default profile
+      Map.has_key?(config, :llm) ->
+        case default_model_profile(config) do
+          {:ok, profile} -> profile_generation_params(profile)
+          {:error, :not_found} -> []
+        end
+
+      true ->
+        []
+    end
+  end
+
+  @doc """
+  Returns the list of model profiles from a resolved config map.
+
+  ## Example
+
+      iex> Schema.model_profiles(%{llm: %{models: [%{id: "default", model: "x:y"}]}})
+      [%{id: "default", model: "x:y"}]
+  """
+  @spec model_profiles(map()) :: [map()]
+  def model_profiles(config) when is_map(config) do
+    config
+    |> Map.get(:llm, %{})
+    |> Map.get(:models, [])
+  end
+
+  @doc """
+  Resolves a model profile by id.
+
+  Returns `{:ok, profile}` if found, or `{:error, :not_found}`.
+
+  ## Example
+
+      iex> Schema.get_model_profile(%{llm: %{models: [%{id: "fast", model: "x:y"}]}}, "fast")
+      {:ok, %{id: "fast", model: "x:y"}}
+  """
+  @spec get_model_profile(map(), String.t()) :: {:ok, map()} | {:error, :not_found}
+  def get_model_profile(config, id) when is_map(config) and is_binary(id) do
+    case Enum.find(model_profiles(config), fn p -> Map.get(p, :id) == id end) do
+      nil -> {:error, :not_found}
+      profile -> {:ok, profile}
+    end
+  end
+
+  @doc """
+  Returns the first (default) model profile from a resolved config map.
+
+  Returns `{:ok, profile}` if at least one profile exists, or `{:error, :not_found}`.
+
+  ## Example
+
+      iex> Schema.default_model_profile(%{llm: %{models: [%{id: "default", model: "x:y"}]}})
+      {:ok, %{id: "default", model: "x:y"}}
+  """
+  @spec default_model_profile(map()) :: {:ok, map()} | {:error, :not_found}
+  def default_model_profile(config) when is_map(config) do
+    case model_profiles(config) do
+      [] -> {:error, :not_found}
+      [profile | _] -> {:ok, profile}
+    end
+  end
+
+  # Extracts generation params from a single profile map.
+  defp profile_generation_params(profile) when is_map(profile) do
     []
-    |> maybe_param(:temperature, Map.get(llm_config, :temperature))
-    |> maybe_param(:max_tokens, Map.get(llm_config, :max_tokens))
-    |> maybe_param(:reasoning_effort, llm_config |> Map.get(:reasoning_effort) |> convert_reasoning_effort())
-    |> maybe_param(:top_p, Map.get(llm_config, :top_p))
-    |> maybe_param(:top_k, Map.get(llm_config, :top_k))
-    |> maybe_param(:frequency_penalty, Map.get(llm_config, :frequency_penalty))
-    |> maybe_param(:presence_penalty, Map.get(llm_config, :presence_penalty))
+    |> maybe_param(:temperature, Map.get(profile, :temperature))
+    |> maybe_param(:max_tokens, Map.get(profile, :max_tokens))
+    |> maybe_param(:reasoning_effort, profile |> Map.get(:reasoning_effort) |> convert_reasoning_effort())
+    |> maybe_param(:top_p, Map.get(profile, :top_p))
+    |> maybe_param(:top_k, Map.get(profile, :top_k))
+    |> maybe_param(:frequency_penalty, Map.get(profile, :frequency_penalty))
+    |> maybe_param(:presence_penalty, Map.get(profile, :presence_penalty))
   end
 
   defp maybe_param(keyword_list, _key, nil), do: keyword_list

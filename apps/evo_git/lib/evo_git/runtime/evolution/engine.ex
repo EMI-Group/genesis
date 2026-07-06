@@ -14,7 +14,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
   alias EvoGit.Runtime.Evolution.{Fragment, SeedFragments, EntropyPool, MapElites,
     NoveltyMetric, LLMSynthesis, ConceptExpander}
 
-  alias EvoGit.{AgentSpec, AgentScheduler, Config, Defaults}
+  alias EvoGit.{AgentSpec, AgentScheduler, Config}
+  alias EvoGit.Config.Schema
   alias EvoGit.Core.{ContextNode, PhyloGraphNode}
   alias EvoGit.Agent.Result
   alias EvoGit.Runtime.Helpers
@@ -22,7 +23,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
   @type state :: %__MODULE__{}
 
   defstruct [
-    :objective, :repo_path, :base_sha, :node_path, :model,
+    :objective, :repo_path, :base_sha, :node_path, :model, :generation_params,
     :generation, :max_generations, :pool_size, :selection_size,
     :crossover_rate, :mutation_rate, :convergence_threshold,
     :novelty_neighbors, :stagnation_limit, :user_seeds,
@@ -90,13 +91,15 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
   defp build_state(objective, repo_path, current_sha, node_path, opts) when is_list(opts) do
     evo_config = get_evolution_config()
+    {model, generation_params} = resolve_model_and_params(opts)
 
     %__MODULE__{
       objective: objective,
       repo_path: repo_path,
       base_sha: current_sha,
       node_path: node_path,
-      model: resolve_model(opts),
+      model: model,
+      generation_params: generation_params,
       generation: 0,
       max_generations: Keyword.get(opts, :max_generations, Map.get(evo_config, :max_generations, @default_max_generations)),
       pool_size: Keyword.get(opts, :pool_size, Map.get(evo_config, :pool_size, @default_pool_size)),
@@ -136,10 +139,28 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     file_seeds ++ content_seeds
   end
 
-  defp resolve_model(opts) do
-    case Keyword.get(opts, :model) do
-      nil -> Defaults.llm_model()
-      model -> model
+  # Resolves the LLM model and generation params from the model profile system.
+  #
+  # If opts[:model_id] is set, look up the profile by id using
+  # Schema.get_model_profile/2. If nil, use Schema.default_model_profile/1.
+  # Returns {model, generation_params} where model is the profile's `:model`
+  # field and generation_params is a keyword list from Schema.llm_generation_params/1.
+  defp resolve_model_and_params(opts) do
+    config = Config.resolve()
+    model_id = Keyword.get(opts, :model_id)
+
+    profile =
+      case model_id do
+        nil -> Schema.default_model_profile(config)
+        id -> Schema.get_model_profile(config, id)
+      end
+
+    case profile do
+      {:ok, p} ->
+        {Map.get(p, :model), Schema.llm_generation_params(p)}
+
+      {:error, :not_found} ->
+        {nil, []}
     end
   end
 
@@ -468,7 +489,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
 
     solution =
       safe_llm_call({:evolution, :synthesize}, fn ->
-        call_llm(prompt, state.model)
+        call_llm(prompt, state.model, state.generation_params || [])
       end)
 
     case solution do
@@ -548,7 +569,8 @@ defmodule EvoGit.Runtime.Evolution.Engine do
         EvoGit.Agents.Manager,
         agent_objective,
         archive: Keyword.get(state.opts, :archive, false),
-        task_id: Keyword.get(state.opts, :task_id)
+        task_id: Keyword.get(state.opts, :task_id),
+        model_id: Keyword.get(state.opts, :model_id)
       )
 
     case AgentScheduler.run_agent(spec) do
@@ -597,12 +619,12 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     end)
   end
 
-  defp call_llm(prompt, model) do
+  defp call_llm(prompt, model, opts) do
     alias ReqLLM.Context, as: C
 
     context = C.new([C.user(prompt)])
 
-    with {:ok, stream_response} <- ReqLLM.stream_text(model, context),
+    with {:ok, stream_response} <- ReqLLM.stream_text(model, context, opts),
          {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
          text <- ReqLLM.Response.text(response) do
       {:ok, text}

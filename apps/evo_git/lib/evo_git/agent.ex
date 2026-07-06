@@ -669,6 +669,7 @@ defmodule EvoGit.Agent do
             repo_id: agent_state.repo_id,
             repo_root: agent_state.repo_root,
             llm_model: agent_state.llm_model,
+            model_id: agent_state.model_id,
             llm_generation_params: agent_state.llm_generation_params,
             max_turns: agent_state.max_turns,
             max_retries: agent_state.max_retries,

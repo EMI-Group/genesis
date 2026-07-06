@@ -118,7 +118,13 @@ defmodule EvoDash.TaskRegistry do
   def init(opts) do
     # Allow data_dir to be overridden via opts (for testing), fallback to config
     # then platform default. Tests set `config :evo_dash, :data_dir` to a temp dir.
-    data_dir = Keyword.get(opts, :data_dir, Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir()))
+    data_dir =
+      Keyword.get(
+        opts,
+        :data_dir,
+        Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir())
+      )
+
     File.mkdir_p!(data_dir)
 
     # The TaskStore is started by the supervisor; here just reference by name.
@@ -232,7 +238,14 @@ defmodule EvoDash.TaskRegistry do
                 end
 
                 Task.shutdown(task_ref, :brutal_kill)
-                updated = %{task | status: :cancelled, finished_at: DateTime.utc_now(), lease_expires_at: nil}
+
+                updated = %{
+                  task
+                  | status: :cancelled,
+                    finished_at: DateTime.utc_now(),
+                    lease_expires_at: nil
+                }
+
                 EvoDash.Store.put_task(state.task_store, updated)
                 cleanup_expired_tasks(state)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
@@ -634,7 +647,8 @@ defmodule EvoDash.TaskRegistry do
               ]
             )
 
-            {%{task | status: :failed, ref: nil, lease_expires_at: nil} |> set_crash_details(), state}
+            {%{task | status: :failed, ref: nil, lease_expires_at: nil} |> set_crash_details(),
+             state}
           end
         end
     end
@@ -755,9 +769,7 @@ defmodule EvoDash.TaskRegistry do
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
-    Logger.info(
-      "TaskRegistry: recheck resolved task #{task_id} to #{final_status}"
-    )
+    Logger.info("TaskRegistry: recheck resolved task #{task_id} to #{final_status}")
 
     {:noreply, state}
   end
@@ -954,7 +966,10 @@ defmodule EvoDash.TaskRegistry do
       if is_nil(prev_task) do
         # Previous task not found — run with the original objective.
         objective = Keyword.get(opts_without_resume, :objective, "")
-        {_input_arg, runtime_opts} = build_common_runtime_opts(opts_without_resume, task_id, :evolve)
+
+        {_input_arg, runtime_opts} =
+          build_common_runtime_opts(opts_without_resume, task_id, :evolve)
+
         {objective, runtime_opts}
       else
         context_block = build_resume_context_block(prev_task)
@@ -1092,6 +1107,16 @@ defmodule EvoDash.TaskRegistry do
         do: Keyword.put(runtime_opts, :archive, archive),
         else: runtime_opts
 
+    # Per-task model selection: threads the selected model profile id into
+    # the runtime opts so the scheduler uses that profile for this task.
+    # If nil/empty, the runtime falls back to the default (first) profile.
+    model_id = Keyword.get(opts, :model_id)
+
+    runtime_opts =
+      if model_id && model_id != "",
+        do: Keyword.put(runtime_opts, :model_id, model_id),
+        else: runtime_opts
+
     {nil, runtime_opts}
   end
 
@@ -1141,8 +1166,12 @@ defmodule EvoDash.TaskRegistry do
                 else: task.finished_at
 
             updated = %{task | status: status, finished_at: finished_at}
-            updated = if status in [:completed, :failed, :cancelled],
-                       do: %{updated | lease_expires_at: nil}, else: updated
+
+            updated =
+              if status in [:completed, :failed, :cancelled],
+                do: %{updated | lease_expires_at: nil},
+                else: updated
+
             EvoDash.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
@@ -1310,7 +1339,10 @@ defmodule EvoDash.TaskRegistry do
     Enum.each(state.task_refs, fn {task_id, _ref} ->
       case task_get(state, task_id) do
         %TaskInfo{status: s} = task when s in [:running, :pending] ->
-          EvoDash.Store.put_task(state.task_store, %{task | lease_expires_at: now + @lease_duration})
+          EvoDash.Store.put_task(state.task_store, %{
+            task
+            | lease_expires_at: now + @lease_duration
+          })
 
         _ ->
           :ok

@@ -27,9 +27,13 @@ defmodule EvoDashWeb.DashboardComponents do
           <div>
             <%= if @active_project do %>
               <p class="text-base font-bold">{@active_project.name}</p>
-              <p class="text-sm text-base-content/50 font-mono truncate max-w-[300px]">{@active_project.path}</p>
+              <p class="text-sm text-base-content/50 font-mono truncate max-w-[300px]">
+                {@active_project.path}
+              </p>
             <% else %>
-              <p class="font-semibold text-sm text-base-content/50">{gettext("No project selected")}</p>
+              <p class="font-semibold text-sm text-base-content/50">
+                {gettext("No project selected")}
+              </p>
               <p class="text-xs text-base-content/40">{gettext("Open a project to get started")}</p>
             <% end %>
           </div>
@@ -46,10 +50,17 @@ defmodule EvoDashWeb.DashboardComponents do
               {gettext("Recent")}
               <.icon name="hero-chevron-down" class="size-3" />
             </div>
-            <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-72 p-2 shadow-lg border border-base-200 mt-2 overflow-hidden">
+            <ul
+              tabindex="0"
+              class="dropdown-content menu bg-base-100 rounded-box z-[1] w-72 p-2 shadow-lg border border-base-200 mt-2 overflow-hidden"
+            >
               <%= for project <- Enum.take(@recent_projects, 8) do %>
                 <li>
-                  <button phx-click="select_project" phx-value-path={project.path} class="flex items-center gap-2">
+                  <button
+                    phx-click="select_project"
+                    phx-value-path={project.path}
+                    class="flex items-center gap-2"
+                  >
                     <.icon name="hero-folder" class="size-4 text-base-content/50" />
                     <div class="flex-1 min-w-0 text-left">
                       <p class="text-sm font-medium truncate">{project.name}</p>
@@ -140,6 +151,8 @@ defmodule EvoDashWeb.DashboardComponents do
   attr(:show_advanced, :boolean, default: false)
   attr(:disabled, :boolean, default: false)
   attr(:archive, :boolean, default: false)
+  attr(:model_profiles, :list, default: [])
+  attr(:selected_model_id, :string, default: nil)
 
   def task_form(assigns) do
     ~H"""
@@ -162,9 +175,15 @@ defmodule EvoDashWeb.DashboardComponents do
               phx-change="task_change"
               class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
             >
-              <option value="genesis_existing" selected={@mode == "genesis_existing"}>{gettext("Initialize Existing Codebase")}</option>
-              <option value="genesis_new" selected={@mode == "genesis_new"}>{gettext("Create New Codebase")}</option>
-              <option value="evolve_simple" selected={@mode == "evolve_simple"}>{gettext("Evolution")}</option>
+              <option value="genesis_existing" selected={@mode == "genesis_existing"}>
+                {gettext("Initialize Existing Codebase")}
+              </option>
+              <option value="genesis_new" selected={@mode == "genesis_new"}>
+                {gettext("Create New Codebase")}
+              </option>
+              <option value="evolve_simple" selected={@mode == "evolve_simple"}>
+                {gettext("Evolution")}
+              </option>
             </select>
             <div class="hidden sm:block">
               <.tip text={mode_description(@mode)} />
@@ -172,6 +191,31 @@ defmodule EvoDashWeb.DashboardComponents do
           </div>
           <p class="text-sm text-base-content/60 mt-2 sm:hidden">{mode_description(@mode)}</p>
         </div>
+
+        <%= if @model_profiles != [] do %>
+          <div class="bg-base-200/50 rounded-xl p-4 border border-base-300">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+              <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
+                <.icon name="hero-cpu-chip" class="size-5 text-primary" />
+                {gettext("Model")}
+              </label>
+              <select
+                name="model_id"
+                phx-change="select_model"
+                class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
+              >
+                <%= for profile <- @model_profiles do %>
+                  <option value={profile.id} selected={@selected_model_id == profile.id}>
+                    {profile.id <> " (" <> (profile.model || "") <> ")"}
+                  </option>
+                <% end %>
+              </select>
+              <div class="hidden sm:block">
+                <.tip text={gettext("Select which model profile to use for this task")} />
+              </div>
+            </div>
+          </div>
+        <% end %>
 
         <%= if String.starts_with?(@mode, "evolve") do %>
           <div class="rounded-xl border border-base-200 bg-base-200/30">
@@ -182,14 +226,24 @@ defmodule EvoDashWeb.DashboardComponents do
             >
               <.icon name="hero-adjustments-horizontal" class="size-4 text-base-content/60" />
               <span class="text-sm font-semibold text-base-content">{gettext("Advanced Options")}</span>
-              <.icon name="hero-chevron-down" class={"size-4 text-base-content/40 ml-auto transition-transform #{if @show_advanced, do: "rotate-180", else: ""}"} />
+              <.icon
+                name="hero-chevron-down"
+                class={"size-4 text-base-content/40 ml-auto transition-transform #{if @show_advanced, do: "rotate-180", else: ""}"}
+              />
             </button>
             <%= if @show_advanced do %>
               <div class="px-4 pb-4 pt-2 space-y-4 border-t border-base-200 rounded-b-xl">
                 <div class="flex flex-col md:flex-row gap-4">
                   <div class="form-control flex-1">
                     <label class="label">
-                      <span class="label-text font-semibold text-base-content">{gettext("Starting Node")} <.tip text={gettext("The subdirectory within the project to start evolution from. Use './' for root.")} /></span>
+                      <span class="label-text font-semibold text-base-content">{gettext(
+                        "Starting Node"
+                      )}
+                      <.tip text={
+                        gettext(
+                          "The subdirectory within the project to start evolution from. Use './' for root."
+                        )
+                      } /></span>
                     </label>
                     <input
                       type="text"
@@ -199,12 +253,21 @@ defmodule EvoDashWeb.DashboardComponents do
                       placeholder={gettext("e.g., ./src/components")}
                     />
                     <label class="label">
-                      <span class="label-text-alt text-base-content/50">{gettext("Subdirectory to start evolution from (optional)")}</span>
+                      <span class="label-text-alt text-base-content/50">{gettext(
+                        "Subdirectory to start evolution from (optional)"
+                      )}</span>
                     </label>
                   </div>
                   <div class="form-control flex-1">
                     <label class="label">
-                      <span class="label-text font-semibold text-base-content">{gettext("Starting Commit")} <.tip text={gettext("A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD.")} /></span>
+                      <span class="label-text font-semibold text-base-content">{gettext(
+                        "Starting Commit"
+                      )}
+                      <.tip text={
+                        gettext(
+                          "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
+                        )
+                      } /></span>
                     </label>
                     <input
                       type="text"
@@ -214,13 +277,20 @@ defmodule EvoDashWeb.DashboardComponents do
                       placeholder={gettext("e.g., abc1234 or HEAD")}
                     />
                     <label class="label">
-                      <span class="label-text-alt text-base-content/50">{gettext("Commit SHA or ref to start from (defaults to HEAD)")}</span>
+                      <span class="label-text-alt text-base-content/50">{gettext(
+                        "Commit SHA or ref to start from (defaults to HEAD)"
+                      )}</span>
                     </label>
                   </div>
                 </div>
                 <div class="form-control">
                   <label class="label">
-                    <span class="label-text font-semibold text-base-content">{gettext("Resume from")} <.tip text={gettext("The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective.")} /></span>
+                    <span class="label-text font-semibold text-base-content">{gettext("Resume from")}
+                    <.tip text={
+                      gettext(
+                        "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
+                      )
+                    } /></span>
                   </label>
                   <input
                     type="text"
@@ -230,7 +300,9 @@ defmodule EvoDashWeb.DashboardComponents do
                     placeholder="a1b2c3d4"
                   />
                   <label class="label">
-                    <span class="label-text-alt text-base-content/50">{gettext("Previous task ID to continue from (optional)")}</span>
+                    <span class="label-text-alt text-base-content/50">{gettext(
+                      "Previous task ID to continue from (optional)"
+                    )}</span>
                   </label>
                 </div>
               </div>
@@ -264,8 +336,15 @@ defmodule EvoDashWeb.DashboardComponents do
         <!-- Inline execute button -->
         <div class="flex items-center justify-between gap-4">
           <label class="label cursor-pointer flex items-center gap-3 justify-start">
-            <input type="checkbox" name="archive" value="true" class="checkbox checkbox-sm checkbox-primary" />
-            <span class="label-text text-sm font-medium text-base-content/70">{gettext("Archive agent details")}</span>
+            <input
+              type="checkbox"
+              name="archive"
+              value="true"
+              class="checkbox checkbox-sm checkbox-primary"
+            />
+            <span class="label-text text-sm font-medium text-base-content/70">{gettext(
+              "Archive agent details"
+            )}</span>
           </label>
           <button
             type="submit"
@@ -312,26 +391,37 @@ defmodule EvoDashWeb.DashboardComponents do
             <.icon name="hero-document-text" class="size-3" /> {gettext("Defaults")}
           </span>
         <% end %>
-        <.icon name="hero-chevron-down" class="size-4 text-base-content/40 group-open:rotate-180 transition-transform" />
+        <.icon
+          name="hero-chevron-down"
+          class="size-4 text-base-content/40 group-open:rotate-180 transition-transform"
+        />
       </summary>
 
       <div class="bg-base-100 border border-t-0 border-base-200 p-4 sm:p-6 space-y-4">
         <!-- Config Info -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
-            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Project Root")}</p>
+            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">
+              {gettext("Project Root")}
+            </p>
             <p class="text-sm font-mono mt-1 truncate">{@active_project}</p>
           </div>
           <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
-            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Configuration")}</p>
+            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">
+              {gettext("Configuration")}
+            </p>
             <p class="text-sm mt-1">
               <%= if @project_config do %>
                 <span class="text-success flex items-center gap-1">
-                  <.icon name="hero-check-circle" class="size-4" /> {gettext("genesis.toml found — using project settings")}
+                  <.icon name="hero-check-circle" class="size-4" /> {gettext(
+                    "genesis.toml found — using project settings"
+                  )}
                 </span>
               <% else %>
                 <span class="text-base-content/50 flex items-center gap-1">
-                  <.icon name="hero-information-circle" class="size-4" /> {gettext("No genesis.toml — using global defaults")}
+                  <.icon name="hero-information-circle" class="size-4" /> {gettext(
+                    "No genesis.toml — using global defaults"
+                  )}
                 </span>
               <% end %>
             </p>
@@ -340,7 +430,9 @@ defmodule EvoDashWeb.DashboardComponents do
 
         <%= if @worktree_script do %>
           <div class="bg-base-200/40 rounded-lg p-3 border border-base-200">
-            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">{gettext("Worktree Init Script")}</p>
+            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">
+              {gettext("Worktree Init Script")}
+            </p>
             <p class="text-sm font-mono mt-1">{@worktree_script}</p>
           </div>
         <% end %>
@@ -349,14 +441,20 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="border-t border-base-200 pt-4">
             <h3 class="text-base font-semibold flex items-center gap-2 mb-3">
               <.icon name="hero-terminal" class="size-4 text-secondary" /> {gettext("Dev Commands")}
-              <.tip text={gettext("Quick shortcuts for common development commands. Click Run to execute.")} />
+              <.tip text={
+                gettext("Quick shortcuts for common development commands. Click Run to execute.")
+              } />
             </h3>
             <div class="space-y-2">
               <%= for {name, cmd} <- Enum.sort(@commands) do %>
                 <div class="flex items-center gap-2 bg-base-200/40 rounded-lg p-2.5 border border-base-200 border-l-2 border-l-accent/40">
                   <span class="badge badge-accent badge-sm font-mono">{name}</span>
                   <span class="text-sm font-mono flex-1 truncate">{cmd}</span>
-                  <button class="btn btn-ghost btn-xs btn-primary" phx-click="run_command" phx-value-command={name}>
+                  <button
+                    class="btn btn-ghost btn-xs btn-primary"
+                    phx-click="run_command"
+                    phx-value-command={name}
+                  >
                     <.icon name="hero-play" class="size-3" /> {gettext("Run")}
                   </button>
                 </div>
@@ -368,27 +466,40 @@ defmodule EvoDashWeb.DashboardComponents do
         <!-- Foreign Repos -->
         <div class="border-t border-base-200 pt-4">
           <h3 class="text-base font-semibold flex items-center gap-2 mb-3">
-            <.icon name="hero-server-stack" class="size-4 text-secondary" /> {gettext("Foreign Repositories")}
-            <.tip text={gettext("Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects.")} />
+            <.icon name="hero-server-stack" class="size-4 text-secondary" /> {gettext(
+              "Foreign Repositories"
+            )}
+            <.tip text={
+              gettext(
+                "Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects."
+              )
+            } />
           </h3>
 
           <%= if @foreign_repos == [] do %>
             <div class="border-2 border-dashed border-base-300 rounded-xl p-6 text-center text-base-content/50">
               <.icon name="hero-server-stack" class="size-8 mx-auto mb-2 opacity-30" />
               <p class="text-sm font-medium">{gettext("No foreign repositories registered")}</p>
-              <p class="text-xs mt-1">{gettext("Add repositories to allow agents to reference external code.")}</p>
+              <p class="text-xs mt-1">
+                {gettext("Add repositories to allow agents to reference external code.")}
+              </p>
             </div>
           <% else %>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <%= for repo <- @foreign_repos do %>
                 <div class="bg-base-100 rounded-xl p-3 border border-base-200 shadow-sm relative group flex flex-col gap-1 hover:border-secondary/30 transition-colors">
-                  <div class={"absolute left-0 top-0 bottom-0 w-1 rounded-l-xl #{if ForeignRepo.primary?(repo.id), do: "bg-primary", else: "bg-secondary/60"}"}></div>
+                  <div class={"absolute left-0 top-0 bottom-0 w-1 rounded-l-xl #{if ForeignRepo.primary?(repo.id), do: "bg-primary", else: "bg-secondary/60"}"}>
+                  </div>
                   <div class="flex items-center justify-between ml-2">
                     <span class={"badge #{if ForeignRepo.primary?(repo.id), do: "badge-primary", else: "badge-ghost"} badge-sm font-mono"}>
                       {repo.id}
                     </span>
                     <%= unless ForeignRepo.primary?(repo.id) do %>
-                      <button class="btn btn-ghost btn-xs text-error opacity-0 group-hover:opacity-100 transition-opacity" phx-click="remove_foreign_repo" phx-value-repo_id={repo.id}>
+                      <button
+                        class="btn btn-ghost btn-xs text-error opacity-0 group-hover:opacity-100 transition-opacity"
+                        phx-click="remove_foreign_repo"
+                        phx-value-repo_id={repo.id}
+                      >
                         <.icon name="hero-trash" class="size-3" />
                       </button>
                     <% end %>
@@ -411,20 +522,39 @@ defmodule EvoDashWeb.DashboardComponents do
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
                     <label class="label py-1">
-                      <span class="label-text text-xs font-medium">{gettext("Repo ID")} <.tip text={gettext("A unique identifier for this repository (e.g., 'original', 'upstream')")} /></span>
+                      <span class="label-text text-xs font-medium">{gettext("Repo ID")}
+                      <.tip text={
+                        gettext(
+                          "A unique identifier for this repository (e.g., 'original', 'upstream')"
+                        )
+                      } /></span>
                     </label>
-                    <input type="text" name="repo_id" value={@new_repo_id} placeholder="e.g., original"
-                      class="input input-bordered input-sm w-full font-mono" required />
+                    <input
+                      type="text"
+                      name="repo_id"
+                      value={@new_repo_id}
+                      placeholder="e.g., original"
+                      class="input input-bordered input-sm w-full font-mono"
+                      required
+                    />
                   </div>
                   <div>
                     <label class="label py-1">
-                      <span class="label-text text-xs font-medium">{gettext("Path")} <.tip text={gettext("Absolute path to the repository root on this machine")} /></span>
+                      <span class="label-text text-xs font-medium">{gettext("Path")}
+                      <.tip text={gettext("Absolute path to the repository root on this machine")} /></span>
                     </label>
                     <div class="picker-container relative">
-                      <input type="text" name="path" value={@new_repo_path} placeholder="/absolute/path/to/repo"
-                        class="input input-bordered input-sm w-full font-mono pr-8" required
-                        id="foreign-repo-path-input" />
-                      <button type="button"
+                      <input
+                        type="text"
+                        name="path"
+                        value={@new_repo_path}
+                        placeholder="/absolute/path/to/repo"
+                        class="input input-bordered input-sm w-full font-mono pr-8"
+                        required
+                        id="foreign-repo-path-input"
+                      />
+                      <button
+                        type="button"
                         id="foreign-repo-path-picker-button"
                         class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
                         phx-click="pick_directory"
@@ -440,22 +570,34 @@ defmodule EvoDashWeb.DashboardComponents do
                     <label class="label py-1">
                       <span class="label-text text-xs font-medium">{gettext("Description (optional)")}</span>
                     </label>
-                    <input type="text" name="description" value={@new_repo_description} placeholder={gettext("Short description of what this repo does")}
-                      class="input input-bordered input-sm w-full" />
+                    <input
+                      type="text"
+                      name="description"
+                      value={@new_repo_description}
+                      placeholder={gettext("Short description of what this repo does")}
+                      class="input input-bordered input-sm w-full"
+                    />
                   </div>
                 </div>
                 <div class="flex gap-2">
                   <button type="submit" class="btn btn-primary btn-sm gap-1">
                     <.icon name="hero-plus" class="size-3" /> {gettext("Add")}
                   </button>
-                  <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_add_foreign_repo_form">
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    phx-click="toggle_add_foreign_repo_form"
+                  >
                     {gettext("Cancel")}
                   </button>
                 </div>
               </.form>
             </div>
           <% else %>
-            <button class="btn btn-sm btn-outline btn-secondary gap-1 mt-3" phx-click="toggle_add_foreign_repo_form">
+            <button
+              class="btn btn-sm btn-outline btn-secondary gap-1 mt-3"
+              phx-click="toggle_add_foreign_repo_form"
+            >
               <.icon name="hero-plus-circle" class="size-4" /> {gettext("Add Foreign Repo")}
             </button>
           <% end %>
@@ -493,18 +635,31 @@ defmodule EvoDashWeb.DashboardComponents do
             <span class="w-1 h-1 rounded-full bg-base-content/20"></span>
             <span class="text-xs font-mono text-base-content/40">#{String.slice(@task.id, 0, 8)}</span>
           </div>
-          
+
           <div class="flex items-center gap-2 shrink-0">
             <%= if Map.get(@task, :review_status) do %>
-              <span class={["badge border-0 font-medium px-2.5 py-2 rounded-md", review_status_badge(Map.get(@task, :review_status))]}>
-                <.icon name={review_status_icon(Map.get(@task, :review_status))} class="size-4 mr-1.5" />
+              <span class={[
+                "badge border-0 font-medium px-2.5 py-2 rounded-md",
+                review_status_badge(Map.get(@task, :review_status))
+              ]}>
+                <.icon
+                  name={review_status_icon(Map.get(@task, :review_status))}
+                  class="size-4 mr-1.5"
+                />
                 {review_status_label(Map.get(@task, :review_status))}
               </span>
             <% end %>
-            <span class={["badge", task_status_badge(@task.status), "font-medium border-0 px-2.5 py-2 rounded-md"]}>
+            <span class={[
+              "badge",
+              task_status_badge(@task.status),
+              "font-medium border-0 px-2.5 py-2 rounded-md"
+            ]}>
               <%= if @task.status == :running do %>
                 <span class="relative flex h-2.5 w-2.5 mr-2">
-                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" style="animation-duration: 2s"></span>
+                  <span
+                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"
+                    style="animation-duration: 2s"
+                  ></span>
                   <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-success"></span>
                 </span>
               <% end %>
@@ -512,8 +667,10 @@ defmodule EvoDashWeb.DashboardComponents do
                 <span class="loading loading-spinner loading-xs mr-2"></span>
               <% end %>
               <%= cond do %>
-                <% @task.status == :finalizing -> %>Finalizing
-                <% true -> %>{@task.status}
+                <% @task.status == :finalizing -> %>
+                  Finalizing
+                <% true -> %>
+                  {@task.status}
               <% end %>
             </span>
           </div>
@@ -523,11 +680,17 @@ defmodule EvoDashWeb.DashboardComponents do
         <div class="pr-2 -mt-2">
           <% objective_text = @task.opts[:prompt] || @task.opts[:objective] || "" %>
           <%= if objective_text != "" do %>
-            <p class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2" title={objective_text}>
+            <p
+              class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2"
+              title={objective_text}
+            >
               {objective_text}
             </p>
           <% else %>
-            <p class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2" title={task_description(@task)}>
+            <p
+              class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2"
+              title={task_description(@task)}
+            >
               {task_description(@task)}
             </p>
           <% end %>
@@ -553,7 +716,7 @@ defmodule EvoDashWeb.DashboardComponents do
               </span>
             <% end %>
           </div>
-          
+
           <div class="flex items-center gap-2 sm:gap-3">
             <%= if @task.status in [:running, :finalizing] do %>
               <button
@@ -565,7 +728,7 @@ defmodule EvoDashWeb.DashboardComponents do
                 <.icon name="hero-x-mark" class="size-4 mr-1" /> {gettext("Cancel")}
               </button>
             <% end %>
-            
+
             <%= if show_review_button?(@task) do %>
               <.link
                 navigate={~p"/review/#{@task.id}"}
@@ -574,9 +737,13 @@ defmodule EvoDashWeb.DashboardComponents do
                 <.icon name="hero-eye" class="size-4 mr-1" /> {gettext("Review")}
               </.link>
             <% end %>
-            
+
             <button
-              class={["btn btn-sm rounded-md px-4 font-medium transition-all", @show_details && "btn-neutral shadow-sm" || "btn-ghost bg-base-200/50 hover:bg-base-200"]}
+              class={[
+                "btn btn-sm rounded-md px-4 font-medium transition-all",
+                (@show_details && "btn-neutral shadow-sm") ||
+                  "btn-ghost bg-base-200/50 hover:bg-base-200"
+              ]}
               phx-click="toggle_task_details"
               phx-value-task_id={@task.id}
             >
@@ -586,14 +753,19 @@ defmodule EvoDashWeb.DashboardComponents do
                 {gettext("Details")} <.icon name="hero-chevron-down" class="size-4 ml-1.5" />
               <% end %>
             </button>
-            
+
             <details class="dropdown dropdown-end dropdown-top sm:dropdown-bottom">
               <summary class="btn btn-sm btn-ghost btn-circle rounded-md hover:bg-base-200">
                 <.icon name="hero-ellipsis-vertical" class="size-4" />
               </summary>
               <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-lg w-40 border border-base-200">
                 <li>
-                  <button class="text-error hover:bg-error/10 hover:text-error rounded-md" phx-click="delete_task" phx-value-task_id={@task.id} phx-confirm={gettext("Delete this task?")}>
+                  <button
+                    class="text-error hover:bg-error/10 hover:text-error rounded-md"
+                    phx-click="delete_task"
+                    phx-value-task_id={@task.id}
+                    phx-confirm={gettext("Delete this task?")}
+                  >
                     <.icon name="hero-trash" class="size-4 mr-2" /> {gettext("Delete")}
                   </button>
                 </li>
@@ -609,9 +781,15 @@ defmodule EvoDashWeb.DashboardComponents do
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <div class="flex items-center justify-between mb-4">
                     <h4 class="text-sm font-bold flex items-center gap-2">
-                      <.icon name="hero-cog-8-tooth" class="size-4.5 text-primary" /> {gettext("Options")}
+                      <.icon name="hero-cog-8-tooth" class="size-4.5 text-primary" /> {gettext(
+                        "Options"
+                      )}
                     </h4>
-                    <button class="btn btn-xs btn-ghost rounded-md" phx-click="view_full_options" phx-value-task_id={@task.id}>
+                    <button
+                      class="btn btn-xs btn-ghost rounded-md"
+                      phx-click="view_full_options"
+                      phx-value-task_id={@task.id}
+                    >
                       <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext("Full")}
                     </button>
                   </div>
@@ -621,10 +799,18 @@ defmodule EvoDashWeb.DashboardComponents do
                   <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                     <div class="flex items-center justify-between mb-4">
                       <h4 class="text-sm font-bold flex items-center gap-2">
-                        <.icon name="hero-check-badge" class="size-4.5 text-success" /> {gettext("Result")}
+                        <.icon name="hero-check-badge" class="size-4.5 text-success" /> {gettext(
+                          "Result"
+                        )}
                       </h4>
-                      <button class="btn btn-xs btn-ghost rounded-md" phx-click="view_full_result" phx-value-task_id={@task.id}>
-                        <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext("Full")}
+                      <button
+                        class="btn btn-xs btn-ghost rounded-md"
+                        phx-click="view_full_result"
+                        phx-value-task_id={@task.id}
+                      >
+                        <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext(
+                          "Full"
+                        )}
                       </button>
                     </div>
                     {render_result(@task.result)}
@@ -633,82 +819,132 @@ defmodule EvoDashWeb.DashboardComponents do
               </div>
 
               <%= if Map.get(@task, :usage) do %>
-              <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
-                  <.icon name="hero-currency-dollar" class="size-4.5 text-primary" /> {gettext("Token & Cost Usage")}
-                </h4>
-                <div class="grid grid-cols-3 gap-3">
-                  <div>
-                    <div class="text-xs text-base-content/50 mb-1">{gettext("Input Tokens")}</div>
-                    <div class="text-sm font-semibold">{format_number(@task.usage.input_tokens)}</div>
+                <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                  <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
+                    <.icon name="hero-currency-dollar" class="size-4.5 text-primary" /> {gettext(
+                      "Token & Cost Usage"
+                    )}
+                  </h4>
+                  <div class="grid grid-cols-3 gap-3">
+                    <div>
+                      <div class="text-xs text-base-content/50 mb-1">{gettext("Input Tokens")}</div>
+                      <div class="text-sm font-semibold">
+                        {format_number(@task.usage.input_tokens)}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-base-content/50 mb-1">{gettext("Output Tokens")}</div>
+                      <div class="text-sm font-semibold">
+                        {format_number(@task.usage.output_tokens)}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-base-content/50 mb-1">{gettext("Total Tokens")}</div>
+                      <div class="text-sm font-semibold">
+                        {format_number(@task.usage.total_tokens)}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div class="text-xs text-base-content/50 mb-1">{gettext("Output Tokens")}</div>
-                    <div class="text-sm font-semibold">{format_number(@task.usage.output_tokens)}</div>
-                  </div>
-                  <div>
-                    <div class="text-xs text-base-content/50 mb-1">{gettext("Total Tokens")}</div>
-                    <div class="text-sm font-semibold">{format_number(@task.usage.total_tokens)}</div>
-                  </div>
-                </div>
-                <%= if Map.get(@task.usage, :cached_tokens, 0) > 0 or Map.get(@task.usage, :cache_creation_tokens, 0) > 0 do %>
+                  <%= if Map.get(@task.usage, :cached_tokens, 0) > 0 or Map.get(@task.usage, :cache_creation_tokens, 0) > 0 do %>
+                    <div class="mt-4 pt-4 border-t border-base-200">
+                      <div class="grid grid-cols-3 gap-3">
+                        <div>
+                          <div class="text-xs text-base-content/50 mb-1">
+                            {gettext("Cached Tokens")}
+                          </div>
+                          <div class="text-sm font-semibold">
+                            {format_number(Map.get(@task.usage, :cached_tokens, 0))}
+                          </div>
+                        </div>
+                        <div>
+                          <div class="text-xs text-base-content/50 mb-1">
+                            {gettext("Cache Creation")}
+                          </div>
+                          <div class="text-sm font-semibold">
+                            {format_number(Map.get(@task.usage, :cache_creation_tokens, 0))}
+                          </div>
+                        </div>
+                        <div>
+                          <div class="text-xs text-base-content/50 mb-1">
+                            {gettext("Cache Hit Rate")}
+                          </div>
+                          <div class="text-sm font-semibold text-success">
+                            {format_cache_hit_rate(@task.usage)}
+                          </div>
+                          <progress
+                            class="progress progress-success w-full mt-1"
+                            value={
+                              if @task.usage.input_tokens > 0,
+                                do:
+                                  min(
+                                    round(
+                                      Map.get(@task.usage, :cached_tokens, 0) /
+                                        @task.usage.input_tokens * 100
+                                    ),
+                                    100
+                                  ),
+                                else: 0
+                            }
+                            max="100"
+                          ></progress>
+                        </div>
+                      </div>
+                    </div>
+                  <% end %>
                   <div class="mt-4 pt-4 border-t border-base-200">
                     <div class="grid grid-cols-3 gap-3">
                       <div>
-                        <div class="text-xs text-base-content/50 mb-1">{gettext("Cached Tokens")}</div>
-                        <div class="text-sm font-semibold">{format_number(Map.get(@task.usage, :cached_tokens, 0))}</div>
+                        <div class="text-xs text-base-content/50 mb-1">{gettext("Input Cost")}</div>
+                        <div class="text-sm font-semibold">
+                          ${format_cost(@task.usage.input_cost)}
+                        </div>
                       </div>
                       <div>
-                        <div class="text-xs text-base-content/50 mb-1">{gettext("Cache Creation")}</div>
-                        <div class="text-sm font-semibold">{format_number(Map.get(@task.usage, :cache_creation_tokens, 0))}</div>
+                        <div class="text-xs text-base-content/50 mb-1">{gettext("Output Cost")}</div>
+                        <div class="text-sm font-semibold">
+                          ${format_cost(@task.usage.output_cost)}
+                        </div>
                       </div>
                       <div>
-                        <div class="text-xs text-base-content/50 mb-1">{gettext("Cache Hit Rate")}</div>
-                        <div class="text-sm font-semibold text-success">{format_cache_hit_rate(@task.usage)}</div>
-                        <progress class="progress progress-success w-full mt-1" value={if @task.usage.input_tokens > 0, do: min(round(Map.get(@task.usage, :cached_tokens, 0) / @task.usage.input_tokens * 100), 100), else: 0} max="100"></progress>
+                        <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
+                        <div class="text-sm font-semibold text-primary">
+                          ${format_cost(@task.usage.total_cost)}
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                <% end %>
-                <div class="mt-4 pt-4 border-t border-base-200">
-                  <div class="grid grid-cols-3 gap-3">
-                    <div>
-                      <div class="text-xs text-base-content/50 mb-1">{gettext("Input Cost")}</div>
-                      <div class="text-sm font-semibold">${format_cost(@task.usage.input_cost)}</div>
-                    </div>
-                    <div>
-                      <div class="text-xs text-base-content/50 mb-1">{gettext("Output Cost")}</div>
-                      <div class="text-sm font-semibold">${format_cost(@task.usage.output_cost)}</div>
-                    </div>
-                    <div>
-                      <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
-                      <div class="text-sm font-semibold text-primary">${format_cost(@task.usage.total_cost)}</div>
                     </div>
                   </div>
                 </div>
-              </div>
               <% end %>
 
               <%= if Map.get(@task, :agent_count) do %>
-              <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
-                  <.icon name="hero-user-group" class="size-4.5 text-primary" /> {gettext("Agents Spawned")}
-                </h4>
-                <div class="flex items-center gap-3">
-                  <span class="text-2xl font-bold text-primary">{format_number(@task.agent_count)}</span>
-                  <span class="text-xs text-base-content/50">{gettext("total agents (incl. subagents)")}</span>
+                <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                  <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
+                    <.icon name="hero-user-group" class="size-4.5 text-primary" /> {gettext(
+                      "Agents Spawned"
+                    )}
+                  </h4>
+                  <div class="flex items-center gap-3">
+                    <span class="text-2xl font-bold text-primary">{format_number(@task.agent_count)}</span>
+                    <span class="text-xs text-base-content/50">{gettext(
+                      "total agents (incl. subagents)"
+                    )}</span>
+                  </div>
                 </div>
-              </div>
               <% end %>
-              
+
               <%= if @task.logs != [] do %>
                 <% log_count = length(@task.logs) %>
                 <details class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs">
                   <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
-                    <.icon name="hero-command-line" class="size-4.5 text-base-content/70 group-hover/logs:text-primary transition-colors" />
+                    <.icon
+                      name="hero-command-line"
+                      class="size-4.5 text-base-content/70 group-hover/logs:text-primary transition-colors"
+                    />
                     {gettext("Execution Logs")}
                     <span class="text-xs font-medium text-base-content/50 bg-base-300 px-2 py-0.5 rounded-md ml-2">
-                      <%= if log_count > 20, do: gettext("last 20 of %{count}", count: log_count), else: gettext("%{count}", count: log_count) %>
+                      {if log_count > 20,
+                        do: gettext("last 20 of %{count}", count: log_count),
+                        else: gettext("%{count}", count: log_count)}
                     </span>
                   </summary>
                   <div class="bg-neutral text-neutral-content p-4 rounded-md max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
@@ -740,7 +976,10 @@ defmodule EvoDashWeb.DashboardComponents do
               <% end %>
 
               <%= if Map.get(@task, :archive_metadata) not in [nil, []] do %>
-                <.archive_details archive_metadata={Map.get(@task, :archive_metadata)} task_id={@task.id} />
+                <.archive_details
+                  archive_metadata={Map.get(@task, :archive_metadata)}
+                  task_id={@task.id}
+                />
               <% end %>
             </div>
           </div>
@@ -763,10 +1002,16 @@ defmodule EvoDashWeb.DashboardComponents do
       <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
         <div class="flex items-center justify-between mb-4">
           <h4 class="text-sm font-bold flex items-center gap-2">
-            <.icon name="hero-archive-box" class="size-4.5 text-primary" /> {gettext("Archived Agent Details")}
+            <.icon name="hero-archive-box" class="size-4.5 text-primary" /> {gettext(
+              "Archived Agent Details"
+            )}
           </h4>
           <%= if @task_id do %>
-            <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-full" download>
+            <.link
+              href={"/tasks/#{@task_id}/export"}
+              class="btn btn-sm btn-outline btn-primary rounded-full"
+              download
+            >
               <.icon name="hero-arrow-down-tray" class="size-4 mr-1" /> {gettext("Export JSON")}
             </.link>
           <% end %>
@@ -819,7 +1064,9 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if @agent[:objective] not in [nil, ""] do %>
           <div>
             <div class="text-xs text-base-content/50 mb-0.5">{gettext("Objective")}</div>
-            <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">{@agent[:objective]}</div>
+            <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">
+              {@agent[:objective]}
+            </div>
           </div>
         <% end %>
 
@@ -827,7 +1074,9 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if @agent[:result] not in [nil, ""] do %>
           <div>
             <div class="text-xs text-base-content/50 mb-0.5">{gettext("Result")}</div>
-            <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">{@agent[:result]}</div>
+            <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">
+              {@agent[:result]}
+            </div>
           </div>
         <% end %>
 
@@ -875,15 +1124,21 @@ defmodule EvoDashWeb.DashboardComponents do
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-base-200">
             <div>
               <div class="text-xs text-base-content/50">{gettext("Input Tokens")}</div>
-              <div class="text-sm font-semibold">{format_number(@agent[:usage][:input_tokens] || 0)}</div>
+              <div class="text-sm font-semibold">
+                {format_number(@agent[:usage][:input_tokens] || 0)}
+              </div>
             </div>
             <div>
               <div class="text-xs text-base-content/50">{gettext("Output Tokens")}</div>
-              <div class="text-sm font-semibold">{format_number(@agent[:usage][:output_tokens] || 0)}</div>
+              <div class="text-sm font-semibold">
+                {format_number(@agent[:usage][:output_tokens] || 0)}
+              </div>
             </div>
             <div>
               <div class="text-xs text-base-content/50">{gettext("Total Tokens")}</div>
-              <div class="text-sm font-semibold">{format_number(@agent[:usage][:total_tokens] || 0)}</div>
+              <div class="text-sm font-semibold">
+                {format_number(@agent[:usage][:total_tokens] || 0)}
+              </div>
             </div>
             <div>
               <div class="text-xs text-base-content/50">{gettext("Cost")}</div>
@@ -1008,13 +1263,13 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if @mode != "" do %>
           <span class="badge badge-primary font-mono">
             <.icon name="hero-cog-6-tooth" class="size-3 mr-1" />
-            <%= @mode %>
+            {@mode}
           </span>
         <% end %>
         <%= if @path != "" do %>
           <span class="badge badge-ghost font-mono">
             <.icon name="hero-folder" class="size-3 mr-1" />
-            <%= @path %>
+            {@path}
           </span>
         <% end %>
       </div>
@@ -1073,7 +1328,9 @@ defmodule EvoDashWeb.DashboardComponents do
         <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
           <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
         </h5>
-        <p class="text-sm text-warning">{gettext("The agent completed without making any changes to the codebase.")}</p>
+        <p class="text-sm text-warning">
+          {gettext("The agent completed without making any changes to the codebase.")}
+        </p>
       </div>
     </div>
     """
@@ -1102,19 +1359,19 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if @commit_sha do %>
           <span class="badge badge-ghost font-mono">
             <.icon name="hero-code-bracket" class="size-3 mr-1" />
-            <%= String.slice(@commit_sha, 0..7) %>
+            {String.slice(@commit_sha, 0..7)}
           </span>
         <% end %>
         <%= if @tag do %>
           <span class="badge badge-ghost font-mono">
             <.icon name="hero-tag" class="size-3 mr-1" />
-            <%= @tag %>
+            {@tag}
           </span>
         <% end %>
         <%= if @branch_name do %>
           <span class="badge badge-primary font-mono">
             <.icon name="hero-code-bracket-square" class="size-3 mr-1" />
-            <%= @branch_name %>
+            {@branch_name}
           </span>
         <% end %>
         <%= if @pr_url do %>
@@ -1162,20 +1419,20 @@ defmodule EvoDashWeb.DashboardComponents do
           <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Objective")}
         </h5>
         <div class="text-sm whitespace-pre-wrap break-words">
-          <%= @primary_text %>
+          {@primary_text}
         </div>
       </div>
       <div class="flex flex-wrap gap-2 text-xs">
         <%= if @mode != "" do %>
           <span class="badge badge-primary font-mono">
             <.icon name="hero-cog-6-tooth" class="size-3 mr-1" />
-            <%= @mode %>
+            {@mode}
           </span>
         <% end %>
         <%= if @path != "" do %>
           <span class="badge badge-ghost font-mono">
             <.icon name="hero-folder" class="size-3 mr-1" />
-            <%= @path %>
+            {@path}
           </span>
         <% end %>
       </div>
@@ -1226,7 +1483,9 @@ defmodule EvoDashWeb.DashboardComponents do
         <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
           <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
         </h5>
-        <p class="text-sm text-warning">{gettext("The agent completed without making any changes to the codebase.")}</p>
+        <p class="text-sm text-warning">
+          {gettext("The agent completed without making any changes to the codebase.")}
+        </p>
       </div>
       <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
         <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
@@ -1254,19 +1513,19 @@ defmodule EvoDashWeb.DashboardComponents do
         <%= if @branch_name do %>
           <span class="badge badge-primary font-mono text-sm">
             <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
-            <%= @branch_name %>
+            {@branch_name}
           </span>
         <% end %>
         <%= if @commit_sha do %>
           <span class="badge badge-ghost font-mono text-sm">
             <.icon name="hero-code-bracket" class="size-4 mr-1" />
-            <%= String.slice(@commit_sha, 0..7) %>
+            {String.slice(@commit_sha, 0..7)}
           </span>
         <% end %>
         <%= if @tag do %>
           <span class="badge badge-ghost font-mono text-sm">
             <.icon name="hero-tag" class="size-4 mr-1" />
-            <%= @tag %>
+            {@tag}
           </span>
         <% end %>
         <%= if @pr_url do %>

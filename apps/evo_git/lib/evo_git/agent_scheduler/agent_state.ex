@@ -13,6 +13,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
     `nil` before the agent is dispatched to a worktree
   - `llm_model` — the LLM model string for this agent to use
   - `llm_generation_params` — the LLM generation parameters (temperature, max_tokens, etc.) passed to ReqLLM calls
+  - `model_id` — the model profile id this agent is bound to (determines which per-model slot pool is used). Defaults to `"default"`.
   - `max_retries` — maximum LLM call retries for this agent
   - `max_depth` — maximum agent recursion depth
   - `max_turns` — maximum turns per agent loop
@@ -47,6 +48,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
     :objective,
     :task_local_id,
     :turn,
+    model_id: "default",
     archive: false,
     usage: nil,
     compression_count: 0,
@@ -63,6 +65,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           phylo_node: PhyloGraphNode.t() | nil,
           llm_model: ReqLLM.model_input(),
           llm_generation_params: keyword(),
+          model_id: String.t(),
           max_retries: pos_integer(),
           max_depth: pos_integer(),
           max_turns: pos_integer(),

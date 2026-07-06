@@ -47,10 +47,14 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   end
 
   defp base_state(overrides) when is_list(overrides) do
-    struct!(
-      %State{paused: true, agent_max_retries: 3, ref_to_agent: %{make_ref() => 1}},
-      overrides
-    )
+    # Start from a per-model pool state (single default model)
+    profiles = [%{id: "default", model: "test:model", concurrency: 3}]
+
+    base =
+      State.from_model_profiles(profiles)
+      |> struct!(paused: true, agent_max_retries: 3, ref_to_agent: %{make_ref() => 1})
+
+    struct!(base, overrides)
   end
 
   # --- ETS helpers ---
@@ -393,9 +397,9 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         # cancellation.
         state =
           base_state(
-            llm_holders: MapSet.new([1, 2]),
+            llm_holders: %{"default" => MapSet.new([1, 2])},
             tool_holders: MapSet.new([1, 2]),
-            llm_last_granted: %{1 => 1_000, 2 => 2_000}
+            llm_last_granted: %{"default" => %{1 => 1_000, 2 => 2_000}}
           )
 
         from = {self(), make_ref()}
@@ -405,16 +409,18 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
         # The cancelled agents must be removed from both holder sets so that
         # the slots are returned to the pool (no permanent leak).
-        refute MapSet.member?(new_state.llm_holders, 1)
-        refute MapSet.member?(new_state.llm_holders, 2)
+        default_holders = State.holders_for(new_state, "default")
+        refute MapSet.member?(default_holders, 1)
+        refute MapSet.member?(default_holders, 2)
         refute MapSet.member?(new_state.tool_holders, 1)
         refute MapSet.member?(new_state.tool_holders, 2)
 
         # llm_last_granted entries for cancelled agents are also cleaned up.
-        refute Map.has_key?(new_state.llm_last_granted, 1)
-        refute Map.has_key?(new_state.llm_last_granted, 2)
+        default_last_granted = State.last_granted_for(new_state, "default")
+        refute Map.has_key?(default_last_granted, 1)
+        refute Map.has_key?(default_last_granted, 2)
 
-        assert new_state.llm_holders == MapSet.new()
+        assert default_holders == MapSet.new()
         assert new_state.tool_holders == MapSet.new()
       after
         Enum.each(tasks, fn task ->

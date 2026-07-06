@@ -165,6 +165,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         repo_root: Keyword.get(opts, :repo_root),
         completed_at: DateTime.utc_now(),
         llm_model: Keyword.get(opts, :llm_model),
+        model_id: Keyword.get(opts, :model_id),
         llm_generation_params: Keyword.get(opts, :llm_generation_params, []),
         compression_threshold: Keyword.get(opts, :compression_threshold),
         max_turns: Keyword.get(opts, :max_turns),
@@ -326,7 +327,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         build_llm_settings(
           data[:llm_model],
           data[:llm_generation_params],
-          data[:compression_threshold]
+          data[:compression_threshold],
+          data[:model_id]
         ),
       agent_settings: %{
         max_turns: data[:max_turns],
@@ -354,11 +356,14 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     end
   end
 
-  defp build_llm_settings(model, generation_params, compression_threshold)
+  defp build_llm_settings(model, generation_params, compression_threshold, model_id)
        when is_list(generation_params) or is_nil(generation_params) do
     params_map = Map.new(generation_params || [])
 
-    Map.merge(%{model: model, context_compression_threshold: compression_threshold}, params_map)
+    Map.merge(
+      %{model: model, context_compression_threshold: compression_threshold, model_id: model_id},
+      params_map
+    )
   end
 
   defp format_foreign_repos(nil), do: []

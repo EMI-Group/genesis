@@ -23,14 +23,21 @@ defmodule EvoDashWeb.SystemLive do
   max_retries = 15
 
   [llm]
-  # REQUIRED: LLM model identifier (format: "provider:model")
+  # Token count threshold for context compression
+  compression_threshold_tokens = 100_000
+
+  # Model profiles — define one or more [[llm.models]] entries.
+  # The first profile is the default. Each task can select a profile
+  # via the dashboard task form's Model dropdown or the runtime :model_id opt.
+  [[llm.models]]
+  id = "default"
+  # LLM model identifier (format: "provider:model")
   # Examples:
   #   "anthropic:claude-sonnet-4-20250514"
   #   "google:gemini-2.0-flash-exp"
   #   "zai:glm-5.1"
   model = "your-model-here"
-  # Token count threshold for context compression
-  compression_threshold_tokens = 100_000
+  concurrency = 3
 
   [user]
   # Your GitHub username (used for commit co-authoring)
@@ -121,7 +128,9 @@ defmodule EvoDashWeb.SystemLive do
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status}>
       <div class="mb-6 mt-2">
         <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("System")}</h1>
-        <p class="text-sm text-base-content/60 mt-0.5">{gettext("Scheduler controls, system health, and usage guides")}</p>
+        <p class="text-sm text-base-content/60 mt-0.5">
+          {gettext("Scheduler controls, system health, and usage guides")}
+        </p>
       </div>
 
       <!-- Scheduler Control banner -->
@@ -133,11 +142,15 @@ defmodule EvoDashWeb.SystemLive do
           />
           <div>
             <h2 class="text-base font-bold tracking-tight">
-              {if @scheduler_paused, do: gettext("Scheduler Paused"), else: gettext("Scheduler Active")}
+              {if @scheduler_paused,
+                do: gettext("Scheduler Paused"),
+                else: gettext("Scheduler Active")}
             </h2>
             <p class="text-sm text-base-content/60 mt-0.5 max-w-lg">
               <%= if @scheduler_paused do %>
-                {gettext("Running agents continue. No new slots or agents will be granted until resumed.")}
+                {gettext(
+                  "Running agents continue. No new slots or agents will be granted until resumed."
+                )}
               <% else %>
                 {gettext("Agents and slots are being granted normally.")}
               <% end %>
@@ -149,7 +162,10 @@ defmodule EvoDashWeb.SystemLive do
           phx-click="toggle_pause"
           class={[
             "btn rounded-md font-medium shrink-0",
-            if(@scheduler_paused, do: "bg-success/20 hover:bg-success/30 text-success-content", else: "bg-warning/20 hover:bg-warning/30 text-warning-content")
+            if(@scheduler_paused,
+              do: "bg-success/20 hover:bg-success/30 text-success-content",
+              else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
+            )
           ]}
         >
           <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
@@ -166,7 +182,9 @@ defmodule EvoDashWeb.SystemLive do
               {gettext("System Control")}
             </h2>
             <p class="text-sm text-base-content/60 max-w-lg">
-              {gettext("Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases.")}
+              {gettext(
+                "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
+              )}
             </p>
           </div>
         </div>
@@ -198,12 +216,23 @@ defmodule EvoDashWeb.SystemLive do
               <.icon name="hero-shield-check" class="size-5 text-success" />
               <div>
                 <h2 class="font-bold text-base">{gettext("System Self-Check")}</h2>
-                <p class="text-sm text-base-content/60">{gettext("System status and health overview")}</p>
+                <p class="text-sm text-base-content/60">
+                  {gettext("System status and health overview")}
+                </p>
               </div>
             </div>
-            <button phx-click="rerun_checks" class="btn btn-ghost btn-sm gap-2" disabled={@system_checks_status == :checking}>
-              <.icon name="hero-arrow-path" class={"size-4 #{if @system_checks_status == :checking, do: "animate-spin"}"} />
-              {if @system_checks_status == :checking, do: gettext("Checking..."), else: gettext("Re-check")}
+            <button
+              phx-click="rerun_checks"
+              class="btn btn-ghost btn-sm gap-2"
+              disabled={@system_checks_status == :checking}
+            >
+              <.icon
+                name="hero-arrow-path"
+                class={"size-4 #{if @system_checks_status == :checking, do: "animate-spin"}"}
+              />
+              {if @system_checks_status == :checking,
+                do: gettext("Checking..."),
+                else: gettext("Re-check")}
             </button>
           </div>
 
@@ -215,7 +244,11 @@ defmodule EvoDashWeb.SystemLive do
               </div>
             <% else %>
               <!-- Config Status Row -->
-              <.system_check_row title={gettext("Configuration")} icon="hero-cog-6-tooth" status={if config_ok?(@config_status), do: :ok, else: :error}>
+              <.system_check_row
+                title={gettext("Configuration")}
+                icon="hero-cog-6-tooth"
+                status={if config_ok?(@config_status), do: :ok, else: :error}
+              >
                 <:details>
                   <%= if config_ok?(@config_status) do %>
                     <span class="text-sm text-success">{gettext("All configured")}</span>
@@ -231,14 +264,22 @@ defmodule EvoDashWeb.SystemLive do
                   <% end %>
                   <%= if @config_status != nil and @config_status[:validation_errors] not in [[], nil] do %>
                     <div class="mt-1 text-xs text-warning">
-                      {ngettext("%{count} validation warning", "%{count} validation warnings", length(@config_status.validation_errors))}
+                      {ngettext(
+                        "%{count} validation warning",
+                        "%{count} validation warnings",
+                        length(@config_status.validation_errors)
+                      )}
                     </div>
                   <% end %>
                 </:details>
               </.system_check_row>
 
               <!-- Tools Row -->
-              <.system_check_row title={gettext("Required Tools")} icon="hero-wrench-screwdriver" status={tools_status(@tool_check)}>
+              <.system_check_row
+                title={gettext("Required Tools")}
+                icon="hero-wrench-screwdriver"
+                status={tools_status(@tool_check)}
+              >
                 <:details>
                   <div class="flex flex-wrap gap-3">
                     <.tool_badge name="git" check={@tool_check.git} />
@@ -248,7 +289,11 @@ defmodule EvoDashWeb.SystemLive do
               </.system_check_row>
 
               <!-- Sandbox Row -->
-              <.system_check_row title={gettext("Sandbox")} icon="hero-lock-closed" status={sandbox_status(@sandbox_check)}>
+              <.system_check_row
+                title={gettext("Sandbox")}
+                icon="hero-lock-closed"
+                status={sandbox_status(@sandbox_check)}
+              >
                 <:details>
                   <div class="flex flex-wrap gap-2 items-center">
                     <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
@@ -259,8 +304,11 @@ defmodule EvoDashWeb.SystemLive do
                     </span>
                     <%= if @sandbox_check.backend != :none do %>
                       <span class="text-xs text-base-content/40">
-                        {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation, do: "✓", else: "✗"}
-                        · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits, do: "✓", else: "✗"}
+                        {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
+                          do: "✓",
+                          else: "✗"} · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits,
+                          do: "✓",
+                          else: "✗"}
                       </span>
                     <% end %>
                   </div>
@@ -268,17 +316,31 @@ defmodule EvoDashWeb.SystemLive do
               </.system_check_row>
 
               <!-- Supervisor Row -->
-              <.system_check_row title={gettext("EvoX Genesis Process Tree")} icon="hero-server-stack" status={if supervisor_healthy?(@supervisor_check), do: :ok, else: :error}>
+              <.system_check_row
+                title={gettext("EvoX Genesis Process Tree")}
+                icon="hero-server-stack"
+                status={if supervisor_healthy?(@supervisor_check), do: :ok, else: :error}
+              >
                 <:details>
                   <div class="space-y-1">
-                    <.supervisor_status label={gettext("EvoGit")} children={@supervisor_check.evo_git} />
-                    <.supervisor_status label={gettext("EvoDash")} children={@supervisor_check.evo_dash} />
+                    <.supervisor_status
+                      label={gettext("EvoGit")}
+                      children={@supervisor_check.evo_git}
+                    />
+                    <.supervisor_status
+                      label={gettext("EvoDash")}
+                      children={@supervisor_check.evo_dash}
+                    />
                   </div>
                 </:details>
               </.system_check_row>
 
               <!-- Nix Environment Row -->
-              <.system_check_row title={gettext("Nix Environment")} icon="hero-cube-transparent" status={nix_status(@nix_check)}>
+              <.system_check_row
+                title={gettext("Nix Environment")}
+                icon="hero-cube-transparent"
+                status={nix_status(@nix_check)}
+              >
                 <:details>
                   <div class="flex flex-wrap gap-2 items-center">
                     <span class={"badge badge-sm #{if @nix_check.enabled, do: "badge-success", else: "badge-ghost"}"}>
@@ -306,10 +368,16 @@ defmodule EvoDashWeb.SystemLive do
               </.system_check_row>
 
               <!-- LLM Test Row -->
-              <.system_check_row title={gettext("LLM Connection")} icon="hero-chat-bubble-left-right" status={:info}>
+              <.system_check_row
+                title={gettext("LLM Connection")}
+                icon="hero-chat-bubble-left-right"
+                status={:info}
+              >
                 <:details>
                   <div class="flex items-center gap-3">
-                    <span class="text-sm text-base-content/60">{gettext("LLM connection testing is now available on the Settings page.")}</span>
+                    <span class="text-sm text-base-content/60">{gettext(
+                      "LLM connection testing is now available on the Settings page."
+                    )}</span>
                     <.link navigate={~p"/settings?category=llm"} class="btn btn-primary btn-sm gap-2">
                       <.icon name="hero-sparkles" class="size-4" />
                       {gettext("Test in Settings")}
@@ -330,7 +398,9 @@ defmodule EvoDashWeb.SystemLive do
               <.icon name="hero-chart-bar" class="size-5 text-info shrink-0" />
               <div class="flex-1">
                 <h3 class="font-semibold text-base">{gettext("System Dashboard")}</h3>
-                <p class="text-sm text-base-content/60 mt-0.5">{gettext("View system metrics, processes, and application telemetry")}</p>
+                <p class="text-sm text-base-content/60 mt-0.5">
+                  {gettext("View system metrics, processes, and application telemetry")}
+                </p>
               </div>
               <.icon name="hero-arrow-right" class="size-5 text-base-content/30" />
             </div>
@@ -340,26 +410,44 @@ defmodule EvoDashWeb.SystemLive do
 
       <!-- Example Configuration -->
       <div class="mt-6">
-        <.collapsible_card id="config-reference" title={gettext("Example Configuration")} icon="hero-book-open" color={:info}>
+        <.collapsible_card
+          id="config-reference"
+          title={gettext("Example Configuration")}
+          icon="hero-book-open"
+          color={:info}
+        >
           <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
         </.collapsible_card>
       </div>
 
       <!-- Example Usage -->
       <div class="mt-6">
-        <.collapsible_card id="usage-reference" title={gettext("Example Usage")} icon="hero-command-line" color={:success}>
+        <.collapsible_card
+          id="usage-reference"
+          title={gettext("Example Usage")}
+          icon="hero-command-line"
+          color={:success}
+        >
           <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
         </.collapsible_card>
       </div>
 
       <!-- FAQ -->
       <div class="mt-6">
-        <.collapsible_card id="faq" title={gettext("Frequently Asked Questions")} icon="hero-question-mark-circle" color={:accent}>
+        <.collapsible_card
+          id="faq"
+          title={gettext("Frequently Asked Questions")}
+          icon="hero-question-mark-circle"
+          color={:accent}
+        >
           <div class="space-y-4">
             <%= for {{question, answer}, idx} <- Enum.with_index(@faq_content) do %>
-              <details class={"group rounded-lg border border-base-200 overflow-hidden bg-base-100/50"}>
+              <details class="group rounded-lg border border-base-200 overflow-hidden bg-base-100/50">
                 <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none hover:bg-base-200/50 transition-colors list-none">
-                  <.icon name="hero-chevron-down" class="size-4.5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+                  <.icon
+                    name="hero-chevron-down"
+                    class="size-4.5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
+                  />
                   <span class="font-semibold text-sm">{question}</span>
                 </summary>
                 <div class="px-4 py-3 text-sm text-base-content/70 leading-relaxed border-t border-base-200">
@@ -373,16 +461,25 @@ defmodule EvoDashWeb.SystemLive do
 
       <!-- Credentials Reference -->
       <div class="mt-6">
-        <.collapsible_card id="credentials-reference" title={gettext("Credentials Reference")} icon="hero-key" color={:accent}>
+        <.collapsible_card
+          id="credentials-reference"
+          title={gettext("Credentials Reference")}
+          icon="hero-key"
+          color={:accent}
+        >
           <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
           <div class="mt-4 space-y-2">
             <p class="text-sm text-base-content/60 flex items-start gap-2.5">
               <.icon name="hero-arrows-right-left" class="size-4.5 shrink-0 mt-0.5" />
-              <span>{gettext("Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY).")}</span>
+              <span>{gettext(
+                "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
+              )}</span>
             </p>
             <p class="text-sm text-base-content/60 flex items-start gap-2.5">
               <.icon name="hero-shield-check" class="size-4.5 shrink-0 mt-0.5" />
-              <span>{gettext("For security, credentials cannot be edited from this page. Edit the file directly on your system.")}</span>
+              <span>{gettext(
+                "For security, credentials cannot be edited from this page. Edit the file directly on your system."
+              )}</span>
             </p>
           </div>
         </.collapsible_card>
@@ -399,17 +496,25 @@ defmodule EvoDashWeb.SystemLive do
             </div>
 
             <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext("This will gracefully restart the Erlang VM. All applications will be torn down and restarted.")}
+              {gettext(
+                "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
+              )}
             </p>
             <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-              {gettext("All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone.")}
+              {gettext(
+                "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
+              )}
             </p>
 
             <div class="flex justify-end gap-3 pt-2">
               <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_restart">
                 {gettext("Cancel")}
               </button>
-              <button type="button" class="btn btn-error rounded-md px-6 gap-2" phx-click="confirm_restart">
+              <button
+                type="button"
+                class="btn btn-error rounded-md px-6 gap-2"
+                phx-click="confirm_restart"
+              >
                 <.icon name="hero-arrow-path" class="size-4.5" />
                 {gettext("Restart System")}
               </button>
@@ -429,17 +534,25 @@ defmodule EvoDashWeb.SystemLive do
             </div>
 
             <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext("This will gracefully shut down the Erlang VM. All applications will be stopped in order.")}
+              {gettext(
+                "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
+              )}
             </p>
             <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-              {gettext("The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone.")}
+              {gettext(
+                "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
+              )}
             </p>
 
             <div class="flex justify-end gap-3 pt-2">
               <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_stop">
                 {gettext("Cancel")}
               </button>
-              <button type="button" class="btn btn-error rounded-md px-6 gap-2" phx-click="confirm_stop">
+              <button
+                type="button"
+                class="btn btn-error rounded-md px-6 gap-2"
+                phx-click="confirm_stop"
+              >
                 <.icon name="hero-power" class="size-4.5" />
                 {gettext("Stop System")}
               </button>
@@ -476,8 +589,7 @@ defmodule EvoDashWeb.SystemLive do
         config_dir: config_dir,
         config_path: config_path,
         credentials_path: credentials_path,
-        config_reference:
-          String.replace(@config_reference, "__CONFIG_PATH__", config_path),
+        config_reference: String.replace(@config_reference, "__CONFIG_PATH__", config_path),
         credentials_reference:
           String.replace(@credentials_reference, "__CREDENTIALS_PATH__", credentials_path),
         usage_reference: @usage_reference,
@@ -640,10 +752,14 @@ defmodule EvoDashWeb.SystemLive do
         <div class="flex items-center gap-2 mb-1">
           <span class="font-semibold text-sm">{@title}</span>
           <%= case @status do %>
-            <% :ok -> %><.icon name="hero-check-circle-solid" class="size-4 text-success" />
-            <% :error -> %><.icon name="hero-x-circle-solid" class="size-4 text-error" />
-            <% :info -> %><.icon name="hero-information-circle-solid" class="size-4 text-info" />
-            <% :warning -> %><.icon name="hero-exclamation-triangle-solid" class="size-4 text-warning" />
+            <% :ok -> %>
+              <.icon name="hero-check-circle-solid" class="size-4 text-success" />
+            <% :error -> %>
+              <.icon name="hero-x-circle-solid" class="size-4 text-error" />
+            <% :info -> %>
+              <.icon name="hero-information-circle-solid" class="size-4 text-info" />
+            <% :warning -> %>
+              <.icon name="hero-exclamation-triangle-solid" class="size-4 text-warning" />
           <% end %>
         </div>
         {render_slot(@details)}
@@ -707,7 +823,7 @@ defmodule EvoDashWeb.SystemLive do
        )},
       {gettext("How do I change the LLM model?"),
        gettext(
-         "Edit your config.toml file at %{path} and set the model field under [llm] (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can also adjust the model temporarily from the Settings page in the dashboard.",
+         "Edit your config.toml file at %{path} and set the model field in a [[llm.models]] profile (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can define multiple profiles and select one per task from the dashboard's Model dropdown. You can also adjust the model temporarily from the Settings page in the dashboard.",
          path: config_path
        )},
       {gettext("What is sandbox mode?"),

@@ -497,6 +497,9 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert record.base_commit == base_commit
       assert record.final_commit == final_commit
 
+      # model_id defaults to nil when not provided
+      assert record.llm_settings.model_id == nil
+
       :ets.delete(:evogit_sched_meta, "agent_arc1")
       :ets.delete(:evogit_agent_state, "agent_arc1")
       Process.delete(:repo_path)
@@ -612,6 +615,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         parent_id: "parent_99",
         depth: 3,
         llm_model: "test:model",
+        model_id: "fast",
         llm_generation_params: [temperature: 0.7, reasoning_effort: :medium],
         compression_threshold: 100_000,
         max_turns: 128,
@@ -651,6 +655,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       # Verify llm_settings structure
       llm_settings = record.llm_settings
       assert llm_settings.model == "test:model"
+      assert llm_settings.model_id == "fast"
       assert llm_settings.context_compression_threshold == 100_000
       assert llm_settings.temperature == 0.7
       assert llm_settings.reasoning_effort == :medium
