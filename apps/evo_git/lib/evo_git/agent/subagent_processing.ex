@@ -489,7 +489,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
         Conflicting files:
         #{conflict_files_list}
 
-        You have three options to handle this:
+        Normally you have three options to handle this:
 
         1. **Resolve conflicts manually** — Edit the conflicting files to resolve the merge
            conflicts, then stage the resolved files with `git add <file>` and complete the
@@ -503,9 +503,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
            to revert to the pre-merge state. Then identify and merge only the important
            branches you want to keep with `git merge <branch-name>`. After those are
            successfully merged, you can re-run the remaining tasks or re-delegate work
-           to subagents to complete the implementation.
-
-        Choose the option that best fits the situation and report the outcome.
+           to subagents.
         """
 
       {:error, code, output} ->
