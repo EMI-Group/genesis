@@ -280,7 +280,7 @@ defmodule EvoDash.Store.Codec do
 
   def decode_opt_key(key) when is_binary(key) do
     if MapSet.member?(@known_opt_key_strings, key) do
-      String.to_existing_atom(key)
+      String.to_atom(key)
     else
       key
     end

@@ -825,6 +825,163 @@ defmodule EvoDash.StoreTest do
     end
   end
 
+  describe "quarantine recovery" do
+    test "recovers a decodable task row from tasks_quarantine", %{sqlite_path: sqlite_path} do
+      # Simulate a quarantined task row with valid data. This represents a row
+      # that was quarantined due to a codec bug (e.g. String.to_existing_atom/1
+      # for opt keys that weren't yet loaded in the atom table) that has since
+      # been fixed.
+      columns = ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id)
+
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+      opts_json = Jason.encode!([["path", "/tmp/test"], ["mode", "simple"], ["resume_from", "abc123"]])
+      logs_json = Jason.encode!(["log line 1"])
+
+      row = [
+        "rec-task-1", "genesis", "completed", opts_json,
+        now, now, logs_json, nil, nil, nil, 1,
+        "base123", "commit456", nil, nil, "gpt-4o"
+      ]
+
+      data_json =
+        columns
+        |> Enum.zip(row)
+        |> Map.new()
+        |> Jason.encode!()
+
+      {:ok, conn} = Xqlite.open(sqlite_path)
+      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["rec-task-1", data_json])
+      :ok = XqliteNIF.close(conn)
+
+      # Verify the row is NOT in the live tasks table yet
+      assert nil == Store.get_task(Store, "rec-task-1")
+
+      # Recover
+      assert {:ok, 1} = Store.recover_quarantine(Store)
+
+      # Now it should be in the live table
+      fetched = Store.get_task(Store, "rec-task-1")
+      assert %TaskInfo{} = fetched
+      assert fetched.id == "rec-task-1"
+      assert fetched.type == :genesis
+      assert fetched.status == :completed
+      assert fetched.base_sha == "base123"
+      assert fetched.commit_sha == "commit456"
+      assert fetched.model_id == "gpt-4o"
+      assert fetched.opts[:resume_from] == "abc123"
+      assert fetched.logs == ["log line 1"]
+
+      # And gone from quarantine
+      {:ok, conn2} = Xqlite.open(sqlite_path)
+      {:ok, %{rows: quarantine_rows}} = XqliteNIF.query(conn2, "SELECT id FROM tasks_quarantine WHERE id = ?1", ["rec-task-1"])
+      assert quarantine_rows == []
+      :ok = XqliteNIF.close(conn2)
+    end
+
+    test "recovers a decodable project row from projects_quarantine", %{sqlite_path: sqlite_path} do
+      columns = ~w(path name last_opened_at)
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+      row = ["/home/user/my_project", "My Project", now]
+
+      data_json =
+        columns
+        |> Enum.zip(row)
+        |> Map.new()
+        |> Jason.encode!()
+
+      {:ok, conn} = Xqlite.open(sqlite_path)
+      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)", ["/home/user/my_project", data_json])
+      :ok = XqliteNIF.close(conn)
+
+      # Verify not in live table
+      assert nil == Store.get_project(Store, "/home/user/my_project")
+
+      # Recover
+      assert {:ok, 1} = Store.recover_quarantine(Store)
+
+      # Now it should be live
+      fetched = Store.get_project(Store, "/home/user/my_project")
+      assert %RecentProject{} = fetched
+      assert fetched.path == "/home/user/my_project"
+      assert fetched.name == "My Project"
+      assert %DateTime{} = fetched.last_opened_at
+    end
+
+    test "recovers rows from both quarantine tables at once", %{sqlite_path: sqlite_path} do
+      # Insert one task and one project into quarantine
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+      task_opts = Jason.encode!([["path", "/tmp/both"], ["mode", "new"]])
+      task_logs = Jason.encode!([])
+
+      task_data =
+        EvoDash.Store.Codec.task_columns()
+        |> Enum.zip([
+          "both-task", "genesis", "completed", task_opts,
+          now, now, task_logs, nil, nil, nil, 2,
+          "sha1", "sha2", nil, nil, nil
+        ])
+        |> Map.new()
+        |> Jason.encode!()
+
+      project_data =
+        EvoDash.Store.Codec.project_columns()
+        |> Enum.zip(["/both/project", "Both Project", now])
+        |> Map.new()
+        |> Jason.encode!()
+
+      {:ok, conn} = Xqlite.open(sqlite_path)
+      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["both-task", task_data])
+      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)", ["/both/project", project_data])
+      :ok = XqliteNIF.close(conn)
+
+      assert {:ok, 2} = Store.recover_quarantine(Store)
+
+      assert %TaskInfo{id: "both-task"} = Store.get_task(Store, "both-task")
+      assert %RecentProject{path: "/both/project"} = Store.get_project(Store, "/both/project")
+    end
+
+    test "returns {:ok, 0} when quarantine tables are empty" do
+      assert {:ok, 0} = Store.recover_quarantine(Store)
+    end
+
+    test "leaves undecodable rows in quarantine (corrupt data)", %{sqlite_path: sqlite_path} do
+      # Insert a row with JSON data that is valid JSON but contains NO valid
+      # column data — decode will fail because row positions are wrong.
+      corrupt_json = Jason.encode!(%{"garbage" => "value", "id" => "corrupt-task"})
+
+      {:ok, conn} = Xqlite.open(sqlite_path)
+      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["corrupt-task", corrupt_json])
+      :ok = XqliteNIF.close(conn)
+
+      # Recovery should report 0 recovered
+      assert {:ok, 0} = Store.recover_quarantine(Store)
+
+      # Row should still be in quarantine
+      {:ok, conn2} = Xqlite.open(sqlite_path)
+      {:ok, %{rows: [[qd]]}} = XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["corrupt-task"])
+      assert qd == corrupt_json
+      :ok = XqliteNIF.close(conn2)
+
+      # And NOT in the live table
+      assert nil == Store.get_task(Store, "corrupt-task")
+    end
+
+    test "leaves rows with unparseable JSON in quarantine", %{sqlite_path: sqlite_path} do
+      {:ok, conn} = Xqlite.open(sqlite_path)
+      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["bad-json", "not valid json {{{"])
+      :ok = XqliteNIF.close(conn)
+
+      assert {:ok, 0} = Store.recover_quarantine(Store)
+
+      # Still in quarantine
+      {:ok, conn2} = Xqlite.open(sqlite_path)
+      {:ok, %{rows: [[qd]]}} = XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["bad-json"])
+      assert qd == "not valid json {{{"
+      :ok = XqliteNIF.close(conn2)
+    end
+  end
+
   describe "terminate" do
     test "closes the connection gracefully on stop" do
       unique = System.unique_integer([:positive])
