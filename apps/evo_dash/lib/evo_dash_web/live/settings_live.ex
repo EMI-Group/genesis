@@ -116,30 +116,29 @@ defmodule EvoDashWeb.SettingsLive do
               />
             </.form>
           <% else %>
-            <.form
-              for={%{}}
-              phx-submit="save_category"
-              class="flex-1 flex flex-col min-w-0 relative"
-              id={"settings-form-#{@active_category}"}
-            >
-              <input type="hidden" name="category" value={@active_category} />
-
-              <EvoDashWeb.SettingsComponents.category_section
-                category={@active_category}
-                schemas={Map.get(@schemas_by_category, @active_category, [])}
-                file_config={@file_config}
-                errors={Map.get(@per_category_errors, @active_category, [])}
-                sandbox_backend={@scheduler_config[:sandbox_backend]}
-                sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
-                llm_providers={@llm_providers}
-                selected_provider_id={@selected_provider_id}
-                selected_provider_models={@selected_provider_models}
-                selected_variant_id={@selected_variant_id}
-                llm_test_status={@llm_test_status}
-                model_profiles={@file_config[:llm][:models] || []}
-                editing_profile_id={@editing_profile_id}
-              />
-            </.form>
+            <%!-- category_section renders its own <form phx-submit="save_category">
+                 internally. The LLM category's Quick Setup panel and Model
+                 Profiles editor contain their own nested forms (save_api_key,
+                 save_custom_model, save_model_profile), so they must NOT be
+                 wrapped in the outer save_category form (nested <form> elements
+                 are invalid HTML — browsers ignore the inner <form> tag, causing
+                 the profile editor's Save button to submit save_category instead
+                 of save_model_profile, which deletes the models list). --%>
+            <EvoDashWeb.SettingsComponents.category_section
+              category={@active_category}
+              schemas={Map.get(@schemas_by_category, @active_category, [])}
+              file_config={@file_config}
+              errors={Map.get(@per_category_errors, @active_category, [])}
+              sandbox_backend={@scheduler_config[:sandbox_backend]}
+              sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
+              llm_providers={@llm_providers}
+              selected_provider_id={@selected_provider_id}
+              selected_provider_models={@selected_provider_models}
+              selected_variant_id={@selected_variant_id}
+              llm_test_status={@llm_test_status}
+              model_profiles={@file_config[:llm][:models] || []}
+              editing_profile_id={@editing_profile_id}
+            />
           <% end %>
         </div>
       </div>
@@ -862,6 +861,13 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   defp params_to_category_config(params, _category, schemas) do
+    # Skip :model_profiles type schemas entirely. These schemas (e.g. [:llm, :models])
+    # are managed by dedicated event handlers (save_model_profile, delete_model_profile,
+    # add_model_profile) and have no corresponding flat form field. If processed here,
+    # they'd parse as :explicitly_empty (no matching form param) and get queued for
+    # deletion via deep_delete, wiping the entire models list on every save_category.
+    schemas = Enum.reject(schemas, &(&1.type == :model_profiles))
+
     Enum.reduce(schemas, {%{}, []}, fn schema, {config_acc, emptied_acc} ->
       value = Map.get(params, Enum.join(schema.key_path, "."))
 
