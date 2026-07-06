@@ -71,79 +71,93 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
     results = AgentScheduler.spawn_sub_agents(subagent_specs)
 
-    {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-    parent_commit = agent_state.phylo_node.current_commit
+    # Handle scheduler errors (e.g. scheduler paused) — spawn_sub_agents returns
+    # {:error, reason} instead of a results list. Convert to per-subagent error
+    # results so the parent agent gets a clear message.
+    if match?({:error, _}, results) do
+      error_results =
+        Enum.map(valid_calls, fn {call, index} ->
+          tool_call_id = Map.get(call, :id) || call.name || "unknown"
+          {index, tool_call_id, call.name, format_subagent_result(results)}
+        end)
 
-    # Separate same-repo and cross-repo results
-    # Cross-repo subagents commit to their own repo, no merge needed into parent
-    {same_repo_shas, cross_repo_details} =
-      Enum.reduce(Enum.zip(subagent_specs, results), {[], []}, fn {spec, result},
-                                                                  {shas, details} ->
-        case result do
-          {:ok, %Result{commit_sha: sha}} when is_binary(sha) ->
-            if spec.repo_id == "primary" do
-              {[sha | shas], details}
-            else
-              {shas, [{spec.repo_id, sha} | details]}
-            end
+      all_results = error_results ++ path_error_results ++ Enum.reverse(invalid_results)
+      {all_results, nil}
+    else
+      {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
+      parent_commit = agent_state.phylo_node.current_commit
 
-          _ ->
-            {shas, details}
-        end
-      end)
+      # Separate same-repo and cross-repo results
+      # Cross-repo subagents commit to their own repo, no merge needed into parent
+      {same_repo_shas, cross_repo_details} =
+        Enum.reduce(Enum.zip(subagent_specs, results), {[], []}, fn {spec, result},
+                                                                    {shas, details} ->
+          case result do
+            {:ok, %Result{commit_sha: sha}} when is_binary(sha) ->
+              if spec.repo_id == "primary" do
+                {[sha | shas], details}
+              else
+                {shas, [{spec.repo_id, sha} | details]}
+              end
 
-    successful_shas = Enum.reverse(same_repo_shas)
-    cross_repo_details = Enum.reverse(cross_repo_details)
+            _ ->
+              {shas, details}
+          end
+        end)
 
-    repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
+      successful_shas = Enum.reverse(same_repo_shas)
+      cross_repo_details = Enum.reverse(cross_repo_details)
 
-    cross_repo_note =
-      if cross_repo_details != [] do
-        details_str =
-          cross_repo_details
-          |> Enum.map(fn {repo_id, sha} -> "  - #{repo_id}: #{sha}" end)
-          |> Enum.join("\n")
+      repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
-        "\nSystem Note: #{length(cross_repo_details)} cross-repo subagent(s) completed in foreign repositories:\n#{details_str}"
-      else
-        ""
-      end
-
-    # Skip merge if no same-repo subagents returned successful commits
-    merge_message =
-      if successful_shas == [] do
+      cross_repo_note =
         if cross_repo_details != [] do
-          cross_repo_note
+          details_str =
+            cross_repo_details
+            |> Enum.map(fn {repo_id, sha} -> "  - #{repo_id}: #{sha}" end)
+            |> Enum.join("\n")
+
+          "\nSystem Note: #{length(cross_repo_details)} cross-repo subagent(s) completed in foreign repositories:\n#{details_str}"
         else
-          nil
+          ""
         end
-      else
-        perform_merge(repo_path, successful_shas, parent_commit, cross_repo_note)
-      end
 
-    # Only delete branches for same-repo subagents
-    same_repo_branches =
-      for {spec, {:ok, %Result{branch: branch}}} <- Enum.zip(subagent_specs, results),
-          spec.repo_id == "primary" do
-        branch
-      end
+      # Skip merge if no same-repo subagents returned successful commits
+      merge_message =
+        if successful_shas == [] do
+          if cross_repo_details != [] do
+            cross_repo_note
+          else
+            nil
+          end
+        else
+          perform_merge(repo_path, successful_shas, parent_commit, cross_repo_note)
+        end
 
-    Enum.each(same_repo_branches, fn branch ->
-      Git.delete_branch(repo_path, branch)
-    end)
+      # Only delete branches for same-repo subagents
+      same_repo_branches =
+        for {spec, {:ok, %Result{branch: branch}}} <- Enum.zip(subagent_specs, results),
+            spec.repo_id == "primary" do
+          branch
+        end
 
-    # Sync current_commit after subagents complete (parent worktree state may have changed)
-    sync_commit_fn.(state)
-
-    indexed_results =
-      Enum.zip(valid_calls, results)
-      |> Enum.map(fn {{call, index}, result} ->
-        process_subagent_result(call, index, result, state)
+      Enum.each(same_repo_branches, fn branch ->
+        Git.delete_branch(repo_path, branch)
       end)
 
-    all_results = indexed_results ++ path_error_results ++ Enum.reverse(invalid_results)
+      # Sync current_commit after subagents complete (parent worktree state may have changed)
+      sync_commit_fn.(state)
 
-    {all_results, merge_message}
+      indexed_results =
+        Enum.zip(valid_calls, results)
+        |> Enum.map(fn {{call, index}, result} ->
+          process_subagent_result(call, index, result, state)
+        end)
+
+      all_results = indexed_results ++ path_error_results ++ Enum.reverse(invalid_results)
+
+      {all_results, merge_message}
+    end
   end
 
   @doc """
@@ -371,9 +385,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "Error: Maximum subagent recursion depth reached. Hint: complete the work at the current level instead of spawning further subagents, or report back to the parent agent."
   end
 
-  def format_subagent_result({:error, reason})
-      when reason in [:worktree_creation_failed, :agent_max_retries_exceeded] do
-    "Error: Subagent failed due to an infrastructure/runtime issue (#{reason}). Hint: this may be a transient system error — retry the spawn once, and if it persists report the issue to the user."
+  def format_subagent_result({:error, :recovery_failed}) do
+    "Error: The subagent exceeded its execution limit (ran out of turns) and could not complete its task in time. " <>
+      "Hint: the objective was likely too large or complex for a single subagent. Try breaking the work into smaller, more focused sub-tasks, " <>
+      "or complete the work directly at the current level instead of delegating."
+  end
+
+  def format_subagent_result({:error, :agent_max_retries_exceeded}) do
+    "Error: Subagent failed due to an infrastructure/runtime issue (repeated crashes). Hint: this may be a transient system error — retry the spawn once, and if it persists report the issue to the user."
   end
 
   def format_subagent_result({:error, :unknown_error}) do

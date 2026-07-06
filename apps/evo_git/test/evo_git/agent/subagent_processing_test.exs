@@ -180,12 +180,18 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert result =~ "current level"
     end
 
-    test "worktree_creation_failed error mentions retry and report" do
-      result = SubagentProcessing.format_subagent_result({:error, :worktree_creation_failed})
+    test "recovery_failed error mentions execution limit and smaller sub-tasks hint" do
+      result = SubagentProcessing.format_subagent_result({:error, :recovery_failed})
 
-      assert result =~ "retry"
-      assert result =~ "report"
+      assert result =~ "execution limit" or result =~ "ran out of turns"
+      assert result =~ "smaller"
+      refute result =~ "unexpected"
     end
+
+    # NOTE: :worktree_creation_failed is never returned by the runtime — worktree
+    # failures raise and become :agent_max_retries_exceeded. It is dead code with
+    # no dedicated clause, so it falls through to the generic catch-all below.
+    # A dedicated test was therefore removed.
 
     test "agent_max_retries_exceeded error mentions retry and report" do
       result = SubagentProcessing.format_subagent_result({:error, :agent_max_retries_exceeded})

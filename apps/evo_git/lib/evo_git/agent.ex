@@ -610,9 +610,12 @@ defmodule EvoGit.Agent do
       end
 
       defp handle_complete_call(complete_call, %LoopState{} = state, tool_calls) do
-        # Check if git status validation is enabled (default: true)
+        # Skip the dirty-workspace check when explicitly disabled OR during grace period
+        # (during recovery, the agent is forced to complete — blocking it on a dirty
+        # workspace guarantees recovery failure since it can't call any other tools).
         check_git_status =
-          Map.get(complete_call.arguments, "check_git_status") != false
+          not state.in_grace_period and
+            Map.get(complete_call.arguments, "check_git_status") != false
 
         if check_git_status do
           repo_path = Process.get(:repo_path)
