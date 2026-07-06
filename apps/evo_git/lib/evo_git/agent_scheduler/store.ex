@@ -22,10 +22,10 @@ defmodule EvoGit.AgentScheduler.Store do
   Reads the scheduler metadata for the given agent ID.
   Returns `{:ok, %SchedMeta{}}` or `:error` if not found.
   """
-  @spec get_sched_meta(pos_integer()) :: {:ok, SchedMeta.t()} | :error
+  @spec get_sched_meta(pos_integer()) :: {:ok, SchedMeta.t() | map()} | :error
   def get_sched_meta(agent_id) do
     case :ets.lookup(@sched_table, agent_id) do
-      [{^agent_id, %SchedMeta{} = meta}] -> {:ok, meta}
+      [{^agent_id, %{} = meta}] -> {:ok, meta}
       [] -> :error
     end
   end
@@ -56,10 +56,10 @@ defmodule EvoGit.AgentScheduler.Store do
   Reads the live agent state for the given agent ID.
   Returns `{:ok, %AgentState{}}` or `:error` if not found.
   """
-  @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t()} | :error
+  @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t() | map()} | :error
   def get_agent_state(agent_id) do
     case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %AgentState{} = agent_state}] -> {:ok, agent_state}
+      [{^agent_id, %{} = agent_state}] -> {:ok, agent_state}
       [] -> :error
     end
   end

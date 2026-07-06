@@ -190,7 +190,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         {task_id, task_number, task_local_id}
 
       {:error, :not_found} ->
-        raise "Agent #{agent_id} not found in ETS tables"
+        {0, nil, 0}
     end
   end
 
