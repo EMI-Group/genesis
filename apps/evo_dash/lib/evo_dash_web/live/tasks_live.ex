@@ -5,6 +5,7 @@ defmodule EvoDashWeb.TasksLive do
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
   alias EvoDash.TaskRegistry
+  use EvoDashWeb.ModalHelpers
 
   @impl true
   def render(assigns) do
@@ -187,44 +188,24 @@ defmodule EvoDashWeb.TasksLive do
 
       <!-- Full Result Modal -->
       <%= if @selected_result do %>
-        <div class="modal modal-open bg-black/50">
-          <div class="modal-box w-11/12 max-w-5xl">
-            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-              <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-              {gettext("Task Result")}
-            </h3>
-            <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
-              {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
-            </div>
-            <div class="modal-action">
-              <button class="btn" phx-click="close_result_modal">{gettext("Close")}</button>
-            </div>
-          </div>
-          <div class="modal-backdrop" phx-click="close_result_modal">
-            <button class="cursor-default">close</button>
-          </div>
-        </div>
+        <EvoDashWeb.Helpers.modal on_close="close_result_modal">
+          <:title>
+            <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+            {gettext("Task Result")}
+          </:title>
+          {EvoDashWeb.DashboardComponents.render_result_full(@selected_result)}
+        </EvoDashWeb.Helpers.modal>
       <% end %>
 
       <!-- Full Options Modal -->
       <%= if @selected_options do %>
-        <div class="modal modal-open bg-black/50">
-          <div class="modal-box w-11/12 max-w-5xl">
-            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-              {gettext("Full Objective")}
-            </h3>
-            <div class="bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-              <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
-            </div>
-            <div class="modal-action">
-              <button class="btn" phx-click="close_options_modal">{gettext("Close")}</button>
-            </div>
-          </div>
-          <div class="modal-backdrop" phx-click="close_options_modal">
-            <button class="cursor-default">close</button>
-          </div>
-        </div>
+        <EvoDashWeb.Helpers.modal on_close="close_options_modal">
+          <:title>
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+            {gettext("Full Objective")}
+          </:title>
+          <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+        </EvoDashWeb.Helpers.modal>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
@@ -394,27 +375,22 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("view_full_result", %{"task_id" => task_id}, socket) do
-    task = Enum.find(socket.assigns.tasks, &(&1.id == task_id))
-    result = Map.get(task || %{}, :result)
-    {:noreply, assign(socket, :selected_result, result)}
+    view_full_result(socket, task_id)
   end
 
   @impl true
   def handle_event("close_result_modal", _params, socket) do
-    {:noreply, assign(socket, :selected_result, nil)}
+    close_result_modal(socket)
   end
 
   @impl true
   def handle_event("view_full_options", %{"task_id" => task_id}, socket) do
-    task = Enum.find(socket.assigns.tasks, &(&1.id == task_id))
-    opts = Map.get(task || %{}, :opts, [])
-    primary_text = opts[:prompt] || opts[:objective] || ""
-    {:noreply, assign(socket, :selected_options, primary_text)}
+    view_full_options(socket, task_id)
   end
 
   @impl true
   def handle_event("close_options_modal", _params, socket) do
-    {:noreply, assign(socket, :selected_options, nil)}
+    close_options_modal(socket)
   end
 
   @impl true
