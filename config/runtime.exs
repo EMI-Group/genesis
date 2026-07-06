@@ -35,9 +35,9 @@ end
 # a small buffer (+2) on top of the summed concurrency for auxiliary
 # (non-slot-gated) LLM calls (context compression, evolution synthesis,
 # novelty metrics, etc.).
-_resolved = EvoGit.Config.resolve()
-_total_concurrency =
-  case EvoGit.Config.Schema.model_profiles(_resolved) do
+resolved = EvoGit.Config.resolve()
+total_concurrency =
+  case EvoGit.Config.Schema.model_profiles(resolved) do
     [] ->
       # No model profiles configured (fresh install / legacy single-model
       # config with flat [llm] fields). Fall back to scheduler.max_concurrency.
@@ -49,7 +49,7 @@ _total_concurrency =
       |> Enum.sum()
   end
 
-stream_pool_count = max(_total_concurrency + 2, 8)
+stream_pool_count = max(total_concurrency + 2, 8)
 
 config :req_llm,
   stream_pool_count: stream_pool_count,

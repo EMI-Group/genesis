@@ -163,59 +163,61 @@ defmodule EvoDashWeb.DashboardComponents do
     >
       <!-- Body -->
       <div class={["p-4 sm:p-5 space-y-4", @disabled && "opacity-50 pointer-events-none select-none"]}>
-        <!-- Compact mode select row -->
+        <!-- Task mode & model selectors in one card -->
         <div class="bg-base-200/50 rounded-xl p-4 border border-base-300">
-          <div class="flex flex-col sm:flex-row sm:items-center gap-3">
-            <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
-              <.icon name="hero-cpu-chip" class="size-5 text-primary" />
-              {gettext("Task Mode")}
-            </label>
-            <select
-              name="mode"
-              phx-change="task_change"
-              class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
-            >
-              <option value="genesis_existing" selected={@mode == "genesis_existing"}>
-                {gettext("Initialize Existing Codebase")}
-              </option>
-              <option value="genesis_new" selected={@mode == "genesis_new"}>
-                {gettext("Create New Codebase")}
-              </option>
-              <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-                {gettext("Evolution")}
-              </option>
-            </select>
-            <div class="hidden sm:block">
-              <.tip text={mode_description(@mode)} />
-            </div>
-          </div>
-          <p class="text-sm text-base-content/60 mt-2 sm:hidden">{mode_description(@mode)}</p>
-        </div>
-
-        <%= if @model_profiles != [] do %>
-          <div class="bg-base-200/50 rounded-xl p-4 border border-base-300">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Task Mode -->
             <div class="flex flex-col sm:flex-row sm:items-center gap-3">
               <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
                 <.icon name="hero-cpu-chip" class="size-5 text-primary" />
-                {gettext("Model")}
+                {gettext("Task Mode")}
               </label>
               <select
-                name="model_id"
-                phx-change="select_model"
+                name="mode"
+                phx-change="task_change"
                 class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
               >
-                <%= for profile <- @model_profiles do %>
-                  <option value={profile.id} selected={@selected_model_id == profile.id}>
-                    {profile.id <> " (" <> (profile.model || "") <> ")"}
-                  </option>
-                <% end %>
+                <option value="genesis_existing" selected={@mode == "genesis_existing"}>
+                  {gettext("Initialize Existing Codebase")}
+                </option>
+                <option value="genesis_new" selected={@mode == "genesis_new"}>
+                  {gettext("Create New Codebase")}
+                </option>
+                <option value="evolve_simple" selected={@mode == "evolve_simple"}>
+                  {gettext("Evolution")}
+                </option>
               </select>
               <div class="hidden sm:block">
-                <.tip text={gettext("Select which model profile to use for this task")} />
+                <.tip text={mode_description(@mode)} />
               </div>
+              <p class="text-sm text-base-content/60 mt-1 sm:hidden">{mode_description(@mode)}</p>
             </div>
+
+            <!-- Model -->
+            <%= if @model_profiles != [] do %>
+              <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+                <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
+                  <.icon name="hero-cpu-chip" class="size-5 text-primary" />
+                  {gettext("Model")}
+                </label>
+                <select
+                  name="model_id"
+                  phx-change="select_model"
+                  class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
+                >
+                  <%= for profile <- @model_profiles do %>
+                    <option value={profile.id} selected={@selected_model_id == profile.id}>
+                      {profile.id <> " (" <> (profile.model || "") <> ")"}
+                    </option>
+                  <% end %>
+                </select>
+                <div class="hidden sm:block">
+                  <.tip text={gettext("Select which model profile to use for this task")} />
+                </div>
+              </div>
+            <% end %>
           </div>
-        <% end %>
+        </div>
 
         <%= if String.starts_with?(@mode, "evolve") do %>
           <div class="rounded-xl border border-base-200 bg-base-200/30">
