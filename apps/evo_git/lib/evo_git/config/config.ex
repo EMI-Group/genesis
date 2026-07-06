@@ -381,33 +381,43 @@ defmodule EvoGit.Config do
   @spec user_config() :: map()
   def user_config do
     path = config_path()
+    read_opts = [description: "config"]
 
     cond do
       File.exists?(path) ->
-        read_config_file(path)
+        read_toml_file(path, %{}, read_opts)
+        |> Map.delete("evolution")
 
       true ->
         legacy_path = Path.join(legacy_config_dir(), @config_filename)
 
-        if File.exists?(legacy_path), do: read_config_file(legacy_path), else: %{}
+        if File.exists?(legacy_path) do
+          read_toml_file(legacy_path, %{}, read_opts)
+          |> Map.delete("evolution")
+        else
+          %{}
+        end
     end
   end
 
-  defp read_config_file(path) when is_binary(path) do
+  @doc false
+  def read_toml_file(path, default, opts \\ []) do
+    description = Keyword.get(opts, :description, Path.basename(path))
+
     case File.read(path) do
       {:ok, contents} ->
         case TomlElixir.decode(contents) do
-          {:ok, config} ->
-            Map.delete(config, "evolution")
+          {:ok, data} ->
+            data
 
           {:error, reason} ->
-            Logger.warning("Failed to parse config at #{path}: #{inspect(reason)}")
-            %{}
+            Logger.warning("Failed to parse #{description} at #{path}: #{inspect(reason)}")
+            default
         end
 
       {:error, reason} ->
-        Logger.warning("Failed to read config at #{path}: #{inspect(reason)}")
-        %{}
+        Logger.warning("Failed to read #{description} at #{path}: #{inspect(reason)}")
+        default
     end
   end
 
@@ -608,25 +618,13 @@ defmodule EvoGit.Config do
   end
 
   defp read_credentials_file(path) when is_binary(path) do
-    case File.read(path) do
-      {:ok, contents} ->
-        case TomlElixir.decode(contents) do
-          {:ok, creds} ->
-            Enum.each(creds, fn {key, value} ->
-              if is_binary(value), do: System.put_env(key, value)
-            end)
+    creds = read_toml_file(path, %{}, description: "credentials")
 
-            creds
+    Enum.each(creds, fn {key, value} ->
+      if is_binary(value), do: System.put_env(key, value)
+    end)
 
-          {:error, reason} ->
-            Logger.warning("Failed to parse credentials at #{path}: #{inspect(reason)}")
-            %{}
-        end
-
-      {:error, reason} ->
-        Logger.warning("Failed to read credentials at #{path}: #{inspect(reason)}")
-        %{}
-    end
+    creds
   end
 
   @doc """

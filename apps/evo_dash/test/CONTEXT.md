@@ -4,7 +4,9 @@
 Holds all test files for the EvoDash application. Provides the ExUnit test runner configuration and shared test support modules (e.g., `ConnCase`) used across controller and endpoint tests.
 
 ## Routing Table
-- `support/` → Shared test support modules (ConnCase for connection-based tests)
+- `support/` → Shared test support modules (ConnCase for connection-based tests, TaskRegistryCase for TaskRegistry tests)
+- `evo_dash/` → Domain-layer tests (Store, MarkdownRender, and TaskRegistry split suite)
+- `evo_dash/task_registry/` → Focused TaskRegistry tests — cleanup, persistence, store integrity, reconciliation, lease & heartbeat
 - `evo_dash_web/` → Web-layer tests (controller tests, error handler tests)
 
 ## API Surface
@@ -18,11 +20,21 @@ Holds all test files for the EvoDash application. Provides the ExUnit test runne
   - Verified routes via `use EvoDashWeb, :verified_routes`
   - Imports: `Plug.Conn`, `Phoenix.ConnTest`, and the case module itself
   - Default setup returning a built `%Conn{}`
+- `task_registry_case.ex` — `EvoDash.TaskRegistryCase` module: a shared `ExUnit.CaseTemplate` for TaskRegistry tests. Provides:
+  - Isolated Store + TaskRegistry setup on a temporary SQLite database (terminates production children, starts supervised replacements, cleans up on exit)
+  - Helper functions: `trigger_cleanup!/0`, `cleanup_process/1`, `old_age_days/0`, `within_age_days/0`, `restart_registry!/1`
+  - Aliases for `EvoDash.TaskRegistry` and `EvoDash.TaskInfo` in the `using` block
 
 ### `evo_dash/`
 - `store_test.exs` — `EvoDash.StoreTest` — Column-based SQLite round-trip tests for all TaskInfo/RecentProject field types (scalars, DateTime, opts keyword lists, logs, result tuples, usage structs, archive_metadata, atom fields). Covers quarantine/integrity_check (undecodable rows quarantined, not destroyed) and atom-field round-trip safety (encode_atom/decode_atom regression — no crashes on string values in atom fields, unknown values decode to nil). Uses an isolated Store with a unique tmp SQLite path (`async: false`; terminates and restarts production children).
-- `task_registry_test.exs` — `EvoDash.TaskRegistryTest` — Covers cleanup_expired_tasks (age/count limits, running/pending preservation), set_review_metadata, TaskInfo field backfill (normalize_tasks backfills base_sha/commit_sha as nil), persistence (get_task retrieves seeded tasks; tasks survive registry restart with the same store), recent projects round-trip persistence (project survives registry restart with same store), TaskStore.integrity_check (healthy store → :ok; undecodable TASKS rows hard-deleted + repaired count; undecodable PROJECTS rows QUARANTINED — raw blob preserved in `projects_quarantine`, not destroyed), and GenServer resilience (registry stays alive and preserves task state across mutation operations that trigger cleanup). Uses an isolated TaskRegistry + TaskStore (unique temp root + SQLite database file; terminates production children and restarts them in `on_exit`, `async: false`).
 - `markdown_render_test.exs` — `EvoDash.MarkdownRenderTest` — Markdown-to-HTML rendering edge cases (nil, empty, headings, code blocks, tables, bold).
+
+### `evo_dash/task_registry/` — Focused TaskRegistry test suite (split from former `task_registry_test.exs`)
+- `cleanup_test.exs` — `EvoDash.TaskRegistry.CleanupTest` — task_history_config defaults (1 test) and cleanup_expired_tasks (age-based removal, recent preservation, running/pending protection, combined age+count limits — 4 tests).
+- `persistence_test.exs` — `EvoDash.TaskRegistry.PersistenceTest` — set_review_metadata (4 tests), TaskInfo field backfill (2 tests), CRUD persistence (2 tests), recent projects persistence (1 test), GenServer resilience (2 tests), corruption resilience — structural (3 tests), archive_metadata (3 tests), status recovery from spurious :failed (5 tests).
+- `store_integrity_test.exs` — `EvoDash.TaskRegistry.StoreIntegrityTest` — Store.integrity_check: healthy store → :ok, undecodable TASKS rows hard-deleted + repaired count, undecodable PROJECTS rows QUARANTINED (3 tests).
+- `reconciliation_test.exs` — `EvoDash.TaskRegistry.ReconciliationTest` — restart reconciliation (normalize_tasks liveness check): live PID survives restart, dead/nil PID marked failed, ETS sched_meta recovery keeps task :running, DOWN handler marks completed/failed (6 tests).
+- `lease_heartbeat_test.exs` — `EvoDash.TaskRegistry.LeaseHeartbeatTest` — lease & heartbeat: startup reconciliation respects valid leases, marks expired leases as failed, lease cleared on completion, heartbeat does NOT sweep, lease_sweep sweeps expired unowned tasks (5 tests).
 
 ### `evo_dash_web/live/`
 - `settings_live_test.exs` — `EvoDashWeb.SettingsLiveTest` — Settings page: search input rendering, search handler (value-key matching, results panel, no-results message, clear-to-category-view), and search-input-within-form regression. Also covers custom model providers (OpenRouter / OpenAI-Compatible): form rendering (model name, base URL, placeholders, warning, hidden quick-select buttons), saving (openrouter: spec pre-fill + openai-compatible map spec pre-fill), and validation errors (empty model name, empty base URL). Also covers whitelist safety regression: unknown category/provider/variant/key-path values safely map to nil/default instead of crashing (with positive cases confirming valid conversions). NOTE: these custom-model tests render the LLM category via `select_category`, which currently crashes due to a pre-existing `:model_spec` gap in `setting_card` (see note below).

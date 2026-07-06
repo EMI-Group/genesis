@@ -347,6 +347,39 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
+  # --- Common File/Directory Operations ---
+
+  @doc """
+  Creates a directory, optionally with parents.
+  """
+  def mkdir_if_needed(path, true), do: File.mkdir_p(path)
+  def mkdir_if_needed(path, false), do: File.mkdir(path)
+
+  @doc """
+  Stages and commits the given files with a message.
+  Handles all git add/commit error cases uniformly.
+  """
+  def do_git_commit(repo_path, files_to_add, commit_message) do
+    if files_to_add == [] do
+      {:ok, "No files to commit"}
+    else
+      case EvoGit.Adapters.Git.run(["add" | files_to_add], repo_path) do
+        {:ok, _output} ->
+          case EvoGit.Adapters.Git.commit(repo_path, commit_message) do
+            {:ok, _} -> {:ok, "Commit successful"}
+            {:error, _, _} = error -> {:error, error}
+            {:conflict, _} = conflict -> {:error, conflict}
+          end
+
+        {:error, _, _} = error ->
+          {:error, "git add failed: #{inspect(error)}"}
+
+        {:conflict, output} ->
+          {:error, "git add conflict: #{output}"}
+      end
+    end
+  end
+
   @doc """
   Performs a string replacement edit on a file.
   Reads the file, finds the old_string (with quote normalization),

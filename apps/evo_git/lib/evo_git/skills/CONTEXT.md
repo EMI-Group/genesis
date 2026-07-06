@@ -7,6 +7,16 @@ Each file has YAML frontmatter (name, description, parameters) and a markdown bo
 (typically a bash code block). Skills are loaded at runtime as LLM-callable tools,
 enabling project-specific automation without modifying EvoGit source.
 
+## Module Structure
+
+| Module | Purpose |
+|--------|---------|
+| `EvoGit.Skills` | Top-level API — loading, parsing, YAML, delegation wrappers |
+| `EvoGit.Skills.Skill` | `%Skill{}` struct |
+| `EvoGit.Skills.Executor` | Skill execution — find, extract bash block, substitute params, run script |
+| `EvoGit.Skills.CRUD` | Skill file management — create, read, update, delete, validate |
+| `EvoGit.Skills.ContextIntegration` | Hierarchical enablement via CONTEXT.md frontmatter |
+
 ## API Surface
 
 ### `EvoGit.Skills` — Key Functions
@@ -15,18 +25,27 @@ enabling project-specific automation without modifying EvoGit source.
 |----------|---------|
 | `load_skills/1` | Parse all `.md` files from `.agents/skills/` into `[Skill.t()]` |
 | `to_tool_schemas/1` | Convert skills to `ReqLLM` tool schemas for the LLM |
-| `execute/4` | Find a skill by name, substitute `{{params}}`, run its bash block, return output |
-| `validate_skill_text/1` | Validate skill text will produce a valid skill |
 | `skill_names/1`, `find_skill/2` | Query loaded skills by name |
+| `parse_frontmatter/1` | Parse YAML frontmatter from skill/CONTEXT.md content |
+| `parse_yaml_simple/1` | Parse a YAML string via `yaml_elixir` |
 
-### CRUD Operations
+### Execution (delegates to `EvoGit.Skills.Executor`)
+
+| Function | Purpose |
+|----------|---------|
+| `execute/4` | Find a skill by name, substitute `{{params}}`, run its bash block, return output |
+| `extract_bash_block/1` | Extract the first ```bash fenced block from markdown |
+| `substitute_params/3` | Replace `{{param_name}}` placeholders with arg values |
+
+### CRUD Operations (delegates to `EvoGit.Skills.CRUD`)
 
 | Function | Purpose |
 |----------|---------|
 | `add_skill/4`, `edit_skill/3`, `remove_skill/2` | Create / update / delete skill files |
 | `list_skills/1`, `read_skill/2` | List all skills or read raw markdown |
+| `validate_skill_text/1` | Validate skill text will produce a valid skill |
 
-### Hierarchical Enablement (Spatial Dimension)
+### Hierarchical Enablement (delegates to `EvoGit.Skills.ContextIntegration`)
 
 Skills are **globally defined** in `.agents/skills/` but **hierarchically enabled** per Context Tree node. Each `CONTEXT.md` may carry a YAML frontmatter `skill:` list naming skills active at that node. Skills are **inherited downward**: enabling at a parent node makes the skill available to all agents in that subtree.
 
@@ -67,4 +86,10 @@ YAML frontmatter delimited by `---`, containing `name` (required), `description`
 
 ## Routing Table
 
-Leaf module — no child subdirectories.
+| File | Module |
+|------|--------|
+| `skills.ex` | `EvoGit.Skills` — top-level API |
+| `skill.ex` | `EvoGit.Skills.Skill` — struct |
+| `executor.ex` | `EvoGit.Skills.Executor` — execution |
+| `crud.ex` | `EvoGit.Skills.CRUD` — file management |
+| `context_integration.ex` | `EvoGit.Skills.ContextIntegration` — hierarchical enablement |
