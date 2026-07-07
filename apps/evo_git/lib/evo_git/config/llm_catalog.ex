@@ -275,7 +275,16 @@ defmodule EvoGit.Config.LLMCatalog do
   """
   @spec requires_base_url?(atom()) :: boolean()
   def requires_base_url?(provider_atom) when is_atom(provider_atom) do
-    case find_provider(provider_atom) do
+    # Look up by :id first (each catalog entry has a unique :id atom, e.g.
+    # :openai_compatible). This is needed because :openai_compatible shares
+    # the :openai provider atom with the regular OpenAI entry, so
+    # find_provider/1 (which matches by provider_atoms) cannot distinguish
+    # them. Falling back to find_provider/1 covers raw provider atoms.
+    provider =
+      Enum.find(@providers, fn p -> p.id == provider_atom end) ||
+        find_provider(provider_atom)
+
+    case provider do
       nil -> false
       provider -> provider[:requires_base_url] == true
     end
