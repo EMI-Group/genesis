@@ -127,6 +127,20 @@ defmodule EvoDashWeb.DashboardLive.Project do
   end
 
   @doc """
+  Validates a project name for new project creation.
+  Returns `{:ok, trimmed}` or `{:error, :invalid_name}`.
+  """
+  def validate_project_name(name) when is_binary(name) do
+    trimmed = String.trim(name)
+
+    cond do
+      trimmed == "" -> {:error, :invalid_name}
+      String.contains?(trimmed, "/") -> {:error, :invalid_name}
+      true -> {:ok, trimmed}
+    end
+  end
+
+  @doc """
   Puts a flash info message about the detected mode, but only when the project
   is newly activated (no existing project).
   """

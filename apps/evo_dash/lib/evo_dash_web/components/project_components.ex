@@ -12,6 +12,7 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:active_project, :map, default: nil)
   attr(:recent_projects, :list, default: [])
   attr(:show_open_form, :boolean, default: false)
+  attr(:show_new_project_form, :boolean, default: false)
   attr(:path_suggestions, :list, default: [])
 
   def project_selector(assigns) do
@@ -84,6 +85,12 @@ defmodule EvoDashWeb.ProjectComponents do
             {gettext("Open Project")}
           <% end %>
         </button>
+
+        <!-- New Project button -->
+        <button class="btn btn-sm btn-outline btn-primary gap-1" phx-click="toggle_new_project_form">
+          <.icon name="hero-plus-circle" class="size-4" />
+          {gettext("New Project")}
+        </button>
       </div>
 
       <!-- Inline Open Project Form (expandable) -->
@@ -129,6 +136,66 @@ defmodule EvoDashWeb.ProjectComponents do
             <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_open_project_form">
               {gettext("Cancel")}
             </button>
+          </.form>
+        </div>
+      <% end %>
+
+      <!-- Inline New Project Form (expandable) -->
+      <%= if @show_new_project_form do %>
+        <div class="mt-3 pt-3 border-t border-base-300/50 animate-slide-down">
+          <.form for={%{}} phx-submit="create_project" class="flex flex-col gap-2">
+            <!-- Location (parent directory) -->
+            <div>
+              <label class="label py-1">
+                <span class="label-text text-xs font-medium">{gettext("Location (parent directory)")}</span>
+              </label>
+              <div class="picker-container relative">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                  <.icon name="hero-folder" class="size-4" />
+                </div>
+                <input
+                  type="text"
+                  name="location"
+                  class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
+                  placeholder={gettext("/path/to/parent/directory")}
+                  autofocus
+                  id="new-project-location-input"
+                />
+                <button
+                  type="button"
+                  id="new-project-location-picker-button"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
+                  phx-click="pick_directory"
+                  phx-hook="DirectoryPicker"
+                  data-picker-id="new-project"
+                  title={gettext("Browse for location")}
+                >
+                  <.icon name="hero-folder-open" class="size-4" />
+                </button>
+              </div>
+            </div>
+
+            <!-- Project name -->
+            <div>
+              <label class="label py-1">
+                <span class="label-text text-xs font-medium">{gettext("Project name")}</span>
+              </label>
+              <input
+                type="text"
+                name="name"
+                class="input input-bordered input-sm w-full font-mono text-sm"
+                placeholder="my-new-project"
+              />
+            </div>
+
+            <div class="flex gap-2">
+              <button type="submit" class="btn btn-primary btn-sm gap-1">
+                <.icon name="hero-check" class="size-4" /> {gettext("Create")}
+              </button>
+              <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_new_project_form">
+                {gettext("Cancel")}
+              </button>
+            </div>
           </.form>
         </div>
       <% end %>

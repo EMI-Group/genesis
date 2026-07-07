@@ -54,6 +54,7 @@ defmodule EvoDashWeb.DashboardLive do
               active_project={@active_project}
               recent_projects={@recent_projects}
               show_open_form={@show_open_project_form}
+              show_new_project_form={@show_new_project_form}
               path_suggestions={@path_suggestions}
             />
 
@@ -289,6 +290,7 @@ defmodule EvoDashWeb.DashboardLive do
         active_project: nil,
         active_project_path: nil,
         show_open_project_form: false,
+        show_new_project_form: false,
         recent_projects: recent_projects,
         path_suggestions: [],
         expanded_task_ids: MapSet.new(),
@@ -456,12 +458,59 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("toggle_open_project_form", _params, socket) do
-    {:noreply, assign(socket, :show_open_project_form, !socket.assigns.show_open_project_form)}
+    {:noreply,
+     assign(socket,
+       show_open_project_form: !socket.assigns.show_open_project_form,
+       show_new_project_form: false
+     )}
+  end
+
+  @impl true
+  def handle_event("toggle_new_project_form", _params, socket) do
+    {:noreply,
+     assign(socket,
+       show_new_project_form: !socket.assigns.show_new_project_form,
+       show_open_project_form: false
+     )}
   end
 
   @impl true
   def handle_event("toggle_advanced", _params, socket) do
     {:noreply, assign(socket, :show_advanced, !socket.assigns.show_advanced)}
+  end
+
+  @impl true
+  def handle_event("create_project", %{"location" => location, "name" => name}, socket) do
+    location = Path.expand(location)
+
+    cond do
+      not File.dir?(location) ->
+        {:noreply,
+         put_flash(socket, :error,
+           gettext("Parent directory does not exist: %{path}", path: location)
+         )}
+
+      true ->
+        case Project.validate_project_name(name) do
+          {:error, :invalid_name} ->
+            {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
+
+          {:ok, sanitized} ->
+            full_path = Path.join(location, sanitized)
+            File.mkdir!(full_path)
+
+            TaskRegistry.add_recent_project(full_path, sanitized)
+            recent_projects = TaskRegistry.list_recent_projects()
+
+            socket =
+              socket
+              |> assign(:recent_projects, recent_projects)
+              |> assign(:show_new_project_form, false)
+              |> put_flash(:info, gettext("Project created: %{path}", path: full_path))
+
+            {:noreply, push_patch(socket, to: ~p"/?project=#{URI.encode(full_path)}")}
+        end
+    end
   end
 
   @impl true
@@ -482,7 +531,12 @@ defmodule EvoDashWeb.DashboardLive do
     else
       {:noreply,
        socket
-       |> put_flash(:error, gettext("Directory does not exist: %{path}", path: path))}
+       |> put_flash(:error,
+         gettext(
+           "Directory does not exist: %{path}. Create a new project instead?",
+           path: path
+         )
+       )}
     end
   end
 
@@ -1035,6 +1089,7 @@ defmodule EvoDashWeb.DashboardLive do
       task_mode: mode,
       task_mode_info: mode_info,
       show_open_project_form: false,
+      show_new_project_form: false,
       show_project_settings: true,
       project_config: project_config,
       worktree_script: worktree_script,
