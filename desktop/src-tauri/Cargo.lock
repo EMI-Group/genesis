@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "genesis-desktop"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
