@@ -346,6 +346,31 @@ const AgentHistoryAutoScroll = {
   }
 };
 
+// TauriDetect hook: pushes tauri_detected event on mount
+const TauriDetect = {
+  mounted() {
+    this.pushEvent("tauri_detected", {tauri: !!window.__TAURI__});
+  }
+};
+
+// PlatformDetect hook: pushes platform_info event on mount
+const PlatformDetect = {
+  mounted() {
+    const p = navigator.platform || "";
+    let platform;
+    if (p.includes("Mac")) {
+      platform = "mac";
+    } else if (p.includes("Linux")) {
+      platform = "linux";
+    } else if (p.includes("Win")) {
+      platform = "windows";
+    } else {
+      platform = "linux";
+    }
+    this.pushEvent("platform_info", {platform: platform});
+  }
+};
+
 // WelcomeCheck hook: detects first visit and shows welcome modal
 const WelcomeCheck = {
   mounted() {
@@ -363,7 +388,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, WelcomeCheck},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, WelcomeCheck},
 })
 
 // Show progress bar on live navigation and form submits
