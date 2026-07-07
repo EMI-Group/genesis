@@ -654,17 +654,12 @@ defmodule EvoGit.Agent.ToolsTest do
 
     test "returns false even when TAVILY_API_KEY is set (config still disabled)" do
       with_isolated_config(fn ->
-        original_key = System.get_env("TAVILY_API_KEY")
-        System.put_env("TAVILY_API_KEY", "test-key")
+        ReqLLM.put_key(:tavily_api_key, "test-key")
 
         try do
           refute EvoGit.Config.tools_search_enabled?()
         after
-          if original_key do
-            System.put_env("TAVILY_API_KEY", original_key)
-          else
-            System.delete_env("TAVILY_API_KEY")
-          end
+          Application.delete_env(:req_llm, :tavily_api_key)
         end
       end)
     end
@@ -673,14 +668,14 @@ defmodule EvoGit.Agent.ToolsTest do
   describe "WebSearch.execute/3" do
     test "returns error when API key is missing" do
       # Ensure no API key is set
-      original_key = System.get_env("TAVILY_API_KEY")
-      System.delete_env("TAVILY_API_KEY")
+      original_reqllm_key = Application.get_env(:req_llm, :tavily_api_key)
+      Application.delete_env(:req_llm, :tavily_api_key)
 
       try do
         result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test query"}, nil, nil)
-        assert result =~ "Error: TAVILY_API_KEY environment variable is not set"
+        assert result =~ "Error: API key for search provider is not set"
       after
-        if original_key, do: System.put_env("TAVILY_API_KEY", original_key)
+        if original_reqllm_key, do: Application.put_env(:req_llm, :tavily_api_key, original_reqllm_key)
       end
     end
 

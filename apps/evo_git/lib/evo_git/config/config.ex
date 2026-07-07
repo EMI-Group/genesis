@@ -88,7 +88,7 @@ defmodule EvoGit.Config do
 
   ## Credentials File Format (credentials.toml)
 
-      # API keys as environment variable names — they are set as env vars on load
+      # API keys as environment variable names — they are loaded by the runtime
       GOOGLE_API_KEY = "AIza..."
       ZAI_API_KEY = "sk-..."
       DEEPSEEK_API_KEY = "sk-..."
@@ -659,19 +659,38 @@ defmodule EvoGit.Config do
     creds = read_toml_file(path, %{}, description: "credentials")
 
     Enum.each(creds, fn {key, value} ->
-      if is_binary(value), do: System.put_env(key, value)
+      if is_binary(value) and value != "" do
+        # Set via ReqLLM for immediate in-process effect.
+        if key_atom = env_var_to_reqllm_key(key) do
+          ReqLLM.put_key(key_atom, value)
+        end
+      end
     end)
 
     creds
   end
 
   @doc """
+  Derives a ReqLLM atom key from an environment variable name.
+
+  Strips the `_API_KEY` suffix, downcases, and appends `_api_key`.
+  Returns `nil` if the env var does not end with `_API_KEY`.
+  """
+  def env_var_to_reqllm_key(env_var) when is_binary(env_var) do
+    # Derive from env var name: strip _API_KEY suffix, downcase, append _api_key.
+    # The config file is a trusted source, so String.to_atom/1 is safe here.
+    base = String.replace_suffix(env_var, "_API_KEY", "")
+    if base != "" and base != env_var do
+      String.to_atom("#{String.downcase(base)}_api_key")
+    end
+  end
+
+  @doc """
   Saves credential key-value pairs to the credentials TOML file.
 
   Takes a map of `%{"ENV_VAR_NAME" => "api_key_value"}` (string keys).
-  Deep merges the new credentials into any existing ones (new values override),
-  writes the merged map to `credentials.toml`, and sets each new key-value pair
-  as an environment variable via `System.put_env/2`.
+  Deep merges the new credentials into any existing ones (new values override)
+  and writes the merged map to `credentials.toml`.
 
   Creates the credentials file if it doesn't exist yet.
 
@@ -687,11 +706,16 @@ defmodule EvoGit.Config do
     merged =
       Map.merge(existing, new_creds, fn _key, _existing_val, new_val -> new_val end)
 
-    # Set each new key-value pair in the environment FIRST, unconditionally.
+    # Set each new key-value pair via ReqLLM for immediate in-process effect.
     # This guarantees the keys are usable in the current session even if
     # persistence to disk fails (e.g., Windows path issues).
     Enum.each(new_creds, fn {key, value} ->
-      if is_binary(value), do: System.put_env(key, value)
+      if is_binary(value) and value != "" do
+        # Set via ReqLLM for immediate in-process effect.
+        if key_atom = env_var_to_reqllm_key(key) do
+          ReqLLM.put_key(key_atom, value)
+        end
+      end
     end)
 
     with :ok <- File.mkdir_p(dir),
@@ -813,10 +837,15 @@ defmodule EvoGit.Config do
 
         api_key_env_var =
           get_in(config, [:tools, :search, provider, :api_key_env_var]) || default_env_var
-        
-        key = System.get_env(api_key_env_var)
-        key != nil and key != ""
-      
+
+        reqllm_key = env_var_to_reqllm_key(api_key_env_var)
+        if is_nil(reqllm_key) do
+          false
+        else
+          key = ReqLLM.get_key(reqllm_key)
+          key != nil and key != ""
+        end
+
       _ -> false
     end
   end
