@@ -227,7 +227,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <div class={["diff-line", diff_line_class(line.type)]}>
             <span class="diff-line-gutter">{line.line_number}</span>
             <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
-            <span class="diff-line-content">{Map.get(@highlighted, line.line_number, line.content)}</span>
+            <span class="diff-line-content" phx-no-format>{Map.get(@highlighted, line.line_number, line.content)}</span>
           </div>
         <% end %>
         <%= if show_bottom_expand do %>
@@ -425,12 +425,109 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
              default_theme: "light-dark()"}
         )
         |> strip_lumis_wrappers()
-        |> String.split("\n")
+        |> String.trim_trailing("\n")
+        |> split_html_by_newline()
       rescue
         _ -> String.split(code, "\n")
       end
     end
   end
+
+  # Split highlighted HTML by newlines while keeping <span> tags balanced per
+  # line. Tree-sitter/Lumis produces multi-line spans (for multi-line strings,
+  # block comments, etc.) whose \n falls *inside* a <span>. A naive
+  # String.split("\n") would split those spans into orphaned fragments. Instead
+  # we walk the HTML, tracking a stack of open spans: at each \n we close all
+  # open spans (LIFO) on the current line, then reopen them (FIFO) on the next.
+  defp split_html_by_newline(html) do
+    html
+    |> String.to_charlist()
+    |> do_split_html_by_newline([], [], [])
+    |> Enum.reverse()
+    |> Enum.map(&IO.iodata_to_binary/1)
+  end
+
+  # End of input: close any remaining open spans on the final line.
+  defp do_split_html_by_newline([], current_line, open_tags, lines) do
+    final = [current_line | close_span_tags(open_tags)]
+    [final | lines]
+  end
+
+  # Start of an HTML tag — read the full tag (respecting quoted attributes).
+  defp do_split_html_by_newline([?< | _] = chars, current_line, open_tags, lines) do
+    {tag, rest} = take_tag(chars)
+    tag_str = List.to_string(tag)
+
+    cond do
+      opening_span?(tag_str) ->
+        do_split_html_by_newline(rest, [current_line, tag_str], [tag_str | open_tags], lines)
+
+      tag_str == "</span>" ->
+        do_split_html_by_newline(rest, [current_line, tag_str], drop_one(open_tags), lines)
+
+      true ->
+        do_split_html_by_newline(rest, [current_line, tag_str], open_tags, lines)
+    end
+  end
+
+  # Newline — flush the current line (closing all open spans), reopen on next.
+  defp do_split_html_by_newline([?\n | rest], current_line, open_tags, lines) do
+    completed = [current_line | close_span_tags(open_tags)]
+    reopened = reopen_span_tags(open_tags)
+    do_split_html_by_newline(rest, reopened, open_tags, [completed | lines])
+  end
+
+  # Regular character.
+  defp do_split_html_by_newline([char | rest], current_line, open_tags, lines) do
+    do_split_html_by_newline(rest, [current_line, char], open_tags, lines)
+  end
+
+  # Extract a full HTML tag from a charlist starting with '<'. Reads until the
+  # matching '>' while respecting single/double-quoted attribute values.
+  defp take_tag([?< | rest]) do
+    take_tag_rest(rest, [?<], nil)
+  end
+
+  # '>' outside quotes terminates the tag.
+  defp take_tag_rest([?> | rest], acc, nil) do
+    {Enum.reverse([?> | acc]), rest}
+  end
+
+  # Enter a quoted attribute string.
+  defp take_tag_rest([q | rest], acc, nil) when q in [?", ?'] do
+    take_tag_rest(rest, [q | acc], q)
+  end
+
+  # Exit a quoted attribute string (closing quote matches the opening one).
+  defp take_tag_rest([q | rest], acc, q) when q in [?", ?'] do
+    take_tag_rest(rest, [q | acc], nil)
+  end
+
+  # Any other character (including '>' inside quotes).
+  defp take_tag_rest([char | rest], acc, quote_state) do
+    take_tag_rest(rest, [char | acc], quote_state)
+  end
+
+  defp take_tag_rest([], acc, _quote_state) do
+    {Enum.reverse(acc), []}
+  end
+
+  defp opening_span?(tag_str) do
+    String.starts_with?(tag_str, "<span") and not String.ends_with?(tag_str, "/>")
+  end
+
+  # Emit </span> for each open tag, in stack (LIFO) order.
+  defp close_span_tags(open_tags) do
+    Enum.map(open_tags, fn _ -> "</span>" end)
+  end
+
+  # Reopen spans in original (FIFO) order — reverse of the stack.
+  defp reopen_span_tags(open_tags) do
+    Enum.reverse(open_tags)
+  end
+
+  defp drop_one([]), do: []
+  defp drop_one([_ | rest]), do: rest
 
   # Strip <pre class="lumis" ...><code ...>...</code></pre> wrappers,
   # keeping only the inner <span> elements with syntax colors.
