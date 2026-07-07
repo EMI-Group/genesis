@@ -101,7 +101,7 @@ defmodule EvoDashWeb.ProjectComponents do
           <.form for={%{}} phx-submit="open_project" class="flex flex-col sm:flex-row gap-2">
             <div class="flex-1 flex items-center gap-2">
               <%= if @tauri_detected do %>
-                <button type="button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="project">
+                <button type="button" id="project-path-browse-button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="project">
                   <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
                 </button>
               <% end %>
@@ -163,7 +163,7 @@ defmodule EvoDashWeb.ProjectComponents do
               </label>
               <div class="flex items-center gap-2">
                 <%= if @tauri_detected do %>
-                  <button type="button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="new-project">
+                  <button type="button" id="new-project-location-browse-button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="new-project">
                     <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
                   </button>
                 <% end %>
@@ -413,7 +413,7 @@ defmodule EvoDashWeb.ProjectComponents do
                     </label>
                     <div class="flex items-center gap-2">
                       <%= if @tauri_detected do %>
-                        <button type="button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="foreign-repo">
+                        <button type="button" id="foreign-repo-path-browse-button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="foreign-repo">
                           <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
                         </button>
                       <% end %>
