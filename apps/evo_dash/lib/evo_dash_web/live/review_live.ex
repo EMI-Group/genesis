@@ -203,6 +203,7 @@ defmodule EvoDashWeb.ReviewLive do
         review_status: :open,
         branch_exists: false,
         can_continue: false,
+        is_no_changes: false,
         has_pr: false,
         pr_url: nil,
         show_extract_modal: false,
