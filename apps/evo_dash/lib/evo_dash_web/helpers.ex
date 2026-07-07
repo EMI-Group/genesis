@@ -64,7 +64,7 @@ defmodule EvoDashWeb.Helpers do
   `:cancelled`, `:pending`).
   """
   def task_status_badge(:running),
-    do: "bg-success/10 text-success rounded-full flex items-center justify-center"
+    do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
 
   def task_status_badge(:finalizing),
     do: "bg-orange-500/10 text-orange-500 rounded-full flex items-center justify-center"
@@ -95,7 +95,7 @@ defmodule EvoDashWeb.Helpers do
   def review_status_badge(:open), do: "badge-warning"
   def review_status_badge(:merged), do: "badge-success"
   def review_status_badge(:rejected), do: "badge-error"
-  def review_status_badge(:continued), do: "badge-info"
+  def review_status_badge(:continued), do: "badge-secondary"
   def review_status_badge(:ignored), do: "badge-ghost"
   def review_status_badge(:no_changes), do: "badge-ghost"
   def review_status_badge(_), do: "badge-ghost"

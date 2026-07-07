@@ -55,10 +55,10 @@ defmodule EvoDashWeb.TaskCardComponents do
               <%= if @task.status == :running do %>
                 <span class="relative flex h-2.5 w-2.5 mr-2">
                   <span
-                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"
+                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75"
                     style="animation-duration: 2s"
                   ></span>
-                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-success"></span>
+                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-warning"></span>
                 </span>
               <% end %>
               <%= if @task.status == :finalizing do %>
@@ -398,7 +398,7 @@ defmodule EvoDashWeb.TaskCardComponents do
   # Private helpers — accent color for task_card status bar
   # ---------------------------------------------------------------------------
 
-  defp status_accent_color(:running), do: "bg-success"
+  defp status_accent_color(:running), do: "bg-warning"
   defp status_accent_color(:finalizing), do: "bg-orange-500"
   defp status_accent_color(:completed), do: "bg-info"
   defp status_accent_color(:failed), do: "bg-error"
@@ -407,11 +407,11 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   defp task_accent_color(%{status: :completed, review_status: :merged}), do: "bg-success"
   defp task_accent_color(%{status: :completed, review_status: :rejected}), do: "bg-error"
-  defp task_accent_color(%{status: :completed, review_status: :continued}), do: "bg-info"
+  defp task_accent_color(%{status: :completed, review_status: :continued}), do: "bg-secondary"
   defp task_accent_color(%{status: :completed, review_status: :ignored}), do: "bg-base-300"
   defp task_accent_color(%{status: status}), do: status_accent_color(status)
 
-  defp task_card_tint(%{status: :running}), do: "bg-success/5 shadow-success/10 border-success/20"
+  defp task_card_tint(%{status: :running}), do: "bg-warning/5 shadow-warning/10 border-warning/20"
 
   defp task_card_tint(%{status: :completed, review_status: :merged}),
     do: "bg-success/5 shadow-success/10 border-success/20"
@@ -420,7 +420,7 @@ defmodule EvoDashWeb.TaskCardComponents do
     do: "bg-error/5 shadow-error/10 border-error/20"
 
   defp task_card_tint(%{status: :completed, review_status: :continued}),
-    do: "bg-info/5 shadow-info/10 border-info/20"
+    do: "bg-secondary/5 shadow-secondary/10 border-secondary/20"
 
   defp task_card_tint(%{status: :completed, review_status: :ignored}),
     do: "bg-base-200/40 shadow-base-300/10 border-base-300/20"
