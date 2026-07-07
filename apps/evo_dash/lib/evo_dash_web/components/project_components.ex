@@ -121,19 +121,6 @@ defmodule EvoDashWeb.ProjectComponents do
                   id="project-path-input"
                   list="path-suggestions"
                 />
-                <%= if @tauri_detected do %>
-                  <button
-                    type="button"
-                    id="project-path-picker-button"
-                    class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/30 hover:text-base-content/60 transition-colors"
-                    phx-click="pick_directory"
-                    phx-hook="DirectoryPicker"
-                    data-picker-id="project"
-                    title={gettext("Browse for directory")}
-                  >
-                    <.icon name="hero-folder-open" class="size-4" />
-                  </button>
-                <% end %>
                 <span class="label-text-alt text-base-content/50 text-xs mt-1 block">{gettext("Repository path on this machine")}</span>
                 <datalist id="path-suggestions">
                   <%= for suggestion <- @path_suggestions do %>
@@ -179,19 +166,6 @@ defmodule EvoDashWeb.ProjectComponents do
                     autofocus
                     id="new-project-location-input"
                   />
-                  <%= if @tauri_detected do %>
-                    <button
-                      type="button"
-                      id="new-project-location-picker-button"
-                      class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/30 hover:text-base-content/60 transition-colors"
-                      phx-click="pick_directory"
-                      phx-hook="DirectoryPicker"
-                      data-picker-id="new-project"
-                      title={gettext("Browse for location")}
-                    >
-                      <.icon name="hero-folder-open" class="size-4" />
-                    </button>
-                  <% end %>
                   <span class="label-text-alt text-base-content/50 text-xs mt-1 block">{gettext("Repository path on this machine")}</span>
                 </div>
               </div>
@@ -427,19 +401,6 @@ defmodule EvoDashWeb.ProjectComponents do
                           required
                           id="foreign-repo-path-input"
                         />
-                        <%= if @tauri_detected do %>
-                          <button
-                            type="button"
-                            id="foreign-repo-path-picker-button"
-                            class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/30 hover:text-base-content/60 transition-colors"
-                            phx-click="pick_directory"
-                            phx-hook="DirectoryPicker"
-                            data-picker-id="foreign-repo"
-                            title={gettext("Browse for directory")}
-                          >
-                            <.icon name="hero-folder-open" class="size-4" />
-                          </button>
-                        <% end %>
                         <span class="label-text-alt text-base-content/50 text-xs mt-1 block">{gettext("Repository path on this machine")}</span>
                       </div>
                     </div>
