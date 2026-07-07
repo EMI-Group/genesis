@@ -204,16 +204,17 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   # Converts an untrusted provider id string to a canonical provider atom via a
   # whitelist Map.get lookup built from the LLMCatalog. Returns nil for unknown
   # providers (callers keep the string verbatim so the schema can surface a
-  # friendly error). Mirrors ConfigIO.provider_by_id_str/0. We resolve the
-  # catalog entry id through resolve_provider_atom/1 to get the atom usable in
-  # model strings (e.g. :alibaba vs. the entry id :alibaba — same for most
-  # providers, but variant providers like :alibaba_cn are handled correctly).
+  # friendly error). Mirrors ConfigIO.provider_by_id_str/0. We map to the full
+  # struct and use hd/1 on its provider_atoms to get the canonical atom usable
+  # in model specs (e.g. the :openai_compatible entry has provider_atoms
+  # [:openai] → resolves to :openai). Using resolve_provider_atom/1 would look
+  # up by membership and leave :openai_compatible unchanged (the bug).
   defp provider_atom_from_str(provider_str) when is_binary(provider_str) do
-    provider_by_id = Map.new(LLMCatalog.providers(), fn p -> {Atom.to_string(p.id), p.id} end)
+    provider_by_id = Map.new(LLMCatalog.providers(), fn p -> {Atom.to_string(p.id), p} end)
 
     case Map.get(provider_by_id, provider_str) do
       nil -> nil
-      entry_id -> LLMCatalog.resolve_provider_atom(entry_id)
+      entry -> hd(entry.provider_atoms)
     end
   end
 

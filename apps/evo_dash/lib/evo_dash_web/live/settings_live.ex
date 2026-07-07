@@ -503,10 +503,12 @@ defmodule EvoDashWeb.SettingsLive do
           {:error, gettext("Model name cannot be empty.")}
 
         true ->
-          # Resolve the canonical provider atom from the catalog entry id
-          # (e.g. :openai_compatible entry → :openai atom via its
-          # provider_atoms, :openrouter → :openrouter).
-          provider_atom = EvoGit.Config.LLMCatalog.resolve_provider_atom(provider.id)
+          # Resolve the canonical provider atom from the catalog entry's
+          # provider_atoms list directly (e.g. :openai_compatible entry → :openai
+          # atom, :openrouter → :openrouter). We use hd/1 on provider_atoms
+          # because resolve_provider_atom/1 looks up by membership, NOT by
+          # catalog id — it would leave :openai_compatible unchanged (the bug).
+          provider_atom = hd(provider.provider_atoms)
 
           # Validate base_url requirement using the catalog function (NOT the
           # dead provider[:requires_base_url] struct field).
