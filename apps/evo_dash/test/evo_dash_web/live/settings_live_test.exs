@@ -198,10 +198,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ ~s(value="my-model")
       assert html =~ ~s(value="https://api.example.com/v1")
 
-      # openai_compatible catalog entry resolves to the :openai_compatible atom.
+      # openai_compatible catalog entry resolves to the canonical :openai atom.
       models = current_models(view)
       assert hd(models).model == %{
-               provider: :openai_compatible,
+               provider: :openai,
                id: "my-model",
                base_url: "https://api.example.com/v1"
              }
@@ -640,7 +640,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Custom model saved."
       models = current_models(view)
-      assert hd(models).model == %{provider: :openai_compatible, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+      assert hd(models).model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
     end
 
     test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do
