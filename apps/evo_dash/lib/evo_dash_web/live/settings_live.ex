@@ -502,20 +502,31 @@ defmodule EvoDashWeb.SettingsLive do
         String.trim(model_name || "") == "" ->
           {:error, gettext("Model name cannot be empty.")}
 
-        provider[:requires_base_url] == true ->
-          if String.trim(base_url || "") == "" do
+        true ->
+          # Resolve the canonical provider atom from the catalog entry's
+          # provider_atoms list directly (e.g. :openai_compatible entry → :openai
+          # atom, :openrouter → :openrouter). We use hd/1 on provider_atoms
+          # because resolve_provider_atom/1 looks up by membership, NOT by
+          # catalog id — it would leave :openai_compatible unchanged (the bug).
+          provider_atom = hd(provider.provider_atoms)
+
+          # Validate base_url requirement using the catalog function (NOT the
+          # dead provider[:requires_base_url] struct field).
+          requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
+
+          if requires_base_url and String.trim(base_url || "") == "" do
             {:error, gettext("Base URL cannot be empty.")}
           else
-            {:ok,
-             %{
-               provider: :openai,
-               id: String.trim(model_name),
-               base_url: String.trim(base_url)
-             }}
-          end
+            # Build the map spec via resolve_model_spec/3 — it omits nil/empty
+            # base_url and resolves model shortcuts/variants. Produces a MAP for
+            # ALL providers (including OpenRouter), not a legacy string.
+            opts =
+              if String.trim(base_url || "") == "",
+                do: [],
+                else: [base_url: String.trim(base_url)]
 
-        true ->
-          {:ok, "openrouter:#{String.trim(model_name)}"}
+            {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
+          end
       end
 
     case result do
@@ -595,16 +606,20 @@ defmodule EvoDashWeb.SettingsLive do
          )}
 
       true ->
-        updated_profile = ModelProfileHelpers.parse_model_profile_params(params, new_id)
+        case ModelProfileHelpers.parse_model_profile_params(params, new_id) do
+          {:ok, updated_profile} ->
+            file_config =
+              socket.assigns.file_config
+              |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
+              |> ModelProfileHelpers.mirror_default_model()
 
-        file_config =
-          socket.assigns.file_config
-          |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
-          |> ModelProfileHelpers.mirror_default_model()
+            socket = socket |> assign(:editing_profile_id, nil)
 
-        socket = socket |> assign(:editing_profile_id, nil)
+            persist_file_config(file_config, socket, gettext("Model profile saved."))
 
-        persist_file_config(file_config, socket, gettext("Model profile saved."))
+          {:error, "model_id_empty"} ->
+            {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
+        end
     end
   end
 

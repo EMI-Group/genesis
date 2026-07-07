@@ -228,10 +228,20 @@ defmodule EvoGit.Config.Schema do
         []
 
       is_map(value) ->
-        # Accept map model specs (e.g. %{provider: :openai, id: "...", base_url: "..."})
-        # Must have at least :id and :provider keys.
+        # Accept map model specs (e.g. %{provider: :openai, id: "...", base_url: "...",
+        # extra: %{...}}). Must have at least :id and :provider keys. :extra is
+        # optional but, if present, must be a map.
         has_provider = Map.has_key?(value, :provider) or Map.has_key?(value, "provider")
         has_id = Map.has_key?(value, :id) or Map.has_key?(value, "id")
+        has_extra = Map.has_key?(value, :extra) or Map.has_key?(value, "extra")
+        extra = Map.get(value, :extra) || Map.get(value, "extra")
+
+        extra_errors =
+          if has_extra and not is_map(extra) do
+            [error(key_path, "model map 'extra' must be a map, got #{inspect(extra)}", value, :model_spec)]
+          else
+            []
+          end
 
         cond do
           not has_provider ->
@@ -241,11 +251,11 @@ defmodule EvoGit.Config.Schema do
             [error(key_path, "model map must have an 'id' key, got #{inspect(value)}", value, :model_spec)]
 
           true ->
-            []
+            extra_errors
         end
 
       true ->
-        [error(key_path, "must be a string (e.g. \"provider:model\") or a map (e.g. %{provider: :openai, id: \"...\", base_url: \"...\"}), got #{inspect(value)}", value, :model_spec)]
+        [error(key_path, "must be a string (e.g. \"provider:model\") or a map (e.g. %{provider: :openai, id: \"...\", base_url: \"...\", extra: %{...}}), got #{inspect(value)}", value, :model_spec)]
     end
   end
 

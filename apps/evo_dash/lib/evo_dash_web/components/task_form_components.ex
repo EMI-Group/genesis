@@ -75,7 +75,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 >
                   <%= for profile <- @model_profiles do %>
                     <option value={profile.id} selected={@selected_model_id == profile.id}>
-                      {profile.id <> " (" <> (profile.model || "") <> ")"}
+                      {profile.id <> " (" <> profile_model_label(profile) <> ")"}
                     </option>
                   <% end %>
                 </select>
@@ -230,4 +230,22 @@ defmodule EvoDashWeb.TaskFormComponents do
     </.form>
     """
   end
+
+  # Renders a compact label for a profile's model spec, handling both the new
+  # map format (%{provider: atom, id: string, base_url: ...}) and the legacy
+  # "provider:id" string format. The `<>` binary operator crashes on maps, so we
+  # normalize to a string here.
+  defp profile_model_label(%{model: model} = _profile) when is_map(model) do
+    provider = model[:provider] || model["provider"]
+    id = model[:id] || model["id"]
+
+    cond do
+      provider != nil and id != nil -> "#{provider}:#{id}"
+      id != nil -> to_string(id)
+      true -> ""
+    end
+  end
+
+  defp profile_model_label(%{model: model}) when is_binary(model), do: model
+  defp profile_model_label(_profile), do: ""
 end

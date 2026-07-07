@@ -7,6 +7,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   """
 
   alias EvoDash.SettingsUtils
+  alias EvoGit.Config.LLMCatalog
 
   @doc """
   Adds a new model profile to the file_config's `[:llm, :models]` list.
@@ -91,20 +92,56 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   @doc """
   Parses the form params for a single profile into a normalized map with atom
   keys and correctly-typed values.
+
+  Reads the structured model fields `provider`, `model_id`, and `base_url`
+  (instead of the legacy single `model` string) and composes a ReqLLM-native
+  map model spec `%{provider: atom, id: string}` with `base_url` included only
+  when provided/non-empty.
+
+  Returns `{:ok, profile_map}` on success, or `{:error, reason_string}` when
+  validation fails (model_id required, provider must be a known catalog entry).
   """
   def parse_model_profile_params(params, id) do
-    model = String.trim(params["model"] || "")
+    provider_str = String.trim(params["provider"] || "")
+    model_id = String.trim(params["model_id"] || "")
+    base_url = String.trim(params["base_url"] || "")
 
-    %{id: id}
-    |> maybe_put_non_empty(:model, model)
-    |> maybe_put_int(:concurrency, params["concurrency"], 3)
-    |> maybe_put_float(:temperature, params["temperature"])
-    |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])
-    |> maybe_put_int(:max_tokens, params["max_tokens"])
-    |> maybe_put_float(:top_p, params["top_p"])
-    |> maybe_put_int(:top_k, params["top_k"])
-    |> maybe_put_float(:frequency_penalty, params["frequency_penalty"])
-    |> maybe_put_float(:presence_penalty, params["presence_penalty"])
+    cond do
+      model_id == "" ->
+        {:error, "model_id_empty"}
+
+      true ->
+        # Provider-atom conversion via whitelist Map.get lookup (no try/rescue,
+        # no String.to_existing_atom on untrusted input). Unknown provider
+        # strings resolve to nil → we keep the provider as a STRING in the spec.
+        # The map spec intentionally accepts string providers so the value is
+        # preserved verbatim and the schema validator can surface a friendly
+        # error rather than silently dropping data.
+        provider_atom = provider_atom_from_str(provider_str)
+
+        spec =
+          if provider_atom do
+            %{provider: provider_atom, id: model_id}
+          else
+            %{provider: provider_str, id: model_id}
+          end
+
+        spec = if base_url == "", do: spec, else: Map.put(spec, :base_url, base_url)
+
+        profile =
+          %{id: id}
+          |> Map.put(:model, spec)
+          |> maybe_put_int(:concurrency, params["concurrency"], 3)
+          |> maybe_put_float(:temperature, params["temperature"])
+          |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])
+          |> maybe_put_int(:max_tokens, params["max_tokens"])
+          |> maybe_put_float(:top_p, params["top_p"])
+          |> maybe_put_int(:top_k, params["top_k"])
+          |> maybe_put_float(:frequency_penalty, params["frequency_penalty"])
+          |> maybe_put_float(:presence_penalty, params["presence_penalty"])
+
+        {:ok, profile}
+    end
   end
 
   @doc """
@@ -164,8 +201,22 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   # Private helpers
   # ───────────────────────────────────────────────────────────────────────────
 
-  defp maybe_put_non_empty(map, _key, ""), do: map
-  defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
+  # Converts an untrusted provider id string to a canonical provider atom via a
+  # whitelist Map.get lookup built from the LLMCatalog. Returns nil for unknown
+  # providers (callers keep the string verbatim so the schema can surface a
+  # friendly error). Mirrors ConfigIO.provider_by_id_str/0. We map to the full
+  # struct and use hd/1 on its provider_atoms to get the canonical atom usable
+  # in model specs (e.g. the :openai_compatible entry has provider_atoms
+  # [:openai] → resolves to :openai). Using resolve_provider_atom/1 would look
+  # up by membership and leave :openai_compatible unchanged (the bug).
+  defp provider_atom_from_str(provider_str) when is_binary(provider_str) do
+    provider_by_id = Map.new(LLMCatalog.providers(), fn p -> {Atom.to_string(p.id), p} end)
+
+    case Map.get(provider_by_id, provider_str) do
+      nil -> nil
+      entry -> hd(entry.provider_atoms)
+    end
+  end
 
   # Only include :model key when a non-nil value is given (e.g. from a shortcut).
   # For "add_model_profile" with nil, we omit it so the user can fill it in.

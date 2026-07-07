@@ -133,7 +133,8 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         <h4 class="font-bold text-sm text-base-content">{gettext("Edit Profile")}</h4>
       </div>
 
-      <%!-- id + model (required fields) ── side by side ── --%>
+      <%!-- id + provider/model-id/base-url (required fields) ── ── --%>
+      <% {provider_val, model_id_val, base_url_val} = profile_model_fields(@profile) %>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="form-control">
           <label class="label pb-1">
@@ -154,19 +155,52 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </div>
         <div class="form-control">
           <label class="label pb-1">
-            <span class="label-text font-semibold text-xs">{gettext("Model")}
+            <span class="label-text font-semibold text-xs">{gettext("Provider")}</span>
+          </label>
+          <input
+            type="text"
+            name="provider"
+            value={provider_val}
+            placeholder={gettext("e.g. anthropic, openai")}
+            class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+          />
+          <p class="text-[11px] text-base-content/60 mt-1">
+            {gettext("The LLM provider name")}
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-semibold text-xs">{gettext("Model ID")}
             <span class="text-error">*</span></span>
           </label>
           <input
             type="text"
-            name="model"
-            value={model_display(@profile[:model] || @profile["model"])}
-            placeholder={gettext("e.g. anthropic:claude-sonnet-4-6")}
+            name="model_id"
+            value={model_id_val}
+            placeholder={gettext("e.g. claude-sonnet-4-6")}
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
             required
           />
           <p class="text-[11px] text-base-content/60 mt-1">
-            {gettext("Format: provider:model-name")}
+            {gettext("The model name")}
+          </p>
+        </div>
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-semibold text-xs">{gettext("Base URL")}</span>
+          </label>
+          <input
+            type="text"
+            name="base_url"
+            value={base_url_val}
+            placeholder={gettext("https://api.my-provider.com/v1")}
+            class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
+          />
+          <p class="text-[11px] text-base-content/60 mt-1">
+            {gettext("For proxy/aggregator endpoints; leave empty for standard providers.")}
           </p>
         </div>
       </div>
@@ -360,6 +394,47 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   end
 
   defp profile_param(_, _), do: nil
+
+  # Extracts {provider_str, model_id_str, base_url_str} from a profile's model
+  # value for pre-filling the edit form. Handles ALL three shapes the model can
+  # arrive in (after config resolution, map specs have atom keys + atom provider):
+  #
+  #   * MAP %{provider: p, id: i, base_url: b} (current format) — pre-fills
+  #     provider=to_string(p), model_id=i, base_url=b (or ""). Handles both
+  #     atom and string keys.
+  #   * STRING "provider:id" (legacy) — splits on the FIRST colon only; model
+  #     ids may themselves contain colons. base_url empty.
+  #   * nil → all empty.
+  defp profile_model_fields(profile) when is_map(profile) do
+    model = Map.get(profile, :model) || Map.get(profile, "model")
+    model_model_fields(model)
+  end
+
+  defp profile_model_fields(_), do: {"", "", ""}
+
+  defp model_model_fields(nil), do: {"", "", ""}
+
+  defp model_model_fields(model) when is_map(model) do
+    provider = model[:provider] || model["provider"]
+    id = model[:id] || model["id"]
+    base_url = model[:base_url] || model["base_url"]
+
+    provider_str = if is_nil(provider), do: "", else: to_string(provider)
+    id_str = if is_nil(id), do: "", else: to_string(id)
+    base_url_str = if is_nil(base_url), do: "", else: to_string(base_url)
+
+    {provider_str, id_str, base_url_str}
+  end
+
+  defp model_model_fields(model) when is_binary(model) do
+    case :binary.split(model, ":") do
+      [provider, id] ->
+        {provider, id, ""}
+
+      [_no_colon] ->
+        {"", model, ""}
+    end
+  end
 
   # Builds a compact summary string of generation params, e.g.
   # "temp: 0.7, max_tokens: 4096". Returns nil if no params are set.

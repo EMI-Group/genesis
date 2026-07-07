@@ -114,6 +114,9 @@ defmodule EvoGit.Config do
   def __migrate_llm_models__(config), do: migrate_llm_models(config)
 
   @doc false
+  def __string_to_model_map__(string), do: string_to_model_map(string)
+
+  @doc false
   def __strip_flat_llm_fields__(config), do: strip_flat_llm_fields(config)
 
   @doc false
@@ -168,12 +171,15 @@ defmodule EvoGit.Config do
       # 1. Flat [llm].model map → normalize provider atom
       # 2. [[llm.models]] → normalize model maps in each profile
       {:llm, llm_config}, acc when is_map(llm_config) ->
-        # Normalize the flat model map (backward compat)
+        # Normalize the flat model (backward compat). Both map and string
+        # forms are normalized to a map model spec.
         acc =
           case Map.get(llm_config, :model) do
             model when is_map(model) ->
-              normalized = normalize_model_map(model)
-              put_in(acc, [:llm, :model], normalized)
+              put_in(acc, [:llm, :model], normalize_model_map(model))
+
+            model when is_binary(model) ->
+              put_in(acc, [:llm, :model], string_to_model_map(model))
 
             _ ->
               acc
@@ -192,6 +198,9 @@ defmodule EvoGit.Config do
                   case Map.get(profile, :model) do
                     model when is_map(model) ->
                       Map.put(profile, :model, normalize_model_map(model))
+
+                    model when is_binary(model) ->
+                      Map.put(profile, :model, string_to_model_map(model))
 
                     _ ->
                       profile
@@ -332,6 +341,21 @@ defmodule EvoGit.Config do
     case Map.get(atomized, :provider) do
       provider when is_binary(provider) -> Map.put(atomized, :provider, safe_atomize(provider))
       _ -> atomized
+    end
+  end
+
+  # Parses a "provider:model" string into a map model spec
+  # %{provider: atom, id: string}. Splits on the FIRST colon. The provider part
+  # is atomized via safe_atomize/1 (unknown atoms stay as strings); the rest is
+  # the id string. Defensive: if there is no colon, returns %{id: string} with
+  # no :provider key (provider will be nil downstream — never crashes).
+  defp string_to_model_map(string) when is_binary(string) do
+    case :binary.split(string, ":") do
+      [provider, id] ->
+        %{provider: safe_atomize(provider), id: id}
+
+      [_no_colon] ->
+        %{id: string}
     end
   end
 

@@ -25,7 +25,9 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 |----------|-------------|
 | `providers/0` | Returns list of predefined provider entries (Anthropic, OpenAI, Google, DeepSeek, ZAI, Alibaba) with models |
 | `provider_models/1` | Returns model shortcuts for a given provider atom |
-| `resolve_model/2` | Resolves `{provider_atom, model_input}` to `"provider:model"` string |
+| `resolve_model/2` | Resolves `{provider_atom, model_input}` to `"provider:model"` string (backward-compat string form) |
+| `resolve_model_spec/3` | Map-producing analog of `resolve_model/2`. Returns `%{provider: atom, id: string}` plus optional `base_url`/`extra`. Opts: `:base_url`, `:variant`, `:extra`. |
+| `requires_base_url?/1` | Returns whether a provider requires a custom `base_url` (reads the `requires_base_url` flag; default `false`). `:openai_compatible` → `true`. |
 | `find_provider/1` | Finds provider entry by atom (checks `provider_atoms` list) |
 | `unknown_provider_help/0` | Returns guidance text with links to llmdb.xyz and ReqLLM docs |
 | `known_env_vars/0` | Returns all unique env var names from the catalog |
@@ -128,6 +130,6 @@ Keys are set as environment variables on load. Only one key needed (matching the
 - Config directory follows XDG conventions via `EvoGit.Platform.os()`.
 - All file reads use `case File.read/1` (non-crashing) with explicit error handling via `with`/`case`, not `try/rescue`.
 - `EvoGit.Defaults` is a backward-compatibility shim that delegates all calls to this module.
-- Model format is `"provider:model"` — provider determines which API key env var is used.
+- Model format: either a `"provider:model"` string (backward-compat, still accepted in TOML) OR a map spec `%{provider: atom, id: string, base_url: string, extra: %{...}}` (ReqLLM-native). String models are normalized to maps at **resolve time** (`string_to_model_map/1` in `atomize_enum_values/1`); users' existing config files are NOT rewritten. The `[[llm.models]]` data layer supports multiple endpoints per provider+model via per-profile `base_url`. The provider atom determines which API key env var is used.
 - `config_status/0` checks: LLM model presence, at least one API key. GitHub username is **optional** — a missing username does NOT appear in `:missing`/`:warnings` or make `:ok?` false.
 - **Crash resilience (untrusted user config boundary)**: The `resolve/0` → `config_status()` pipeline MUST NEVER raise on any user-provided config content, including valid TOML with wrong value types (e.g. `llm = "string"` instead of a `[llm]` table). `deep_merge/2` discards type-mismatched user values (keeping the default map). `migrate_llm_models/1`, `atomize_enum_values/1`, `Schema.model_profiles/1`, and `Schema.validate/1` all guard against non-map structures. `Schema.validate/1` uses `safe_get_in` (not `get_in`) to avoid Access-behaviour crashes on non-map intermediate values. Bad config produces `validation_errors` but does not crash the caller — the user must always be able to boot the app and access the settings page.

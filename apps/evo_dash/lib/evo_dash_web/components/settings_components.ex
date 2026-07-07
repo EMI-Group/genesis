@@ -111,27 +111,6 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% current_model = get_in(@file_config, [:llm, :model]) %>
                 <% show_custom_input = provider[:custom_model] == true %>
                 <% show_model_buttons = show_models and not show_custom_input %>
-                <% openrouter_prefill =
-                  if is_binary(current_model) and String.starts_with?(current_model, "openrouter:") do
-                    String.replace_prefix(current_model, "openrouter:", "")
-                  else
-                    ""
-                  end %>
-                <% openai_prefill_id =
-                  if is_map(current_model) and
-                       (current_model[:provider] == :openai or current_model["provider"] == "openai") do
-                    to_string(current_model[:id] || current_model["id"] || "")
-                  else
-                    ""
-                  end %>
-                <% openai_prefill_base_url =
-                  if is_map(current_model) and
-                       (current_model[:provider] == :openai or current_model["provider"] == "openai") do
-                    to_string(current_model[:base_url] || current_model["base_url"] || "")
-                  else
-                    ""
-                  end %>
-
                 <%!-- Variant selection (only if provider has variants) --%>
                 <%= if has_variants do %>
                   <div class="mb-5">
@@ -192,33 +171,62 @@ defmodule EvoDashWeb.SettingsComponents do
 
                 <%!-- Custom model input (for providers with custom_model: true, e.g. OpenRouter / OpenAI-Compatible) --%>
                 <%= if show_custom_input do %>
-                  <%= if provider[:requires_base_url] == true do %>
-                    <form phx-submit="save_custom_model" class="mb-5 space-y-4">
-                      <input type="hidden" name="provider_id" value={@selected_provider_id} />
-                      <div class="form-control">
-                        <label class="label">
-                          <span class="label-text font-bold text-sm mb-2 block">{gettext("Model Name")}</span>
-                        </label>
-                        <input
-                          type="text"
-                          name="model_name"
-                          value={openai_prefill_id}
-                          placeholder={gettext("e.g. gpt-4o or my-custom-model")}
-                          class="input input-bordered w-full rounded-xl shadow-sm bg-base-50"
-                        />
-                      </div>
-                      <div class="form-control">
-                        <label class="label">
-                          <span class="label-text font-bold text-sm mb-2 block">{gettext("Base URL")}</span>
-                        </label>
-                        <input
-                          type="text"
-                          name="base_url"
-                          value={openai_prefill_base_url}
-                          placeholder={gettext("https://api.my-provider.com/v1")}
-                          class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
-                        />
-                      </div>
+                  <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
+                  <%!-- Pre-fill helpers: read the current flat model for the selected provider --%>
+                  <% custom_prefill_id =
+                    if is_map(current_model) do
+                      to_string(current_model[:id] || current_model["id"] || "")
+                    else
+                      if is_binary(current_model) and String.contains?(current_model, ":") do
+                        [_provider, id] = :binary.split(current_model, ":")
+                        id
+                      else
+                        if is_binary(current_model), do: current_model, else: ""
+                      end
+                    end %>
+                  <% custom_prefill_base_url =
+                    if is_map(current_model) do
+                      to_string(current_model[:base_url] || current_model["base_url"] || "")
+                    else
+                      ""
+                    end %>
+                  <form phx-submit="save_custom_model" class="mb-5 space-y-4">
+                    <input type="hidden" name="provider_id" value={@selected_provider_id} />
+                    <div class="form-control">
+                      <label class="label">
+                        <span class="label-text font-bold text-sm mb-2 block">{gettext("Model Name")}</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="model_name"
+                        value={custom_prefill_id}
+                        placeholder={gettext("e.g. gpt-4o or anthropic/claude-3.5-sonnet")}
+                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
+                      />
+                    </div>
+                    <div class="form-control">
+                      <label class="label">
+                        <span class="label-text font-bold text-sm mb-2 block">
+                          {gettext("Base URL")}
+                          <%= if requires_base_url do %>
+                            <span class="text-error">*</span>
+                          <% end %>
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        name="base_url"
+                        value={custom_prefill_base_url}
+                        placeholder={gettext("https://api.my-provider.com/v1")}
+                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
+                      />
+                      <p class="text-xs text-base-content/70 leading-relaxed mt-1">
+                        {gettext(
+                          "For proxy/aggregator endpoints. Leave empty for standard provider endpoints."
+                        )}
+                      </p>
+                    </div>
+                    <%= if requires_base_url do %>
                       <div class="bg-warning/5 border border-warning/20 rounded-xl p-3 flex gap-2 items-start">
                         <.icon
                           name="hero-exclamation-triangle"
@@ -230,33 +238,11 @@ defmodule EvoDashWeb.SettingsComponents do
                           )}
                         </p>
                       </div>
-                      <button type="submit" class="btn btn-primary btn-sm rounded-xl">
-                        {gettext("Set Model")}
-                      </button>
-                    </form>
-                  <% else %>
-                    <form phx-submit="save_custom_model" class="mb-5 space-y-4">
-                      <input type="hidden" name="provider_id" value={@selected_provider_id} />
-                      <div class="form-control">
-                        <label class="label">
-                          <span class="label-text font-bold text-sm mb-2 block">{gettext("Model Name")}</span>
-                        </label>
-                        <input
-                          type="text"
-                          name="model_name"
-                          value={openrouter_prefill}
-                          placeholder={gettext("anthropic/claude-3.5-sonnet")}
-                          class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
-                        />
-                      </div>
-                      <p class="text-xs text-base-content/70 leading-relaxed">
-                        {gettext("The model will be saved as")} <code class="font-mono bg-base-200 px-1.5 py-0.5 rounded text-[11px]">{gettext("openrouter:<model-name>")}</code>.
-                      </p>
-                      <button type="submit" class="btn btn-primary btn-sm rounded-xl">
-                        {gettext("Set Model")}
-                      </button>
-                    </form>
-                  <% end %>
+                    <% end %>
+                    <button type="submit" class="btn btn-primary btn-sm rounded-xl">
+                      {gettext("Set Model")}
+                    </button>
+                  </form>
                 <% end %>
 
                 <%!-- API Key input --%>

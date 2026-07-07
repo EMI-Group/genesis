@@ -388,6 +388,73 @@ defmodule EvoGit.Config.SchemaTest do
     end
   end
 
+  describe "model_spec :extra validation for [:llm, :model]" do
+    # The :extra key on a model spec map is optional, but when present it must
+    # be a map (carries arbitrary provider-specific metadata, e.g. %{family: "glm"}).
+
+    test "accepts a map with atom-keyed extra" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model], %{
+          provider: :openai,
+          id: "my-model",
+          extra: %{family: "glm"}
+        })
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts a map with string-keyed extra" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model], %{
+          "extra" => %{family: "glm"},
+          provider: :openai,
+          id: "my-model"
+        })
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts a map without extra" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model], %{
+          provider: :openai,
+          id: "my-model"
+        })
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "rejects a map where extra is a string" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model], %{
+          provider: :openai,
+          id: "my-model",
+          extra: "not a map"
+        })
+
+      assert {:error, errors} = Schema.validate(config)
+      assert is_list(errors)
+      assert Enum.any?(errors, fn e ->
+        String.contains?(e.message, "extra")
+      end)
+    end
+
+    test "rejects a map where extra is a list" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model], %{
+          provider: :openai,
+          id: "my-model",
+          extra: [1, 2, 3]
+        })
+
+      assert {:error, errors} = Schema.validate(config)
+      assert is_list(errors)
+      assert Enum.any?(errors, fn e ->
+        String.contains?(e.message, "extra")
+      end)
+    end
+  end
+
   describe "model_profiles type for [:llm, :models]" do
     test "the schema entry for [:llm, :models] has type: :model_profiles" do
       entry =

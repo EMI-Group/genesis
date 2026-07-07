@@ -144,4 +144,88 @@ defmodule EvoGit.Config.LLMCatalogTest do
       assert LLMCatalog.provider_models(:nonexistent) == []
     end
   end
+
+  describe "resolve_model_spec/2,3" do
+    # The map-producing analog of resolve_model/2. Returns
+    # %{provider: atom, id: string} (plus optional base_url/extra).
+
+    test "resolves provider + model id to a map with no base_url when not provided" do
+      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-sonnet-4") ==
+               %{provider: :anthropic, id: "claude-sonnet-4"}
+    end
+
+    test "resolves a display name to the canonical catalog id" do
+      # "Claude Sonnet 4.6" -> id "claude-sonnet-4-6" (from the catalog)
+      assert LLMCatalog.resolve_model_spec(:anthropic, "Claude Sonnet 4.6") ==
+               %{provider: :anthropic, id: "claude-sonnet-4-6"}
+    end
+
+    test "includes base_url when a non-empty value is provided" do
+      assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5",
+               base_url: "https://my.proxy/v1"
+             ) ==
+               %{provider: :openai, id: "gpt-5.5", base_url: "https://my.proxy/v1"}
+    end
+
+    test "omits base_url when it is an empty string" do
+      assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: "") ==
+               %{provider: :openai, id: "gpt-5.5"}
+    end
+
+    test "omits base_url when it is nil" do
+      assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: nil) ==
+               %{provider: :openai, id: "gpt-5.5"}
+    end
+
+    test "includes extra when a non-nil value is provided" do
+      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.1-pro",
+               extra: %{family: "glm"}
+             ) ==
+               %{provider: :google, id: "gemini-3.1-pro", extra: %{family: "glm"}}
+    end
+
+    test "omits extra when it is nil" do
+      refute Map.has_key?(
+               LLMCatalog.resolve_model_spec(:google, "gemini-3.1-pro", extra: nil),
+               :extra
+             )
+    end
+
+    test "variant resolves to the variant's provider atom (alibaba cn)" do
+      # The :cn variant maps to provider_atom :alibaba_cn (from the catalog)
+      assert LLMCatalog.resolve_model_spec(:alibaba, "qwen-3.7-max", variant: :cn) ==
+               %{provider: :alibaba_cn, id: "qwen-3.7-max"}
+    end
+
+    test "custom/unknown model passes through unchanged" do
+      assert LLMCatalog.resolve_model_spec(:openrouter, "custom-model-x") ==
+               %{provider: :openrouter, id: "custom-model-x"}
+    end
+  end
+
+  describe "requires_base_url?/1" do
+    test "returns true for openai_compatible" do
+      assert LLMCatalog.requires_base_url?(:openai_compatible) == true
+    end
+
+    test "returns false for anthropic" do
+      assert LLMCatalog.requires_base_url?(:anthropic) == false
+    end
+
+    test "returns false for openai" do
+      assert LLMCatalog.requires_base_url?(:openai) == false
+    end
+
+    test "returns false for google" do
+      assert LLMCatalog.requires_base_url?(:google) == false
+    end
+
+    test "returns false for openrouter" do
+      assert LLMCatalog.requires_base_url?(:openrouter) == false
+    end
+
+    test "returns false for an unknown provider" do
+      assert LLMCatalog.requires_base_url?(:unknown_provider) == false
+    end
+  end
 end
