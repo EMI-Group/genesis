@@ -219,6 +219,69 @@ defmodule EvoGit.Config.LLMCatalog do
   end
 
   @doc """
+  Resolves a provider atom + model shortcut/full name to a map model spec.
+
+  This is the map-producing analog of `resolve_model/2` (which returns a
+  "provider:model" string). Returns a map of the shape ReqLLM natively
+  accepts: `%{provider: atom, id: string}`.
+
+  ## Options
+
+    * `:base_url` — when provided and non-empty, included in the returned map.
+    * `:variant` — variant atom used to resolve the canonical provider atom
+      (e.g. `:cn` for Alibaba CN).
+    * `:extra` — when provided and non-nil, included in the returned map as
+      the `:extra` key (must be a map).
+
+  ## Examples
+
+      iex> EvoGit.Config.LLMCatalog.resolve_model_spec(:anthropic, "claude-sonnet-4")
+      %{provider: :anthropic, id: "claude-sonnet-4"}
+
+      iex> EvoGit.Config.LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: "https://my.proxy/v1")
+      %{provider: :openai, id: "gpt-5.5", base_url: "https://my.proxy/v1"}
+
+  """
+  @spec resolve_model_spec(atom(), String.t(), keyword()) :: map()
+  def resolve_model_spec(provider_atom, model_input, opts \\ [])
+      when is_atom(provider_atom) and is_binary(model_input) do
+    variant_id = Keyword.get(opts, :variant)
+    canonical = resolve_provider_atom(provider_atom, variant_id)
+
+    provider = find_provider(provider_atom)
+    model_id = if provider, do: find_model_id(provider.models, model_input), else: model_input
+
+    spec = %{provider: canonical, id: model_id}
+
+    spec =
+      case Keyword.get(opts, :base_url) do
+        nil -> spec
+        "" -> spec
+        base_url -> Map.put(spec, :base_url, base_url)
+      end
+
+    case Keyword.get(opts, :extra) do
+      nil -> spec
+      extra -> Map.put(spec, :extra, extra)
+    end
+  end
+
+  @doc """
+  Returns whether the given provider requires a custom `base_url` to function.
+
+  Looks up the provider entry by its atom and returns its `requires_base_url`
+  flag. Defaults to `false` for providers that do not declare the flag and for
+  unknown providers.
+  """
+  @spec requires_base_url?(atom()) :: boolean()
+  def requires_base_url?(provider_atom) when is_atom(provider_atom) do
+    case find_provider(provider_atom) do
+      nil -> false
+      provider -> provider[:requires_base_url] == true
+    end
+  end
+
+  @doc """
   Finds the provider entry for a given provider atom.
 
   Checks if the atom is in the provider's `provider_atoms` list.
