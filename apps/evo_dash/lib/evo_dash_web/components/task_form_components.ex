@@ -37,13 +37,13 @@ defmodule EvoDashWeb.TaskFormComponents do
             <!-- Task Mode -->
             <div class="flex flex-col sm:flex-row sm:items-center gap-3">
               <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
-                <.icon name="hero-cpu-chip" class="size-5 text-primary" />
+                <.icon name="hero-cpu-chip" class="size-5 text-base-content/60" />
                 {gettext("Task Mode")}
               </label>
               <select
                 name="mode"
                 phx-change="task_change"
-                class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
+                class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
               >
                 <option value="genesis_existing" selected={@mode == "genesis_existing"}>
                   {gettext("Initialize Existing Codebase")}
@@ -65,13 +65,13 @@ defmodule EvoDashWeb.TaskFormComponents do
             <%= if @model_profiles != [] do %>
               <div class="flex flex-col sm:flex-row sm:items-center gap-3">
                 <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
-                  <.icon name="hero-cpu-chip" class="size-5 text-primary" />
+                  <.icon name="hero-cpu-chip" class="size-5 text-base-content/60" />
                   {gettext("Model")}
                 </label>
                 <select
                   name="model_id"
                   phx-change="select_model"
-                  class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-primary/50 font-semibold bg-base-100 shadow-sm"
+                  class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
                 >
                   <%= for profile <- @model_profiles do %>
                     <option value={profile.id} selected={@selected_model_id == profile.id}>
@@ -119,7 +119,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                       type="text"
                       name="node_path"
                       value={@node_path}
-                      class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+                      class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-base-content/20 bg-base-200/30"
                       placeholder={gettext("e.g., ./src/components")}
                     />
                     <label class="label">
@@ -143,7 +143,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                       type="text"
                       name="starting_commit"
                       value={@starting_commit}
-                      class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+                      class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-base-content/20 bg-base-200/30"
                       placeholder={gettext("e.g., abc1234 or HEAD")}
                     />
                     <label class="label">
@@ -166,7 +166,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                     type="text"
                     name="resume_from"
                     value={@resume_from}
-                    class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-base-200/30"
+                    class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-base-content/20 bg-base-200/30"
                     placeholder="a1b2c3d4"
                   />
                   <label class="label">
@@ -194,7 +194,7 @@ defmodule EvoDashWeb.TaskFormComponents do
             name="prompt"
             id="prompt"
             phx-update="ignore"
-            class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y bg-base-200/30"
+            class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-base-content/20 resize-y bg-base-200/30"
             placeholder={
               if String.starts_with?(@mode, "evolve") do
                 gettext("Describe what you want to change or improve...")

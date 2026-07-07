@@ -14,6 +14,8 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:show_open_form, :boolean, default: false)
   attr(:show_new_project_form, :boolean, default: false)
   attr(:path_suggestions, :list, default: [])
+  attr(:tauri_detected, :boolean, default: false)
+  attr(:platform, :string, default: "linux")
 
   def project_selector(assigns) do
     ~H"""
@@ -21,7 +23,7 @@ defmodule EvoDashWeb.ProjectComponents do
       <div class="flex items-center gap-3 flex-wrap">
         <!-- Project icon + info -->
         <div class="flex items-center gap-2">
-          <div class="bg-primary/15 text-primary p-2 rounded-lg">
+          <div class="bg-base-content/10 text-base-content/60 p-2 rounded-lg">
             <.icon name="hero-folder-open" class="size-5" />
           </div>
           <div>
@@ -97,38 +99,48 @@ defmodule EvoDashWeb.ProjectComponents do
       <%= if @show_open_form do %>
         <div class="mt-3 pt-3 border-t border-base-300/50 animate-slide-down">
           <.form for={%{}} phx-submit="open_project" class="flex flex-col sm:flex-row gap-2">
-            <div class="picker-container relative flex-1">
-              <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
-                <.icon name="hero-folder" class="size-4" />
-              </div>
-              <input
-                type="text"
-                name="path"
-                class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
-                placeholder={gettext("/path/to/your/repo")}
-                autofocus
-                phx-hook="PathAutocomplete"
-                phx-change="path_input"
-                phx-debounce="150"
-                id="project-path-input"
-                list="path-suggestions"
-              />
-              <button
-                type="button"
-                id="project-path-picker-button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
-                phx-click="pick_directory"
-                phx-hook="DirectoryPicker"
-                data-picker-id="project"
-                title={gettext("Browse for directory")}
-              >
-                <.icon name="hero-folder-open" class="size-4" />
-              </button>
-              <datalist id="path-suggestions">
-                <%= for suggestion <- @path_suggestions do %>
-                  <option value={suggestion}></option>
+            <div class="flex-1 flex items-center gap-2">
+              <%= if @tauri_detected do %>
+                <button type="button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="project">
+                  <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
+                </button>
+              <% end %>
+              <div class="picker-container relative flex-1">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                  <.icon name="hero-folder" class="size-4" />
+                </div>
+                <input
+                  type="text"
+                  name="path"
+                  class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+                  placeholder={platform_placeholder(@platform)}
+                  autofocus
+                  phx-hook="PathAutocomplete"
+                  phx-change="path_input"
+                  phx-debounce="150"
+                  id="project-path-input"
+                  list="path-suggestions"
+                />
+                <%= if @tauri_detected do %>
+                  <button
+                    type="button"
+                    id="project-path-picker-button"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/30 hover:text-base-content/60 transition-colors"
+                    phx-click="pick_directory"
+                    phx-hook="DirectoryPicker"
+                    data-picker-id="project"
+                    title={gettext("Browse for directory")}
+                  >
+                    <.icon name="hero-folder-open" class="size-4" />
+                  </button>
                 <% end %>
-              </datalist>
+                <span class="label-text-alt text-base-content/50 text-xs mt-1 block">{gettext("Repository path on this machine")}</span>
+                <datalist id="path-suggestions">
+                  <%= for suggestion <- @path_suggestions do %>
+                    <option value={suggestion}></option>
+                  <% end %>
+                </datalist>
+              </div>
             </div>
             <button type="submit" class="btn btn-primary btn-sm gap-1">
               <.icon name="hero-check" class="size-4" /> {gettext("Open")}
@@ -149,29 +161,39 @@ defmodule EvoDashWeb.ProjectComponents do
               <label class="label py-1">
                 <span class="label-text text-xs font-medium">{gettext("Location (parent directory)")}</span>
               </label>
-              <div class="picker-container relative">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
-                  <.icon name="hero-folder" class="size-4" />
+              <div class="flex items-center gap-2">
+                <%= if @tauri_detected do %>
+                  <button type="button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="new-project">
+                    <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
+                  </button>
+                <% end %>
+                <div class="picker-container relative flex-1">
+                  <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                    <.icon name="hero-folder" class="size-4" />
+                  </div>
+                  <input
+                    type="text"
+                    name="location"
+                    class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+                    placeholder={platform_parent_placeholder(@platform)}
+                    autofocus
+                    id="new-project-location-input"
+                  />
+                  <%= if @tauri_detected do %>
+                    <button
+                      type="button"
+                      id="new-project-location-picker-button"
+                      class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/30 hover:text-base-content/60 transition-colors"
+                      phx-click="pick_directory"
+                      phx-hook="DirectoryPicker"
+                      data-picker-id="new-project"
+                      title={gettext("Browse for location")}
+                    >
+                      <.icon name="hero-folder-open" class="size-4" />
+                    </button>
+                  <% end %>
+                  <span class="label-text-alt text-base-content/50 text-xs mt-1 block">{gettext("Repository path on this machine")}</span>
                 </div>
-                <input
-                  type="text"
-                  name="location"
-                  class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
-                  placeholder={gettext("/path/to/parent/directory")}
-                  autofocus
-                  id="new-project-location-input"
-                />
-                <button
-                  type="button"
-                  id="new-project-location-picker-button"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
-                  phx-click="pick_directory"
-                  phx-hook="DirectoryPicker"
-                  data-picker-id="new-project"
-                  title={gettext("Browse for location")}
-                >
-                  <.icon name="hero-folder-open" class="size-4" />
-                </button>
               </div>
             </div>
 
@@ -217,6 +239,8 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:new_repo_id, :string, default: "")
   attr(:new_repo_path, :string, default: "")
   attr(:new_repo_description, :string, default: "")
+  attr(:tauri_detected, :boolean, default: false)
+  attr(:platform, :string, default: "linux")
 
   def project_settings_panel(assigns) do
     ~H"""
@@ -295,7 +319,7 @@ defmodule EvoDashWeb.ProjectComponents do
                   <span class="badge badge-accent badge-sm font-mono">{name}</span>
                   <span class="text-sm font-mono flex-1 truncate">{cmd}</span>
                   <button
-                    class="btn btn-ghost btn-xs btn-primary"
+                    class="btn btn-ghost btn-xs"
                     phx-click="run_command"
                     phx-value-command={name}
                   >
@@ -387,27 +411,37 @@ defmodule EvoDashWeb.ProjectComponents do
                       <span class="label-text text-xs font-medium">{gettext("Path")}
                       <.tip text={gettext("Absolute path to the repository root on this machine")} /></span>
                     </label>
-                    <div class="picker-container relative">
-                      <input
-                        type="text"
-                        name="path"
-                        value={@new_repo_path}
-                        placeholder="/absolute/path/to/repo"
-                        class="input input-bordered input-sm w-full font-mono pr-8"
-                        required
-                        id="foreign-repo-path-input"
-                      />
-                      <button
-                        type="button"
-                        id="foreign-repo-path-picker-button"
-                        class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-primary transition-colors"
-                        phx-click="pick_directory"
-                        phx-hook="DirectoryPicker"
-                        data-picker-id="foreign-repo"
-                        title={gettext("Browse for directory")}
-                      >
-                        <.icon name="hero-folder-open" class="size-4" />
-                      </button>
+                    <div class="flex items-center gap-2">
+                      <%= if @tauri_detected do %>
+                        <button type="button" class="btn btn-sm btn-warning gap-1" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="foreign-repo">
+                          <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
+                        </button>
+                      <% end %>
+                      <div class="picker-container relative flex-1">
+                        <input
+                          type="text"
+                          name="path"
+                          value={@new_repo_path}
+                          placeholder={platform_placeholder(@platform)}
+                          class="input input-bordered input-sm w-full font-mono pr-8"
+                          required
+                          id="foreign-repo-path-input"
+                        />
+                        <%= if @tauri_detected do %>
+                          <button
+                            type="button"
+                            id="foreign-repo-path-picker-button"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/30 hover:text-base-content/60 transition-colors"
+                            phx-click="pick_directory"
+                            phx-hook="DirectoryPicker"
+                            data-picker-id="foreign-repo"
+                            title={gettext("Browse for directory")}
+                          >
+                            <.icon name="hero-folder-open" class="size-4" />
+                          </button>
+                        <% end %>
+                        <span class="label-text-alt text-base-content/50 text-xs mt-1 block">{gettext("Repository path on this machine")}</span>
+                      </div>
                     </div>
                   </div>
                   <div>
@@ -450,4 +484,12 @@ defmodule EvoDashWeb.ProjectComponents do
     </details>
     """
   end
+
+  defp platform_placeholder("mac"), do: "/Users/username/my-project"
+  defp platform_placeholder("windows"), do: "C:\\Users\\username\\my-project"
+  defp platform_placeholder(_), do: "/home/user/my-project"
+
+  defp platform_parent_placeholder("mac"), do: "/Users/username/projects"
+  defp platform_parent_placeholder("windows"), do: "C:\\Users\\username\\projects"
+  defp platform_parent_placeholder(_), do: "/home/user/projects"
 end

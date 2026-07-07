@@ -48,6 +48,8 @@ defmodule EvoDashWeb.DashboardLive do
           data-task-mode={@task_mode}
         >
           <div id="welcome-check" phx-hook="WelcomeCheck" class="hidden"></div>
+          <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
+          <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
           <div id="browser-notifications" phx-hook="BrowserNotifications">
             <!-- Project Selector (always visible) -->
             <EvoDashWeb.ProjectComponents.project_selector
@@ -56,6 +58,8 @@ defmodule EvoDashWeb.DashboardLive do
               show_open_form={@show_open_project_form}
               show_new_project_form={@show_new_project_form}
               path_suggestions={@path_suggestions}
+              tauri_detected={@tauri_detected}
+              platform={@platform}
             />
 
             <!-- Task Form (always visible, disabled when no project) -->
@@ -89,6 +93,8 @@ defmodule EvoDashWeb.DashboardLive do
                 new_repo_id={@new_repo_id}
                 new_repo_path={@new_repo_path}
                 new_repo_description={@new_repo_description}
+                tauri_detected={@tauri_detected}
+                platform={@platform}
               />
             </div>
 
@@ -308,6 +314,8 @@ defmodule EvoDashWeb.DashboardLive do
         tasks: [],
         model_profiles: model_profiles,
         selected_model_id: selected_model_id,
+        tauri_detected: false,
+        platform: "linux",
         notified_task_ids:
           TaskRegistry.list_tasks()
           |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
@@ -572,6 +580,16 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_event("select_model", %{"model_id" => id}, socket) do
     {:noreply, assign(socket, :selected_model_id, id)}
+  end
+
+  @impl true
+  def handle_event("tauri_detected", %{"tauri" => tauri}, socket) do
+    {:noreply, assign(socket, :tauri_detected, tauri)}
+  end
+
+  @impl true
+  def handle_event("platform_info", %{"platform" => platform}, socket) do
+    {:noreply, assign(socket, :platform, platform)}
   end
 
   @impl true
