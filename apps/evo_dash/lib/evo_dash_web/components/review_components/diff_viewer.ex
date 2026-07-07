@@ -189,7 +189,18 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # ---------------------------------------------------------------------------
 
   defp render_diff_content(file, file_path, context_level) do
-    assigns = %{file: file, file_path: file_path, context_level: context_level}
+    # Pre-compute highlighted content at the hunk level (one Lumis call per
+    # code block instead of one per line), then look up per-line results.
+    lines = if file.diff, do: parse_diff_lines(file), else: []
+    highlighted = if file.diff, do: precompute_highlights(lines, file.language), else: %{}
+
+    assigns = %{
+      file: file,
+      file_path: file_path,
+      context_level: context_level,
+      lines: lines,
+      highlighted: highlighted
+    }
 
     ~H"""
     <div class="text-xs font-mono">
@@ -199,9 +210,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <span><%= gettext("Loading diff...") %></span>
         </div>
       <% else %>
-        <% lines = parse_diff_lines(@file) %>
         <% {hunk_starts, _} =
-            Enum.reduce(lines, {[], 0}, fn line, {acc, idx} ->
+            Enum.reduce(@lines, {[], 0}, fn line, {acc, idx} ->
               if line.type == :hunk, do: {[idx | acc], idx + 1}, else: {acc, idx + 1}
             end) %>
         <% hunk_indices = Enum.reverse(hunk_starts) %>
@@ -210,14 +220,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         <%= if show_top_expand do %>
           <.diff_expand_bar path={@file_path} context_level={@context_level} />
         <% end %>
-        <%= for {line, i} <- Enum.with_index(lines) do %>
+        <%= for {line, i} <- Enum.with_index(@lines) do %>
           <%= if i in hunk_indices and i > 0 do %>
             <.diff_expand_bar path={@file_path} context_level={@context_level} />
           <% end %>
           <div class={["diff-line", diff_line_class(line.type)]}>
             <span class="diff-line-gutter">{line.line_number}</span>
             <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
-            <span class="diff-line-content" phx-no-format>{if line.type in [:addition, :deletion, :context], do: highlight_line_content(line.content, @file.language), else: line.content}</span>
+            <span class="diff-line-content">{Map.get(@highlighted, line.line_number, line.content)}</span>
           </div>
         <% end %>
         <%= if show_bottom_expand do %>
@@ -294,6 +304,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         String.starts_with?(line, "index ") ->
           %{line_number: idx, prefix: " ", content: line, type: :meta}
 
+        # "\ No newline at end of file" git marker — not code, skip highlighting
+        String.starts_with?(line, "\\ ") ->
+          %{line_number: idx, prefix: " ", content: line, type: :no_newline}
+
         true ->
           content = if String.length(line) > 0, do: String.slice(line, 1..-1//1), else: ""
           %{line_number: idx, prefix: " ", content: content, type: :context}
@@ -301,22 +315,109 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     end)
   end
 
-  # Syntax highlighting using Lumis multi-themes for light/dark support.
-  # Strips the <pre>/<code> wrappers since we render lines individually.
+  # ---------------------------------------------------------------------------
+  # Hunk-level syntax highlighting (batched Lumis calls)
+  # ---------------------------------------------------------------------------
+  #
+  # Instead of calling Lumis.highlight! per line (one NIF round-trip per diff
+  # line), we batch at the hunk level: reconstruct clean Old Code and New Code
+  # strings from each hunk, call Lumis once per code block, then map the
+  # resulting highlighted lines back to individual diff lines.
   #
   # This try/rescue is JUSTIFIED:
   #   - Lumis.highlight!/2 raises on invalid/unexpected input (malformed code,
   #     unsupported language, binary-encoded edge cases). The non-bang variant
   #     Lumis.highlight/2 also raises internally (it does NOT return {:error, _}
   #     despite what the docs suggest), so case/with cannot cleanly replace it.
-  #   - This is called per-line in a diff viewer, so offloading to a separate
-  #     process (Task/async) is impractical — it would spawn one task per line.
-  #   - Falling back to the raw (un-highlighted) content is the correct graceful
-  #     degradation: the line is still visible, just without syntax coloring.
-  defp highlight_line_content(content, language) do
-    if content && String.length(content) > 0 do
+  #   - This is called once per hunk code block (not per line), so the cost is
+  #     amortized. Fallback to raw un-highlighted code is the correct graceful
+  #     degradation for a single hunk failure.
+
+  defp precompute_highlights(lines, language) do
+    {result, _} = do_precompute(lines, language, %{})
+    result
+  end
+
+  defp do_precompute([], _language, acc), do: {acc, []}
+
+  # Start of a hunk: collect everything until the next hunk header or end.
+  defp do_precompute([%{type: :hunk} = hdr | rest], language, acc) do
+    {hunk_body, remaining} = Enum.split_while(rest, fn l -> l.type != :hunk end)
+    hunk_lines = [hdr | hunk_body]
+    new_acc = highlight_hunk(hunk_lines, language, acc)
+    do_precompute(remaining, language, new_acc)
+  end
+
+  # Header/meta lines before the first hunk — no highlighting needed.
+  defp do_precompute([line | rest], language, acc) do
+    do_precompute(rest, language, Map.put(acc, line.line_number, line.content))
+  end
+
+  # Highlight a single hunk (including its @@ header line).
+  defp highlight_hunk(hunk_lines, language, acc) do
+    # Map the hunk header line (plain text)
+    acc =
+      case hunk_lines do
+        [%{type: :hunk} = hdr | _] -> Map.put(acc, hdr.line_number, hdr.content)
+        _ -> acc
+      end
+
+    old_code = build_hunk_code(hunk_lines, :old)
+    new_code = build_hunk_code(hunk_lines, :new)
+
+    old_highlighted = highlight_code_block(old_code, language)
+    new_highlighted = highlight_code_block(new_code, language)
+
+    # Walk the hunk lines and map each code line to its highlighted counterpart.
+    {_old_i, _new_i, result} =
+      Enum.reduce(hunk_lines, {0, 0, acc}, fn
+        %{type: :hunk}, counters ->
+          counters
+
+        %{type: :context, line_number: ln}, {old_i, new_i, acc2} ->
+          hl = Enum.at(old_highlighted, old_i) || Enum.at(new_highlighted, new_i) || ""
+          {old_i + 1, new_i + 1, Map.put(acc2, ln, raw(hl))}
+
+        %{type: :addition, line_number: ln}, {old_i, new_i, acc2} ->
+          hl = Enum.at(new_highlighted, new_i) || ""
+          {old_i, new_i + 1, Map.put(acc2, ln, raw(hl))}
+
+        %{type: :deletion, line_number: ln}, {old_i, new_i, acc2} ->
+          hl = Enum.at(old_highlighted, old_i) || ""
+          {old_i + 1, new_i, Map.put(acc2, ln, raw(hl))}
+
+        %{type: :no_newline, line_number: ln} = line, {old_i, new_i, acc2} ->
+          {old_i, new_i, Map.put(acc2, ln, line.content)}
+
+        _line, counters ->
+          counters
+      end)
+
+    result
+  end
+
+  # Build a clean code string for a hunk, joining lines of the requested type.
+  # :old → context + deletion lines (original file)
+  # :new → context + addition lines (new file)
+  defp build_hunk_code(hunk_lines, :old) do
+    hunk_lines
+    |> Enum.filter(&(&1.type in [:context, :deletion]))
+    |> Enum.map_join("\n", & &1.content)
+  end
+
+  defp build_hunk_code(hunk_lines, :new) do
+    hunk_lines
+    |> Enum.filter(&(&1.type in [:context, :addition]))
+    |> Enum.map_join("\n", & &1.content)
+  end
+
+  # Call Lumis once for a whole code block, return per-line highlighted HTML.
+  defp highlight_code_block(code, language) do
+    if code == "" or is_nil(language) do
+      String.split(code, "\n")
+    else
       try do
-        Lumis.highlight!(content,
+        Lumis.highlight!(code,
           formatter:
             {:html_multi_themes,
              language: language,
@@ -324,12 +425,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
              default_theme: "light-dark()"}
         )
         |> strip_lumis_wrappers()
-        |> raw()
+        |> String.split("\n")
       rescue
-        _ -> content
+        _ -> String.split(code, "\n")
       end
-    else
-      ""
     end
   end
 
