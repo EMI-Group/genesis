@@ -671,7 +671,12 @@ defmodule EvoGit.Config do
   end
 
   defp env_var_to_reqllm_key(env_var) when is_binary(env_var) do
-    String.to_atom(env_var)
+    # Derive from env var name: strip _API_KEY suffix, downcase, append _api_key.
+    # The config file is a trusted source, so String.to_atom/1 is safe here.
+    base = String.replace_suffix(env_var, "_API_KEY", "")
+    if base != "" and base != env_var do
+      String.to_atom("#{String.downcase(base)}_api_key")
+    end
   end
 
   @doc """
