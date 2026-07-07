@@ -61,7 +61,7 @@ defmodule EvoDashWeb.HelpersTest do
 
   describe "task_status_badge/1" do
     test "returns correct badge for known statuses" do
-      assert task_status_badge(:running) =~ "text-success"
+      assert task_status_badge(:running) =~ "text-warning"
       assert task_status_badge(:completed) =~ "text-info"
       assert task_status_badge(:failed) =~ "text-error"
       assert task_status_badge(:cancelled) =~ "text-warning"

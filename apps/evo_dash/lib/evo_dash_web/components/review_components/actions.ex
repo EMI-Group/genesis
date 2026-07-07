@@ -41,7 +41,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             {gettext("Reject Changes")}
           </button>
           <button
-            class="btn btn-outline btn-info rounded-full px-6 gap-2"
+            class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
             phx-click="continue"
             disabled={@loading}
           >
@@ -96,7 +96,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <% end %>
         <%= if not @branch_exists and @can_continue do %>
           <button
-            class="btn btn-outline btn-info rounded-full px-6 gap-2"
+            class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
             phx-click="continue"
             disabled={@loading}
           >
@@ -105,7 +105,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
           </button>
         <% end %>
         <button
-          class="btn btn-outline btn-warning rounded-full px-6 gap-2"
+          class="btn btn-outline btn-ghost rounded-full px-6 gap-2"
           phx-click="ignore"
           phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
           disabled={@loading}
