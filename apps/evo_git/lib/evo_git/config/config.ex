@@ -659,10 +659,32 @@ defmodule EvoGit.Config do
     creds = read_toml_file(path, %{}, description: "credentials")
 
     Enum.each(creds, fn {key, value} ->
-      if is_binary(value), do: System.put_env(key, value)
+      if is_binary(value) and value != "" do
+        System.put_env(key, value)
+        # Also set via ReqLLM for immediate in-process effect (settings page).
+        if key_atom = env_var_to_reqllm_key(key) do
+          ReqLLM.put_key(key_atom, value)
+        end
+      end
     end)
 
     creds
+  end
+
+  defp env_var_to_reqllm_key(env_var) when is_binary(env_var) do
+    # Look up in the LLM catalog for a provider with this env var.
+    provider = Enum.find(EvoGit.Config.LLMCatalog.providers(), fn p -> p.env_var == env_var end)
+
+    if provider do
+      canonical = hd(provider.provider_atoms)
+      :"#{canonical}_api_key"
+    else
+      # Derive from env var name: strip _API_KEY suffix, downcase, append _api_key.
+      base = String.replace_suffix(env_var, "_API_KEY", "")
+      if base != "" and base != env_var do
+        String.to_atom("#{String.downcase(base)}_api_key")
+      end
+    end
   end
 
   @doc """
@@ -691,7 +713,13 @@ defmodule EvoGit.Config do
     # This guarantees the keys are usable in the current session even if
     # persistence to disk fails (e.g., Windows path issues).
     Enum.each(new_creds, fn {key, value} ->
-      if is_binary(value), do: System.put_env(key, value)
+      if is_binary(value) and value != "" do
+        System.put_env(key, value)
+        # Also set via ReqLLM for immediate in-process effect (settings page).
+        if key_atom = env_var_to_reqllm_key(key) do
+          ReqLLM.put_key(key_atom, value)
+        end
+      end
     end)
 
     with :ok <- File.mkdir_p(dir),
