@@ -105,22 +105,26 @@ defmodule EvoDashWeb.ProjectComponents do
                   <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
                 </button>
               <% end %>
-              <div class="picker-container relative flex-1">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
-                  <.icon name="hero-folder" class="size-4" />
+              <div class="picker-container flex-1">
+                <div class="relative">
+                  <%= if @tauri_detected do %>
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                      <.icon name="hero-folder" class="size-4" />
+                    </div>
+                  <% end %>
+                  <input
+                    type="text"
+                    name="path"
+                    class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+                    placeholder={platform_placeholder(@platform)}
+                    autofocus
+                    phx-hook="PathAutocomplete"
+                    phx-change="path_input"
+                    phx-debounce="150"
+                    id="project-path-input"
+                    list="path-suggestions"
+                  />
                 </div>
-                <input
-                  type="text"
-                  name="path"
-                  class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
-                  placeholder={platform_placeholder(@platform)}
-                  autofocus
-                  phx-hook="PathAutocomplete"
-                  phx-change="path_input"
-                  phx-debounce="150"
-                  id="project-path-input"
-                  list="path-suggestions"
-                />
                 <span class="label-text-alt text-base-content/50 text-xs mt-1 block">{gettext("Repository path on this machine")}</span>
                 <datalist id="path-suggestions">
                   <%= for suggestion <- @path_suggestions do %>
@@ -154,18 +158,22 @@ defmodule EvoDashWeb.ProjectComponents do
                     <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
                   </button>
                 <% end %>
-                <div class="picker-container relative flex-1">
-                  <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
-                    <.icon name="hero-folder" class="size-4" />
+                <div class="picker-container flex-1">
+                  <div class="relative">
+                    <%= if @tauri_detected do %>
+                      <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-base-content/40">
+                        <.icon name="hero-folder" class="size-4" />
+                      </div>
+                    <% end %>
+                    <input
+                      type="text"
+                      name="location"
+                      class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+                      placeholder={platform_parent_placeholder(@platform)}
+                      autofocus
+                      id="new-project-location-input"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    name="location"
-                    class="input input-bordered input-sm w-full pl-9 pr-9 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
-                    placeholder={platform_parent_placeholder(@platform)}
-                    autofocus
-                    id="new-project-location-input"
-                  />
                   <span class="label-text-alt text-base-content/50 text-xs mt-1 block">{gettext("Repository path on this machine")}</span>
                 </div>
               </div>
