@@ -193,6 +193,11 @@ defmodule EvoGit.Agent.Tools.Context do
             result
           else
             if commit do
+              trailer =
+                if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
+                  do: @co_author_trailer,
+                  else: ""
+
               {add_output, _} =
                 EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root)
 
@@ -203,7 +208,7 @@ defmodule EvoGit.Agent.Tools.Context do
                   [
                     "commit",
                     "-m",
-                    "Update CONTEXT.md for #{dir_path}#{@co_author_trailer}"
+                    "Update CONTEXT.md for #{dir_path}#{trailer}"
                   ],
                   repo_root
                 )
@@ -250,6 +255,11 @@ defmodule EvoGit.Agent.Tools.Context do
                 result_msg = "Successfully updated CONTEXT.md for directory '#{dir_path}'"
 
                 if commit do
+                  trailer =
+                    if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
+                      do: @co_author_trailer,
+                      else: ""
+
                   relative_path = Path.join(dir_path, "CONTEXT.md")
 
                   {add_output, _} =
@@ -262,7 +272,7 @@ defmodule EvoGit.Agent.Tools.Context do
                       [
                         "commit",
                         "-m",
-                        "Update CONTEXT.md for #{dir_path}#{@co_author_trailer}"
+                        "Update CONTEXT.md for #{dir_path}#{trailer}"
                       ],
                       repo_root
                     )

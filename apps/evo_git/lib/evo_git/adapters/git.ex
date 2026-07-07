@@ -93,7 +93,12 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def commit(path, message) when is_binary(path) and is_binary(message) do
-    full_message = message <> @co_author_trailer
+    trailer =
+      if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
+        do: @co_author_trailer,
+        else: ""
+
+    full_message = message <> trailer
     run(["commit", "-m", full_message], path)
   end
 

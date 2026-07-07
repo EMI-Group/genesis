@@ -87,8 +87,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 49 schemas" do
-      assert length(Schema.all_schemas()) == 49
+    test "has exactly 50 schemas" do
+      assert length(Schema.all_schemas()) == 50
     end
   end
 
@@ -142,6 +142,9 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.nix.enabled == false
       assert defaults.nix.flake_output == nil
 
+      # Git
+      assert defaults.git.co_authored_by_enabled == true
+
       # Tools
       assert defaults.tools.search.enabled == false
       assert defaults.tools.search.provider == :tavily
@@ -180,6 +183,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(grouped, :truncation)
       assert Map.has_key?(grouped, :task_history)
       assert Map.has_key?(grouped, :nix)
+      assert Map.has_key?(grouped, :git)
       assert Map.has_key?(grouped, :server)
       assert Map.has_key?(grouped, :tools)
     end
@@ -193,6 +197,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
       assert length(grouped[:nix]) == 2
+      assert length(grouped[:git]) == 1
       assert length(grouped[:server]) == 2
       assert length(grouped[:tools]) == 8
     end

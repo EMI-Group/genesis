@@ -9,6 +9,13 @@ defmodule EvoGit.Agent.Tools.Git do
   Returns the tool schema for ReqLLM.
   """
   def schema do
+    co_author_tip =
+      if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false do
+        "- When committing, append `Genesis <noreply@evogit.ai>` as a co-author on git commits using a second `-m` flag (e.g., `git commit -m \"message\" -m \"Co-authored-by: Genesis <noreply@evogit.ai>\"`)."
+      else
+        ""
+      end
+
     ReqLLM.tool(
       name: "run_git",
       description: """
@@ -26,7 +33,7 @@ defmodule EvoGit.Agent.Tools.Git do
       - Run git status to check the current state of the repo
       - Run git diff to see the specific changes to tracked files
       - Run git log to see the commit history and understand recent changes
-      - When committing, append `Genesis <noreply@evogit.ai>` as a co-author on git commits using a second `-m` flag (e.g., `git commit -m "message" -m "Co-authored-by: Genesis <noreply@evogit.ai>"`).
+      #{co_author_tip}
       """,
       parameter_schema: %{
         "type" => "object",
