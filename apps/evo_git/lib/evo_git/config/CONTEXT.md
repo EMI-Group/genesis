@@ -25,7 +25,9 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 |----------|-------------|
 | `providers/0` | Returns list of predefined provider entries (Anthropic, OpenAI, Google, DeepSeek, ZAI, Alibaba) with models |
 | `provider_models/1` | Returns model shortcuts for a given provider atom |
-| `resolve_model/2` | Resolves `{provider_atom, model_input}` to `"provider:model"` string |
+| `resolve_model/2` | Resolves `{provider_atom, model_input}` to `"provider:model"` string (backward-compat string form) |
+| `resolve_model_spec/3` | Map-producing analog of `resolve_model/2`. Returns `%{provider: atom, id: string}` plus optional `base_url`/`extra`. Opts: `:base_url`, `:variant`, `:extra`. |
+| `requires_base_url?/1` | Returns whether a provider requires a custom `base_url` (reads the `requires_base_url` flag; default `false`). `:openai_compatible` → `true`. |
 | `find_provider/1` | Finds provider entry by atom (checks `provider_atoms` list) |
 | `unknown_provider_help/0` | Returns guidance text with links to llmdb.xyz and ReqLLM docs |
 | `known_env_vars/0` | Returns all unique env var names from the catalog |
