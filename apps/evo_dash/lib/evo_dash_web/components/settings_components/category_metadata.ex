@@ -14,6 +14,7 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_display_name(:scheduler), do: gettext("Scheduler")
   def category_display_name(:llm), do: gettext("LLM")
   def category_display_name(:user), do: gettext("User")
+  def category_display_name(:git), do: gettext("Git")
   def category_display_name(:sandbox), do: gettext("Sandbox")
   def category_display_name(:truncation), do: gettext("Truncation")
   def category_display_name(:task_history), do: gettext("Task History")
@@ -24,6 +25,7 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_icon(:scheduler), do: "hero-cog-6-tooth"
   def category_icon(:llm), do: "hero-sparkles"
   def category_icon(:user), do: "hero-user"
+  def category_icon(:git), do: "hero-git-branch"
   def category_icon(:sandbox), do: "hero-shield-check"
   def category_icon(:truncation), do: "hero-scissors"
   def category_icon(:task_history), do: "hero-clock"
@@ -40,6 +42,9 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
 
   def category_description(:user),
     do: gettext("Set your user identity for Git commits and collaboration.")
+
+  def category_description(:git),
+    do: gettext("Configure Git commit behavior and attribution for agent-generated commits.")
 
   def category_description(:sandbox),
     do: gettext("Manage sandbox isolation, resource limits, and process constraints.")
@@ -81,7 +86,19 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   # ── Helpers shared by sidebar and search_results ──
 
   def sort_categories(categories) do
-    order = [:llm, :scheduler, :user, :sandbox, :truncation, :task_history, :server, :tools, :nix]
+    order = [
+      :llm,
+      :scheduler,
+      :user,
+      :git,
+      :sandbox,
+      :truncation,
+      :task_history,
+      :server,
+      :tools,
+      :nix
+    ]
+
     Enum.sort_by(categories, fn {cat, _} -> Enum.find_index(order, &(&1 == cat)) || 99 end)
   end
 
