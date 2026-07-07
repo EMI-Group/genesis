@@ -130,16 +130,17 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # Note: gettext is NOT imported in ConnCase, so assertions use literal
     # English source strings (matching what the en translation returns).
 
-    test "renders custom model form for OpenRouter (no base URL)", %{conn: conn} do
+    test "renders custom model form for OpenRouter", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
       assert html =~ "Model Name"
       assert html =~ ~s(name="model_name")
-      assert html =~ ~s(placeholder="anthropic/claude-3.5-sonnet")
+      # The unified custom-model form ALWAYS shows a base_url input (optional
+      # for OpenRouter, required for OpenAI-compatible providers).
+      assert html =~ ~s(name="base_url")
       assert html =~ "Set Model"
-      assert html =~ "The model will be saved as"
       # custom-model providers hide the quick-select buttons
       refute html =~ "Quick-select a model:"
     end
@@ -160,7 +161,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute html =~ "Quick-select a model:"
     end
 
-    test "saving OpenRouter custom model stores openrouter: spec and pre-fills on re-render", %{
+    test "saving OpenRouter custom model stores map spec and pre-fills on re-render", %{
       conn: conn
     } do
       {:ok, view, _html} = live(conn, ~p"/settings")
@@ -173,7 +174,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "provider_id" => "openrouter"
         })
 
-      # After saving, the re-rendered HTML pre-fills the input with the model name
+      # The model is persisted as a ReqLLM-native map spec (normalized to a map
+      # with atom provider after config resolve/reload).
+      models = current_models(view)
+      assert length(models) == 1
+      assert hd(models).model == %{provider: :openrouter, id: "anthropic/claude-3.5-sonnet"}
+      # After saving, the re-rendered HTML pre-fills the model_id input from the map
       assert html =~ ~s(value="anthropic/claude-3.5-sonnet")
     end
 
@@ -191,6 +197,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ ~s(value="my-model")
       assert html =~ ~s(value="https://api.example.com/v1")
+
+      # openai_compatible catalog entry resolves to the :openai_compatible atom.
+      models = current_models(view)
+      assert hd(models).model == %{
+               provider: :openai_compatible,
+               id: "my-model",
+               base_url: "https://api.example.com/v1"
+             }
     end
 
     test "rejects empty model name", %{conn: conn} do
@@ -360,7 +374,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
       render_hook(view, "save_model_profile", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
-        "model" => "anthropic:claude-sonnet-4-6",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
         "concurrency" => "3"
       })
 
@@ -416,7 +431,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
         render_hook(view, "save_model_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
-          "model" => "anthropic:claude-sonnet-4-6",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
           "concurrency" => "5",
           "temperature" => "0.7",
           "max_tokens" => "4096",
@@ -426,7 +442,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Model profile saved."
       [profile] = current_models(view)
       assert profile.id == "default"
-      assert profile.model == "anthropic:claude-sonnet-4-6"
+      assert profile.model == %{provider: :anthropic, id: "claude-sonnet-4-6"}
       assert profile.concurrency == 5
       assert profile.temperature == 0.7
       assert profile.max_tokens == 4096
@@ -441,7 +457,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
       render_hook(view, "save_model_profile", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
-        "model" => "anthropic:claude-sonnet-4-6",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
         "concurrency" => "3"
       })
 
@@ -457,7 +474,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
         render_hook(view, "save_model_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "  ",
-          "model" => "anthropic:claude-sonnet-4-6",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
           "concurrency" => "3"
         })
 
@@ -471,7 +489,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
       render_hook(view, "save_model_profile", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
-        "model" => "anthropic:claude-sonnet-4-6",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
         "concurrency" => "3"
       })
 
@@ -481,7 +500,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
         render_hook(view, "save_model_profile", %{
           "profile_id" => "profile-2",
           "profile_id_new" => "default",
-          "model" => "openai:gpt-5.5",
+          "provider" => "openai",
+          "model_id" => "gpt-5.5",
           "concurrency" => "5"
         })
 
@@ -496,7 +516,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
         render_hook(view, "save_model_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "profile-1",
-          "model" => "anthropic:claude-sonnet-4-6",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
           "concurrency" => "5"
         })
 
@@ -513,7 +534,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
       render_hook(view, "save_model_profile", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
-        "model" => "anthropic:claude-sonnet-4-6",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
         "concurrency" => "3"
       })
 
@@ -522,7 +544,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
       render_hook(view, "save_model_profile", %{
         "profile_id" => "profile-2",
         "profile_id_new" => "profile-2",
-        "model" => "openai:gpt-5.5",
+        "provider" => "openai",
+        "model_id" => "gpt-5.5",
         "concurrency" => "3"
       })
 
@@ -544,10 +567,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Model selected and saved."
       models = current_models(view)
       assert length(models) == 1
-      assert hd(models).model == "anthropic:claude-sonnet-4-6"
+      # After save + resolve, the model string is normalized to a map spec with
+      # an atom provider.
+      assert hd(models).model == %{provider: :anthropic, id: "claude-sonnet-4-6"}
       assert hd(models).concurrency == 3
-      # Flat [:llm, :model] mirrors the default profile
-      assert get_in(assigns(view).file_config, [:llm, :model]) == "anthropic:claude-sonnet-4-6"
+      # Flat [:llm, :model] mirrors the default profile (also normalized to map)
+      assert get_in(assigns(view).file_config, [:llm, :model]) ==
+               %{provider: :anthropic, id: "claude-sonnet-4-6"}
     end
 
     test "save_custom_model adds a profile for OpenRouter", %{conn: conn} do
@@ -562,7 +588,80 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Custom model saved."
       models = current_models(view)
       assert length(models) == 1
-      assert hd(models).model == "openrouter:anthropic/claude-3.5-sonnet"
+      assert hd(models).model == %{provider: :openrouter, id: "anthropic/claude-3.5-sonnet"}
+    end
+
+    test "save_model_profile composes map spec with provider, id, and base_url", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "profile-1",
+          "provider" => "openai",
+          "model_id" => "gpt-4o",
+          "base_url" => "https://my-proxy.com/v1",
+          "concurrency" => "3"
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      assert profile.model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+    end
+
+    test "save_model_profile rejects empty model id", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "profile-1",
+          "provider" => "anthropic",
+          "model_id" => "  ",
+          "concurrency" => "3"
+        })
+
+      assert html =~ "Model ID cannot be empty."
+    end
+
+    test "save_custom_model with base_url for OpenAI-compatible produces map spec", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "llm"})
+      render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
+
+      html =
+        render_hook(view, "save_custom_model", %{
+          "model_name" => "gpt-4o",
+          "base_url" => "https://my-proxy.com/v1",
+          "provider_id" => "openai_compatible"
+        })
+
+      assert html =~ "Custom model saved."
+      models = current_models(view)
+      assert hd(models).model == %{provider: :openai_compatible, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+    end
+
+    test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "base_url" => "https://proxy.example.com/v1",
+        "concurrency" => "3"
+      })
+
+      # Re-open the edit form and verify the structured fields pre-fill from the map spec
+      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      assert html =~ ~s(value="claude-sonnet-4-6")
+      assert html =~ ~s(value="anthropic")
+      assert html =~ ~s(value="https://proxy.example.com/v1")
     end
 
     test "save_custom_model rejects empty name", %{conn: conn} do
