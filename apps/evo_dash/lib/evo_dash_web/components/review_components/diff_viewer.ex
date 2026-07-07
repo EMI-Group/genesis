@@ -25,7 +25,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
               phx-value-path={file.path}
               class={["file-item", @selected_file == file.path && "file-selected"]}
             >
-              <.icon name={file_status_icon(file.status)} class={"size-3.5 shrink-0 #{file_status_color(file.status)}"} />
+              <.icon
+                name={file_status_icon(file.status)}
+                class={"size-3.5 shrink-0 #{file_status_color(file.status)}"}
+              />
               <span class="font-mono truncate flex-1 text-xs" title={file.path}>
                 {Path.basename(file.path)}
               </span>
@@ -50,9 +53,15 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
                 <button
                   phx-click="select_file"
                   phx-value-path={file.path}
-                  class={["file-item file-item-indented", @selected_file == file.path && "file-selected"]}
+                  class={[
+                    "file-item file-item-indented",
+                    @selected_file == file.path && "file-selected"
+                  ]}
                 >
-                  <.icon name={file_status_icon(file.status)} class={"size-3.5 shrink-0 #{file_status_color(file.status)}"} />
+                  <.icon
+                    name={file_status_icon(file.status)}
+                    class={"size-3.5 shrink-0 #{file_status_color(file.status)}"}
+                  />
                   <span class="font-mono truncate flex-1 text-xs" title={file.path}>
                     {Path.basename(file.path)}
                   </span>
@@ -91,7 +100,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
               name="hero-chevron-right"
               class={"size-3.5 transition-transform shrink-0 #{if Map.get(@expanded_files, file.path, false), do: "rotate-90", else: ""}"}
             />
-            <.icon name={file_status_icon(file.status)} class={"size-3.5 #{file_status_color(file.status)}"} />
+            <.icon
+              name={file_status_icon(file.status)}
+              class={"size-3.5 #{file_status_color(file.status)}"}
+            />
             <span class="truncate flex-1">{file.path}</span>
             <span class="text-[10px] text-success font-mono">+{file.additions}</span>
             <span class="text-[10px] text-error font-mono">-{file.deletions}</span>
@@ -207,13 +219,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       <%= if is_nil(@file.diff) do %>
         <div class="flex items-center justify-center py-8 gap-2 text-base-content/50">
           <span class="loading loading-spinner loading-sm"></span>
-          <span><%= gettext("Loading diff...") %></span>
+          <span>{gettext("Loading diff...")}</span>
         </div>
       <% else %>
         <% {hunk_starts, _} =
-            Enum.reduce(@lines, {[], 0}, fn line, {acc, idx} ->
-              if line.type == :hunk, do: {[idx | acc], idx + 1}, else: {acc, idx + 1}
-            end) %>
+          Enum.reduce(@lines, {[], 0}, fn line, {acc, idx} ->
+            if line.type == :hunk, do: {[idx | acc], idx + 1}, else: {acc, idx + 1}
+          end) %>
         <% hunk_indices = Enum.reverse(hunk_starts) %>
         <% show_top_expand = length(hunk_indices) > 0 %>
         <% show_bottom_expand = @context_level != :all %>
@@ -439,7 +451,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # String.split("\n") would split those spans into orphaned fragments. Instead
   # we walk the HTML, tracking a stack of open spans: at each \n we close all
   # open spans (LIFO) on the current line, then reopen them (FIFO) on the next.
-  defp split_html_by_newline(html) do
+  @doc false
+  def split_html_by_newline(html) do
     html
     |> String.to_charlist()
     |> do_split_html_by_newline([], [], [])
@@ -529,12 +542,17 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   defp drop_one([]), do: []
   defp drop_one([_ | rest]), do: rest
 
-  # Strip <pre class="lumis" ...><code ...>...</code></pre> wrappers,
-  # keeping only the inner <span> elements with syntax colors.
-  defp strip_lumis_wrappers(html) do
+  # Strip <pre class="lumis" ...><code ...>...</code></pre> wrappers AND the
+  # per-line <div class="l-line" data-line="N">...</div> wrappers that Lumis
+  # emits around each highlighted line, keeping only the inner <span> elements
+  # with syntax colors. The div wrappers are block-level elements that would
+  # break the flex diff-line layout, so they must be removed before splitting.
+  @doc false
+  def strip_lumis_wrappers(html) do
     html
     |> String.replace(~r/^<pre[^>]*><code[^>]*>/, "")
     |> String.replace(~r/<\/code><\/pre>$/, "")
+    |> String.replace(~r/<\/?div[^>]*>/, "")
   end
 
   # Convert a file path to a valid HTML id (replace / and . with -)
