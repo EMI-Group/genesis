@@ -70,7 +70,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       # Click to show the open project form
       html = render_click(view, "toggle_open_project_form", %{})
-      assert html =~ "/path/to/your/repo"
+      assert html =~ "/home/user/my-project"
 
       # Submit the form with a path
       html =
