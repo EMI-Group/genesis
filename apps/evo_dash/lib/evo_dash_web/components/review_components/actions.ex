@@ -11,6 +11,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   attr(:pr_url, :string, default: nil)
   attr(:loading, :boolean, default: false)
   attr(:can_continue, :boolean, default: false)
+  attr(:is_no_changes, :boolean, default: false)
 
   def action_buttons(assigns) do
     ~H"""
@@ -77,10 +78,19 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
           </button>
         <% end %>
         <%= if not @branch_exists do %>
-          <div class="bg-warning/10 border border-warning/20 rounded-lg p-5 w-full">
+          <div class={[
+            "rounded-lg p-5 w-full",
+            if(@is_no_changes, do: "bg-info/10 border border-info/20", else: "bg-warning/10 border border-warning/20")
+          ]}>
             <div class="flex items-center gap-3">
-              <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
-              <span class="text-sm text-warning font-medium">{gettext("This branch no longer exists. You can dismiss it with Ignore.")}</span>
+              <.icon name={if @is_no_changes, do: "hero-information-circle", else: "hero-exclamation-triangle"} class={"size-5 " <> if(@is_no_changes, do: "text-info", else: "text-warning")} />
+              <span class={["text-sm font-medium", if(@is_no_changes, do: "text-info", else: "text-warning")]}>
+                <%= if @is_no_changes do %>
+                  {gettext("The agent completed without making any code changes. You can continue from this investigation or dismiss it.")}
+                <% else %>
+                  {gettext("This branch no longer exists. You can dismiss it with Ignore.")}
+                <% end %>
+              </span>
             </div>
           </div>
         <% end %>

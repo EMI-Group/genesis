@@ -735,5 +735,7 @@ defmodule EvoDashWeb.TaskCardComponents do
   defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
        when is_binary(branch) and branch != "", do: true
 
+  defp show_review_button?(%{status: :completed, result: {:ok, %{no_changes: true}}}), do: true
+
   defp show_review_button?(_), do: false
 end

@@ -112,6 +112,7 @@ defmodule EvoDashWeb.ReviewLive do
                           has_pr={@has_pr}
                           pr_url={@pr_url}
                           loading={@action_loading}
+                          is_no_changes={@is_no_changes}
                         />
                         <%= if @archive_metadata not in [nil, []] do %>
                           <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-full gap-2" download>
@@ -392,19 +393,24 @@ defmodule EvoDashWeb.ReviewLive do
 
     TaskRegistry.set_review_status(task_id, :continued)
 
-    query = [starting_commit: commit_sha, resume_from: task_id]
+    query = [resume_from: task_id]
+    query = if commit_sha, do: Keyword.put(query, :starting_commit, commit_sha), else: query
     # Include project query param so the dashboard re-opens the correct project
     query = if repo_path, do: Keyword.put(query, :project, repo_path), else: query
 
+    flash_msg =
+      if commit_sha do
+        gettext("Continuing from branch %{branch} at %{sha}",
+          branch: branch_name,
+          sha: String.slice(commit_sha, 0..7)
+        )
+      else
+        gettext("Continuing from investigation task. A new evolve task form has been prepared for you.")
+      end
+
     {:noreply,
      socket
-     |> put_flash(
-       :info,
-       gettext("Continuing from branch %{branch} at %{sha}",
-         branch: branch_name,
-         sha: String.slice(commit_sha || "", 0..7)
-       )
-     )
+     |> put_flash(:info, flash_msg)
      |> push_navigate(to: ~p"/?#{query}")}
   end
 
@@ -570,7 +576,7 @@ defmodule EvoDashWeb.ReviewLive do
 
         branch_exists = branch_name && repo_path && File.dir?(repo_path) && Review.branch_exists?(repo_path, branch_name)
 
-        can_continue = commit_sha != nil && repo_path != nil && File.dir?(repo_path)
+        can_continue = repo_path != nil && File.dir?(repo_path) && (commit_sha != nil || branch_name == nil)
 
         rs = task.review_status
 
@@ -581,6 +587,8 @@ defmodule EvoDashWeb.ReviewLive do
             not branch_exists -> :open
             true -> :open
           end
+
+        is_no_changes = branch_name == nil && task.status == :completed
 
         commit_sha = commit_sha || task.commit_sha
 
@@ -637,6 +645,7 @@ defmodule EvoDashWeb.ReviewLive do
           review_status: review_status,
           branch_exists: branch_exists || false,
           can_continue: can_continue || false,
+          is_no_changes: is_no_changes,
           has_pr: pr_url != nil,
           pr_url: pr_url,
           review_data: review_data,
