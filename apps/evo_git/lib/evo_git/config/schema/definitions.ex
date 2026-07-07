@@ -423,6 +423,17 @@ defmodule EvoGit.Config.Schema.Definitions do
         description:
           "Optional flake output attribute to use (e.g. \"devShells.x86_64-linux.default\"). When nil, uses the default devShell. Appended to the flake URI as \"#<output>\" for `nix print-dev-env`."
       },
+      # ── Git ────────────────────────────────────────────────────────────
+      %{
+        key_path: [:git, :co_authored_by_enabled],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :git,
+        sub_category: nil,
+        description:
+          "When true, appends a 'Co-authored-by: Genesis <noreply@evogit.ai>' trailer to all agent-generated git commits. Disable to omit the co-author attribution."
+      },
       # ── Tools ────────────────────────────────────────────────────────────
       %{
         key_path: [:tools, :search, :enabled],
