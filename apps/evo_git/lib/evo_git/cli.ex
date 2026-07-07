@@ -308,6 +308,8 @@ defmodule EvoGit.CLI do
   end
 
   defp setup_provider(provider) do
+    alias EvoGit.Config.LLMCatalog
+
     IO.puts("\nSelected: #{provider.display_name}")
     IO.puts("API key environment variable: #{provider.env_var}\n")
 
@@ -346,7 +348,14 @@ defmodule EvoGit.CLI do
           prompt_input("Enter model name: ")
       end
 
-    model_string = "#{hd(provider.provider_atoms)}:#{model_id}"
+    # Variant selection — only for providers that offer multiple endpoint
+    # variants (e.g. Alibaba Global/CN, Z.ai Normal/Coding Plan).
+    variant = prompt_variant(provider)
+
+    # Build a map model spec via the catalog. Named providers generally do not
+    # need a base_url, so the resulting map is %{provider: atom, id: string}.
+    model_spec =
+      LLMCatalog.resolve_model_spec(hd(provider.provider_atoms), model_id, variant: variant)
 
     # Step 3: API key
     IO.puts("\nStep 3: Enter your API key.")
@@ -359,36 +368,62 @@ defmodule EvoGit.CLI do
     end
 
     # Save everything
-    save_setup_result(model_string, provider.env_var, api_key)
+    save_setup_result(model_spec, provider.env_var, api_key)
   end
 
   defp setup_custom_provider do
     IO.puts("\n" <> String.trim(EvoGit.Config.LLMCatalog.unknown_provider_help()))
     IO.puts("")
 
-    model_string = prompt_input("Enter the full model string (provider:model): ")
+    provider = prompt_input("Enter the provider name (e.g. openai, mistral, deepseek): ")
 
-    if model_string == "" or not String.contains?(model_string, ":") do
-      IO.puts("\nInvalid model string. Expected format: \"provider:model-name\"")
-      IO.puts("Setup cancelled.")
+    if provider == "" do
+      IO.puts("\nNo provider entered. Setup cancelled.")
     else
-      [provider_part | _] = String.split(model_string, ":", parts: 2)
-      env_var = String.upcase(provider_part) <> "_API_KEY"
+      model_id = prompt_input("Enter the model id (e.g. gpt-4o, custom-model): ")
 
-      IO.puts("\n  Provider: #{provider_part}")
-      IO.puts("  Expected API key env var: #{env_var}")
+      if model_id == "" do
+        IO.puts("\nNo model id entered. Setup cancelled.")
+      else
+        # The whole point of the custom path is proxy/aggregator endpoints.
+        base_url = prompt_input("Enter the base_url (e.g. https://my-proxy.com/v1): ")
 
-      IO.puts(
-        "  (If this is incorrect, check https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html)\n"
-      )
+        if base_url == "" do
+          IO.puts(
+            "\n  ⚠ No base_url provided. The endpoint will not work for OpenAI-compatible providers that require it."
+          )
+        end
 
-      api_key = prompt_input("Enter #{env_var}: ")
+        # Atomize the provider name (returns the atom if it exists, else the string).
+        provider_atom = safe_to_existing_atom(String.downcase(provider))
 
-      save_setup_result(model_string, env_var, api_key)
+        IO.puts("\n  Provider: #{provider}")
+        IO.puts("  Model id: #{model_id}")
+
+        if base_url != "" do
+          IO.puts("  Base URL: #{base_url}")
+        end
+
+        env_var = String.upcase(provider) <> "_API_KEY"
+        IO.puts("  Expected API key env var: #{env_var}")
+
+        IO.puts(
+          "  (If this is incorrect, check https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html)\n"
+        )
+
+        # Build the map model spec. base_url is included only when non-empty
+        # (resolve_model_spec omits nil/"" values).
+        model_spec =
+          EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_id, base_url: base_url)
+
+        api_key = prompt_input("Enter #{env_var}: ")
+
+        save_setup_result(model_spec, env_var, api_key)
+      end
     end
   end
 
-  defp save_setup_result(model_string, env_var, api_key) do
+  defp save_setup_result(model_spec, env_var, api_key) do
     # Save model to config.toml using the [[llm.models]] array format
     existing_config = EvoGit.Config.user_config()
 
@@ -397,11 +432,11 @@ defmodule EvoGit.CLI do
       existing_config
       |> atomize_config_keys()
       |> ensure_llm_section()
-      |> add_model_profile(model_string)
+      |> add_model_profile(model_spec)
 
     case EvoGit.Config.save_user_config(config) do
       :ok ->
-        IO.puts("\n  ✓ Model saved to config.toml: #{model_string}")
+        IO.puts("\n  ✓ Model saved to config.toml: #{format_model_for_display(model_spec)}")
 
         # Save API key to credentials.toml if provided
         if api_key != "" do
@@ -479,13 +514,19 @@ defmodule EvoGit.CLI do
     Map.put(config, :llm, Map.put_new(llm, :models, []))
   end
 
-  # Adds a model string to the [[llm.models]] array.
+  # Adds a model spec to the [[llm.models]] array.
+  #
+  # `model` may be either:
+  #   * a string in "provider:model" form (legacy — normalized to a map later
+  #     by Config.resolve/0), or
+  #   * a map spec like %{provider: :openai, id: "gpt-5.5", base_url: "..."}
+  #     (new — stored directly).
   #
   # If a profile with the id "default" already exists, its model is updated.
   # Otherwise a new "default" profile is created/appended. This keeps the
   # setup wizard simple — it always operates on the default profile.
   # Each profile gets its own concurrency setting (defaults to 3).
-  defp add_model_profile(config, model_string) do
+  defp add_model_profile(config, model) do
     llm = Map.get(config, :llm, %{})
     models = Map.get(llm, :models, [])
 
@@ -493,31 +534,79 @@ defmodule EvoGit.CLI do
       case models do
         [] ->
           # No profiles yet — create the default profile
-          [%{id: "default", model: model_string, concurrency: 3}]
+          [%{id: "default", model: model, concurrency: 3}]
 
         existing ->
           case Enum.find_index(existing, fn p -> Map.get(p, :id) == "default" end) do
             nil ->
               # Profiles exist but none is "default" — append a new one
-              existing ++ [%{id: "default", model: model_string, concurrency: 3}]
+              existing ++ [%{id: "default", model: model, concurrency: 3}]
 
             idx ->
               # Update the existing default profile's model
               List.update_at(existing, idx, fn p ->
-                Map.put(p, :model, model_string)
+                Map.put(p, :model, model)
               end)
           end
       end
 
     llm = Map.put(llm, :models, updated_models)
     # Mirror the default profile's model to llm.model for backward compat
-    llm = Map.put(llm, :model, model_string)
+    llm = Map.put(llm, :model, model)
     Map.put(config, :llm, llm)
   end
 
   @doc false
   # Public test wrapper for add_model_profile/2
-  def do_add_model_profile(config, model_string), do: add_model_profile(config, model_string)
+  def do_add_model_profile(config, model), do: add_model_profile(config, model)
+
+  # Prompts the user to select a variant when the provider offers multiple
+  # endpoint variants (e.g. Alibaba Global/CN). Returns the chosen variant id
+  # (atom) or `nil` when the provider has no variants.
+  defp prompt_variant(provider) do
+    variants = provider[:variants]
+
+    if is_list(variants) and variants != [] do
+      IO.puts("\nThis provider offers multiple endpoint variants:\n")
+
+      variants
+      |> Enum.with_index(1)
+      |> Enum.each(fn {variant, idx} ->
+        IO.puts("  #{idx}. #{variant.display_name}")
+      end)
+
+      IO.puts("")
+      choice = prompt_input("Enter your choice [1-#{length(variants)}] (default: 1): ")
+
+      case parse_int(choice) do
+        n when n >= 1 and n <= length(variants) ->
+          Enum.at(variants, n - 1).id
+
+        _ ->
+          # Default to the first/canonical variant on invalid input.
+          hd(variants).id
+      end
+    else
+      nil
+    end
+  end
+
+  # Formats a model spec for human-friendly display in the setup success
+  # message. Accepts either a map spec (new) or a "provider:model" string
+  # (legacy).
+  defp format_model_for_display(%{provider: provider, id: id} = model) do
+    base = "#{provider}:#{id}"
+    extra = Map.get(model, :base_url)
+
+    if extra do
+      "#{base} (base_url: #{extra})"
+    else
+      base
+    end
+  end
+
+  defp format_model_for_display(model) when is_map(model), do: inspect(model)
+  defp format_model_for_display(model) when is_binary(model), do: model
 
   defp get_input(rest, opts) do
     cond do
