@@ -33,6 +33,7 @@ defmodule EvoGit.Agent.ContextCompression do
   require Logger
 
   alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
 
   @doc """
@@ -84,7 +85,17 @@ defmodule EvoGit.Agent.ContextCompression do
             summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> text)
             new_context = ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
             AgentScheduler.increment_compression_count(agent_id)
-            %{state | context: new_context, total_tokens: 0}
+
+            %{
+              state
+              | context: new_context,
+                total_tokens: 0,
+                usage:
+                  Usage.add(
+                    state.usage,
+                    Usage.from_response_usage(ReqLLM.Response.usage(response))
+                  )
+            }
           end)
 
         _ ->
