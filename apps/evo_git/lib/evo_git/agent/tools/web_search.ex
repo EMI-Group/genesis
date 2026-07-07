@@ -134,7 +134,19 @@ defmodule EvoGit.Agent.Tools.WebSearch do
       provider_config = get_in(config, [:tools, :search, provider]) || %{}
 
       api_key_env_var = provider_config[:api_key_env_var]
-      api_key = if api_key_env_var, do: System.get_env(api_key_env_var), else: nil
+      api_key =
+        if api_key_env_var do
+          case EvoGit.Config.env_var_to_reqllm_key(api_key_env_var) do
+            nil -> System.get_env(api_key_env_var)
+            atom_key ->
+              case ReqLLM.get_key(atom_key) do
+                nil -> System.get_env(api_key_env_var)
+                key -> key
+              end
+          end
+        else
+          nil
+        end
 
       base_url = provider_config[:base_url]
       timeout = args["timeout"] || provider_config[:timeout] || @default_timeout
@@ -165,10 +177,9 @@ defmodule EvoGit.Agent.Tools.WebSearch do
 
   defp do_web_search(query, search_depth, max_results, provider_config) do
     api_key = provider_config.api_key
-    api_key_env_var = provider_config.api_key_env_var || "TAVILY_API_KEY"
 
     if is_nil(api_key) or api_key == "" do
-      "Error: #{api_key_env_var} environment variable is not set"
+      "Error: API key for search provider is not set"
     else
       url = provider_config.base_url || "https://api.tavily.com/search"
       receive_timeout = provider_config.timeout || 30_000

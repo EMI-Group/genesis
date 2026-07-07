@@ -670,7 +670,13 @@ defmodule EvoGit.Config do
     creds
   end
 
-  defp env_var_to_reqllm_key(env_var) when is_binary(env_var) do
+  @doc """
+  Derives a ReqLLM atom key from an environment variable name.
+
+  Strips the `_API_KEY` suffix, downcases, and appends `_api_key`.
+  Returns `nil` if the env var does not end with `_API_KEY`.
+  """
+  def env_var_to_reqllm_key(env_var) when is_binary(env_var) do
     # Derive from env var name: strip _API_KEY suffix, downcase, append _api_key.
     # The config file is a trusted source, so String.to_atom/1 is safe here.
     base = String.replace_suffix(env_var, "_API_KEY", "")
@@ -831,10 +837,15 @@ defmodule EvoGit.Config do
 
         api_key_env_var =
           get_in(config, [:tools, :search, provider, :api_key_env_var]) || default_env_var
-        
-        key = System.get_env(api_key_env_var)
-        key != nil and key != ""
-      
+
+        reqllm_key = env_var_to_reqllm_key(api_key_env_var)
+        if is_nil(reqllm_key) do
+          false
+        else
+          key = ReqLLM.get_key(reqllm_key)
+          key != nil and key != ""
+        end
+
       _ -> false
     end
   end
