@@ -41,14 +41,6 @@ jobs:
             rg_target: aarch64-apple-darwin
             vendor_platform: macos-arm64
             tauri_bundles: ""
-          - os_label: macOS
-            arch: x64
-            runner: macos-15-intel
-            burrito_target: darwin_amd64
-            rust_target: x86_64-apple-darwin
-            rg_target: x86_64-apple-darwin
-            vendor_platform: macos-x86_64
-            tauri_bundles: ""
           - os_label: Linux
             arch: x64
             runner: ubuntu-24.04
