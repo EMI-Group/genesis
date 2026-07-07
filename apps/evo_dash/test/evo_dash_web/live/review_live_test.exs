@@ -91,6 +91,56 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "completed task with nil branch name" do
+    # This test guards against an ArgumentError at :erlang.not(nil) that
+    # crashed the review page on mount. The bug: when branch_name is nil,
+    # the `branch_exists` computation yielded nil (not a boolean), and the
+    # cond clause `not branch_exists` raised ArgumentError because `not`
+    # strictly requires a boolean argument.
+    setup do
+      task_id = "review_test_nil_branch_#{System.unique_integer([:positive])}"
+
+      # A completed task whose result does NOT include a branch_name
+      # (result is an error tuple, so the pattern match falls through and
+      # branch_name is nil). repo_path IS set via opts[:path], which is
+      # the exact condition that triggered the crash: branch_exists was nil,
+      # cond clause 1 was falsy, and clause 2 did `not nil` -> ArgumentError.
+      task = %TaskInfo{
+        id: task_id,
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        review_status: nil,
+        result: {:error, "Something went wrong"}
+      }
+
+      EvoDash.Store.put_task(EvoDash.Store, task)
+
+      on_exit(fn ->
+        TaskRegistry.delete_task(task_id)
+        TaskRegistry.list_tasks()
+      end)
+
+      {:ok, task_id: task_id}
+    end
+
+    test "mounts without crashing when branch_name is nil", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      # Before the fix, this live/2 call raised ArgumentError: not nil.
+      assert {:ok, _view, html} = live(conn, ~p"/review/#{task_id}")
+
+      # The page renders normally (the "no changes" / review-not-available
+      # path) rather than crashing.
+      refute html =~ "ArgumentError"
+    end
+  end
+
   describe "archive tab with string-keyed metadata" do
     # This test guards against the infinite-recursion / OOM bug where archive
     # records arrive with STRING keys (after a DB round-trip through

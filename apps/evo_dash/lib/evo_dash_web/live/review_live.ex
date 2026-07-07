@@ -575,7 +575,7 @@ defmodule EvoDashWeb.ReviewLive do
 
         title = pr_title || objective || branch_name || gettext("Review Changes")
 
-        branch_exists = branch_name && repo_path && File.dir?(repo_path) && Review.branch_exists?(repo_path, branch_name)
+        branch_exists = !!(branch_name && repo_path && File.dir?(repo_path) && Review.branch_exists?(repo_path, branch_name))
 
         can_continue = repo_path != nil && File.dir?(repo_path) && (commit_sha != nil || branch_name == nil)
 
