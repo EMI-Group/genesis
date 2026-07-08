@@ -72,7 +72,6 @@ defmodule EvoGit.Agent do
       require Logger
       use Retry
 
-      @default_max_turns 128
       @complete_tool "complete_task"
 
       import ReqLLM.Context, only: [user: 1, assistant: 1, system: 1, tool_result: 3]
@@ -173,7 +172,7 @@ defmodule EvoGit.Agent do
               []
             end
 
-          max_turns = agent_state.max_turns || @default_max_turns
+          max_turns = agent_state.max_turns
 
           state = %LoopState{
             agent_id: agent_id,
