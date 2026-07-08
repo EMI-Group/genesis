@@ -216,7 +216,7 @@ defmodule EvoDashWeb.DashboardLive do
               <p class="text-sm text-base-content/70 leading-relaxed mb-6">
                 {gettext(
                   "EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?"
-                )}
+                )} <% # zh_CN: "智能体", "演进" %>
               </p>
               <div class="mb-4">
                 <div class="text-xs font-medium text-base-content/50 mb-1.5">
