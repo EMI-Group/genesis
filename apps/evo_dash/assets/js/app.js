@@ -210,6 +210,7 @@ const StatePersistence = {
           task_node_path: this.el.querySelector('[name="node_path"]')?.value || '',
           task_seeds: this.el.querySelector('[name="seeds"]')?.value || '',
           task_starting_commit: this.el.querySelector('[name="starting_commit"]')?.value || '',
+          selected_model_id: this.el.querySelector('[name="model_id"]')?.value || '',
         });
         // Also capture project settings toggle state
         const detailsEl = this.el.querySelector('details');
@@ -224,6 +225,14 @@ const StatePersistence = {
     this.el.addEventListener('input', (e) => {
       const name = e.target.getAttribute('name');
       if (['prompt', 'node_path', 'seeds', 'starting_commit'].includes(name)) {
+        persistFormState();
+      }
+    });
+
+    // Watch select elements for change events (model_id, etc.)
+    this.el.addEventListener('change', (e) => {
+      const name = e.target.getAttribute('name');
+      if (['model_id'].includes(name)) {
         persistFormState();
       }
     });

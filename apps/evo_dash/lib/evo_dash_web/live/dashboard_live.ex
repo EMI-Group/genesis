@@ -579,7 +579,10 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("select_model", %{"model_id" => id}, socket) do
-    {:noreply, assign(socket, :selected_model_id, id)}
+    {:noreply,
+     socket
+     |> assign(:selected_model_id, id)
+     |> StatePersistence.maybe_persist_state()}
   end
 
   @impl true
@@ -619,15 +622,19 @@ defmodule EvoDashWeb.DashboardLive do
       |> StatePersistence.maybe_restore_show_project_settings(params["show_project_settings"])
       |> StatePersistence.maybe_restore_task_archive(params["task_archive"])
       |> StatePersistence.maybe_restore_show_advanced(params["show_advanced"])
+      |> StatePersistence.maybe_restore_assign(:selected_model_id, params["selected_model_id"])
+
+    # Always restore task_mode from sessionStorage — the user's explicit choice
+    # takes precedence over auto-detection when returning to a project.
+    socket = StatePersistence.maybe_restore_assign(socket, :task_mode, params["task_mode"])
 
     # Restore project if we don't already have one active.
-    # Only restore project-specific assigns (mode, node_path) when no project is
+    # Only restore project-specific assigns (node_path) when no project is
     # active — otherwise the auto-detected values from detect_mode/1 should win.
     socket =
       if is_nil(socket.assigns.active_project) do
         socket =
           socket
-          |> StatePersistence.maybe_restore_assign(:task_mode, params["task_mode"])
           |> StatePersistence.maybe_restore_assign(:task_node_path, params["task_node_path"])
 
         project_path = params["project"]
