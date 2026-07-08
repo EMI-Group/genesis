@@ -23,7 +23,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     socket =
       socket
       |> assign_new(:current_node, fn -> node() end)
-      |> assign_new(:current_node_name, fn -> gettext("Local") end)
+      |> assign_new(:current_node_name, fn -> "Local" end)
       |> assign_new(:current_node_id, fn -> nil end)
       |> assign_new(:remote_targets, fn -> EvoDash.NodeContext.list_targets() end)
       |> assign_new(:connection_statuses, fn -> EvoDash.NodeContext.connection_status() end)
@@ -51,7 +51,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       :local ->
         socket
         |> assign(:current_node, node())
-        |> assign(:current_node_name, gettext("Local"))
+        |> assign(:current_node_name, "Local")
         |> assign(:current_node_id, nil)
 
       {:remote, target} ->
@@ -91,7 +91,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   Falls back to `"Local"` when the assign is absent.
   """
   def current_node_display_name(assigns) do
-    Map.get(assigns, :current_node_name) || gettext("Local")
+    Map.get(assigns, :current_node_name) || "Local"
   end
 
   @doc """

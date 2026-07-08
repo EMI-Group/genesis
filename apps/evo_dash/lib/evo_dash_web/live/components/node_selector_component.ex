@@ -13,12 +13,13 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
   use EvoDashWeb, :live_component
 
-  import Phoenix.Component, only: [assign: 3]
+  import Phoenix.Component
 
   @impl true
   def render(assigns) do
     ~H"""
-    <details class="dropdown dropdown-end" id={"#{@id}-details"}>
+    <div id={@id}>
+      <details class="dropdown dropdown-end" id={"#{@id}-details"}>
       <summary
         class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         title={gettext("Switch node")}
@@ -38,7 +39,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
               not is_nil(@current_node_id) &&
                 "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
             ]}
-            phx-click={JS.push("select_node", target: @myself, value: %{node: "local"}) |> JS.remove_attribute("open", "##{@id}-details")}
+            phx-click={JS.push("select_node", target: @myself, value: %{node: "local"})}
           >
             <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
             <span class="flex-1 text-left">{gettext("Local")}</span>
@@ -60,7 +61,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
               @current_node_id != target.id &&
                 "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
             ]}
-            phx-click={JS.push("select_node", target: @myself, value: %{node: target.id}) |> JS.remove_attribute("open", "##{@id}-details")}
+            phx-click={JS.push("select_node", target: @myself, value: %{node: target.id})}
           >
             <span class={["w-2 h-2 rounded-full shrink-0", target_dot_color(target.id, @connection_statuses)]}></span>
             <span class="flex-1 text-left">
@@ -194,7 +195,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
                   <% end %>
                 </h4>
                 <form phx-submit="save_target" phx-target={@myself} class="space-y-3">
-                  <input type="hidden" name="id" value={@form_target[:id]} />
+                  <input type="hidden" name="_id" value={@form_target[:id]} />
                   <div class="grid grid-cols-2 gap-3">
                     <div class="form-control col-span-2">
                       <label class="label">
@@ -313,6 +314,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
         </div>
       </div>
     <% end %>
+    </div>
     """
   end
 
@@ -340,8 +342,8 @@ defmodule EvoDashWeb.NodeSelectorComponent do
   end
 
   def handle_event("select_node", %{"node" => node_id}, socket) do
-    # The parent LiveView handles the actual navigation via :node_selected.
-    # The dropdown <details> is closed client-side via JS.remove_attribute.
+    # The parent LiveView handles navigation via :node_selected, which triggers
+    # push_patch → handle_params → re-render. The re-render closes the dropdown.
     send(self(), {:node_selected, node_id})
     {:noreply, socket}
   end
@@ -416,13 +418,12 @@ defmodule EvoDashWeb.NodeSelectorComponent do
   end
 
   # ── handle_info: connection status broadcasts ─────────────────────
-
-  @impl true
-  def handle_info({:remote_connection_status, _target_id, _status}, socket) do
-    {:noreply, reload_statuses(socket)}
-  end
-
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  #
+  # Note: LiveComponents do not have handle_info. Connection-status broadcasts
+  # (subscribed to by the parent LiveView via the NodeAware on_mount hook) are
+  # handled by the parent's handle_info, which re-assigns @connection_statuses.
+  # That triggers a re-render of the parent, calling this component's update/1,
+  # which reloads statuses from EvoDash.NodeContext.
 
   # ── Private helpers ───────────────────────────────────────────────
 
@@ -441,7 +442,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
   # Builds an atom-keyed target map from form params.
   # Generates a new id from the name when creating; preserves existing id when editing.
   defp build_target_from_params(params) do
-    id = params["id"]
+    id = params["_id"]
 
     id =
       if id && id != "" do

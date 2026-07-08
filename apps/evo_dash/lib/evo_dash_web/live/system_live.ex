@@ -615,16 +615,6 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   @impl true
-  def handle_info({:node_selected, node_id}, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
-  end
-
-  @impl true
-  def handle_info({:remote_connection_status, _, _} = msg, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
-  end
-
-  @impl true
   def handle_event("rerun_checks", _params, socket) do
     spawn_system_checks()
 
@@ -728,6 +718,16 @@ defmodule EvoDashWeb.SystemLive do
          "System is stopping. The Erlang VM will shut down and must be started again manually."
        )
      )}
+  end
+
+  @impl true
+  def handle_info({:node_selected, node_id}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
+  end
+
+  @impl true
+  def handle_info({:remote_connection_status, _, _} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
   end
 
   @impl true
