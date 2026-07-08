@@ -24,6 +24,327 @@ defmodule Mix.Tasks.Translate do
 
   @model "deepseek:deepseek-v4-flash"
 
+  @glossary %{
+    # ===== Arabic =====
+    "ar" => %{
+      "Agent" => "وكيل", # TODO: verify
+      "Base commit" => "الإيداع الأساسي", # TODO: verify
+      "Branch" => "فرع", # TODO: verify
+      "Commit" => "إيداع", # TODO: verify
+      "Concurrency" => "تزامن", # TODO: verify
+      "Context Tree" => "شجرة السياق", # TODO: verify
+      "Context window" => "نافذة السياق", # TODO: verify
+      "Evolve" => "تطوّر", # TODO: verify
+      "Genesis" => "جينيسيس", # TODO: verify
+      "Genesis (command)" => "إنشاء", # TODO: verify
+      "Graceful restart" => "إعادة تشغيل سلسة", # TODO: verify
+      "Prompt" => "موجّه", # TODO: verify
+      "Provider" => "مزوّد", # TODO: verify
+      "Runtime" => "وقت التشغيل", # TODO: verify
+      "Sandbox" => "صندوق الرمل", # TODO: verify
+      "Scheduler" => "مجدول", # TODO: verify
+      "Token" => "وحدة", # TODO: verify
+      "Tool call" => "استدعاء الأداة", # TODO: verify
+      "Worktree" => "شجرة العمل" # TODO: verify
+    },
+    # ===== German =====
+    "de" => %{
+      "Agent" => "Agent",
+      "Base commit" => "Basis-Commit",
+      "Branch" => "Branch",
+      "Commit" => "Commit",
+      "Concurrency" => "Nebenläufigkeit",
+      "Context Tree" => "Kontextbaum",
+      "Context window" => "Kontextfenster",
+      "Evolve" => "Evolution", # TODO: verify
+      "Genesis" => "Genesis",
+      "Genesis (command)" => "Genesis", # TODO: verify
+      "Graceful restart" => "sanfter Neustart",
+      "Prompt" => "Prompt",
+      "Provider" => "Anbieter",
+      "Runtime" => "Laufzeitumgebung",
+      "Sandbox" => "Sandbox",
+      "Scheduler" => "Scheduler",
+      "Token" => "Token",
+      "Tool call" => "Werkzeugaufruf",
+      "Worktree" => "Worktree"
+    },
+    # ===== Spanish =====
+    "es" => %{
+      "Agent" => "Agente",
+      "Base commit" => "commit base",
+      "Branch" => "rama",
+      "Commit" => "commit",
+      "Concurrency" => "concurrencia",
+      "Context Tree" => "árbol de contexto",
+      "Context window" => "ventana de contexto",
+      "Evolve" => "evolucionar", # TODO: verify
+      "Genesis" => "Genesis",
+      "Genesis (command)" => "génesis", # TODO: verify
+      "Graceful restart" => "reinicio controlado",
+      "Prompt" => "prompt",
+      "Provider" => "proveedor",
+      "Runtime" => "entorno de ejecución",
+      "Sandbox" => "entorno aislado",
+      "Scheduler" => "planificador",
+      "Token" => "Token",
+      "Tool call" => "llamada a herramienta",
+      "Worktree" => "árbol de trabajo"
+    },
+    # ===== French =====
+    "fr" => %{
+      "Agent" => "Agent",
+      "Base commit" => "commit de base",
+      "Branch" => "branche",
+      "Commit" => "commit",
+      "Concurrency" => "concurrence",
+      "Context Tree" => "arbre de contexte",
+      "Context window" => "fenêtre de contexte",
+      "Evolve" => "évolution", # TODO: verify
+      "Genesis" => "Genesis",
+      "Genesis (command)" => "genèse", # TODO: verify
+      "Graceful restart" => "redémarrage en douceur",
+      "Prompt" => "prompt",
+      "Provider" => "fournisseur",
+      "Runtime" => "environnement d'exécution",
+      "Sandbox" => "bac à sable",
+      "Scheduler" => "planificateur",
+      "Token" => "jeton",
+      "Tool call" => "appel d'outil",
+      "Worktree" => "arbre de travail"
+    },
+    # ===== Indonesian =====
+    "id" => %{
+      "Agent" => "Agen", # TODO: verify
+      "Base commit" => "commit dasar", # TODO: verify
+      "Branch" => "cabang", # TODO: verify
+      "Commit" => "commit", # TODO: verify
+      "Concurrency" => "konkurensi", # TODO: verify
+      "Context Tree" => "pohon konteks", # TODO: verify
+      "Context window" => "jendela konteks", # TODO: verify
+      "Evolve" => "evolusi", # TODO: verify
+      "Genesis" => "Genesis", # TODO: verify
+      "Genesis (command)" => "genesis", # TODO: verify
+      "Graceful restart" => "mulai ulang halus", # TODO: verify
+      "Prompt" => "prompt", # TODO: verify
+      "Provider" => "penyedia", # TODO: verify
+      "Runtime" => "runtime", # TODO: verify
+      "Sandbox" => "kotak pasir", # TODO: verify
+      "Scheduler" => "penjadwal", # TODO: verify
+      "Token" => "Token", # TODO: verify
+      "Tool call" => "panggilan alat", # TODO: verify
+      "Worktree" => "pohon kerja" # TODO: verify
+    },
+    # ===== Italian =====
+    "it" => %{
+      "Agent" => "Agente",
+      "Base commit" => "commit di base",
+      "Branch" => "ramo",
+      "Commit" => "commit",
+      "Concurrency" => "concorrenza",
+      "Context Tree" => "albero di contesto",
+      "Context window" => "finestra di contesto",
+      "Evolve" => "evoluzione", # TODO: verify
+      "Genesis" => "Genesis",
+      "Genesis (command)" => "genesi", # TODO: verify
+      "Graceful restart" => "riavvio controllato",
+      "Prompt" => "prompt",
+      "Provider" => "fornitore",
+      "Runtime" => "runtime",
+      "Sandbox" => "sandbox",
+      "Scheduler" => "pianificatore",
+      "Token" => "Token",
+      "Tool call" => "chiamata strumento",
+      "Worktree" => "albero di lavoro"
+    },
+    # ===== Japanese =====
+    "ja" => %{
+      "Agent" => "エージェント",
+      "Base commit" => "ベースコミット",
+      "Branch" => "ブランチ",
+      "Commit" => "コミット",
+      "Concurrency" => "並行性",
+      "Context Tree" => "コンテキストツリー",
+      "Context window" => "コンテキストウィンドウ",
+      "Evolve" => "進化", # TODO: verify
+      "Genesis" => "Genesis",
+      "Genesis (command)" => "生成", # TODO: verify
+      "Graceful restart" => "グレースフルリスタート",
+      "Prompt" => "プロンプト",
+      "Provider" => "プロバイダー",
+      "Runtime" => "ランタイム",
+      "Sandbox" => "サンドボックス",
+      "Scheduler" => "スケジューラー",
+      "Token" => "トークン",
+      "Tool call" => "ツール呼び出し",
+      "Worktree" => "ワークツリー"
+    },
+    # ===== Korean =====
+    "ko" => %{
+      "Agent" => "에이전트",
+      "Base commit" => "베이스 커밋",
+      "Branch" => "브랜치",
+      "Commit" => "커밋",
+      "Concurrency" => "동시성",
+      "Context Tree" => "컨텍스트 트리",
+      "Context window" => "컨텍스트 윈도우",
+      "Evolve" => "진화", # TODO: verify
+      "Genesis" => "Genesis",
+      "Genesis (command)" => "생성", # TODO: verify
+      "Graceful restart" => "정상 재시작", # TODO: verify
+      "Prompt" => "프롬프트",
+      "Provider" => "제공자",
+      "Runtime" => "런타임",
+      "Sandbox" => "샌드박스",
+      "Scheduler" => "스케줄러",
+      "Token" => "토큰",
+      "Tool call" => "도구 호출",
+      "Worktree" => "작업 트리"
+    },
+    # ===== Portuguese =====
+    "pt" => %{
+      "Agent" => "Agente",
+      "Base commit" => "commit base",
+      "Branch" => "ramo",
+      "Commit" => "commit",
+      "Concurrency" => "concorrência",
+      "Context Tree" => "árvore de contexto",
+      "Context window" => "janela de contexto",
+      "Evolve" => "evoluir", # TODO: verify
+      "Genesis" => "Genesis",
+      "Genesis (command)" => "gênese", # TODO: verify
+      "Graceful restart" => "reinicialização controlada",
+      "Prompt" => "prompt",
+      "Provider" => "provedor",
+      "Runtime" => "ambiente de execução",
+      "Sandbox" => "sandbox",
+      "Scheduler" => "agendador",
+      "Token" => "Token",
+      "Tool call" => "chamada de ferramenta",
+      "Worktree" => "árvore de trabalho"
+    },
+    # ===== Russian =====
+    "ru" => %{
+      "Agent" => "агент",
+      "Base commit" => "базовый коммит",
+      "Branch" => "ветка",
+      "Commit" => "коммит",
+      "Concurrency" => "конкурентность",
+      "Context Tree" => "дерево контекста",
+      "Context window" => "контекстное окно",
+      "Evolve" => "развитие", # TODO: verify
+      "Genesis" => "Genesis",
+      "Genesis (command)" => "создание", # TODO: verify
+      "Graceful restart" => "плавный перезапуск",
+      "Prompt" => "промпт",
+      "Provider" => "провайдер",
+      "Runtime" => "среда выполнения",
+      "Sandbox" => "песочница",
+      "Scheduler" => "планировщик",
+      "Token" => "токен",
+      "Tool call" => "вызов инструмента",
+      "Worktree" => "рабочее дерево"
+    },
+    # ===== Thai =====
+    "th" => %{
+      "Agent" => "เอเจนต์", # TODO: verify
+      "Base commit" => "คอมมิตพื้นฐาน", # TODO: verify
+      "Branch" => "แบรนช์", # TODO: verify
+      "Commit" => "คอมมิต", # TODO: verify
+      "Concurrency" => "ภาวะพร้อมกัน", # TODO: verify
+      "Context Tree" => "ต้นไม้บริบท", # TODO: verify
+      "Context window" => "หน้าต่างบริบท", # TODO: verify
+      "Evolve" => "วิวัฒนาการ", # TODO: verify
+      "Genesis" => "Genesis", # TODO: verify
+      "Genesis (command)" => "การสร้าง", # TODO: verify
+      "Graceful restart" => "การรีสตาร์ทแบบนุ่มนวล", # TODO: verify
+      "Prompt" => "พรอมต์", # TODO: verify
+      "Provider" => "ผู้ให้บริการ", # TODO: verify
+      "Runtime" => "รันไทม์", # TODO: verify
+      "Sandbox" => "แซนด์บ็อกซ์", # TODO: verify
+      "Scheduler" => "ตัวจัดตาราง", # TODO: verify
+      "Token" => "โทเค็น", # TODO: verify
+      "Tool call" => "การเรียกใช้เครื่องมือ", # TODO: verify
+      "Worktree" => "เวิร์กทรี" # TODO: verify
+    },
+    # ===== Vietnamese =====
+    "vi" => %{
+      "Agent" => "Tác tử", # TODO: verify
+      "Base commit" => "commit cơ sở", # TODO: verify
+      "Branch" => "nhánh", # TODO: verify
+      "Commit" => "commit", # TODO: verify
+      "Concurrency" => "đồng thời", # TODO: verify
+      "Context Tree" => "cây ngữ cảnh", # TODO: verify
+      "Context window" => "cửa sổ ngữ cảnh", # TODO: verify
+      "Evolve" => "tiến hóa", # TODO: verify
+      "Genesis" => "Genesis", # TODO: verify
+      "Genesis (command)" => "khởi tạo", # TODO: verify
+      "Graceful restart" => "khởi động lại nhẹ nhàng", # TODO: verify
+      "Prompt" => "lời nhắc", # TODO: verify
+      "Provider" => "nhà cung cấp", # TODO: verify
+      "Runtime" => "thời gian chạy", # TODO: verify
+      "Sandbox" => "hộp cát", # TODO: verify
+      "Scheduler" => "bộ lập lịch", # TODO: verify
+      "Token" => "Token", # TODO: verify
+      "Tool call" => "gọi công cụ", # TODO: verify
+      "Worktree" => "cây làm việc" # TODO: verify
+    },
+    # ===== Chinese (Simplified) =====
+    "zh_CN" => %{
+      # Brand
+      "Genesis" => "启元",
+      # AI/Agent
+      "Agent" => "智能体",
+      "Token" => "词元",
+      "Tool call" => "工具调用",
+      "Provider" => "服务商",
+      "Context window" => "上下文窗口",
+      "Prompt" => "提示词",
+      # Git/Version control
+      "Commit" => "提交",
+      "Base commit" => "起始提交",
+      "Worktree" => "工作树",
+      "Branch" => "分支",
+      # Computing/Systems
+      "Graceful restart" => "平滑重启",
+      "Scheduler" => "调度器",
+      "Sandbox" => "沙箱",
+      "Runtime" => "运行时",
+      "Concurrency" => "并发",
+      # EvoGit-specific
+      "Evolve" => "演进",
+      "Genesis (command)" => "生成",
+      "Context Tree" => "上下文树"
+    },
+    # ===== Chinese (Traditional) =====
+    "zh_HK" => %{
+      # Brand
+      "Genesis" => "啟元",
+      # AI/Agent
+      "Agent" => "智能體",
+      "Token" => "詞元",
+      "Tool call" => "工具調用",
+      "Provider" => "服務商",
+      "Context window" => "上下文窗口",
+      "Prompt" => "提示詞",
+      # Git/Version control
+      "Commit" => "提交",
+      "Base commit" => "起始提交",
+      "Worktree" => "工作樹",
+      "Branch" => "分支",
+      # Computing/Systems
+      "Graceful restart" => "平滑重啟",
+      "Scheduler" => "調度器",
+      "Sandbox" => "沙箱",
+      "Runtime" => "運行時",
+      "Concurrency" => "並發",
+      # EvoGit-specific
+      "Evolve" => "演進",
+      "Genesis (command)" => "生成",
+      "Context Tree" => "上下文樹"
+    }
+  }
+
   @impl Mix.Task
   def run(args) do
     Application.ensure_all_started(:req_llm)
@@ -216,6 +537,27 @@ defmodule Mix.Tasks.Translate do
       ]
     ]
 
+    glossary_entries = glossary_for_lang(target_lang)
+
+    glossary_section =
+      if glossary_entries != [] do
+        entries_text =
+          glossary_entries
+          |> Enum.map(fn {en, tr} -> ~s(- "#{en}" → "#{tr}") end)
+          |> Enum.join("\n")
+
+        """
+
+        GLOSSARY — MUST FOLLOW:
+        The following terms have pre-approved translations in the target language.
+        ALWAYS use these translations when these terms appear. Do NOT substitute alternatives.
+
+        #{entries_text}
+        """
+      else
+        ""
+      end
+
     prompt = """
     --- SOURCE CODE CONTEXT ---
     This code snippet provides structural and functional context for where these strings appear.
@@ -230,17 +572,24 @@ defmodule Mix.Tasks.Translate do
     Task: Translate UI strings for the following webpage into #{target_lang_name}.
 
     Translation Guidelines:
-    1. Contextual Naturalness:
-      - Do not translate literally. Ensure the content matches a professional web interface.
-      - No need to translate language-agnostic contents, like math, code snippets, special symbols, indices.
-    2. UI/UX Awareness:
-      - Consider the likely layout. Use concise terms for buttons/labels and clear, helpful language for messages.
-      - Consider the space constraints of UI elements; prefer translations that fit well in the original design.
-    3. Consistency: Maintain terminology consistency within the context of the provided source code.
-    4. Correctness: Maintain the correct format for placeholders, for example:
-      - Q1, Q2 should remain as is.
-      - All interpolations like `%{you}` in the source string should be preserved in the translated string. For example, if the source string is "Hello %{name}", the translated string should also contain "%{name}" in the appropriate place according to the grammar of the target language.
-    5. Format: Return valid JSON matching the requested schema.
+    1. Meaning-First Translation (for full sentences and long phrases):
+      - Translate the MEANING, not individual words. Use natural, idiomatic expressions in the target language.
+      - Think about what the user needs to understand, not the literal English words.
+      - Word-for-word translation produces unnatural, hard-to-read text — avoid it unless translating short labels or technical terms.
+    2. UI Context Awareness:
+      - Is this a button label? Be concise — often a single verb or noun.
+      - Is this a help message or description? Be clear and helpful.
+      - Is this a heading or title? Be descriptive and scannable.
+      - Match the tone and length to the UI context. Consider space constraints of UI elements.
+    3. Short Standalone Terms (single words or 2-3 word labels):
+      - Consult the GLOSSARY section below for pre-approved translations of common technical terms.
+      - If no glossary entry exists, use the most natural equivalent in the target language.
+    4. Technical Correctness:
+      - Preserve all placeholders exactly: %{name}, %{count}, Q1, Q2, etc. must remain as-is.
+      - Do not translate code snippets, math expressions, special symbols, or indices.
+      - All interpolations like %{name} in the source must appear in the translated string, positioned according to the grammar of the target language.
+    5. Consistency: Maintain terminology consistency within the provided source code context.
+    6. Format: Return valid JSON matching the requested schema.#{glossary_section}
 
     Source Language: English
     Target Language: #{target_lang_name}
@@ -295,6 +644,13 @@ defmodule Mix.Tasks.Translate do
     Enum.all?(source_interpolations, fn interp ->
       interp in target_interpolations
     end)
+  end
+
+  defp glossary_for_lang(lang_code) do
+    case Map.get(@glossary, lang_code) do
+      nil -> []
+      entries -> Enum.to_list(entries)
+    end
   end
 
   defp apply_translations(messages, translation_map) do
