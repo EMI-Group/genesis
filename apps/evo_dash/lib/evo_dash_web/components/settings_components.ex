@@ -475,7 +475,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       schema={schema}
                       value={get_in(@file_config, schema.key_path)}
                       error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                      disabled={false}
+                      disabled={@disabled}
                     />
                   </div>
                 <% end %>
@@ -506,7 +506,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         schema={schema}
                         value={get_in(@file_config, schema.key_path)}
                         error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                        disabled={@sandbox_mode == :disabled}
+                        disabled={@disabled or @sandbox_mode == :disabled}
                       />
                     <% end %>
                   </div>
@@ -538,7 +538,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         schema={schema}
                         value={get_in(@file_config, schema.key_path)}
                         error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                        disabled={@sandbox_mode == :disabled}
+                        disabled={@disabled or @sandbox_mode == :disabled}
                       />
                     <% end %>
                   </div>

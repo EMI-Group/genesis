@@ -53,6 +53,101 @@ defmodule EvoDashWeb.DashboardLive do
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
           <div id="browser-notifications" phx-hook="BrowserNotifications">
+            <%= if @remote? do %>
+              <!-- Remote node view: show the remote node's active agents.
+                   The local task list and project management are LOCAL
+                   concerns — the remote daemon runs evo_git only, no
+                   evo_dash (no TaskRegistry/Store). -->
+              <div class="mt-2 mb-6 rounded-lg border border-info/30 bg-info/5 p-4 flex items-start gap-3">
+                <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
+                <div>
+                  <h2 class="font-bold text-sm text-info mb-0.5">
+                    {gettext("Remote Node — Active Agents")}
+                  </h2>
+                  <p class="text-sm text-base-content/70">
+                    {gettext(
+                      "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <%= if @remote_agents == [] do %>
+                <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
+                  <div class="animate-float">
+                    <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
+                  </div>
+                  <p class="text-base font-medium">{gettext("No active agents")}</p>
+                  <p class="text-sm mt-1">
+                    {gettext("There are no running agents on this remote node.")}
+                  </p>
+                </div>
+              <% else %>
+                <div class="mt-6 animate-fade-in-up">
+                  <div class="flex items-center gap-2 mb-4">
+                    <div class="bg-success/15 text-success p-2 rounded-lg">
+                      <.icon name="hero-play-circle" class="size-5" />
+                    </div>
+                    <h2 class="text-lg font-semibold text-base-content/80">
+                      {gettext("Agents")}
+                    </h2>
+                    <span class="badge badge-success">{length(@remote_agents)}</span>
+                  </div>
+                  <div class="space-y-3">
+                    <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
+                      <div class="rounded-2xl border border-base-200 bg-base-100 p-4">
+                        <div class="flex items-center justify-between gap-3 mb-2">
+                          <div class="flex items-center gap-2 min-w-0">
+                            <span class="badge badge-ghost badge-sm font-mono shrink-0">
+                              #{Map.get(agent, :id, "?")}
+                            </span>
+                            <code class="text-xs text-base-content/60 truncate">
+                              {Map.get(agent, :agent_module, "")}
+                            </code>
+                          </div>
+                          <span class={[
+                            "badge badge-sm shrink-0",
+                            case Map.get(agent, :status) do
+                              :running -> "badge-success"
+                              :pending -> "badge-warning"
+                              :waiting -> "badge-info"
+                              :ready -> "badge-info"
+                              :blocked -> "badge-error"
+                              _ -> "badge-ghost"
+                            end
+                          ]}>
+                            {case Map.get(agent, :status) do
+                              s when is_atom(s) ->
+                                Gettext.gettext(EvoDashWeb.Gettext, String.capitalize(Atom.to_string(s)))
+
+                              _ ->
+                                gettext("Unknown")
+                            end}
+                          </span>
+                        </div>
+                        <% objective = Map.get(agent, :objective) %>
+                        <%= if objective do %>
+                          <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
+                        <% end %>
+                        <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/50">
+                          <%= if Map.get(agent, :model_id) do %>
+                            <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
+                          <% end %>
+                          <%= if Map.get(agent, :repo_id) do %>
+                            <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
+                          <% end %>
+                          <% usage = Map.get(agent, :usage) || %{} %>
+                          <% total = Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
+                          <%= if total > 0 do %>
+                            <span>{gettext("Tokens")}: {total}</span>
+                          <% end %>
+                        </div>
+                      </div>
+                    <% end %>
+                  </div>
+                </div>
+              <% end %>
+            <% else %>
             <!-- Project Selector (always visible) -->
             <EvoDashWeb.ProjectComponents.project_selector
               active_project={@active_project}
@@ -204,6 +299,8 @@ defmodule EvoDashWeb.DashboardLive do
                 <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
               </EvoDashWeb.Helpers.modal>
             <% end %>
+            <% end %>
+            <%!-- end of @remote? else branch --%>
           </div>
         </div>
         <%= if @show_welcome do %>
@@ -333,7 +430,9 @@ defmodule EvoDashWeb.DashboardLive do
         task_resume_from: "",
         config_status: config_status,
         show_welcome: false,
-        welcome_locale: Gettext.get_locale(EvoDashWeb.Gettext)
+        welcome_locale: Gettext.get_locale(EvoDashWeb.Gettext),
+        remote?: false,
+        remote_agents: []
       )
 
     socket = Assigns.assign_running_and_pending_tasks(socket)
@@ -347,6 +446,21 @@ defmodule EvoDashWeb.DashboardLive do
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/")
+      |> assign(:remote?, socket.assigns.current_node != node())
+
+    # When viewing a remote node, the dashboard shows the remote node's active
+    # agents instead of local tasks/projects. Load them here so the render
+    # branch has the data.
+    socket =
+      if socket.assigns.remote? do
+        assign(
+          socket,
+          :remote_agents,
+          EvoDash.NodeContext.list_agents(socket.assigns.current_node)
+        )
+      else
+        socket
+      end
 
     project_path = params["project"]
 
@@ -501,7 +615,9 @@ defmodule EvoDashWeb.DashboardLive do
     cond do
       not File.dir?(location) ->
         {:noreply,
-         put_flash(socket, :error,
+         put_flash(
+           socket,
+           :error,
            gettext("Parent directory does not exist: %{path}", path: location)
          )}
 
@@ -546,7 +662,8 @@ defmodule EvoDashWeb.DashboardLive do
     else
       {:noreply,
        socket
-       |> put_flash(:error,
+       |> put_flash(
+         :error,
          gettext(
            "Directory does not exist: %{path}. Create a new project instead?",
            path: path
@@ -610,7 +727,11 @@ defmodule EvoDashWeb.DashboardLive do
       if socket.assigns.task_starting_commit != "" do
         socket
       else
-        StatePersistence.maybe_restore_assign(socket, :task_starting_commit, params["task_starting_commit"])
+        StatePersistence.maybe_restore_assign(
+          socket,
+          :task_starting_commit,
+          params["task_starting_commit"]
+        )
       end
 
     # Don't let restore_state overwrite a resume_from that came from the URL
@@ -619,7 +740,11 @@ defmodule EvoDashWeb.DashboardLive do
       if socket.assigns.task_resume_from != "" do
         socket
       else
-        StatePersistence.maybe_restore_assign(socket, :task_resume_from, params["task_resume_from"])
+        StatePersistence.maybe_restore_assign(
+          socket,
+          :task_resume_from,
+          params["task_resume_from"]
+        )
       end
 
     socket =
