@@ -164,21 +164,17 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "command") do
       {:ok, command} ->
-        do_execute(command, repo_path, repo_root)
+        timeout = Map.get(args, "timeout", @default_timeout)
+        do_execute(command, repo_path, repo_root, timeout)
 
       {:error, message} ->
         message
     end
   end
 
-  defp do_execute(command, repo_path, repo_root) do
+  defp do_execute(command, repo_path, repo_root, timeout) do
     shell = Platform.shell()
     shell_args = Platform.shell_args(command)
-
-    # Extract timeout from tool args — the execute/3 caller does not pass
-    # the full args map to do_execute, so we extract timeout directly from
-    # the command string context. We use @default_timeout as fallback.
-    timeout = @default_timeout
 
     case EvoGit.Sandbox.run_with_partial(repo_path, shell, shell_args, repo_root, timeout) do
       {:ok, output, exit_code} ->
