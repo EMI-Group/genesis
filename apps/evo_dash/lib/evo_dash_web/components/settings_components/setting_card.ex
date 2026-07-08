@@ -55,7 +55,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                 class="select select-bordered select-sm rounded-md w-full font-mono text-base appearance-none pr-8"
               >
                 <option value="" selected={is_nil(@value)}>
-                  {gettext("(provider default)")}
+                  <%!-- zh_CN: provider → "服务商" --%>{gettext("(provider default)")}
                 </option>
                 <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
                   <option value={opt} selected={to_string(@value) == opt}>

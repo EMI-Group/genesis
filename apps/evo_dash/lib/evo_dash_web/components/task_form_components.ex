@@ -3,6 +3,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   Task form component for the dashboard — mode selector, model dropdown,
   advanced options, prompt textarea, archive checkbox, and execute button.
   """
+
+  # zh_CN: Evolution → "演进", Prompt → "提示词", Commit → "提交", Branch → "分支"
+
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
@@ -52,7 +55,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                   {gettext("Create New Codebase")}
                 </option>
                 <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-                  {gettext("Evolution")}
+                  <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
                 </option>
               </select>
               <div class="hidden sm:block">
@@ -109,6 +112,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                       <span class="label-text font-semibold text-base-content">{gettext(
                         "Starting Node"
                       )}
+                      <%!-- zh_CN: evolution → "演进" -->
                       <.tip text={
                         gettext(
                           "The subdirectory within the project to start evolution from. Use './' for root."
@@ -123,16 +127,17 @@ defmodule EvoDashWeb.TaskFormComponents do
                       placeholder={gettext("e.g., ./src/components")}
                     />
                     <label class="label">
-                      <span class="label-text-alt text-base-content/50">{gettext(
+                      <span class="label-text-alt text-base-content/50"><%!-- zh_CN: evolution → "演进" --%>{gettext(
                         "Subdirectory to start evolution from (optional)"
                       )}</span>
                     </label>
                   </div>
                   <div class="form-control flex-1">
                     <label class="label">
-                      <span class="label-text font-semibold text-base-content">{gettext(
+                      <span class="label-text font-semibold text-base-content"><%!-- zh_CN: Commit → "提交" --%>{gettext(
                         "Starting Commit"
                       )}
+                      <%!-- zh_CN: commit → "提交", branch → "分支" -->
                       <.tip text={
                         gettext(
                           "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
@@ -147,7 +152,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                       placeholder={gettext("e.g., abc1234 or HEAD")}
                     />
                     <label class="label">
-                      <span class="label-text-alt text-base-content/50">{gettext(
+                      <span class="label-text-alt text-base-content/50"><%!-- zh_CN: Commit → "提交" --%>{gettext(
                         "Commit SHA or ref to start from (defaults to HEAD)"
                       )}</span>
                     </label>
@@ -186,7 +191,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               <%= if String.starts_with?(@mode, "evolve") do %>
                 {gettext("Objective")}
               <% else %>
-                {gettext("Prompt")}
+                <%!-- zh_CN: Prompt → "提示词" --%>{gettext("Prompt")}
               <% end %>
             </span>
           </label>

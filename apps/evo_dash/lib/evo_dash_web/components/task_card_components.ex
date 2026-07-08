@@ -3,6 +3,9 @@ defmodule EvoDashWeb.TaskCardComponents do
   Task card components for the dashboard — status display, metatags,
   expandable details, result rendering, and option rendering helpers.
   """
+
+  # zh_CN: Agent → "智能体", Token → "词元"
+
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
@@ -110,7 +113,7 @@ defmodule EvoDashWeb.TaskCardComponents do
             <%= if Map.get(@task, :agent_count) do %>
               <span class="flex items-center gap-1.5">
                 <.icon name="hero-user-group" class="size-4 opacity-60" />
-                {gettext("%{count} Agents", count: @task.agent_count)}
+                <%!-- zh_CN: Agent → "智能体" --%>{gettext("%{count} Agents", count: @task.agent_count)}
               </span>
             <% end %>
           </div>
@@ -219,25 +222,25 @@ defmodule EvoDashWeb.TaskCardComponents do
               <%= if Map.get(@task, :usage) do %>
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
-                    <.icon name="hero-currency-dollar" class="size-4.5 text-primary" /> {gettext(
+                    <.icon name="hero-currency-dollar" class="size-4.5 text-primary" /> <%!-- zh_CN: Token → "词元" --%>{gettext(
                       "Token & Cost Usage"
                     )}
                   </h4>
                   <div class="grid grid-cols-3 gap-3">
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1">{gettext("Input Tokens")}</div>
+                      <div class="text-xs text-base-content/50 mb-1"><%!-- zh_CN: Token → "词元" --%>{gettext("Input Tokens")}</div>
                       <div class="text-sm font-semibold">
                         {format_number(@task.usage.input_tokens)}
                       </div>
                     </div>
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1">{gettext("Output Tokens")}</div>
+                      <div class="text-xs text-base-content/50 mb-1"><%!-- zh_CN: Token → "词元" --%>{gettext("Output Tokens")}</div>
                       <div class="text-sm font-semibold">
                         {format_number(@task.usage.output_tokens)}
                       </div>
                     </div>
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1">{gettext("Total Tokens")}</div>
+                      <div class="text-xs text-base-content/50 mb-1"><%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}</div>
                       <div class="text-sm font-semibold">
                         {format_number(@task.usage.total_tokens)}
                       </div>
@@ -248,7 +251,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                       <div class="grid grid-cols-3 gap-3">
                         <div>
                           <div class="text-xs text-base-content/50 mb-1">
-                            {gettext("Cached Tokens")}
+                            <%!-- zh_CN: Token → "词元" --%>{gettext("Cached Tokens")}
                           </div>
                           <div class="text-sm font-semibold">
                             {format_number(Map.get(@task.usage, :cached_tokens, 0))}
@@ -318,7 +321,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <h4 class="text-sm font-bold flex items-center justify-between gap-2 mb-4">
                     <span class="flex items-center gap-2">
-                      <.icon name="hero-user-group" class="size-4.5 text-primary" /> {gettext(
+                      <.icon name="hero-user-group" class="size-4.5 text-primary" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext(
                         "Agents Spawned"
                       )}
                     </span>
@@ -330,7 +333,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                   </h4>
                   <div class="flex items-center gap-3">
                     <span class="text-2xl font-bold text-primary">{format_number(@task.agent_count)}</span>
-                    <span class="text-xs text-base-content/50">{gettext(
+                    <span class="text-xs text-base-content/50"><%!-- zh_CN: agent → "智能体" --%>{gettext(
                       "total agents (incl. subagents)"
                     )}</span>
                   </div>
@@ -555,7 +558,7 @@ defmodule EvoDashWeb.TaskCardComponents do
       <%= if @truncate do %>
         <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
           <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
           </h5>
           <div class="text-sm whitespace-pre-wrap break-words">
             {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
@@ -566,7 +569,7 @@ defmodule EvoDashWeb.TaskCardComponents do
             <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
           </h5>
           <p class="text-sm text-warning">
-            {gettext("The agent completed without making any changes to the codebase.")}
+            <%!-- zh_CN: agent → "智能体" --%>{gettext("The agent completed without making any changes to the codebase.")}
           </p>
         </div>
       <% else %>
@@ -575,12 +578,12 @@ defmodule EvoDashWeb.TaskCardComponents do
             <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
           </h5>
           <p class="text-sm text-warning">
-            {gettext("The agent completed without making any changes to the codebase.")}
+            <%!-- zh_CN: agent → "智能体" --%>{gettext("The agent completed without making any changes to the codebase.")}
           </p>
         </div>
         <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
           <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
           </h5>
           <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
         </div>
