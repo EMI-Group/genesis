@@ -33,6 +33,25 @@ defmodule EvoGit.Runtime.Evolution.Engine do
   ]
 
   # ── Defaults ──────────────────────────────────────────────────────
+  #
+  # Evolution engine parameters deliberately bypass the persistent config schema
+  # system (EvoGit.Config / Schema). They are per-session CLI options (`--evolve-*`
+  # flags), NOT persistent user preferences. Three design decisions enforce this:
+  #
+  #   1. user_config/0 strips the `"evolution"` TOML key on read AND on save
+  #      (config.ex:446,453,504) — it can never enter the persistent config.
+  #
+  #   2. Schema.defaults/0 has no `:evolution` key — no schema validation path.
+  #
+  #   3. The build_state/5 resolution chain below uses the triple-fallback
+  #      pattern (CLI opts → evo_config → @default_*), but the middle tier
+  #      is always %{} because Config.resolve(:evolution) returns nil (→ %{}
+  #      via get_evolution_config/0). The chain is intentionally 2-tier at
+  #      runtime but retains the 3-tier pattern for clarity and future
+  #      flexibility.
+  #
+  # This keeps evolution tuning ephemeral: each `evogit evolve --mode complex`
+  # invocation starts fresh with defaults, overridable only by CLI flags.
 
   @default_max_generations 10
   @default_pool_size 30

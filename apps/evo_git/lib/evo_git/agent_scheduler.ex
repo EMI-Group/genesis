@@ -359,16 +359,16 @@ defmodule EvoGit.AgentScheduler do
     # Load API keys from credentials.toml into environment variables
     _credentials = EvoGit.Config.credentials()
 
-    scheduler_config = Map.get(config, :scheduler, %{})
-    sandbox_config = Map.get(config, :sandbox, %{})
+    scheduler_config = config[:scheduler]
+    sandbox_config = config[:sandbox]
 
-    max_concurrency = Map.get(scheduler_config, :max_concurrency, 3)
-    max_tool_concurrency = Map.get(scheduler_config, :max_tool_concurrency, 2)
-    agent_max_retries = Map.get(scheduler_config, :agent_max_retries, 3)
-    max_depth = Map.get(scheduler_config, :max_agent_depth, 8)
-    max_retries = Map.get(scheduler_config, :max_retries, 15)
-    max_turns = Map.get(scheduler_config, :max_turns, 128)
-    max_turns_root = Map.get(scheduler_config, :max_turns_root, 128)
+    max_concurrency = scheduler_config[:max_concurrency]
+    max_tool_concurrency = scheduler_config[:max_tool_concurrency]
+    agent_max_retries = scheduler_config[:agent_max_retries]
+    max_depth = scheduler_config[:max_agent_depth]
+    max_retries = scheduler_config[:max_retries]
+    max_turns = scheduler_config[:max_turns]
+    max_turns_root = scheduler_config[:max_turns_root]
 
     # Load model profiles from config (Step 2: per-model slot pools).
     # Each profile becomes its own slot pool. Falls back to a single
@@ -380,7 +380,7 @@ defmodule EvoGit.AgentScheduler do
       case raw_model_profiles do
         [] ->
           # Legacy path: build a single "default" profile from flat config
-          legacy_model = Map.get(config, :llm, %{}) |> Map.get(:model)
+          legacy_model = config[:llm] |> Map.get(:model)
 
           [
             %{
@@ -402,7 +402,7 @@ defmodule EvoGit.AgentScheduler do
     default_model =
       case List.first(model_profiles) do
         %{model: model} when model != nil -> model
-        _ -> Map.get(config, :llm, %{}) |> Map.get(:model)
+        _ -> config[:llm] |> Map.get(:model)
       end
 
     default_params =

@@ -9,37 +9,23 @@ defmodule EvoGit.Agent.DelegationHints do
   directly.
   """
 
-  # Number of write-tool calls to the same child directory before nudging
-  # the agent to spawn a subagent. Set to 0 to disable delegation hints.
-  @delegation_hint_threshold 5
   # Write tools whose file paths should be tracked for delegation hints
   @write_tools_for_delegation ~w(write_file edit_file)
-  # Number of read-tool calls to the same child directory before nudging
-  # the agent to delegate investigation to a subagent.
-  @read_delegation_hint_threshold 8
   # Read/investigation tools whose paths should be tracked for read delegation hints
   @read_tools_for_delegation ~w(read_file rg glob list_dir)
-  # 10 seconds default timeout for tools that don't specify their own
-  @default_tool_timeout 10_000
-  # The max timeout for any tool is capped at 30 minutes to prevent runaway executions.
-  @max_tool_timeout 1_800_000
 
   # --- Threshold accessors ---
 
   def delegation_hint_threshold do
-    # Allow config to override the compile-time default
-    EvoGit.Config.resolve([:scheduler, :delegation_hint_threshold]) ||
-      @delegation_hint_threshold
+    EvoGit.Config.resolve([:scheduler, :delegation_hint_threshold])
   end
 
   def max_tool_timeout do
-    EvoGit.Config.resolve([:scheduler, :max_tool_timeout]) ||
-      @max_tool_timeout
+    EvoGit.Config.resolve([:scheduler, :max_tool_timeout])
   end
 
   def default_tool_timeout do
-    EvoGit.Config.resolve([:scheduler, :default_tool_timeout]) ||
-      @default_tool_timeout
+    EvoGit.Config.resolve([:scheduler, :default_tool_timeout])
   end
 
   # --- Write-tool child path extraction ---
@@ -211,8 +197,7 @@ defmodule EvoGit.Agent.DelegationHints do
   # directly. Only fires for high-level agents.
 
   def read_delegation_hint_threshold do
-    EvoGit.Config.resolve([:scheduler, :read_delegation_hint_threshold]) ||
-      @read_delegation_hint_threshold
+    EvoGit.Config.resolve([:scheduler, :read_delegation_hint_threshold])
   end
 
   @doc false

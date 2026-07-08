@@ -145,9 +145,9 @@ defmodule EvoGit.Agent.OutputSanitizer do
   Non-binary results pass through as `{result, nil}`.
   """
   def truncate(result, tool_name, tool_args) when is_binary(result) do
-    global_max = EvoGit.Config.resolve([:truncation, :tool_output_max_bytes]) || 128 * 1024
-    default_max = EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes]) || 16 * 1024
-    truncate_size = EvoGit.Config.resolve([:truncation, :tool_output_truncate_size]) || 8192
+    global_max = EvoGit.Config.resolve([:truncation, :tool_output_max_bytes])
+    default_max = EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes])
+    truncate_size = EvoGit.Config.resolve([:truncation, :tool_output_truncate_size])
 
     effective_max = determine_effective_max(tool_name, tool_args, global_max, default_max)
 
