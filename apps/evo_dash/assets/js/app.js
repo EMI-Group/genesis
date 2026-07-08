@@ -338,11 +338,18 @@ const ScrollToFile = {
 // Native smooth scroll is interrupted when scrollTo is called again mid-animation,
 // causing stutter when messages arrive rapidly. The custom animation restarts cleanly
 // from the current position to the latest target on every update.
+//
+// A `_isAnimating` flag suppresses the scroll listener while the programmatic
+// animation runs. Each frame writes `el.scrollTop`, which fires a `scroll` event;
+// mid-animation we're still partway down, so that event would otherwise flip
+// `isAtBottom` to false and make the next message skip scrolling — getting stuck.
+// Once the animation completes we re-affirm `isAtBottom = true`.
 const AgentHistoryAutoScroll = {
   mounted() {
     this.isAtBottom = true;
     this._scheduleRAF = null;
     this._animRAF = null;
+    this._isAnimating = false;
 
     // Scroll to bottom after initial layout completes
     requestAnimationFrame(() => {
@@ -351,6 +358,7 @@ const AgentHistoryAutoScroll = {
 
     // Track whether user has scrolled away from bottom
     this.el.addEventListener("scroll", () => {
+      if (this._isAnimating) return;  // ignore scroll events from our own animation
       this.isAtBottom =
         this.el.scrollTop + this.el.clientHeight >= this.el.scrollHeight - 30;
     }, { passive: true });
@@ -381,9 +389,14 @@ const AgentHistoryAutoScroll = {
       this._animRAF = null;
     }
 
+    this._isAnimating = true;
+
     const start = this.el.scrollTop;
     const distance = target - start;
-    if (Math.abs(distance) < 1) return;
+    if (Math.abs(distance) < 1) {
+      this._isAnimating = false;
+      return;
+    }
 
     const duration = 200; // ms — short enough to keep up with streaming, long enough to feel smooth
     const startTime = performance.now();
@@ -399,6 +412,8 @@ const AgentHistoryAutoScroll = {
         this._animRAF = requestAnimationFrame(animate);
       } else {
         this._animRAF = null;
+        this._isAnimating = false;
+        this.isAtBottom = true;
       }
     };
 
