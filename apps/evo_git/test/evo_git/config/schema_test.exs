@@ -44,6 +44,16 @@ defmodule EvoGit.Config.SchemaTest do
       assert [:sandbox, :process, :limit_nofile] in paths
       assert [:sandbox, :process, :oom_score_adjust] in paths
 
+      # Sandbox: Linux security features
+      assert [:sandbox, :linux, :protect_system] in paths
+      assert [:sandbox, :linux, :protect_home] in paths
+      assert [:sandbox, :linux, :protect_kernel_tunables] in paths
+      assert [:sandbox, :linux, :protect_control_groups] in paths
+      assert [:sandbox, :linux, :system_call_filter] in paths
+      assert [:sandbox, :linux, :no_new_privileges] in paths
+      assert [:sandbox, :linux, :private_pids] in paths
+      assert [:sandbox, :linux, :protect_proc] in paths
+
       # Truncation
       assert [:truncation, :tool_output_max_bytes] in paths
       assert [:truncation, :tool_output_default_max_bytes] in paths
@@ -87,8 +97,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 50 schemas" do
-      assert length(Schema.all_schemas()) == 50
+    test "has exactly 58 schemas" do
+      assert length(Schema.all_schemas()) == 58
     end
   end
 
@@ -127,6 +137,14 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.sandbox.process.memory_max == "12G"
       assert defaults.sandbox.process.limit_nofile == 65536
       assert defaults.sandbox.process.oom_score_adjust == 1000
+      assert defaults.sandbox.linux.protect_system == true
+      assert defaults.sandbox.linux.protect_home == true
+      assert defaults.sandbox.linux.protect_kernel_tunables == true
+      assert defaults.sandbox.linux.protect_control_groups == true
+      assert defaults.sandbox.linux.system_call_filter == true
+      assert defaults.sandbox.linux.no_new_privileges == true
+      assert defaults.sandbox.linux.private_pids == true
+      assert defaults.sandbox.linux.protect_proc == true
 
       # Truncation
       assert defaults.truncation.tool_output_max_bytes == 131_072
@@ -193,7 +211,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:scheduler]) == 11
       assert length(grouped[:llm]) == 10
       assert length(grouped[:user]) == 1
-      assert length(grouped[:sandbox]) == 9
+      assert length(grouped[:sandbox]) == 17
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
       assert length(grouped[:nix]) == 2
@@ -208,9 +226,11 @@ defmodule EvoGit.Config.SchemaTest do
 
       resources = Enum.filter(sandbox, &(&1.sub_category == :resources))
       process = Enum.filter(sandbox, &(&1.sub_category == :process))
+      linux = Enum.filter(sandbox, &(&1.sub_category == :linux))
 
       assert length(resources) == 4
       assert length(process) == 4
+      assert length(linux) == 8
     end
   end
 

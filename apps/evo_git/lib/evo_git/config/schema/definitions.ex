@@ -12,7 +12,7 @@ defmodule EvoGit.Config.Schema.Definitions do
   - `:default` — the default value (or nil if none)
   - `:validation` — a keyword list of validation rules (`min:`, `max:`, `in:`)
   - `:category` — the top-level config category
-  - `:sub_category` — sub-category within sandbox (`:resources` or `:process`); nil otherwise
+  - `:sub_category` — sub-category within sandbox (`:resources`, `:process`, or `:linux`); nil otherwise
   - `:description` — human-readable description string
   """
   @spec schemas() :: [EvoGit.Config.Schema.schema_map()]
@@ -339,6 +339,87 @@ defmodule EvoGit.Config.Schema.Definitions do
         sub_category: :process,
         description:
           "OOM killer adjustment score per process (-1000 to 1000). Higher values make processes more likely to be killed when memory is exhausted. Default of 1000 means sandboxed processes are preferentially killed over system processes."
+      },
+      # ── Sandbox: Linux security features ──────────────────────────────
+      %{
+        key_path: [:sandbox, :linux, :protect_system],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :sandbox,
+        sub_category: :linux,
+        description:
+          "Enable ProtectSystem=strict (systemd v214+). Makes /usr, /boot, and /etc read-only inside the sandbox."
+      },
+      %{
+        key_path: [:sandbox, :linux, :protect_home],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :sandbox,
+        sub_category: :linux,
+        description:
+          "Enable ProtectHome=read-only (systemd v214+). Makes /home read-only except for explicitly whitelisted ReadWritePaths."
+      },
+      %{
+        key_path: [:sandbox, :linux, :protect_kernel_tunables],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :sandbox,
+        sub_category: :linux,
+        description:
+          "Enable ProtectKernelTunables=yes (systemd v218+). Prevents modification of kernel tunables in /sys and /proc/sys."
+      },
+      %{
+        key_path: [:sandbox, :linux, :protect_control_groups],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :sandbox,
+        sub_category: :linux,
+        description:
+          "Enable ProtectControlGroups=yes (systemd v214+). Prevents the sandboxed process from modifying control group hierarchies."
+      },
+      %{
+        key_path: [:sandbox, :linux, :system_call_filter],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :sandbox,
+        sub_category: :linux,
+        description:
+          "Enable system call filtering (systemd v214+). Restricts which syscalls the sandboxed process can make. Controls SystemCallArchitectures=native, SystemCallErrorNumber=EPERM, and SystemCallFilter=~ @clock @module @mount @raw-io @reboot @swap."
+      },
+      %{
+        key_path: [:sandbox, :linux, :no_new_privileges],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :sandbox,
+        sub_category: :linux,
+        description:
+          "Enable NoNewPrivileges=yes (systemd v214+). Prevents the sandboxed process from gaining new privileges via setuid binaries or sudo."
+      },
+      %{
+        key_path: [:sandbox, :linux, :private_pids],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :sandbox,
+        sub_category: :linux,
+        description:
+          "Enable PrivatePIDs=yes (systemd v239+). Hides host processes from the sandboxed process's view via a private PID namespace."
+      },
+      %{
+        key_path: [:sandbox, :linux, :protect_proc],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :sandbox,
+        sub_category: :linux,
+        description:
+          "Enable ProtectProc=invisible (systemd v247+). Hides processes of other users in /proc from the sandboxed process."
       },
       # ── Truncation ─────────────────────────────────────────────────────
       %{

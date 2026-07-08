@@ -51,6 +51,18 @@ defmodule EvoGit.Config do
       limit_nofile = 65536     # Max open file descriptors
       oom_score_adjust = 1000  # OOM killer preference (-1000 to 1000)
 
+      [sandbox.linux]
+      # Toggle individual systemd-run security features. All default to true.
+      # Disable features that your systemd version does not support.
+      # protect_system = true           # ProtectSystem=strict (v214+)
+      # protect_home = true             # ProtectHome=read-only (v214+)
+      # protect_kernel_tunables = true  # ProtectKernelTunables=yes (v218+)
+      # protect_control_groups = true   # ProtectControlGroups=yes (v214+)
+      # system_call_filter = true       # SystemCallFilter=~ @clock @module ... (v214+)
+      # no_new_privileges = true        # NoNewPrivileges=yes (v214+)
+      # private_pids = true             # PrivatePIDs=yes (v239+)
+      # protect_proc = true             # ProtectProc=invisible (v247+)
+
       [truncation]
       tool_output_max_bytes = 131_072    # 128 KB — threshold to trigger truncation
       tool_output_default_max_bytes = 16_384 # 16 KB — default max for high-output tools
