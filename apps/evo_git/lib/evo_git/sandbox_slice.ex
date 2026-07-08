@@ -156,7 +156,7 @@ defmodule EvoGit.SandboxSlice do
   # --- Private Implementation ---
 
   defp load_config_resources do
-    EvoGit.Config.resolve([:sandbox, :resources]) || %{}
+    EvoGit.Config.resolve([:sandbox, :resources])
   end
 
   defp sandbox_enabled? do
@@ -167,7 +167,7 @@ defmodule EvoGit.SandboxSlice do
         false
 
       true ->
-        case EvoGit.Config.resolve([:sandbox, :mode]) || :auto do
+        case EvoGit.Config.resolve([:sandbox, :mode]) do
           :enabled -> true
           :disabled -> false
           :auto -> EvoGit.Platform.systemd_available?()

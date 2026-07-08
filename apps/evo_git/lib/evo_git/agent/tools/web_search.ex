@@ -33,9 +33,6 @@ defmodule EvoGit.Agent.Tools.WebSearch do
 
   alias EvoGit.Agent.Tools.Shared
 
-  @default_timeout 60_000
-  @default_max_bytes 16_384
-
   @doc """
   Returns the tool schema for ReqLLM.
 
@@ -53,8 +50,8 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   """
   def schema(_opts) do
     config = EvoGit.Config.resolve()
-    provider = get_in(config, [:tools, :search, :provider]) || :tavily
-    provider_config = get_in(config, [:tools, :search, provider]) || %{}
+    provider = get_in(config, [:tools, :search, :provider])
+    provider_config = get_in(config, [:tools, :search, provider])
 
     search_depth =
       provider_config
@@ -64,17 +61,14 @@ defmodule EvoGit.Agent.Tools.WebSearch do
     max_results =
       provider_config
       |> Map.get(:max_results)
-      |> Kernel.||(10)
 
     timeout =
       provider_config
       |> Map.get(:timeout)
-      |> Kernel.||(@default_timeout)
 
     max_bytes =
       provider_config
       |> Map.get(:max_bytes)
-      |> Kernel.||(@default_max_bytes)
 
     ReqLLM.tool(
       name: "search_web",
@@ -130,8 +124,8 @@ defmodule EvoGit.Agent.Tools.WebSearch do
          {:ok, search_depth} <- validate_search_depth(Map.get(args, "search_depth", "basic")),
          {:ok, max_results} <- validate_max_results(Map.get(args, "max_results", 10)) do
       config = EvoGit.Config.resolve()
-      provider = get_in(config, [:tools, :search, :provider]) || :tavily
-      provider_config = get_in(config, [:tools, :search, provider]) || %{}
+      provider = get_in(config, [:tools, :search, :provider])
+      provider_config = get_in(config, [:tools, :search, provider])
 
       api_key_env_var = provider_config[:api_key_env_var]
       api_key =
@@ -149,8 +143,8 @@ defmodule EvoGit.Agent.Tools.WebSearch do
         end
 
       base_url = provider_config[:base_url]
-      timeout = args["timeout"] || provider_config[:timeout] || @default_timeout
-      max_bytes = args["max_bytes"] || provider_config[:max_bytes] || @default_max_bytes
+      timeout = args["timeout"] || provider_config[:timeout]
+      max_bytes = args["max_bytes"] || provider_config[:max_bytes]
 
       provider_map = %{
         api_key: api_key,
@@ -181,7 +175,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
     if is_nil(api_key) or api_key == "" do
       "Error: API key for search provider is not set"
     else
-      url = provider_config.base_url || "https://api.tavily.com/search"
+      url = provider_config.base_url
       receive_timeout = provider_config.timeout || 30_000
 
       body = %{

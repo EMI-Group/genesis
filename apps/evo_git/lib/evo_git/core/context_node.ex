@@ -238,6 +238,6 @@ defmodule EvoGit.Core.ContextNode do
   end
 
   defp context_max_bytes do
-    EvoGit.Config.resolve([:truncation, :context_max_bytes]) || 64 * 1024
+    EvoGit.Config.resolve([:truncation, :context_max_bytes])
   end
 end
