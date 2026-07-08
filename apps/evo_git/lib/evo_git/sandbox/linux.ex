@@ -11,7 +11,7 @@ defmodule EvoGit.Sandbox.Linux do
   @doc "Returns true when sandbox mode allows systemd-run on Linux."
   @spec enabled?() :: boolean()
   def enabled? do
-    case EvoGit.Defaults.sandbox() || :auto do
+    case EvoGit.Defaults.sandbox() do
       :enabled -> true
       :disabled -> false
       :auto -> Platform.systemd_available?()
@@ -223,7 +223,7 @@ defmodule EvoGit.Sandbox.Linux do
   # when the config key is missing (full security). Users on older systemd
   # versions can disable unsupported features in ~/.config/genesis/config.toml.
   defp security_args do
-    cfg = EvoGit.Config.resolve([:sandbox, :linux]) || %{}
+    cfg = EvoGit.Config.resolve([:sandbox, :linux])
 
     protect_system =
       if Map.get(cfg, :protect_system, true) do
@@ -311,8 +311,8 @@ defmodule EvoGit.Sandbox.Linux do
       end
 
     case scheduler_config[:sandbox_process_resources] do
-      nil -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
-      resources when map_size(resources) == 0 -> EvoGit.Config.resolve([:sandbox, :process]) || %{}
+      nil -> EvoGit.Config.resolve([:sandbox, :process])
+      resources when map_size(resources) == 0 -> EvoGit.Config.resolve([:sandbox, :process])
       resources -> resources
     end
   end
