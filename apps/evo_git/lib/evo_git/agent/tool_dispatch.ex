@@ -330,6 +330,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       :ok
     end
   end
+
   @doc false
   def handle_complete_call(complete_call, %LoopState{in_grace_period: grace} = state, tool_calls) do
     # Check if git status validation is enabled (default: true).
