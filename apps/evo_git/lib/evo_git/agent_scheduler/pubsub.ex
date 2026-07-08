@@ -23,8 +23,11 @@ defmodule EvoGit.AgentScheduler.PubSub do
   `broadcast_agents_updated/0` degrades gracefully to an immediate broadcast.
   """
   def start_throttle do
-    pid = spawn(fn -> throttle_loop(nil) end)
-    Process.register(pid, __MODULE__.Throttle)
+    unless Process.whereis(__MODULE__.Throttle) do
+      pid = spawn(fn -> throttle_loop(nil) end)
+      Process.register(pid, __MODULE__.Throttle)
+    end
+
     :ok
   end
 
