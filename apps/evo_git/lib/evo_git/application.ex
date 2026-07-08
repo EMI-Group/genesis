@@ -14,6 +14,9 @@ defmodule EvoGit.Application do
     ensure_ets_table(:evogit_sched_meta, [:named_table, :public, :set, read_concurrency: true])
     ensure_ets_table(:evogit_archive_records, [:named_table, :public, :duplicate_bag, read_concurrency: true])
 
+    # Start the PubSub throttle process (coalesces rapid agent-update signals)
+    EvoGit.AgentScheduler.PubSub.start_throttle()
+
     children = [
       {Phoenix.PubSub, name: EvoGit.PubSub},
       {EvoGit.AgentGroupSupervisor, []}

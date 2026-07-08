@@ -4,7 +4,8 @@ defmodule EvoGit.AgentScheduler.Store do
 
   Centralizes read/write/delete operations on the two scheduler-owned ETS
   tables (`:evogit_agent_state` and `:evogit_sched_meta`). Every write/delete
-  broadcasts an `:agents_updated` PubSub event so the dashboard stays in sync.
+  broadcasts enriched PubSub delta events so the dashboard can apply incremental
+  updates, plus a throttled `:agents_updated` fallback for backward compat.
   """
 
   alias EvoGit.AgentScheduler.AgentState
@@ -16,7 +17,9 @@ defmodule EvoGit.AgentScheduler.Store do
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
 
-  # --- Scheduler Metadata Table ---
+  # ---------------------------------------------------------------------------
+  # Scheduler Metadata Table
+  # ---------------------------------------------------------------------------
 
   @doc """
   Reads the scheduler metadata for the given agent ID.
@@ -31,26 +34,58 @@ defmodule EvoGit.AgentScheduler.Store do
   end
 
   @doc """
-  Inserts/updates scheduler metadata for the given agent ID, then broadcasts
-  an `:agents_updated` event.
+  Inserts/updates scheduler metadata for the given agent ID.
+
+  Broadcasts an enriched `:agent_registered` event for new agents (status
+  `:pending`) or an `:agent_updated` delta for updates.  Always also sends
+  the throttled `:agents_updated` fallback for backward compatibility.
   """
   @spec put_sched_meta(pos_integer(), SchedMeta.t()) :: :ok
   def put_sched_meta(agent_id, meta) do
+    old_meta =
+      case :ets.lookup(@sched_table, agent_id) do
+        [{^agent_id, existing}] -> existing
+        [] -> nil
+      end
+
     :ets.insert(@sched_table, {agent_id, meta})
+
+    if old_meta do
+      changes = sched_meta_changes(old_meta, meta)
+
+      if changes != [] do
+        PubSub.broadcast_agent_updated(agent_id, changes)
+      end
+    else
+      PubSub.broadcast_agent_registered(agent_id, %{
+        status: meta.status,
+        depth: meta.depth,
+        parent_id: meta.parent_id,
+        task_id: meta.task_id,
+        task_number: meta.task_number,
+        objective: meta.spec.objective
+      })
+    end
+
     PubSub.broadcast_agents_updated()
   end
 
   @doc """
-  Deletes scheduler metadata for the given agent ID, then broadcasts
-  an `:agents_updated` event.
+  Deletes scheduler metadata for the given agent ID.
+
+  Broadcasts an `:agent_removed` event plus the throttled `:agents_updated`
+  fallback for backward compatibility.
   """
   @spec delete_sched_meta(pos_integer()) :: :ok
   def delete_sched_meta(agent_id) do
     :ets.delete(@sched_table, agent_id)
+    PubSub.broadcast_agent_removed(agent_id)
     PubSub.broadcast_agents_updated()
   end
 
-  # --- Agent State Table ---
+  # ---------------------------------------------------------------------------
+  # Agent State Table
+  # ---------------------------------------------------------------------------
 
   @doc """
   Reads the live agent state for the given agent ID.
@@ -65,26 +100,51 @@ defmodule EvoGit.AgentScheduler.Store do
   end
 
   @doc """
-  Inserts/updates agent state for the given agent ID, then broadcasts
-  an `:agents_updated` event.
+  Inserts/updates agent state for the given agent ID.
+
+  Broadcasts an `:agent_updated` delta event with the changed fields plus
+  the throttled `:agents_updated` fallback for backward compatibility.
   """
   @spec put_agent_state(pos_integer(), AgentState.t()) :: :ok
   def put_agent_state(agent_id, agent_state) do
+    old_state =
+      case :ets.lookup(@agent_table, agent_id) do
+        [{^agent_id, existing}] -> existing
+        [] -> nil
+      end
+
     :ets.insert(@agent_table, {agent_id, agent_state})
+
+    changes =
+      if old_state do
+        agent_state_changes(old_state, agent_state)
+      else
+        initial_agent_state_fields(agent_state)
+      end
+
+    if changes != [] do
+      PubSub.broadcast_agent_updated(agent_id, changes)
+    end
+
     PubSub.broadcast_agents_updated()
   end
 
   @doc """
-  Deletes agent state for the given agent ID, then broadcasts
-  an `:agents_updated` event.
+  Deletes agent state for the given agent ID.
+
+  Broadcasts an `:agent_removed` event plus the throttled `:agents_updated`
+  fallback for backward compatibility.
   """
   @spec delete_agent_state(pos_integer()) :: :ok
   def delete_agent_state(agent_id) do
     :ets.delete(@agent_table, agent_id)
+    PubSub.broadcast_agent_removed(agent_id)
     PubSub.broadcast_agents_updated()
   end
 
-  # --- ETS Helpers (Agent History Table) ---
+  # ---------------------------------------------------------------------------
+  # ETS Helpers (Agent History Table)
+  # ---------------------------------------------------------------------------
 
   @doc """
   Returns all entries from the scheduler metadata table as a list of
@@ -149,12 +209,22 @@ defmodule EvoGit.AgentScheduler.Store do
   Accepts a keyword list of field-value pairs (e.g., `[context: ctx, turn: 5, usage: usage, total_tokens: 100]`).
   This avoids redundant `:ets.lookup` + `:ets.insert` round-trips when syncing
   multiple fields per agent turn.
+
+  Broadcasts an enriched `:agent_updated` delta with the exact changed fields,
+  plus the throttled `:agents_updated` fallback for backward compat.
   """
   @spec batch_update_agent(pos_integer(), keyword()) :: :ok
   def batch_update_agent(agent_id, fields) when is_list(fields) do
     {:ok, agent_state} = get_agent_state(agent_id)
     updated_state = Kernel.struct!(agent_state, fields)
-    put_agent_state(agent_id, updated_state)
+
+    # Write through put_agent_state which does its own enriched broadcast.
+    # We also emit the exact fields kwlist as a focused delta — subscribers
+    # can use whichever granularity they prefer.
+    :ets.insert(@agent_table, {agent_id, updated_state})
+    PubSub.broadcast_agent_updated(agent_id, fields)
+    PubSub.broadcast_agents_updated()
+
     :ok
   end
 
@@ -211,5 +281,87 @@ defmodule EvoGit.AgentScheduler.Store do
     put_agent_state(agent_id, updated_state)
 
     :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers — field-level diffing
+  # ---------------------------------------------------------------------------
+
+  # Fields to compare for sched-meta change detection.
+  @sched_meta_tracked_fields [
+    :status,
+    :depth,
+    :worktree,
+    :task_ref,
+    :from,
+    :parent_id,
+    :task_id,
+    :task_number,
+    :retries,
+    :result_sent,
+    :sub_agent_from,
+    :total_sub_specs,
+    :pending_sub_agents,
+    :sub_agent_results,
+    :sub_agent_indices,
+    :foreign_repo_commits
+  ]
+
+  # Fields to compare for agent-state change detection.
+  # `context` is intentionally excluded — it is large, changes every turn, and
+  # its progress is tracked via `total_tokens` which is sufficient for the
+  # dashboard.
+  @agent_state_tracked_fields [
+    :turn,
+    :usage,
+    :total_tokens,
+    :compression_count,
+    :phylo_node,
+    :context_node,
+    :objective,
+    :llm_model,
+    :llm_generation_params,
+    :model_id,
+    :archive,
+    :repo_id,
+    :repo_root,
+    :foreign_repos,
+    :parent_id,
+    :max_retries,
+    :max_depth,
+    :max_turns,
+    :task_local_id
+  ]
+
+  defp sched_meta_changes(old, new) do
+    diff_fields(old, new, @sched_meta_tracked_fields)
+  end
+
+  defp agent_state_changes(old, new) do
+    diff_fields(old, new, @agent_state_tracked_fields)
+  end
+
+  defp diff_fields(old, new, fields) do
+    Enum.reduce(fields, [], fn field, acc ->
+      old_val = Map.get(old, field)
+      new_val = Map.get(new, field)
+
+      if old_val != new_val do
+        [{field, new_val} | acc]
+      else
+        acc
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  defp initial_agent_state_fields(state) do
+    Enum.reduce(@agent_state_tracked_fields, [], fn field, acc ->
+      case Map.get(state, field) do
+        nil -> acc
+        val -> [{field, val} | acc]
+      end
+    end)
+    |> Enum.reverse()
   end
 end
