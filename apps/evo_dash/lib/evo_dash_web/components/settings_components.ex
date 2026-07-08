@@ -320,7 +320,7 @@ defmodule EvoDashWeb.SettingsComponents do
                     <span class="text-sm text-base-content/80">{gettext(
                       "Not tested — click to verify LLM connectivity"
                     )}</span>
-                    <button phx-click="test_llm" class="btn btn-primary btn-sm gap-2">
+                    <button phx-click="test_llm" class="btn btn-primary btn-sm gap-2" disabled={@disabled}>
                       <.icon name="hero-signal" class="size-4" />
                       {gettext("Test Connection")}
                     </button>
@@ -335,14 +335,14 @@ defmodule EvoDashWeb.SettingsComponents do
                       data.response,
                       50
                     )}"</span>
-                    <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
+                    <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2" disabled={@disabled}>
                       <.icon name="hero-arrow-path" class="size-3" />
                       {gettext("Retest")}
                     </button>
                   <% {:error, reason} -> %>
                     <.icon name="hero-x-circle" class="size-5 text-error" />
                     <span class="text-sm text-error">{reason}</span>
-                    <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
+                    <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2" disabled={@disabled}>
                       <.icon name="hero-arrow-path" class="size-3" />
                       {gettext("Retry")}
                     </button>

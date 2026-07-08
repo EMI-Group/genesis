@@ -529,6 +529,7 @@ defmodule EvoDashWeb.SystemLive do
                 type="button"
                 class="btn btn-error rounded-md px-6 gap-2"
                 phx-click="confirm_restart"
+                disabled={@remote?}
               >
                 <.icon name="hero-arrow-path" class="size-4.5" />
                 {gettext("Restart System")}
@@ -567,6 +568,7 @@ defmodule EvoDashWeb.SystemLive do
                 type="button"
                 class="btn btn-error rounded-md px-6 gap-2"
                 phx-click="confirm_stop"
+                disabled={@remote?}
               >
                 <.icon name="hero-power" class="size-4.5" />
                 {gettext("Stop System")}
@@ -617,6 +619,13 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    # Detect whether the node context is changing (e.g. user switched from
+    # Local to a remote target via ?node= navigation, or vice versa). When it
+    # changes, clear stale confirmation modal flags so a restart/stop modal
+    # opened on the local node doesn't persist (and potentially get confirmed)
+    # after switching to a remote node.
+    previous_remote? = socket.assigns[:remote?]
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
@@ -624,6 +633,16 @@ defmodule EvoDashWeb.SystemLive do
       |> assign(:remote?, socket.assigns.current_node != node())
       # Refresh the scheduler paused state for the (possibly new) node context.
       |> assign(:scheduler_paused, EvoDash.NodeContext.paused?(socket.assigns.current_node))
+
+    socket =
+      if previous_remote? != nil and previous_remote? != socket.assigns.remote? do
+        # Node context changed — clear stale confirm flags.
+        socket
+        |> assign(:show_restart_confirm, false)
+        |> assign(:show_stop_confirm, false)
+      else
+        socket
+      end
 
     {:noreply, socket}
   end
@@ -711,22 +730,37 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("confirm_restart", _params, socket) do
-    # Spawn a short-lived process so this LiveView can finish replying (and the
-    # browser can close the modal) before the VM tears down. System.restart/0
-    # gracefully restarts the BEAM runtime — all applications are stopped and
-    # started again. It does NOT shut down the host OS.
-    spawn(fn ->
-      Process.sleep(150)
-      System.restart()
-    end)
+    # Defense-in-depth: the entry button (request_restart) and the modal confirm
+    # button are both disabled when remote, and handle_params clears the confirm
+    # flags on a node switch. But System.restart/0 tears down the LOCAL VM, so we
+    # MUST guard the handler too — a stale modal or crafted event must never
+    # restart the local dashboard VM while the user is viewing a remote node.
+    if socket.assigns.remote? do
+      {:noreply,
+       socket
+       |> assign(:show_restart_confirm, false)
+       |> put_flash(
+         :error,
+         gettext("Cannot restart a remote node from the dashboard")
+       )}
+    else
+      # Spawn a short-lived process so this LiveView can finish replying (and the
+      # browser can close the modal) before the VM tears down. System.restart/0
+      # gracefully restarts the BEAM runtime — all applications are stopped and
+      # started again. It does NOT shut down the host OS.
+      spawn(fn ->
+        Process.sleep(150)
+        System.restart()
+      end)
 
-    {:noreply,
-     socket
-     |> assign(:show_restart_confirm, false)
-     |> put_flash(
-       :info,
-       gettext("System is restarting. Please wait while the Erlang VM comes back up.")
-     )}
+      {:noreply,
+       socket
+       |> assign(:show_restart_confirm, false)
+       |> put_flash(
+         :info,
+         gettext("System is restarting. Please wait while the Erlang VM comes back up.")
+       )}
+    end
   end
 
   @impl true
@@ -752,25 +786,39 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("confirm_stop", _params, socket) do
-    # Spawn a short-lived process so this LiveView can finish replying (and the
-    # browser can close the modal) before the VM shuts down. System.stop/0
-    # gracefully shuts down the BEAM runtime — all applications are stopped in
-    # order and the VM exits. It does NOT affect the host OS, but the VM will
-    # need to be started again manually.
-    spawn(fn ->
-      Process.sleep(150)
-      System.stop()
-    end)
+    # Defense-in-depth: same rationale as confirm_restart — System.stop/0 shuts
+    # down the LOCAL VM. Guard the handler even though the buttons are disabled
+    # when remote, so a stale modal or crafted event can never stop the local
+    # dashboard VM while the user is viewing a remote node.
+    if socket.assigns.remote? do
+      {:noreply,
+       socket
+       |> assign(:show_stop_confirm, false)
+       |> put_flash(
+         :error,
+         gettext("Cannot stop a remote node from the dashboard")
+       )}
+    else
+      # Spawn a short-lived process so this LiveView can finish replying (and the
+      # browser can close the modal) before the VM shuts down. System.stop/0
+      # gracefully shuts down the BEAM runtime — all applications are stopped in
+      # order and the VM exits. It does NOT affect the host OS, but the VM will
+      # need to be started again manually.
+      spawn(fn ->
+        Process.sleep(150)
+        System.stop()
+      end)
 
-    {:noreply,
-     socket
-     |> assign(:show_stop_confirm, false)
-     |> put_flash(
-       :info,
-       gettext(
-         "System is stopping. The Erlang VM will shut down and must be started again manually."
-       )
-     )}
+      {:noreply,
+       socket
+       |> assign(:show_stop_confirm, false)
+       |> put_flash(
+         :info,
+         gettext(
+           "System is stopping. The Erlang VM will shut down and must be started again manually."
+         )
+       )}
+    end
   end
 
   @impl true

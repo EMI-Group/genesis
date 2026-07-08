@@ -28,7 +28,7 @@ defmodule EvoDashWeb.AgentsLive do
     id_to_display =
       Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
 
-    config_status = config_status()
+    config_status = node_config_status(current_node)
 
     socket =
       assign(socket,
@@ -64,7 +64,9 @@ defmodule EvoDashWeb.AgentsLive do
       if current_node != previous_node do
         # Node changed (e.g. user switched from Local to a remote target, or
         # vice versa). Reload agents from the new node and clear per-agent
-        # selection state that no longer applies.
+        # selection state that no longer applies. Also refresh config_status so
+        # the layout config banner reflects the new node's config (not stale
+        # local status).
         agents = load_agents(current_node)
         id_to_display = Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end)
 
@@ -73,6 +75,7 @@ defmodule EvoDashWeb.AgentsLive do
           agents: agents,
           id_to_display: id_to_display,
           repo_trees: build_repo_trees(agents),
+          config_status: node_config_status(current_node),
           previous_agent_ids: MapSet.new(agents, & &1.id),
           previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
           new_agent_ids: MapSet.new(),
@@ -876,6 +879,18 @@ defmodule EvoDashWeb.AgentsLive do
     else
       config = EvoDash.NodeContext.get_remote_config(node)
       get_in(config, [:llm, :compression_threshold_tokens]) || 100_000
+    end
+  end
+
+  # Reads the config health status for the given node. On the local node this
+  # resolves the local config directly; on a remote node it fetches the remote
+  # config status via RPC. The layout config banner uses this to show the
+  # correct status for the node being viewed (not stale local status).
+  defp node_config_status(node) do
+    if node == node() do
+      EvoGit.Config.config_status()
+    else
+      EvoDash.NodeContext.get_remote_config_status(node)
     end
   end
 

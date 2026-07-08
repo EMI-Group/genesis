@@ -747,14 +747,27 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("test_llm", _params, socket) do
-    parent = self()
+    # The connection test button renders outside the disabled form, so it
+    # remains clickable on a remote node. Guard the handler: EvoGit.SystemCheck
+    # .llm_test/0 tests the LOCAL LLM, returning a misleading result when the
+    # user is viewing a remote node's read-only config.
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext("LLM connection test is not available for remote nodes")
+       )}
+    else
+      parent = self()
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result = EvoGit.SystemCheck.llm_test()
-      send(parent, {:llm_test_result, result})
-    end)
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        result = EvoGit.SystemCheck.llm_test()
+        send(parent, {:llm_test_result, result})
+      end)
 
-    {:noreply, assign(socket, :llm_test_status, :testing)}
+      {:noreply, assign(socket, :llm_test_status, :testing)}
+    end
   end
 
   # ───────────────────────────────────────────────────────────────────────────
