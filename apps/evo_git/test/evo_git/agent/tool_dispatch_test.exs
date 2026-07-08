@@ -69,7 +69,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
           ToolDispatch.ensure_tool_calls(resp, 42)
         end)
 
-      assert log =~ "Agent 42: LLM returned no tool calls, retrying..."
+      assert log =~ "Agent 42: LLM returned no tool calls"
     end
 
     test "does not log a warning when tool calls are present" do
@@ -93,10 +93,59 @@ defmodule EvoGit.Agent.ToolDispatchTest do
 
   describe "process_tool_calls/3 defensive fallback" do
     test "returns {:error, :protocol_violation} for an empty tool-call list" do
-      # This clause is now a defensive fallback: ensure_tool_calls/2 catches the
-      # empty case inside the retry loop first. The clause must still return the
-      # same protocol-violation error if reached directly.
+      # This clause is now a defensive fallback: ensure_tool_calls/2 (called
+      # inside prompt_until_tools_or_limit/5) catches the empty case before
+      # tool calls are extracted. The clause must still return the same
+      # protocol-violation error if reached directly.
       assert ToolDispatch.process_tool_calls([], nil, []) == {:error, :protocol_violation}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # no_tool_call_nudge_message / append_no_tool_call_nudge
+  # ---------------------------------------------------------------------------
+
+  describe "no_tool_call_nudge_message/0" do
+    test "returns a user-role message instructing the model to use tools" do
+      msg = ToolDispatch.no_tool_call_nudge_message()
+
+      assert msg.role == :user
+      # Extract the text content from the message
+      text_parts =
+        Enum.filter(msg.content, fn
+          %ReqLLM.Message.ContentPart{text: _} -> true
+          _ -> false
+        end)
+
+      combined = Enum.map_join(text_parts, "", & &1.text)
+      assert combined =~ "tool call"
+      assert combined =~ "did not make any tool calls"
+    end
+  end
+
+  describe "append_no_tool_call_nudge/1" do
+    test "appends a user nudge message to the context" do
+      ctx = ReqLLM.Context.new([])
+      nudge_msg = ToolDispatch.no_tool_call_nudge_message()
+
+      updated = ToolDispatch.append_no_tool_call_nudge(ctx)
+
+      assert length(updated.messages) == 1
+      [appended] = updated.messages
+      assert appended.role == :user
+      assert appended == nudge_msg
+    end
+
+    test "preserves existing messages and appends the nudge at the end" do
+      existing = ReqLLM.Context.user("prior assistant message")
+      ctx = ReqLLM.Context.new([existing])
+
+      updated = ToolDispatch.append_no_tool_call_nudge(ctx)
+
+      assert length(updated.messages) == 2
+      [first, second] = updated.messages
+      assert first == existing
+      assert second.role == :user
     end
   end
 end
