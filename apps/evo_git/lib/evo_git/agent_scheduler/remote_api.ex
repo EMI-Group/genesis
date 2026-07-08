@@ -272,6 +272,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     |> Map.put(:usage, Map.from_struct(usage))
     |> Map.put(:foreign_repos, Enum.map(state.foreign_repos, &Map.from_struct/1))
     |> Map.put(:llm_generation_params, convert_keyword(state.llm_generation_params))
+    |> maybe_convert_struct_field(:llm_model)
     |> maybe_convert_struct_field(:context_node)
     |> maybe_convert_struct_field(:phylo_node)
   end
