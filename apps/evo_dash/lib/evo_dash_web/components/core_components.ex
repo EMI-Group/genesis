@@ -414,7 +414,9 @@ defmodule EvoDashWeb.CoreComponents do
   end
 
   @git_svg File.read!(Path.join(__DIR__, "../../../assets/vendor/brand/git.svg"))
+       |> String.replace("<svg", "<svg width=\"100%\" height=\"100%\"")
   @nix_svg File.read!(Path.join(__DIR__, "../../../assets/vendor/brand/nix.svg"))
+       |> String.replace("<svg", "<svg width=\"100%\" height=\"100%\"")
 
   @doc """
   Renders a [Heroicon](https://heroicons.com).
@@ -445,7 +447,7 @@ defmodule EvoDashWeb.CoreComponents do
 
   def icon(%{name: "brand-" <> _} = assigns) do
     ~H"""
-    <span class={["inline-block shrink-0", @class]} style="width:auto;height:auto">
+    <span class={["inline-block shrink-0", @class]}>
       <%= raw(brand_svg_content(@name)) %>
     </span>
     """
