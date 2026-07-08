@@ -3,6 +3,8 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   `model_profiles_editor/1` — List editor for [[llm.models]] profiles.
   """
 
+  # zh_CN: Provider → "服务商", Concurrency → "并发", Token → "词元"
+
   use EvoDashWeb, :html
 
   import EvoDashWeb.SettingsComponents.SettingCard, only: [model_display: 1]
@@ -21,7 +23,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         <div>
           <h3 class="text-lg font-bold text-base-content mb-0.5">{gettext("Model Profiles")}</h3>
           <p class="text-sm text-base-content/80">
-            {gettext(
+            <%!-- zh_CN: concurrency → "并发" --%>{gettext(
               "Configure one or more LLM models. Each profile can have its own concurrency and generation parameters."
             )}
           </p>
@@ -155,7 +157,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </div>
         <div class="form-control">
           <label class="label pb-1">
-            <span class="label-text font-semibold text-xs">{gettext("Provider")}</span>
+            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Provider → "服务商" --%>{gettext("Provider")}</span>
           </label>
           <input
             type="text"
@@ -165,7 +167,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
           />
           <p class="text-[11px] text-base-content/60 mt-1">
-            {gettext("The LLM provider name")}
+            <%!-- zh_CN: provider → "服务商" --%>{gettext("The LLM provider name")}
           </p>
         </div>
       </div>
@@ -200,7 +202,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
           />
           <p class="text-[11px] text-base-content/60 mt-1">
-            {gettext("For proxy/aggregator endpoints; leave empty for standard providers.")}
+            <%!-- zh_CN: provider → "服务商" --%>{gettext("For proxy/aggregator endpoints; leave empty for standard providers.")}
           </p>
         </div>
       </div>
@@ -208,7 +210,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       <%!-- concurrency ── --%>
       <div class="form-control">
         <label class="label pb-1">
-          <span class="label-text font-semibold text-xs">{gettext("Concurrency")}</span>
+          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Concurrency → "并发" --%>{gettext("Concurrency")}</span>
         </label>
         <input
           type="number"
@@ -280,7 +282,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <%!-- Max tokens ── --%>
           <div class="form-control">
             <label class="label pb-1">
-              <span class="label-text font-semibold text-xs">{gettext("Max Tokens")}</span>
+              <span class="label-text font-semibold text-xs"><%!-- zh_CN: Token → "词元" --%>{gettext("Max Tokens")}</span>
             </label>
             <input
               type="number"

@@ -83,7 +83,7 @@ defmodule EvoDashWeb.SettingsComponents do
             <div class="mb-8 rounded-lg border border-base-200 bg-base-100 p-5">
               <h3 class="text-lg font-bold text-base-content mb-1">{gettext("Quick Setup")}</h3>
               <p class="text-sm text-base-content/80 mb-5">
-                {gettext("Select a provider to quickly configure your model and API key.")}
+                <%!-- zh_CN: provider → "服务商" --%>{gettext("Select a provider to quickly configure your model and API key.")}
               </p>
 
               <%!-- Provider buttons --%>
@@ -225,7 +225,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
                       />
                       <p class="text-xs text-base-content/70 leading-relaxed mt-1">
-                        {gettext(
+                        <%!-- zh_CN: provider → "服务商" --%>{gettext(
                           "For proxy/aggregator endpoints. Leave empty for standard provider endpoints."
                         )}
                       </p>
@@ -237,7 +237,7 @@ defmodule EvoDashWeb.SettingsComponents do
                           class="size-5 text-warning shrink-0 mt-0.5"
                         />
                         <p class="text-xs font-medium text-warning/80 leading-relaxed">
-                          {gettext(
+                          <%!-- zh_CN: tool calls → "工具调用", provider → "服务商" --%>{gettext(
                             "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
                           )}
                         </p>
@@ -353,7 +353,7 @@ defmodule EvoDashWeb.SettingsComponents do
             <%!-- Help text for other providers --%>
             <div class="mb-6 bg-base-200/30 rounded-lg p-4 border border-base-200">
               <p class="text-xs text-base-content/70 leading-relaxed">
-                {raw(
+                <%!-- zh_CN: provider → "服务商" --%>{raw(
                   gettext(
                     "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
                   )
@@ -425,7 +425,7 @@ defmodule EvoDashWeb.SettingsComponents do
                             <span class="badge badge-success badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                           </h3>
                           <p class="text-sm font-medium text-success/80 leading-relaxed">
-                            {gettext(
+                            <%!-- zh_CN: sandbox → "沙箱" --%>{gettext(
                               "Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active."
                             )}
                           </p>
@@ -459,7 +459,7 @@ defmodule EvoDashWeb.SettingsComponents do
                             <span class="badge badge-error badge-sm text-[10px] uppercase tracking-wider font-bold">Disabled</span>
                           </h3>
                           <p class="text-sm font-medium text-error/80 leading-relaxed">
-                            {gettext(
+                            <%!-- zh_CN: sandbox → "沙箱" --%>{gettext(
                               "No sandbox support on this platform. Commands will run directly on the host."
                             )}
                           </p>

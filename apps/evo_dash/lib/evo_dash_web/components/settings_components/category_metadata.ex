@@ -7,14 +7,20 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   It uses `use Gettext, backend: EvoDashWeb.Gettext` for gettext macros.
   """
 
+  # zh_CN: Scheduler → "调度器", Sandbox → "沙箱", Agent → "智能体",
+  # Concurrency → "并发", Provider → "服务商", Token → "词元",
+  # Context window → "上下文窗口"
+
   use Gettext, backend: EvoDashWeb.Gettext
 
   # ── Public API ──
 
+  # zh_CN: Scheduler → "调度器"
   def category_display_name(:scheduler), do: gettext("Scheduler")
   def category_display_name(:llm), do: gettext("LLM")
   def category_display_name(:user), do: gettext("User")
   def category_display_name(:git), do: gettext("Git")
+  # zh_CN: Sandbox → "沙箱"
   def category_display_name(:sandbox), do: gettext("Sandbox")
   def category_display_name(:truncation), do: gettext("Truncation")
   def category_display_name(:task_history), do: gettext("Task History")
@@ -34,9 +40,11 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_icon(:nix), do: "brand-nix"
 
   # Made public because category_section/1 in the parent module calls it.
+  # zh_CN: agent → "智能体", concurrency → "并发"
   def category_description(:scheduler),
     do: gettext("Control agent concurrency, retry behavior, and depth limits.")
 
+  # zh_CN: provider → "服务商", token → "词元"
   def category_description(:llm),
     do: gettext("Configure the language model provider and token compression.")
 
@@ -46,9 +54,11 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_description(:git),
     do: gettext("Configure Git commit behavior and attribution for agent-generated commits.")
 
+  # zh_CN: sandbox → "沙箱"
   def category_description(:sandbox),
     do: gettext("Manage sandbox isolation, resource limits, and process constraints.")
 
+  # zh_CN: context windows → "上下文窗口"
   def category_description(:truncation),
     do: gettext("Configure output truncation limits for tool and context windows.")
 

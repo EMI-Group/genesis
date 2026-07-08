@@ -2,6 +2,9 @@ defmodule EvoDashWeb.ReviewComponents do
   @moduledoc """
   Components for the code review page — GitHub PR-style tab layout with split diff viewer.
   """
+
+  # zh_CN: Commit → "提交", Agent → "智能体", Token → "词元"
+
   use EvoDashWeb, :html
   alias EvoDashWeb.ArchiveHelpers
 
@@ -46,7 +49,7 @@ defmodule EvoDashWeb.ReviewComponents do
         class={["review-tab rounded-md px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :commits && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-clock" class="size-4 mr-2" />
-        {gettext("Commits")}
+        <%!-- zh_CN: Commit → "提交" --%>{gettext("Commits")}
         <span class="badge badge-sm badge-ghost rounded-md ml-2">{@commits_count}</span>
       </button>
       <button
@@ -91,7 +94,7 @@ defmodule EvoDashWeb.ReviewComponents do
       <div class="flex items-center justify-between gap-3 p-5 md:p-6 border-b border-base-200/50 bg-base-200/20">
         <div class="flex items-center gap-3">
           <.icon name="hero-archive-box-arrow-down" class="size-5 text-base-content/60" />
-          <h3 class="font-semibold text-base">{gettext("Archived Agent Details")}</h3>
+          <%!-- zh_CN: Agent → "智能体" --%><h3 class="font-semibold text-base">{gettext("Archived Agent Details")}</h3>
         </div>
         <%= if @task_id do %>
           <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-md gap-2" download>
@@ -156,7 +159,7 @@ defmodule EvoDashWeb.ReviewComponents do
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
           <%= if @agent[:base_commit] do %>
             <div class="flex items-center gap-2">
-              <span class="text-xs text-base-content/50 shrink-0">{gettext("Start Commit")}</span>
+              <span class="text-xs text-base-content/50 shrink-0"><%!-- zh_CN: Commit → "提交" --%>{gettext("Start Commit")}</span>
               <span class="font-mono text-xs text-base-content/70 bg-base-200/50 rounded-full px-2 py-0.5 truncate">
                 {String.slice(@agent[:base_commit], 0..7)}
               </span>
@@ -164,7 +167,7 @@ defmodule EvoDashWeb.ReviewComponents do
           <% end %>
           <%= if @agent[:final_commit] do %>
             <div class="flex items-center gap-2">
-              <span class="text-xs text-base-content/50 shrink-0">{gettext("End Commit")}</span>
+              <span class="text-xs text-base-content/50 shrink-0"><%!-- zh_CN: Commit → "提交" --%>{gettext("End Commit")}</span>
               <span class="font-mono text-xs text-base-content/70 bg-base-200/50 rounded-full px-2 py-0.5 truncate">
                 {String.slice(@agent[:final_commit], 0..7)}
               </span>
@@ -198,15 +201,15 @@ defmodule EvoDashWeb.ReviewComponents do
         <%= if @agent[:usage] do %>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
             <div class="bg-base-200/40 rounded-xl p-2.5 text-center">
-              <p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Input Tokens")}</p>
+              <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Input Tokens")}</p>
               <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:input_tokens] || 0)}</p>
             </div>
             <div class="bg-base-200/40 rounded-xl p-2.5 text-center">
-              <p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Output Tokens")}</p>
+              <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Output Tokens")}</p>
               <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:output_tokens] || 0)}</p>
             </div>
             <div class="bg-base-200/40 rounded-xl p-2.5 text-center">
-              <p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Total Tokens")}</p>
+              <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Total Tokens")}</p>
               <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:total_tokens] || 0)}</p>
             </div>
             <div class="bg-base-200/40 rounded-xl p-2.5 text-center">

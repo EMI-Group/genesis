@@ -3,6 +3,9 @@ defmodule EvoDashWeb.Layouts do
   This module holds layouts and related functionality
   used by your application.
   """
+
+  # zh_CN: Genesis → "启元"
+
   use EvoDashWeb, :html
 
   # Embed all files in layouts/* within this module.
@@ -40,17 +43,20 @@ defmodule EvoDashWeb.Layouts do
                 navigate={~p"/"}
                 class="flex items-center gap-2 hover:opacity-80 transition-opacity"
               >
+                <%!-- zh_CN: Genesis → "启元" --%>
                 <img
                   src={~p"/images/logo.svg"}
                   class="h-8 w-auto block dark:hidden"
                   alt={gettext("Genesis")}
                 />
+                <%!-- zh_CN: Genesis → "启元" --%>
                 <img
                   src={~p"/images/logo-alt.svg"}
                   class="h-8 w-auto hidden dark:block"
                   alt={gettext("Genesis")}
                 />
                 <span class="text-xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
+                  <%!-- zh_CN: Genesis → "启元" --%>
                   {gettext("Genesis")}
                 </span>
               </.link>
