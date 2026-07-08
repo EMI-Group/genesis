@@ -63,6 +63,9 @@ defmodule EvoDashWeb.AgentsLive do
     id_to_display =
       Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
 
+    # Reload history for the selected agent (wiped by load_agents)
+    agents = reload_selected_agent_history(agents, socket.assigns.selected_agent_id)
+
     {:noreply,
      assign(socket,
        agents: agents,
@@ -187,6 +190,9 @@ defmodule EvoDashWeb.AgentsLive do
       current_ids = MapSet.new(agents, & &1.id)
       current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
 
+      # Reload history for the selected agent (wiped by load_agents)
+      agents = reload_selected_agent_history(agents, socket.assigns.selected_agent_id)
+
       {:noreply,
        assign(socket,
          agents: agents,
@@ -232,6 +238,15 @@ defmodule EvoDashWeb.AgentsLive do
           agents
           |> maybe_update_parent_children(old_parent_id)
           |> maybe_update_parent_children(new_parent_id)
+        else
+          agents
+        end
+
+      # Reload history from ETS if the updated agent is currently selected
+      agents =
+        if agent_id == socket.assigns.selected_agent_id do
+          history = load_agent_history(agent_id)
+          update_agent_in_list(agents, agent_id, fn a -> %{a | history: history} end)
         else
           agents
         end
@@ -359,15 +374,10 @@ defmodule EvoDashWeb.AgentsLive do
     socket =
       if agent_idx do
         agent = Enum.at(agents, agent_idx)
-
-        if agent.history == [] do
-          history = load_agent_history(agent_id)
-          updated_agent = %{agent | history: history}
-          updated_agents = List.replace_at(agents, agent_idx, updated_agent)
-          assign(socket, :agents, updated_agents)
-        else
-          socket
-        end
+        history = load_agent_history(agent_id)
+        updated_agent = %{agent | history: history}
+        updated_agents = List.replace_at(agents, agent_idx, updated_agent)
+        assign(socket, :agents, updated_agents)
       else
         socket
       end
@@ -679,6 +689,15 @@ defmodule EvoDashWeb.AgentsLive do
       [] ->
         []
     end
+  end
+
+  # Reloads history for the selected agent in the agents list.
+  # Returns the updated agents list (no-op if selected_agent_id is nil or not found).
+  defp reload_selected_agent_history(agents, nil), do: agents
+
+  defp reload_selected_agent_history(agents, selected_agent_id) do
+    history = load_agent_history(selected_agent_id)
+    update_agent_in_list(agents, selected_agent_id, fn agent -> %{agent | history: history} end)
   end
 
   # Converts ReqLLM.Message structs to history entry format
