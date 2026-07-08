@@ -53,6 +53,20 @@ The dashboard supports the core runtime's **multi-model** architecture (`[[llm.m
 - **Welcome modal**: `show_welcome` now checks `model_profiles == []` instead of a single `[:llm, :model]`.
 - **System page**: The example config reference and FAQ use the `[[llm.models]]` format.
 
+### SSH Remote Development — Node-Aware Dashboard (Phase 2)
+
+The dashboard supports connecting to a **remote headless `genesis_remote` daemon** over Erlang distribution via an SSH tunnel. The local Phoenix frontend controls the remote runtime. The architecture has three layers:
+
+- **`EvoDash.NodeContext`** (`lib/evo_dash/node_context.ex`) — domain-layer thin client (see Core Modules above). The single entry point for the web layer; wraps `EvoGit.RemoteConnections` (target persistence), `EvoGit.RemoteConnection` (lifecycle GenServer), and cross-node `:erpc` RPC.
+- **`EvoDashWeb.LiveHooks.NodeAware`** (`lib/evo_dash_web/live_hooks/node_aware.ex`) — on-mount hook + helpers applied to ALL LiveViews via the `live_view/0` macro in `evo_dash_web.ex` (alongside `SetLocale`). Sets node-context assigns (`@current_node`, `@current_node_name`, `@current_node_id`, `@remote_targets`, `@connection_statuses`) with safe local defaults and subscribes to `EvoGit.PubSub` topic `"remote_connections"` for real-time status updates. `assign_node/2` reads the `?node=` query param in each LiveView's `handle_params/3`, resolving it to a saved+connected target or falling back to local. `handle_node_selected/2` builds a `push_patch` to update the URL.
+- **`EvoDashWeb.NodeSelectorComponent`** (`lib/evo_dash_web/live/components/node_selector_component.ex`) — a **LiveComponent** rendered in the navbar (next to the brand name) that shows the current node (status dot + name), a dropdown for switching nodes (Local / saved targets / "Manage Connections..."), and a full **connection manager modal** (add/edit/delete targets, bootstrap/connect/disconnect, status badges). Manages its own state; selects nodes by sending `{:node_selected, id}` to the parent LiveView.
+
+**URL param threading**: When a remote node is selected, ALL navigation links carry `?node=<target_id>` so the node context persists across page navigation. The `with_node_param/2` helper in `layouts.ex` appends the query string when `@current_node_id` is non-nil; applied to all desktop + mobile nav links + the brand logo link.
+
+**Graceful degradation**: Because the `EvoGit.RemoteConnection` GenServer ships as parallel Phase 2 work, `NodeContext` connection-lifecycle calls return safe fallbacks until that module is compiled and its process started. The node selector renders "Local" by default and saved targets appear (they're read from TOML, which always works) but show "Disconnected" status until connections can be made.
+
+**Current limitation (documented)**: The remote Erlang node name isn't resolved from the target map alone — `@current_node` remains `node()` (local) even when a remote target is selected via the URL. Actual remote node resolution comes when the connection GenServer provides node names. The `call_remote/4` RPC helpers ARE ready (local calls go direct; remote calls route through `:erpc`), but LiveViews aren't yet wired to read remote state — that's a later phase.
+
 ### Task Archive Feature
 
 When a task is started with the **archive** option enabled (checkbox in the task form), the core runtime collects per-agent metadata (`archive_records`) and EvoDash stores it in `TaskInfo.archive_metadata`. Archived tasks display the agent parent-child tree, per-agent details (objective, return message, start/end commits, token usage, archive refs), and provide JSON export.
