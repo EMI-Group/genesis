@@ -53,7 +53,7 @@ The dashboard supports the core runtime's **multi-model** architecture (`[[llm.m
 - **Welcome modal**: `show_welcome` now checks `model_profiles == []` instead of a single `[:llm, :model]`.
 - **System page**: The example config reference and FAQ use the `[[llm.models]]` format.
 
-### SSH Remote Development — Node-Aware Dashboard (Phase 2)
+### SSH Remote Development — Node-Aware Dashboard (Phases 2-3)
 
 The dashboard supports connecting to a **remote headless `genesis_remote` daemon** over Erlang distribution via an SSH tunnel. The local Phoenix frontend controls the remote runtime. The architecture has three layers:
 
@@ -65,7 +65,20 @@ The dashboard supports connecting to a **remote headless `genesis_remote` daemon
 
 **Graceful degradation**: Because the `EvoGit.RemoteConnection` GenServer ships as parallel Phase 2 work, `NodeContext` connection-lifecycle calls return safe fallbacks until that module is compiled and its process started. The node selector renders "Local" by default and saved targets appear (they're read from TOML, which always works) but show "Disconnected" status until connections can be made.
 
-**Current limitation (documented)**: The remote Erlang node name isn't resolved from the target map alone — `@current_node` remains `node()` (local) even when a remote target is selected via the URL. Actual remote node resolution comes when the connection GenServer provides node names. The `call_remote/4` RPC helpers ARE ready (local calls go direct; remote calls route through `:erpc`), but LiveViews aren't yet wired to read remote state — that's a later phase.
+**Phase 3 — LiveView Node-Aware Integration (node name resolution + node-aware data loading)**: All LiveViews now route their data access through the node context so that viewing a remote node fetches data from the remote server via RPC.
+
+- **Node name resolution (FIX 1)**: `assign_node/2`'s `resolve_node_context/1` now resolves the actual remote BEAM node name from `EvoDash.NodeContext.connection_status(target.id)`. When the connection status is `%{phase: :connected, node: "genesis_remote@host"}`, `@current_node` is set to `String.to_atom(node_name)` so `EvoDash.NodeContext.*(@current_node)` functions route `:erpc.call/5` to the correct node. Falls back to local for nil/`"local"` params, unknown ids, disconnected targets, or targets whose connection manager hasn't reported a node name yet. The old "Current limitation" (where `@current_node` stayed `node()` even for a selected remote target) is **resolved**.
+
+- **AgentsLive node-aware data loading (FIX 2)**: `AgentsLive` no longer reads ETS tables directly. All data access goes through `EvoDash.NodeContext`: `load_agents/1(node)` uses `list_agents/1`, `load_agent_history/2(node, agent_id)` uses `get_agent_history/2`, and `safe_compression_threshold/1(node)` reads the remote config. The RPC returns plain maps; `load_agents/1` reconciles the RPC map shape into the rich display map (computing `children`/`has_children` from `parent_id` relationships, normalizing `usage` over `Usage.zero()`, defaulting secondary fields not exposed by the serialization-safe RPC layer to nil). History entries are converted from the RPC format (`%{role, content_summary, tool_calls, turn}`) to the `%{turn, type, data}` shape the template consumes via `rpc_history_to_entries/1`. Local and remote paths are unified (local node calls `RemoteAPI` directly, no `:erpc`). Node changes trigger a full agent reload (tracked via `:previous_node` assign).
+
+- **Cross-node PubSub + polling fallback**: When viewing a remote node, cross-node PubSub events (on the `"agents"` topic) may not be delivered reliably. As a fallback, `AgentsLive` starts a periodic poll (every 3s via `Process.send_after/3`) for remote nodes — the `:remote_poll` handler reloads agents and reschedules itself only while `current_node != node()`. When viewing the local node, PubSub drives updates and no poll is scheduled.
+
+- **SettingsLive / SystemLive / DashboardLive node-aware handling (FIX 3)**: These LiveViews branch on `current_node != node()`:
+  - **SettingsLive**: When remote, config is loaded read-only via `EvoDash.NodeContext.get_remote_config/1` + `get_remote_config_status/1` and rendered with a "Remote configuration" banner + disabled form inputs. All mutation handlers (save, reset, model profile edits) are guarded — they return an error flash when remote. Local behavior is unchanged.
+  - **SystemLive**: When remote, scheduler pause/resume controls are hidden (replaced with a note — no clean RPC path yet), restart/stop VM buttons are `disabled` (local-VM-only actions), and the system check's config row reads the remote config status via `get_remote_config_status/1`. The scheduler paused state is read from `NodeContext.paused?/1`.
+  - **DashboardLive**: When remote, the render branches to show the remote node's active agents (via `list_agents/1`) with status badges + token usage instead of the local task list (the remote daemon runs `evo_git` only — no `EvoDash.TaskRegistry`/`Store` there, so task/project management is a LOCAL dashboard concern). Local behavior is unchanged.
+
+- **Layout assigns (FIX 4)**: All LiveViews call `EvoDashWeb.LiveHooks.NodeAware.assign_node(params)` in `handle_params/3` and pass `current_node_id`/`current_node_name` to the `Layouts.app` component. The `NodeAware` on-mount hook sets these assigns globally before each LiveView's own `mount/3`, so they're always available.
 
 ### Task Archive Feature
 
