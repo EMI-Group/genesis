@@ -144,7 +144,22 @@ defmodule EvoGit.RemoteConnection do
   def list_connections do
     @registry
     |> Registry.select([{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
-    |> Map.new(fn {target_id, pid} -> {target_id, GenServer.call(pid, :status)} end)
+    |> Enum.flat_map(fn {target_id, pid} ->
+      # Justified try/catch :exit: we iterate Registry entries whose processes
+      # may terminate concurrently (e.g. another caller invoked disconnect/1).
+      # This is a concurrency boundary, not error masking — a GenServer that
+      # exits between Registry.select and our call is expected during teardown.
+      if Process.alive?(pid) do
+        try do
+          [{target_id, GenServer.call(pid, :status)}]
+        catch
+          :exit, _ -> []
+        end
+      else
+        []
+      end
+    end)
+    |> Map.new()
   end
 
   @doc """

@@ -25,6 +25,12 @@ defmodule EvoGit.RemoteConnectionTest do
     Application.put_env(:evo_git, :remote_binary_path, nil)
 
     on_exit(fn ->
+      # Disconnect any connection managers started during this test so they
+      # don't leak into sibling tests (the DynamicSupervisor is app-level).
+      for {target_id, _status} <- EvoGit.RemoteConnection.list_connections() do
+        EvoGit.RemoteConnection.disconnect(target_id)
+      end
+
       if original_xdg do
         System.put_env("XDG_CONFIG_HOME", original_xdg)
       else
