@@ -174,38 +174,9 @@ defmodule EvoGit.Sandbox.Linux do
         "-p",
         "WorkingDirectory=#{cwd}",
         "-p",
-        "StandardInput=null",
-        # --- FILESYSTEM PROTECTION (The Anti-rm -rf) ---
-        # /usr, /boot, /etc are read-only
-        "-p",
-        "ProtectSystem=strict",
-        # /home is read-only (except ReadWritePaths)
-        "-p",
-        "ProtectHome=read-only",
-        # Cannot tweak /sys
-        "-p",
-        "ProtectKernelTunables=yes",
-        # Cannot escape cgroups
-        "-p",
-        "ProtectControlGroups=yes",
-        # --- SYSCALL FILTERING (The Goldilocks Zone) ---
-        "-p",
-        "SystemCallArchitectures=native",
-        "-p",
-        "SystemCallErrorNumber=EPERM",
-        "-p",
-        "SystemCallFilter=~ @clock @module @mount @raw-io @reboot @swap",
-        # --- PROCESS ISOLATION ---
-        # Cannot use sudo or setuid binaries
-        "-p",
-        "NoNewPrivileges=yes",
-        # Cannot see host processes via `ps`
-        "-p",
-        "PrivatePIDs=yes",
-        # Hides other user processes in /proc
-        "-p",
-        "ProtectProc=invisible"
+        "StandardInput=null"
       ] ++
+      security_args() ++
       resource_args() ++
       read_write_args ++
       inaccessible_args ++
@@ -245,6 +216,83 @@ defmodule EvoGit.Sandbox.Linux do
       end
 
     cpu_quota_args ++ memory_args ++ nofile_args ++ oom_args
+  end
+
+  # Returns the list of systemd-run security property arguments based on
+  # the `[sandbox.linux]` config section. Each feature defaults to `true`
+  # when the config key is missing (full security). Users on older systemd
+  # versions can disable unsupported features in ~/.config/genesis/config.toml.
+  defp security_args do
+    cfg = EvoGit.Config.resolve([:sandbox, :linux]) || %{}
+
+    protect_system =
+      if Map.get(cfg, :protect_system, true) do
+        ["-p", "ProtectSystem=strict"]
+      else
+        []
+      end
+
+    protect_home =
+      if Map.get(cfg, :protect_home, true) do
+        ["-p", "ProtectHome=read-only"]
+      else
+        []
+      end
+
+    protect_kernel_tunables =
+      if Map.get(cfg, :protect_kernel_tunables, true) do
+        ["-p", "ProtectKernelTunables=yes"]
+      else
+        []
+      end
+
+    protect_control_groups =
+      if Map.get(cfg, :protect_control_groups, true) do
+        ["-p", "ProtectControlGroups=yes"]
+      else
+        []
+      end
+
+    system_call_filter =
+      if Map.get(cfg, :system_call_filter, true) do
+        [
+          "-p", "SystemCallArchitectures=native",
+          "-p", "SystemCallErrorNumber=EPERM",
+          "-p", "SystemCallFilter=~ @clock @module @mount @raw-io @reboot @swap"
+        ]
+      else
+        []
+      end
+
+    no_new_privileges =
+      if Map.get(cfg, :no_new_privileges, true) do
+        ["-p", "NoNewPrivileges=yes"]
+      else
+        []
+      end
+
+    private_pids =
+      if Map.get(cfg, :private_pids, true) do
+        ["-p", "PrivatePIDs=yes"]
+      else
+        []
+      end
+
+    protect_proc =
+      if Map.get(cfg, :protect_proc, true) do
+        ["-p", "ProtectProc=invisible"]
+      else
+        []
+      end
+
+    protect_system ++
+      protect_home ++
+      protect_kernel_tunables ++
+      protect_control_groups ++
+      system_call_filter ++
+      no_new_privileges ++
+      private_pids ++
+      protect_proc
   end
 
   defp get_process_resources do

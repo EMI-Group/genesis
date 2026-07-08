@@ -38,7 +38,7 @@ defmodule EvoGit.Config.Schema do
   @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix | :git | :server | :tools
 
   @typedoc "Sub-category for sandbox keys; nil for all other categories"
-  @type sub_category :: :resources | :process | nil
+  @type sub_category :: :resources | :process | :linux | nil
 
   @typedoc "Supported config value types"
   @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :float | :atom | :boolean | :model_spec | :model_profiles
@@ -87,7 +87,7 @@ defmodule EvoGit.Config.Schema do
   - `:default` — the default value (or nil if none)
   - `:validation` — a keyword list of validation rules (`min:`, `max:`, `in:`)
   - `:category` — the top-level config category
-  - `:sub_category` — sub-category within sandbox (`:resources` or `:process`); nil otherwise
+  - `:sub_category` — sub-category within sandbox (`:resources`, `:process`, or `:linux`); nil otherwise
   - `:description` — human-readable description string
 
   Calling this function also preloads all valid config atoms for safe use
