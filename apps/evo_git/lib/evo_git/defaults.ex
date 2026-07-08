@@ -2,8 +2,14 @@ defmodule EvoGit.Defaults do
   @moduledoc """
   Backward-compatible accessor functions for EvoGit configuration.
 
-  Delegates to `EvoGit.Config` for all values. This module exists for
-  backward compatibility — new code should use `EvoGit.Config` directly.
+  > **⚠️ Deprecated.** This module is a backward-compatibility shim.
+  > New code should use `EvoGit.Config.resolve/1` directly.
+  > Existing callers should be migrated during their next refactor.
+  > This module may be removed in a future major version.
+
+  Delegates to `EvoGit.Config` for all values. Since `Config.resolve/1`
+  now guarantees non-nil returns for all known keys, these functions
+  are simple one-liner delegates with no fallback logic.
 
   ## Migration Guide
 
