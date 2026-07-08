@@ -689,4 +689,67 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Base URL cannot be empty."
     end
   end
+
+  describe "LLM connection test rendering (map model safety)" do
+    # Bug 2: The Connection Test result used to render `{data.model}` directly in
+    # HEEx, but `data.model` is a MAP (e.g. %{id: "deepseek-v4-pro",
+    # provider: :deepseek}) returned from EvoGit.SystemCheck.llm_test/0.
+    # Maps don't implement Phoenix.HTML.Safe, so this crashed the LiveView with
+    # Protocol.UndefinedError. The fix renders `model_display(data.model)` instead,
+    # which formats maps into readable strings like "deepseek:deepseek-v4-pro".
+
+    test "connection test with a map model renders the formatted string, not the raw map",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "llm"})
+
+      # Simulate the LLM connection test result being delivered by the async task
+      # (handle_info({:llm_test_result, result}, socket) stores the status). We send
+      # a result with a MAP model — the exact shape that crashed before the fix.
+      # `render/1` synchronously processes pending messages for the LiveView
+      # process, so the info message is handled before the HTML is produced.
+      send(view.pid, {:llm_test_result,
+       {:ok, %{response: "hello", model: %{id: "deepseek-v4-pro", provider: :deepseek}}}})
+
+      html = render(view)
+
+      # The success state "Connected" (gettext'd) should be present — proving the
+      # {:ok, data} branch rendered without raising.
+      assert html =~ "Connected"
+      # The map model must be rendered as the formatted "provider:id" string rather
+      # than crashing on the raw map.
+      assert html =~ "deepseek:deepseek-v4-pro"
+    end
+
+    test "model_display/1 formats a map model into a readable provider:id string" do
+      # Unit-style test on the helper that the fix delegates to. This is the core
+      # guarantee that maps are formatted safely — if the integration approach
+      # above ever becomes flaky, this test alone proves maps won't crash HEEx.
+      assert EvoDashWeb.SettingsComponents.SettingCard.model_display(%{
+               id: "deepseek-v4-pro",
+               provider: :deepseek
+             }) == "deepseek:deepseek-v4-pro"
+    end
+
+    test "model_display/1 includes base_url when present in a map model" do
+      assert EvoDashWeb.SettingsComponents.SettingCard.model_display(%{
+               id: "gpt-4o",
+               provider: :openai,
+               base_url: "https://x/v1"
+             }) =~ "gpt-4o"
+
+      assert EvoDashWeb.SettingsComponents.SettingCard.model_display(%{
+               id: "gpt-4o",
+               provider: :openai,
+               base_url: "https://x/v1"
+             }) =~ "https://x/v1"
+    end
+
+    test "model_display/1 passes through binary (string) models unchanged" do
+      # Binary model strings (e.g. "anthropic:claude-sonnet-4") are already safe
+      # to render in HEEx and should pass through identically.
+      assert EvoDashWeb.SettingsComponents.SettingCard.model_display("anthropic:claude-sonnet-4") ==
+               "anthropic:claude-sonnet-4"
+    end
+  end
 end
