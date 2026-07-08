@@ -4,6 +4,9 @@ defmodule EvoDashWeb.SettingsComponents do
   sections, and schema-driven inputs.
   """
 
+  # zh_CN: Agent → "智能体", Token → "词元", Provider → "服务商",
+  # Tool call → "工具调用", Sandbox → "沙箱", Context window → "上下文窗口"
+
   use EvoDashWeb, :html
 
   import EvoDashWeb.SettingsComponents.CategoryMetadata,
