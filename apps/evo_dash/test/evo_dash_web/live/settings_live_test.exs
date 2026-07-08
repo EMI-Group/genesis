@@ -84,6 +84,95 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
+  describe "LLM quick setup API key detection (credentials.toml + env)" do
+    @deepseek_var "DEEPSEEK_API_KEY"
+
+    # The credentials.toml file is written under the test's isolated XDG dir
+    # (see the file-level `setup` block), so EvoGit.Config.credentials_path/0
+    # resolves to a path we can control. Each test cleans up after itself so no
+    # state leaks between tests.
+    defp creds_file, do: EvoGit.Config.credentials_path()
+
+    test "Case A — key present in credentials.toml only", %{conn: conn} do
+      # Ensure DEEPSEEK_API_KEY is NOT set in the OS environment.
+      original = System.get_env(@deepseek_var)
+      System.delete_env(@deepseek_var)
+
+      # Write a credentials.toml with the key. credentials.toml is a flat
+      # key=value TOML; string keys map directly into the parsed map.
+      creds = creds_file()
+      File.mkdir_p!(Path.dirname(creds))
+      File.write!(creds, ~s(DEEPSEEK_API_KEY = "sk-test-12345"\n))
+
+      on_exit(fn ->
+        if original do
+          System.put_env(@deepseek_var, original)
+        else
+          System.delete_env(@deepseek_var)
+        end
+
+        File.rm(creds_file())
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      # The API key input only renders once a provider is selected.
+      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+
+      # When key_is_set is true the placeholder is "API key is already set".
+      assert html =~ "API key is already set"
+      assert html =~ "Your API key is configured and ready to use."
+    end
+
+    test "Case B — key present in OS env only", %{conn: conn} do
+      # No credentials.toml exists (the test's temp dir is empty by default).
+      refute File.exists?(creds_file())
+
+      # Set the key in the OS environment.
+      original = System.get_env(@deepseek_var)
+      System.put_env(@deepseek_var, "sk-test-env")
+
+      on_exit(fn ->
+        if original do
+          System.put_env(@deepseek_var, original)
+        else
+          System.delete_env(@deepseek_var)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      # The API key input only renders once a provider is selected.
+      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+
+      assert html =~ "API key is already set"
+      assert html =~ "Your API key is configured and ready to use."
+    end
+
+    test "Case C — key absent from both env and credentials.toml", %{conn: conn} do
+      # Ensure DEEPSEEK_API_KEY is NOT set in the OS environment.
+      original = System.get_env(@deepseek_var)
+      System.delete_env(@deepseek_var)
+
+      # Ensure no credentials.toml exists.
+      File.rm(creds_file())
+
+      on_exit(fn ->
+        if original do
+          System.put_env(@deepseek_var, original)
+        else
+          System.delete_env(@deepseek_var)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      # The API key input only renders once a provider is selected.
+      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+
+      # When the key is NOT set, the placeholder is "Enter your API key".
+      assert html =~ "Enter your API key"
+      refute html =~ "API key is already set"
+    end
+  end
+
   describe "boolean field rendering (nix.enabled)" do
     test "renders a DaisyUI toggle with hidden field for false value submission", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/settings")

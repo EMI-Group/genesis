@@ -140,6 +140,7 @@ defmodule EvoDashWeb.SettingsLive do
               llm_test_status={@llm_test_status}
               model_profiles={@file_config[:llm][:models] || []}
               editing_profile_id={@editing_profile_id}
+              credentials={@credentials}
             />
           <% end %>
         </div>
@@ -171,6 +172,7 @@ defmodule EvoDashWeb.SettingsLive do
         file_config: file_config,
         config_path: config_path,
         config_file_exists: config_file_exists,
+        credentials: EvoGit.Config.credentials(),
         llm_providers: EvoGit.Config.LLMCatalog.providers(),
         selected_provider_id: nil,
         selected_provider_models: [],
@@ -650,6 +652,7 @@ defmodule EvoDashWeb.SettingsLive do
           {:noreply,
            socket
            |> assign(:config_status, config_status)
+           |> assign(:credentials, EvoGit.Config.credentials())
            |> put_flash(:info, gettext("API key saved successfully."))}
 
         {:error, reason} ->

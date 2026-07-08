@@ -49,6 +49,7 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:llm_test_status, :any, default: :idle)
   attr(:model_profiles, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
+  attr(:credentials, :map, default: %{})
 
   def category_section(assigns) do
     ~H"""
@@ -246,7 +247,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% end %>
 
                 <%!-- API Key input --%>
-                <% key_is_set = System.get_env(provider.env_var) %>
+                <% key_is_set = api_key_present?(provider.env_var, @credentials) %>
                 <form phx-submit="save_api_key" class="flex items-end gap-3 pt-6 pb-4">
                   <input type="hidden" name="env_var" value={provider.env_var} />
                   <div class="form-control flex-1">
@@ -566,5 +567,19 @@ defmodule EvoDashWeb.SettingsComponents do
       <% end %>
     </div>
     """
+  end
+
+  # Checks whether a specific provider's API key env var is already configured —
+  # either as an OS environment variable OR as a non-nil, non-empty value in the
+  # parsed credentials.toml map (obtained from EvoGit.Config.credentials/0).
+  # This keeps the quick-setup UI consistent with EvoGit.Config.config_status/0,
+  # which treats both sources as valid.
+  defp api_key_present?(env_var, credentials) do
+    System.get_env(env_var) != nil or
+      case Map.get(credentials, env_var) do
+        nil -> false
+        "" -> false
+        _ -> true
+      end
   end
 end
