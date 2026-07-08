@@ -165,6 +165,65 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
+  describe "api_key_present?/1" do
+    # The set of env vars consulted; we restore each one after the test so the
+    # shared BEAM environment stays clean.
+    @provider_vars EvoGit.Config.LLMCatalog.known_env_vars()
+
+    setup do
+      on_exit(fn ->
+        Enum.each(@provider_vars, &System.delete_env/1)
+      end)
+
+      :ok
+    end
+
+    test "returns false when no key is in env or creds" do
+      # Ensure no provider env vars are set.
+      Enum.each(@provider_vars, &System.delete_env/1)
+
+      assert Config.api_key_present?(%{}) == false
+    end
+
+    test "returns true when a key is present in the creds map (deepseek)" do
+      # DEEPSEEK_API_KEY is NOT set in env, but IS in the creds map.
+      Enum.each(@provider_vars, &System.delete_env/1)
+
+      creds = %{"DEEPSEEK_API_KEY" => "sk-test"}
+      assert Config.api_key_present?(creds) == true
+    end
+
+    test "returns true when a key is set in the OS env (anthropic)" do
+      Enum.each(@provider_vars, &System.delete_env/1)
+      System.put_env("ANTHROPIC_API_KEY", "sk-test")
+
+      assert Config.api_key_present?(%{}) == true
+    end
+
+    test "returns true when a key is set in the OS env (deepseek)" do
+      Enum.each(@provider_vars, &System.delete_env/1)
+      System.put_env("DEEPSEEK_API_KEY", "sk-test")
+
+      assert Config.api_key_present?(%{}) == true
+    end
+
+    test "treats empty-string creds value as absent" do
+      Enum.each(@provider_vars, &System.delete_env/1)
+
+      assert Config.api_key_present?(%{"DEEPSEEK_API_KEY" => ""}) == false
+    end
+
+    test "config_status/0 does not flag :api_key as missing when env var is set" do
+      Enum.each(@provider_vars, &System.delete_env/1)
+      System.put_env("DEEPSEEK_API_KEY", "sk-test")
+
+      status = Config.config_status()
+      assert :api_key not in status.missing
+    after
+      Enum.each(@provider_vars, &System.delete_env/1)
+    end
+  end
+
   describe "LLMCatalog.known_env_vars integration" do
     test "returns a list that is a superset of expected env vars" do
       vars = EvoGit.Config.LLMCatalog.known_env_vars()

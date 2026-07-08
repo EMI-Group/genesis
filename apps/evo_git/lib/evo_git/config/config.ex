@@ -606,8 +606,7 @@ defmodule EvoGit.Config do
         not has_model
       end},
       {:api_key, "No API key found. Add keys to credentials.toml or set environment variables.", fn ->
-        providers = EvoGit.Config.LLMCatalog.known_env_vars()
-        Enum.all?(providers, fn p -> System.get_env(p) == nil end)
+        not api_key_present?(credentials())
       end},
       {:search_api_key, "Web search is enabled but the API key environment variable is not set.", fn ->
         # Use get_in_path (safe accessor) instead of get_in: if a user wrote
@@ -627,6 +626,32 @@ defmodule EvoGit.Config do
       ok?: missing == [],
       validation_errors: Process.get(:evo_git_config_validation_errors, [])
     }
+  end
+
+  @doc """
+  Returns `true` if any known provider API key is present.
+
+  A key counts as "present" if it is set as a non-nil environment variable OR
+  present as a non-nil, non-empty-string value in the given `creds` map
+  (parsed from `credentials.toml`, which uses string keys).
+  """
+  @spec api_key_present?(map()) :: boolean()
+  def api_key_present?(creds) do
+    providers = EvoGit.Config.LLMCatalog.known_env_vars()
+
+    Enum.any?(providers, fn var ->
+      env_set?(var) or cred_set?(creds, var)
+    end)
+  end
+
+  defp env_set?(var), do: System.get_env(var) != nil
+
+  defp cred_set?(creds, var) do
+    case Map.get(creds, var) do
+      nil -> false
+      "" -> false
+      _ -> true
+    end
   end
 
   @doc """
