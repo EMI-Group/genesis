@@ -12,14 +12,6 @@ defmodule EvoDashWeb.SettingsLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status}>
-      <%!-- Header --%>
-      <div class="mb-6 mt-2">
-        <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("Settings")}</h1>
-        <p class="text-sm text-base-content/80 mt-0.5">
-          {gettext("Runtime configuration and file settings")}
-        </p>
-      </div>
-
       <%!-- Config file path display --%>
       <div class="mb-4 rounded-lg border border-base-200 bg-base-100 p-3 flex items-center gap-3">
         <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />

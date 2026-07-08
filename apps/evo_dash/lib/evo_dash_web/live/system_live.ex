@@ -126,13 +126,6 @@ defmodule EvoDashWeb.SystemLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status}>
-      <div class="mb-6 mt-2">
-        <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("System")}</h1>
-        <p class="text-sm text-base-content/60 mt-0.5">
-          {gettext("Scheduler controls, system health, and usage guides")}
-        </p>
-      </div>
-
       <!-- Scheduler Control banner -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="flex items-center gap-3">

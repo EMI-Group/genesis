@@ -11,19 +11,6 @@ defmodule EvoDashWeb.TasksLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:tasks} config_status={@config_status}>
-      <!-- Page Header -->
-      <div class="flex items-center justify-between mb-6">
-        <div>
-          <h1 class="text-xl font-bold tracking-tight text-base-content">{gettext("Task History")}</h1>
-          <p class="text-sm text-base-content/60 mt-0.5">{gettext("View and manage all tasks across projects")}</p>
-        </div>
-        <div class="flex items-center gap-2">
-          <.link navigate={~p"/"} class="btn btn-ghost gap-2">
-            <.icon name="hero-arrow-left" class="size-4" /> {gettext("Dashboard")}
-          </.link>
-        </div>
-      </div>
-
       <!-- Filter Bar -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
         <form id="task-filters" phx-submit="noop">
