@@ -79,6 +79,29 @@ defmodule EvoGit do
   end
 
   @doc """
+  Runs a command inside the platform-appropriate sandbox with partial output recovery on timeout.
+
+  Unlike `sandbox_run/4`, which loses all output when a command times out, this function
+  redirects command output to a temp file so that partial output can be recovered on timeout.
+
+  ## Parameters
+
+  - `cwd` - The working directory for the command
+  - `executable` - The executable to run
+  - `args` - List of arguments to pass to the executable (default: [])
+  - `repo_root` - Optional path to the git repository root
+  - `timeout` - Timeout in milliseconds
+
+  ## Returns
+
+  - `{:ok, output, exit_code}` — command completed within timeout
+  - `{:timeout, partial_output}` — command timed out, partial output recovered
+  """
+  def sandbox_run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout) do
+    EvoGit.Sandbox.run_with_partial(cwd, executable, args, repo_root, timeout)
+  end
+
+  @doc """
   Returns whether the sandbox is currently enabled for the active backend.
   """
   def sandbox_enabled? do
