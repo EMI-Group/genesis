@@ -359,16 +359,20 @@ defmodule EvoGit.AgentScheduler do
     # Load API keys from credentials.toml into environment variables
     _credentials = EvoGit.Config.credentials()
 
-    scheduler_config = config[:scheduler]
-    sandbox_config = config[:sandbox]
+    %{
+      scheduler: scheduler_config,
+      sandbox: sandbox_config
+    } = config
 
-    max_concurrency = scheduler_config[:max_concurrency]
-    max_tool_concurrency = scheduler_config[:max_tool_concurrency]
-    agent_max_retries = scheduler_config[:agent_max_retries]
-    max_depth = scheduler_config[:max_agent_depth]
-    max_retries = scheduler_config[:max_retries]
-    max_turns = scheduler_config[:max_turns]
-    max_turns_root = scheduler_config[:max_turns_root]
+    %{
+      max_concurrency: max_concurrency,
+      max_tool_concurrency: max_tool_concurrency,
+      agent_max_retries: agent_max_retries,
+      max_agent_depth: max_depth,
+      max_retries: max_retries,
+      max_turns: max_turns,
+      max_turns_root: max_turns_root
+    } = scheduler_config
 
     # Load model profiles from config (Step 2: per-model slot pools).
     # Each profile becomes its own slot pool. Falls back to a single
