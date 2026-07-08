@@ -54,30 +54,39 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
         |> assign(:current_node_name, "Local")
         |> assign(:current_node_id, nil)
 
-      {:remote, target} ->
-        # The remote Erlang node name isn't available from the target map alone;
-        # actual remote node resolution comes later when the connection GenServer
-        # provides node names. For now we keep @current_node as the local node
-        # and record the selected target id + display name.
+      {:remote, target, remote_node} ->
+        # The remote BEAM node name is resolved from the connection manager's
+        # status map (`:node` field, e.g. "genesis_remote@127.0.0.1"). We store
+        # it as an atom so `EvoDash.NodeContext.list_agents(@current_node)`
+        # routes `:erpc.call/5` to the correct node.
         socket
-        |> assign(:current_node, node())
+        |> assign(:current_node, remote_node)
         |> assign(:current_node_name, target.name)
         |> assign(:current_node_id, node_param)
     end
   end
 
-  # Resolves a node param string into `:local` or `{:remote, target_map}`.
-  # Falls back to `:local` for nil, "local", unknown ids, or disconnected targets.
+  # Resolves a node param string into `:local` or
+  # `{:remote, target_map, remote_node_atom}`.
+  #
+  # Falls back to `:local` for nil, "local", unknown ids, disconnected targets,
+  # or connected targets whose connection manager has not yet reported a node
+  # name (the `:node` field is nil until distribution completes).
   defp resolve_node_context(nil), do: :local
   defp resolve_node_context("local"), do: :local
 
   defp resolve_node_context(node_param) do
     case EvoDash.NodeContext.get_target(node_param) do
       {:ok, target} ->
-        if EvoDash.NodeContext.connected?(target.id) do
-          {:remote, target}
-        else
-          :local
+        # `connection_status/1` returns `%{phase:, node:, ...}` when the
+        # connection manager is running, or `:disconnected` (an atom) when the
+        # connection subsystem is unavailable. Pattern match handles both.
+        case EvoDash.NodeContext.connection_status(target.id) do
+          %{phase: :connected, node: remote_node} when is_binary(remote_node) ->
+            {:remote, target, String.to_atom(remote_node)}
+
+          _ ->
+            :local
         end
 
       {:error, :not_found} ->
