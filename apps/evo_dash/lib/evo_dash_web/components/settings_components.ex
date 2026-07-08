@@ -326,7 +326,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   <% {:ok, data} -> %>
                     <.icon name="hero-check-circle" class="size-5 text-success" />
                     <span class="text-sm text-success font-medium">{gettext("Connected")}</span>
-                    <span class="text-xs text-base-content/70">({data.model})</span>
+                    <span class="text-xs text-base-content/70">({model_display(data.model)})</span>
                     <span class="text-xs text-base-content/70 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(
                       data.response,
                       50
