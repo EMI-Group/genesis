@@ -294,24 +294,32 @@ defmodule EvoGit.Sandbox.MacOS do
   # (8192 bytes: 4096 first + 4096 last) matches OutputSanitizer.
   defp read_truncated(path, file_size, max_bytes) do
     truncate_size = 8192
-    half_size = div(truncate_size, 2)
-    omitted = file_size - truncate_size
 
-    {:ok, device} = File.open(path, [:read, :raw, :binary])
+    if file_size <= truncate_size do
+      case File.read(path) do
+        {:ok, data} -> data
+        {:error, _} -> ""
+      end
+    else
+      half_size = div(truncate_size, 2)
+      omitted = file_size - truncate_size
 
-    {:ok, first_part} = :file.pread(device, 0, half_size)
-    {:ok, last_part} = :file.pread(device, file_size - half_size, half_size)
+      {:ok, device} = File.open(path, [:read, :raw, :binary])
 
-    File.close(device)
+      {:ok, first_part} = :file.pread(device, 0, half_size)
+      {:ok, last_part} = :file.pread(device, file_size - half_size, half_size)
 
-    """
-    [WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{truncate_size} bytes]
-    The output was too large. Consider using more specific arguments
-    or alternative tools to retrieve only the relevant portion of data.
-    #{first_part}
-    ... [#{omitted} bytes omitted] ...
-    #{last_part}
-    """
-    |> String.trim()
+      File.close(device)
+
+      """
+      [WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{truncate_size} bytes]
+      The output was too large. Consider using more specific arguments
+      or alternative tools to retrieve only the relevant portion of data.
+      #{first_part}
+      ... [#{omitted} bytes omitted] ...
+      #{last_part}
+      """
+      |> String.trim()
+    end
   end
 end

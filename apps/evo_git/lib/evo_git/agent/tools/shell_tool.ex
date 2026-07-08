@@ -165,7 +165,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     case Shared.fetch_string_arg(args, "command") do
       {:ok, command} ->
         timeout = Map.get(args, "timeout", @default_timeout)
-        max_bytes = Map.get(args, "max_bytes", 16_384)
+        max_bytes = Map.get(args, "max_bytes", EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes]) || 16_384)
         do_execute(command, repo_path, repo_root, timeout, max_bytes)
 
       {:error, message} ->
