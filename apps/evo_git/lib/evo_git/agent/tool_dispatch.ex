@@ -21,6 +21,13 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @complete_tool "complete_task"
 
+  # Maximum consecutive "no tool calls" nudges before ending the turn gracefully.
+  # When the LLM returns no tool calls, we append a user-role nudge message and
+  # re-prompt. After this many consecutive nudges with still no tool calls, we
+  # stop and end the turn via the existing protocol-violation path (recovery or
+  # :recovery_failed) instead of crashing or spinning forever.
+  @max_no_tool_call_nudges 3
+
   # --- Model & Generation Params ---
 
   @doc false
@@ -81,7 +88,13 @@ defmodule EvoGit.Agent.ToolDispatch do
   # --- Main Turn ---
 
   @doc false
-  def do_turn(%LoopState{} = state, effective_tools_fn, subagent_modules, loop_fn, trigger_recovery_fn) do
+  def do_turn(
+        %LoopState{} = state,
+        effective_tools_fn,
+        subagent_modules,
+        loop_fn,
+        trigger_recovery_fn
+      ) do
     context = state.context
     tools = effective_tools_fn.(state)
 
@@ -89,50 +102,166 @@ defmodule EvoGit.Agent.ToolDispatch do
     max_retries = agent_state.max_retries
     llm_gen_opts = agent_state.llm_generation_params
 
-    {:ok, response, _llm_duration} =
-      AgentScheduler.with_llm_slot(state.agent_id, fn ->
-        retry with:
-                exponential_backoff(1_000)
-                |> randomize()
-                |> cap(60_000)
-                |> Stream.take(max_retries) do
-          with llm_start <- System.monotonic_time(:millisecond),
-               {:ok, stream_resp} <-
-                 ReqLLM.stream_text(
-                   current_model(),
-                   context,
-                   Keyword.merge([tools: tools], llm_gen_opts)
-                 ),
-               {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
-               llm_end <- System.monotonic_time(:millisecond),
-               :ok <- ensure_tool_calls(response, state.agent_id) do
-            {:ok, response, llm_end - llm_start}
-          else
-            {:error, :no_tool_calls} = err ->
-              # Warning already logged in ensure_tool_calls/2; just propagate for retry.
-              err
+    case prompt_until_tools_or_limit(
+           context,
+           tools,
+           llm_gen_opts,
+           state.agent_id,
+           max_retries
+         ) do
+      {:ok, response} ->
+        process_llm_response(response, state, subagent_modules, loop_fn, trigger_recovery_fn)
 
-            {:error, reason} ->
+      {:error, :protocol_violation} ->
+        handle_protocol_violation(state, trigger_recovery_fn)
+    end
+  end
+
+  # --- LLM Prompting (transient-error retry + no-tool-call nudging) ---
+
+  @doc false
+  # Calls the LLM and re-prompts (with a user-role nudge) when the model returns
+  # no tool calls, instead of retrying the same unchanged context or crashing.
+  # Transient transport/stream errors are still retried with exponential backoff
+  # inside `call_llm_with_retry/5`; only the semantic "no tool calls" case is
+  # handled here by appending a nudge message and re-prompting. After
+  # `@max_no_tool_call_nudges` consecutive nudges with still no tool calls, the
+  # turn ends gracefully via `{:error, :protocol_violation}`, feeding the
+  # existing recovery path (no crash, no new try/rescue).
+  def prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries) do
+    prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries, 0)
+  end
+
+  defp prompt_until_tools_or_limit(
+         context,
+         tools,
+         llm_gen_opts,
+         agent_id,
+         max_retries,
+         nudge_count
+       ) do
+    case call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
+      {:ok, response, _llm_duration} ->
+        case ensure_tool_calls(response, agent_id) do
+          :ok ->
+            {:ok, response}
+
+          {:error, :no_tool_calls} ->
+            if nudge_count >= @max_no_tool_call_nudges do
               Logger.warning(
-                "Agent #{state.agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
+                "Agent #{agent_id}: LLM returned no tool calls after #{nudge_count} consecutive nudges (#{nudge_count + 1} attempts), ending turn gracefully"
               )
 
-              {:error, reason}
-          end
-        end
-        |> case do
-          {:ok, _response, _llm_duration} = result ->
-            result
+              {:error, :protocol_violation}
+            else
+              Logger.warning(
+                "Agent #{agent_id}: LLM returned no tool calls, appending nudge and continuing (nudge #{nudge_count + 1}/#{@max_no_tool_call_nudges})"
+              )
 
-          {:error, reason} ->
-            if EvoGit.Agent.TruncationFeedback.is_rate_limit_error?(reason) do
-              AgentScheduler.report_llm_error(state.agent_id, :rate_limit)
+              nudge_context = append_no_tool_call_nudge(response.context)
+
+              prompt_until_tools_or_limit(
+                nudge_context,
+                tools,
+                llm_gen_opts,
+                agent_id,
+                max_retries,
+                nudge_count + 1
+              )
             end
-
-            raise "LLM request failed after #{max_retries} retries: #{inspect(reason)}"
         end
-      end)
 
+      {:error, reason} ->
+        # Genuine transient failure (network/rate-limit/stream) exhausted all
+        # retries. This is a real error — raise, preserving prior behavior.
+        raise "LLM request failed after #{max_retries} retries: #{inspect(reason)}"
+    end
+  end
+
+  @doc false
+  # Calls the LLM with retry-on-transient-error semantics. The retry loop (with
+  # exponential backoff) handles ONLY genuine transport/stream errors (network
+  # failures, rate limits, stream-processing errors). It does NOT retry the "no
+  # tool calls" case — that semantic problem is handled by the caller via context
+  # nudging. Returns {:ok, response, duration_ms} or {:error, reason}.
+  def call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
+    AgentScheduler.with_llm_slot(agent_id, fn ->
+      retry with:
+              exponential_backoff(1_000)
+              |> randomize()
+              |> cap(60_000)
+              |> Stream.take(max_retries) do
+        with llm_start <- System.monotonic_time(:millisecond),
+             {:ok, stream_resp} <-
+               ReqLLM.stream_text(
+                 current_model(),
+                 context,
+                 Keyword.merge([tools: tools], llm_gen_opts)
+               ),
+             {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
+             llm_end <- System.monotonic_time(:millisecond) do
+          {:ok, response, llm_end - llm_start}
+        else
+          {:error, reason} ->
+            Logger.warning(
+              "Agent #{agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
+            )
+
+            {:error, reason}
+        end
+      end
+      |> case do
+        {:ok, _response, _llm_duration} = result ->
+          result
+
+        {:error, reason} ->
+          if EvoGit.Agent.TruncationFeedback.is_rate_limit_error?(reason) do
+            AgentScheduler.report_llm_error(agent_id, :rate_limit)
+          end
+
+          {:error, reason}
+      end
+    end)
+  end
+
+  @doc false
+  # Appends a user-role nudge message to the context (which already contains the
+  # assistant's tool-less response), instructing the model to make a tool call.
+  def append_no_tool_call_nudge(context) do
+    ReqLLM.Context.append(context, no_tool_call_nudge_message())
+  end
+
+  @doc false
+  # The user-role nudge message appended when the LLM returns no tool calls.
+  def no_tool_call_nudge_message do
+    user(
+      "You did not make any tool calls in your last response. You must use the " <>
+        "provided tools to accomplish the task. Please respond with a tool call."
+    )
+  end
+
+  @doc false
+  # Handles the protocol-violation outcome (no usable tool calls) by either
+  # triggering recovery (when not in the grace period) or returning
+  # :recovery_failed (when already in the grace period).
+  def handle_protocol_violation(%LoopState{} = state, trigger_recovery_fn) do
+    if state.in_grace_period do
+      {:error, :recovery_failed}
+    else
+      trigger_recovery_fn.(state, "agent stopped calling tools")
+    end
+  end
+
+  # --- Post-LLM Response Processing ---
+
+  @doc false
+  def process_llm_response(
+        response,
+        %LoopState{} = state,
+        subagent_modules,
+        loop_fn,
+        trigger_recovery_fn
+      ) do
     # Track current context length (replace, don't accumulate)
     usage = ReqLLM.Response.usage(response)
 
@@ -142,9 +271,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       else
         # Usage is nil - can happen with some providers or cached responses
         # Keep the previous token count
-        Logger.warning(
-          "Agent #{state.agent_id}: LLM response doesn't contain token usage info."
-        )
+        Logger.warning("Agent #{state.agent_id}: LLM response doesn't contain token usage info.")
 
         state.total_tokens
       end
@@ -172,7 +299,10 @@ defmodule EvoGit.Agent.ToolDispatch do
     # Compact reasoning_details to avoid N small fragments from streaming
     compacted_context = compact_reasoning_details(response.context)
     new_turn = state.turn + 1
-    compacted_context = EvoGit.Agent.ContextBuilder.tag_context_tail_with_turn(compacted_context, new_turn)
+
+    compacted_context =
+      EvoGit.Agent.ContextBuilder.tag_context_tail_with_turn(compacted_context, new_turn)
+
     state = %{state | context: compacted_context, turn: new_turn}
 
     AgentScheduler.batch_update_agent(state.agent_id,
@@ -212,7 +342,10 @@ defmodule EvoGit.Agent.ToolDispatch do
           new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
 
           tagged_tool_responses =
-            Enum.map(tool_responses, &EvoGit.Agent.ContextBuilder.tag_message_turn(&1, state.turn))
+            Enum.map(
+              tool_responses,
+              &EvoGit.Agent.ContextBuilder.tag_message_turn(&1, state.turn)
+            )
 
           # Accumulate subagent usage into the parent agent's cumulative usage
           usage = if subagent_usage, do: Usage.add(state.usage, subagent_usage), else: state.usage
@@ -299,15 +432,15 @@ defmodule EvoGit.Agent.ToolDispatch do
   # --- Tool Call Processing ---
 
   @doc false
-  # Defensive fallback: an LLM response with zero tool calls is now detected
-  # inside the do_turn retry loop (via ensure_tool_calls/2), so an empty list
-  # should never reach here in normal operation. Kept as a guard so any
-  # unexpected empty-list input degrades to a protocol violation rather than a
-  # crash in process_regular_tool_calls/3.
+  # Defensive fallback: an LLM response with zero tool calls is detected in
+  # prompt_until_tools_or_limit/5 (via ensure_tool_calls/2) before tool calls are
+  # ever extracted, so an empty list should never reach here in normal
+  # operation. Kept as a guard so any unexpected empty-list input degrades to a
+  # protocol violation rather than a crash in process_regular_tool_calls/3.
   def process_tool_calls([], _state, _subagent_modules), do: {:error, :protocol_violation}
 
   def process_tool_calls(tool_calls, %LoopState{} = state, subagent_modules)
-       when is_list(tool_calls) and tool_calls != [] do
+      when is_list(tool_calls) and tool_calls != [] do
     complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
 
     if complete_call do
@@ -318,13 +451,14 @@ defmodule EvoGit.Agent.ToolDispatch do
   end
 
   @doc false
-  # Detects an LLM response with zero tool calls. Such responses are treated as
-  # a retriable LLM failure (logged + retried in the do_turn retry loop) rather
-  # than a fatal protocol violation. Returns :ok when tool calls are present,
-  # otherwise {:error, :no_tool_calls} (after logging a warning).
+  # Detects an LLM response with zero tool calls. Returns :ok when tool calls are
+  # present, otherwise {:error, :no_tool_calls}. The caller
+  # (`prompt_until_tools_or_limit/5`) handles the no-tool-call case by appending a
+  # nudge message and re-prompting, then ending gracefully after a bounded number
+  # of nudges. This function only emits a warning; it does NOT retry or crash.
   def ensure_tool_calls(response, agent_id) do
     if ReqLLM.Response.tool_calls(response) == [] do
-      Logger.warning("Agent #{agent_id}: LLM returned no tool calls, retrying...")
+      Logger.warning("Agent #{agent_id}: LLM returned no tool calls")
       {:error, :no_tool_calls}
     else
       :ok
@@ -500,8 +634,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     # Execute tools sequentially, threading delegation hints through
     {results, final_hints, read_final_hints} =
       Enum.reduce(indexed_calls, {[], initial_hints, read_initial_hints}, fn {call, index},
-                                                                             {acc_results,
-                                                                              hints,
+                                                                             {acc_results, hints,
                                                                               read_hints} ->
         tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
 
