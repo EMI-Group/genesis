@@ -50,6 +50,7 @@ defmodule EvoDashWeb do
     quote do
       use Phoenix.LiveView
       on_mount EvoDashWeb.LiveHooks.SetLocale
+      on_mount EvoDashWeb.LiveHooks.NodeAware
 
       unquote(html_helpers())
     end
