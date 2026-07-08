@@ -7,6 +7,9 @@ defmodule EvoDashWeb.Helpers do
   This module is imported via `use EvoDashWeb, :html` and `use EvoDashWeb, :live_view`.
   """
 
+  # zh_CN glossary terms used in this module:
+  #   Prompt → "提示词", Context Tree → "上下文树", Evolve → "演进", Agent → "智能体"
+
   use Phoenix.Component
   import EvoDashWeb.CoreComponents
   use Gettext, backend: EvoDashWeb.Gettext
@@ -324,12 +327,14 @@ defmodule EvoDashWeb.Helpers do
   """
   def task_description(%{type: :genesis, opts: opts}) do
     prompt = opts[:prompt] || ""
+    # zh_CN: Prompt → "提示词"
     gettext("Mode: %{mode} | %{prompt}", mode: opts[:mode], prompt: String.slice(prompt, 0, 200))
   end
 
   def task_description(%{type: :evolve, opts: opts}) do
     objective = opts[:objective] || ""
 
+    # zh_CN: Prompt → "提示词"
     gettext("Mode: %{mode} | %{prompt}",
       mode: opts[:mode],
       prompt: String.slice(objective, 0, 200)
@@ -348,6 +353,7 @@ defmodule EvoDashWeb.Helpers do
     do: gettext("No CONTEXT.md found — Existing Codebase mode selected")
 
   def mode_info_message("evolve_simple"),
+    # zh_CN: Context Tree → "上下文树", Evolution → "演进"
     do: gettext("Context tree detected — Evolution mode selected")
 
   def mode_info_message(_), do: ""
@@ -515,6 +521,7 @@ defmodule EvoDashWeb.Helpers do
   """
   def mode_description("genesis_new"),
     do:
+      # zh_CN: Prompt → "提示词"
       gettext(
         "Creates a brand new codebase from scratch in an empty directory using your prompt."
       )
@@ -524,6 +531,7 @@ defmodule EvoDashWeb.Helpers do
       gettext("Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it.")
 
   def mode_description("evolve_simple"),
+    # zh_CN: Agent → "智能体"
     do: gettext("Uses a single top-down agent to modify the codebase based on your objective.")
 
   def mode_description(_), do: ""
