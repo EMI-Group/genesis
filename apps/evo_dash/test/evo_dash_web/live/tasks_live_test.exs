@@ -182,7 +182,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # render/1 flushes pending messages synchronously; a crash would propagate here.
       html = render(view)
       assert is_binary(html)
-      assert html =~ "Task History"
+      assert html =~ "All Statuses"
     end
 
     test "handle_info catch-all does not crash on unknown messages", %{conn: conn} do
@@ -194,7 +194,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       html = render(view)
       assert is_binary(html)
-      assert html =~ "Task History"
+      assert html =~ "All Statuses"
     end
   end
 end
