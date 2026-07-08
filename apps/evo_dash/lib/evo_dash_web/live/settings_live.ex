@@ -132,6 +132,7 @@ defmodule EvoDashWeb.SettingsLive do
               llm_test_status={@llm_test_status}
               model_profiles={@file_config[:llm][:models] || []}
               editing_profile_id={@editing_profile_id}
+              test_profile_id={@test_profile_id}
               credentials={@credentials}
             />
           <% end %>
@@ -153,6 +154,9 @@ defmodule EvoDashWeb.SettingsLive do
     file_config = ConfigIO.load_file_config()
     schemas_by_category = Schema.schemas_by_category()
 
+    models = get_in(file_config, [:llm, :models]) || []
+    test_profile_id = if models != [], do: ModelProfileHelpers.profile_id(hd(models))
+
     socket =
       assign(socket,
         schemas_by_category: schemas_by_category,
@@ -170,7 +174,8 @@ defmodule EvoDashWeb.SettingsLive do
         selected_provider_models: [],
         selected_variant_id: nil,
         llm_test_status: :idle,
-        editing_profile_id: nil
+        editing_profile_id: nil,
+        test_profile_id: test_profile_id
       )
 
     {:ok, socket}
@@ -659,16 +664,48 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("test_llm", _params, socket) do
-    parent = self()
+  def handle_event("test_llm", params, socket) do
+    profile_id = params["profile_id"]
+    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result = EvoGit.SystemCheck.llm_test()
-      send(parent, {:llm_test_result, result})
-    end)
+    profile = Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == profile_id end)
 
-    {:noreply, assign(socket, :llm_test_status, :testing)}
+    model_string =
+      if profile, do: profile_model_string(profile)
+
+    if model_string do
+      parent = self()
+
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        result = EvoGit.SystemCheck.llm_test(model_string)
+        send(parent, {:llm_test_result, result})
+      end)
+
+      {:noreply, assign(socket, :llm_test_status, :testing)}
+    else
+      {:noreply, put_flash(socket, :error, gettext("Selected profile has no model configured."))}
+    end
   end
+
+  @impl true
+  def handle_event("select_test_profile", %{"value" => profile_id}, socket) do
+    {:noreply, assign(socket, :test_profile_id, profile_id)}
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: Model profile string composition
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Composes a model string like "provider:id" from a profile's :model field.
+  # Handles both map specs (%{provider: a, id: s}) and legacy binary strings.
+  defp profile_model_string(%{model: model}) when is_map(model) do
+    provider = model[:provider] || model["provider"]
+    id = model[:id] || model["id"]
+    if provider && id, do: "#{provider}:#{id}"
+  end
+
+  defp profile_model_string(%{model: model}) when is_binary(model) and model != "", do: model
+  defp profile_model_string(_), do: nil
 
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config persistence

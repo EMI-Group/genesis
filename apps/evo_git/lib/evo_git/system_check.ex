@@ -149,8 +149,18 @@ defmodule EvoGit.SystemCheck do
   @spec llm_test() :: {:ok, map()} | {:error, String.t()}
   def llm_test do
     model = EvoGit.Config.resolve([:llm, :model])
+    llm_test(model)
+  end
 
-    if is_nil(model) or model == "" do
+  @doc """
+  Tests LLM connectivity for a specific model string.
+
+  Returns `{:ok, %{model: String.t(), response: String.t()}}` on success,
+  or `{:error, String.t()}` on failure.
+  """
+  @spec llm_test(String.t()) :: {:ok, map()} | {:error, String.t()}
+  def llm_test(model) when is_binary(model) do
+    if model == "" do
       {:error, "No LLM model configured"}
     else
       do_llm_test(model)
@@ -158,7 +168,28 @@ defmodule EvoGit.SystemCheck do
   rescue
     # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
     e ->
-      Logger.warning("SystemCheck llm_test failed: #{Exception.message(e)}")
+      Logger.warning("SystemCheck llm_test/1 failed: #{Exception.message(e)}")
+      {:error, Exception.message(e)}
+  end
+
+  @doc """
+  Tests LLM connectivity for a specific model string with extra generation params
+  (e.g., `max_tokens`, `temperature`).
+
+  Returns `{:ok, %{model: String.t(), response: String.t()}}` on success,
+  or `{:error, String.t()}` on failure.
+  """
+  @spec llm_test(String.t(), keyword()) :: {:ok, map()} | {:error, String.t()}
+  def llm_test(model, opts) when is_binary(model) and is_list(opts) do
+    if model == "" do
+      {:error, "No LLM model configured"}
+    else
+      do_llm_test(model, opts)
+    end
+  rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
+    e ->
+      Logger.warning("SystemCheck llm_test/2 failed: #{Exception.message(e)}")
       {:error, Exception.message(e)}
   end
 
@@ -298,7 +329,7 @@ defmodule EvoGit.SystemCheck do
   defp classify_pid(pid) when is_pid(pid), do: {:running, pid}
   defp classify_pid(_other), do: {:error, nil}
 
-  defp do_llm_test(model) do
+  defp do_llm_test(model, opts \\ []) do
     # Ensure API keys from credentials.toml are loaded into env vars before
     # the test request. This is a defensive measure so the test connection
     # is self-sufficient (doesn't rely on AgentScheduler.init having
@@ -306,8 +337,9 @@ defmodule EvoGit.SystemCheck do
     EvoGit.Config.credentials()
 
     context = ReqLLM.Context.new([ReqLLM.Context.user("Say hello in one word.")])
+    stream_opts = Keyword.merge([max_tokens: 10], opts)
 
-    with {:ok, stream_response} <- ReqLLM.stream_text(model, context, max_tokens: 10),
+    with {:ok, stream_response} <- ReqLLM.stream_text(model, context, stream_opts),
          {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response) do
       text = ReqLLM.Response.text(response) || ""
       {:ok, %{model: model, response: text}}

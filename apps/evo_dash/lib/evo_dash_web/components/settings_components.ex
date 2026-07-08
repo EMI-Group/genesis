@@ -52,6 +52,7 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:llm_test_status, :any, default: :idle)
   attr(:model_profiles, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
+  attr(:test_profile_id, :any, default: nil)
   attr(:credentials, :map, default: %{})
 
   def category_section(assigns) do
@@ -314,16 +315,39 @@ defmodule EvoDashWeb.SettingsComponents do
                   </p>
                 </div>
               </div>
-              <div class="flex items-center gap-3">
+              <div class="flex flex-wrap items-center gap-3">
                 <%= case @llm_test_status do %>
                   <% :idle -> %>
-                    <span class="text-sm text-base-content/80">{gettext(
-                      "Not tested — click to verify LLM connectivity"
-                    )}</span>
-                    <button phx-click="test_llm" class="btn btn-primary btn-sm gap-2">
-                      <.icon name="hero-signal" class="size-4" />
-                      {gettext("Test Connection")}
-                    </button>
+                    <%= if @model_profiles == [] do %>
+                      <span class="text-sm text-base-content/50 italic">{gettext(
+                        "No model profiles configured — add a profile first"
+                      )}</span>
+                      <button disabled class="btn btn-primary btn-sm gap-2 opacity-50">
+                        <.icon name="hero-signal" class="size-4" />
+                        {gettext("Test Connection")}
+                      </button>
+                    <% else %>
+                      <% profile_id_val = selected_test_profile_id(assigns) %>
+                      <select
+                        phx-change="select_test_profile"
+                        class="select select-bordered select-sm rounded-md max-w-[300px]"
+                      >
+                        <%= for profile <- @model_profiles do %>
+                          <% pid = profile_id_str(profile) %>
+                          <option value={pid} selected={pid == profile_id_val}>
+                            {profile_option_label(profile)}
+                          </option>
+                        <% end %>
+                      </select>
+                      <button
+                        phx-click="test_llm"
+                        phx-value-profile_id={profile_id_val}
+                        class="btn btn-primary btn-sm gap-2"
+                      >
+                        <.icon name="hero-signal" class="size-4" />
+                        {gettext("Test Connection")}
+                      </button>
+                    <% end %>
                   <% :testing -> %>
                     <span class="loading loading-spinner loading-sm text-primary"></span>
                     <span class="text-sm text-base-content/80">{gettext("Testing LLM connection...")}</span>
@@ -335,14 +359,22 @@ defmodule EvoDashWeb.SettingsComponents do
                       data.response,
                       50
                     )}"</span>
-                    <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
+                    <button
+                      phx-click="test_llm"
+                      phx-value-profile_id={@test_profile_id}
+                      class="btn btn-ghost btn-xs gap-1 ml-2"
+                    >
                       <.icon name="hero-arrow-path" class="size-3" />
                       {gettext("Retest")}
                     </button>
                   <% {:error, reason} -> %>
                     <.icon name="hero-x-circle" class="size-5 text-error" />
                     <span class="text-sm text-error">{reason}</span>
-                    <button phx-click="test_llm" class="btn btn-ghost btn-xs gap-1 ml-2">
+                    <button
+                      phx-click="test_llm"
+                      phx-value-profile_id={@test_profile_id}
+                      class="btn btn-ghost btn-xs gap-1 ml-2"
+                    >
                       <.icon name="hero-arrow-path" class="size-3" />
                       {gettext("Retry")}
                     </button>
@@ -584,5 +616,52 @@ defmodule EvoDashWeb.SettingsComponents do
         "" -> false
         _ -> true
       end
+  end
+
+  # ── Connection test profile selector helpers ──
+
+  # Safely extracts the id from a profile map (handles both atom and string keys).
+  defp profile_id_str(profile) when is_map(profile) do
+    case Map.get(profile, :id) || Map.get(profile, "id") do
+      nil -> ""
+      id -> to_string(id)
+    end
+  end
+
+  defp profile_id_str(_), do: ""
+
+  # Builds a human-readable option label for the profile dropdown.
+  defp profile_option_label(profile) do
+    pid = profile_id_str(profile)
+    model_label = profile_model_label(profile)
+    "#{pid} — #{model_label}"
+  end
+
+  defp profile_model_label(profile) when is_map(profile) do
+    model = Map.get(profile, :model) || Map.get(profile, "model")
+    model_display(model)
+  end
+
+  defp profile_model_label(_), do: gettext("No model")
+
+  # Returns the currently selected test profile id, defaulting to the first
+  # profile when @test_profile_id is nil or doesn't match any profile.
+  defp selected_test_profile_id(assigns) do
+    profiles = assigns.model_profiles
+    current = assigns.test_profile_id
+
+    cond do
+      profiles == [] ->
+        nil
+
+      is_nil(current) ->
+        profile_id_str(hd(profiles))
+
+      Enum.any?(profiles, fn p -> profile_id_str(p) == current end) ->
+        current
+
+      true ->
+        profile_id_str(hd(profiles))
+    end
   end
 end
