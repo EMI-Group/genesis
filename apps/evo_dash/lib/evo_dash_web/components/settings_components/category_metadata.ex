@@ -25,13 +25,13 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_icon(:scheduler), do: "hero-cog-6-tooth"
   def category_icon(:llm), do: "hero-sparkles"
   def category_icon(:user), do: "hero-user"
-  def category_icon(:git), do: "hero-git-branch"
+  def category_icon(:git), do: "brand-git"
   def category_icon(:sandbox), do: "hero-shield-check"
   def category_icon(:truncation), do: "hero-scissors"
   def category_icon(:task_history), do: "hero-clock"
   def category_icon(:tools), do: "hero-wrench-screwdriver"
   def category_icon(:server), do: "hero-server"
-  def category_icon(:nix), do: "hero-cube-transparent"
+  def category_icon(:nix), do: "brand-nix"
 
   # Made public because category_section/1 in the parent module calls it.
   def category_description(:scheduler),

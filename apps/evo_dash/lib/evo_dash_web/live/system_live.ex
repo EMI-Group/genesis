@@ -277,7 +277,7 @@ defmodule EvoDashWeb.SystemLive do
               <!-- Tools Row -->
               <.system_check_row
                 title={gettext("Required Tools")}
-                icon="hero-wrench-screwdriver"
+                icon="brand-git"
                 status={tools_status(@tool_check)}
               >
                 <:details>
@@ -338,7 +338,7 @@ defmodule EvoDashWeb.SystemLive do
               <!-- Nix Environment Row -->
               <.system_check_row
                 title={gettext("Nix Environment")}
-                icon="hero-cube-transparent"
+                icon="brand-nix"
                 status={nix_status(@nix_check)}
               >
                 <:details>

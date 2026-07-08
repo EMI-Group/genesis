@@ -28,6 +28,8 @@ defmodule EvoDashWeb.CoreComponents do
   """
   use Phoenix.Component
 
+  import Phoenix.HTML, only: [raw: 1]
+
   alias Phoenix.LiveView.JS
 
   @doc """
@@ -411,6 +413,9 @@ defmodule EvoDashWeb.CoreComponents do
     """
   end
 
+  @git_svg File.read!(Path.join(__DIR__, "../../../assets/vendor/brand/git.svg"))
+  @nix_svg File.read!(Path.join(__DIR__, "../../../assets/vendor/brand/nix.svg"))
+
   @doc """
   Renders a [Heroicon](https://heroicons.com).
 
@@ -437,6 +442,17 @@ defmodule EvoDashWeb.CoreComponents do
     <span class={[@name, @class]} />
     """
   end
+
+  def icon(%{name: "brand-" <> _} = assigns) do
+    ~H"""
+    <span class={["inline-block shrink-0", @class]} style="width:auto;height:auto">
+      <%= raw(brand_svg_content(@name)) %>
+    </span>
+    """
+  end
+
+  defp brand_svg_content("brand-git"), do: @git_svg
+  defp brand_svg_content("brand-nix"), do: @nix_svg
 
   @doc """
   Renders a horizontal tab bar with pill-shaped tabs.
