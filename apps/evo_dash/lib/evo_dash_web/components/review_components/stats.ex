@@ -1,5 +1,8 @@
 defmodule EvoDashWeb.ReviewComponents.Stats do
   @moduledoc false
+
+  # zh_CN: Commit → "提交"
+
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
@@ -33,6 +36,7 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
         <div class="flex items-center gap-2.5">
           <.icon name="hero-clock" class="size-4.5 text-base-content/50" />
           <span class="font-medium text-base-content/80">
+            <%!-- zh_CN: commit → "提交" --%>
             {ngettext("%{count} commit", "%{count} commits", @commits_count, count: @commits_count)}
           </span>
         </div>

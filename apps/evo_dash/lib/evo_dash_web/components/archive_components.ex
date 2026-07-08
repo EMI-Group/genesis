@@ -3,6 +3,9 @@ defmodule EvoDashWeb.ArchiveComponents do
   Archive components for the dashboard — per-agent archive records,
   nested agent hierarchy tree, and recursive node renderer.
   """
+
+  # zh_CN: Agent → "智能体", Commit → "提交", Branch → "分支", Token → "词元"
+
   use EvoDashWeb, :html
   alias EvoDashWeb.ArchiveHelpers
 
@@ -19,7 +22,7 @@ defmodule EvoDashWeb.ArchiveComponents do
       <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
         <div class="flex items-center justify-between mb-4">
           <h4 class="text-sm font-bold flex items-center gap-2">
-            <.icon name="hero-archive-box" class="size-4.5 text-primary" /> {gettext(
+            <.icon name="hero-archive-box" class="size-4.5 text-primary" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext(
               "Archived Agent Details"
             )}
           </h4>
@@ -101,13 +104,13 @@ defmodule EvoDashWeb.ArchiveComponents do
         <div class="flex flex-wrap gap-x-6 gap-y-1">
           <%= if @agent[:base_commit] not in [nil, ""] do %>
             <div>
-              <span class="text-xs text-base-content/50">{gettext("Start Commit")}: </span>
+              <%!-- zh_CN: Commit → "提交" --%><span class="text-xs text-base-content/50">{gettext("Start Commit")}: </span>
               <span class="text-xs font-mono">{@agent[:base_commit]}</span>
             </div>
           <% end %>
           <%= if @agent[:final_commit] not in [nil, ""] do %>
             <div>
-              <span class="text-xs text-base-content/50">{gettext("End Commit")}: </span>
+              <%!-- zh_CN: Commit → "提交" --%><span class="text-xs text-base-content/50">{gettext("End Commit")}: </span>
               <span class="text-xs font-mono">{@agent[:final_commit]}</span>
             </div>
           <% end %>
@@ -131,7 +134,7 @@ defmodule EvoDashWeb.ArchiveComponents do
 
         <%= if @agent[:branch_name] not in [nil, ""] do %>
           <div>
-            <span class="text-xs text-base-content/50">{gettext("Branch")}: </span>
+            <%!-- zh_CN: Branch → "分支" --%><span class="text-xs text-base-content/50">{gettext("Branch")}: </span>
             <span class="text-xs font-mono">{@agent[:branch_name]}</span>
           </div>
         <% end %>
@@ -140,19 +143,19 @@ defmodule EvoDashWeb.ArchiveComponents do
         <%= if @agent[:usage] do %>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-base-200">
             <div>
-              <div class="text-xs text-base-content/50">{gettext("Input Tokens")}</div>
+              <%!-- zh_CN: Token → "词元" --%><div class="text-xs text-base-content/50">{gettext("Input Tokens")}</div>
               <div class="text-sm font-semibold">
                 {format_number(@agent[:usage][:input_tokens] || 0)}
               </div>
             </div>
             <div>
-              <div class="text-xs text-base-content/50">{gettext("Output Tokens")}</div>
+              <%!-- zh_CN: Token → "词元" --%><div class="text-xs text-base-content/50">{gettext("Output Tokens")}</div>
               <div class="text-sm font-semibold">
                 {format_number(@agent[:usage][:output_tokens] || 0)}
               </div>
             </div>
             <div>
-              <div class="text-xs text-base-content/50">{gettext("Total Tokens")}</div>
+              <%!-- zh_CN: Token → "词元" --%><div class="text-xs text-base-content/50">{gettext("Total Tokens")}</div>
               <div class="text-sm font-semibold">
                 {format_number(@agent[:usage][:total_tokens] || 0)}
               </div>

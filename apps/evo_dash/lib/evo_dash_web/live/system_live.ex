@@ -4,6 +4,17 @@ defmodule EvoDashWeb.SystemLive do
   system self-check, plus usage guides and references (example config, CLI
   usage, FAQ, credentials).
   """
+
+  # zh_CN glossary translations used in this file:
+  #   Scheduler → 调度器
+  #   Agent → 智能体
+  #   Graceful restart → 平滑重启
+  #   Runtime → 运行时
+  #   Sandbox → 沙箱
+  #   Genesis → 启元
+  #   Context Tree → 上下文树
+  #   LLM Provider → 服务商
+
   use EvoDashWeb, :live_view
 
   @config_reference """
@@ -137,15 +148,15 @@ defmodule EvoDashWeb.SystemLive do
             <h2 class="text-base font-bold tracking-tight">
               {if @scheduler_paused,
                 do: gettext("Scheduler Paused"),
-                else: gettext("Scheduler Active")}
+                else: gettext("Scheduler Active")} <% # zh_CN: "调度器" %>
             </h2>
             <p class="text-sm text-base-content/60 mt-0.5 max-w-lg">
               <%= if @scheduler_paused do %>
                 {gettext(
                   "Running agents continue. No new slots or agents will be granted until resumed."
-                )}
+                )} <% # zh_CN: "智能体" %>
               <% else %>
-                {gettext("Agents and slots are being granted normally.")}
+                {gettext("Agents and slots are being granted normally.")} <% # zh_CN: "智能体" %>
               <% end %>
             </p>
           </div>
@@ -162,7 +173,7 @@ defmodule EvoDashWeb.SystemLive do
           ]}
         >
           <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
-          {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")}
+          {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
         </button>
       </div>
 
@@ -177,7 +188,7 @@ defmodule EvoDashWeb.SystemLive do
             <p class="text-sm text-base-content/60 max-w-lg">
               {gettext(
                 "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
-              )}
+              )} <% # zh_CN: "平滑重启", "运行时" %>
             </p>
           </div>
         </div>
@@ -282,6 +293,7 @@ defmodule EvoDashWeb.SystemLive do
               </.system_check_row>
 
               <!-- Sandbox Row -->
+              <% # zh_CN: "沙箱" %>
               <.system_check_row
                 title={gettext("Sandbox")}
                 icon="hero-lock-closed"
@@ -491,12 +503,12 @@ defmodule EvoDashWeb.SystemLive do
             <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
               {gettext(
                 "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
-              )}
+              )} <% # zh_CN: "平滑重启" %>
             </p>
             <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
               {gettext(
                 "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
-              )}
+              )} <% # zh_CN: "运行时", "调度器", "智能体" %>
             </p>
 
             <div class="flex justify-end gap-3 pt-2">
@@ -617,6 +629,7 @@ defmodule EvoDashWeb.SystemLive do
       {:noreply,
        socket
        |> assign(:scheduler_paused, false)
+       # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
        |> put_flash(:info, gettext("Scheduler resumed. New agents and slots are being granted."))}
     else
       EvoGit.AgentScheduler.pause()
@@ -626,6 +639,7 @@ defmodule EvoDashWeb.SystemLive do
        |> assign(:scheduler_paused, true)
        |> put_flash(
          :info,
+         # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
          gettext(
            "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
          )
@@ -810,6 +824,7 @@ defmodule EvoDashWeb.SystemLive do
   defp faq_content(config_path, credentials_path) do
     [
       {gettext("How do I set my API key?"),
+       # GENESIS_TERM: LLM Provider → 服务商
        gettext(
          "Create a credentials.toml file at %{path} with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...).",
          path: credentials_path
@@ -819,18 +834,22 @@ defmodule EvoDashWeb.SystemLive do
          "Edit your config.toml file at %{path} and set the model field in a [[llm.models]] profile (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can define multiple profiles and select one per task from the dashboard's Model dropdown. You can also adjust the model temporarily from the Settings page in the dashboard.",
          path: config_path
        )},
+      # GENESIS_TERM: Sandbox → 沙箱, Genesis → 启元
       {gettext("What is sandbox mode?"),
        gettext(
          "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
        )},
+      # GENESIS_TERM: Context Tree → 上下文树, Genesis → 启元, Agent → 智能体
       {gettext("How does the context tree work?"),
        gettext(
          "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
        )},
+      # GENESIS_TERM: Genesis → 启元
       {gettext("What happens if my config is missing?"),
        gettext(
          "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
        )},
+      # GENESIS_TERM: Sandbox → 沙箱
       {gettext("How do I configure sandbox resources?"),
        gettext(
          "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
