@@ -104,9 +104,14 @@ defmodule EvoGit.Agent.ToolDispatch do
                    Keyword.merge([tools: tools], llm_gen_opts)
                  ),
                {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
-               llm_end <- System.monotonic_time(:millisecond) do
+               llm_end <- System.monotonic_time(:millisecond),
+               :ok <- ensure_tool_calls(response, state.agent_id) do
             {:ok, response, llm_end - llm_start}
           else
+            {:error, :no_tool_calls} = err ->
+              # Warning already logged in ensure_tool_calls/2; just propagate for retry.
+              err
+
             {:error, reason} ->
               Logger.warning(
                 "Agent #{state.agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
@@ -294,6 +299,11 @@ defmodule EvoGit.Agent.ToolDispatch do
   # --- Tool Call Processing ---
 
   @doc false
+  # Defensive fallback: an LLM response with zero tool calls is now detected
+  # inside the do_turn retry loop (via ensure_tool_calls/2), so an empty list
+  # should never reach here in normal operation. Kept as a guard so any
+  # unexpected empty-list input degrades to a protocol violation rather than a
+  # crash in process_regular_tool_calls/3.
   def process_tool_calls([], _state, _subagent_modules), do: {:error, :protocol_violation}
 
   def process_tool_calls(tool_calls, %LoopState{} = state, subagent_modules)
@@ -304,6 +314,20 @@ defmodule EvoGit.Agent.ToolDispatch do
       handle_complete_call(complete_call, state, tool_calls)
     else
       process_regular_tool_calls(tool_calls, state, subagent_modules)
+    end
+  end
+
+  @doc false
+  # Detects an LLM response with zero tool calls. Such responses are treated as
+  # a retriable LLM failure (logged + retried in the do_turn retry loop) rather
+  # than a fatal protocol violation. Returns :ok when tool calls are present,
+  # otherwise {:error, :no_tool_calls} (after logging a warning).
+  def ensure_tool_calls(response, agent_id) do
+    if ReqLLM.Response.tool_calls(response) == [] do
+      Logger.warning("Agent #{agent_id}: LLM returned no tool calls, retrying...")
+      {:error, :no_tool_calls}
+    else
+      :ok
     end
   end
 
