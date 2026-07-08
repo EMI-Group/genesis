@@ -53,7 +53,7 @@ defmodule EvoGit.Agent.ContextCompression do
   """
   @spec compress_if_needed(LoopState.t(), keyword()) :: LoopState.t()
   def compress_if_needed(%LoopState{} = state, opts \\ []) do
-    threshold = EvoGit.Defaults.compression_threshold_tokens() || 100_000
+    threshold = EvoGit.Defaults.compression_threshold_tokens()
     agent_id = Keyword.fetch!(opts, :agent_id)
     llm_model = Keyword.fetch!(opts, :llm_model)
     llm_gen_opts = Keyword.get(opts, :llm_generation_params, [])
