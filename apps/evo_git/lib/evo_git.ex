@@ -91,14 +91,15 @@ defmodule EvoGit do
   - `args` - List of arguments to pass to the executable (default: [])
   - `repo_root` - Optional path to the git repository root
   - `timeout` - Timeout in milliseconds
+  - `max_bytes` - Maximum output size in bytes before truncation (nil = no limit)
 
   ## Returns
 
   - `{:ok, output, exit_code}` — command completed within timeout
   - `{:timeout, partial_output}` — command timed out, partial output recovered
   """
-  def sandbox_run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout) do
-    EvoGit.Sandbox.run_with_partial(cwd, executable, args, repo_root, timeout)
+  def sandbox_run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil) do
+    EvoGit.Sandbox.run_with_partial(cwd, executable, args, repo_root, timeout, max_bytes)
   end
 
   @doc """

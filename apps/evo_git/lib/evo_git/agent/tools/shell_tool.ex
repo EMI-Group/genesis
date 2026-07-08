@@ -165,18 +165,19 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     case Shared.fetch_string_arg(args, "command") do
       {:ok, command} ->
         timeout = Map.get(args, "timeout", @default_timeout)
-        do_execute(command, repo_path, repo_root, timeout)
+        max_bytes = Map.get(args, "max_bytes", 16_384)
+        do_execute(command, repo_path, repo_root, timeout, max_bytes)
 
       {:error, message} ->
         message
     end
   end
 
-  defp do_execute(command, repo_path, repo_root, timeout) do
+  defp do_execute(command, repo_path, repo_root, timeout, max_bytes) do
     shell = Platform.shell()
     shell_args = Platform.shell_args(command)
 
-    case EvoGit.Sandbox.run_with_partial(repo_path, shell, shell_args, repo_root, timeout) do
+    case EvoGit.Sandbox.run_with_partial(repo_path, shell, shell_args, repo_root, timeout, max_bytes) do
       {:ok, output, exit_code} ->
         base =
           if exit_code == 0 do

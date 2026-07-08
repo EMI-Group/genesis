@@ -89,6 +89,9 @@ defmodule EvoGit.Sandbox do
   - `args` - List of arguments to pass to the executable (default: [])
   - `repo_root` - Optional path to the git repository root
   - `timeout` - Timeout in milliseconds (positive integer)
+  - `max_bytes` - Maximum output size in bytes before truncation (nil = no limit).
+    When set and the output exceeds this size, only the first and last portions
+    are read from disk to avoid loading large files into memory.
 
   ## Returns
 
@@ -96,11 +99,18 @@ defmodule EvoGit.Sandbox do
   - `{:timeout, partial_output}` — command timed out; partial_output is a string
     that may be empty if nothing was written before the timeout
   """
-  @spec run_with_partial(String.t(), String.t(), [String.t()], String.t() | nil, pos_integer()) ::
+  @spec run_with_partial(
+          String.t(),
+          String.t(),
+          [String.t()],
+          String.t() | nil,
+          pos_integer(),
+          integer() | nil
+        ) ::
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
-  def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout) do
+  def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil) do
     resolved = EvoGit.Executable.resolve(executable)
-    backend().run_with_partial(cwd, resolved, args, repo_root, timeout)
+    backend().run_with_partial(cwd, resolved, args, repo_root, timeout, max_bytes)
   end
 
   @doc "Ensures the sandbox backend is initialized (e.g., creates systemd slice)."
