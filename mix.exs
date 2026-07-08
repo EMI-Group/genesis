@@ -34,6 +34,26 @@ defmodule EvoGit.Umbrella.MixProject do
               linux_arm64: [os: :linux, cpu: :aarch64]
             ]
           ]
+        ],
+        genesis_remote: [
+          # Headless evo_git-only release for SSH remote development. It runs as
+          # a lightweight daemon on a remote server (no Phoenix/Tauri dashboard).
+          applications: [
+            evo_git: :permanent
+          ],
+          # Bake a compile-time flag into sys.config so the runtime can detect
+          # that it is running as a remote daemon.
+          config: [evo_git: [remote_release: true]],
+          steps: [:assemble, &Burrito.wrap/1],
+          burrito: [
+            targets: [
+              darwin_arm64: [os: :darwin, cpu: :aarch64],
+              darwin_amd64: [os: :darwin, cpu: :x86_64],
+              windows_x64: [os: :windows, cpu: :x86_64],
+              linux_x64: [os: :linux, cpu: :x86_64],
+              linux_arm64: [os: :linux, cpu: :aarch64]
+            ]
+          ]
         ]
       ]
     ]

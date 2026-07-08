@@ -98,7 +98,8 @@ This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, and `Cargo.lock` in one
 The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds native desktop app installers on every GitHub release. The build process uses a **Tauri + Burrito** architecture:
 
 - **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
-- **Build process**: Burrito-wrapped Elixir release (`mix release genesis_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers
+- **Build process**: Burrito-wrapped Elixir release (`mix release genesis_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers. A second Burrito release (`mix release genesis_remote`) — a headless `evo_git`-only daemon for SSH remote development, no Phoenix/Tauri — is built alongside and uploaded as a standalone binary directly to the GitHub release (not packaged into Tauri).
+- **Release configuration**: Three Burrito-wrapped releases are defined in `mix.exs`: `genesis_desktop` (full, for the Tauri sidecar), `genesis_remote` (headless `evo_git`-only, bakes `config: [evo_git: [remote_release: true]]` so the runtime detects remote-daemon mode and enables EPMD-less distribution via `rel/remote/vm.args.eex`), and the base `genesis`. The remote release excludes `evo_dash` entirely.
 - **Job structure**: Two jobs — `build-unix` (matrix: macOS arm64/x64 + Linux x64/arm64) and `build-windows` (matrix: x86_64 + ARM64). macOS and Linux share a common Unix step sequence; Windows is separate (bash shell, MinGit).
 - **macOS**: Builds ARM64 (`macos-14`) → `.dmg` / `.app` bundles
 - **Linux**: Builds x86_64 (`ubuntu-24.04`) and ARM64 (`ubuntu-24.04-arm`) → `.rpm` / AppImage / `.tar.gz` portable archive (AppImage excluded on ARM64 — `appimagetool`/`linuxdeploy` are x86_64-only). The `.deb` package was removed in favor of AppImage + tarball. Flatpak is not built — Tauri v2 has no native Flatpak bundle target (documented in the workflow).
@@ -107,7 +108,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 - **ARM runner ImageOS fix**: GitHub-hosted ARM partner runners (`ubuntu-24.04-arm`, `windows-11-arm`) report `ImageOS` values (`ubuntu24-arm64`, `win11-arm64`) that `erlef/setup-beam` does not recognize. The workflow sets `ImageOS` to the base value (`ubuntu24` / `win22`) via `$GITHUB_ENV` before the setup-beam step for ARM targets only.
 - **Toolchains**: CI requires Elixir/OTP, Rust (Tauri), and Zig (Burrito wrapper compilation) on all platforms; Linux also needs system packages (webkit2gtk, libayatana-appindicator3-dev for system tray, libdbus-1-dev for tray-icon crate, etc.)
 - **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
-- **Burrito targets**: `darwin_arm64`, `darwin_amd64`, `windows_x64`, `linux_x64`, `linux_arm64` (defined in `mix.exs`)
+- **Burrito targets**: `darwin_arm64`, `darwin_amd64`, `windows_x64`, `linux_x64`, `linux_arm64` (defined in `mix.exs`). Both `genesis_desktop` and `genesis_remote` use the same 5 targets; the remote binary is named `genesis_remote_<target>` (e.g. `genesis_remote_linux_x64`) and uploaded straight to the release assets.
 - **Version pinning**: `.tool-versions` pins OTP 29 / Elixir 1.20.1
 
 The legacy launcher scripts and manual `.app`/zip packaging have been removed — Tauri generates native bundles and the Rust sidecar (`desktop/src-tauri/src/sidecar.rs`) handles backend lifecycle with the correct env vars.
