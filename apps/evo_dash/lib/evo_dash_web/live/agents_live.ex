@@ -43,6 +43,7 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  # Backward-compatible fallback — enriched deltas (agent_registered/updated/removed) handle most updates
   def handle_info({:agents_updated}, socket) do
     agents = load_agents()
     current_ids = MapSet.new(agents, & &1.id)
@@ -75,9 +76,303 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  def handle_info({:agent_registered, agent_id, meta_summary}, socket) do
+    # Check for duplicate (race with :agents_updated fallback)
+    already_exists = Enum.any?(socket.assigns.agents, fn a -> a.id == agent_id end)
+    if already_exists do
+      {:noreply, socket}
+    else
+      # Look up agent_state from ETS (may be nil for brand-new agents)
+      agent_state =
+        case :ets.lookup(@agent_state_table, agent_id) do
+          [{^agent_id, state}] -> state
+          [] -> nil
+        end
+
+      # Look up sched_meta from ETS for fields not in meta_summary
+      sched_meta =
+        case :ets.lookup(@sched_meta_table, agent_id) do
+          [{^agent_id, meta}] -> meta
+          [] -> nil
+        end
+
+      total_tokens = (agent_state && agent_state.total_tokens) || 0
+      compression_count = (agent_state && agent_state.compression_count) || 0
+      compression_threshold = safe_compression_threshold()
+
+      compression_pct =
+        trunc(min(total_tokens / max(compression_threshold, 1) * 100, 100))
+
+      new_agent = %{
+        id: agent_id,
+        task_local_id: (agent_state && agent_state.task_local_id) || agent_id,
+        repo_id: (agent_state && agent_state.repo_id) || "primary",
+        repo_root: agent_state && agent_state.repo_root,
+        task_id: meta_summary[:task_id] || (sched_meta && sched_meta.task_id),
+        task_number: meta_summary[:task_number] || (sched_meta && sched_meta.task_number),
+        status: meta_summary[:status] || :pending,
+        depth: meta_summary[:depth] || 0,
+        parent_id: meta_summary[:parent_id] || (sched_meta && sched_meta.parent_id),
+        worktree: sched_meta && sched_meta.worktree,
+        retries: (sched_meta && sched_meta.retries) || 0,
+        agent_module: sched_meta && sched_meta.spec.agent_module,
+        objective: meta_summary[:objective] || (sched_meta && sched_meta.spec.objective),
+        context_path: agent_state && agent_state.context_node && agent_state.context_node.path,
+        current_commit:
+          agent_state && agent_state.phylo_node && agent_state.phylo_node.current_commit,
+        base_commit: sched_meta && sched_meta.spec.phylo_node.base_commit,
+        children: [],
+        has_children: false,
+        pending_sub_agents:
+          (sched_meta && MapSet.to_list(sched_meta.pending_sub_agents)) || [],
+        sub_agent_results: (sched_meta && sched_meta.sub_agent_results) || %{},
+        task_ref: sched_meta && sched_meta.task_ref,
+        result_sent: (sched_meta && sched_meta.result_sent) || false,
+        history: [],
+        usage: (agent_state && agent_state.usage) || EvoGit.Agent.Usage.zero(),
+        total_tokens: total_tokens,
+        compression_count: compression_count,
+        compression_threshold: compression_threshold,
+        compression_pct: compression_pct
+      }
+
+      agents = socket.assigns.agents
+
+      # Insert at correct sorted position (by {depth, id})
+      insert_idx =
+        Enum.find_index(agents, fn a -> {a.depth, a.id} > {new_agent.depth, new_agent.id} end)
+
+      agents =
+        if insert_idx do
+          List.insert_at(agents, insert_idx, new_agent)
+        else
+          agents ++ [new_agent]
+        end
+
+      # Update parent's children if parent_id is set
+      agents =
+        if new_agent.parent_id do
+          update_agent_in_list(agents, new_agent.parent_id, fn parent ->
+            children = find_children_from_agents(parent.id, agents)
+            %{parent | children: children, has_children: length(children) > 0}
+          end)
+        else
+          agents
+        end
+
+      id_to_display = Map.put(socket.assigns.id_to_display, agent_id, new_agent.task_local_id || agent_id)
+      previous_agent_ids = MapSet.put(socket.assigns.previous_agent_ids, agent_id)
+      new_agent_ids = MapSet.put(socket.assigns.new_agent_ids, agent_id)
+      repo_trees = build_repo_trees(agents)
+
+      {:noreply,
+       assign(socket,
+         agents: agents,
+         id_to_display: id_to_display,
+         repo_trees: repo_trees,
+         previous_agent_ids: previous_agent_ids,
+         new_agent_ids: new_agent_ids
+       )}
+    end
+  end
+
+  @impl true
+  def handle_info({:agent_updated, agent_id, changed_fields}, socket) do
+    agents = socket.assigns.agents
+    agent_idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
+
+    if agent_idx == nil do
+      # Race — agent not yet in our list, do a full reload
+      agents = load_agents()
+      current_ids = MapSet.new(agents, & &1.id)
+      current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
+
+      {:noreply,
+       assign(socket,
+         agents: agents,
+         id_to_display: Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end),
+         repo_trees: build_repo_trees(agents),
+         previous_agent_ids: current_ids,
+         previous_statuses: current_statuses,
+         new_agent_ids: MapSet.new(),
+         changed_status_ids: MapSet.new()
+       )}
+    else
+      agent = Enum.at(agents, agent_idx)
+
+      # Track old parent_id for children recalculation
+      old_parent_id = agent.parent_id
+
+      # Convert changed_fields keyword list to a map for merging
+      changed_map =
+        changed_fields
+        |> Enum.into(%{})
+        |> handle_special_fields()
+
+      # Merge changed fields into agent
+      agent = Map.merge(agent, changed_map)
+
+      # Recalculate compression_pct if total_tokens changed
+      agent =
+        if Keyword.has_key?(changed_fields, :total_tokens) do
+          threshold = agent.compression_threshold
+          pct = trunc(min(agent.total_tokens / max(threshold, 1) * 100, 100))
+          %{agent | compression_pct: pct}
+        else
+          agent
+        end
+
+      agents = List.replace_at(agents, agent_idx, agent)
+
+      # Recalculate children if parent_id changed
+      agents =
+        if Keyword.has_key?(changed_fields, :parent_id) do
+          new_parent_id = agent.parent_id
+
+          agents
+          |> maybe_update_parent_children(old_parent_id)
+          |> maybe_update_parent_children(new_parent_id)
+        else
+          agents
+        end
+
+      # Detect status change
+      old_status = socket.assigns.previous_statuses[agent_id]
+      new_status = agent.status
+
+      previous_statuses = socket.assigns.previous_statuses
+      changed_status_ids = socket.assigns.changed_status_ids
+
+      {previous_statuses, changed_status_ids} =
+        if old_status != new_status do
+          {Map.put(previous_statuses, agent_id, new_status),
+           MapSet.put(changed_status_ids, agent_id)}
+        else
+          {previous_statuses, changed_status_ids}
+        end
+
+      # Update id_to_display if task_local_id changed
+      id_to_display = socket.assigns.id_to_display
+      id_to_display =
+        if Keyword.has_key?(changed_fields, :task_local_id) do
+          Map.put(id_to_display, agent_id, agent.task_local_id || agent_id)
+        else
+          id_to_display
+        end
+
+      # Rebuild repo_trees only if context_node or repo_root changed
+      repo_trees =
+        if Keyword.has_key?(changed_fields, :context_node) or
+             Keyword.has_key?(changed_fields, :repo_root) do
+          build_repo_trees(agents)
+        else
+          socket.assigns.repo_trees
+        end
+
+      {:noreply,
+       assign(socket,
+         agents: agents,
+         id_to_display: id_to_display,
+         repo_trees: repo_trees,
+         previous_statuses: previous_statuses,
+         changed_status_ids: changed_status_ids
+       )}
+    end
+  end
+
+  @impl true
+  def handle_info({:agent_removed, agent_id}, socket) do
+    agents = socket.assigns.agents
+    removed_agent = Enum.find(agents, fn a -> a.id == agent_id end)
+
+    if removed_agent == nil do
+      {:noreply, socket}
+    else
+      parent_id = removed_agent.parent_id
+
+      # Remove the agent
+      agents = Enum.reject(agents, fn a -> a.id == agent_id end)
+
+      # Set parent_id to nil for orphaned children
+      agents =
+        Enum.map(agents, fn a ->
+          if a.parent_id == agent_id, do: %{a | parent_id: nil}, else: a
+        end)
+
+      # Recalculate children for the removed agent's parent
+      agents = maybe_update_parent_children(agents, parent_id)
+
+      # Remove from tracking sets
+      id_to_display = Map.delete(socket.assigns.id_to_display, agent_id)
+      previous_agent_ids = MapSet.delete(socket.assigns.previous_agent_ids, agent_id)
+      new_agent_ids = MapSet.delete(socket.assigns.new_agent_ids, agent_id)
+      previous_statuses = Map.delete(socket.assigns.previous_statuses, agent_id)
+
+      # Clear selection if the removed agent was selected
+      selected_agent_id =
+        if socket.assigns.selected_agent_id == agent_id do
+          nil
+        else
+          socket.assigns.selected_agent_id
+        end
+
+      repo_trees = build_repo_trees(agents)
+
+      {:noreply,
+       assign(socket,
+         agents: agents,
+         id_to_display: id_to_display,
+         repo_trees: repo_trees,
+         previous_agent_ids: previous_agent_ids,
+         new_agent_ids: new_agent_ids,
+         previous_statuses: previous_statuses,
+         selected_agent_id: selected_agent_id
+       )}
+    end
+  end
+
+  @impl true
+  def handle_info({:update_agent_history, agent_id, history}, socket) do
+    agents = socket.assigns.agents
+    agent_idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
+
+    if agent_idx do
+      agent = Enum.at(agents, agent_idx)
+      updated_agent = %{agent | history: history}
+      updated_agents = List.replace_at(agents, agent_idx, updated_agent)
+      {:noreply, assign(socket, :agents, updated_agents)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_event("select_agent", %{"id" => id}, socket) do
     agent_id = String.to_integer(id)
-    {:noreply, assign(socket, :selected_agent_id, agent_id) |> assign(:show_usage, false)}
+
+    socket = assign(socket, :selected_agent_id, agent_id) |> assign(:show_usage, false)
+
+    # Lazy-load chat history for the selected agent
+    agents = socket.assigns.agents
+    agent_idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
+
+    socket =
+      if agent_idx do
+        agent = Enum.at(agents, agent_idx)
+
+        if agent.history == [] do
+          history = load_agent_history(agent_id)
+          updated_agent = %{agent | history: history}
+          updated_agents = List.replace_at(agents, agent_idx, updated_agent)
+          assign(socket, :agents, updated_agents)
+        else
+          socket
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -101,7 +396,18 @@ defmodule EvoDashWeb.AgentsLive do
     index = String.to_integer(index)
 
     agent = Enum.find(socket.assigns.agents, &(&1.id == socket.assigns.selected_agent_id))
-    entry = Enum.at(agent.history || [], index)
+
+    # Safety net: if history is empty, lazy-load it first
+    agent =
+      if agent && agent.history == [] do
+        history = load_agent_history(agent.id)
+        send(self(), {:update_agent_history, agent.id, history})
+        %{agent | history: history}
+      else
+        agent
+      end
+
+    entry = agent && Enum.at(agent.history || [], index)
 
     {:noreply, assign(socket, :selected_history_entry, entry)}
   end
@@ -125,6 +431,65 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_event("close_objective_modal", _params, socket) do
     {:noreply, assign(socket, :selected_objective, nil)}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  defp handle_special_fields(changed_map) do
+    changed_map =
+      if Map.has_key?(changed_map, :context_node) do
+        context_node = changed_map[:context_node]
+        path = context_node && context_node.path
+        changed_map
+        |> Map.put(:context_path, path)
+        |> Map.delete(:context_node)
+      else
+        changed_map
+      end
+
+    changed_map =
+      if Map.has_key?(changed_map, :phylo_node) do
+        phylo_node = changed_map[:phylo_node]
+        current_commit = phylo_node && phylo_node.current_commit
+        changed_map
+        |> Map.put(:current_commit, current_commit)
+        |> Map.delete(:phylo_node)
+      else
+        changed_map
+      end
+
+    if Map.has_key?(changed_map, :usage) && is_nil(changed_map[:usage]) do
+      Map.put(changed_map, :usage, EvoGit.Agent.Usage.zero())
+    else
+      changed_map
+    end
+  end
+
+  defp update_agent_in_list(agents, agent_id, updater_fn) do
+    idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
+    if idx do
+      List.replace_at(agents, idx, updater_fn.(Enum.at(agents, idx)))
+    else
+      agents
+    end
+  end
+
+  defp maybe_update_parent_children(agents, nil), do: agents
+
+  defp maybe_update_parent_children(agents, parent_id) do
+    update_agent_in_list(agents, parent_id, fn parent ->
+      children = find_children_from_agents(parent.id, agents)
+      %{parent | children: children, has_children: length(children) > 0}
+    end)
+  end
+
+  defp find_children_from_agents(parent_id, agents) do
+    agents
+    |> Enum.filter(fn a -> a.parent_id == parent_id end)
+    |> Enum.map(fn a -> {a.id, a.status} end)
+    |> Enum.sort_by(fn {id, _} -> id end)
   end
 
   defp build_repo_trees(agents) do
@@ -255,7 +620,6 @@ defmodule EvoDashWeb.AgentsLive do
     |> Enum.map(fn {id, meta} ->
       agent_state = Map.get(agent_states, id)
       children = find_children(id, sched_metas)
-      history = load_agent_history(id)
 
       total_tokens = agent_state && Map.get(agent_state, :total_tokens, 0)
       compression_count = agent_state && Map.get(agent_state, :compression_count, 0)
@@ -288,7 +652,7 @@ defmodule EvoDashWeb.AgentsLive do
         sub_agent_results: meta.sub_agent_results,
         task_ref: meta.task_ref,
         result_sent: meta.result_sent,
-        history: history,
+        history: [],
         usage: (agent_state && agent_state.usage) || EvoGit.Agent.Usage.zero(),
         total_tokens: total_tokens,
         compression_count: compression_count,
