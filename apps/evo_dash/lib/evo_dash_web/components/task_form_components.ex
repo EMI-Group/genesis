@@ -112,7 +112,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                       <span class="label-text font-semibold text-base-content">{gettext(
                         "Starting Node"
                       )}
-                      <%!-- zh_CN: evolution → "演进" -->
+                      <%!-- zh_CN: evolution → "演进" --%>
                       <.tip text={
                         gettext(
                           "The subdirectory within the project to start evolution from. Use './' for root."
@@ -137,7 +137,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                       <span class="label-text font-semibold text-base-content"><%!-- zh_CN: Commit → "提交" --%>{gettext(
                         "Starting Commit"
                       )}
-                      <%!-- zh_CN: commit → "提交", branch → "分支" -->
+                      <%!-- zh_CN: commit → "提交", branch → "分支" --%>
                       <.tip text={
                         gettext(
                           "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
