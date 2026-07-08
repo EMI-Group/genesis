@@ -331,26 +331,86 @@ const ScrollToFile = {
   }
 };
 
-// AgentHistoryAutoScroll hook: auto-scrolls chat history when user is at the bottom
+// AgentHistoryAutoScroll hook: auto-scrolls chat history when user is at the bottom.
+//
+// Uses requestAnimationFrame to wait for browser layout before reading scrollHeight,
+// and a custom rAF-based ease-out scroll animation instead of native smooth scrolling.
+// Native smooth scroll is interrupted when scrollTo is called again mid-animation,
+// causing stutter when messages arrive rapidly. The custom animation restarts cleanly
+// from the current position to the latest target on every update.
 const AgentHistoryAutoScroll = {
   mounted() {
     this.isAtBottom = true;
-    
-    // Scroll to bottom initially
-    this.el.scrollTop = this.el.scrollHeight;
-    
+    this._scheduleRAF = null;
+    this._animRAF = null;
+
+    // Scroll to bottom after initial layout completes
+    requestAnimationFrame(() => {
+      this.el.scrollTop = this.el.scrollHeight;
+    });
+
     // Track whether user has scrolled away from bottom
     this.el.addEventListener("scroll", () => {
-      this.isAtBottom = this.el.scrollTop + this.el.clientHeight >= this.el.scrollHeight - 30;
+      this.isAtBottom =
+        this.el.scrollTop + this.el.clientHeight >= this.el.scrollHeight - 30;
     }, { passive: true });
   },
-  
+
   updated() {
-    if (this.isAtBottom) {
-      this.el.scrollTo({
-        top: this.el.scrollHeight,
-        behavior: "smooth"
-      });
+    if (!this.isAtBottom) return;
+
+    // Coalesce rapid same-frame updates: cancel any pending rAF and schedule
+    // a fresh one. Only the last update in a burst triggers a scroll, and
+    // it reads scrollHeight AFTER all DOM mutations from that burst are laid out.
+    if (this._scheduleRAF !== null) {
+      cancelAnimationFrame(this._scheduleRAF);
+    }
+    this._scheduleRAF = requestAnimationFrame(() => {
+      this._scheduleRAF = null;
+      this._smoothScrollTo(this.el.scrollHeight);
+    });
+  },
+
+  // Custom smooth scroll using requestAnimationFrame + scrollTop.
+  // Uses a short easeOutCubic curve (200ms). When called mid-animation
+  // (rapid message arrivals), it cancels the current animation and restarts
+  // from wherever we are to the new target — no jump, no stuck mid-way.
+  _smoothScrollTo(target) {
+    if (this._animRAF !== null) {
+      cancelAnimationFrame(this._animRAF);
+      this._animRAF = null;
+    }
+
+    const start = this.el.scrollTop;
+    const distance = target - start;
+    if (Math.abs(distance) < 1) return;
+
+    const duration = 200; // ms — short enough to keep up with streaming, long enough to feel smooth
+    const startTime = performance.now();
+
+    const animate = (now) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // easeOutCubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      this.el.scrollTop = start + distance * eased;
+
+      if (progress < 1) {
+        this._animRAF = requestAnimationFrame(animate);
+      } else {
+        this._animRAF = null;
+      }
+    };
+
+    this._animRAF = requestAnimationFrame(animate);
+  },
+
+  destroyed() {
+    if (this._scheduleRAF !== null) {
+      cancelAnimationFrame(this._scheduleRAF);
+    }
+    if (this._animRAF !== null) {
+      cancelAnimationFrame(this._animRAF);
     }
   }
 };
