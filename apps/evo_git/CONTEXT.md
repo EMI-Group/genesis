@@ -3,6 +3,11 @@
 ## Intent
 The `:evo_git` OTP application implements an evolutionary software development runtime where LLM-powered agents create, analyze, and modify codebases using git worktree isolation. The system models a codebase as a **Context Tree** (spatial dimension) and a **Phylogenetic Graph** (temporal dimension).
 
+### SSH Remote Development
+Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightweight headless `:evo_git` daemon runs on a remote server (via `systemd-run --user`), and the local Phoenix dashboard connects to it via **Erlang distribution over an SSH tunnel**. The local web frontend controls the remote runtime. Two core foundation modules enable this:
+- `EvoGit.RemoteConnections` — TOML-based store (`~/.config/genesis/remote_connections.toml`) for SSH target definitions (host, port, dist port, identity file, remote binary path).
+- `EvoGit.AgentScheduler.RemoteAPI` — a read-only RPC API over the scheduler's ETS state, designed to be called via `:erpc.call/4` from the local dashboard. All returns are serialization-safe plain maps/lists/scalars (no struct references or PIDs cross-node). Distribution is enabled via Mix release env vars (`RELEASE_DISTRIBUTION`/`RELEASE_NODE`); the existing `Phoenix.PubSub` PG2 adapter already uses `:pg` (OTP 26+), which supports multi-node out of the box — no Redis or third-party PubSub required.
+
 ## Routing Table
 | Directory | Purpose |
 |---|---|
@@ -30,6 +35,8 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `EvoGit.Defaults` | Backward-compatibility shim delegating to `EvoGit.Config` |
 | `EvoGit.Platform` | Cross-platform OS detection, config/data directory resolution |
 | `EvoGit.Nix` | Nix develop integration helper — builds the dev env ONCE via `nix print-dev-env`, caches the bash script to `<data_dir>/nix-dev-env.sh`, and sources it per tool call via `bash -c`. `active?/0` gate gracefully disables nix if the build fails |
+| `EvoGit.RemoteConnections` | Pure-function (non-GenServer) TOML file store for SSH remote connection targets (`~/.config/genesis/remote_connections.toml`). CRUD + `touch/1` for `last_connected`. `list/0`, `get/1`, `save/1` (validates `:host`, auto-generates id/name, applies defaults), `delete/1`, `touch/1`. Stores `[[connections]]` array-of-tables via `TomlElixir`. |
+| `EvoGit.AgentScheduler.RemoteAPI` | Read-only RPC API over scheduler ETS state for remote (SSH) dashboard connections. Called via `:erpc.call/4`. Functions: `list_agents/0`, `get_agent_history/1`, `get_agent_state/1`, `get_config/0`, `get_config_status/0`, `paused?/0`. All returns are serialization-safe plain maps/lists/scalars (no structs/PIDs cross-node); usage converted via `Map.from_struct/1`, agent module stringified, `:context` stripped from `get_agent_state/1` (access via `get_agent_history/1`). |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -39,7 +46,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `./lib/evo_git/agent/` | Agent behaviour, tool library, context compression, subagent processing, usage tracking |
 | `./lib/evo_git/agents/` | Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, Extractor, Evaluator) |
 | `./lib/evo_git/runtime/` | Genesis, Evolution, and Prompts (LLM templates) |
-| `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, `Worktrees` — ETS schemas and helper logic |
+| `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, `Worktrees`, `RemoteAPI` — ETS schemas, helper logic, and RPC-readable state API for remote (SSH) dashboard connections |
 | `./lib/evo_git/config/` | `EvoGit.Config` — defaults, user TOML, credentials, API keys |
 | `./lib/evo_git/sandbox/` | `EvoGit.Sandbox` — multi-platform sandbox backends (Linux, macOS, None) |
 
