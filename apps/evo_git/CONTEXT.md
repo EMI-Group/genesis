@@ -46,6 +46,13 @@ The `:evo_git` OTP application implements an evolutionary software development r
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.
+
+### Distribution & Release Setup (relevant to remote/SSH features)
+- **Erlang distribution is DISABLED by default.** `rel/vm.args.eex` (line 28) hard-codes `-start_epmd false` (enabled, not commented). `rel/remote.vm.args.eex` exists for remote console but has epmd/dist commented out. `rel/env.sh.eex` / `rel/env.bat.eex` contain commented-out `RELEASE_DISTRIBUTION`/`RELEASE_NODE` examples. The desktop release (Tauri sidecar) explicitly sets `RELEASE_DISTRIBUTION=none` (see `desktop/src-tauri/src/sidecar.rs`).
+- **Phoenix.PubSub uses the bare `{Phoenix.PubSub, name: EvoGit.PubSub}`** (see `EvoGit.Application.start/2`, line 21) with NO adapter options → defaults to the PG2 adapter. EvoDash has its own separate `EvoDash.PubSub`. **PubSub does NOT work across nodes** without distribution + a distributed adapter; out of the box everything is single-node/local.
+- **No `Node.set_cookie`, `Node.connect`, `:net_kernel`, or `inet_dist_listen` anywhere** in `evo_git/lib`. Distribution would need to be re-enabled (remove `-start_epmd false`, set `RELEASE_DISTRIBUTION=name`/`sname` + a cookie) to support multi-node features.
+- Release definitions live in the **umbrella root** `mix.exs` (`releases: [genesis:, genesis_desktop:]`), not under `apps/evo_git/rel/`. There are **no `apps/evo_git/rel/` overlays** — all `rel/` overlays are at the repo root (`rel/`).
+- **Endpoint bind config** is resolved in `config/runtime.exs` (prod only): `PORT`/`PHX_IP` env vars take priority, else `config.toml` `[server] listen_port`/`listen_ip` (schema-defined in `EvoGit.Config.Schema.Definitions`). Desktop mode binds loopback by default; non-desktop prod binds `{0,0,0,0,0,0,0,0}` (all interfaces).
 - Agents are transient modules using `EvoGit.Agent` behaviour; the framework manages state via ETS.
 - Agent execution happens in **isolated git worktrees** managed by `AgentScheduler` — never on the main working copy.
 - Subdirectories follow Elixir convention: `./lib/evo_git/<subdir>/` maps to `EvoGit.<Subdir>` namespace.
