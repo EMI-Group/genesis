@@ -414,12 +414,16 @@ defmodule EvoGit.Config do
   """
   @spec resolve(atom() | [atom()]) :: term()
   def resolve(key) when is_atom(key) do
-    Map.get(resolve(), key)
+    Map.get(resolve(), key) || Map.get(EvoGit.Config.Schema.defaults(), key)
   end
 
   def resolve(path) when is_list(path) do
     resolve()
     |> get_in_path(path)
+    |> then(fn
+      nil -> get_in(EvoGit.Config.Schema.defaults(), path)
+      value -> value
+    end)
   end
 
   @doc """
