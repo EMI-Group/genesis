@@ -136,7 +136,7 @@ defmodule EvoDashWeb.SystemLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
       <!-- Scheduler Control banner -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="flex items-center gap-3">
@@ -602,6 +602,26 @@ defmodule EvoDashWeb.SystemLive do
       )
 
     {:ok, socket}
+  end
+
+  @impl true
+  def handle_params(params, _url, socket) do
+    socket =
+      socket
+      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
+      |> assign(:current_path, ~p"/system")
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:node_selected, node_id}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
+  end
+
+  @impl true
+  def handle_info({:remote_connection_status, _, _} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
   end
 
   @impl true

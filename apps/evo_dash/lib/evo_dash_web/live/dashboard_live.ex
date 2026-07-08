@@ -20,6 +20,8 @@ defmodule EvoDashWeb.DashboardLive do
         flash={@flash}
         current_page={:phx_dashboard}
         config_status={@config_status}
+        current_node_id={@current_node_id}
+        current_node_name={@current_node_name}
       >
         <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
           <div class="bg-info/15 text-info p-3 rounded-xl">
@@ -40,7 +42,7 @@ defmodule EvoDashWeb.DashboardLive do
         ></iframe>
       </EvoDashWeb.Layouts.app>
     <% else %>
-      <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status}>
+      <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
         <div
           id="dashboard-root"
           phx-hook="StatePersistence"
@@ -341,6 +343,11 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    socket =
+      socket
+      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
+      |> assign(:current_path, ~p"/")
+
     project_path = params["project"]
 
     socket =
@@ -1024,6 +1031,16 @@ defmodule EvoDashWeb.DashboardLive do
   defp truncate_output(output), do: String.trim(output)
 
   # --- PubSub Handlers ---
+
+  @impl true
+  def handle_info({:node_selected, node_id}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
+  end
+
+  @impl true
+  def handle_info({:remote_connection_status, _, _} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
+  end
 
   @impl true
   def handle_info({:tasks_updated}, socket) do

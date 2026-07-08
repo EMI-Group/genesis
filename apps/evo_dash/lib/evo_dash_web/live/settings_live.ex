@@ -11,7 +11,7 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
       <%!-- Config file path display --%>
       <div class="mb-4 rounded-lg border border-base-200 bg-base-100 p-3 flex items-center gap-3">
         <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
@@ -178,6 +178,11 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    socket =
+      socket
+      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
+      |> assign(:current_path, ~p"/settings")
+
     # Map the raw query param to a known category atom via a whitelist lookup
     # built from the existing schemas_by_category map (atom keys). Stringify
     # the keys so we compare string-to-string — no String.to_existing_atom on
@@ -201,6 +206,16 @@ defmodule EvoDashWeb.SettingsLive do
       end
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:node_selected, node_id}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
+  end
+
+  @impl true
+  def handle_info({:remote_connection_status, _, _} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
   end
 
   @impl true

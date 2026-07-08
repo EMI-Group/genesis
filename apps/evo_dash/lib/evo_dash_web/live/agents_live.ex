@@ -43,6 +43,16 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  def handle_params(params, _url, socket) do
+    socket =
+      socket
+      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
+      |> assign(:current_path, ~p"/agents")
+
+    {:noreply, socket}
+  end
+
+  @impl true
   # Backward-compatible fallback — enriched deltas (agent_registered/updated/removed) handle most updates
   def handle_info({:agents_updated}, socket) do
     agents = load_agents()
@@ -76,6 +86,16 @@ defmodule EvoDashWeb.AgentsLive do
        new_agent_ids: new_agent_ids,
        changed_status_ids: changed_status_ids
      )}
+  end
+
+  @impl true
+  def handle_info({:node_selected, node_id}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
+  end
+
+  @impl true
+  def handle_info({:remote_connection_status, _, _} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
   end
 
   @impl true

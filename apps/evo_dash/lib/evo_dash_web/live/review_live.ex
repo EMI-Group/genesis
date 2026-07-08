@@ -12,7 +12,7 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
       <%= if @error do %>
         <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
@@ -227,6 +227,11 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    socket =
+      socket
+      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
+      |> assign(:current_path, ~p"/review/#{socket.assigns.task_id}")
+
     case {socket.assigns.live_action, params["commit_sha"]} do
       {:commit, commit_sha} when is_binary(commit_sha) ->
         {:noreply, load_commit_inspection(socket, commit_sha)}
@@ -527,6 +532,16 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_info({:task_status, _task_id, _status}, socket) do
     {:noreply, load_task_data(socket, socket.assigns.task_id)}
+  end
+
+  @impl true
+  def handle_info({:node_selected, node_id}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
+  end
+
+  @impl true
+  def handle_info({:remote_connection_status, _, _} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
   end
 
   @impl true
