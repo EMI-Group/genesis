@@ -541,7 +541,7 @@ defmodule EvoGit.Agent.ToolDispatch do
                 "Error: Tool execution crashed: #{inspect(reason)}"
 
               nil ->
-                "Error: Tool execution timed out after #{tool_timeout}ms"
+                "Error: Tool execution timed out after #{tool_timeout}ms. Some output may have been partially captured by the tool."
             end
           end)
 

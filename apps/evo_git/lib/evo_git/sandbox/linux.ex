@@ -316,4 +316,105 @@ defmodule EvoGit.Sandbox.Linux do
       resources -> resources
     end
   end
+
+  @doc """
+  Runs a command with timeout, recovering partial output on timeout via temp-file redirection.
+
+  Unlike `run/4` which uses blocking `System.cmd/3` and loses all output on timeout,
+  this function redirects stdout/stderr to a temp file. If the timeout fires, the
+  partial output written so far can still be read from the temp file.
+
+  Returns:
+    * `{:ok, output, exit_code}` — command completed within timeout
+    * `{:timeout, partial_output}` — command timed out; partial_output may be empty
+  """
+  @spec run_with_partial(String.t(), String.t(), [String.t()], String.t() | nil, pos_integer()) ::
+          {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
+  def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout)
+      when is_list(args) and is_integer(timeout) and timeout > 0 do
+    tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
+    File.mkdir_p!(tmpdir)
+    tmpfile = Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
+
+    inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
+    wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1"
+
+    # Detect git on the ORIGINAL executable (before we wrap it in bash).
+    # The sandbox args/4 won't detect git since it receives "bash", so we
+    # append git env vars ourselves when needed.
+    is_git = EvoGit.GitEnv.git_command?(executable)
+
+    if enabled?() do
+      ensure_initialized()
+      sandbox_args = args(cwd, "bash", ["-c", wrapped_cmd], repo_root)
+
+      # Append git env vars for the inner command (args/4 won't detect git on "bash")
+      sandbox_args = maybe_append_git_env(sandbox_args, is_git)
+
+      task = Task.async(fn ->
+        System.cmd("systemd-run", sandbox_args, stderr_to_stdout: true)
+      end)
+
+      case Task.yield(task, timeout) || Task.shutdown(task) do
+        {:ok, {_output, exit_code}} ->
+          content = read_tempfile(tmpfile)
+          {:ok, content, exit_code}
+
+        nil ->
+          partial = read_tempfile(tmpfile)
+          {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
+      end
+    else
+      # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
+      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []
+
+      task = Task.async(fn ->
+        System.cmd("bash", ["-c", wrapped_cmd],
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: git_env
+        )
+      end)
+
+      case Task.yield(task, timeout) || Task.shutdown(task) do
+        {:ok, {_output, exit_code}} ->
+          content = read_tempfile(tmpfile)
+          {:ok, content, exit_code}
+
+        nil ->
+          partial = read_tempfile(tmpfile)
+          {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
+      end
+    end
+  end
+
+  # Appends --setenv args for git env vars when the original executable is git.
+  defp maybe_append_git_env(sandbox_args, true) do
+    git_env_args =
+      EvoGit.GitEnv.git_env_list()
+      |> Enum.flat_map(fn {k, v} -> ["--setenv=#{k}=#{v}"] end)
+
+    sandbox_args ++ git_env_args
+  end
+
+  defp maybe_append_git_env(sandbox_args, false), do: sandbox_args
+
+  # POSIX-safe shell escaping: wrap each argument in single quotes and
+  # replace every literal single-quote with the sequence '\\''.
+  defp shell_escape(arg) do
+    "'" <> String.replace(arg, "'", "'\\''") <> "'"
+  end
+
+  # Reads content from the temp file and deletes it. Returns empty string
+  # if the file does not exist or cannot be read.
+  defp read_tempfile(path) do
+    content =
+      case File.read(path) do
+        {:ok, data} -> data
+        {:error, _} -> ""
+      end
+
+    _ = File.rm(path)
+    content
+  end
 end

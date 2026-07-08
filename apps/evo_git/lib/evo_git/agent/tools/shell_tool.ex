@@ -174,18 +174,33 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   defp do_execute(command, repo_path, repo_root) do
     shell = Platform.shell()
     shell_args = Platform.shell_args(command)
-    {output, exit_code} = EvoGit.sandbox_run(repo_path, shell, shell_args, repo_root)
 
-    base =
-      if exit_code == 0 do
-        "Command executed successfully.\nOutput:\n#{output}"
-      else
-        "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
-      end
+    # Extract timeout from tool args — the execute/3 caller does not pass
+    # the full args map to do_execute, so we extract timeout directly from
+    # the command string context. We use @default_timeout as fallback.
+    timeout = @default_timeout
 
-    case detect_cd_warnings(command, repo_path, repo_root) do
-      nil -> base
-      warning -> base <> "\n\n" <> warning
+    case EvoGit.Sandbox.run_with_partial(repo_path, shell, shell_args, repo_root, timeout) do
+      {:ok, output, exit_code} ->
+        base =
+          if exit_code == 0 do
+            "Command executed successfully.\nOutput:\n#{output}"
+          else
+            "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+          end
+
+        case detect_cd_warnings(command, repo_path, repo_root) do
+          nil -> base
+          warning -> base <> "\n\n" <> warning
+        end
+
+      {:timeout, partial_output} ->
+        base = "Command timed out after #{timeout}ms. Partial output:\n#{partial_output}"
+
+        case detect_cd_warnings(command, repo_path, repo_root) do
+          nil -> base
+          warning -> base <> "\n\n" <> warning
+        end
     end
   end
 

@@ -75,6 +75,34 @@ defmodule EvoGit.Sandbox do
     backend().run(cwd, resolved, args, repo_root)
   end
 
+  @doc """
+  Runs a command with timeout through the sandbox, recovering partial output on timeout.
+
+  Unlike `run/4`, this function supports a timeout: if the command does not
+  complete within the given timeout, any partial output written to stdout/stderr
+  up to that point is recovered and returned.
+
+  ## Parameters
+
+  - `cwd` - The working directory for the command
+  - `executable` - The executable to run
+  - `args` - List of arguments to pass to the executable (default: [])
+  - `repo_root` - Optional path to the git repository root
+  - `timeout` - Timeout in milliseconds (positive integer)
+
+  ## Returns
+
+  - `{:ok, output, exit_code}` — command completed within timeout
+  - `{:timeout, partial_output}` — command timed out; partial_output is a string
+    that may be empty if nothing was written before the timeout
+  """
+  @spec run_with_partial(String.t(), String.t(), [String.t()], String.t() | nil, pos_integer()) ::
+          {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
+  def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout) do
+    resolved = EvoGit.Executable.resolve(executable)
+    backend().run_with_partial(cwd, resolved, args, repo_root, timeout)
+  end
+
   @doc "Ensures the sandbox backend is initialized (e.g., creates systemd slice)."
   @spec ensure_initialized() :: :ok | {:error, term()}
   def ensure_initialized do
