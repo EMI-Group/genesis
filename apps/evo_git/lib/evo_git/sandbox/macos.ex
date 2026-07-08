@@ -13,7 +13,7 @@ defmodule EvoGit.Sandbox.MacOS do
   @doc "Returns true when sandbox mode allows sandbox-exec on macOS."
   @spec enabled?() :: boolean()
   def enabled? do
-    case EvoGit.Defaults.sandbox() || :auto do
+    case EvoGit.Defaults.sandbox() do
       :enabled -> true
       :disabled -> false
       :auto -> Platform.sandbox_exec_available?()
