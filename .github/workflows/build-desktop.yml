@@ -185,6 +185,17 @@ jobs:
           echo "Sidecar binaries:"
           ls -la "${SIDECAR_DIR}/"
 
+      - name: Build genesis_remote Burrito release
+        # genesis_remote is a headless evo_git-only release for SSH remote
+        # development. It is a standalone Burrito binary (no Tauri packaging)
+        # uploaded directly to the GitHub release.
+        env:
+          BURRITO_TARGET: ${{ matrix.burrito_target }}
+          # --overwrite is required: when _build/ is cache-restored, mix detects
+          # an existing assembled release and skips the Burrito.wrap/1 step,
+          # leaving burrito_out/ empty. This forces a fresh wrap every run.
+        run: MIX_ENV=prod mix release genesis_remote --overwrite
+
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
@@ -213,6 +224,7 @@ jobs:
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/appimage/*.AppImage
             /tmp/genesis-desktop-*.tar.gz
+            burrito_out/genesis_remote_${{ matrix.burrito_target }}
 
       # NOTE on Flatpak: Tauri v2 does not have a native Flatpak bundle target.
       # Producing a Flatpak requires a flatpak-builder manifest (YAML) declaring
@@ -375,6 +387,18 @@ jobs:
           echo "Sidecar binaries:"
           ls -la "${SIDECAR_DIR}/"
 
+      - name: Build genesis_remote Burrito release
+        # genesis_remote is a headless evo_git-only release for SSH remote
+        # development. It is a standalone Burrito binary (no Tauri packaging)
+        # uploaded directly to the GitHub release.
+        shell: bash
+        env:
+          BURRITO_TARGET: windows_x64
+          # --overwrite is required: when _build/ is cache-restored, mix detects
+          # an existing assembled release and skips the Burrito.wrap/1 step,
+          # leaving burrito_out/ empty. This forces a fresh wrap every run.
+        run: MIX_ENV=prod mix release genesis_remote --overwrite
+
       - name: Build Tauri app
         shell: bash
         run: |
@@ -388,3 +412,4 @@ jobs:
           files: |
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/msi/*.msi
             desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/nsis/*.exe
+            burrito_out/genesis_remote_windows_x64.exe

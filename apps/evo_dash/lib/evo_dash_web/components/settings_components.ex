@@ -343,6 +343,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         phx-click="test_llm"
                         phx-value-profile_id={profile_id_val}
                         class="btn btn-primary btn-sm gap-2"
+                        disabled={@disabled}
                       >
                         <.icon name="hero-signal" class="size-4" />
                         {gettext("Test Connection")}
@@ -363,6 +364,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       phx-click="test_llm"
                       phx-value-profile_id={@test_profile_id}
                       class="btn btn-ghost btn-xs gap-1 ml-2"
+                      disabled={@disabled}
                     >
                       <.icon name="hero-arrow-path" class="size-3" />
                       {gettext("Retest")}
@@ -374,6 +376,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       phx-click="test_llm"
                       phx-value-profile_id={@test_profile_id}
                       class="btn btn-ghost btn-xs gap-1 ml-2"
+                      disabled={@disabled}
                     >
                       <.icon name="hero-arrow-path" class="size-3" />
                       {gettext("Retry")}
@@ -507,7 +510,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       schema={schema}
                       value={get_in(@file_config, schema.key_path)}
                       error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                      disabled={false}
+                      disabled={@disabled}
                     />
                   </div>
                 <% end %>
@@ -538,7 +541,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         schema={schema}
                         value={get_in(@file_config, schema.key_path)}
                         error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                        disabled={@sandbox_mode == :disabled}
+                        disabled={@disabled or @sandbox_mode == :disabled}
                       />
                     <% end %>
                   </div>
@@ -570,7 +573,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         schema={schema}
                         value={get_in(@file_config, schema.key_path)}
                         error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                        disabled={@sandbox_mode == :disabled}
+                        disabled={@disabled or @sandbox_mode == :disabled}
                       />
                     <% end %>
                   </div>

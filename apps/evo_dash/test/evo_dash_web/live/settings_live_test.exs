@@ -841,4 +841,41 @@ defmodule EvoDashWeb.SettingsLiveTest do
                "anthropic:claude-sonnet-4"
     end
   end
+
+  describe "LLM connection test remote guard" do
+    # BUG 2 fix: The Connection Test button renders outside the disabled form, so
+    # clicking it on a remote node runs EvoGit.SystemCheck.llm_test/0 which tests
+    # the LOCAL LLM, returning a misleading result. The test_llm handler must
+    # guard on socket.assigns.remote_config and reject when remote.
+
+    test "test_llm handler rejects when remote_config is true (no async test spawned)" do
+      alias EvoDashWeb.SettingsLive
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{__changed__: nil, flash: %{}, remote_config: true, llm_test_status: :idle}
+      }
+
+      assert {:noreply, result_socket} =
+               SettingsLive.handle_event("test_llm", %{}, socket)
+
+      # Status should remain :idle (no test was started)
+      assert result_socket.assigns.llm_test_status == :idle
+    end
+
+    test "test_llm handler proceeds when remote_config is false" do
+      # On the local node, the test should start (status moves to :testing).
+      # We don't verify the actual LLM call (that's in the spawned task), just
+      # that the handler doesn't reject and sets status to :testing.
+      alias EvoDashWeb.SettingsLive
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{__changed__: nil, flash: %{}, remote_config: false, llm_test_status: :idle}
+      }
+
+      assert {:noreply, result_socket} =
+               SettingsLive.handle_event("test_llm", %{}, socket)
+
+      assert result_socket.assigns.llm_test_status == :testing
+    end
+  end
 end

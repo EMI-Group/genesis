@@ -3,6 +3,11 @@
 ## Intent
 The `:evo_git` OTP application implements an evolutionary software development runtime where LLM-powered agents create, analyze, and modify codebases using git worktree isolation. The system models a codebase as a **Context Tree** (spatial dimension) and a **Phylogenetic Graph** (temporal dimension).
 
+### SSH Remote Development
+Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightweight headless `:evo_git` daemon runs on a remote server (via `systemd-run --user`), and the local Phoenix dashboard connects to it via **Erlang distribution over an SSH tunnel**. The local web frontend controls the remote runtime. Two core foundation modules enable this:
+- `EvoGit.RemoteConnections` — TOML-based store (`~/.config/genesis/remote_connections.toml`) for SSH target definitions (host, port, dist port, identity file, remote binary path).
+- `EvoGit.AgentScheduler.RemoteAPI` — a read-only RPC API over the scheduler's ETS state, designed to be called via `:erpc.call/4` from the local dashboard. All returns are serialization-safe plain maps/lists/scalars (no struct references or PIDs cross-node). Distribution is enabled via Mix release env vars (`RELEASE_DISTRIBUTION`/`RELEASE_NODE`); the existing `Phoenix.PubSub` PG2 adapter already uses `:pg` (OTP 26+), which supports multi-node out of the box — no Redis or third-party PubSub required.
+
 ## Routing Table
 | Directory | Purpose |
 |---|---|
@@ -30,6 +35,9 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `EvoGit.Defaults` | Backward-compatibility shim delegating to `EvoGit.Config` |
 | `EvoGit.Platform` | Cross-platform OS detection, config/data directory resolution |
 | `EvoGit.Nix` | Nix develop integration helper — builds the dev env ONCE via `nix print-dev-env`, caches the bash script to `<data_dir>/nix-dev-env.sh`, and sources it per tool call via `bash -c`. `active?/0` gate gracefully disables nix if the build fails |
+| `EvoGit.RemoteConnections` | Pure-function (non-GenServer) TOML file store for SSH remote connection targets (`~/.config/genesis/remote_connections.toml`). CRUD + `touch/1` for `last_connected`. `list/0`, `get/1`, `save/1` (validates `:host`, auto-generates id/name, applies defaults), `delete/1`, `touch/1`. Stores `[[connections]]` array-of-tables via `TomlElixir`. |
+| `EvoGit.AgentScheduler.RemoteAPI` | Read-only RPC API over scheduler ETS state for remote (SSH) dashboard connections. Called via `:erpc.call/4`. Functions: `list_agents/0`, `get_agent_history/1`, `get_agent_state/1`, `get_config/0`, `get_config_status/0`, `paused?/0`. All returns are serialization-safe plain maps/lists/scalars (no structs/PIDs cross-node); usage converted via `Map.from_struct/1`, agent module stringified, `:context` stripped from `get_agent_state/1` (access via `get_agent_history/1`). |
+| `EvoGit.RemoteConnection` | GenServer managing the lifecycle of a single SSH remote connection (one per active connection target). Two deliberately separate operations: **bootstrap** (`bootstrap/1` — pushes the `genesis_remote` binary to the remote over `:ssh_sftp` + launches it as a `systemd-run --user` daemon; does NOT connect) and **connection** (`connect/1` — establishes an SSH port-forwarding tunnel to the already-running daemon, then `Node.connect/1` for Erlang distribution). Other API: `disconnect/1`, `status/1` (`%{phase, node, last_error, target}`), `connected?/1`, `list_connections/0`. Registered via `EvoGit.RemoteConnection.Registry` (unique, keyed by target id), started on demand via `EvoGit.RemoteConnection.Supervisor` (DynamicSupervisor). Phases: `:disconnected \| :bootstrapping \| :connecting \| :connected \| :error`. Monitors the SSH tunnel Port (`{:EXIT, port, reason}` via trap_exit) and runs a 10s heartbeat (`Node.list()` membership) that transitions to `:error` on node loss. Broadcasts status via `Phoenix.PubSub` on topic `"remote_connections"`. No `try/rescue` — the only justified `try/catch :exit` is in `list_connections/0` (concurrency boundary during process teardown). |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -39,13 +47,21 @@ The `:evo_git` OTP application implements an evolutionary software development r
 | `./lib/evo_git/agent/` | Agent behaviour, tool library, context compression, subagent processing, usage tracking |
 | `./lib/evo_git/agents/` | Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, Extractor, Evaluator) |
 | `./lib/evo_git/runtime/` | Genesis, Evolution, and Prompts (LLM templates) |
-| `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, `Worktrees` — ETS schemas and helper logic |
+| `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, `Worktrees`, `RemoteAPI` — ETS schemas, helper logic, and RPC-readable state API for remote (SSH) dashboard connections |
 | `./lib/evo_git/config/` | `EvoGit.Config` — defaults, user TOML, credentials, API keys |
 | `./lib/evo_git/sandbox/` | `EvoGit.Sandbox` — multi-platform sandbox backends (Linux, macOS, None) |
 
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.
+
+### Distribution & Release Setup (relevant to remote/SSH features)
+- **Erlang distribution is DISABLED by default.** `rel/vm.args.eex` (line 28) hard-codes `-start_epmd false` (enabled, not commented). `rel/remote.vm.args.eex` exists for remote console but has epmd/dist commented out. `rel/env.sh.eex` / `rel/env.bat.eex` contain commented-out `RELEASE_DISTRIBUTION`/`RELEASE_NODE` examples. The desktop release (Tauri sidecar) explicitly sets `RELEASE_DISTRIBUTION=none` (see `desktop/src-tauri/src/sidecar.rs`).
+- **Phoenix.PubSub uses the bare `{Phoenix.PubSub, name: EvoGit.PubSub}`** (see `EvoGit.Application.start/2`, line 21) with NO adapter options → defaults to the PG2 adapter. EvoDash has its own separate `EvoDash.PubSub`. **PubSub does NOT work across nodes** without distribution + a distributed adapter; out of the box everything is single-node/local.
+- **`Node.set_cookie`/`Node.connect` now appear ONLY in `EvoGit.RemoteConnection`** (the SSH connection GenServer, added in Phase 2 of SSH remote development). These are exercised only at runtime when a user explicitly initiates a remote connection via `EvoGit.RemoteConnection.connect/1`; out of the box (no remote connection active), the local node remains `:nonode@nohost` and undistributed. Distribution would otherwise need re-enabling (remove `-start_epmd false`, set `RELEASE_DISTRIBUTION=name`/`sname` + a cookie) to support multi-node features.
+- **Remote connection supervision**: `EvoGit.Application.start/2` starts `EvoGit.RemoteConnection.Registry` (unique-keyed Registry, keyed by target id) and `EvoGit.RemoteConnection.Supervisor` (DynamicSupervisor) **before** `EvoGit.AgentGroupSupervisor`. Connection manager GenServers are NOT started at boot — they are spawned on demand via `RemoteConnection.connect/1` or `bootstrap/1` (find-or-start against the Registry/DynamicSupervisor). The `:ssh` Erlang application is in `extra_applications` (for `:ssh`/`:ssh_sftp` used by bootstrap).
+- Release definitions live in the **umbrella root** `mix.exs` (`releases: [genesis:, genesis_desktop:]`), not under `apps/evo_git/rel/`. There are **no `apps/evo_git/rel/` overlays** — all `rel/` overlays are at the repo root (`rel/`).
+- **Endpoint bind config** is resolved in `config/runtime.exs` (prod only): `PORT`/`PHX_IP` env vars take priority, else `config.toml` `[server] listen_port`/`listen_ip` (schema-defined in `EvoGit.Config.Schema.Definitions`). Desktop mode binds loopback by default; non-desktop prod binds `{0,0,0,0,0,0,0,0}` (all interfaces).
 - Agents are transient modules using `EvoGit.Agent` behaviour; the framework manages state via ETS.
 - Agent execution happens in **isolated git worktrees** managed by `AgentScheduler` — never on the main working copy.
 - Subdirectories follow Elixir convention: `./lib/evo_git/<subdir>/` maps to `EvoGit.<Subdir>` namespace.

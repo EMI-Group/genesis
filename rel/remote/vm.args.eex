@@ -1,0 +1,14 @@
+## Remote Daemon — Distribution ENABLED
+## EPMD-less distribution over a pinned port (for SSH tunneling)
+-start_epmd false -erl_epmd_port 9000
+-dist_listen true
+-kernel inet_dist_listen_min 9000 inet_dist_listen_max 9000
+
+## Desktop Optimization Flags (same as desktop)
++sbwt none
++sbwtdcpu none
++sbwtdio none
+
+## Shrink Pre-allocated Table Limits
++P 40000
++t 80000

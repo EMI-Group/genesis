@@ -18,6 +18,7 @@ The full design specification is in `AGENTS.md`.
 - `./apps/evo_git/` → Core runtime (agents, scheduler, git adapter, runtime phases)
 - `./apps/evo_dash/` → Web dashboard (LiveView pages, components, task registry)
 - `./config/` → Environment-based Elixir configuration
+- `./rel/` → Mix release overlays (`rel/genesis/`, `rel/remote/` — vm.args + env scripts per release; distribution config for SSH remote dev)
 - `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management)
 - `./nix/` → NixOS build support (vendor bundling helper for local desktop builds)
 - `./.github/workflows/` → CI/CD pipelines (desktop app build on release)
@@ -28,7 +29,7 @@ The full design specification is in `AGENTS.md`.
 
 | File | Purpose |
 |------|---------|
-| `mix.exs` | Umbrella Mix project — apps_path, release config (`:evogit` release with both apps). Version is read dynamically from `VERSION` (single source of truth). |
+| `mix.exs` | Umbrella Mix project — apps_path, three releases: `genesis` (both apps), `genesis_desktop` (Burrito-wrapped, Tauri sidecar), `genesis_remote` (headless evo_git-only daemon for SSH remote dev). Version is read dynamically from `VERSION` (single source of truth). |
 | `VERSION` | Single source of truth for the project version (e.g. `0.1.0`). All umbrella `mix.exs` files read this; the desktop manifests are synced by `mix bump.version`. |
 | `flake.nix` | Nix flake — `devShells.default` provides a complete NixOS toolchain (Erlang/OTP 29, Elixir 1.20, Rust, Zig 0.15.2, Tauri v2 native deps) for local desktop app builds |
 | `AGENTS.md` | Full EvoGit design specification (dual-dimension architecture, agent model, runtime phases) |
@@ -93,12 +94,42 @@ mix bump.version 0.2.0
 
 This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, and `Cargo.lock` in one command, then prints next-step guidance (compile, commit, tag). The CLI also supports `--version` / `-v` to print the version at runtime.
 
+### SSH Remote Development
+
+Genesis supports a VSCode Remote-SSH-like workflow: a lightweight headless daemon runs on a remote server, and the local Phoenix dashboard controls it over an SSH tunnel via Erlang distribution.
+
+**Architecture:**
+- **Remote daemon** (`genesis_remote` release): a Burrito-wrapped `evo_git`-only binary (no Phoenix/Tauri). Launched via `systemd-run --user` as an independent daemon — survives dashboard disconnection. Enables EPMD-less distribution on a pinned port (default 9000) via `rel/remote/vm.args.eex`.
+- **Local dashboard**: connects to the remote daemon by (1) establishing an SSH port-forwarding tunnel (`ssh -L <dist_port>:127.0.0.1:<dist_port> -N`), then (2) `Node.connect/1` over the tunnel. The `EvoGit.RemoteConnection` GenServer manages this lifecycle.
+- **Data access**: the dashboard reads remote agent state/config via `:erpc.call/5` to `EvoGit.AgentScheduler.RemoteAPI` on the remote node (RPC returns only serializable plain maps — no PIDs/structs). PubSub uses the existing PG2 adapter backed by `:pg`, which is cluster-aware — broadcasts on the remote node's `EvoGit.PubSub` propagate to the local dashboard.
+- **Bootstrap vs Connect**: deliberately separate. **Bootstrap** (`EvoGit.RemoteConnection.bootstrap/1`) pushes the binary via `:ssh_sftp` and starts the daemon — first-time setup. **Connect** (`EvoGit.RemoteConnection.connect/1`) assumes the daemon is already running and only establishes the tunnel + distribution link.
+
+**Key modules:**
+| Module | App | Purpose |
+|--------|-----|---------|
+| `EvoGit.RemoteConnections` | evo_git | TOML-based SSH target persistence (`~/.config/genesis/remote_connections.toml`) |
+| `EvoGit.RemoteConnection` | evo_git | GenServer — bootstrap + connection lifecycle, SSH tunnel Port, heartbeat |
+| `EvoGit.AgentScheduler.RemoteAPI` | evo_git | Read-only RPC API over scheduler ETS (list_agents, get_agent_history, get_config, etc.) |
+| `EvoDash.NodeContext` | evo_dash | Thin client — wraps RemoteConnections + RemoteConnection + cross-node RPC helpers |
+| `EvoDashWeb.LiveHooks.NodeAware` | evo_dash | On-mount hook — resolves `?node=` param to remote BEAM node name for RPC routing |
+| `EvoDashWeb.NodeSelectorComponent` | evo_dash | Navbar node indicator/selector + connection manager modal |
+
+**Dashboard UX:**
+- Node indicator/selector next to the brand logo in the navbar — shows green dot "Local" or blue dot + target name when remote.
+- All navigation links carry `?node=<target_id>` when viewing a remote node.
+- Connection manager modal: add/edit/delete SSH targets, bootstrap remote daemon, connect/disconnect.
+- When viewing a remote node: Agents page shows remote agents via RPC, Settings is read-only, System controls are disabled (restart/stop), config banner shows remote config status.
+- SSH targets are persisted and remembered across sessions.
+
+**Design constraint — single active remote connection:** The current architecture uses a fixed distribution node name (`genesis_remote@127.0.0.1`) and a single SSH tunnel binding a fixed local port (default 9000). This means only one remote connection is active at a time — `Node.connect` to the same fixed name cannot address two hosts. This is the intended product behavior for the initial implementation.
+
 ### Desktop App Build Pipeline
 
 The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds native desktop app installers on every GitHub release. The build process uses a **Tauri + Burrito** architecture:
 
 - **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
-- **Build process**: Burrito-wrapped Elixir release (`mix release genesis_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers
+- **Build process**: Burrito-wrapped Elixir release (`mix release genesis_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers. A second Burrito release (`mix release genesis_remote`) — a headless `evo_git`-only daemon for SSH remote development, no Phoenix/Tauri — is built alongside and uploaded as a standalone binary directly to the GitHub release (not packaged into Tauri).
+- **Release configuration**: Three Burrito-wrapped releases are defined in `mix.exs`: `genesis_desktop` (full, for the Tauri sidecar), `genesis_remote` (headless `evo_git`-only, bakes `config: [evo_git: [remote_release: true]]` so the runtime detects remote-daemon mode and enables EPMD-less distribution via `rel/remote/vm.args.eex`), and the base `genesis`. The remote release excludes `evo_dash` entirely.
 - **Job structure**: Two jobs — `build-unix` (matrix: macOS arm64/x64 + Linux x64/arm64) and `build-windows` (matrix: x86_64 + ARM64). macOS and Linux share a common Unix step sequence; Windows is separate (bash shell, MinGit).
 - **macOS**: Builds ARM64 (`macos-14`) → `.dmg` / `.app` bundles
 - **Linux**: Builds x86_64 (`ubuntu-24.04`) and ARM64 (`ubuntu-24.04-arm`) → `.rpm` / AppImage / `.tar.gz` portable archive (AppImage excluded on ARM64 — `appimagetool`/`linuxdeploy` are x86_64-only). The `.deb` package was removed in favor of AppImage + tarball. Flatpak is not built — Tauri v2 has no native Flatpak bundle target (documented in the workflow).
@@ -107,7 +138,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 - **ARM runner ImageOS fix**: GitHub-hosted ARM partner runners (`ubuntu-24.04-arm`, `windows-11-arm`) report `ImageOS` values (`ubuntu24-arm64`, `win11-arm64`) that `erlef/setup-beam` does not recognize. The workflow sets `ImageOS` to the base value (`ubuntu24` / `win22`) via `$GITHUB_ENV` before the setup-beam step for ARM targets only.
 - **Toolchains**: CI requires Elixir/OTP, Rust (Tauri), and Zig (Burrito wrapper compilation) on all platforms; Linux also needs system packages (webkit2gtk, libayatana-appindicator3-dev for system tray, libdbus-1-dev for tray-icon crate, etc.)
 - **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
-- **Burrito targets**: `darwin_arm64`, `darwin_amd64`, `windows_x64`, `linux_x64`, `linux_arm64` (defined in `mix.exs`)
+- **Burrito targets**: `darwin_arm64`, `darwin_amd64`, `windows_x64`, `linux_x64`, `linux_arm64` (defined in `mix.exs`). Both `genesis_desktop` and `genesis_remote` use the same 5 targets; the remote binary is named `genesis_remote_<target>` (e.g. `genesis_remote_linux_x64`) and uploaded straight to the release assets.
 - **Version pinning**: `.tool-versions` pins OTP 29 / Elixir 1.20.1
 
 The legacy launcher scripts and manual `.app`/zip packaging have been removed — Tauri generates native bundles and the Rust sidecar (`desktop/src-tauri/src/sidecar.rs`) handles backend lifecycle with the correct env vars.

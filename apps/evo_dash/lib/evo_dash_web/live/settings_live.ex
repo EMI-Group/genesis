@@ -11,7 +11,7 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
       <%!-- Config file path display --%>
       <div class="mb-4 rounded-lg border border-base-200 bg-base-100 p-3 flex items-center gap-3">
         <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
@@ -52,8 +52,8 @@ defmodule EvoDashWeb.SettingsLive do
         </div>
       <% end %>
 
-      <%!-- No LLM Model Warning --%>
-      <%= if is_nil(get_in(@file_config, [:llm, :model])) do %>
+      <%!-- No LLM Model Warning (local only — remote config_status covers this) --%>
+      <%= if not @remote_config and is_nil(get_in(@file_config, [:llm, :model])) do %>
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div>
@@ -85,6 +85,25 @@ defmodule EvoDashWeb.SettingsLive do
            here, rebuild assets with `mix tailwind evo_dash` (dev) or
            `mix assets.deploy` (prod) so the new utilities are emitted. --%>
       <div class="flex flex-col gap-8">
+        <%!-- Remote read-only banner: when viewing a remote node, config is
+             read-only — it can only be changed on that node directly or via
+             a config push (not yet implemented in the dashboard). --%>
+        <%= if @remote_config do %>
+          <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
+            <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
+            <div>
+              <h3 class="font-bold text-sm text-info mb-0.5">
+                {gettext("Remote Configuration — Read Only")}
+              </h3>
+              <p class="text-sm text-base-content/70">
+                {gettext(
+                  "You are viewing the configuration of a remote node. Changes cannot be saved from here — use config push to update the remote node."
+                )}
+              </p>
+            </div>
+          </div>
+        <% end %>
+
         <%!-- Two-column sidebar + content layout --%>
         <div class="flex flex-col md:flex-row bg-base-100 rounded-lg border border-base-200 shadow-sm overflow-hidden">
           <%!-- Sidebar --%>
@@ -134,6 +153,7 @@ defmodule EvoDashWeb.SettingsLive do
               editing_profile_id={@editing_profile_id}
               test_profile_id={@test_profile_id}
               credentials={@credentials}
+              disabled={@remote_config}
             />
           <% end %>
         </div>
@@ -175,7 +195,8 @@ defmodule EvoDashWeb.SettingsLive do
         selected_variant_id: nil,
         llm_test_status: :idle,
         editing_profile_id: nil,
-        test_profile_id: test_profile_id
+        test_profile_id: test_profile_id,
+        remote_config: false
       )
 
     {:ok, socket}
@@ -183,6 +204,12 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    socket =
+      socket
+      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
+      |> assign(:current_path, ~p"/settings")
+      |> load_node_config()
+
     # Map the raw query param to a known category atom via a whitelist lookup
     # built from the existing schemas_by_category map (atom keys). Stringify
     # the keys so we compare string-to-string — no String.to_existing_atom on
@@ -206,6 +233,16 @@ defmodule EvoDashWeb.SettingsLive do
       end
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:node_selected, node_id}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
+  end
+
+  @impl true
+  def handle_info({:remote_connection_status, _, _} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
   end
 
   @impl true
@@ -251,177 +288,197 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("save_category", params, socket) do
-    # Whitelist lookup: validate the category string against known schema atoms.
-    # Unknown value → nil → fall back to the current active_category.
-    category =
-      case params["category"] do
-        cat_str when is_binary(cat_str) ->
-          Map.get(ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category), cat_str)
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      # Whitelist lookup: validate the category string against known schema atoms.
+      # Unknown value → nil → fall back to the current active_category.
+      category =
+        case params["category"] do
+          cat_str when is_binary(cat_str) ->
+            Map.get(ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category), cat_str)
 
-        _ ->
-          nil
-      end
-
-    category = category || socket.assigns.active_category
-
-    schemas = Map.get(socket.assigns.schemas_by_category, category, [])
-
-    # Build config from params and merge into full file_config
-    config =
-      ConfigIO.build_config_from_category_params(params, category, schemas, socket.assigns.file_config)
-
-    case Schema.validate(config) do
-      {:ok, _validated} ->
-        case EvoGit.Config.save_user_config(config) do
-          :ok ->
-            file_config = ConfigIO.load_file_config()
-            config_status = config_status()
-            config_file_exists = File.exists?(socket.assigns.config_path)
-
-            socket =
-              socket
-              |> assign(:file_config, file_config)
-              |> assign(:config_status, config_status)
-              |> assign(:config_file_exists, config_file_exists)
-              |> assign(:per_category_errors, %{})
-              |> put_flash(:info, gettext("Configuration saved successfully."))
-
-            # Update runtime scheduler when LLM or scheduler categories change
-            socket =
-              if category in [:scheduler, :llm] do
-                ConfigIO.update_runtime_from_file_config(file_config, socket)
-              else
-                socket
-              end
-
-            {:noreply, socket}
-
-          {:error, reason} ->
-            {:noreply,
-             socket
-             |> put_flash(
-               :error,
-               gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
-             )}
+          _ ->
+            nil
         end
 
-      {:error, errors} ->
-        category_errors = Enum.filter(errors, fn e -> List.first(e.key_path) == category end)
+      category = category || socket.assigns.active_category
 
-        {:noreply,
-         socket
-         |> assign(
-           :per_category_errors,
-           Map.put(socket.assigns.per_category_errors, category, category_errors)
-         )
-         |> put_flash(:error, gettext("Validation failed. Please fix the errors below."))}
+      schemas = Map.get(socket.assigns.schemas_by_category, category, [])
+
+      # Build config from params and merge into full file_config
+      config =
+        ConfigIO.build_config_from_category_params(
+          params,
+          category,
+          schemas,
+          socket.assigns.file_config
+        )
+
+      case Schema.validate(config) do
+        {:ok, _validated} ->
+          case EvoGit.Config.save_user_config(config) do
+            :ok ->
+              file_config = ConfigIO.load_file_config()
+              config_status = config_status()
+              config_file_exists = File.exists?(socket.assigns.config_path)
+
+              socket =
+                socket
+                |> assign(:file_config, file_config)
+                |> assign(:config_status, config_status)
+                |> assign(:config_file_exists, config_file_exists)
+                |> assign(:per_category_errors, %{})
+                |> put_flash(:info, gettext("Configuration saved successfully."))
+
+              # Update runtime scheduler when LLM or scheduler categories change
+              socket =
+                if category in [:scheduler, :llm] do
+                  ConfigIO.update_runtime_from_file_config(file_config, socket)
+                else
+                  socket
+                end
+
+              {:noreply, socket}
+
+            {:error, reason} ->
+              {:noreply,
+               socket
+               |> put_flash(
+                 :error,
+                 gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
+               )}
+          end
+
+        {:error, errors} ->
+          category_errors = Enum.filter(errors, fn e -> List.first(e.key_path) == category end)
+
+          {:noreply,
+           socket
+           |> assign(
+             :per_category_errors,
+             Map.put(socket.assigns.per_category_errors, category, category_errors)
+           )
+           |> put_flash(:error, gettext("Validation failed. Please fix the errors below."))}
+      end
     end
   end
 
   @impl true
   def handle_event("save_search", params, socket) do
-    search_text = socket.assigns.search_text
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      search_text = socket.assigns.search_text
 
-    all_matching_schemas =
-      socket.assigns.schemas_by_category
-      |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
-      |> Enum.filter(&EvoDashWeb.SettingsComponents.schema_matches?(&1, search_text))
+      all_matching_schemas =
+        socket.assigns.schemas_by_category
+        |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
+        |> Enum.filter(&EvoDashWeb.SettingsComponents.schema_matches?(&1, search_text))
 
-    config =
-      ConfigIO.build_config_from_category_params(
-        params,
-        nil,
-        all_matching_schemas,
-        socket.assigns.file_config
-      )
+      config =
+        ConfigIO.build_config_from_category_params(
+          params,
+          nil,
+          all_matching_schemas,
+          socket.assigns.file_config
+        )
 
-    case Schema.validate(config) do
-      {:ok, _validated} ->
+      case Schema.validate(config) do
+        {:ok, _validated} ->
+          case EvoGit.Config.save_user_config(config) do
+            :ok ->
+              file_config = ConfigIO.load_file_config()
+              config_status = config_status()
+              config_file_exists = File.exists?(socket.assigns.config_path)
+
+              socket =
+                socket
+                |> assign(:file_config, file_config)
+                |> assign(:config_status, config_status)
+                |> assign(:config_file_exists, config_file_exists)
+                |> assign(:per_category_errors, %{})
+                |> put_flash(:info, gettext("Configuration saved successfully."))
+
+              # Update runtime scheduler when LLM or scheduler keys change
+              socket =
+                if Enum.any?(
+                     all_matching_schemas,
+                     &(List.first(&1.key_path) in [:scheduler, :llm])
+                   ) do
+                  ConfigIO.update_runtime_from_file_config(file_config, socket)
+                else
+                  socket
+                end
+
+              {:noreply, socket}
+
+            {:error, reason} ->
+              {:noreply,
+               socket
+               |> put_flash(
+                 :error,
+                 gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
+               )}
+          end
+
+        {:error, errors} ->
+          # Group errors by category for display
+          per_category_errors =
+            Enum.reduce(errors, %{}, fn e, acc ->
+              cat = List.first(e.key_path)
+              Map.update(acc, cat, [e], fn existing -> existing ++ [e] end)
+            end)
+
+          {:noreply,
+           socket
+           |> assign(:per_category_errors, per_category_errors)
+           |> put_flash(:error, gettext("Validation failed. Please fix the errors below."))}
+      end
+    end
+  end
+
+  @impl true
+  def handle_event("reset_key", %{"key_path" => path_str}, socket) do
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      key_path = ConfigIO.parse_key_path(path_str, socket.assigns.schemas_by_category)
+      schema = ConfigIO.find_schema(key_path, socket.assigns.schemas_by_category)
+
+      # An unknown or stale key_path / schema means untrusted client input did not
+      # resolve to a known setting — surface a friendly flash instead of crashing
+      # on put_in with a nil path or a nil schema.default.
+      if is_nil(key_path) or is_nil(schema) do
+        {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
+      else
+        config = put_in(socket.assigns.file_config, key_path, schema.default)
+
         case EvoGit.Config.save_user_config(config) do
           :ok ->
             file_config = ConfigIO.load_file_config()
             config_status = config_status()
             config_file_exists = File.exists?(socket.assigns.config_path)
 
-            socket =
-              socket
-              |> assign(:file_config, file_config)
-              |> assign(:config_status, config_status)
-              |> assign(:config_file_exists, config_file_exists)
-              |> assign(:per_category_errors, %{})
-              |> put_flash(:info, gettext("Configuration saved successfully."))
-
-            # Update runtime scheduler when LLM or scheduler keys change
-            socket =
-              if Enum.any?(
-                   all_matching_schemas,
-                   &(List.first(&1.key_path) in [:scheduler, :llm])
-                 ) do
-                ConfigIO.update_runtime_from_file_config(file_config, socket)
-              else
-                socket
-              end
-
-            {:noreply, socket}
+            {:noreply,
+             socket
+             |> assign(:file_config, file_config)
+             |> assign(:config_status, config_status)
+             |> assign(:config_file_exists, config_file_exists)
+             |> assign(:per_category_errors, %{})
+             |> put_flash(:info, gettext("Reset %{key} to default.", key: path_str))}
 
           {:error, reason} ->
             {:noreply,
              socket
              |> put_flash(
                :error,
-               gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
+               gettext("Failed to reset key: %{reason}", reason: inspect(reason))
              )}
         end
-
-      {:error, errors} ->
-        # Group errors by category for display
-        per_category_errors =
-          Enum.reduce(errors, %{}, fn e, acc ->
-            cat = List.first(e.key_path)
-            Map.update(acc, cat, [e], fn existing -> existing ++ [e] end)
-          end)
-
-        {:noreply,
-         socket
-         |> assign(:per_category_errors, per_category_errors)
-         |> put_flash(:error, gettext("Validation failed. Please fix the errors below."))}
-    end
-  end
-
-  @impl true
-  def handle_event("reset_key", %{"key_path" => path_str}, socket) do
-    key_path = ConfigIO.parse_key_path(path_str, socket.assigns.schemas_by_category)
-    schema = ConfigIO.find_schema(key_path, socket.assigns.schemas_by_category)
-
-    # An unknown or stale key_path / schema means untrusted client input did not
-    # resolve to a known setting — surface a friendly flash instead of crashing
-    # on put_in with a nil path or a nil schema.default.
-    if is_nil(key_path) or is_nil(schema) do
-      {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
-    else
-      config = put_in(socket.assigns.file_config, key_path, schema.default)
-
-      case EvoGit.Config.save_user_config(config) do
-        :ok ->
-          file_config = ConfigIO.load_file_config()
-          config_status = config_status()
-          config_file_exists = File.exists?(socket.assigns.config_path)
-
-          {:noreply,
-           socket
-           |> assign(:file_config, file_config)
-           |> assign(:config_status, config_status)
-           |> assign(:config_file_exists, config_file_exists)
-           |> assign(:per_category_errors, %{})
-           |> put_flash(:info, gettext("Reset %{key} to default.", key: path_str))}
-
-        {:error, reason} ->
-          {:noreply,
-           socket
-           |> put_flash(
-             :error,
-             gettext("Failed to reset key: %{reason}", reason: inspect(reason))
-           )}
       end
     end
   end
@@ -472,75 +529,85 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("select_llm_model_shortcut", %{"model_string" => model_string}, socket) do
-    # Add a new model profile using the selected model string, and mirror it to
-    # the flat [:llm, :model] for backward compatibility (older code paths and
-    # the config-status check still read the flat field).
-    file_config =
-      socket.assigns.file_config
-      |> ModelProfileHelpers.add_model_profile(model_string)
-      |> ModelProfileHelpers.mirror_default_model()
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      # Add a new model profile using the selected model string, and mirror it to
+      # the flat [:llm, :model] for backward compatibility (older code paths and
+      # the config-status check still read the flat field).
+      file_config =
+        socket.assigns.file_config
+        |> ModelProfileHelpers.add_model_profile(model_string)
+        |> ModelProfileHelpers.mirror_default_model()
 
-    persist_file_config(file_config, socket, gettext("Model selected and saved."))
+      persist_file_config(file_config, socket, gettext("Model selected and saved."))
+    end
   end
 
   @impl true
   def handle_event("save_custom_model", params, socket) do
-    model_name = params["model_name"]
-    base_url = params["base_url"]
-    provider_id_str = params["provider_id"]
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      model_name = params["model_name"]
+      base_url = params["base_url"]
+      provider_id_str = params["provider_id"]
 
-    # Build a whitelist map keyed by the string form of each provider's atom id,
-    # so untrusted POST data is matched without String.to_existing_atom.
-    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
+      # Build a whitelist map keyed by the string form of each provider's atom id,
+      # so untrusted POST data is matched without String.to_existing_atom.
+      provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
 
-    result =
-      cond do
-        is_nil(provider) ->
-          {:error, gettext("Unknown provider.")}
+      result =
+        cond do
+          is_nil(provider) ->
+            {:error, gettext("Unknown provider.")}
 
-        String.trim(model_name || "") == "" ->
-          {:error, gettext("Model name cannot be empty.")}
+          String.trim(model_name || "") == "" ->
+            {:error, gettext("Model name cannot be empty.")}
 
-        true ->
-          # Resolve the canonical provider atom from the catalog entry's
-          # provider_atoms list directly (e.g. :openai_compatible entry → :openai
-          # atom, :openrouter → :openrouter). We use hd/1 on provider_atoms
-          # because resolve_provider_atom/1 looks up by membership, NOT by
-          # catalog id — it would leave :openai_compatible unchanged (the bug).
-          provider_atom = hd(provider.provider_atoms)
+          true ->
+            # Resolve the canonical provider atom from the catalog entry's
+            # provider_atoms list directly (e.g. :openai_compatible entry → :openai
+            # atom, :openrouter → :openrouter). We use hd/1 on provider_atoms
+            # because resolve_provider_atom/1 looks up by membership, NOT by
+            # catalog id — it would leave :openai_compatible unchanged (the bug).
+            provider_atom = hd(provider.provider_atoms)
 
-          # Validate base_url requirement using the catalog function (NOT the
-          # dead provider[:requires_base_url] struct field).
-          requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
+            # Validate base_url requirement using the catalog function (NOT the
+            # dead provider[:requires_base_url] struct field).
+            requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
 
-          if requires_base_url and String.trim(base_url || "") == "" do
-            {:error, gettext("Base URL cannot be empty.")}
-          else
-            # Build the map spec via resolve_model_spec/3 — it omits nil/empty
-            # base_url and resolves model shortcuts/variants. Produces a MAP for
-            # ALL providers (including OpenRouter), not a legacy string.
-            opts =
-              if String.trim(base_url || "") == "",
-                do: [],
-                else: [base_url: String.trim(base_url)]
+            if requires_base_url and String.trim(base_url || "") == "" do
+              {:error, gettext("Base URL cannot be empty.")}
+            else
+              # Build the map spec via resolve_model_spec/3 — it omits nil/empty
+              # base_url and resolves model shortcuts/variants. Produces a MAP for
+              # ALL providers (including OpenRouter), not a legacy string.
+              opts =
+                if String.trim(base_url || "") == "",
+                  do: [],
+                  else: [base_url: String.trim(base_url)]
 
-            {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
-          end
+              {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
+            end
+        end
+
+      case result do
+        {:error, msg} ->
+          {:noreply, put_flash(socket, :error, msg)}
+
+        {:ok, model_value} ->
+          # Add a new model profile using the custom model, and mirror it to the
+          # flat [:llm, :model] for backward compatibility.
+          file_config =
+            socket.assigns.file_config
+            |> ModelProfileHelpers.add_model_profile(model_value)
+            |> ModelProfileHelpers.mirror_default_model()
+
+          persist_file_config(file_config, socket, gettext("Custom model saved."))
       end
-
-    case result do
-      {:error, msg} ->
-        {:noreply, put_flash(socket, :error, msg)}
-
-      {:ok, model_value} ->
-        # Add a new model profile using the custom model, and mirror it to the
-        # flat [:llm, :model] for backward compatibility.
-        file_config =
-          socket.assigns.file_config
-          |> ModelProfileHelpers.add_model_profile(model_value)
-          |> ModelProfileHelpers.mirror_default_model()
-
-        persist_file_config(file_config, socket, gettext("Custom model saved."))
     end
   end
 
@@ -550,24 +617,29 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("add_model_profile", _params, socket) do
-    # Add the profile to the in-memory file_config (not persisted yet — the
-    # profile has no model until the user fills in the edit form, and persisting
-    # now would fail schema validation). Enter edit mode immediately so the
-    # user can complete the profile, then save.
-    file_config =
-      socket.assigns.file_config
-      |> ModelProfileHelpers.add_model_profile(nil)
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      # Add the profile to the in-memory file_config (not persisted yet — the
+      # profile has no model until the user fills in the edit form, and persisting
+      # now would fail schema validation). Enter edit mode immediately so the
+      # user can complete the profile, then save.
+      file_config =
+        socket.assigns.file_config
+        |> ModelProfileHelpers.add_model_profile(nil)
 
-    models = get_in(file_config, [:llm, :models]) || []
-    new_id = models |> List.last() |> ModelProfileHelpers.profile_id()
+      models = get_in(file_config, [:llm, :models]) || []
+      new_id = models |> List.last() |> ModelProfileHelpers.profile_id()
 
-    socket =
-      socket
-      |> assign(:file_config, file_config)
-      |> assign(:editing_profile_id, new_id)
-      |> put_flash(:info, gettext("New profile added — fill in the details and save."))
+      socket =
+        socket
+        |> assign(:file_config, file_config)
+        |> assign(:editing_profile_id, new_id)
+        |> put_flash(:info, gettext("New profile added — fill in the details and save."))
 
-    {:noreply, socket}
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -585,105 +657,133 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("save_model_profile", params, socket) do
-    old_id = params["profile_id"]
-    new_id = String.trim(params["profile_id_new"] || "")
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      old_id = params["profile_id"]
+      new_id = String.trim(params["profile_id_new"] || "")
 
-    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+      models = get_in(socket.assigns.file_config, [:llm, :models]) || []
 
-    cond do
-      new_id == "" ->
-        {:noreply, put_flash(socket, :error, gettext("Profile id cannot be empty."))}
+      cond do
+        new_id == "" ->
+          {:noreply, put_flash(socket, :error, gettext("Profile id cannot be empty."))}
 
-      # Duplicate id check: another profile (with a different old id) already
-      # uses the requested id.
-      ModelProfileHelpers.id_collision?(models, old_id, new_id) ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("A profile with id \"%{id}\" already exists.", id: new_id)
-         )}
+        # Duplicate id check: another profile (with a different old id) already
+        # uses the requested id.
+        ModelProfileHelpers.id_collision?(models, old_id, new_id) ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("A profile with id \"%{id}\" already exists.", id: new_id)
+           )}
 
-      true ->
-        case ModelProfileHelpers.parse_model_profile_params(params, new_id) do
-          {:ok, updated_profile} ->
-            file_config =
-              socket.assigns.file_config
-              |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
-              |> ModelProfileHelpers.mirror_default_model()
+        true ->
+          case ModelProfileHelpers.parse_model_profile_params(params, new_id) do
+            {:ok, updated_profile} ->
+              file_config =
+                socket.assigns.file_config
+                |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
+                |> ModelProfileHelpers.mirror_default_model()
 
-            socket = socket |> assign(:editing_profile_id, nil)
+              socket = socket |> assign(:editing_profile_id, nil)
 
-            persist_file_config(file_config, socket, gettext("Model profile saved."))
+              persist_file_config(file_config, socket, gettext("Model profile saved."))
 
-          {:error, "model_id_empty"} ->
-            {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
-        end
+            {:error, "model_id_empty"} ->
+              {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
+          end
+      end
     end
   end
 
   @impl true
   def handle_event("delete_model_profile", %{"profile_id" => id}, socket) do
-    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
-    new_models = Enum.reject(models, fn p -> ModelProfileHelpers.profile_id(p) == id end)
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+      new_models = Enum.reject(models, fn p -> ModelProfileHelpers.profile_id(p) == id end)
 
-    file_config =
-      socket.assigns.file_config
-      |> ModelProfileHelpers.put_in_model_profiles(new_models)
-      |> ModelProfileHelpers.mirror_default_model()
+      file_config =
+        socket.assigns.file_config
+        |> ModelProfileHelpers.put_in_model_profiles(new_models)
+        |> ModelProfileHelpers.mirror_default_model()
 
-    socket = socket |> assign(:editing_profile_id, nil)
+      socket = socket |> assign(:editing_profile_id, nil)
 
-    persist_file_config(file_config, socket, gettext("Model profile deleted."))
+      persist_file_config(file_config, socket, gettext("Model profile deleted."))
+    end
   end
 
   @impl true
   def handle_event("save_api_key", %{"env_var" => env_var, "api_key" => api_key}, socket) do
-    if String.trim(api_key) == "" do
-      {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
     else
-      case EvoGit.Config.save_credentials(%{env_var => String.trim(api_key)}) do
-        :ok ->
-          config_status = config_status()
+      if String.trim(api_key) == "" do
+        {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
+      else
+        case EvoGit.Config.save_credentials(%{env_var => String.trim(api_key)}) do
+          :ok ->
+            config_status = config_status()
 
-          {:noreply,
-           socket
-           |> assign(:config_status, config_status)
-           |> assign(:credentials, EvoGit.Config.credentials())
-           |> put_flash(:info, gettext("API key saved successfully."))}
+            {:noreply,
+             socket
+             |> assign(:config_status, config_status)
+             |> assign(:credentials, EvoGit.Config.credentials())
+             |> put_flash(:info, gettext("API key saved successfully."))}
 
-        {:error, reason} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Failed to save API key: %{reason}", reason: inspect(reason))
-           )}
+          {:error, reason} ->
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               gettext("Failed to save API key: %{reason}", reason: inspect(reason))
+             )}
+        end
       end
     end
   end
 
   @impl true
   def handle_event("test_llm", params, socket) do
-    profile_id = params["profile_id"]
-    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
-
-    profile = Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == profile_id end)
-
-    model_string =
-      if profile, do: profile_model_string(profile)
-
-    if model_string do
-      parent = self()
-
-      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        result = EvoGit.SystemCheck.llm_test(model_string)
-        send(parent, {:llm_test_result, result})
-      end)
-
-      {:noreply, assign(socket, :llm_test_status, :testing)}
+    # The connection test button renders outside the disabled form, so it
+    # remains clickable on a remote node. Guard the handler: EvoGit.SystemCheck
+    # .llm_test/0 tests the LOCAL LLM, returning a misleading result when the
+    # user is viewing a remote node's read-only config.
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext("LLM connection test is not available for remote nodes")
+       )}
     else
-      {:noreply, put_flash(socket, :error, gettext("Selected profile has no model configured."))}
+      profile_id = params["profile_id"]
+      models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+
+      profile = Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == profile_id end)
+
+      model_string =
+        if profile, do: profile_model_string(profile)
+
+      if model_string do
+        parent = self()
+
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          result = EvoGit.SystemCheck.llm_test(model_string)
+          send(parent, {:llm_test_result, result})
+        end)
+
+        {:noreply, assign(socket, :llm_test_status, :testing)}
+      else
+        {:noreply, put_flash(socket, :error, gettext("Selected profile has no model configured."))}
+      end
     end
   end
 
@@ -740,4 +840,82 @@ defmodule EvoDashWeb.SettingsLive do
          )}
     end
   end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: Node-aware config loading
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Loads the config to display based on the current node context.
+  #
+  # On the local node (`socket.assigns.current_node == node()`), config is loaded
+  # from the local file system exactly as before (editable). On a remote node, the
+  # resolved scheduler config is fetched via `EvoDash.NodeContext.get_remote_config/1`
+  # and displayed read-only — the form inputs are disabled and saves are blocked.
+  #
+  # `@remote_config` is a boolean flag the template uses to show the read-only
+  # banner and disable form inputs.
+  defp load_node_config(socket) do
+    if socket.assigns.current_node == node() do
+      # Local node — load from disk exactly as mount/1 does.
+      socket
+      |> assign(:remote_config, false)
+      |> assign(:file_config, ConfigIO.load_file_config())
+      |> assign(:config_status, config_status())
+    else
+      # Remote node — fetch the resolved scheduler config via RPC. This returns
+      # a flat map (e.g. %{max_concurrency: 3, llm_model: "...", ...}), which we
+      # surface read-only. We DON'T attempt to reconstruct the full nested
+      # file_config structure — instead we put the remote values into a
+      # best-effort nested map so the schema-driven cards display them.
+      remote_cfg = EvoDash.NodeContext.get_remote_config(socket.assigns.current_node)
+
+      file_config = remote_config_to_file_config(remote_cfg)
+
+      socket
+      |> assign(:remote_config, true)
+      |> assign(:file_config, file_config)
+      |> assign(
+        :config_status,
+        EvoDash.NodeContext.get_remote_config_status(socket.assigns.current_node)
+      )
+    end
+  end
+
+  # Maps the flat scheduler config map (from get_remote_config/1) into the nested
+  # %{scheduler: ..., llm: ...} structure the schema-driven setting cards expect.
+  # Only the keys present in the scheduler config are populated; the rest fall
+  # back to schema defaults when rendered. This is best-effort display data for
+  # the read-only remote view.
+  defp remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
+    scheduler =
+      %{}
+      |> maybe_put(:max_concurrency, remote_cfg[:max_concurrency])
+      |> maybe_put(:max_tool_concurrency, remote_cfg[:max_tool_concurrency])
+      |> maybe_put(:agent_max_retries, remote_cfg[:agent_max_retries])
+      |> maybe_put(:max_agent_depth, remote_cfg[:max_agent_depth])
+      |> maybe_put(:max_retries, remote_cfg[:max_retries])
+      |> maybe_put(:max_turns, remote_cfg[:max_turns])
+      |> maybe_put(:max_turns_root, remote_cfg[:max_turns_root])
+
+    llm =
+      %{}
+      |> maybe_put(:model, remote_cfg[:llm_model])
+
+    # Model profiles come as a list of maps; surface them for display.
+    llm =
+      case remote_cfg[:model_profiles] do
+        nil -> llm
+        [] -> llm
+        profiles -> Map.put(llm, :models, profiles)
+      end
+
+    %{}
+    |> Map.put(:scheduler, scheduler)
+    |> Map.put(:llm, llm)
+  end
+
+  defp remote_config_to_file_config(_), do: %{}
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

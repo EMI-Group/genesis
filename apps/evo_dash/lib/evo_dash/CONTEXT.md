@@ -108,6 +108,13 @@ size(store) :: non_neg_integer()                          # total across both ta
 | `delete_task(task_id)` | Removes a task. |
 | `clear_finished_tasks()` | Removes all finished tasks. |
 
+### `EvoDash.NodeContext` (`node_context.ex`)
+- Domain-layer thin client for **SSH Remote Development** (the node-aware dashboard, Phase 2). Not a GenServer — a pure wrapper module and the single entry point for the web layer to manage remote connections and read remote runtime state.
+- **Target persistence** (delegates to `EvoGit.RemoteConnections`, pure TOML functions): `list_targets/0`, `get_target/1`, `save_target/1`, `delete_target/1`.
+- **Connection lifecycle** (delegates to the `EvoGit.RemoteConnection` GenServer): `connect/1`, `disconnect/1`, `bootstrap/1`, `connection_status/0,1`, `connected?/1` — all **gracefully degrade** to safe fallbacks (`{:error, :remote_connection_unavailable}`, `%{}`, `:disconnected`, `false`) when that module isn't compiled/started (ships as parallel Phase 2 work).
+- **Cross-node RPC helpers**: `call_remote/4` wraps `:erpc.call/5` (10s timeout; returns `{:ok, _} | {:error, _}`; local node calls go direct without erpc). State readers `list_agents/1`, `get_agent_history/2`, `get_agent_state/2`, `get_remote_config/1`, `get_remote_config_status/1`, `paused?/1` read local ETS directly when `node == node()` and route through `:erpc` to `EvoGit.AgentScheduler.RemoteAPI` when remote.
+- All degradation is centralized in a private `with_remote_connection/4` guard (`Code.ensure_loaded?/1` + `catch :exit`). The only exception handling: a justified `try/catch` in `call_remote/4` (cross-node RPC boundary) and a justified `catch :exit` for the possibly-dead GenServer.
+
 ## Task Lifecycle
 1. **Creation** (`start_task/2`): Generates random 16-char hex ID, spawns `Task.Supervisor.async_nolink` task, writes `TaskInfo` to SQLite via `put_task` (ref nulled), stores ref in `task_refs`.
 2. **Running**: Status updates via `cast`. All writes go through `EvoDash.Store.put_task/2`.

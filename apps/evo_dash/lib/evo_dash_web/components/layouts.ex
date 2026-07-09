@@ -26,6 +26,12 @@ defmodule EvoDashWeb.Layouts do
 
   attr(:config_status, :map, default: nil)
 
+  attr(:current_node, :any, default: nil)
+  attr(:current_node_id, :string, default: nil)
+  attr(:current_node_name, :string, default: "Local")
+  attr(:remote_targets, :list, default: [])
+  attr(:connection_statuses, :map, default: %{})
+
   slot(:inner_block, required: true)
 
   def app(assigns) do
@@ -37,10 +43,10 @@ defmodule EvoDashWeb.Layouts do
         <!-- Sticky Navigation Bar -->
         <header class="sticky top-0 z-40 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-sm">
           <nav class="flex items-center justify-between px-4 sm:px-6 lg:px-8 h-16">
-            <!-- Left: Logo -->
-            <div class="flex-shrink-0">
+            <!-- Left: Logo + Node Selector -->
+            <div class="flex items-center gap-3">
               <.link
-                navigate={~p"/"}
+                navigate={with_node_param(~p"/", @current_node_id)}
                 class="flex items-center gap-2 hover:opacity-80 transition-opacity"
               >
                 <%!-- zh_CN: Genesis → "启元" --%>
@@ -60,33 +66,39 @@ defmodule EvoDashWeb.Layouts do
                   {gettext("Genesis")}
                 </span>
               </.link>
+              <.live_component
+                module={EvoDashWeb.NodeSelectorComponent}
+                id="node-selector"
+                current_node_id={@current_node_id}
+                current_node_name={@current_node_name}
+              />
             </div>
 
             <!-- Right: Desktop Nav Links + Theme Toggle -->
             <div class="hidden lg:flex items-center gap-2">
               <div class="flex items-center gap-1">
                 <.nav_link
-                  navigate={~p"/"}
+                  navigate={with_node_param(~p"/", @current_node_id)}
                   current={@current_page == :dashboard}
                   icon="hero-squares-2x2"
                 >{gettext("Projects")}</.nav_link>
                 <.nav_link
-                  navigate={~p"/agents"}
+                  navigate={with_node_param(~p"/agents", @current_node_id)}
                   current={@current_page == :agents}
                   icon="hero-server"
                 >{gettext("Agents")}</.nav_link>
                 <.nav_link
-                  navigate={~p"/tasks"}
+                  navigate={with_node_param(~p"/tasks", @current_node_id)}
                   current={@current_page == :tasks}
                   icon="hero-clipboard-document-list"
                 >{gettext("Tasks")}</.nav_link>
                 <.nav_link
-                  navigate={~p"/settings"}
+                  navigate={with_node_param(~p"/settings", @current_node_id)}
                   current={@current_page == :settings}
                   icon="hero-cog-6-tooth"
                 >{gettext("Settings")}</.nav_link>
                 <.nav_link
-                  navigate={~p"/system"}
+                  navigate={with_node_param(~p"/system", @current_node_id)}
                   current={@current_page == :system}
                   icon="hero-server-stack"
                 >{gettext("System")}</.nav_link>
@@ -135,27 +147,27 @@ defmodule EvoDashWeb.Layouts do
 
         <nav class="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
           <.mobile_nav_link
-            navigate={~p"/"}
+            navigate={with_node_param(~p"/", @current_node_id)}
             current={@current_page == :dashboard}
             icon="hero-squares-2x2"
           >{gettext("Projects")}</.mobile_nav_link>
           <.mobile_nav_link
-            navigate={~p"/agents"}
+            navigate={with_node_param(~p"/agents", @current_node_id)}
             current={@current_page == :agents}
             icon="hero-server"
           >{gettext("Agents")}</.mobile_nav_link>
           <.mobile_nav_link
-            navigate={~p"/tasks"}
+            navigate={with_node_param(~p"/tasks", @current_node_id)}
             current={@current_page == :tasks}
             icon="hero-clipboard-document-list"
           >{gettext("Tasks")}</.mobile_nav_link>
           <.mobile_nav_link
-            navigate={~p"/settings"}
+            navigate={with_node_param(~p"/settings", @current_node_id)}
             current={@current_page == :settings}
             icon="hero-cog-6-tooth"
           >{gettext("Settings")}</.mobile_nav_link>
           <.mobile_nav_link
-            navigate={~p"/system"}
+            navigate={with_node_param(~p"/system", @current_node_id)}
             current={@current_page == :system}
             icon="hero-server-stack"
           >{gettext("System")}</.mobile_nav_link>
@@ -205,6 +217,11 @@ defmodule EvoDashWeb.Layouts do
     </div>
     """
   end
+
+  # Appends the ?node= query param to a path when a remote node is selected,
+  # so nav links preserve the node context across pages. No-op for local node.
+  defp with_node_param(path, nil), do: path
+  defp with_node_param(path, node_id), do: path <> "?node=" <> node_id
 
   attr(:navigate, :string, required: true)
   attr(:current, :boolean, default: false)

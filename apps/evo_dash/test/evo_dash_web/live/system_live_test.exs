@@ -110,5 +110,44 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       refute html =~ "Stop System?"
     end
+
+    test "confirm_restart handler is guarded when remote (no System.restart called)" do
+      # BUG 1 fix: confirm_restart must NOT call System.restart/0 when remote.
+      # The entry handler (request_restart) guards, the template disables the
+      # button, and handle_params clears the flag on node switch — but the
+      # confirm handler itself MUST also guard as defense-in-depth (a stale
+      # modal or crafted event could bypass the UI guards).
+      #
+      # We test the guard directly by invoking the handle_event/3 callback with
+      # a socket that has remote?: true. This avoids both booting a real remote
+      # node AND calling System.restart/0 (which would tear down the test VM).
+      # The handler should return a flash error and close the modal.
+      alias EvoDashWeb.SystemLive
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{__changed__: nil, flash: %{}, remote?: true, show_restart_confirm: true}
+      }
+
+      assert {:noreply, result_socket} =
+               SystemLive.handle_event("confirm_restart", %{}, socket)
+
+      # Modal closed
+      refute result_socket.assigns.show_restart_confirm
+    end
+
+    test "confirm_stop handler is guarded when remote (no System.stop called)" do
+      # BUG 1 fix: same defense-in-depth guard for confirm_stop.
+      alias EvoDashWeb.SystemLive
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{__changed__: nil, flash: %{}, remote?: true, show_stop_confirm: true}
+      }
+
+      assert {:noreply, result_socket} =
+               SystemLive.handle_event("confirm_stop", %{}, socket)
+
+      # Modal closed
+      refute result_socket.assigns.show_stop_confirm
+    end
   end
 end
