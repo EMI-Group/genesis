@@ -86,8 +86,18 @@ defmodule EvoGit.Config.LLMCatalog do
       provider_atoms: [:alibaba, :alibaba_cn],
       credential_key: "alibaba_api_key",
       variants: [
-        %{id: :global, display_name: "Global", provider_atom: :alibaba, credential_key: "alibaba_api_key"},
-        %{id: :cn, display_name: "CN", provider_atom: :alibaba_cn, credential_key: "alibaba_cn_api_key"}
+        %{
+          id: :global,
+          display_name: "Global",
+          provider_atom: :alibaba,
+          credential_key: "alibaba_api_key"
+        },
+        %{
+          id: :cn,
+          display_name: "CN",
+          provider_atom: :alibaba_cn,
+          credential_key: "alibaba_cn_api_key"
+        }
       ],
       models: [
         %{id: "qwen-3.7-max", display_name: "Qwen 3.7 Max"},
@@ -100,8 +110,18 @@ defmodule EvoGit.Config.LLMCatalog do
       provider_atoms: [:zai, :zai_coding_plan],
       credential_key: "zai_api_key",
       variants: [
-        %{id: :normal, display_name: "Normal API", provider_atom: :zai, credential_key: "zai_api_key"},
-        %{id: :coding_plan, display_name: "Coding Plan", provider_atom: :zai_coding_plan, credential_key: "zai_coding_plan_api_key"}
+        %{
+          id: :normal,
+          display_name: "Normal API",
+          provider_atom: :zai,
+          credential_key: "zai_api_key"
+        },
+        %{
+          id: :coding_plan,
+          display_name: "Coding Plan",
+          provider_atom: :zai_coding_plan,
+          credential_key: "zai_coding_plan_api_key"
+        }
       ],
       models: [
         %{id: "glm-5", display_name: "GLM-5"},
@@ -125,7 +145,7 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :xai,
       display_name: "xAI",
       provider_atoms: [:xai],
-      env_var: "xai_api_key",
+      credential_key: "xai_api_key",
       variants: nil,
       models: [
         %{id: "grok-4.3", display_name: "Grok 4.3"},
@@ -194,9 +214,12 @@ defmodule EvoGit.Config.LLMCatalog do
   @spec resolve_provider_atom(atom(), atom() | nil) :: atom()
   def resolve_provider_atom(provider_atom, variant_id \\ nil) when is_atom(provider_atom) do
     case find_provider(provider_atom) do
-      nil -> provider_atom
+      nil ->
+        provider_atom
+
       provider ->
         variants = provider[:variants]
+
         if variants && variant_id do
           case Enum.find(variants, &(&1.id == variant_id)) do
             %{provider_atom: atom} -> atom
@@ -242,7 +265,8 @@ defmodule EvoGit.Config.LLMCatalog do
   "provider:model" string.
   """
   @spec resolve_model(atom(), String.t()) :: String.t()
-  def resolve_model(provider_atom, model_input) when is_atom(provider_atom) and is_binary(model_input) do
+  def resolve_model(provider_atom, model_input)
+      when is_atom(provider_atom) and is_binary(model_input) do
     provider = find_provider(provider_atom)
     canonical = if provider, do: hd(provider.provider_atoms), else: provider_atom
 
@@ -363,6 +387,7 @@ defmodule EvoGit.Config.LLMCatalog do
   @spec known_credential_keys() :: [String.t()]
   def known_credential_keys do
     provider_vars = Enum.map(@providers, & &1.credential_key)
+
     variant_vars =
       @providers
       |> Enum.flat_map(fn p ->
@@ -384,7 +409,9 @@ defmodule EvoGit.Config.LLMCatalog do
 
     # Check exact id match first
     case Enum.find(models, fn m -> m.id == trimmed end) do
-      %{id: id} -> id
+      %{id: id} ->
+        id
+
       nil ->
         # Check display_name match (case-insensitive, trimmed)
         case Enum.find(models, fn m -> String.downcase(String.trim(m.display_name)) == lower end) do
