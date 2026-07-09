@@ -32,7 +32,7 @@ defmodule EvoDashWeb.AgentsComponents do
           <div
             class={[
               "absolute top-0 border-l-2 border-base-content/10 z-0",
-              "left-2 sm:left-3 lg:left-4",
+              "-left-4 sm:-left-5 lg:-left-6",
               if(is_last, do: "h-5"),
               if(!is_last, do: "bottom-0")
             ]}
@@ -42,7 +42,7 @@ defmodule EvoDashWeb.AgentsComponents do
           <div
             class={[
               "absolute top-5 border-t-2 border-base-content/10 z-0",
-              "left-2 sm:left-3 lg:left-4 w-3 sm:w-4 lg:w-5"
+              "-left-4 sm:-left-5 lg:-left-6 w-4 sm:w-5 lg:w-6"
             ]}
           >
           </div>
