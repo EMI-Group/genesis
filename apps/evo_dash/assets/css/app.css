@@ -460,11 +460,11 @@ button, a, input, textarea, select, summary,
 
 /* Mobile-first: normal flow (single column, page scrolls) */
 .agents-page-layout {
-  @apply flex flex-col gap-6;
+  @apply flex flex-col gap-4;
 }
 
 .agents-left-col {
-  @apply flex flex-col gap-6;
+  @apply flex flex-col gap-4;
 }
 
 .agents-tree-panel {
@@ -484,15 +484,15 @@ button, a, input, textarea, select, summary,
   .agents-page-layout {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
-    height: calc(100vh - 10rem - 3px); /* navbar ~4rem + main padding 5rem + space-y gap */
+    gap: 1rem;
+    height: calc(100vh - 9rem - 3px); /* navbar ~4rem + main padding 5rem + space-y gap */
     overflow: hidden;
   }
 
   .agents-left-col {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 1rem;
     min-height: 0; /* allow flex children to shrink */
     overflow: hidden;
   }
