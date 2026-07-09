@@ -468,11 +468,33 @@ const WelcomeCheck = {
   }
 };
 
+// DialogModal hook: opens/closes <dialog class="modal"> elements in the
+// browser's top layer, immune to parent CSS containing blocks (backdrop-filter,
+// transform, etc.). Pushes "dialog_closed" when the dialog is dismissed via ESC
+// or backdrop click so the server can sync state.
+const DialogModal = {
+  mounted() {
+    this.el.showModal();
+    this._onClose = () => this.pushEvent("dialog_closed", {});
+    this.el.addEventListener("close", this._onClose);
+  },
+  destroyed() {
+    if (this._onClose) {
+      this.el.removeEventListener("close", this._onClose);
+    }
+    // If the dialog is still open when destroyed (e.g., server toggle while
+    // modal is showing), close it so the top layer is released.
+    if (this.el.open) {
+      this.el.close();
+    }
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, WelcomeCheck},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, WelcomeCheck, DialogModal},
 })
 
 // Show progress bar on live navigation and form submits
