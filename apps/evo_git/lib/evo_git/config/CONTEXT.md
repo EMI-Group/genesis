@@ -30,7 +30,7 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 | `requires_base_url?/1` | Returns whether a provider requires a custom `base_url` (reads the `requires_base_url` flag; default `false`). `:openai_compatible` → `true`. |
 | `find_provider/1` | Finds provider entry by atom (checks `provider_atoms` list) |
 | `unknown_provider_help/0` | Returns guidance text with links to llmdb.xyz and ReqLLM docs |
-| `known_env_vars/0` | Returns all unique env var names from the catalog |
+| `known_credential_keys/0` | Returns all unique credential key names from the catalog |
 
 ### `EvoGit.Defaults` (backward-compatibility shim)
 Delegates all calls to `EvoGit.Config.resolve/1`. Functions: `max_concurrency`, `max_tool_concurrency`, `max_retries`, `agent_max_retries`, `max_agent_depth`, `llm_model`, `github_username`, `compression_threshold_tokens`, `sandbox`.

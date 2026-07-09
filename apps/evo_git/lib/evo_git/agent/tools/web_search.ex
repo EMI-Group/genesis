@@ -13,7 +13,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   Each provider has its own config section under `[:tools, :search, :<provider>]`
   with the following keys:
 
-  - `:api_key_env_var` — the configuration key name for the API key (used with ReqLLM's key store)
+  - `:api_key_credential_key` — the configuration key name for the API key (used with ReqLLM's key store)
   - `:base_url` — the API endpoint URL
   - `:search_depth` — default search depth (`:basic` or `:advanced`)
   - `:max_results` — default max results (1-50)
@@ -26,7 +26,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   1. Add the provider atom to the validation list in `EvoGit.Config.Schema`
      (`[:tools, :search, :provider]`)
   2. Add a new config section `[:tools, :search, :<provider>]` in the schema
-     with at minimum `:api_key_env_var` and `:base_url`
+     with at minimum `:api_key_credential_key` and `:base_url`
   3. The provider will work automatically — this module reads all provider-
      specific settings from config at execution time
   """
@@ -127,10 +127,10 @@ defmodule EvoGit.Agent.Tools.WebSearch do
       provider = get_in(config, [:tools, :search, :provider])
       provider_config = get_in(config, [:tools, :search, provider])
 
-      api_key_env_var = provider_config[:api_key_env_var]
+      api_key_credential_key = provider_config[:api_key_credential_key]
       api_key =
-        if api_key_env_var do
-          case EvoGit.Config.env_var_to_reqllm_key(api_key_env_var) do
+        if api_key_credential_key do
+          case EvoGit.Config.credential_key_to_reqllm_key(api_key_credential_key) do
             nil -> nil
             atom_key -> ReqLLM.get_key(atom_key)
           end
@@ -144,7 +144,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
 
       provider_map = %{
         api_key: api_key,
-        api_key_env_var: api_key_env_var,
+        api_key_credential_key: api_key_credential_key,
         base_url: base_url,
         timeout: timeout,
         max_bytes: max_bytes
