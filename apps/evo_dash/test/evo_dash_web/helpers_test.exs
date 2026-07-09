@@ -138,8 +138,8 @@ defmodule EvoDashWeb.HelpersTest do
       assert format_module_name(EvoGit.Agent.Spatial) == "Spatial"
     end
 
-    test "falls back to Unknown for non-atom input" do
-      assert format_module_name("not-a-module") == "Unknown"
+    test "falls back to Unknown for non-module input" do
+      assert format_module_name(123) == "Unknown"
     end
   end
 

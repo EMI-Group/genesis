@@ -778,15 +778,16 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   # Loads all agents for the given node. Reads scheduler state via
-  # `EvoDash.NodeContext.list_agents/1`, which returns plain maps. On the local
-  # node this reads the local ETS-backed RemoteAPI directly (no :erpc); on a
-  # remote node it routes through :erpc.
+  # `EvoDash.NodeContext.list_agents/1`, which returns summary maps. On the
+  # local node this reads the local ETS-backed RemoteAPI directly (no :erpc);
+  # on a remote node it routes through :erpc.call/5, which transfers native
+  # Elixir terms (atoms, structs) directly — no serialization boundary.
   #
-  # The RPC maps provide a subset of the fields the rendering code expects; the
-  # missing secondary fields (repo_root, context_path, current_commit,
+  # The RPC summaries provide a subset of the fields the rendering code expects;
+  # the missing secondary fields (repo_root, context_path, current_commit,
   # base_commit, worktree, retries, task_id, task_number, pending_sub_agents,
   # sub_agent_results, task_ref, result_sent) are set to nil/defaults because
-  # they are not exposed by the serialization-safe RPC layer.
+  # they are not exposed by the RemoteAPI summary layer.
   defp load_agents(node) do
     summaries = EvoDash.NodeContext.list_agents(node)
     compression_threshold = safe_compression_threshold(node)
@@ -849,24 +850,21 @@ defmodule EvoDashWeb.AgentsLive do
     end)
   end
 
-  # The RPC returns agent_module as a string (e.g. "EvoGit.Agents.Manager").
-  # The rendering code calls inspect/1 on it; return the string so it displays
+  # RemoteAPI returns agent_module as a native module atom
+  # (e.g. EvoGit.Agents.Manager), transferred directly by :erpc.call/5.
+  # The rendering code calls inspect/1 on it; return the atom so it displays
   # correctly. Returns nil when absent.
   defp parse_agent_module(nil), do: nil
   defp parse_agent_module(module) when is_atom(module), do: module
-  defp parse_agent_module(module) when is_binary(module), do: module
 
-  # Normalizes the usage value from an RPC summary into a struct-shaped map so
-  # the rendering code (which reads usage.input_tokens etc.) works uniformly.
-  # The RPC layer returns a plain map (Map.from_struct of Usage); merge it over
-  # a zero struct so all expected numeric keys default to 0.
+  # Normalizes the usage value from an agent summary into a struct so the
+  # rendering code (which reads usage.input_tokens etc.) works uniformly.
+  # :erpc.call/5 transfers the native %EvoGit.Agent.Usage{} struct directly —
+  # no serialization boundary — so we just return it (with a nil → zero
+  # fallback for agents that have no usage yet).
   defp normalize_usage(nil), do: EvoGit.Agent.Usage.zero()
 
-  defp normalize_usage(usage) when is_map(usage) do
-    EvoGit.Agent.Usage.zero()
-    |> Map.from_struct()
-    |> Map.merge(usage)
-  end
+  defp normalize_usage(%EvoGit.Agent.Usage{} = usage), do: usage
 
   defp normalize_usage(_), do: EvoGit.Agent.Usage.zero()
 
@@ -894,31 +892,39 @@ defmodule EvoDashWeb.AgentsLive do
     end
   end
 
-  # Loads the conversation history for an agent on the given node. The RPC
-  # returns a different format than the old local ETS path; we convert it to
-  # the %{turn, type, data} entry shape the template expects via
-  # rpc_history_to_entries/1. On the local node this reads the local
-  # RemoteAPI (same format), so both local and remote paths are unified.
+  # Loads the conversation history for an agent on the given node. RemoteAPI
+  # returns native %ReqLLM.Message{} structs (transferred directly by
+  # :erpc.call/5); we convert them to the %{turn, type, data} entry shape the
+  # template expects via messages_to_history_entries/1. On the local node this
+  # reads the local RemoteAPI (same format), so both local and remote paths are
+  # unified.
   defp load_agent_history(node, agent_id) do
     EvoDash.NodeContext.get_agent_history(node, agent_id)
-    |> rpc_history_to_entries()
+    |> messages_to_history_entries()
   end
 
-  # Converts the RPC history format (%{role, content_summary, tool_calls, turn})
-  # into the %{turn, type, data} entry format the template consumes. This keeps
-  # the rendering code unchanged.
-  defp rpc_history_to_entries(entries) when is_list(entries) do
-    Enum.map(entries, &rpc_entry_to_history_entry/1)
+  # Converts native %ReqLLM.Message{} structs into the %{turn, type, data}
+  # entry format the template consumes. The only legitimate conversion here is
+  # extracting display text from the ContentPart list → a single string; all
+  # other fields are passed through as native terms.
+  defp messages_to_history_entries(messages) when is_list(messages) do
+    Enum.map(messages, &message_to_history_entry/1)
   end
 
-  defp rpc_entry_to_history_entry(entry) do
+  defp message_to_history_entry(%ReqLLM.Message{} = msg) do
     %{
-      turn: Map.get(entry, :turn) || 0,
-      type: to_string(Map.get(entry, :role, "unknown")),
+      turn: Map.get(msg.metadata, :turn) || 0,
+      type: Atom.to_string(msg.role),
       data: %{
-        content: Map.get(entry, :content_summary, ""),
-        tool_calls: Map.get(entry, :tool_calls),
-        metadata: %{}
+        content:
+          msg.content
+          |> Enum.map(&Map.get(&1, :text))
+          |> Enum.reject(&is_nil/1)
+          |> Enum.join(),
+        tool_calls: msg.tool_calls,
+        reasoning_details: msg.reasoning_details,
+        tool_name: Map.get(msg.metadata, :tool_name) || msg.name,
+        metadata: msg.metadata
       }
     }
   end
