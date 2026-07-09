@@ -639,12 +639,24 @@ defmodule EvoDashWeb.SettingsLive do
 
             resolved_atom =
               if variant_id_str != nil and variant_id_str != "" do
-                EvoGit.Config.LLMCatalog.resolve_provider_atom(
-                  provider_atom,
-                  String.to_existing_atom(variant_id_str)
-                )
+                # Whitelist variant lookup via variant_id_by_str (safe Map.get,
+                # no String.to_existing_atom on untrusted input). Falls back
+                # to the canonical provider atom for unknown/empty values.
+                variant_atom = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
+                EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom, variant_atom)
               else
                 EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom)
+              end
+
+            # The model_string from shortcut buttons is in "provider:model"
+            # format (e.g. "openai:gpt-5.5"). resolve_model_spec expects
+            # just the model id portion, so we strip the provider prefix.
+            model_name =
+              if String.contains?(model_string, ":") do
+                [_provider_prefix, name] = :binary.split(model_string, ":")
+                name
+              else
+                model_string
               end
 
             # Validate base_url requirement
@@ -659,7 +671,7 @@ defmodule EvoDashWeb.SettingsLive do
                   else: [base_url: String.trim(base_url)]
 
               {:ok,
-               EvoGit.Config.LLMCatalog.resolve_model_spec(resolved_atom, model_string, opts)}
+               EvoGit.Config.LLMCatalog.resolve_model_spec(resolved_atom, model_name, opts)}
             end
         end
 
