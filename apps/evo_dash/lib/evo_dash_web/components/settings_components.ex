@@ -111,12 +111,12 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% provider =
                   Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == @selected_provider_id)) %>
                 <% variants = provider[:variants] %>
-                <% effective_env_var =
+                <% credential_key =
                   if @selected_variant_id && is_list(variants) do
                     variant = Enum.find(variants, &(&1.id == @selected_variant_id))
-                    if variant && Map.get(variant, :env_var), do: variant.env_var, else: provider.env_var
+                    if variant && Map.get(variant, :credential_key), do: variant.credential_key, else: Map.get(provider, :credential_key)
                   else
-                    provider.env_var
+                    Map.get(provider, :credential_key)
                   end
                 %>
                 <% has_variants = is_list(variants) and length(variants) > 0 %>
@@ -305,12 +305,12 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% end %>
 
                 <%!-- API Key input --%>
-                <% key_is_set = api_key_present?(effective_env_var, @credentials) %>
+                <% key_is_set = Map.get(@credentials, credential_key) not in [nil, ""] %>
                 <form phx-submit="save_api_key" class="flex items-end gap-3 pt-6 pb-4">
-                  <input type="hidden" name="env_var" value={effective_env_var} />
+                  <input type="hidden" name="credential_key" value={credential_key} />
                   <div class="form-control flex-1">
                     <label class="label">
-                      <span class="label-text font-semibold text-sm">{effective_env_var}</span>
+                      <span class="label-text font-semibold text-sm">{credential_key}</span>
                       <%= if key_is_set do %>
                         <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
                       <% end %>
@@ -661,16 +661,7 @@ defmodule EvoDashWeb.SettingsComponents do
     """
   end
 
-  # Checks whether a specific provider's API key is already configured as a
-  # non-nil, non-empty value in the parsed credentials.toml map (obtained from
-  # EvoGit.Config.credentials/0).
-  defp api_key_present?(_env_var, credentials) do
-    case Map.get(credentials, _env_var) do
-      nil -> false
-      "" -> false
-      _ -> true
-    end
-  end
+
 
   # ── Connection test profile selector helpers ──
 

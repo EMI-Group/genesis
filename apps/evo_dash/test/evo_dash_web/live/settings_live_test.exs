@@ -821,12 +821,22 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # that the handler doesn't reject and sets status to :testing.
       alias EvoDashWeb.SettingsLive
 
+      file_config =
+        EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
+        |> put_in([:llm, :models], [%{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}])
+
       socket = %Phoenix.LiveView.Socket{
-        assigns: %{__changed__: nil, flash: %{}, remote_config: false, llm_test_status: :idle}
+        assigns: %{
+          __changed__: nil,
+          flash: %{},
+          remote_config: false,
+          llm_test_status: :idle,
+          file_config: file_config
+        }
       }
 
       assert {:noreply, result_socket} =
-               SettingsLive.handle_event("test_llm", %{}, socket)
+               SettingsLive.handle_event("test_llm", %{"profile_id" => "test_profile"}, socket)
 
       assert result_socket.assigns.llm_test_status == :testing
     end

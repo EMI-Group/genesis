@@ -156,10 +156,10 @@ defmodule EvoGit.ConfigTest do
       assert Map.has_key?(status, :missing)
     end
 
-    test "LLMCatalog.known_env_vars/0 includes the new provider env vars" do
+    test "LLMCatalog.known_credential_keys/0 includes the new provider credential keys" do
       # If config_status still used a hardcoded list, minimax_api_key and
       # openrouter_api_key would be absent. The catalog now drives the list.
-      vars = EvoGit.Config.LLMCatalog.known_env_vars()
+      vars = EvoGit.Config.LLMCatalog.known_credential_keys()
       assert "minimax_api_key" in vars
       assert "openrouter_api_key" in vars
     end
@@ -170,8 +170,8 @@ defmodule EvoGit.ConfigTest do
     # shared BEAM environment stays clean.
 
     defp reqllm_key_cleanup do
-      for var <- EvoGit.Config.LLMCatalog.known_env_vars(),
-          key_atom = EvoGit.Config.env_var_to_reqllm_key(var),
+      for var <- EvoGit.Config.LLMCatalog.known_credential_keys(),
+          key_atom = EvoGit.Config.credential_key_to_reqllm_key(var),
           not is_nil(key_atom) do
         Application.delete_env(:req_llm, key_atom)
       end
@@ -225,9 +225,9 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "LLMCatalog.known_env_vars integration" do
-    test "returns a list that is a superset of expected env vars" do
-      vars = EvoGit.Config.LLMCatalog.known_env_vars()
+  describe "LLMCatalog.known_credential_keys integration" do
+    test "returns a list that is a superset of expected credential keys" do
+      vars = EvoGit.Config.LLMCatalog.known_credential_keys()
 
       # GROQ_API_KEY appears in the credentials.toml example format but has no
       # dedicated entry in the LLMCatalog, so it is intentionally NOT asserted here.
@@ -245,7 +245,7 @@ defmodule EvoGit.ConfigTest do
       ]
 
       for e <- expected do
-        assert e in vars, "expected #{e} to be a member of known_env_vars/0"
+        assert e in vars, "expected #{e} to be a member of known_credential_keys/0"
       end
     end
   end

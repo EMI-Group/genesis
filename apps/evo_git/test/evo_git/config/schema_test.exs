@@ -71,7 +71,7 @@ defmodule EvoGit.Config.SchemaTest do
       # Tools
       assert [:tools, :search, :enabled] in paths
       assert [:tools, :search, :provider] in paths
-      assert [:tools, :search, :tavily, :api_key_env_var] in paths
+      assert [:tools, :search, :tavily, :api_key_credential_key] in paths
       assert [:tools, :search, :tavily, :base_url] in paths
       assert [:tools, :search, :tavily, :search_depth] in paths
       assert [:tools, :search, :tavily, :max_results] in paths
@@ -166,7 +166,7 @@ defmodule EvoGit.Config.SchemaTest do
       # Tools
       assert defaults.tools.search.enabled == false
       assert defaults.tools.search.provider == :tavily
-      assert defaults.tools.search.tavily.api_key_env_var == "TAVILY_API_KEY"
+      assert defaults.tools.search.tavily.api_key_credential_key == "TAVILY_API_KEY"
       assert defaults.tools.search.tavily.base_url == "https://api.tavily.com/search"
       assert defaults.tools.search.tavily.search_depth == :basic
       assert defaults.tools.search.tavily.max_results == 10

@@ -537,14 +537,14 @@ defmodule EvoGit.Config.Schema.Definitions do
           "Search service provider."
       },
       %{
-        key_path: [:tools, :search, :tavily, :api_key_env_var],
+        key_path: [:tools, :search, :tavily, :api_key_credential_key],
         type: :string,
         default: "TAVILY_API_KEY",
         validation: [],
         category: :tools,
         sub_category: nil,
         description:
-          "Environment variable name for the Tavily API key."
+          "Credential key name for the Tavily API key."
       },
       %{
         key_path: [:tools, :search, :tavily, :base_url],
