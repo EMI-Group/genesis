@@ -1,7 +1,7 @@
 # Config — Unified Configuration Resolver
 
 ## Intent
-Contains `EvoGit.Config`, the single source of truth for non-project configuration. Merges application defaults with user config (`~/.config/genesis/config.toml`), loads API keys from credentials into env vars, and provides write capability for persisting user config changes plus a diagnostic function for configuration completeness.
+Contains `EvoGit.Config`, the single source of truth for non-project configuration. Merges application defaults with user config (`~/.config/genesis/config.toml`), loads API keys from credentials into ReqLLM's key store, and provides write capability for persisting user config changes plus a diagnostic function for configuration completeness.
 
 ## API Surface
 
@@ -12,9 +12,9 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 | `resolve/1` | Returns resolved value for a specific key path (atom or list of atoms) |
 | `user_config/0` | Reads and returns parsed `config.toml`, or `%{}` if not found |
 | `save_user_config/1` | Persists a config map to `config.toml`. Creates config directory if needed. Returns `:ok` or `{:error, reason}`. |
-| `save_credentials/1` | Merges and persists API key map to `credentials.toml`. Sets env vars. Returns `:ok` or `{:error, reason}`. |
+| `save_credentials/1` | Merges and persists API key map to `credentials.toml`. Sets keys via ReqLLM.put_key for immediate in-process use. Returns `:ok` or `{:error, reason}`. |
 | `config_status/0` | Returns diagnostic map with `:missing`, `:warnings`, and `:ok?`. Checks LLM model presence and API key presence. GitHub username is **optional** — it is NOT checked here (a missing username does not affect `:ok?`, `:missing`, or `:warnings`). |
-| `credentials/0` | Reads `credentials.toml`, sets each key-value pair as an env var, returns parsed map |
+| `credentials/0` | Reads `credentials.toml`, loads each key-value pair into ReqLLM's key store via ReqLLM.put_key, returns parsed map |
 | `defaults/0` | Returns built-in application defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode) |
 | `config_path/0` | Returns the full path to `config.toml` |
 | `config_dir/0` | Returns platform-specific config directory (XDG/macos/windows) |
@@ -122,7 +122,7 @@ DEEPSEEK_API_KEY = "sk-..."
 GROQ_API_KEY = "gsk_..."
 TAVILY_API_KEY = "tvly-..."
 ```
-Keys are set as environment variables on load. Only one key needed (matching the LLM model's provider).
+Keys are loaded into ReqLLM's in-process key store on load. Only one key needed (matching the LLM model's provider).
 
 ## Constraints
 - `save_user_config/1` writes to `config.toml` and `save_credentials/1` writes to `credentials.toml`. Both create the config directory if needed.

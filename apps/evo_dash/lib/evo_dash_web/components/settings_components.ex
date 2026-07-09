@@ -661,18 +661,15 @@ defmodule EvoDashWeb.SettingsComponents do
     """
   end
 
-  # Checks whether a specific provider's API key env var is already configured —
-  # either as an OS environment variable OR as a non-nil, non-empty value in the
-  # parsed credentials.toml map (obtained from EvoGit.Config.credentials/0).
-  # This keeps the quick-setup UI consistent with EvoGit.Config.config_status/0,
-  # which treats both sources as valid.
-  defp api_key_present?(env_var, credentials) do
-    System.get_env(env_var) != nil or
-      case Map.get(credentials, env_var) do
-        nil -> false
-        "" -> false
-        _ -> true
-      end
+  # Checks whether a specific provider's API key is already configured as a
+  # non-nil, non-empty value in the parsed credentials.toml map (obtained from
+  # EvoGit.Config.credentials/0).
+  defp api_key_present?(_env_var, credentials) do
+    case Map.get(credentials, _env_var) do
+      nil -> false
+      "" -> false
+      _ -> true
+    end
   end
 
   # ── Connection test profile selector helpers ──
