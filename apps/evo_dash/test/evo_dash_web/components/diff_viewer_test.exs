@@ -412,9 +412,10 @@ defmodule EvoDashWeb.DiffViewerTest do
       assert unwrap(Map.get(result, deletion_line.line_number)) == "line2_old"
     end
 
-    test "falls back to hunk-level when file exceeds size threshold" do
-      # Create a file with more than 5000 lines to exceed the threshold.
-      big_content = Enum.map_join(1..6000, "\n", fn n -> "line#{n}" end)
+    test "falls back to hunk-level when file exceeds byte-size threshold" do
+      # Generate ~600KB of content to genuinely exceed the
+      # @max_full_file_bytes (500_000 = 500KB) byte-size threshold.
+      big_content = Enum.map_join(1..10, "\n", fn _ -> String.duplicate("x", 60_000) end)
 
       diff = """
       @@ -1,2 +1,2 @@
@@ -425,8 +426,26 @@ defmodule EvoDashWeb.DiffViewerTest do
       lines = DiffViewer.parse_diff_lines(%{diff: diff})
       result = DiffViewer.precompute_highlights(lines, nil, big_content, big_content)
 
-      # The big file exceeds @max_full_file_lines (5000), so file-level is
+      # The big file exceeds @max_full_file_bytes (500_000), so file-level is
       # skipped and hunk-level is used. With nil language the result is raw.
+      addition_line = Enum.find(lines, &(&1.type == :addition))
+      assert unwrap(Map.get(result, addition_line.line_number)) == "line2_new"
+    end
+
+    test "falls back to hunk-level for binary content (null bytes)" do
+      binary_content = "line1\n\0binary data here\nline3"
+
+      diff = """
+      @@ -1,2 +1,2 @@
+       line1
+      +line2_new
+      """
+
+      lines = DiffViewer.parse_diff_lines(%{diff: diff})
+      result = DiffViewer.precompute_highlights(lines, nil, binary_content, binary_content)
+
+      # Binary content (null byte) is detected by maybe_highlight_full/2, so
+      # file-level is skipped and hunk-level fallback is used.
       addition_line = Enum.find(lines, &(&1.type == :addition))
       assert unwrap(Map.get(result, addition_line.line_number)) == "line2_new"
     end
