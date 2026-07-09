@@ -23,7 +23,7 @@ defmodule EvoDashWeb.AgentsComponents do
 
     ~H"""
     <%= for {node, index} <- Enum.with_index(@nodes) do %>
-      <div class={["relative", @depth > 0 && "ml-3 sm:ml-6"]}>
+      <div class={["relative", @depth > 0 && "ml-2 sm:ml-4"]}>
         <!-- Tree connector lines for nested items -->
         <%= if @depth > 0 do %>
           <!-- Horizontal connector from parent trunk -->
@@ -31,9 +31,9 @@ defmodule EvoDashWeb.AgentsComponents do
         <% end %>
 
     <!-- Path and Agents Row -->
-        <div class="relative z-10 flex flex-col sm:flex-row sm:items-start gap-4 py-2">
+        <div class="relative z-10 flex flex-col sm:flex-row sm:items-start gap-3 py-1">
           <!-- Path info -->
-          <div class="flex items-center gap-2 mt-2 shrink-0" style={"width: #{@max_width}ch; max-width: 100%;"}>
+          <div class="flex items-center gap-2 mt-1 shrink-0" style={"width: #{@max_width}ch; max-width: 100%;"}>
             <.icon name="hero-folder" class="size-5 text-base-content/50 shrink-0" />
             <span class="font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
             <%= if length(node.agents) > 0 do %>
@@ -48,7 +48,7 @@ defmodule EvoDashWeb.AgentsComponents do
                 <div
                   id={"agent-card-#{agent.id}"}
                   class={[
-                    "flex flex-col gap-1 p-2.5 rounded-xl border shadow-sm transition-all cursor-pointer hover:bg-base-200/80 min-w-[120px] sm:min-w-[140px]",
+                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-all cursor-pointer hover:bg-base-200/80 min-w-[120px] sm:min-w-[140px]",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
                     @selected_id == agent.id && "ring-2 ring-primary ring-offset-1",
