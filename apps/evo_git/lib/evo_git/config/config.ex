@@ -91,7 +91,7 @@ defmodule EvoGit.Config do
       [tools.search]
       enabled = false   # Enable web search tool for agents
       # provider = "tavily"           # Search service provider
-      # tavily.api_key_env_var = "TAVILY_API_KEY"  # env var for API key
+      # tavily.api_key_credential_key = "TAVILY_API_KEY"  # credential key for API key
       # tavily.base_url = "https://api.tavily.com/search"
       # tavily.search_depth = "basic"  # "basic" | "advanced"
       # tavily.max_results = 10        # 1-50
@@ -653,7 +653,7 @@ defmodule EvoGit.Config do
   """
   @spec api_key_present?(map()) :: boolean()
   def api_key_present?(creds) do
-    providers = EvoGit.Config.LLMCatalog.known_env_vars()
+    providers = EvoGit.Config.LLMCatalog.known_credential_keys()
 
     Enum.any?(providers, fn var ->
       reqllm_key_set?(var) or cred_set?(creds, var)
@@ -661,7 +661,7 @@ defmodule EvoGit.Config do
   end
 
   defp reqllm_key_set?(var) do
-    reqllm_key = env_var_to_reqllm_key(var)
+    reqllm_key = credential_key_to_reqllm_key(var)
     not is_nil(reqllm_key) and ReqLLM.get_key(reqllm_key) != nil
   end
 
@@ -705,7 +705,7 @@ defmodule EvoGit.Config do
     Enum.each(creds, fn {key, value} ->
       if is_binary(value) and value != "" do
         # Set via ReqLLM for immediate in-process effect.
-        if key_atom = env_var_to_reqllm_key(key) do
+        if key_atom = credential_key_to_reqllm_key(key) do
           ReqLLM.put_key(key_atom, value)
         end
       end
@@ -715,23 +715,23 @@ defmodule EvoGit.Config do
   end
 
   @doc """
-  Derives a ReqLLM atom key from an environment variable name.
+  Derives a ReqLLM atom key from a credential key name.
 
   Strips the `_API_KEY` or `_api_key` suffix (handles both legacy uppercase
   and new lowercase formats), downcases, and appends `_api_key`.
-  Returns `nil` if the env var does not end with a recognized suffix.
+  Returns `nil` if the credential key does not end with a recognized suffix.
   """
-  def env_var_to_reqllm_key(env_var) when is_binary(env_var) do
-    # Derive from env var name: strip _API_KEY or _api_key suffix, downcase,
+  def credential_key_to_reqllm_key(credential_key) when is_binary(credential_key) do
+    # Derive from credential key name: strip _API_KEY or _api_key suffix, downcase,
     # append _api_key. The config file is a trusted source, so String.to_atom/1
     # is safe here.
     base =
-      case String.replace_suffix(env_var, "_API_KEY", "") do
-        result when result != env_var -> result
-        _ -> String.replace_suffix(env_var, "_api_key", "")
+      case String.replace_suffix(credential_key, "_API_KEY", "") do
+        result when result != credential_key -> result
+        _ -> String.replace_suffix(credential_key, "_api_key", "")
       end
 
-    if base != "" and base != env_var do
+    if base != "" and base != credential_key do
       String.to_atom("#{String.downcase(base)}_api_key")
     end
   end
@@ -763,7 +763,7 @@ defmodule EvoGit.Config do
     Enum.each(new_creds, fn {key, value} ->
       if is_binary(value) and value != "" do
         # Set via ReqLLM for immediate in-process effect.
-        if key_atom = env_var_to_reqllm_key(key) do
+        if key_atom = credential_key_to_reqllm_key(key) do
           ReqLLM.put_key(key_atom, value)
         end
       end
@@ -883,13 +883,13 @@ defmodule EvoGit.Config do
     case get_in(config, [:tools, :search, :enabled]) do
       true ->
         provider = get_in(config, [:tools, :search, :provider]) || :tavily
-        default_env_var =
-          get_in(config, [:tools, :search, :tavily, :api_key_env_var]) || "TAVILY_API_KEY"
+        default_credential_key =
+          get_in(config, [:tools, :search, :tavily, :api_key_credential_key]) || "TAVILY_API_KEY"
 
-        api_key_env_var =
-          get_in(config, [:tools, :search, provider, :api_key_env_var]) || default_env_var
+        api_key_credential_key =
+          get_in(config, [:tools, :search, provider, :api_key_credential_key]) || default_credential_key
 
-        reqllm_key = env_var_to_reqllm_key(api_key_env_var)
+        reqllm_key = credential_key_to_reqllm_key(api_key_credential_key)
         if is_nil(reqllm_key) do
           false
         else

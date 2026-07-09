@@ -311,7 +311,7 @@ defmodule EvoGit.CLI do
     alias EvoGit.Config.LLMCatalog
 
     IO.puts("\nSelected: #{provider.display_name}")
-    IO.puts("API key environment variable: #{provider.env_var}\n")
+    IO.puts("API key credential key: #{provider.credential_key}\n")
 
     # Step 2: Model selection
     models = provider.models
@@ -361,14 +361,14 @@ defmodule EvoGit.CLI do
     IO.puts("\nStep 3: Enter your API key.")
     IO.puts("  This will be stored in your credentials file.\n")
 
-    api_key = prompt_input("Enter #{provider.env_var}: ")
+    api_key = prompt_input("Enter #{provider.credential_key}: ")
 
     if api_key == "" do
       IO.puts("\nNo API key entered. API key can be set later in credentials.toml.")
     end
 
     # Save everything
-    save_setup_result(model_spec, provider.env_var, api_key)
+    save_setup_result(model_spec, provider.credential_key, api_key)
   end
 
   defp setup_custom_provider do
@@ -404,8 +404,8 @@ defmodule EvoGit.CLI do
           IO.puts("  Base URL: #{base_url}")
         end
 
-        env_var = String.upcase(provider) <> "_API_KEY"
-        IO.puts("  Expected API key env var: #{env_var}")
+        credential_key = String.upcase(provider) <> "_API_KEY"
+        IO.puts("  Expected API key credential key: #{credential_key}")
 
         IO.puts(
           "  (If this is incorrect, check https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html)\n"
@@ -416,14 +416,14 @@ defmodule EvoGit.CLI do
         model_spec =
           EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_id, base_url: base_url)
 
-        api_key = prompt_input("Enter #{env_var}: ")
+        api_key = prompt_input("Enter #{credential_key}: ")
 
-        save_setup_result(model_spec, env_var, api_key)
+        save_setup_result(model_spec, credential_key, api_key)
       end
     end
   end
 
-  defp save_setup_result(model_spec, env_var, api_key) do
+  defp save_setup_result(model_spec, credential_key, api_key) do
     # Save model to config.toml using the [[llm.models]] array format
     existing_config = EvoGit.Config.user_config()
 
@@ -440,14 +440,14 @@ defmodule EvoGit.CLI do
 
         # Save API key to credentials.toml if provided
         if api_key != "" do
-          case EvoGit.Config.save_credentials(%{env_var => api_key}) do
+          case EvoGit.Config.save_credentials(%{credential_key => api_key}) do
             :ok ->
-              IO.puts("  ✓ API key saved to credentials.toml: #{env_var}")
+              IO.puts("  ✓ API key saved to credentials.toml: #{credential_key}")
 
             {:error, reason} ->
               IO.puts("  ✗ Failed to save API key: #{inspect(reason)}")
               IO.puts("    You can manually add it to your credentials.toml:")
-              IO.puts("    #{env_var} = \"your-api-key\"")
+              IO.puts("    #{credential_key} = \"your-api-key\"")
           end
         end
 

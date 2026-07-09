@@ -11,7 +11,7 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
 
     test "every entry has required keys" do
-      required_keys = [:id, :display_name, :provider_atoms, :env_var, :models, :variants]
+      required_keys = [:id, :display_name, :provider_atoms, :credential_key, :models, :variants]
 
       for provider <- LLMCatalog.providers() do
         for key <- required_keys do
@@ -53,7 +53,7 @@ defmodule EvoGit.Config.LLMCatalogTest do
       assert provider != nil
       assert provider.display_name == "OpenRouter"
       assert provider.provider_atoms == [:openrouter]
-      assert provider.env_var == "openrouter_api_key"
+      assert provider.credential_key == "openrouter_api_key"
       assert provider.variants == nil
       assert provider.models == []
       assert provider.custom_model == true
@@ -69,7 +69,7 @@ defmodule EvoGit.Config.LLMCatalogTest do
 
       assert provider != nil
       assert provider.display_name == "OpenAI-Compatible API"
-      assert provider.env_var == "openai_api_key"
+      assert provider.credential_key == "openai_api_key"
       assert provider.provider_atoms == [:openai]
       assert provider.variants == nil
       assert provider.models == []
@@ -95,9 +95,9 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
   end
 
-  describe "known_env_vars/0" do
+  describe "known_credential_keys/0" do
     test "returns a list of strings" do
-      vars = LLMCatalog.known_env_vars()
+      vars = LLMCatalog.known_credential_keys()
       assert is_list(vars)
 
       for v <- vars do
@@ -106,7 +106,7 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
 
     test "includes all expected provider and variant env vars" do
-      vars = LLMCatalog.known_env_vars()
+      vars = LLMCatalog.known_credential_keys()
 
       expected = [
         "anthropic_api_key",
@@ -122,12 +122,12 @@ defmodule EvoGit.Config.LLMCatalogTest do
       ]
 
       for e <- expected do
-        assert e in vars, "expected #{e} to be in known_env_vars/0"
+        assert e in vars, "expected #{e} to be in known_credential_keys/0"
       end
     end
 
     test "returns unique values" do
-      assert LLMCatalog.known_env_vars() == Enum.uniq(LLMCatalog.known_env_vars())
+      assert LLMCatalog.known_credential_keys() == Enum.uniq(LLMCatalog.known_credential_keys())
     end
   end
 
@@ -231,21 +231,21 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
   end
 
-  describe "env_var_for_atom/1" do
+  describe "credential_key_for_atom/1" do
     test "lowercases the atom name and appends _api_key" do
-      assert LLMCatalog.env_var_for_atom(:anthropic) == "anthropic_api_key"
+      assert LLMCatalog.credential_key_for_atom(:anthropic) == "anthropic_api_key"
     end
 
     test "works with multi-word atoms" do
-      assert LLMCatalog.env_var_for_atom(:zai_coding_plan) == "zai_coding_plan_api_key"
+      assert LLMCatalog.credential_key_for_atom(:zai_coding_plan) == "zai_coding_plan_api_key"
     end
 
     test "works with aliased atoms like :alibaba_cn" do
-      assert LLMCatalog.env_var_for_atom(:alibaba_cn) == "alibaba_cn_api_key"
+      assert LLMCatalog.credential_key_for_atom(:alibaba_cn) == "alibaba_cn_api_key"
     end
 
     test "works with single-word atoms" do
-      assert LLMCatalog.env_var_for_atom(:openai) == "openai_api_key"
+      assert LLMCatalog.credential_key_for_atom(:openai) == "openai_api_key"
     end
   end
 end

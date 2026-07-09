@@ -11,14 +11,14 @@ defmodule EvoGit.Config.LLMCatalog do
           id: atom(),
           display_name: String.t(),
           provider_atom: atom(),
-          env_var: String.t()
+          credential_key: String.t()
         }
 
   @type provider_entry :: %{
           id: atom(),
           display_name: String.t(),
           provider_atoms: [atom()],
-          env_var: String.t(),
+          credential_key: String.t(),
           models: [model_entry()],
           variants: [variant_entry()] | nil,
           custom_model: boolean() | nil,
@@ -35,7 +35,7 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :anthropic,
       display_name: "Anthropic",
       provider_atoms: [:anthropic],
-      env_var: "anthropic_api_key",
+      credential_key: "anthropic_api_key",
       variants: nil,
       models: [
         %{id: "claude-opus-4-7", display_name: "Claude Opus 4.7"},
@@ -46,7 +46,7 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :openai,
       display_name: "OpenAI",
       provider_atoms: [:openai],
-      env_var: "openai_api_key",
+      credential_key: "openai_api_key",
       variants: nil,
       models: [
         %{id: "gpt-5.5", display_name: "GPT-5.5"},
@@ -57,7 +57,7 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :google,
       display_name: "Google",
       provider_atoms: [:google],
-      env_var: "google_api_key",
+      credential_key: "google_api_key",
       variants: nil,
       models: [
         %{id: "gemini-3.1-pro", display_name: "Gemini 3.1 Pro"},
@@ -68,7 +68,7 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :deepseek,
       display_name: "DeepSeek",
       provider_atoms: [:deepseek],
-      env_var: "deepseek_api_key",
+      credential_key: "deepseek_api_key",
       variants: nil,
       models: [
         %{id: "deepseek-v4-pro", display_name: "DeepSeek V4 Pro"},
@@ -79,10 +79,10 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :alibaba,
       display_name: "Alibaba Cloud (Qwen)",
       provider_atoms: [:alibaba, :alibaba_cn],
-      env_var: "alibaba_api_key",
+      credential_key: "alibaba_api_key",
       variants: [
-        %{id: :global, display_name: "Global", provider_atom: :alibaba, env_var: "alibaba_api_key"},
-        %{id: :cn, display_name: "CN", provider_atom: :alibaba_cn, env_var: "alibaba_cn_api_key"}
+        %{id: :global, display_name: "Global", provider_atom: :alibaba, credential_key: "alibaba_api_key"},
+        %{id: :cn, display_name: "CN", provider_atom: :alibaba_cn, credential_key: "alibaba_cn_api_key"}
       ],
       models: [
         %{id: "qwen-3.7-max", display_name: "Qwen 3.7 Max"},
@@ -93,10 +93,10 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :zai,
       display_name: "Z.ai (Zhipu AI)",
       provider_atoms: [:zai, :zai_coding_plan],
-      env_var: "zai_api_key",
+      credential_key: "zai_api_key",
       variants: [
-        %{id: :normal, display_name: "Normal API", provider_atom: :zai, env_var: "zai_api_key"},
-        %{id: :coding_plan, display_name: "Coding Plan", provider_atom: :zai_coding_plan, env_var: "zai_coding_plan_api_key"}
+        %{id: :normal, display_name: "Normal API", provider_atom: :zai, credential_key: "zai_api_key"},
+        %{id: :coding_plan, display_name: "Coding Plan", provider_atom: :zai_coding_plan, credential_key: "zai_coding_plan_api_key"}
       ],
       models: [
         %{id: "glm-5", display_name: "GLM-5"},
@@ -108,7 +108,7 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :minimax,
       display_name: "MiniMax",
       provider_atoms: [:minimax],
-      env_var: "minimax_api_key",
+      credential_key: "minimax_api_key",
       variants: nil,
       models: [
         %{id: "MiniMax-M2.7", display_name: "MiniMax-M2.7"},
@@ -120,7 +120,7 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :openrouter,
       display_name: "OpenRouter",
       provider_atoms: [:openrouter],
-      env_var: "openrouter_api_key",
+      credential_key: "openrouter_api_key",
       variants: nil,
       models: [],
       custom_model: true
@@ -129,7 +129,7 @@ defmodule EvoGit.Config.LLMCatalog do
       id: :openai_compatible,
       display_name: "OpenAI-Compatible API",
       provider_atoms: [:openai],
-      env_var: "openai_api_key",
+      credential_key: "openai_api_key",
       variants: nil,
       models: [],
       custom_model: true,
@@ -193,23 +193,23 @@ defmodule EvoGit.Config.LLMCatalog do
   end
 
   @doc """
-  Converts a provider atom to the expected environment variable name.
+  Converts a provider atom to the expected credential key name.
 
   Lowercases the atom name and appends `_api_key`.
 
   ## Examples
 
-      iex> LLMCatalog.env_var_for_atom(:anthropic)
+      iex> LLMCatalog.credential_key_for_atom(:anthropic)
       "anthropic_api_key"
 
-      iex> LLMCatalog.env_var_for_atom(:zai_coding_plan)
+      iex> LLMCatalog.credential_key_for_atom(:zai_coding_plan)
       "zai_coding_plan_api_key"
 
-      iex> LLMCatalog.env_var_for_atom(:alibaba_cn)
+      iex> LLMCatalog.credential_key_for_atom(:alibaba_cn)
       "alibaba_cn_api_key"
   """
-  @spec env_var_for_atom(atom()) :: String.t()
-  def env_var_for_atom(atom) when is_atom(atom) do
+  @spec credential_key_for_atom(atom()) :: String.t()
+  def credential_key_for_atom(atom) when is_atom(atom) do
     "#{String.downcase(Atom.to_string(atom))}_api_key"
   end
 
@@ -341,18 +341,18 @@ defmodule EvoGit.Config.LLMCatalog do
   end
 
   @doc """
-  Returns all unique env var names from the catalog, including both provider
-  and variant entries (since variants may use different env vars).
+  Returns all unique credential key names from the catalog, including both provider
+  and variant entries (since variants may use different credential keys).
   """
-  @spec known_env_vars() :: [String.t()]
-  def known_env_vars do
-    provider_vars = Enum.map(@providers, & &1.env_var)
+  @spec known_credential_keys() :: [String.t()]
+  def known_credential_keys do
+    provider_vars = Enum.map(@providers, & &1.credential_key)
     variant_vars =
       @providers
       |> Enum.flat_map(fn p ->
         case p[:variants] do
           nil -> []
-          variants -> Enum.map(variants, & &1.env_var)
+          variants -> Enum.map(variants, & &1.credential_key)
         end
       end)
 
