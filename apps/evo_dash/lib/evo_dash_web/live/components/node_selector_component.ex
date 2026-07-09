@@ -19,7 +19,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
   def render(assigns) do
     ~H"""
     <div id={@id}>
-      <details class="dropdown dropdown-end" id={"#{@id}-details"}>
+      <details class="dropdown dropdown-start" id={"#{@id}-details"}>
       <summary
         class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         title={gettext("Switch node")}
