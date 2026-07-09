@@ -245,7 +245,7 @@ defmodule EvoGit.Nix do
   defp do_build_dev_env do
     uri = flake_uri()
 
-    {output, exit_code} = System.cmd("nix", ["print-dev-env", uri], stderr_to_stdout: true)
+    {output, exit_code} = System.cmd("nix", ["print-dev-env", uri], stderr_to_stdout: false)
 
     if exit_code == 0 do
       path = cache_path()
