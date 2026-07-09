@@ -106,7 +106,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     # `:ets.whereis/1` guard in the production code (read_table/1 and
     # lookup_agent_state/1) is simple enough to trust by inspection.
 
-    test "returns summaries with all expected keys and plain values" do
+    test "returns summaries with all expected keys and native values" do
       meta = %SchedMeta{
         id: 1,
         depth: 0,
@@ -133,15 +133,15 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert is_nil(summary.started_at)
       assert summary.model_id == "default"
 
-      # usage is a plain map, NOT a struct
-      refute is_struct(summary.usage)
+      # usage is a native %Usage{} struct
+      assert %Usage{} = summary.usage
       assert summary.usage.input_tokens == 100
       assert summary.usage.output_tokens == 50
       assert summary.usage.total_tokens == 150
 
-      # agent_module is a string, not a module/atom
-      assert is_binary(summary.agent_module)
-      assert summary.agent_module == inspect(__MODULE__)
+      # agent_module is the raw atom, not a string
+      assert is_atom(summary.agent_module)
+      assert summary.agent_module == __MODULE__
     end
 
     test "falls back to sched_meta spec.objective when agent_state objective is nil" do
@@ -165,9 +165,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
       [summary] = RemoteAPI.list_agents()
 
-      # Still a plain map (converted from zero struct)
-      refute is_struct(summary.usage)
-      assert summary.usage == Map.from_struct(Usage.zero())
+      # Still a native %Usage{} struct
+      assert %Usage{} = summary.usage
+      assert summary.usage == Usage.zero()
     end
 
     test "handles agents registered in sched_meta but missing agent_state" do
@@ -214,7 +214,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert RemoteAPI.get_agent_history(1) == []
     end
 
-    test "returns converted message maps for an agent with a populated context" do
+    test "returns native ReqLLM.Message structs for an agent with a populated context" do
       content_part = ReqLLM.Message.ContentPart.text("hello world")
 
       message = %ReqLLM.Message{
@@ -226,31 +226,31 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       context = %ReqLLM.Context{messages: [message]}
       put_agent_state(1, agent_state(context: context))
 
-      [msg_map] = RemoteAPI.get_agent_history(1)
+      [msg] = RemoteAPI.get_agent_history(1)
 
-      assert msg_map.role == "user"
-      assert msg_map.content_summary == "hello world"
-      assert msg_map.turn == 0
-      assert is_nil(msg_map.tool_calls)
+      # The returned message is the native struct, not a converted map.
+      assert %ReqLLM.Message{} = msg
+      assert msg.role == :user
+      assert msg.content == [content_part]
+      assert msg.metadata == %{turn: 0}
+      assert is_nil(msg.tool_calls)
     end
 
-    test "joins multiple content parts into content_summary" do
-      part1 = ReqLLM.Message.ContentPart.text("part one ")
-      part2 = ReqLLM.Message.ContentPart.text("part two")
+    test "returns multiple messages as native structs" do
+      message1 = %ReqLLM.Message{role: :user, content: [ReqLLM.Message.ContentPart.text("one")]}
+      message2 = %ReqLLM.Message{role: :assistant, content: [ReqLLM.Message.ContentPart.text("two")]}
 
-      message = %ReqLLM.Message{
-        role: :assistant,
-        content: [part1, part2]
-      }
-
-      context = %ReqLLM.Context{messages: [message]}
+      context = %ReqLLM.Context{messages: [message1, message2]}
       put_agent_state(1, agent_state(context: context))
 
-      [msg_map] = RemoteAPI.get_agent_history(1)
-      assert msg_map.content_summary == "part one part two"
+      messages = RemoteAPI.get_agent_history(1)
+      assert length(messages) == 2
+
+      assert Enum.all?(messages, &match?(%ReqLLM.Message{}, &1))
+      assert Enum.map(messages, & &1.role) == [:user, :assistant]
     end
 
-    test "converts tool_calls to plain maps" do
+    test "preserves tool_calls as native structs" do
       tool_call = ReqLLM.ToolCall.new("call_1", "search", ~s({"query":"elixir"}))
 
       message = %ReqLLM.Message{
@@ -262,29 +262,14 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       context = %ReqLLM.Context{messages: [message]}
       put_agent_state(1, agent_state(context: context))
 
-      [msg_map] = RemoteAPI.get_agent_history(1)
+      [msg] = RemoteAPI.get_agent_history(1)
 
-      assert is_list(msg_map.tool_calls)
-      assert length(msg_map.tool_calls) == 1
-
-      [tc_map] = msg_map.tool_calls
-      assert tc_map.id == "call_1"
-      assert tc_map.name == "search"
-      assert tc_map.arguments == %{"query" => "elixir"}
-    end
-
-    test "handles messages without turn metadata" do
-      message = %ReqLLM.Message{
-        role: :system,
-        content: [ReqLLM.Message.ContentPart.text("system prompt")]
-      }
-
-      context = %ReqLLM.Context{messages: [message]}
-      put_agent_state(1, agent_state(context: context))
-
-      [msg_map] = RemoteAPI.get_agent_history(1)
-      assert msg_map.turn == nil
-      assert msg_map.role == "system"
+      # tool_calls are returned as native structs
+      assert [tc] = msg.tool_calls
+      assert %ReqLLM.ToolCall{} = tc
+      assert tc.id == "call_1"
+      assert tc.function.name == "search"
+      assert tc.function.arguments == ~s({"query":"elixir"})
     end
   end
 
@@ -295,17 +280,17 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert RemoteAPI.get_agent_state(999_999) == nil
     end
 
-    test "returns a plain map without :context key" do
+    test "returns a native AgentState struct with :context dropped" do
       state = agent_state(foreign_repos: [%ForeignRepo{id: "orig", root: "/tmp/orig"}])
       put_agent_state(1, state)
 
       result = RemoteAPI.get_agent_state(1)
 
-      assert is_map(result)
-      refute is_struct(result)
-      refute Map.has_key?(result, :context)
+      # A native AgentState struct (with :context set to nil)
+      assert %AgentState{} = result
+      assert is_nil(result.context)
 
-      # llm_model is a plain value
+      # Native field values
       assert result.llm_model == "test:model"
       assert result.objective == "agent state objective"
       assert result.max_retries == 15
@@ -314,29 +299,28 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert result.model_id == "default"
     end
 
-    test "converts usage to a plain map" do
+    test "returns usage as a native %Usage{} struct" do
       state = agent_state(usage: %Usage{input_tokens: 200, output_tokens: 100, total_tokens: 300})
       put_agent_state(1, state)
 
       result = RemoteAPI.get_agent_state(1)
 
-      # usage is a plain map, not a struct
-      refute is_struct(result.usage)
+      # usage is a native %Usage{} struct
+      assert %Usage{} = result.usage
       assert result.usage.input_tokens == 200
       assert result.usage.total_tokens == 300
     end
 
-    test "defaults nil usage to zero struct" do
+    test "keeps nil usage as nil" do
       state = agent_state(usage: nil)
       put_agent_state(1, state)
 
       result = RemoteAPI.get_agent_state(1)
 
-      refute is_struct(result.usage)
-      assert result.usage == Map.from_struct(Usage.zero())
+      assert is_nil(result.usage)
     end
 
-    test "converts foreign_repos structs to plain maps" do
+    test "keeps foreign_repos as native structs" do
       state = agent_state(foreign_repos: [%ForeignRepo{id: "orig", root: "/tmp/orig"}])
       put_agent_state(1, state)
 
@@ -344,21 +328,23 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
       assert is_list(result.foreign_repos)
       assert length(result.foreign_repos) == 1
-      [repo_map] = result.foreign_repos
-      refute is_struct(repo_map)
-      assert repo_map.id == "orig"
-      assert repo_map.root == "/tmp/orig"
+      [repo] = result.foreign_repos
+      # foreign_repos entries are native structs
+      assert %ForeignRepo{} = repo
+      assert repo.id == "orig"
+      assert repo.root == "/tmp/orig"
     end
 
-    test "converts llm_generation_params keyword list to a map" do
+    test "keeps llm_generation_params as a native keyword list" do
       state = agent_state(llm_generation_params: [temperature: 0.7, max_tokens: 4096])
       put_agent_state(1, state)
 
       result = RemoteAPI.get_agent_state(1)
 
-      assert is_map(result.llm_generation_params)
-      assert result.llm_generation_params.temperature == 0.7
-      assert result.llm_generation_params.max_tokens == 4096
+      # llm_generation_params is a native keyword list, not converted to a map
+      assert Keyword.keyword?(result.llm_generation_params)
+      assert result.llm_generation_params[:temperature] == 0.7
+      assert result.llm_generation_params[:max_tokens] == 4096
     end
   end
 
@@ -374,19 +360,13 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert Map.has_key?(status, :validation_errors)
     end
 
-    test "validation_errors is always a list of plain maps (not structs)" do
-      # config_status/0 calls resolve() which re-validates config and resets
-      # the validation_errors process dictionary entry. We verify that
-      # whatever config_status returns, the validation_errors are never
-      # structs (always plain maps safe for cross-node serialization).
+    test "validation_errors is a list (native structs may be present)" do
+      # get_config_status/0 returns the result of EvoGit.Config.config_status/0
+      # directly. validation_errors may contain %ValidationError{} structs,
+      # which are transferred natively via :erpc.call/5.
       status = RemoteAPI.get_config_status()
 
       assert is_list(status.validation_errors)
-
-      for error <- status.validation_errors do
-        refute is_struct(error), "expected plain map, got struct: #{inspect(error)}"
-        assert is_map(error)
-      end
     end
   end
 
