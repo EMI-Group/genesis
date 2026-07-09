@@ -330,6 +330,7 @@ jobs:
 
       - name: Install Linux system dependencies
         run: |
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
@@ -339,9 +340,11 @@ jobs:
             file \
             libxdo-dev \
             libssl-dev \
+            libssl-dev:arm64 \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libdbus-1-dev
+            libdbus-1-dev \
+            pkg-config-aarch64-linux-gnu
 
       - name: Install ARM64 cross-compiler
         run: |
@@ -411,6 +414,7 @@ jobs:
       - name: Build Tauri (Linux ARM64, cross-compile)
         env:
           PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig"
         run: |
           cd desktop/src-tauri
           cargo tauri build --target aarch64-unknown-linux-gnu --bundles rpm
