@@ -39,7 +39,10 @@ defmodule EvoGit.Config.LLMCatalog do
       variants: nil,
       models: [
         %{id: "claude-opus-4-7", display_name: "Claude Opus 4.7"},
-        %{id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6"}
+        %{id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6"},
+        %{id: "claude-fable-5", display_name: "Claude Fable 5"},
+        %{id: "claude-opus-4.8", display_name: "Claude Opus 4.8"},
+        %{id: "claude-sonnet-5", display_name: "Claude Sonnet 5"}
       ]
     },
     %{
@@ -49,6 +52,7 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "openai_api_key",
       variants: nil,
       models: [
+        %{id: "gpt-5.6", display_name: "GPT-5.6"},
         %{id: "gpt-5.5", display_name: "GPT-5.5"},
         %{id: "gpt-5.4", display_name: "GPT-5.4"}
       ]
@@ -60,6 +64,7 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "google_api_key",
       variants: nil,
       models: [
+        %{id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash"},
         %{id: "gemini-3.1-pro", display_name: "Gemini 3.1 Pro"},
         %{id: "gemini-3.1-flash", display_name: "Gemini 3.1 Flash"}
       ]
@@ -114,6 +119,17 @@ defmodule EvoGit.Config.LLMCatalog do
         %{id: "MiniMax-M2.7", display_name: "MiniMax-M2.7"},
         %{id: "MiniMax-M2.7-highspeed", display_name: "MiniMax-M2.7 Highspeed"},
         %{id: "MiniMax-M3", display_name: "MiniMax-M3"}
+      ]
+    },
+    %{
+      id: :xai,
+      display_name: "xAI",
+      provider_atoms: [:xai],
+      env_var: "xai_api_key",
+      variants: nil,
+      models: [
+        %{id: "grok-4.3", display_name: "Grok 4.3"},
+        %{id: "grok-4.5", display_name: "Grok 4.5"}
       ]
     },
     %{

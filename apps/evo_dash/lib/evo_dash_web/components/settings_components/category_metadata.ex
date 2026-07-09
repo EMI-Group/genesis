@@ -91,6 +91,7 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def api_key_prefix_hint(:alibaba), do: "sk-..."
   def api_key_prefix_hint(:zai), do: gettext("No prefix (hexadecimal)")
   def api_key_prefix_hint(:minimax), do: "sk-cp-... or sk-..."
+  def api_key_prefix_hint(:xai), do: "xai-..."
   def api_key_prefix_hint(_other), do: nil
 
   # ── Helpers shared by sidebar and search_results ──
