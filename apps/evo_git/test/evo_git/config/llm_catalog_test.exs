@@ -53,7 +53,7 @@ defmodule EvoGit.Config.LLMCatalogTest do
       assert provider != nil
       assert provider.display_name == "OpenRouter"
       assert provider.provider_atoms == [:openrouter]
-      assert provider.env_var == "OPENROUTER_API_KEY"
+      assert provider.env_var == "openrouter_api_key"
       assert provider.variants == nil
       assert provider.models == []
       assert provider.custom_model == true
@@ -69,7 +69,7 @@ defmodule EvoGit.Config.LLMCatalogTest do
 
       assert provider != nil
       assert provider.display_name == "OpenAI-Compatible API"
-      assert provider.env_var == "OPENAI_API_KEY"
+      assert provider.env_var == "openai_api_key"
       assert provider.provider_atoms == [:openai]
       assert provider.variants == nil
       assert provider.models == []
@@ -105,18 +105,20 @@ defmodule EvoGit.Config.LLMCatalogTest do
       end
     end
 
-    test "includes all expected provider env vars" do
+    test "includes all expected provider and variant env vars" do
       vars = LLMCatalog.known_env_vars()
 
       expected = [
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "GOOGLE_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "DASHSCOPE_API_KEY",
-        "ZAI_API_KEY",
-        "MINIMAX_API_KEY",
-        "OPENROUTER_API_KEY"
+        "anthropic_api_key",
+        "openai_api_key",
+        "google_api_key",
+        "deepseek_api_key",
+        "alibaba_api_key",
+        "alibaba_cn_api_key",
+        "zai_api_key",
+        "zai_coding_plan_api_key",
+        "minimax_api_key",
+        "openrouter_api_key"
       ]
 
       for e <- expected do
@@ -226,6 +228,24 @@ defmodule EvoGit.Config.LLMCatalogTest do
 
     test "returns false for an unknown provider" do
       assert LLMCatalog.requires_base_url?(:unknown_provider) == false
+    end
+  end
+
+  describe "env_var_for_atom/1" do
+    test "lowercases the atom name and appends _api_key" do
+      assert LLMCatalog.env_var_for_atom(:anthropic) == "anthropic_api_key"
+    end
+
+    test "works with multi-word atoms" do
+      assert LLMCatalog.env_var_for_atom(:zai_coding_plan) == "zai_coding_plan_api_key"
+    end
+
+    test "works with aliased atoms like :alibaba_cn" do
+      assert LLMCatalog.env_var_for_atom(:alibaba_cn) == "alibaba_cn_api_key"
+    end
+
+    test "works with single-word atoms" do
+      assert LLMCatalog.env_var_for_atom(:openai) == "openai_api_key"
     end
   end
 end
