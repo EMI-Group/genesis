@@ -27,7 +27,7 @@ permissions:
   contents: write
 
 jobs:
-  # ── Stage 1a: Build all Burrito binaries ────────────────────────────────
+  # ── Stage 1: Build all Burrito binaries ──────────────────────────────────
   #
   # Single job that builds every Burrito target sequentially on ubuntu-24.04
   # and uploads the resulting sidecar + remote binaries as workflow artifacts.
@@ -511,7 +511,7 @@ jobs:
           files: |
             remote-binaries/*
 
-  # ── Stage 2a: macOS Tauri (ARM64) ───────────────────────────────────────
+  # ── Stage 2d: macOS Tauri (ARM64) ───────────────────────────────────────
   #
   # Downloads the darwin_arm64 sidecar from Stage 1, builds the native
   # macOS .dmg / .app bundles, and uploads them to the release.
@@ -577,7 +577,7 @@ jobs:
             desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
 
-  # ── Stage 2b: Windows Tauri (x86_64) ────────────────────────────────────
+  # ── Stage 2e: Windows Tauri (x86_64) ────────────────────────────────────
   #
   # Downloads the windows_x64 sidecar from Stage 1, builds the native
   # Windows .msi / .exe installers, and uploads them to the release.
