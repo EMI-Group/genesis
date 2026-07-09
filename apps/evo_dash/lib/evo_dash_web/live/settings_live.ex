@@ -846,7 +846,7 @@ defmodule EvoDashWeb.SettingsLive do
        )}
     else
       profile_id = params["profile_id"]
-      models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+      models = get_in(socket.assigns.file_config, [:llm, :models])
 
       profile = Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == profile_id end)
 

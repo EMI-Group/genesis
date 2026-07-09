@@ -664,8 +664,8 @@ defmodule EvoDashWeb.SettingsComponents do
   # Checks whether a specific provider's API key is already configured as a
   # non-nil, non-empty value in the parsed credentials.toml map (obtained from
   # EvoGit.Config.credentials/0).
-  defp api_key_present?(_env_var, credentials) do
-    case Map.get(credentials, _env_var) do
+  defp api_key_present?(env_var, credentials) do
+    case Map.get(credentials, env_var) do
       nil -> false
       "" -> false
       _ -> true

@@ -822,7 +822,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       alias EvoDashWeb.SettingsLive
 
       socket = %Phoenix.LiveView.Socket{
-        assigns: %{__changed__: nil, flash: %{}, remote_config: false, llm_test_status: :idle}
+        assigns: %{
+          __changed__: nil,
+          flash: %{},
+          remote_config: false,
+          llm_test_status: :idle,
+          file_config: EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
+        }
       }
 
       assert {:noreply, result_socket} =
