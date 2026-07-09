@@ -27,7 +27,7 @@ defmodule EvoDashWeb.AgentsComponents do
         <!-- Tree connector lines for nested items -->
         <%= if @depth > 0 do %>
           <!-- Horizontal connector from parent trunk -->
-          <div class="absolute -left-1.5 sm:-left-3 top-6 w-3 border-t-2 border-base-content/10 z-0"></div>
+          <div class="absolute -left-1 sm:-left-2 top-6 w-2 border-t-2 border-base-content/10 z-0"></div>
         <% end %>
 
     <!-- Path and Agents Row -->
@@ -104,7 +104,7 @@ defmodule EvoDashWeb.AgentsComponents do
         <%= if length(node.children) > 0 do %>
           <div class="space-y-1 relative">
             <!-- Vertical trunk line connecting parent to all children -->
-            <div class="absolute left-[0.375rem] sm:left-[0.75rem] -top-2 bottom-6 border-l-2 border-base-content/10 z-0"></div>
+            <div class="absolute left-[0.25rem] sm:left-[0.5rem] -top-2 bottom-6 border-l-2 border-base-content/10 z-0"></div>
             <EvoDashWeb.AgentsComponents.path_tree
               nodes={node.children}
               depth={@depth + 1}
