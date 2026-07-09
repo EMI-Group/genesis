@@ -157,11 +157,11 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "LLMCatalog.known_env_vars/0 includes the new provider env vars" do
-      # If config_status still used a hardcoded list, MINIMAX_API_KEY and
-      # OPENROUTER_API_KEY would be absent. The catalog now drives the list.
+      # If config_status still used a hardcoded list, minimax_api_key and
+      # openrouter_api_key would be absent. The catalog now drives the list.
       vars = EvoGit.Config.LLMCatalog.known_env_vars()
-      assert "MINIMAX_API_KEY" in vars
-      assert "OPENROUTER_API_KEY" in vars
+      assert "minimax_api_key" in vars
+      assert "openrouter_api_key" in vars
     end
   end
 
@@ -186,23 +186,23 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "returns true when a key is present in the creds map (deepseek)" do
-      # DEEPSEEK_API_KEY is NOT set in env, but IS in the creds map.
+      # deepseek_api_key is NOT set in env, but IS in the creds map.
       Enum.each(@provider_vars, &System.delete_env/1)
 
-      creds = %{"DEEPSEEK_API_KEY" => "sk-test"}
+      creds = %{"deepseek_api_key" => "sk-test"}
       assert Config.api_key_present?(creds) == true
     end
 
     test "returns true when a key is set in the OS env (anthropic)" do
       Enum.each(@provider_vars, &System.delete_env/1)
-      System.put_env("ANTHROPIC_API_KEY", "sk-test")
+      System.put_env("anthropic_api_key", "sk-test")
 
       assert Config.api_key_present?(%{}) == true
     end
 
     test "returns true when a key is set in the OS env (deepseek)" do
       Enum.each(@provider_vars, &System.delete_env/1)
-      System.put_env("DEEPSEEK_API_KEY", "sk-test")
+      System.put_env("deepseek_api_key", "sk-test")
 
       assert Config.api_key_present?(%{}) == true
     end
@@ -210,12 +210,12 @@ defmodule EvoGit.ConfigTest do
     test "treats empty-string creds value as absent" do
       Enum.each(@provider_vars, &System.delete_env/1)
 
-      assert Config.api_key_present?(%{"DEEPSEEK_API_KEY" => ""}) == false
+      assert Config.api_key_present?(%{"deepseek_api_key" => ""}) == false
     end
 
     test "config_status/0 does not flag :api_key as missing when env var is set" do
       Enum.each(@provider_vars, &System.delete_env/1)
-      System.put_env("DEEPSEEK_API_KEY", "sk-test")
+      System.put_env("deepseek_api_key", "sk-test")
 
       status = Config.config_status()
       assert :api_key not in status.missing
@@ -231,14 +231,16 @@ defmodule EvoGit.ConfigTest do
       # GROQ_API_KEY appears in the credentials.toml example format but has no
       # dedicated entry in the LLMCatalog, so it is intentionally NOT asserted here.
       expected = [
-        "GOOGLE_API_KEY",
-        "ZAI_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "MINIMAX_API_KEY",
-        "DASHSCOPE_API_KEY",
-        "OPENROUTER_API_KEY"
+        "google_api_key",
+        "zai_api_key",
+        "deepseek_api_key",
+        "anthropic_api_key",
+        "openai_api_key",
+        "minimax_api_key",
+        "alibaba_api_key",
+        "alibaba_cn_api_key",
+        "zai_coding_plan_api_key",
+        "openrouter_api_key"
       ]
 
       for e <- expected do

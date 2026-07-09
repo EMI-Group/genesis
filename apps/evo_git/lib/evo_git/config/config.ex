@@ -714,13 +714,20 @@ defmodule EvoGit.Config do
   @doc """
   Derives a ReqLLM atom key from an environment variable name.
 
-  Strips the `_API_KEY` suffix, downcases, and appends `_api_key`.
-  Returns `nil` if the env var does not end with `_API_KEY`.
+  Strips the `_API_KEY` or `_api_key` suffix (handles both legacy uppercase
+  and new lowercase formats), downcases, and appends `_api_key`.
+  Returns `nil` if the env var does not end with a recognized suffix.
   """
   def env_var_to_reqllm_key(env_var) when is_binary(env_var) do
-    # Derive from env var name: strip _API_KEY suffix, downcase, append _api_key.
-    # The config file is a trusted source, so String.to_atom/1 is safe here.
-    base = String.replace_suffix(env_var, "_API_KEY", "")
+    # Derive from env var name: strip _API_KEY or _api_key suffix, downcase,
+    # append _api_key. The config file is a trusted source, so String.to_atom/1
+    # is safe here.
+    base =
+      case String.replace_suffix(env_var, "_API_KEY", "") do
+        result when result != env_var -> result
+        _ -> String.replace_suffix(env_var, "_api_key", "")
+      end
+
     if base != "" and base != env_var do
       String.to_atom("#{String.downcase(base)}_api_key")
     end
