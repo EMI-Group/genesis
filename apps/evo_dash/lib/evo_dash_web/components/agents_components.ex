@@ -24,7 +24,7 @@ defmodule EvoDashWeb.AgentsComponents do
     ~H"""
     <%= for {node, index} <- Enum.with_index(@nodes) do %>
       <% is_last = index == length(@nodes) - 1 %>
-      <div class={["relative", "py-1", @depth > 0 && "pl-6 sm:pl-8 lg:pl-10"]}>
+      <div class={["relative", "py-1", if(@depth > 0, do: "pl-6 sm:pl-8 lg:pl-10")]}>
         <%= if @depth > 0 do %>
           <!-- Vertical trunk line: full height for non-last children (trunk
                continues to the next sibling), partial height for the last child
@@ -33,8 +33,8 @@ defmodule EvoDashWeb.AgentsComponents do
             class={[
               "absolute top-0 border-l-2 border-base-content/10 z-0",
               "left-2 sm:left-3 lg:left-4",
-              is_last && "h-5",
-              !is_last && "bottom-0"
+              if(is_last, do: "h-5"),
+              if(!is_last, do: "bottom-0")
             ]}
           >
           </div>
