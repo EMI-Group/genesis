@@ -327,7 +327,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         {gettext("Test Connection")}
                       </button>
                     <% else %>
-                      <% profile_id_val = selected_test_profile_id(assigns) %>
+                      <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>
                       <select
                         phx-change="select_test_profile"
                         class="select select-bordered select-sm rounded-md max-w-[300px]"
@@ -649,10 +649,7 @@ defmodule EvoDashWeb.SettingsComponents do
 
   # Returns the currently selected test profile id, defaulting to the first
   # profile when @test_profile_id is nil or doesn't match any profile.
-  defp selected_test_profile_id(assigns) do
-    profiles = assigns.model_profiles
-    current = assigns.test_profile_id
-
+  defp selected_test_profile_id(profiles, current) do
     cond do
       profiles == [] ->
         nil
