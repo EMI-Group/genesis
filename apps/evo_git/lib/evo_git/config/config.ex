@@ -621,10 +621,10 @@ defmodule EvoGit.Config do
 
         not has_model
       end},
-      {:api_key, "No API key found. Add keys to credentials.toml or set environment variables.", fn ->
+      {:api_key, "No API key found. Add keys to credentials.toml or configure via the settings page.", fn ->
         not api_key_present?(credentials())
       end},
-      {:search_api_key, "Web search is enabled but the API key environment variable is not set.", fn ->
+      {:search_api_key, "Web search is enabled but the API key is not configured.", fn ->
         # Use get_in_path (safe accessor) instead of get_in: if a user wrote
         # `tools = "string"` instead of a [tools] table, get_in would crash
         # because strings don't implement Access.
@@ -647,20 +647,23 @@ defmodule EvoGit.Config do
   @doc """
   Returns `true` if any known provider API key is present.
 
-  A key counts as "present" if it is set as a non-nil environment variable OR
-  present as a non-nil, non-empty-string value in the given `creds` map
-  (parsed from `credentials.toml`, which uses string keys).
+  A key counts as "present" if it is stored in ReqLLM's key store via
+  `ReqLLM.put_key/2` OR present as a non-nil, non-empty-string value in
+  the given `creds` map (parsed from `credentials.toml`, which uses string keys).
   """
   @spec api_key_present?(map()) :: boolean()
   def api_key_present?(creds) do
     providers = EvoGit.Config.LLMCatalog.known_env_vars()
 
     Enum.any?(providers, fn var ->
-      env_set?(var) or cred_set?(creds, var)
+      reqllm_key_set?(var) or cred_set?(creds, var)
     end)
   end
 
-  defp env_set?(var), do: System.get_env(var) != nil
+  defp reqllm_key_set?(var) do
+    reqllm_key = env_var_to_reqllm_key(var)
+    not is_nil(reqllm_key) and ReqLLM.get_key(reqllm_key) != nil
+  end
 
   defp cred_set?(creds, var) do
     case Map.get(creds, var) do
@@ -870,8 +873,8 @@ defmodule EvoGit.Config do
   @doc """
   Returns whether the web search tool is enabled and fully configured.
 
-  Checks both the config flag AND that the required API key environment
-  variable is actually set. Both must be true for search to work.
+  Checks both the config flag AND that the required API key is configured
+  via ReqLLM. Both must be true for search to work.
   """
   @spec tools_search_enabled?() :: boolean()
   def tools_search_enabled? do

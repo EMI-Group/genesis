@@ -166,61 +166,62 @@ defmodule EvoGit.ConfigTest do
   end
 
   describe "api_key_present?/1" do
-    # The set of env vars consulted; we restore each one after the test so the
+    # The set of ReqLLM atoms consulted; we clean up after each test so the
     # shared BEAM environment stays clean.
-    @provider_vars EvoGit.Config.LLMCatalog.known_env_vars()
+
+    defp reqllm_key_cleanup do
+      for var <- EvoGit.Config.LLMCatalog.known_env_vars(),
+          key_atom = EvoGit.Config.env_var_to_reqllm_key(var),
+          not is_nil(key_atom) do
+        Application.delete_env(:req_llm, key_atom)
+      end
+    end
 
     setup do
-      on_exit(fn ->
-        Enum.each(@provider_vars, &System.delete_env/1)
-      end)
+      on_exit(&reqllm_key_cleanup/0)
 
       :ok
     end
 
-    test "returns false when no key is in env or creds" do
-      # Ensure no provider env vars are set.
-      Enum.each(@provider_vars, &System.delete_env/1)
+    test "returns false when no key is in ReqLLM store or creds" do
+      reqllm_key_cleanup()
 
       assert Config.api_key_present?(%{}) == false
     end
 
     test "returns true when a key is present in the creds map (deepseek)" do
-      # deepseek_api_key is NOT set in env, but IS in the creds map.
-      Enum.each(@provider_vars, &System.delete_env/1)
+      reqllm_key_cleanup()
 
       creds = %{"deepseek_api_key" => "sk-test"}
       assert Config.api_key_present?(creds) == true
     end
 
-    test "returns true when a key is set in the OS env (anthropic)" do
-      Enum.each(@provider_vars, &System.delete_env/1)
-      System.put_env("anthropic_api_key", "sk-test")
+    test "returns true when a key is stored via ReqLLM.put_key (anthropic)" do
+      reqllm_key_cleanup()
+      ReqLLM.put_key(:anthropic_api_key, "sk-test")
 
       assert Config.api_key_present?(%{}) == true
     end
 
-    test "returns true when a key is set in the OS env (deepseek)" do
-      Enum.each(@provider_vars, &System.delete_env/1)
-      System.put_env("deepseek_api_key", "sk-test")
+    test "returns true when a key is stored via ReqLLM.put_key (deepseek)" do
+      reqllm_key_cleanup()
+      ReqLLM.put_key(:deepseek_api_key, "sk-test")
 
       assert Config.api_key_present?(%{}) == true
     end
 
     test "treats empty-string creds value as absent" do
-      Enum.each(@provider_vars, &System.delete_env/1)
+      reqllm_key_cleanup()
 
       assert Config.api_key_present?(%{"deepseek_api_key" => ""}) == false
     end
 
-    test "config_status/0 does not flag :api_key as missing when env var is set" do
-      Enum.each(@provider_vars, &System.delete_env/1)
-      System.put_env("deepseek_api_key", "sk-test")
+    test "config_status/0 does not flag :api_key as missing when key is in ReqLLM store" do
+      reqllm_key_cleanup()
+      ReqLLM.put_key(:deepseek_api_key, "sk-test")
 
       status = Config.config_status()
       assert :api_key not in status.missing
-    after
-      Enum.each(@provider_vars, &System.delete_env/1)
     end
   end
 
