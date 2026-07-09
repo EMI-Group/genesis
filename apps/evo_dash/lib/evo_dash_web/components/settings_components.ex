@@ -306,15 +306,15 @@ defmodule EvoDashWeb.SettingsComponents do
 
                 <%!-- API Key input --%>
                 <% key_is_set = Map.get(@credentials, credential_key) not in [nil, ""] %>
-                <form phx-submit="save_api_key" class="flex items-end gap-3 pt-6 pb-4">
+                <form phx-submit="save_api_key" class="pt-6 pb-4">
                   <input type="hidden" name="credential_key" value={credential_key} />
-                  <div class="form-control flex-1">
-                    <label class="label">
-                      <span class="label-text font-semibold text-sm">{credential_key}</span>
-                      <%= if key_is_set do %>
-                        <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
-                      <% end %>
-                    </label>
+                  <label class="label">
+                    <span class="label-text font-semibold text-sm">{credential_key}</span>
+                    <%= if key_is_set do %>
+                      <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
+                    <% end %>
+                  </label>
+                  <div class="flex items-stretch gap-3">
                     <input
                       type="password"
                       name="api_key"
@@ -324,28 +324,28 @@ defmodule EvoDashWeb.SettingsComponents do
                           else: api_key_prefix_hint(provider.id) || gettext("Enter your API key")
                       }
                       class={[
-                        "input input-bordered w-full rounded-xl shadow-sm bg-base-50 mt-2",
+                        "input input-bordered flex-1 rounded-xl shadow-sm bg-base-50",
                         key_is_set && "input-success"
                       ]}
                     />
-                    <%= if key_is_set do %>
-                      <p class="text-[11px] text-success/70 mt-1.5 font-medium">
-                        ✓ {gettext("Your API key is configured and ready to use.")}
-                      </p>
-                    <% else %>
-                      <p class="text-[11px] text-base-content/70 mt-1.5">
-                        <%= if prefix = api_key_prefix_hint(provider.id) do %>
-                          {gettext("Enter your API key. It should start with")}
-                          <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]">{prefix}</code>
-                        <% else %>
-                          {gettext("Enter your API key.")}
-                        <% end %>
-                      </p>
-                    <% end %>
+                    <button type="submit" class="btn btn-primary btn-sm rounded-xl">
+                      {gettext("Save Key")}
+                    </button>
                   </div>
-                  <button type="submit" class="btn btn-primary btn-sm rounded-xl">
-                    {gettext("Save Key")}
-                  </button>
+                  <%= if key_is_set do %>
+                    <p class="text-[11px] text-success/70 mt-1.5 font-medium">
+                      ✓ {gettext("Your API key is configured and ready to use.")}
+                    </p>
+                  <% else %>
+                    <p class="text-[11px] text-base-content/70 mt-1.5">
+                      <%= if prefix = api_key_prefix_hint(provider.id) do %>
+                        {gettext("Enter your API key. It should start with")}
+                        <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]">{prefix}</code>
+                      <% else %>
+                        {gettext("Enter your API key.")}
+                      <% end %>
+                    </p>
+                  <% end %>
                 </form>
               <% end %>
             </div>
