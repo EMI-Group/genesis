@@ -111,6 +111,14 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% provider =
                   Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == @selected_provider_id)) %>
                 <% variants = provider[:variants] %>
+                <% effective_env_var =
+                  if @selected_variant_id && is_list(variants) do
+                    variant = Enum.find(variants, &(&1.id == @selected_variant_id))
+                    if variant && Map.get(variant, :env_var), do: variant.env_var, else: provider.env_var
+                  else
+                    provider.env_var
+                  end
+                %>
                 <% has_variants = is_list(variants) and length(variants) > 0 %>
                 <% show_models = not has_variants or @selected_variant_id != nil %>
                 <% current_model = get_in(@file_config, [:llm, :model]) %>
@@ -144,34 +152,74 @@ defmodule EvoDashWeb.SettingsComponents do
 
                 <%!-- Model shortcuts (show only if no variants needed, or variant selected, and not a custom-model provider) --%>
                 <%= if show_model_buttons do %>
-                  <div class="mb-5">
-                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
-                      {gettext("Quick-select a model:")}
-                    </p>
-                    <div class="flex flex-wrap gap-2">
-                      <%= for model <- @selected_provider_models do %>
-                        <% resolved_atom =
-                          EvoGit.Config.LLMCatalog.resolve_provider_atom(
-                            @selected_provider_id,
-                            @selected_variant_id
-                          ) %>
-                        <% model_string = "#{resolved_atom}:#{model.id}" %>
-                        <button
-                          type="button"
-                          phx-click="select_llm_model_shortcut"
-                          phx-value-model_string={model_string}
-                          class={[
-                            "btn btn-sm rounded-xl font-medium transition-all duration-200",
-                            current_model == model_string && "btn-primary shadow-md",
-                            current_model != model_string &&
-                              "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
-                          ]}
-                        >
-                          {model.display_name}
-                        </button>
-                      <% end %>
+                  <form phx-submit="save_quick_setup" class="mb-5 space-y-4">
+                    <input type="hidden" name="provider_id" value={@selected_provider_id} />
+                    <input type="hidden" name="variant_id" value={@selected_variant_id || ""} />
+                    <div>
+                      <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
+                        {gettext("Quick-select a model:")}
+                      </p>
+                      <div class="flex flex-wrap gap-2">
+                        <%= for model <- @selected_provider_models do %>
+                          <% resolved_atom =
+                            EvoGit.Config.LLMCatalog.resolve_provider_atom(
+                              @selected_provider_id,
+                              @selected_variant_id
+                            ) %>
+                          <% model_string = "#{resolved_atom}:#{model.id}" %>
+                          <button
+                            type="submit"
+                            name="model_string"
+                            value={model_string}
+                            class={[
+                              "btn btn-sm rounded-xl font-medium transition-all duration-200",
+                              current_model == model_string && "btn-primary shadow-md",
+                              current_model != model_string &&
+                                "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                            ]}
+                          >
+                            {model.display_name}
+                          </button>
+                        <% end %>
+                      </div>
                     </div>
-                  </div>
+
+                    <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
+                    <% shortcut_prefill_base_url =
+                      if is_map(current_model) do
+                        to_string(current_model[:base_url] || current_model["base_url"] || "")
+                      else
+                        ""
+                      end %>
+                    <div class="form-control">
+                      <label class="label">
+                        <span class="label-text font-bold text-sm mb-2 block">
+                          {gettext("Base URL")}
+                          <%= if requires_base_url do %>
+                            <span class="text-error">*</span>
+                          <% end %>
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        name="base_url"
+                        value={shortcut_prefill_base_url}
+                        placeholder="https://..."
+                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
+                      />
+                      <p class="text-xs text-base-content/70 leading-relaxed mt-1">
+                        <%= if requires_base_url do %>
+                          <%!-- zh_CN: provider → "服务商" --%>{gettext(
+                            "Required for OpenAI-compatible providers."
+                          )}
+                        <% else %>
+                          <%!-- zh_CN: provider → "服务商" --%>{gettext(
+                            "Leave empty to use the default provider endpoint."
+                          )}
+                        <% end %>
+                      </p>
+                    </div>
+                  </form>
                 <% end %>
 
                 <%!-- Custom model input (for providers with custom_model: true, e.g. OpenRouter / OpenAI-Compatible) --%>
@@ -226,9 +274,15 @@ defmodule EvoDashWeb.SettingsComponents do
                         class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
                       />
                       <p class="text-xs text-base-content/70 leading-relaxed mt-1">
-                        <%!-- zh_CN: provider → "服务商" --%>{gettext(
-                          "For proxy/aggregator endpoints. Leave empty for standard provider endpoints."
-                        )}
+                        <%= if requires_base_url do %>
+                          <%!-- zh_CN: provider → "服务商" --%>{gettext(
+                            "For proxy/aggregator endpoints. Leave empty for standard provider endpoints."
+                          )}
+                        <% else %>
+                          <%!-- zh_CN: provider → "服务商" --%>{gettext(
+                            "Leave empty to use the default value."
+                          )}
+                        <% end %>
                       </p>
                     </div>
                     <%= if requires_base_url do %>
@@ -251,12 +305,12 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% end %>
 
                 <%!-- API Key input --%>
-                <% key_is_set = api_key_present?(provider.env_var, @credentials) %>
+                <% key_is_set = api_key_present?(effective_env_var, @credentials) %>
                 <form phx-submit="save_api_key" class="flex items-end gap-3 pt-6 pb-4">
-                  <input type="hidden" name="env_var" value={provider.env_var} />
+                  <input type="hidden" name="env_var" value={effective_env_var} />
                   <div class="form-control flex-1">
                     <label class="label">
-                      <span class="label-text font-semibold text-sm">{provider.env_var}</span>
+                      <span class="label-text font-semibold text-sm">{effective_env_var}</span>
                       <%= if key_is_set do %>
                         <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
                       <% end %>
@@ -289,7 +343,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       </p>
                     <% end %>
                   </div>
-                  <button type="submit" class="btn btn-primary btn-sm rounded-xl mt-2">
+                  <button type="submit" class="btn btn-primary btn-sm rounded-xl">
                     {gettext("Save Key")}
                   </button>
                 </form>

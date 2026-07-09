@@ -611,6 +611,75 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
+  @impl true
+  def handle_event("save_quick_setup", params, socket) do
+    if socket.assigns.remote_config do
+      {:noreply,
+       put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
+    else
+      model_string = params["model_string"]
+      base_url = params["base_url"]
+      provider_id_str = params["provider_id"]
+      variant_id_str = params["variant_id"]
+
+      provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
+
+      result =
+        cond do
+          is_nil(provider) ->
+            {:error, gettext("Unknown provider.")}
+
+          String.trim(model_string || "") == "" ->
+            {:error, gettext("Model name cannot be empty.")}
+
+          true ->
+            # Resolve the canonical provider atom. Start from hd(provider_atoms)
+            # then apply variant resolution if a variant was selected.
+            provider_atom = hd(provider.provider_atoms)
+
+            resolved_atom =
+              if variant_id_str != nil and variant_id_str != "" do
+                EvoGit.Config.LLMCatalog.resolve_provider_atom(
+                  provider_atom,
+                  String.to_existing_atom(variant_id_str)
+                )
+              else
+                EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom)
+              end
+
+            # Validate base_url requirement
+            requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
+
+            if requires_base_url and String.trim(base_url || "") == "" do
+              {:error, gettext("Base URL cannot be empty.")}
+            else
+              opts =
+                if String.trim(base_url || "") == "",
+                  do: [],
+                  else: [base_url: String.trim(base_url)]
+
+              {:ok,
+               EvoGit.Config.LLMCatalog.resolve_model_spec(resolved_atom, model_string, opts)}
+            end
+        end
+
+      case result do
+        {:error, msg} ->
+          {:noreply, put_flash(socket, :error, msg)}
+
+        {:ok, model_value} ->
+          # Add a new model profile using the selected model, and mirror it to the
+          # flat [:llm, :model] for backward compatibility.
+          file_config =
+            socket.assigns.file_config
+            |> ModelProfileHelpers.add_model_profile(model_value)
+            |> ModelProfileHelpers.mirror_default_model()
+
+          persist_file_config(file_config, socket, gettext("Model selected and saved."))
+      end
+    end
+  end
+
   # ───────────────────────────────────────────────────────────────────────────
   # Model Profiles editor events
   # ───────────────────────────────────────────────────────────────────────────
