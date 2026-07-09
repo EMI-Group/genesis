@@ -314,14 +314,13 @@ jobs:
           path: burrito_out/genesis_remote_windows_x64.exe
           retention-days: 1
 
-  # ── Stage 1b: Linux Tauri bundles ───────────────────────────────────────
+  # ── Stage 2a: Linux Tauri (x86_64, native) ──────────────────────────────
   #
-  # Downloads the linux_x64 and linux_arm64 sidecars from Stage 1a, builds
-  # native (x86_64) and cross-compiled (ARM64) Tauri installers, and uploads
-  # everything — Tauri bundles, tarball, and ALL genesis_remote binaries —
-  # to the GitHub release in one shot.
-  build-tauri-linux:
-    name: Tauri Linux (x64 + ARM64 cross)
+  # Downloads the linux_x64 sidecar from Stage 1, builds native x86_64
+  # Tauri installers (.rpm, .AppImage) plus a portable tarball, and uploads
+  # them to the GitHub release.
+  build-tauri-linux-x64:
+    name: Tauri Linux (x86_64)
     needs: build-burrito-all
     runs-on: ubuntu-24.04
     steps:
@@ -330,41 +329,29 @@ jobs:
 
       - name: Install Linux system dependencies
         run: |
-          sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
             curl \
             file \
             libayatana-appindicator3-dev \
-            libayatana-appindicator3-dev:arm64 \
             libdbus-1-dev \
-            libdbus-1-dev:arm64 \
             librsvg2-dev \
-            librsvg2-dev:arm64 \
             libssl-dev \
-            libssl-dev:arm64 \
             libwebkit2gtk-4.1-dev \
-            libwebkit2gtk-4.1-dev:arm64 \
             libxdo-dev \
-            libxdo-dev:arm64 \
-            pkg-config-aarch64-linux-gnu \
             wget
-
-      - name: Install ARM64 cross-compiler
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+          targets: x86_64-unknown-linux-gnu
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
-          key: linux-tauri
+          key: linux-tauri-x64
 
       - name: Cache Tauri CLI binary
         id: cache-tauri-cli
@@ -379,52 +366,27 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall tauri-cli --version "^2.0" --no-confirm
 
-      # ── Download sidecar artifacts ──────────────────────────────────────
       - name: Download linux_x64 sidecar
         uses: actions/download-artifact@v4
         with:
           name: sidecar-linux_x64
           path: sidecars/
 
-      - name: Download linux_arm64 sidecar
-        uses: actions/download-artifact@v4
-        with:
-          name: sidecar-linux_arm64
-          path: sidecars/
-
-      # ── Place sidecar binaries ──────────────────────────────────────────
-      - name: Place sidecar binaries
+      - name: Place sidecar binary
         run: |
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "${SIDECAR_DIR}"
-
-          # Linux x86_64
           cp sidecars/genesis_desktop_linux_x64 "${SIDECAR_DIR}/genesis-backend-x86_64-unknown-linux-gnu"
           chmod +x "${SIDECAR_DIR}/genesis-backend-x86_64-unknown-linux-gnu"
 
-          # Linux ARM64
-          cp sidecars/genesis_desktop_linux_arm64 "${SIDECAR_DIR}/genesis-backend-aarch64-unknown-linux-gnu"
-          chmod +x "${SIDECAR_DIR}/genesis-backend-aarch64-unknown-linux-gnu"
-
-          echo "Sidecar binaries:"
+          echo "Sidecar binary:"
           ls -la "${SIDECAR_DIR}/"
 
-      # ── Build Tauri (Linux x86_64, native) ──────────────────────────────
-      - name: Build Tauri (Linux x86_64)
+      - name: Build Tauri app
         run: |
           cd desktop/src-tauri
           cargo tauri build --target x86_64-unknown-linux-gnu --bundles rpm,appimage
 
-      # ── Build Tauri (Linux ARM64, cross-compile) ────────────────────────
-      - name: Build Tauri (Linux ARM64, cross-compile)
-        env:
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig"
-        run: |
-          cd desktop/src-tauri
-          cargo tauri build --target aarch64-unknown-linux-gnu --bundles rpm
-
-      # ── Create tarball (portable Linux x86_64 archive) ───────────────────
       - name: Create tarball
         run: |
           cd desktop/src-tauri/target/x86_64-unknown-linux-gnu/release
@@ -432,24 +394,6 @@ jobs:
           echo "Tarball created:"
           ls -la /tmp/genesis-desktop-*.tar.gz
 
-      # ── Download all genesis_remote artifacts for release upload ─────────
-      - name: Download all genesis_remote binaries
-        uses: actions/download-artifact@v4
-        with:
-          pattern: remote-*
-          path: remote-binaries/
-          merge-multiple: true
-
-      - name: List release assets
-        run: |
-          echo "=== Tauri bundles ==="
-          find desktop/src-tauri/target -type f \( -name "*.rpm" -o -name "*.AppImage" \) 2>/dev/null || true
-          echo "=== Tarball ==="
-          ls -la /tmp/genesis-desktop-*.tar.gz 2>/dev/null || true
-          echo "=== Remote binaries ==="
-          ls -la remote-binaries/ 2>/dev/null || true
-
-      # ── Upload everything to GitHub release ─────────────────────────────
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v3
         with:
@@ -457,8 +401,114 @@ jobs:
           files: |
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-            desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
             /tmp/genesis-desktop-*.tar.gz
+
+  # ── Stage 2b: Linux Tauri (ARM64, native) ───────────────────────────────
+  #
+  # Downloads the linux_arm64 sidecar from Stage 1, builds native ARM64
+  # Tauri .rpm installer, and uploads it to the GitHub release.
+  # AppImage is excluded — appimagetool is x86_64-only.
+  build-tauri-linux-arm64:
+    name: Tauri Linux (ARM64)
+    needs: build-burrito-all
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            libdbus-1-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            wget
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: linux-tauri-arm64
+
+      - name: Cache Tauri CLI binary
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-Linux-ARM64-v2
+
+      - name: Install Tauri CLI
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall tauri-cli --version "^2.0" --no-confirm
+
+      - name: Download linux_arm64 sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecar-linux_arm64
+          path: sidecars/
+
+      - name: Place sidecar binary
+        run: |
+          SIDECAR_DIR="desktop/src-tauri/sidecars"
+          mkdir -p "${SIDECAR_DIR}"
+          cp sidecars/genesis_desktop_linux_arm64 "${SIDECAR_DIR}/genesis-backend-aarch64-unknown-linux-gnu"
+          chmod +x "${SIDECAR_DIR}/genesis-backend-aarch64-unknown-linux-gnu"
+
+          echo "Sidecar binary:"
+          ls -la "${SIDECAR_DIR}/"
+
+      - name: Build Tauri app
+        run: |
+          cd desktop/src-tauri
+          cargo tauri build --target aarch64-unknown-linux-gnu --bundles rpm
+
+      - name: Upload to GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          files: |
+            desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
+
+  # ── Stage 2c: Upload genesis_remote binaries ────────────────────────────
+  #
+  # Collects all genesis_remote binaries from Stage 1 and uploads them to
+  # the GitHub release as standalone assets.
+  upload-remote-binaries:
+    name: Upload Remote Binaries
+    needs: build-burrito-all
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all genesis_remote binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: remote-*
+          path: remote-binaries/
+          merge-multiple: true
+
+      - name: List remote binaries
+        run: |
+          echo "=== Remote binaries ==="
+          ls -la remote-binaries/ 2>/dev/null || true
+
+      - name: Upload to GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          files: |
             remote-binaries/*
 
   # ── Stage 2a: macOS Tauri (ARM64) ───────────────────────────────────────
