@@ -783,11 +783,11 @@ defmodule EvoDashWeb.AgentsLive do
   # on a remote node it routes through :erpc.call/5, which transfers native
   # Elixir terms (atoms, structs) directly — no serialization boundary.
   #
-  # The RPC summaries provide a subset of the fields the rendering code expects;
-  # the missing secondary fields (repo_root, context_path, current_commit,
-  # base_commit, worktree, retries, task_id, task_number, pending_sub_agents,
-  # sub_agent_results, task_ref, result_sent) are set to nil/defaults because
-  # they are not exposed by the RemoteAPI summary layer.
+  # The RPC summaries provide the fields the rendering code expects, including
+  # the agent metadata fields (repo_root, context_path, current_commit,
+  # base_commit, worktree, task_id, task_number, retries) which are now exposed
+  # by the RemoteAPI summary layer. Fields not in the summary are read via
+  # bracket access (summary[:field]) so they default to nil gracefully.
   defp load_agents(node) do
     summaries = EvoDash.NodeContext.list_agents(node)
     compression_threshold = safe_compression_threshold(node)
@@ -806,19 +806,19 @@ defmodule EvoDashWeb.AgentsLive do
         id: summary[:id],
         task_local_id: summary[:task_local_id],
         repo_id: summary[:repo_id] || "primary",
-        repo_root: nil,
-        task_id: nil,
-        task_number: nil,
+        repo_root: summary[:repo_root],
+        task_id: summary[:task_id],
+        task_number: summary[:task_number],
         status: summary[:status] || :pending,
         depth: summary[:depth] || 0,
         parent_id: summary[:parent_id],
-        worktree: nil,
-        retries: 0,
+        worktree: summary[:worktree],
+        retries: summary[:retries] || 0,
         agent_module: parse_agent_module(summary[:agent_module]),
         objective: summary[:objective] || "",
-        context_path: nil,
-        current_commit: nil,
-        base_commit: nil,
+        context_path: summary[:context_path],
+        current_commit: summary[:current_commit],
+        base_commit: summary[:base_commit],
         # children/has_children are computed after the full list is built
         children: [],
         has_children: false,
