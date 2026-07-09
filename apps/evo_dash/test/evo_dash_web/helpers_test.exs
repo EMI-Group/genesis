@@ -138,8 +138,16 @@ defmodule EvoDashWeb.HelpersTest do
       assert format_module_name(EvoGit.Agent.Spatial) == "Spatial"
     end
 
-    test "falls back to Unknown for non-atom input" do
-      assert format_module_name("not-a-module") == "Unknown"
+    test "extracts last segment from binary module name" do
+      assert format_module_name("EvoGit.Agents.Manager") == "Manager"
+    end
+
+    test "handles single-segment binary module name" do
+      assert format_module_name("Manager") == "Manager"
+    end
+
+    test "falls back to Unknown for non-module input" do
+      assert format_module_name(123) == "Unknown"
     end
   end
 

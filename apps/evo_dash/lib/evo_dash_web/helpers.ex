@@ -320,6 +320,12 @@ defmodule EvoDashWeb.Helpers do
     |> List.last()
   end
 
+  def format_module_name(module) when is_binary(module) do
+    module
+    |> String.split(".")
+    |> List.last()
+  end
+
   def format_module_name(_), do: gettext("Unknown")
 
   @doc """
