@@ -85,7 +85,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
   end
 
   describe "LLM quick setup API key detection (credentials.toml + env)" do
-    @deepseek_var "DEEPSEEK_API_KEY"
+    @deepseek_var "deepseek_api_key"
 
     # The credentials.toml file is written under the test's isolated XDG dir
     # (see the file-level `setup` block), so EvoGit.Config.credentials_path/0
@@ -94,7 +94,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     defp creds_file, do: EvoGit.Config.credentials_path()
 
     test "Case A — key present in credentials.toml only", %{conn: conn} do
-      # Ensure DEEPSEEK_API_KEY is NOT set in the OS environment.
+      # Ensure deepseek_api_key is NOT set in the OS environment.
       original = System.get_env(@deepseek_var)
       System.delete_env(@deepseek_var)
 
@@ -102,7 +102,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # key=value TOML; string keys map directly into the parsed map.
       creds = creds_file()
       File.mkdir_p!(Path.dirname(creds))
-      File.write!(creds, ~s(DEEPSEEK_API_KEY = "sk-test-12345"\n))
+      File.write!(creds, ~s(deepseek_api_key = "sk-test-12345"\n))
 
       on_exit(fn ->
         if original do
@@ -148,7 +148,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "Case C — key absent from both env and credentials.toml", %{conn: conn} do
-      # Ensure DEEPSEEK_API_KEY is NOT set in the OS environment.
+      # Ensure deepseek_api_key is NOT set in the OS environment.
       original = System.get_env(@deepseek_var)
       System.delete_env(@deepseek_var)
 
