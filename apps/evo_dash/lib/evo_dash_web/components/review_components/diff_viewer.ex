@@ -344,7 +344,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # the @@ header line numbers to index into the full-file highlight arrays.
   #
   # FALLBACK (hunk-level): When full content is unavailable (added/deleted
-  # files where content fetch failed, or files exceeding the size threshold),
+  # files where content fetch failed, or binary/oversized files),
   # we fall back to the original approach: reconstruct clean old/new code
   # strings from each hunk and call Lumis once per hunk code block.
   #
@@ -357,11 +357,11 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   #     per hunk (fallback), so the cost is amortized. Falling back to raw
   #     un-highlighted code is the correct graceful degradation.
 
-  # Full files larger than this many lines fall back to hunk-level highlighting.
-  # 5000 lines keeps the single Lumis call fast (< ~200ms) while covering the
-  # vast majority of real source files. Generated/minified files exceeding this
-  # are poor candidates for Tree-sitter highlighting anyway.
-  @max_full_file_lines 5000
+  # Text files larger than this byte size fall back to hunk-level highlighting
+  # to avoid performance issues. 500KB covers the vast majority of real source
+  # files; generated/minified files exceeding this are poor candidates for
+  # Tree-sitter highlighting anyway.
+  @max_full_file_bytes 500_000
 
   @doc false
   def precompute_highlights(lines, language, full_new_content, full_old_content) do
@@ -375,20 +375,23 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     end
   end
 
-  # Highlight the full file content if it is present and under the size
-  # threshold. Returns nil (treat as unavailable) otherwise.
+  # Highlight the full file content if it is present, is not binary, and is
+  # under the byte-size threshold. Returns nil (treat as unavailable) otherwise.
   defp maybe_highlight_full(nil, _language), do: nil
 
   defp maybe_highlight_full(content, language) do
-    if line_count(content) <= @max_full_file_lines do
-      highlight_code_block(content, language)
-    else
-      nil
+    cond do
+      binary_content?(content) -> nil
+      byte_size(content) >= @max_full_file_bytes -> nil
+      true -> highlight_code_block(content, language)
     end
   end
 
-  defp line_count(content) do
-    content |> String.split("\n") |> length()
+  # Detect binary content by checking for null bytes in the first 8KB —
+  # mirrors git's own binary detection heuristic.
+  defp binary_content?(content) do
+    chunk = binary_part(content, 0, min(byte_size(content), 8192))
+    :binary.match(chunk, <<0>>) != :nomatch
   end
 
   # --- File-level mapping -------------------------------------------------
@@ -605,95 +608,53 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # line. Tree-sitter/Lumis produces multi-line spans (for multi-line strings,
   # block comments, etc.) whose \n falls *inside* a <span>. A naive
   # String.split("\n") would split those spans into orphaned fragments. Instead
-  # we walk the HTML, tracking a stack of open spans: at each \n we close all
-  # open spans (LIFO) on the current line, then reopen them (FIFO) on the next.
+  # we split by newline (binary, fast), then for each line track span
+  # open/close tags via Regex.scan and rebalance: reopen incoming spans at the
+  # start, close outgoing spans at the end.
+  @span_tag_regex ~r/<\/?span\b[^>]*>/
+
   @doc false
+  def split_html_by_newline(""), do: [""]
+
   def split_html_by_newline(html) do
     html
-    |> String.to_charlist()
-    |> do_split_html_by_newline([], [], [])
-    |> Enum.reverse()
-    |> Enum.map(&IO.iodata_to_binary/1)
+    |> String.split("\n")
+    |> rebalance_lines([])
   end
 
-  # End of input: close any remaining open spans on the final line.
-  defp do_split_html_by_newline([], current_line, open_tags, lines) do
-    final = [current_line | close_span_tags(open_tags)]
-    [final | lines]
+  defp rebalance_lines([], _open), do: []
+
+  defp rebalance_lines([line | rest], open_tags) do
+    # Scan this line for all <span ...> and </span> tags, in document order.
+    tags = Regex.scan(@span_tag_regex, line, capture: :first) |> Enum.map(&hd/1)
+    # Update the open-span stack by processing the line's own span tags.
+    outgoing = apply_span_tags(open_tags, tags)
+    # Reconstruct a balanced HTML fragment for this line:
+    #   - Reopen any spans that were open coming INTO this line.
+    #   - Close any spans that remain open going OUT of this line.
+    #
+    # `open_tags` is a stack built newest-first (prepend), so we must reverse
+    # it before joining: the outermost (oldest) span must be reopened first so
+    # that the nesting order matches the LIFO closing order of
+    # close_open_spans/1. Joining the stack as-is would reopen the innermost
+    # span first, producing invalid nesting.
+    balanced = (open_tags |> Enum.reverse() |> Enum.join()) <> line <> close_open_spans(outgoing)
+    [balanced | rebalance_lines(rest, outgoing)]
   end
 
-  # Start of an HTML tag — read the full tag (respecting quoted attributes).
-  defp do_split_html_by_newline([?< | _] = chars, current_line, open_tags, lines) do
-    {tag, rest} = take_tag(chars)
-    tag_str = List.to_string(tag)
+  # Walk a list of span tags, maintaining a stack of open span tag strings.
+  defp apply_span_tags(stack, []), do: stack
 
-    cond do
-      opening_span?(tag_str) ->
-        do_split_html_by_newline(rest, [current_line, tag_str], [tag_str | open_tags], lines)
-
-      tag_str == "</span>" ->
-        do_split_html_by_newline(rest, [current_line, tag_str], drop_one(open_tags), lines)
-
-      true ->
-        do_split_html_by_newline(rest, [current_line, tag_str], open_tags, lines)
+  defp apply_span_tags(stack, [tag | rest]) do
+    if String.starts_with?(tag, "</") do
+      apply_span_tags(drop_one(stack), rest)
+    else
+      apply_span_tags([tag | stack], rest)
     end
   end
 
-  # Newline — flush the current line (closing all open spans), reopen on next.
-  defp do_split_html_by_newline([?\n | rest], current_line, open_tags, lines) do
-    completed = [current_line | close_span_tags(open_tags)]
-    reopened = reopen_span_tags(open_tags)
-    do_split_html_by_newline(rest, reopened, open_tags, [completed | lines])
-  end
-
-  # Regular character.
-  defp do_split_html_by_newline([char | rest], current_line, open_tags, lines) do
-    do_split_html_by_newline(rest, [current_line, char], open_tags, lines)
-  end
-
-  # Extract a full HTML tag from a charlist starting with '<'. Reads until the
-  # matching '>' while respecting single/double-quoted attribute values.
-  defp take_tag([?< | rest]) do
-    take_tag_rest(rest, [?<], nil)
-  end
-
-  # '>' outside quotes terminates the tag.
-  defp take_tag_rest([?> | rest], acc, nil) do
-    {Enum.reverse([?> | acc]), rest}
-  end
-
-  # Enter a quoted attribute string.
-  defp take_tag_rest([q | rest], acc, nil) when q in [?", ?'] do
-    take_tag_rest(rest, [q | acc], q)
-  end
-
-  # Exit a quoted attribute string (closing quote matches the opening one).
-  defp take_tag_rest([q | rest], acc, q) when q in [?", ?'] do
-    take_tag_rest(rest, [q | acc], nil)
-  end
-
-  # Any other character (including '>' inside quotes).
-  defp take_tag_rest([char | rest], acc, quote_state) do
-    take_tag_rest(rest, [char | acc], quote_state)
-  end
-
-  defp take_tag_rest([], acc, _quote_state) do
-    {Enum.reverse(acc), []}
-  end
-
-  defp opening_span?(tag_str) do
-    String.starts_with?(tag_str, "<span") and not String.ends_with?(tag_str, "/>")
-  end
-
-  # Emit </span> for each open tag, in stack (LIFO) order.
-  defp close_span_tags(open_tags) do
-    Enum.map(open_tags, fn _ -> "</span>" end)
-  end
-
-  # Reopen spans in original (FIFO) order — reverse of the stack.
-  defp reopen_span_tags(open_tags) do
-    Enum.reverse(open_tags)
-  end
+  defp close_open_spans([]), do: ""
+  defp close_open_spans([_ | rest]), do: "</span>" <> close_open_spans(rest)
 
   defp drop_one([]), do: []
   defp drop_one([_ | rest]), do: rest
