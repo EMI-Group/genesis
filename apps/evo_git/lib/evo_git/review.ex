@@ -11,12 +11,37 @@ defmodule EvoGit.Review do
 
   defmodule FileInfo do
     @moduledoc "Structured info about a changed file"
-    defstruct [:path, :status, :additions, :deletions, :diff, :language]
+    defstruct [
+      :path,
+      :status,
+      :additions,
+      :deletions,
+      :diff,
+      :language,
+      # Full file content at the head/new commit (nil until populated by the caller)
+      full_new_content: nil,
+      # Full file content at the base/old commit (nil until populated by the caller)
+      full_old_content: nil
+    ]
   end
 
   defmodule CommitInfo do
     @moduledoc "Structured info about a commit"
     defstruct [:sha, :short_sha, :message, :author_name, :author_email, :date]
+  end
+
+  @doc """
+  Fetches the full content of a file at a specific commit.
+
+  Returns `{:ok, content}` if the file exists at that commit, or
+  `{:error, code, output}` if not.
+
+  This uses the standard git `"commit_sha:file_path"` revision syntax to
+  address a file at a specific revision, enabling the caller to highlight
+  the entire file (rather than per-hunk) with full context.
+  """
+  def get_file_content(repo_path, commit_sha, file_path) do
+    Git.show(repo_path, "#{commit_sha}:#{file_path}")
   end
 
   @doc """

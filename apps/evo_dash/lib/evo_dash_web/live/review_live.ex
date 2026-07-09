@@ -317,7 +317,10 @@ defmodule EvoDashWeb.ReviewLive do
 
     case load_file_diff_for_mode(socket, path, opts) do
       {:ok, diff_string} ->
-        {:noreply, update_file_diff_in_socket(socket, path, diff_string, new_level)}
+        # Context expansion doesn't change the file content — preserve the
+        # full_new_content/full_old_content already fetched on the initial
+        # lazy-load so file-level highlighting stays effective.
+        {:noreply, update_file_diff_in_socket(socket, path, diff_string, new_level, :preserve, :preserve)}
 
       {:error, reason} ->
         {:noreply,
@@ -708,7 +711,9 @@ defmodule EvoDashWeb.ReviewLive do
 
       case Review.load_file_diff(repo_path, base_sha, commit_sha, path) do
         {:ok, diff_string} ->
-          {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3)}
+          full_new = content_or_nil(Review.get_file_content(repo_path, commit_sha, path))
+          full_old = content_or_nil(Review.get_file_content(repo_path, base_sha, path))
+          {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3, full_new, full_old)}
 
         {:error, reason} ->
           {:noreply,
@@ -735,7 +740,9 @@ defmodule EvoDashWeb.ReviewLive do
 
       case Review.load_commit_file_diff(repo_path, commit_sha, path) do
         {:ok, diff_string} ->
-          {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3)}
+          full_new = content_or_nil(Review.get_file_content(repo_path, commit_sha, path))
+          full_old = content_or_nil(Review.get_file_content(repo_path, "#{commit_sha}~1", path))
+          {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3, full_new, full_old)}
 
         {:error, reason} ->
           {:noreply,
@@ -766,9 +773,18 @@ defmodule EvoDashWeb.ReviewLive do
     end
   end
 
+  # Unwrap a {:ok, content} result from Review.get_file_content/3, returning nil
+  # for any error (file doesn't exist at that commit — e.g. added/deleted files).
+  defp content_or_nil({:ok, content}), do: content
+  defp content_or_nil(_), do: nil
+
   # Updates a file's diff in the appropriate data source (commit_data or review_data)
   # and sets the context level and expanded state.
-  defp update_file_diff_in_socket(socket, path, diff_string, context_level) do
+  #
+  # `full_new`/`full_old` accept either content strings, nil, or the sentinel
+  # `:preserve` (which carries over the existing file's full-content fields —
+  # used by context-expansion where the file content does not change).
+  defp update_file_diff_in_socket(socket, path, diff_string, context_level, full_new, full_old) do
     data_key =
       if socket.assigns.live_action == :commit, do: :commit_data, else: :review_data
 
@@ -776,7 +792,26 @@ defmodule EvoDashWeb.ReviewLive do
 
     updated_files =
       Enum.map(data.files, fn f ->
-        if f.path == path, do: %{f | diff: diff_string}, else: f
+        if f.path == path do
+          {new_val, old_val} =
+            case {full_new, full_old} do
+              {:preserve, :preserve} ->
+                {f.full_new_content, f.full_old_content}
+
+              {:preserve, old} ->
+                {f.full_new_content, old}
+
+              {neww, :preserve} ->
+                {neww, f.full_old_content}
+
+              {neww, old} ->
+                {neww, old}
+            end
+
+          %{f | diff: diff_string, full_new_content: new_val, full_old_content: old_val}
+        else
+          f
+        end
       end)
 
     updated_data = %{data | files: updated_files}
