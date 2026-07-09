@@ -27,59 +27,73 @@ permissions:
   contents: write
 
 jobs:
-  build-unix:
-    name: Build ${{ matrix.os_label }} (${{ matrix.arch }})
+  # ── Stage 1a: Build all Burrito binaries ────────────────────────────────
+  #
+  # Matrix job that builds every Burrito target on ubuntu-24.04 and uploads
+  # the resulting sidecar + remote binaries as workflow artifacts.  Building
+  # on a single platform avoids duplicating Elixir/Rust/Zig toolchain setup.
+  build-burrito-all:
+    name: Burrito ${{ matrix.burrito_target }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os_label: macOS
-            arch: arm64
-            runner: macos-14
-            burrito_target: darwin_arm64
-            rust_target: aarch64-apple-darwin
-            rg_target: aarch64-apple-darwin
+          - burrito_target: darwin_arm64
             vendor_platform: macos-arm64
-            tauri_bundles: ""
-          - os_label: Linux
-            arch: x64
-            runner: ubuntu-24.04
-            burrito_target: linux_x64
-            rust_target: x86_64-unknown-linux-gnu
-            rg_target: x86_64-unknown-linux-musl
+            rg_target: aarch64-apple-darwin
+            rg_ext: .tar.gz
+            needs_git: false
+            needs_mingit: false
+
+          - burrito_target: darwin_amd64
+            vendor_platform: macos-x86_64
+            rg_target: x86_64-apple-darwin
+            rg_ext: .tar.gz
+            needs_git: false
+            needs_mingit: false
+
+          - burrito_target: linux_x64
             vendor_platform: linux-x86_64
-            tauri_bundles: "rpm,appimage"
-          - os_label: Linux
-            arch: arm64
-            runner: ubuntu-24.04-arm
-            burrito_target: linux_arm64
-            rust_target: aarch64-unknown-linux-gnu
-            rg_target: aarch64-unknown-linux-gnu
+            rg_target: x86_64-unknown-linux-musl
+            rg_ext: .tar.gz
+            needs_git: true
+            needs_mingit: false
+
+          - burrito_target: linux_arm64
             vendor_platform: linux-arm64
-            # AppImage is excluded on ARM64: appimagetool/linuxdeploy are
-            # x86_64-only binaries and the bundling step fails on ARM hosts.
-            tauri_bundles: "rpm"
-            # The GitHub-hosted ARM partner runner reports ImageOS as
-            # 'ubuntu24-arm64', which erlef/setup-beam does not recognize.
-            # Override to the base value so setup-beam maps it correctly.
-            beam_image_os: ubuntu24
-    runs-on: ${{ matrix.runner }}
+            rg_target: aarch64-unknown-linux-gnu
+            rg_ext: .tar.gz
+            needs_git: false
+            needs_mingit: false
+
+          - burrito_target: windows_x64
+            vendor_platform: windows-x64
+            rg_target: x86_64-pc-windows-msvc
+            rg_ext: .zip
+            needs_git: false
+            needs_mingit: true
+
+    runs-on: ubuntu-24.04
+
     steps:
+      # ── Common setup (all targets) ──────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Linux system dependencies
-        if: startsWith(matrix.runner, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev
-
-      - name: Fix ImageOS for ARM partner runners
-        # The GitHub-hosted ARM partner runner reports ImageOS as
-        # 'ubuntu24-arm64', which erlef/setup-beam does not recognize.
-        # Override to the base value so setup-beam can map it correctly.
-        if: matrix.beam_image_os != ''
-        run: echo "ImageOS=${{ matrix.beam_image_os }}" >> "$GITHUB_ENV"
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libdbus-1-dev
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -91,22 +105,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps
-          key: mix-deps-${{ matrix.vendor_platform }}-${{ hashFiles('mix.lock') }}
+          key: mix-deps-linux-x86_64-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            mix-deps-${{ matrix.vendor_platform }}-
+            mix-deps-linux-x86_64-
 
       - name: Cache mix build
         uses: actions/cache@v4
         with:
           path: _build
-          key: mix-build-${{ matrix.vendor_platform }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          key: mix-build-linux-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            mix-build-${{ matrix.vendor_platform }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+            mix-build-linux-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_target }}
 
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
@@ -117,14 +129,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
-          key: ${{ matrix.rust_target }}
+          key: ${{ matrix.burrito_target }}
 
       - name: Cache Tauri CLI binary
         id: cache-tauri-cli
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-${{ runner.os }}-${{ runner.arch }}-v2
+          key: tauri-cli-Linux-X64-v2
 
       - name: Install Tauri CLI
         if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
@@ -132,7 +144,7 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall tauri-cli --version "^2.0" --no-confirm
 
-      - name: Install dependencies
+      - name: Install Elixir dependencies
         run: mix deps.get
 
       - name: Build assets
@@ -140,216 +152,42 @@ jobs:
           mix assets.setup
           mix assets.deploy
 
-      - name: Bundle vendor binaries
+      # ── Vendor binaries (per-target) ─────────────────────────────────────
+      - name: Bundle vendor ripgrep
         run: |
           VENDOR_DIR="apps/evo_git/priv/vendor/${{ matrix.vendor_platform }}"
           mkdir -p "${VENDOR_DIR}"
 
-          # Download and extract ripgrep
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}.tar.gz"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}${{ matrix.rg_ext }}"
           RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
           echo "Downloading ${RG_URL}..."
-          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
-          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
-          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}/rg" "${VENDOR_DIR}/rg"
 
-          # Copy system git
-          cp "$(which git)" "${VENDOR_DIR}/git"
-
-          # Ensure executables
-          chmod +x "${VENDOR_DIR}/"*
-
-          echo "Vendor binaries installed to ${VENDOR_DIR}"
-          ls -la "${VENDOR_DIR}/"
-
-      - name: Build Burrito release
-        env:
-          BURRITO_TARGET: ${{ matrix.burrito_target }}
-        # --overwrite is required: when _build/ is cache-restored, mix detects
-        # an existing assembled release and skips the Burrito.wrap/1 step,
-        # leaving burrito_out/ empty. This forces a fresh wrap every run.
-        run: MIX_ENV=prod mix release genesis_desktop --overwrite
-
-      - name: Locate Burrito binary
-        run: |
-          echo "Contents of burrito_out directory:"
-          ls -la burrito_out/ || true
-
-      - name: Place sidecar binary
-        run: |
-          SIDECAR_DIR="desktop/src-tauri/sidecars"
-          mkdir -p "${SIDECAR_DIR}"
-          cp burrito_out/genesis_desktop_${{ matrix.burrito_target }} "${SIDECAR_DIR}/genesis-backend-${{ matrix.rust_target }}"
-          chmod +x "${SIDECAR_DIR}/"*
-
-          echo "Sidecar binaries:"
-          ls -la "${SIDECAR_DIR}/"
-
-      - name: Build genesis_remote Burrito release
-        # genesis_remote is a headless evo_git-only release for SSH remote
-        # development. It is a standalone Burrito binary (no Tauri packaging)
-        # uploaded directly to the GitHub release.
-        env:
-          BURRITO_TARGET: ${{ matrix.burrito_target }}
-          # --overwrite is required: when _build/ is cache-restored, mix detects
-          # an existing assembled release and skips the Burrito.wrap/1 step,
-          # leaving burrito_out/ empty. This forces a fresh wrap every run.
-        run: MIX_ENV=prod mix release genesis_remote --overwrite
-
-      - name: Build Tauri app
-        run: |
-          cd desktop/src-tauri
-          if [ -n "${{ matrix.tauri_bundles }}" ]; then
-            cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.tauri_bundles }}
+          if [ "${{ matrix.rg_ext }}" = ".zip" ]; then
+            curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+            unzip -o "/tmp/${RG_ARCHIVE}" -d /tmp/rg-extract
+            cp "/tmp/rg-extract/ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}/rg.exe" "${VENDOR_DIR}/rg.exe"
           else
-            cargo tauri build --target ${{ matrix.rust_target }}
+            curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+            tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
+            cp "/tmp/ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}/rg" "${VENDOR_DIR}/rg"
+            chmod +x "${VENDOR_DIR}/rg"
           fi
 
-      - name: Create tarball
-        # Package the compiled binary as a portable .tar.gz archive for Linux.
-        # Tauri does not have a native tar.gz bundle target, so we create it
-        # manually from the release binary.
-        if: startsWith(matrix.runner, 'ubuntu')
-        run: |
-          cd desktop/src-tauri/target/${{ matrix.rust_target }}/release
-          tar -czf /tmp/genesis-desktop-${{ matrix.rust_target }}.tar.gz genesis-desktop
-
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-          files: |
-            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/*.app
-            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/rpm/*.rpm
-            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/appimage/*.AppImage
-            /tmp/genesis-desktop-*.tar.gz
-            burrito_out/genesis_remote_${{ matrix.burrito_target }}
-
-      # NOTE on Flatpak: Tauri v2 does not have a native Flatpak bundle target.
-      # Producing a Flatpak requires a flatpak-builder manifest (YAML) declaring
-      # a Flatpak runtime (e.g. org.freedesktop.Platform//24.08), the application
-      # metadata (.desktop file, icon), and build commands. This is significantly
-      # more involved than the native Tauri bundlers and typically targets Flathub
-      # rather than direct GitHub release downloads. See:
-      #   https://v2.tauri.app/distribute/  (no flatpak target listed)
-      #   https://docs.flatpak.org/  (flatpak-builder documentation)
-      # To add Flatpak support in the future: create a com.genesis.desktop.yaml
-      # manifest and add a `flatpak-builder --force-clean build-dir manifest.yaml`
-      # step here, then upload the resulting .flatpak bundle.
-
-  build-windows:
-    name: Build Windows (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: windows-2022
-            rust_target: x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.runner }}
-    env:
-      # Both Windows targets use the x64 Burrito release because Erlang/OTP has
-      # no native ARM64 Windows build.  On ARM64 machines the x64 ERTS runs via
-      # Windows' transparent x86_64 emulation layer, while the Tauri shell
-      # itself compiles natively for aarch64.
-      burrito_target: windows_x64
-      rust_target: ${{ matrix.rust_target }}
-      # ripgrep and MinGit are x64 for both architectures; they run through x64
-      # emulation on ARM64 Windows.
-      rg_target: x86_64-pc-windows-msvc
-      vendor_platform: windows-x64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Fix ImageOS for ARM partner runners
-        # The GitHub-hosted ARM partner runner reports ImageOS as
-        # 'win11-arm64', which erlef/setup-beam does not recognize.
-        # Override to the base value so setup-beam can map it correctly.
-        if: matrix.beam_image_os != ''
-        shell: bash
-        run: echo "ImageOS=${{ matrix.beam_image_os }}" >> "$GITHUB_ENV"
-
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-
-      - name: Cache mix deps
-        uses: actions/cache@v4
-        with:
-          path: deps
-          key: mix-deps-windows-${{ matrix.rust_target }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-deps-windows-${{ matrix.rust_target }}-
-
-      - name: Cache mix build
-        uses: actions/cache@v4
-        with:
-          path: _build
-          key: mix-build-windows-${{ matrix.rust_target }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-build-windows-${{ matrix.rust_target }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_target }}
-
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: desktop/src-tauri -> target
-          key: ${{ matrix.rust_target }}
-
-      - name: Cache Tauri CLI binary
-        id: cache-tauri-cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-${{ runner.os }}-${{ runner.arch }}-v2
-
-      - name: Install Tauri CLI
-        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall tauri-cli --version "^2.0" --no-confirm
-
-      - name: Install dependencies
-        run: mix deps.get
-
-      - name: Build assets
-        run: |
-          mix assets.setup
-          mix assets.deploy
-
-      - name: Bundle vendor ripgrep
-        shell: bash
-        run: |
-          VENDOR_DIR="apps/evo_git/priv/vendor/windows-x64"
-          mkdir -p "${VENDOR_DIR}"
-
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc.zip"
-          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
-          echo "Downloading ${RG_URL}..."
-          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
-          unzip -o "/tmp/${RG_ARCHIVE}" -d /tmp/rg-extract
-          cp "/tmp/rg-extract/ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc/rg.exe" "${VENDOR_DIR}/rg.exe"
-
           echo "ripgrep installed:"
-          ls -la "${VENDOR_DIR}/rg.exe"
+          ls -la "${VENDOR_DIR}/"
 
-      - name: Bundle vendor MinGit
-        shell: bash
+      - name: Bundle system git (linux_x64 native)
+        if: matrix.needs_git
         run: |
-          VENDOR_DIR="apps/evo_git/priv/vendor/windows-x64"
+          VENDOR_DIR="apps/evo_git/priv/vendor/${{ matrix.vendor_platform }}"
+          cp "$(which git)" "${VENDOR_DIR}/git"
+          chmod +x "${VENDOR_DIR}/git"
+          echo "Git bundled: $(ls -la "${VENDOR_DIR}/git")"
+
+      - name: Bundle MinGit (windows_x64)
+        if: matrix.needs_mingit
+        run: |
+          VENDOR_DIR="apps/evo_git/priv/vendor/${{ matrix.vendor_platform }}"
           mkdir -p "${VENDOR_DIR}"
 
           MINGIT_VERSION_CLEAN="${MINGIT_VERSION%.windows.*}"
@@ -362,54 +200,311 @@ jobs:
           echo "MinGit installed:"
           ls "${VENDOR_DIR}/mingit/cmd/git.exe"
 
-      - name: Build Burrito release
-        shell: bash
+      # ── Burrito builds ───────────────────────────────────────────────────
+      - name: Build genesis_desktop Burrito release
         env:
-          BURRITO_TARGET: windows_x64
+          BURRITO_TARGET: ${{ matrix.burrito_target }}
         # --overwrite is required: when _build/ is cache-restored, mix detects
         # an existing assembled release and skips the Burrito.wrap/1 step,
         # leaving burrito_out/ empty. This forces a fresh wrap every run.
         run: MIX_ENV=prod mix release genesis_desktop --overwrite
 
-      - name: Locate Burrito binary
-        shell: bash
-        run: |
-          echo "Contents of burrito_out directory:"
-          ls -la burrito_out/ || true
-
-      - name: Place sidecar binary
-        shell: bash
-        run: |
-          SIDECAR_DIR="desktop/src-tauri/sidecars"
-          mkdir -p "${SIDECAR_DIR}"
-          cp burrito_out/genesis_desktop_windows_x64.exe "${SIDECAR_DIR}/genesis-backend-${{ matrix.rust_target }}.exe"
-
-          echo "Sidecar binaries:"
-          ls -la "${SIDECAR_DIR}/"
-
       - name: Build genesis_remote Burrito release
         # genesis_remote is a headless evo_git-only release for SSH remote
         # development. It is a standalone Burrito binary (no Tauri packaging)
         # uploaded directly to the GitHub release.
-        shell: bash
         env:
-          BURRITO_TARGET: windows_x64
-          # --overwrite is required: when _build/ is cache-restored, mix detects
-          # an existing assembled release and skips the Burrito.wrap/1 step,
-          # leaving burrito_out/ empty. This forces a fresh wrap every run.
+          BURRITO_TARGET: ${{ matrix.burrito_target }}
         run: MIX_ENV=prod mix release genesis_remote --overwrite
 
-      - name: Build Tauri app
-        shell: bash
+      - name: Locate Burrito binaries
+        run: |
+          echo "Contents of burrito_out directory:"
+          ls -la burrito_out/ || true
+
+      # ── Upload sidecar & remote artifacts ────────────────────────────────
+      - name: Upload sidecar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-${{ matrix.burrito_target }}
+          path: burrito_out/genesis_desktop_${{ matrix.burrito_target }}${{ matrix.burrito_target == 'windows_x64' && '.exe' || '' }}
+          retention-days: 1
+
+      - name: Upload genesis_remote artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-${{ matrix.burrito_target }}
+          path: burrito_out/genesis_remote_${{ matrix.burrito_target }}${{ matrix.burrito_target == 'windows_x64' && '.exe' || '' }}
+          retention-days: 1
+
+  # ── Stage 1b: Linux Tauri bundles ───────────────────────────────────────
+  #
+  # Downloads the linux_x64 and linux_arm64 sidecars from the Burrito matrix,
+  # builds native (x86_64) and cross-compiled (ARM64) Tauri installers, and
+  # uploads everything — Tauri bundles, tarball, and ALL genesis_remote
+  # binaries — to the GitHub release in one shot.
+  build-tauri-linux:
+    name: Tauri Linux (x64 + ARM64 cross)
+    needs: build-burrito-all
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libdbus-1-dev
+
+      - name: Install ARM64 cross-compiler
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: linux-tauri
+
+      - name: Cache Tauri CLI binary
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-Linux-X64-v2
+
+      - name: Install Tauri CLI
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall tauri-cli --version "^2.0" --no-confirm
+
+      # ── Download sidecar artifacts ──────────────────────────────────────
+      - name: Download linux_x64 sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecar-linux_x64
+          path: sidecars/
+
+      - name: Download linux_arm64 sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecar-linux_arm64
+          path: sidecars/
+
+      # ── Place sidecar binaries ──────────────────────────────────────────
+      - name: Place sidecar binaries
+        run: |
+          SIDECAR_DIR="desktop/src-tauri/sidecars"
+          mkdir -p "${SIDECAR_DIR}"
+
+          # Linux x86_64
+          cp sidecars/genesis_desktop_linux_x64 "${SIDECAR_DIR}/genesis-backend-x86_64-unknown-linux-gnu"
+          chmod +x "${SIDECAR_DIR}/genesis-backend-x86_64-unknown-linux-gnu"
+
+          # Linux ARM64
+          cp sidecars/genesis_desktop_linux_arm64 "${SIDECAR_DIR}/genesis-backend-aarch64-unknown-linux-gnu"
+          chmod +x "${SIDECAR_DIR}/genesis-backend-aarch64-unknown-linux-gnu"
+
+          echo "Sidecar binaries:"
+          ls -la "${SIDECAR_DIR}/"
+
+      # ── Build Tauri (Linux x86_64, native) ──────────────────────────────
+      - name: Build Tauri (Linux x86_64)
         run: |
           cd desktop/src-tauri
-          cargo tauri build --target ${{ matrix.rust_target }}
+          cargo tauri build --target x86_64-unknown-linux-gnu --bundles rpm,appimage
 
-      - name: Upload release asset
+      # ── Build Tauri (Linux ARM64, cross-compile) ────────────────────────
+      - name: Build Tauri (Linux ARM64, cross-compile)
+        env:
+          PKG_CONFIG_ALLOW_CROSS: "1"
+        run: |
+          cd desktop/src-tauri
+          cargo tauri build --target aarch64-unknown-linux-gnu --bundles rpm
+
+      # ── Create tarball (portable Linux x86_64 archive) ───────────────────
+      - name: Create tarball
+        run: |
+          cd desktop/src-tauri/target/x86_64-unknown-linux-gnu/release
+          tar -czf /tmp/genesis-desktop-x86_64-unknown-linux-gnu.tar.gz genesis-desktop
+          echo "Tarball created:"
+          ls -la /tmp/genesis-desktop-*.tar.gz
+
+      # ── Download all genesis_remote artifacts for release upload ─────────
+      - name: Download all genesis_remote binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: remote-*
+          path: remote-binaries/
+          merge-multiple: true
+
+      - name: List release assets
+        run: |
+          echo "=== Tauri bundles ==="
+          find desktop/src-tauri/target -type f \( -name "*.rpm" -o -name "*.AppImage" \) 2>/dev/null || true
+          echo "=== Tarball ==="
+          ls -la /tmp/genesis-desktop-*.tar.gz 2>/dev/null || true
+          echo "=== Remote binaries ==="
+          ls -la remote-binaries/ 2>/dev/null || true
+
+      # ── Upload everything to GitHub release ─────────────────────────────
+      - name: Upload to GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: |
-            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/msi/*.msi
-            desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/nsis/*.exe
-            burrito_out/genesis_remote_windows_x64.exe
+            desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
+            desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+            desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
+            /tmp/genesis-desktop-*.tar.gz
+            remote-binaries/*
+
+  # ── Stage 2a: macOS Tauri (ARM64) ───────────────────────────────────────
+  #
+  # Downloads the darwin_arm64 sidecar from Stage 1, builds the native
+  # macOS .dmg / .app bundles, and uploads them to the release.
+  # Does NOT need Elixir, Zig, or mix — just Rust + Tauri CLI.
+  build-tauri-macos:
+    name: Tauri macOS (ARM64)
+    needs: build-burrito-all
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download darwin_arm64 sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecar-darwin_arm64
+          path: sidecars/
+
+      - name: Place sidecar binary
+        run: |
+          SIDECAR_DIR="desktop/src-tauri/sidecars"
+          mkdir -p "${SIDECAR_DIR}"
+          cp sidecars/genesis_desktop_darwin_arm64 "${SIDECAR_DIR}/genesis-backend-aarch64-apple-darwin"
+          chmod +x "${SIDECAR_DIR}/genesis-backend-aarch64-apple-darwin"
+
+          echo "Sidecar binary:"
+          ls -la "${SIDECAR_DIR}/"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: macos-tauri-aarch64
+
+      - name: Cache Tauri CLI binary
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-macOS-ARM64-v2
+
+      - name: Install Tauri CLI
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall tauri-cli --version "^2.0" --no-confirm
+
+      - name: Build Tauri app
+        run: |
+          cd desktop/src-tauri
+          cargo tauri build --target aarch64-apple-darwin
+
+      - name: Upload to GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          files: |
+            desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+
+  # ── Stage 2b: Windows Tauri (x86_64) ────────────────────────────────────
+  #
+  # Downloads the windows_x64 sidecar from Stage 1, builds the native
+  # Windows .msi / .exe installers, and uploads them to the release.
+  # Does NOT need Elixir, Zig, or mix — just Rust + Tauri CLI.
+  build-tauri-windows:
+    name: Tauri Windows (x86_64)
+    needs: build-burrito-all
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download windows_x64 sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecar-windows_x64
+          path: sidecars/
+
+      - name: Place sidecar binary
+        run: |
+          SIDECAR_DIR="desktop/src-tauri/sidecars"
+          mkdir -p "${SIDECAR_DIR}"
+          cp sidecars/genesis_desktop_windows_x64.exe "${SIDECAR_DIR}/genesis-backend-x86_64-pc-windows-msvc.exe"
+
+          echo "Sidecar binary:"
+          ls -la "${SIDECAR_DIR}/"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: windows-tauri-x86_64
+
+      - name: Cache Tauri CLI binary
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-Windows-X64-v2
+
+      - name: Install Tauri CLI
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall tauri-cli --version "^2.0" --no-confirm
+
+      - name: Build Tauri app
+        run: |
+          cd desktop/src-tauri
+          cargo tauri build --target x86_64-pc-windows-msvc
+
+      - name: Upload to GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          files: |
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
