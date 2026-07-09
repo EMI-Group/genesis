@@ -143,35 +143,5 @@ defmodule EvoDashWeb.NodeSelectorComponent do
     end
   end
 
-  defp connected?(target_id, statuses) do
-    Map.get(statuses, target_id, :disconnected) == :connected
-  end
-
-  defp status_badge_class(target_id, statuses) do
-    status = Map.get(statuses, target_id, :disconnected)
-
-    case status do
-      :connected -> "badge badge-success badge-sm"
-      :connecting -> "badge badge-warning badge-sm"
-      :disconnecting -> "badge badge-warning badge-sm"
-      :error -> "badge badge-error badge-sm"
-      :disconnected -> "badge badge-ghost badge-sm"
-      _ -> "badge badge-ghost badge-sm"
-    end
-  end
-
-  defp status_label(target_id, statuses) do
-    status = Map.get(statuses, target_id, :disconnected)
-
-    case status do
-      :connected -> gettext("Connected")
-      :connecting -> gettext("Connecting...")
-      :disconnecting -> gettext("Disconnecting...")
-      :error -> gettext("Error")
-      :disconnected -> gettext("Disconnected")
-      _ -> gettext("Unknown")
-    end
-  end
-
   defp maybe_at, do: "@"
 end

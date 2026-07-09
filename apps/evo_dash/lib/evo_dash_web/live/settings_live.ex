@@ -494,21 +494,23 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_info({:node_selected, node_id}, socket) do
-    socket = EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
+    {:noreply, socket} = EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
 
-    if socket.assigns.active_category == :remote_connections do
-      socket =
+    socket =
+      if socket.assigns.active_category == :remote_connections do
         socket
         |> assign(:remote_targets, EvoDash.NodeContext.list_targets())
         |> assign(:remote_statuses, EvoDash.NodeContext.connection_status())
-    end
+      else
+        socket
+      end
 
     {:noreply, socket}
   end
 
   @impl true
   def handle_info({:remote_connection_status, _, _} = msg, socket) do
-    socket = EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
+    {:noreply, socket} = EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
 
     if socket.assigns.active_category == :remote_connections do
       {:noreply, assign(socket, :remote_statuses, EvoDash.NodeContext.connection_status())}
