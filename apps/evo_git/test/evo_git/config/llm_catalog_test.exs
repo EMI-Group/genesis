@@ -118,6 +118,7 @@ defmodule EvoGit.Config.LLMCatalogTest do
         "zai_api_key",
         "zai_coding_plan_api_key",
         "minimax_api_key",
+        "xai_api_key",
         "openrouter_api_key"
       ]
 
