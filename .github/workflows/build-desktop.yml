@@ -29,54 +29,21 @@ permissions:
 jobs:
   # ── Stage 1a: Build all Burrito binaries ────────────────────────────────
   #
-  # Matrix job that builds every Burrito target on ubuntu-24.04 and uploads
-  # the resulting sidecar + remote binaries as workflow artifacts.  Building
-  # on a single platform avoids duplicating Elixir/Rust/Zig toolchain setup.
+  # Single job that builds every Burrito target sequentially on ubuntu-24.04
+  # and uploads the resulting sidecar + remote binaries as workflow artifacts.
+  #
+  # Setup (Elixir, Zig, deps, assets) is done once and shared across all
+  # targets.  Burrito builds are fast once _build is compiled, so running
+  # them sequentially avoids the 5× overhead of duplicating setup.
+  #
+  # Rust, Tauri CLI, and webkit2gtk dev libs are NOT needed here — those are
+  # only required by the downstream Tauri packaging jobs.
   build-burrito-all:
-    name: Burrito ${{ matrix.burrito_target }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - burrito_target: darwin_arm64
-            vendor_platform: macos-arm64
-            rg_target: aarch64-apple-darwin
-            rg_ext: .tar.gz
-            needs_git: false
-            needs_mingit: false
-
-          - burrito_target: darwin_amd64
-            vendor_platform: macos-x86_64
-            rg_target: x86_64-apple-darwin
-            rg_ext: .tar.gz
-            needs_git: false
-            needs_mingit: false
-
-          - burrito_target: linux_x64
-            vendor_platform: linux-x86_64
-            rg_target: x86_64-unknown-linux-musl
-            rg_ext: .tar.gz
-            needs_git: true
-            needs_mingit: false
-
-          - burrito_target: linux_arm64
-            vendor_platform: linux-arm64
-            rg_target: aarch64-unknown-linux-gnu
-            rg_ext: .tar.gz
-            needs_git: false
-            needs_mingit: false
-
-          - burrito_target: windows_x64
-            vendor_platform: windows-x64
-            rg_target: x86_64-pc-windows-msvc
-            rg_ext: .zip
-            needs_git: false
-            needs_mingit: true
-
+    name: Burrito (all targets)
     runs-on: ubuntu-24.04
 
     steps:
-      # ── Common setup (all targets) ──────────────────────────────────────
+      # ── Common setup (once for all targets) ──────────────────────────────
       - name: Checkout
         uses: actions/checkout@v5
 
@@ -84,16 +51,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
             build-essential \
             curl \
             wget \
             file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libdbus-1-dev
+            unzip \
+            p7zip-full
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -117,32 +80,10 @@ jobs:
           restore-keys: |
             mix-build-linux-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: desktop/src-tauri -> target
-          key: ${{ matrix.burrito_target }}
-
-      - name: Cache Tauri CLI binary
-        id: cache-tauri-cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-Linux-X64-v2
-
-      - name: Install Tauri CLI
-        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall tauri-cli --version "^2.0" --no-confirm
 
       - name: Install Elixir dependencies
         run: mix deps.get
@@ -152,97 +93,233 @@ jobs:
           mix assets.setup
           mix assets.deploy
 
-      # ── Vendor binaries (per-target) ─────────────────────────────────────
-      - name: Bundle vendor ripgrep
+      # ── Target: darwin_arm64 ─────────────────────────────────────────────
+      - name: Vendor + Burrito (darwin_arm64)
+        env:
+          BURRITO_TARGET: darwin_arm64
+          VENDOR_PLATFORM: macos-arm64
+          RG_TARGET: aarch64-apple-darwin
+          RG_EXT: .tar.gz
         run: |
-          VENDOR_DIR="apps/evo_git/priv/vendor/${{ matrix.vendor_platform }}"
+          set -euo pipefail
+          # --- ripgrep ---
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
           mkdir -p "${VENDOR_DIR}"
-
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}${{ matrix.rg_ext }}"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
           RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
           echo "Downloading ${RG_URL}..."
-
-          if [ "${{ matrix.rg_ext }}" = ".zip" ]; then
-            curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
-            unzip -o "/tmp/${RG_ARCHIVE}" -d /tmp/rg-extract
-            cp "/tmp/rg-extract/ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}/rg.exe" "${VENDOR_DIR}/rg.exe"
-          else
-            curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
-            tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
-            cp "/tmp/ripgrep-${RIPGREP_VERSION}-${{ matrix.rg_target }}/rg" "${VENDOR_DIR}/rg"
-            chmod +x "${VENDOR_DIR}/rg"
-          fi
-
+          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
+          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          chmod +x "${VENDOR_DIR}/rg"
           echo "ripgrep installed:"
           ls -la "${VENDOR_DIR}/"
 
-      - name: Bundle system git (linux_x64 native)
-        if: matrix.needs_git
+          # --- Burrito builds ---
+          MIX_ENV=prod mix release genesis_desktop --overwrite
+          MIX_ENV=prod mix release genesis_remote --overwrite
+
+      # ── Target: darwin_amd64 ─────────────────────────────────────────────
+      - name: Vendor + Burrito (darwin_amd64)
+        env:
+          BURRITO_TARGET: darwin_amd64
+          VENDOR_PLATFORM: macos-x86_64
+          RG_TARGET: x86_64-apple-darwin
+          RG_EXT: .tar.gz
         run: |
-          VENDOR_DIR="apps/evo_git/priv/vendor/${{ matrix.vendor_platform }}"
+          set -euo pipefail
+          # --- ripgrep ---
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          mkdir -p "${VENDOR_DIR}"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
+          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          echo "Downloading ${RG_URL}..."
+          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
+          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          chmod +x "${VENDOR_DIR}/rg"
+          echo "ripgrep installed:"
+          ls -la "${VENDOR_DIR}/"
+
+          # --- Burrito builds ---
+          MIX_ENV=prod mix release genesis_desktop --overwrite
+          MIX_ENV=prod mix release genesis_remote --overwrite
+
+      # ── Target: linux_x64 ────────────────────────────────────────────────
+      - name: Vendor + Burrito (linux_x64)
+        env:
+          BURRITO_TARGET: linux_x64
+          VENDOR_PLATFORM: linux-x86_64
+          RG_TARGET: x86_64-unknown-linux-musl
+          RG_EXT: .tar.gz
+        run: |
+          set -euo pipefail
+          # --- ripgrep ---
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          mkdir -p "${VENDOR_DIR}"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
+          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          echo "Downloading ${RG_URL}..."
+          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
+          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          chmod +x "${VENDOR_DIR}/rg"
+          echo "ripgrep installed:"
+          ls -la "${VENDOR_DIR}/"
+
+          # --- system git ---
           cp "$(which git)" "${VENDOR_DIR}/git"
           chmod +x "${VENDOR_DIR}/git"
           echo "Git bundled: $(ls -la "${VENDOR_DIR}/git")"
 
-      - name: Bundle MinGit (windows_x64)
-        if: matrix.needs_mingit
-        run: |
-          VENDOR_DIR="apps/evo_git/priv/vendor/${{ matrix.vendor_platform }}"
-          mkdir -p "${VENDOR_DIR}"
+          # --- Burrito builds ---
+          MIX_ENV=prod mix release genesis_desktop --overwrite
+          MIX_ENV=prod mix release genesis_remote --overwrite
 
+      # ── Target: linux_arm64 ──────────────────────────────────────────────
+      - name: Vendor + Burrito (linux_arm64)
+        env:
+          BURRITO_TARGET: linux_arm64
+          VENDOR_PLATFORM: linux-arm64
+          RG_TARGET: aarch64-unknown-linux-gnu
+          RG_EXT: .tar.gz
+        run: |
+          set -euo pipefail
+          # --- ripgrep ---
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          mkdir -p "${VENDOR_DIR}"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
+          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          echo "Downloading ${RG_URL}..."
+          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
+          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          chmod +x "${VENDOR_DIR}/rg"
+          echo "ripgrep installed:"
+          ls -la "${VENDOR_DIR}/"
+
+          # --- Burrito builds ---
+          MIX_ENV=prod mix release genesis_desktop --overwrite
+          MIX_ENV=prod mix release genesis_remote --overwrite
+
+      # ── Target: windows_x64 ──────────────────────────────────────────────
+      - name: Vendor + Burrito (windows_x64)
+        env:
+          BURRITO_TARGET: windows_x64
+          VENDOR_PLATFORM: windows-x64
+          RG_TARGET: x86_64-pc-windows-msvc
+          RG_EXT: .zip
+        run: |
+          set -euo pipefail
+          # --- ripgrep (.zip) ---
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          mkdir -p "${VENDOR_DIR}"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
+          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
+          echo "Downloading ${RG_URL}..."
+          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+          unzip -o "/tmp/${RG_ARCHIVE}" -d /tmp/rg-extract
+          cp "/tmp/rg-extract/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg.exe" "${VENDOR_DIR}/rg.exe"
+          echo "ripgrep installed:"
+          ls -la "${VENDOR_DIR}/"
+
+          # --- MinGit ---
           MINGIT_VERSION_CLEAN="${MINGIT_VERSION%.windows.*}"
           MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION_CLEAN}-64-bit.zip"
           MINGIT_URL="https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}/${MINGIT_ARCHIVE}"
           echo "Downloading ${MINGIT_URL}..."
           curl -fsSL "${MINGIT_URL}" -o "/tmp/${MINGIT_ARCHIVE}"
           unzip -o "/tmp/${MINGIT_ARCHIVE}" -d "${VENDOR_DIR}/mingit"
-
           echo "MinGit installed:"
           ls "${VENDOR_DIR}/mingit/cmd/git.exe"
 
-      # ── Burrito builds ───────────────────────────────────────────────────
-      - name: Build genesis_desktop Burrito release
-        env:
-          BURRITO_TARGET: ${{ matrix.burrito_target }}
-        # --overwrite is required: when _build/ is cache-restored, mix detects
-        # an existing assembled release and skips the Burrito.wrap/1 step,
-        # leaving burrito_out/ empty. This forces a fresh wrap every run.
-        run: MIX_ENV=prod mix release genesis_desktop --overwrite
+          # --- Burrito builds ---
+          MIX_ENV=prod mix release genesis_desktop --overwrite
+          MIX_ENV=prod mix release genesis_remote --overwrite
 
-      - name: Build genesis_remote Burrito release
-        # genesis_remote is a headless evo_git-only release for SSH remote
-        # development. It is a standalone Burrito binary (no Tauri packaging)
-        # uploaded directly to the GitHub release.
-        env:
-          BURRITO_TARGET: ${{ matrix.burrito_target }}
-        run: MIX_ENV=prod mix release genesis_remote --overwrite
-
+      # ── Summary ──────────────────────────────────────────────────────────
       - name: Locate Burrito binaries
         run: |
           echo "Contents of burrito_out directory:"
           ls -la burrito_out/ || true
 
       # ── Upload sidecar & remote artifacts ────────────────────────────────
-      - name: Upload sidecar artifact
+      - name: Upload sidecar (darwin_arm64)
         uses: actions/upload-artifact@v4
         with:
-          name: sidecar-${{ matrix.burrito_target }}
-          path: burrito_out/genesis_desktop_${{ matrix.burrito_target }}${{ matrix.burrito_target == 'windows_x64' && '.exe' || '' }}
+          name: sidecar-darwin_arm64
+          path: burrito_out/genesis_desktop_darwin_arm64
           retention-days: 1
 
-      - name: Upload genesis_remote artifact
+      - name: Upload remote (darwin_arm64)
         uses: actions/upload-artifact@v4
         with:
-          name: remote-${{ matrix.burrito_target }}
-          path: burrito_out/genesis_remote_${{ matrix.burrito_target }}${{ matrix.burrito_target == 'windows_x64' && '.exe' || '' }}
+          name: remote-darwin_arm64
+          path: burrito_out/genesis_remote_darwin_arm64
+          retention-days: 1
+
+      - name: Upload sidecar (darwin_amd64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-darwin_amd64
+          path: burrito_out/genesis_desktop_darwin_amd64
+          retention-days: 1
+
+      - name: Upload remote (darwin_amd64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-darwin_amd64
+          path: burrito_out/genesis_remote_darwin_amd64
+          retention-days: 1
+
+      - name: Upload sidecar (linux_x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-linux_x64
+          path: burrito_out/genesis_desktop_linux_x64
+          retention-days: 1
+
+      - name: Upload remote (linux_x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-linux_x64
+          path: burrito_out/genesis_remote_linux_x64
+          retention-days: 1
+
+      - name: Upload sidecar (linux_arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-linux_arm64
+          path: burrito_out/genesis_desktop_linux_arm64
+          retention-days: 1
+
+      - name: Upload remote (linux_arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-linux_arm64
+          path: burrito_out/genesis_remote_linux_arm64
+          retention-days: 1
+
+      - name: Upload sidecar (windows_x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-windows_x64
+          path: burrito_out/genesis_desktop_windows_x64.exe
+          retention-days: 1
+
+      - name: Upload remote (windows_x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-windows_x64
+          path: burrito_out/genesis_remote_windows_x64.exe
           retention-days: 1
 
   # ── Stage 1b: Linux Tauri bundles ───────────────────────────────────────
   #
-  # Downloads the linux_x64 and linux_arm64 sidecars from the Burrito matrix,
-  # builds native (x86_64) and cross-compiled (ARM64) Tauri installers, and
-  # uploads everything — Tauri bundles, tarball, and ALL genesis_remote
-  # binaries — to the GitHub release in one shot.
+  # Downloads the linux_x64 and linux_arm64 sidecars from Stage 1a, builds
+  # native (x86_64) and cross-compiled (ARM64) Tauri installers, and uploads
+  # everything — Tauri bundles, tarball, and ALL genesis_remote binaries —
+  # to the GitHub release in one shot.
   build-tauri-linux:
     name: Tauri Linux (x64 + ARM64 cross)
     needs: build-burrito-all
