@@ -333,18 +333,23 @@ jobs:
           sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
             build-essential \
             curl \
-            wget \
             file \
-            libxdo-dev \
+            libayatana-appindicator3-dev \
+            libayatana-appindicator3-dev:arm64 \
+            libdbus-1-dev \
+            libdbus-1-dev:arm64 \
+            librsvg2-dev \
+            librsvg2-dev:arm64 \
             libssl-dev \
             libssl-dev:arm64 \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libdbus-1-dev \
-            pkg-config-aarch64-linux-gnu
+            libwebkit2gtk-4.1-dev \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libxdo-dev \
+            libxdo-dev:arm64 \
+            pkg-config-aarch64-linux-gnu \
+            wget
 
       - name: Install ARM64 cross-compiler
         run: |
