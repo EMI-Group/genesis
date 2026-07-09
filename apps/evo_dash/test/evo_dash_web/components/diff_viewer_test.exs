@@ -137,6 +137,32 @@ defmodule EvoDashWeb.DiffViewerTest do
         assert balanced_spans?(line)
       end
     end
+
+    test "nested multi-line spans are reopened in outer-first order (proper nesting)" do
+      # Two nested spans where the \n falls inside BOTH: the outer (red) span
+      # wraps a section of text, and the inner (blue) span crosses the newline.
+      # When line 2 is reconstructed, the outer (red) span must be reopened
+      # FIRST so that nesting is valid (matching the LIFO close order).
+      html =
+        ~s(<span style="color:red">outer<span style="color:blue">cross\nline</span>back</span>)
+
+      result = DiffViewer.split_html_by_newline(html)
+      assert length(result) == 2
+      [line1, line2] = result
+
+      # Each line must still be a balanced HTML fragment.
+      assert balanced_spans?(line1)
+      assert balanced_spans?(line2)
+
+      # Line 2 reopens both spans (they were open coming into line 2). The
+      # outer (red) span must appear at a lower byte index than the inner
+      # (blue) span — i.e. red is reopened before blue (FIFO order).
+      {red_idx, _} = :binary.match(line2, "color:red")
+      {blue_idx, _} = :binary.match(line2, "color:blue")
+      assert red_idx < blue_idx,
+             "expected outer (red) span to be reopened before inner (blue), " <>
+               "got red at #{red_idx}, blue at #{blue_idx} in:\n#{line2}"
+    end
   end
 
   describe "end-to-end: strip_lumis_wrappers then split_html_by_newline" do

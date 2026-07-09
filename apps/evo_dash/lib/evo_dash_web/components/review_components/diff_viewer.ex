@@ -632,7 +632,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     # Reconstruct a balanced HTML fragment for this line:
     #   - Reopen any spans that were open coming INTO this line.
     #   - Close any spans that remain open going OUT of this line.
-    balanced = Enum.join(open_tags) <> line <> close_open_spans(outgoing)
+    #
+    # `open_tags` is a stack built newest-first (prepend), so we must reverse
+    # it before joining: the outermost (oldest) span must be reopened first so
+    # that the nesting order matches the LIFO closing order of
+    # close_open_spans/1. Joining the stack as-is would reopen the innermost
+    # span first, producing invalid nesting.
+    balanced = (open_tags |> Enum.reverse() |> Enum.join()) <> line <> close_open_spans(outgoing)
     [balanced | rebalance_lines(rest, outgoing)]
   end
 
