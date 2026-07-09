@@ -201,6 +201,237 @@ defmodule EvoDashWeb.DiffViewerTest do
     end
   end
 
+  # ---------------------------------------------------------------------------
+  # Hunk header parsing
+  # ---------------------------------------------------------------------------
+
+  describe "parse_hunk_header/1" do
+    test "extracts old_start and new_start with counts" do
+      assert DiffViewer.parse_hunk_header("@@ -10,7 +12,9 @@ def foo") == {10, 12}
+    end
+
+    test "extracts old_start and new_start without counts" do
+      assert DiffViewer.parse_hunk_header("@@ -5 +7 @@") == {5, 7}
+    end
+
+    test "handles hunk header for a new file (old starts at 0)" do
+      assert DiffViewer.parse_hunk_header("@@ -0,0 +1,5 @@") == {0, 1}
+    end
+
+    test "handles hunk header for a deleted file (new starts at 0)" do
+      assert DiffViewer.parse_hunk_header("@@ -1,5 +0,0 @@") == {1, 0}
+    end
+
+    test "returns {0, 0} for malformed header" do
+      assert DiffViewer.parse_hunk_header("not a header") == {0, 0}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File-level highlighting
+  #
+  # These tests verify the line-mapping logic independent of Lumis by using a
+  # nil language. With a nil language, highlight_code_block/2 returns the raw
+  # content split by newline — so the highlighted array equals the source lines
+  # verbatim. This makes the diff-line → file-line mapping deterministic and
+  # testable without the Tree-sitter NIF.
+  # ---------------------------------------------------------------------------
+
+  describe "precompute_highlights/4 — file-level mapping" do
+    # Helper: build a "file" map that parse_diff_lines/1 can consume.
+    # parse_diff_lines/1 reads `file.diff`, so we build a minimal struct/map.
+    defp diff_file(diff) do
+      %{diff: diff}
+    end
+
+    test "maps context and addition lines to the new file's highlighting" do
+      # New file has 5 lines; line 2 is a new addition.
+      full_new = "line1\nline2_new\nline3\nline4\nline5"
+      full_old = "line1\nline3\nline4\nline5"
+
+      diff = """
+      @@ -1,4 +1,5 @@
+       line1
+      +line2_new
+       line3
+       line4
+       line5
+      """
+
+      lines = DiffViewer.parse_diff_lines(diff_file(diff))
+      result = DiffViewer.precompute_highlights(lines, nil, full_new, full_old)
+
+      # The addition (line2_new) and context (line1, line3, line4, line5) all
+      # come from the new file → they should equal the raw new-file lines.
+      addition_line = Enum.find(lines, &(&1.type == :addition))
+      assert unwrap(Map.get(result, addition_line.line_number)) == "line2_new"
+
+      context_line3 = Enum.find(lines, &(&1.type == :context and &1.content == "line3"))
+      assert unwrap(Map.get(result, context_line3.line_number)) == "line3"
+    end
+
+    test "maps deletion lines to the old file's highlighting" do
+      full_new = "line1\nline3"
+      full_old = "line1\nline2_old\nline3"
+
+      diff = """
+      @@ -1,3 +1,2 @@
+       line1
+      -line2_old
+       line3
+      """
+
+      lines = DiffViewer.parse_diff_lines(diff_file(diff))
+      result = DiffViewer.precompute_highlights(lines, nil, full_new, full_old)
+
+      deletion_line = Enum.find(lines, &(&1.type == :deletion))
+      # Deletion should come from the old file's highlighting.
+      assert unwrap(Map.get(result, deletion_line.line_number)) == "line2_old"
+    end
+
+    test "handles added file (full_old_content is nil)" do
+      full_new = "line1\nline2\nline3"
+
+      diff = """
+      @@ -0,0 +1,3 @@
+      +line1
+      +line2
+      +line3
+      """
+
+      lines = DiffViewer.parse_diff_lines(diff_file(diff))
+      result = DiffViewer.precompute_highlights(lines, nil, full_new, nil)
+
+      # All three additions should be mapped to new-file highlighting.
+      additions = Enum.filter(lines, &(&1.type == :addition))
+      assert length(additions) == 3
+
+      for addition <- additions do
+        assert unwrap(Map.get(result, addition.line_number)) == addition.content
+      end
+    end
+
+    test "handles deleted file (full_new_content is nil)" do
+      full_old = "line1\nline2\nline3"
+
+      diff = """
+      @@ -1,3 +0,0 @@
+      -line1
+      -line2
+      -line3
+      """
+
+      lines = DiffViewer.parse_diff_lines(diff_file(diff))
+      result = DiffViewer.precompute_highlights(lines, nil, nil, full_old)
+
+      deletions = Enum.filter(lines, &(&1.type == :deletion))
+      assert length(deletions) == 3
+
+      for deletion <- deletions do
+        assert unwrap(Map.get(result, deletion.line_number)) == deletion.content
+      end
+    end
+
+    test "out-of-bounds line index falls back to raw line content" do
+      # The hunk header claims old_start=100, new_start=100 but the full files
+      # are tiny — so all lookups are out of bounds.
+      full_new = "only_one_line"
+      full_old = "only_one_line"
+
+      diff = """
+      @@ -100,2 +100,2 @@
+       context_a
+      +addition_a
+      """
+
+      lines = DiffViewer.parse_diff_lines(diff_file(diff))
+      result = DiffViewer.precompute_highlights(lines, nil, full_new, full_old)
+
+      context_line = Enum.find(lines, &(&1.type == :context))
+      addition_line = Enum.find(lines, &(&1.type == :addition))
+
+      # Out-of-bounds → fall back to raw content (not empty string).
+      assert unwrap(Map.get(result, context_line.line_number)) == "context_a"
+      assert unwrap(Map.get(result, addition_line.line_number)) == "addition_a"
+    end
+
+    test "multi-hunk offsets are tracked independently" do
+      full_new = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10"
+      full_old = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10"
+
+      # Two hunks: first changes line 2, second changes line 7.
+      diff = """
+      @@ -1,3 +1,3 @@
+       l1
+      -l2
+      +l2_mod
+       l3
+      @@ -6,3 +6,3 @@
+       l6
+      -l7
+      +l7_mod
+       l8
+      """
+
+      lines = DiffViewer.parse_diff_lines(diff_file(diff))
+      result = DiffViewer.precompute_highlights(lines, nil, full_new, full_old)
+
+      deletions = Enum.filter(lines, &(&1.type == :deletion))
+      additions = Enum.filter(lines, &(&1.type == :addition))
+
+      assert length(deletions) == 2
+      assert length(additions) == 2
+
+      # The second hunk's addition should map to "l7_mod" (new file line 7).
+      second_addition = Enum.find(additions, &(&1.content == "l7_mod"))
+      assert unwrap(Map.get(result, second_addition.line_number)) == "l7_mod"
+
+      # The second hunk's deletion should map to "l7" (old file line 7).
+      second_deletion = Enum.find(deletions, &(&1.content == "l7"))
+      assert unwrap(Map.get(result, second_deletion.line_number)) == "l7"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Fallback to hunk-level highlighting
+  # ---------------------------------------------------------------------------
+
+  describe "precompute_highlights/4 — fallback to hunk-level" do
+    test "falls back to hunk-level when both full contents are nil" do
+      diff = """
+      @@ -1,2 +1,2 @@
+       line1
+      -line2_old
+      """
+
+      lines = DiffViewer.parse_diff_lines(%{diff: diff})
+      result = DiffViewer.precompute_highlights(lines, nil, nil, nil)
+
+      # With nil language, hunk-level highlighting returns raw lines.
+      deletion_line = Enum.find(lines, &(&1.type == :deletion))
+      assert unwrap(Map.get(result, deletion_line.line_number)) == "line2_old"
+    end
+
+    test "falls back to hunk-level when file exceeds size threshold" do
+      # Create a file with more than 5000 lines to exceed the threshold.
+      big_content = Enum.map_join(1..6000, "\n", fn n -> "line#{n}" end)
+
+      diff = """
+      @@ -1,2 +1,2 @@
+       line1
+      +line2_new
+      """
+
+      lines = DiffViewer.parse_diff_lines(%{diff: diff})
+      result = DiffViewer.precompute_highlights(lines, nil, big_content, big_content)
+
+      # The big file exceeds @max_full_file_lines (5000), so file-level is
+      # skipped and hunk-level is used. With nil language the result is raw.
+      addition_line = Enum.find(lines, &(&1.type == :addition))
+      assert unwrap(Map.get(result, addition_line.line_number)) == "line2_new"
+    end
+  end
+
   # Helper: a span-balanced fragment has an equal number of opening and
   # closing <span> tags.
   defp balanced_spans?(html) do
@@ -208,6 +439,10 @@ defmodule EvoDashWeb.DiffViewerTest do
     close = count_occurrences(html, "</span>")
     open == close
   end
+
+  # Helper: unwrap {:safe, html} that raw/1 wraps around highlighted values.
+  defp unwrap({:safe, html}), do: html
+  defp unwrap(other), do: other
 
   defp count_occurrences(html, needle) do
     html

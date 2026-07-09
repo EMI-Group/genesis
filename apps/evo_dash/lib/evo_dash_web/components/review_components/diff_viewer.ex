@@ -448,19 +448,22 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   defp map_hunk_body([line | rest], new_hl, old_hl, acc, old_start, new_start, old_off, new_off) do
     case line.type do
       :context ->
+        # Context lines appear in both old and new files; prefer the NEW file's
+        # highlighting (the "after" version) so surrounding code matches the
+        # final result. Both offsets advance (the line exists in both sides).
         idx = new_start - 1 + new_off
-        hl = lookup_highlight(new_hl, idx) || raw(line.content)
-        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, hl), old_start, new_start, old_off + 1, new_off + 1)
+        hl = lookup_highlight(new_hl, idx) || line.content
+        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off + 1, new_off + 1)
 
       :addition ->
         idx = new_start - 1 + new_off
-        hl = lookup_highlight(new_hl, idx) || raw(line.content)
-        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, hl), old_start, new_start, old_off, new_off + 1)
+        hl = lookup_highlight(new_hl, idx) || line.content
+        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off, new_off + 1)
 
       :deletion ->
         idx = old_start - 1 + old_off
-        hl = lookup_highlight(old_hl, idx) || raw(line.content)
-        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, hl), old_start, new_start, old_off + 1, new_off)
+        hl = lookup_highlight(old_hl, idx) || line.content
+        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off + 1, new_off)
 
       _ ->
         # no_newline / header / meta — plain text, don't advance code offsets.
