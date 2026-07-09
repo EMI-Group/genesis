@@ -49,6 +49,14 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     * `:agent_module` — module atom (e.g. `EvoGit.Agents.Manager`)
     * `:started_at` — `nil` (no direct field)
     * `:model_id` — model profile id string
+    * `:repo_root` — absolute path to the repo root (string | nil)
+    * `:context_path` — the spatial node path the agent is targeting (string)
+    * `:worktree` — path to the assigned worktree (string | nil)
+    * `:current_commit` — current git commit SHA (string)
+    * `:base_commit` — base git commit SHA (string)
+    * `:task_id` — task group ID string (string | nil)
+    * `:task_number` — short task number for naming (integer | nil)
+    * `:retries` — crash-retry count (integer)
 
   Returns `[]` when no agents are registered or the ETS tables don't exist yet.
   """
@@ -173,6 +181,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
 
   defp build_agent_summary(id, %SchedMeta{} = meta, nil) do
     # Agent registered in sched_meta but not yet dispatched (no agent_state).
+    spec = meta.spec
+
     %{
       id: id,
       task_local_id: nil,
@@ -183,17 +193,29 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       usage: Usage.zero(),
       total_tokens: 0,
       compression_count: 0,
-      objective: meta.spec.objective,
+      objective: spec.objective,
       result: nil,
-      agent_module: meta.spec.agent_module,
+      agent_module: spec.agent_module,
       started_at: nil,
-      model_id: nil
+      model_id: nil,
+      repo_root: nil,
+      context_path: spec.context_node.path,
+      worktree: meta.worktree,
+      current_commit: spec.phylo_node.current_commit,
+      base_commit: spec.phylo_node.base_commit,
+      task_id: meta.task_id,
+      task_number: meta.task_number,
+      retries: meta.retries
     }
   end
 
   defp build_agent_summary(id, %SchedMeta{} = meta, %AgentState{} = state) do
     usage = state.usage || Usage.zero()
     objective = state.objective || meta.spec.objective
+
+    # Prefer the live phylo_node (worktree-bound, advancing commit); fall back
+    # to the spec's phylo_node which is always populated.
+    phylo = state.phylo_node || meta.spec.phylo_node
 
     %{
       id: id,
@@ -209,7 +231,15 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       result: nil,
       agent_module: meta.spec.agent_module,
       started_at: nil,
-      model_id: state.model_id
+      model_id: state.model_id,
+      repo_root: state.repo_root,
+      context_path: state.context_node.path,
+      worktree: meta.worktree,
+      current_commit: phylo.current_commit,
+      base_commit: phylo.base_commit,
+      task_id: meta.task_id,
+      task_number: meta.task_number,
+      retries: meta.retries
     }
   end
 end
