@@ -88,11 +88,10 @@ defmodule EvoDashWeb.NodeSelectorComponent do
     </details>
 
     <%= if @show_manager do %>
-      <div
-        class="modal modal-open"
-        id={"#{@id}-manager"}
-        phx-click-away="toggle_manager"
-        phx-target={@myself}
+      <dialog
+        class="modal"
+        id={"#{@id}-manager-dialog"}
+        phx-hook="DialogModal"
       >
         <div class="modal-box max-w-2xl rounded-xl">
           <div class="flex items-center justify-between mb-4">
@@ -312,7 +311,10 @@ defmodule EvoDashWeb.NodeSelectorComponent do
             </div>
           </div>
         </div>
-      </div>
+        <form method="dialog" class="modal-backdrop">
+          <button>{gettext("close")}</button>
+        </form>
+      </dialog>
     <% end %>
     </div>
     """
@@ -339,6 +341,12 @@ defmodule EvoDashWeb.NodeSelectorComponent do
   @impl true
   def handle_event("toggle_manager", _params, socket) do
     {:noreply, assign(socket, :show_manager, not socket.assigns.show_manager)}
+  end
+
+  # Called by the DialogModal JS hook when the user dismisses the dialog
+  # natively (ESC key or backdrop click). Syncs server state.
+  def handle_event("dialog_closed", _params, socket) do
+    {:noreply, assign(socket, :show_manager, false)}
   end
 
   def handle_event("select_node", %{"node" => node_id}, socket) do
