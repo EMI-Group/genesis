@@ -13,7 +13,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   Each provider has its own config section under `[:tools, :search, :<provider>]`
   with the following keys:
 
-  - `:api_key_env_var` — the environment variable name for the API key
+  - `:api_key_env_var` — the configuration key name for the API key (used with ReqLLM's key store)
   - `:base_url` — the API endpoint URL
   - `:search_depth` — default search depth (`:basic` or `:advanced`)
   - `:max_results` — default max results (1-50)
@@ -131,12 +131,8 @@ defmodule EvoGit.Agent.Tools.WebSearch do
       api_key =
         if api_key_env_var do
           case EvoGit.Config.env_var_to_reqllm_key(api_key_env_var) do
-            nil -> System.get_env(api_key_env_var)
-            atom_key ->
-              case ReqLLM.get_key(atom_key) do
-                nil -> System.get_env(api_key_env_var)
-                key -> key
-              end
+            nil -> nil
+            atom_key -> ReqLLM.get_key(atom_key)
           end
         else
           nil
