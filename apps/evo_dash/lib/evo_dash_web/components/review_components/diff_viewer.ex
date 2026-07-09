@@ -201,10 +201,15 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # ---------------------------------------------------------------------------
 
   defp render_diff_content(file, file_path, context_level) do
-    # Pre-compute highlighted content at the hunk level (one Lumis call per
-    # code block instead of one per line), then look up per-line results.
+    # Pre-compute highlighted content: prefer file-level highlighting (one Lumis
+    # call for the entire file, then map diff lines back by line number) which
+    # gives Tree-sitter full context; fall back to hunk-level highlighting when
+    # full content is unavailable.
     lines = if file.diff, do: parse_diff_lines(file), else: []
-    highlighted = if file.diff, do: precompute_highlights(lines, file.language), else: %{}
+    highlighted =
+      if file.diff,
+        do: precompute_highlights(lines, file.language, file.full_new_content, file.full_old_content),
+        else: %{}
 
     assigns = %{
       file: file,
@@ -287,7 +292,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   defp diff_prefix_color(_), do: ""
 
   # Parse diff lines into structured data
-  defp parse_diff_lines(file) do
+  @doc false
+  def parse_diff_lines(file) do
     file.diff
     |> String.split("\n")
     |> Enum.with_index(1)
@@ -328,24 +334,171 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   end
 
   # ---------------------------------------------------------------------------
-  # Hunk-level syntax highlighting (batched Lumis calls)
+  # Syntax highlighting: file-level (primary) with hunk-level fallback
   # ---------------------------------------------------------------------------
   #
-  # Instead of calling Lumis.highlight! per line (one NIF round-trip per diff
-  # line), we batch at the hunk level: reconstruct clean Old Code and New Code
-  # strings from each hunk, call Lumis once per code block, then map the
-  # resulting highlighted lines back to individual diff lines.
+  # PRIMARY (file-level): When the full file content at the new/old commit is
+  # available, we highlight the ENTIRE file in a single Lumis call. Tree-sitter
+  # then has full context (imports, function boundaries, multi-line constructs)
+  # and produces consistent highlighting. We walk the diff hunk-by-hunk, using
+  # the @@ header line numbers to index into the full-file highlight arrays.
   #
-  # This try/rescue is JUSTIFIED:
+  # FALLBACK (hunk-level): When full content is unavailable (added/deleted
+  # files where content fetch failed, or files exceeding the size threshold),
+  # we fall back to the original approach: reconstruct clean old/new code
+  # strings from each hunk and call Lumis once per hunk code block.
+  #
+  # This try/rescue in highlight_code_block/2 is JUSTIFIED:
   #   - Lumis.highlight!/2 raises on invalid/unexpected input (malformed code,
   #     unsupported language, binary-encoded edge cases). The non-bang variant
   #     Lumis.highlight/2 also raises internally (it does NOT return {:error, _}
   #     despite what the docs suggest), so case/with cannot cleanly replace it.
-  #   - This is called once per hunk code block (not per line), so the cost is
-  #     amortized. Fallback to raw un-highlighted code is the correct graceful
-  #     degradation for a single hunk failure.
+  #   - It is called at most twice per file (file-level) or a handful of times
+  #     per hunk (fallback), so the cost is amortized. Falling back to raw
+  #     un-highlighted code is the correct graceful degradation.
 
-  defp precompute_highlights(lines, language) do
+  # Full files larger than this many lines fall back to hunk-level highlighting.
+  # 5000 lines keeps the single Lumis call fast (< ~200ms) while covering the
+  # vast majority of real source files. Generated/minified files exceeding this
+  # are poor candidates for Tree-sitter highlighting anyway.
+  @max_full_file_lines 5000
+
+  @doc false
+  def precompute_highlights(lines, language, full_new_content, full_old_content) do
+    new_hl = maybe_highlight_full(full_new_content, language)
+    old_hl = maybe_highlight_full(full_old_content, language)
+
+    if is_nil(new_hl) and is_nil(old_hl) do
+      precompute_highlights_hunk_level(lines, language)
+    else
+      precompute_highlights_file_level(lines, new_hl, old_hl)
+    end
+  end
+
+  # Highlight the full file content if it is present and under the size
+  # threshold. Returns nil (treat as unavailable) otherwise.
+  defp maybe_highlight_full(nil, _language), do: nil
+
+  defp maybe_highlight_full(content, language) do
+    if line_count(content) <= @max_full_file_lines do
+      highlight_code_block(content, language)
+    else
+      nil
+    end
+  end
+
+  defp line_count(content) do
+    content |> String.split("\n") |> length()
+  end
+
+  # --- File-level mapping -------------------------------------------------
+  #
+  # Walks the parsed diff lines hunk-by-hunk. For each hunk, the @@ header
+  # gives 1-indexed starting line numbers in the old file and new file. We
+  # maintain per-hunk offsets (old_offset, new_offset) that advance as we
+  # consume context/addition/deletion lines, and index into the full-file
+  # highlight arrays (converted to 0-indexed). Out-of-bounds or nil lookups
+  # fall back to the raw line content (not empty string).
+
+  defp precompute_highlights_file_level(lines, new_hl, old_hl) do
+    lines
+    |> Enum.chunk_while(
+      [],
+      fn
+        %{type: :hunk} = line, [] ->
+          {:cont, [line]}
+
+        %{type: :hunk} = line, acc ->
+          {:cont, Enum.reverse(acc), [line]}
+
+        line, acc ->
+          {:cont, [line | acc]}
+      end,
+      fn
+        [] -> {:cont, []}
+        acc -> {:cont, Enum.reverse(acc), []}
+      end
+    )
+    |> Enum.reduce(%{}, fn
+      [], acc -> acc
+      chunk, acc -> map_hunk_file_level(chunk, new_hl, old_hl, acc)
+    end)
+  end
+
+  defp map_hunk_file_level(chunk, new_hl, old_hl, acc) do
+    # Split the hunk header from the body. Header/meta lines before the first
+    # hunk (diff/index/---/+++) are mapped as plain text.
+    case Enum.split_with(chunk, &(&1.type != :hunk)) do
+      {pre, [%{type: :hunk} = hdr | body]} ->
+        pre_acc = Enum.reduce(pre, acc, fn l, a -> Map.put(a, l.line_number, l.content) end)
+        header_acc = Map.put(pre_acc, hdr.line_number, hdr.content)
+        {old_start, new_start} = parse_hunk_header(hdr.content)
+        map_hunk_body(body, new_hl, old_hl, header_acc, old_start, new_start, 0, 0)
+
+      _ ->
+        # No hunk header in this chunk — plain text only.
+        Enum.reduce(chunk, acc, fn l, a -> Map.put(a, l.line_number, l.content) end)
+    end
+  end
+
+  defp map_hunk_body([], _new_hl, _old_hl, acc, _old_start, _new_start, _old_off, _new_off) do
+    acc
+  end
+
+  defp map_hunk_body([line | rest], new_hl, old_hl, acc, old_start, new_start, old_off, new_off) do
+    case line.type do
+      :context ->
+        idx = new_start - 1 + new_off
+        hl = lookup_highlight(new_hl, idx) || raw(line.content)
+        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, hl), old_start, new_start, old_off + 1, new_off + 1)
+
+      :addition ->
+        idx = new_start - 1 + new_off
+        hl = lookup_highlight(new_hl, idx) || raw(line.content)
+        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, hl), old_start, new_start, old_off, new_off + 1)
+
+      :deletion ->
+        idx = old_start - 1 + old_off
+        hl = lookup_highlight(old_hl, idx) || raw(line.content)
+        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, hl), old_start, new_start, old_off + 1, new_off)
+
+      _ ->
+        # no_newline / header / meta — plain text, don't advance code offsets.
+        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, line.content), old_start, new_start, old_off, new_off)
+    end
+  end
+
+  # Index into the highlight array; returns nil for out-of-bounds or nil array.
+  defp lookup_highlight(nil, _idx), do: nil
+  defp lookup_highlight(hl_array, idx) when idx >= 0, do: Enum.at(hl_array, idx)
+  defp lookup_highlight(_hl_array, _idx), do: nil
+
+  # Parse the @@ header to extract old_start and new_start line numbers.
+  # Format: "@@ -<old_start>[,<count>] +<new_start>[,<count>] @@ <context>"
+  # Returns {old_start, new_start} as 1-indexed integers, defaulting to {0, 0}.
+  @doc false
+  def parse_hunk_header(content) do
+    case Regex.run(~r/-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?/, content) do
+      [_, new_start_str] ->
+        new_start = String.to_integer(new_start_str)
+        old_start = parse_old_start(content)
+        {old_start, new_start}
+
+      _ ->
+        {0, 0}
+    end
+  end
+
+  defp parse_old_start(content) do
+    case Regex.run(~r/-(\d+)(?:,\d+)?\s+\+\d+/, content) do
+      [_, old_start_str] -> String.to_integer(old_start_str)
+      _ -> 0
+    end
+  end
+
+  # --- Hunk-level fallback (original approach) ----------------------------
+
+  defp precompute_highlights_hunk_level(lines, language) do
     {result, _} = do_precompute(lines, language, %{})
     result
   end
