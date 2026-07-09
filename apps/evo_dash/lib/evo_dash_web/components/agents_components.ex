@@ -24,45 +24,38 @@ defmodule EvoDashWeb.AgentsComponents do
     ~H"""
     <%= for {node, index} <- Enum.with_index(@nodes) do %>
       <% is_last = index == length(@nodes) - 1 %>
-      <div class={["relative", "py-1"]}>
+      <div class="relative">
         <%= if @depth > 0 do %>
-          <!-- Vertical trunk line: full height for non-last children (trunk
-               continues to the next sibling), partial height for the last child
-               (trunk stops at the horizontal connector — no trailing line below). -->
-          <div
-            class={[
-              "absolute top-0 border-l-2 border-base-content/10 z-0",
-              "left-2 sm:left-3 lg:left-4",
-              if(is_last, do: "h-5"),
-              if(!is_last, do: "bottom-0")
-            ]}
-          >
-          </div>
-          <!-- Horizontal connector bridging the trunk to the node content -->
-          <div
-            class={[
-              "absolute top-5 border-t-2 border-base-content/10 z-0",
-              "left-2 sm:left-3 lg:left-4 w-3 sm:w-5 lg:w-6"
-            ]}
-          >
-          </div>
+          <!-- L-connector from parent's trunk to this node's folder icon -->
+          <!-- Connects x=10px (parent trunk) to x=24px (left edge of this child's folder icon) -->
+          <div class="absolute -left-3.5 top-0 w-3.5 h-[18px] border-l-2 border-b-2 border-base-content/20 rounded-bl-sm z-0 pointer-events-none"></div>
+          
+          <!-- Continuation trunk for next siblings -->
+          <%= if not is_last do %>
+             <div class="absolute -left-3.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none"></div>
+          <% end %>
         <% end %>
 
-        <!-- Path and Agents Row — indented to clear connectors (padding on
-             this inner content div, NOT on the outer positioning-context div) -->
-        <div class={["relative z-10 flex flex-col sm:flex-row sm:items-start gap-3", @depth > 0 && "pl-5 sm:pl-8 lg:pl-10"]}>
+        <!-- This Node's Content Row -->
+        <div class="relative z-10 flex flex-col xl:flex-row xl:items-start gap-3 py-1">
+          <!-- Trunk for this node's OWN children (if any) -->
+          <!-- Starts from center of folder icon (x=10px, y=18px) and goes to bottom of this content row -->
+          <%= if length(node.children) > 0 do %>
+            <div class="absolute left-2.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none"></div>
+          <% end %>
+
           <!-- Path info -->
-          <div class="flex items-center gap-2 mt-1 shrink-0" style={"width: #{@max_width}ch; max-width: 100%;"}>
-            <.icon name="hero-folder" class="size-5 text-base-content/50 shrink-0" />
+          <div class="flex items-center gap-2 h-7 shrink-0" style={"width: #{@max_width}ch; max-width: 100%;"}>
+            <.icon name="hero-folder" class="size-5 text-base-content/50 shrink-0 relative z-10 bg-base-100/50 rounded" />
             <span class="font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
             <%= if length(node.agents) > 0 do %>
-              <div class="grow border-b-2 border-dotted border-base-content/10 ml-1 mr-2"></div>
+              <div class="grow border-b-2 border-dotted border-base-content/10 mx-2 hidden xl:block"></div>
             <% end %>
           </div>
 
           <!-- Agents Row -->
           <%= if length(node.agents) > 0 do %>
-            <div class="flex flex-wrap gap-2 flex-1 mt-1 sm:mt-0">
+            <div class="flex flex-wrap gap-2 flex-1 mt-1 xl:mt-0">
               <%= for agent <- node.agents do %>
                 <div
                   id={"agent-card-#{agent.id}"}
@@ -119,10 +112,9 @@ defmodule EvoDashWeb.AgentsComponents do
           <% end %>
         </div>
 
-        <!-- Children container (recursive) — no container-level trunk line;
-             per-node vertical lines (above) handle the connector logic. -->
+        <!-- Children container -->
         <%= if length(node.children) > 0 do %>
-          <div class="space-y-1 relative">
+          <div class="ml-6 relative">
             <EvoDashWeb.AgentsComponents.path_tree
               nodes={node.children}
               depth={@depth + 1}
