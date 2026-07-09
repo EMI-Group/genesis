@@ -188,6 +188,105 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert is_nil(summary.model_id)
     end
 
+    test "includes repo_root, context_path, worktree, commits, and task fields from state" do
+      phylo = %PhyloGraphNode{repo: "/tmp/test", base_commit: "base123", current_commit: "head456"}
+
+      meta = %SchedMeta{
+        id: 1,
+        depth: 0,
+        spec: agent_spec(),
+        status: :running,
+        parent_id: nil,
+        worktree: "/worktrees/worker_T1_A1",
+        task_id: "aabbccddeeff0011",
+        task_number: 1,
+        retries: 2
+      }
+
+      state =
+        agent_state(
+          repo_root: "/home/user/project",
+          phylo_node: phylo
+        )
+
+      put_sched_meta(1, meta)
+      put_agent_state(1, state)
+
+      [summary] = RemoteAPI.list_agents()
+
+      assert summary.repo_root == "/home/user/project"
+      assert summary.context_path == "./"
+      assert summary.worktree == "/worktrees/worker_T1_A1"
+      assert summary.base_commit == "base123"
+      assert summary.current_commit == "head456"
+      assert summary.task_id == "aabbccddeeff0011"
+      assert summary.task_number == 1
+      assert summary.retries == 2
+    end
+
+    test "falls back to spec.phylo_node for commits when state.phylo_node is nil" do
+      meta = %SchedMeta{
+        id: 1,
+        depth: 0,
+        spec: agent_spec(),
+        worktree: "/worktrees/wt1",
+        task_id: "1122334455667788",
+        task_number: 3,
+        retries: 0
+      }
+
+      state = agent_state(phylo_node: nil, repo_root: "/repo/root")
+
+      put_sched_meta(1, meta)
+      put_agent_state(1, state)
+
+      [summary] = RemoteAPI.list_agents()
+
+      # spec.phylo_node has base_commit/current_commit "abc"
+      assert summary.base_commit == "abc"
+      assert summary.current_commit == "abc"
+      assert summary.context_path == "./"
+      assert summary.worktree == "/worktrees/wt1"
+      assert summary.task_id == "1122334455667788"
+      assert summary.task_number == 3
+      assert summary.retries == 0
+    end
+
+    test "includes task and commit fields from spec when agent_state is missing" do
+      meta = %SchedMeta{
+        id: 7,
+        depth: 0,
+        spec: agent_spec(),
+        worktree: nil,
+        task_id: "deadbeefdeadbeef",
+        task_number: 5,
+        retries: 1
+      }
+
+      put_sched_meta(7, meta)
+
+      [summary] = RemoteAPI.list_agents()
+
+      # No agent_state → repo_root is nil, but context_path/commits come from spec
+      assert is_nil(summary.repo_root)
+      assert summary.context_path == "./"
+      assert summary.base_commit == "abc"
+      assert summary.current_commit == "abc"
+      assert is_nil(summary.worktree)
+      assert summary.task_id == "deadbeefdeadbeef"
+      assert summary.task_number == 5
+      assert summary.retries == 1
+    end
+
+    test "defaults retries to 0 when not set in meta" do
+      meta = %SchedMeta{id: 1, depth: 0, spec: agent_spec()}
+      put_sched_meta(1, meta)
+      put_agent_state(1, agent_state())
+
+      [summary] = RemoteAPI.list_agents()
+      assert summary.retries == 0
+    end
+
     test "returns multiple agents" do
       put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
       put_sched_meta(2, %SchedMeta{id: 2, depth: 1, spec: agent_spec()})
