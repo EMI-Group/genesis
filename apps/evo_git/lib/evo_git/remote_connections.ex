@@ -194,14 +194,22 @@ defmodule EvoGit.RemoteConnections do
         user -> user
       end
 
+    # Look up SSH config for auto-population of user, port, identity_file.
+    # SSH config values only fill in when the field is nil/empty.
+    ssh_conf = EvoGit.SSHConfig.lookup(host)
+
+    resolved_user = user || Map.get(ssh_conf, :user)
+    resolved_port = get_or_default(conn, :port, Map.get(ssh_conf, :port) || @default_port)
+    resolved_identity_file = Map.get(conn, :identity_file) || Map.get(ssh_conf, :identity_file)
+
     %{
-      id: Map.get(conn, :id) || slugify_host(host, user),
+      id: Map.get(conn, :id) || slugify_host(host, resolved_user),
       name: Map.get(conn, :name) || host,
       host: host,
-      user: user,
-      port: get_or_default(conn, :port, @default_port),
+      user: resolved_user,
+      port: resolved_port,
       dist_port: get_or_default(conn, :dist_port, @default_dist_port),
-      identity_file: Map.get(conn, :identity_file),
+      identity_file: resolved_identity_file,
       remote_path: get_or_default(conn, :remote_path, @default_remote_path),
       last_connected: Map.get(conn, :last_connected)
     }
