@@ -801,7 +801,7 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("save_api_key", %{"env_var" => env_var, "api_key" => api_key}, socket) do
+  def handle_event("save_api_key", %{"credential_key" => credential_key, "api_key" => api_key}, socket) do
     if socket.assigns.remote_config do
       {:noreply,
        put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
@@ -809,7 +809,7 @@ defmodule EvoDashWeb.SettingsLive do
       if String.trim(api_key) == "" do
         {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
       else
-        case EvoGit.Config.save_credentials(%{env_var => String.trim(api_key)}) do
+        case EvoGit.Config.save_credentials(%{credential_key => String.trim(api_key)}) do
           :ok ->
             config_status = config_status()
 
