@@ -289,22 +289,13 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_params(params, _url, socket) do
-    page_size = socket.assigns.page_size
     requested_page = parse_page(params["page"])
-
-    {tasks, current_page, total_count, total_pages} =
-      load_page(requested_page, page_size)
 
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/tasks")
-      |> assign(:tasks, tasks)
-      |> assign(:current_page, current_page)
-      |> assign(:total_count, total_count)
-      |> assign(:total_pages, total_pages)
-      |> assign(:project_paths, TaskRegistry.get_unique_paths())
-      |> assign_filtered_tasks()
+      |> load_page_into_socket(requested_page)
 
     {:noreply, socket}
   end
@@ -345,7 +336,7 @@ defmodule EvoDashWeb.TasksLive do
      socket
      |> assign(:status_filter, status_filter)
      |> assign(:project_filter, project_filter)
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   @impl true
@@ -353,7 +344,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, filter)
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   @impl true
@@ -361,7 +352,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, query)
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   # Prevents page reload when pressing Enter in the filter/search form
@@ -378,7 +369,7 @@ defmodule EvoDashWeb.TasksLive do
        search_query: "",
        review_status_filter: "all"
      )
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   @impl true
@@ -386,7 +377,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:status_filter, "all")
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   @impl true
@@ -394,7 +385,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:project_filter, "all")
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   @impl true
@@ -402,7 +393,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, "")
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   @impl true
@@ -410,7 +401,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, "all")
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   @impl true
@@ -526,9 +517,9 @@ defmodule EvoDashWeb.TasksLive do
   # If clamping changes the page, a second fetch is performed for the
   # clamped page. This is at most one extra fetch and only on edge cases
   # (e.g. a stale/high page number).
-  defp load_page(requested_page, page_size) do
+  defp load_page(requested_page, page_size, filters) do
     offset = (requested_page - 1) * page_size
-    {tasks, total_count} = TaskRegistry.list_tasks_paginated(limit: page_size, offset: offset)
+    {tasks, total_count} = TaskRegistry.list_tasks_paginated(limit: page_size, offset: offset, filters: filters)
     total_pages = total_pages(total_count, page_size)
     clamped_page = min(max(1, requested_page), total_pages)
 
@@ -536,7 +527,7 @@ defmodule EvoDashWeb.TasksLive do
       clamped_offset = (clamped_page - 1) * page_size
 
       {clamped_tasks, ^total_count} =
-        TaskRegistry.list_tasks_paginated(limit: page_size, offset: clamped_offset)
+        TaskRegistry.list_tasks_paginated(limit: page_size, offset: clamped_offset, filters: filters)
 
       {clamped_tasks, clamped_page, total_count, total_pages}
     else
@@ -566,8 +557,9 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   defp load_page_into_socket(socket, page) do
+    filters = build_filters_from_assigns(socket)
     {tasks, current_page, total_count, total_pages} =
-      load_page(page, socket.assigns.page_size)
+      load_page(page, socket.assigns.page_size, filters)
 
     socket
     |> assign(:tasks, tasks)
@@ -575,79 +567,17 @@ defmodule EvoDashWeb.TasksLive do
     |> assign(:total_count, total_count)
     |> assign(:total_pages, total_pages)
     |> assign(:project_paths, TaskRegistry.get_unique_paths())
-    |> assign_filtered_tasks()
+    |> assign(:filtered_tasks, tasks)
   end
 
-  defp assign_filtered_tasks(socket) do
-    filtered =
-      socket.assigns.tasks
-      |> filter_by_status(socket.assigns.status_filter)
-      |> filter_by_project(socket.assigns.project_filter)
-      |> filter_by_review_status(socket.assigns.review_status_filter)
-      |> filter_by_search(socket.assigns.search_query)
-      |> Enum.sort_by(
-        fn task ->
-          case task.started_at do
-            %DateTime{} = dt -> dt
-            _ -> ~U[0001-01-01T00:00:00Z]
-          end
-        end,
-        {:desc, DateTime}
-      )
-
-    assign(socket, :filtered_tasks, filtered)
+  defp build_filters_from_assigns(socket) do
+    [
+      status: socket.assigns.status_filter,
+      project_path: socket.assigns.project_filter,
+      review_status: socket.assigns.review_status_filter,
+      search: socket.assigns.search_query
+    ]
   end
-
-  defp filter_by_status(tasks, "all"), do: tasks
-
-  defp filter_by_status(tasks, status) when is_binary(status) do
-    status_atom = String.to_existing_atom(status)
-    Enum.filter(tasks, &(&1.status == status_atom))
-  end
-
-  defp filter_by_status(tasks, _), do: tasks
-
-  defp filter_by_project(tasks, "all"), do: tasks
-
-  defp filter_by_project(tasks, path) when is_binary(path) do
-    Enum.filter(tasks, fn task ->
-      task.opts[:path] == path
-    end)
-  end
-
-  defp filter_by_project(tasks, _), do: tasks
-
-  defp filter_by_review_status(tasks, "all"), do: tasks
-
-  defp filter_by_review_status(tasks, "pending") do
-    Enum.filter(tasks, fn task ->
-      task.status == :completed and is_nil(task.review_status) and
-        match?({:ok, %{branch_name: _}}, task.result)
-    end)
-  end
-
-  defp filter_by_review_status(tasks, status) when is_binary(status) do
-    status_atom = String.to_existing_atom(status)
-    Enum.filter(tasks, &(&1.review_status == status_atom))
-  end
-
-  defp filter_by_review_status(tasks, _), do: tasks
-
-  defp filter_by_search(tasks, ""), do: tasks
-
-  defp filter_by_search(tasks, query) when is_binary(query) do
-    query_lower = String.downcase(query)
-
-    Enum.filter(tasks, fn task ->
-      String.contains?(String.downcase(task.id), query_lower) or
-        String.contains?(
-          String.downcase(task.opts[:prompt] || task.opts[:objective] || ""),
-          query_lower
-        )
-    end)
-  end
-
-  defp filter_by_search(tasks, _), do: tasks
 
   defp animation_delay_class(idx) when idx <= 5, do: "animation-delay-#{div(idx, 1) * 100}"
   defp animation_delay_class(_), do: ""
