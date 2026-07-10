@@ -5,7 +5,7 @@ The `:evo_git` OTP application implements an evolutionary software development r
 
 ### SSH Remote Development
 Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightweight headless `:evo_git` daemon runs on a remote server (via `systemd-run --user`), and the local Phoenix dashboard connects to it via **Erlang distribution over an SSH tunnel**. The local web frontend controls the remote runtime. Two core foundation modules enable this:
-- `EvoGit.RemoteConnections` — TOML-based store (`~/.config/genesis/remote_connections.toml`) for SSH target definitions (host, port, dist port, identity file, remote binary path).
+- `EvoGit.RemoteConnections` — TOML-based store (`~/.config/genesis/remote_connections.toml`) for SSH target definitions. New schema uses `ssh_target` (a plain SSH host string like `gpu-server` or `user@host` — port/keys handled by `~/.ssh/config`), `local_binary_path` (path to local `genesis_remote` binary), `dist_port`, `remote_path`, `name`, `id`, `last_connected`. Old `host`/`user`/`port`/`identity_file` fields are auto-migrated to `ssh_target` on load.
 - `EvoGit.AgentScheduler.RemoteAPI` — a read-only RPC API over the scheduler's ETS state, designed to be called via `:erpc.call/4` from the local dashboard. All returns are serialization-safe plain maps/lists/scalars (no struct references or PIDs cross-node). Distribution is enabled via Mix release env vars (`RELEASE_DISTRIBUTION`/`RELEASE_NODE`); the existing `Phoenix.PubSub` PG2 adapter already uses `:pg` (OTP 26+), which supports multi-node out of the box — no Redis or third-party PubSub required.
 
 ## Routing Table
