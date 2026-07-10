@@ -115,11 +115,12 @@ defmodule EvoGit.SandboxSlice do
         runs: %{}
       }
 
-      # If sandbox is enabled, create the slice eagerly (fail fast)
-      cleanup_stale_services()
-
       state =
         if sandbox_enabled?() do
+          # Clean up any stale services from a previous BEVM VM crash before
+          # recreating the slice. Only meaningful when we're about to create one.
+          cleanup_stale_services()
+
           case do_create_slice(resources) do
             :ok ->
               %{state | slice_active: true}
