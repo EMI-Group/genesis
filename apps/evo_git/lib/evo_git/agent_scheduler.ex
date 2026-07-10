@@ -763,6 +763,13 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
+  def handle_cast({:release_tool_slot, agent_id}, %State{} = state) do
+    {new_state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
+    Lifecycle.apply_status_updates(status_updates)
+    {:noreply, new_state}
+  end
+
+  @impl true
   def handle_call({:report_llm_error, agent_id, error_type}, _from, %State{} = state) do
     {:reply, :ok, new_state, status_updates} =
       Slots.handle_report_llm_error(agent_id, error_type, state)
@@ -782,13 +789,6 @@ defmodule EvoGit.AgentScheduler do
         Lifecycle.apply_status_updates(status_updates)
         {:noreply, new_state}
     end
-  end
-
-  @impl true
-  def handle_cast({:release_tool_slot, agent_id}, %State{} = state) do
-    {new_state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
-    Lifecycle.apply_status_updates(status_updates)
-    {:noreply, new_state}
   end
 
   # Retry LLM waiting queue after backoff expiry (delegated to Slots module)
