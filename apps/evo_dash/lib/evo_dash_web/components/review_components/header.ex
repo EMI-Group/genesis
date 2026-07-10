@@ -17,7 +17,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
 
   def review_header(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-200 bg-base-100 overflow-hidden">
+    <div class="border border-base-200 bg-base-100 overflow-hidden">
       <div class="p-4">
         <div class="flex items-start gap-3">
           <.icon name="hero-code-bracket-square" class="size-5 text-base-content/50 shrink-0 mt-0.5" />
@@ -62,7 +62,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
 
   def task_summary(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-200 bg-base-100 p-3">
+    <div class="border-b border-base-200 bg-base-100 p-3">
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <%= if @usage do %>
           <div class="flex flex-col">
@@ -128,7 +128,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
 
   def agent_summary(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-lg shadow-sm border border-base-200/60 overflow-hidden">
+    <div class="bg-base-100 border-b border-base-200 overflow-hidden">
       <div class="relative">
         <details open={@open}>
           <summary class="p-5 md:p-6 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-4 list-none">

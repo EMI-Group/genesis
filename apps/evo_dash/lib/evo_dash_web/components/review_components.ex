@@ -89,7 +89,7 @@ defmodule EvoDashWeb.ReviewComponents do
     assigns = assign(assigns, :archive_tree, tree)
 
     ~H"""
-    <div class="bg-base-100 rounded-lg shadow-sm border border-base-200/60 overflow-hidden">
+    <div class="bg-base-100 border border-base-200 overflow-hidden">
       <!-- Header -->
       <div class="flex items-center justify-between gap-3 p-5 md:p-6 border-b border-base-200/50 bg-base-200/20">
         <div class="flex items-center gap-3">
@@ -120,7 +120,7 @@ defmodule EvoDashWeb.ReviewComponents do
   def archive_tree_node(assigns) do
     ~H"""
     <div class="ml-0">
-      <div class="bg-base-200/30 rounded-lg border border-base-200/60 p-4 sm:p-5">
+      <div class="bg-base-200/30 border border-base-200/60 p-4 sm:p-5">
         <!-- Agent header -->
         <div class="flex flex-wrap items-center gap-2 mb-3">
           <span class="font-mono font-bold text-sm text-base-content">{@agent[:agent_id]}</span>

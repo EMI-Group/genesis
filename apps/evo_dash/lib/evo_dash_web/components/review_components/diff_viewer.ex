@@ -151,7 +151,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   def commit_detail_header(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-200 bg-base-100 overflow-hidden">
+    <div class="border border-base-200 bg-base-100 overflow-hidden">
       <div class="p-4">
         <div class="flex items-start gap-3">
           <.icon name="hero-code-bracket-square" class="size-5 text-base-content/50 shrink-0 mt-0.5" />
