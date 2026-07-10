@@ -340,8 +340,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # PRIMARY (file-level): When the full file content at the new/old commit is
   # available, we highlight the ENTIRE file in a single Lumis call. Tree-sitter
   # then has full context (imports, function boundaries, multi-line constructs)
-  # and produces consistent highlighting. We walk the diff hunk-by-hunk, using
-  # the @@ header line numbers to index into the full-file highlight arrays.
+  # and produces consistent highlighting. The Lumis HTML output is parsed into
+  # a map %{line_number => inner_html} via data-line attributes. We walk the
+  # diff hunk-by-hunk, using the @@ header line numbers to index into the
+  # full-file highlight maps.
   #
   # FALLBACK (hunk-level): When full content is unavailable (added/deleted
   # files where content fetch failed, or binary/oversized files),
