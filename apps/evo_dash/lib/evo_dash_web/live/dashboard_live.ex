@@ -174,6 +174,8 @@ defmodule EvoDashWeb.DashboardLive do
                 archive={@task_archive}
                 model_profiles={@model_profiles}
                 selected_model_id={@selected_model_id}
+                build_systems={@build_systems}
+                selected_build_system={@task_build_system}
               />
             </div>
 
@@ -390,6 +392,8 @@ defmodule EvoDashWeb.DashboardLive do
 
     {model_profiles, selected_model_id} = Project.load_model_profiles()
 
+    build_systems = EvoGit.Runtime.WorktreeInitScript.build_systems()
+
     socket =
       assign(socket,
         active_project: nil,
@@ -413,6 +417,7 @@ defmodule EvoDashWeb.DashboardLive do
         tasks: [],
         model_profiles: model_profiles,
         selected_model_id: selected_model_id,
+        build_systems: build_systems,
         tauri_detected: false,
         platform: "linux",
         notified_task_ids:
@@ -428,6 +433,7 @@ defmodule EvoDashWeb.DashboardLive do
       assign(socket,
         show_advanced: false,
         task_resume_from: "",
+        task_build_system: nil,
         config_status: config_status,
         show_welcome: false,
         welcome_locale: Gettext.get_locale(EvoDashWeb.Gettext),
@@ -814,6 +820,16 @@ defmodule EvoDashWeb.DashboardLive do
           Keyword.put(opts, :prompt, prompt)
         else
           Keyword.put(opts, :objective, prompt)
+        end
+
+      build_system_param = params["build_system"]
+
+      opts =
+        if task_type == :genesis and is_binary(build_system_param) and
+             String.trim(build_system_param) != "" do
+          Keyword.put(opts, :build_system, String.to_existing_atom(build_system_param))
+        else
+          opts
         end
 
       opts =

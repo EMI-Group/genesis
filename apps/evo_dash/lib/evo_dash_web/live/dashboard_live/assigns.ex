@@ -74,6 +74,7 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
       task_starting_commit: "",
       task_resume_from: "",
       task_archive: false,
+      task_build_system: nil,
       show_advanced: false
     )
   end
