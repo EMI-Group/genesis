@@ -146,7 +146,7 @@ Genesis employs a specialized agent taxonomy, where each agent type has a distin
 | **Manager** | Refinement orchestrator | Plans, delegates, validates — does NOT do initial implementation. Coordinates gradual improvements, bug fixing, and polishing via subagents. |
 | **Generalist** | Full-stack engineer | Versatile agent that investigates, plans, and implements autonomously. Can delegate to investigators and executors. |
 | **Executor** | Implementation specialist | Receives well-defined objectives and executes precise, targeted code changes. Focuses strictly on the assigned scope. |
-| **CodebaseArchitect** | Greenfield designer & implementer | Initializes sub-trees with structure + working code (real, functional code — not empty stubs). Works in three phases: structure & public API → rough implementation → review & refinement. |
+| **CodebaseLead** | Greenfield architect & accountable lead | Accountable for all code in its node path (architecture + implementation outcomes), but directly responsible for architecture only: design, structure, CONTEXT.md, public API. Delegates implementation to Manager. Uses Executor for design artifacts. 3-phase: architecture & design → implementation delegation → review & accountability. |
 | **SkillExtractor** | Knowledge distiller | Analyzes completed work and distills reusable knowledge into skills for future agents. |
 
 **Read-Only Agents** (can read and update CONTEXT.md, but not modify code):
@@ -202,11 +202,13 @@ The system spawns a `ContextExtractor` agent at the repository root. This agent 
 
 A **Convergence Circuit Breaker** prevents infinite loops: agents evaluate context changes based *only* on functional API surface modifications (not phrasing or stylistic preferences), and a hard iteration limit guarantees mathematical termination.
 
-**Mode B — New Codebase (Architecture and Implementation):**
-A `CodebaseArchitect` agent interprets the user's prompt and drafts the initial architectural plan at the root node. It then operates in three phases:
-1. **Structure & Public API:** Creates the folder tree with CONTEXT.md files, defines the public API (interfaces, shared types), establishing the spatial hierarchy.
-2. **Rough Implementation:** Writes real, functional code in its own files (internal APIs, data structures, core logic) — not empty stubs. Delegates child directory initialization (structure + rough implementation) to child architects.
-3. **Review & Refinement:** Reviews the overall structure, delegates debugging and polishing to Manager subagents, and finalizes.
+**Mode B — New Codebase (Architecture and Implementation — Two-Root-Agent Mode):**
+Genesis Mode B spawns TWO sequential root agents sharing a single `task_id`:
+
+1. **Architecture root agent (`CodebaseLead`)**: Interprets the user's prompt at the root node, drafts the initial architectural plan, creates the folder tree with CONTEXT.md files, defines the public API (interfaces, shared types, directory structure), and recursively delegates child directory architecture to `subagent_codebase_lead` subagents. Uses `subagent_executor` for design artifacts. Does NOT implement code directly — its direct responsibility is architecture only, though it remains accountable for all code in its node path.
+2. **Implementation root agent (`Manager`)**: Starts from the architect's final commit. Receives a combined objective (original user prompt + architect's result report). Reviews the established architecture, identifies unimplemented work, and delegates implementation to Executor subagents. Completes the codebase to fulfill the original objective.
+
+Usage/cost tracking is aggregated across both root agents: combined token usage, agent count, and archive records are merged into the final result. This two-phase approach prevents the single-agent context exhaustion that previously caused half-completed codebases.
 
 For each planned submodule, child architects are recursively spawned to initialize the corresponding nodes. The same Fixed Point Convergence with circuit breaker applies.
 
@@ -607,7 +609,7 @@ Genesis采用专门的智能体分类学，其中每种智能体类型具有不�
 | **Manager** | 编排者 | 规划、委托、验证——不直接实现。通过子智能体协调工作，解决冲突并确保质量。 |
 | **Generalist** | 全栈工程师 | 多面手智能体，能自主调查、规划和实现。可以委托给调查者和执行者。 |
 | **Executor** | 实现专家 | 接收明确定义的目标并执行精确、有针对性的代码修改。严格专注于分配范围。 |
-| **CodebaseArchitect** | 绿地设计师 | 从零开始创建项目骨架。分三阶段工作：骨架设计 → 实现 → 审查。 |
+| **CodebaseLead** | 绿地架构师兼负责人 | 对其节点路径下的所有代码负责（架构+实现成果），但直接职责仅限架构：设计、结构、CONTEXT.md、公共API。将实现委托给Manager。使用Executor执行设计产物。分三阶段：架构设计 → 实现委托 → 审查与问责。 |
 | **SkillExtractor** | 知识蒸馏器 | 分析已完成的工作，将可重用的知识蒸馏为技能，供未来智能体使用。 |
 
 **只读智能体**（可以读取和更新CONTEXT.md，但不能修改代码）：
@@ -663,11 +665,13 @@ Genesis采用专门的智能体分类学，其中每种智能体类型具有不�
 
 **收敛断路器**防止无限循环：智能体*仅*基于功能性API表面修改（而非措辞或风格偏好）评估上下文变更，硬性迭代限制保证数学上的终止性。
 
-**模式B — 新代码库（架构与实现）：**
-`CodebaseArchitect`智能体解释用户的提示并在根节点草拟初始架构计划。然后它分三阶段运行：
-1. **骨架设计：** 创建带有CONTEXT.md文件的文件夹树，建立空间层次结构。
-2. **实现：** 填充代码文件，委托子架构师处理子目录。
-3. **审查与精炼：** 审查整体结构，调试问题并最终完成。
+**模式B — 新代码库（架构与实现 — 双根智能体模式）：**
+创世模式B生成两个顺序执行的根智能体，共享同一个`task_id`：
+
+1. **架构根智能体（`CodebaseLead`）**：在根节点解释用户的提示，草拟初始架构计划，创建带有CONTEXT.md文件的文件夹树，定义公共API（接口、共享类型、目录结构），并递归委托子目录架构给`subagent_codebase_lead`子智能体。使用`subagent_executor`执行设计产物。不直接实现代码——直接职责仅限架构，但对其节点路径下的所有代码负有问责责任。
+2. **实现根智能体（`Manager`）**：从架构师的最终提交开始。接收组合目标（原始用户提示+架构师的结果报告）。审查已建立的架构，识别未实现的工作，并委托实现给Executor子智能体。完成代码库以实现原始目标。
+
+使用量/成本跟踪在两个根智能体之间聚合：合并的令牌使用量、智能体计数和归档记录合并到最终结果中。这种双阶段方法防止单智能体上下文耗尽导致代码库半完成的问题。
 
 对于每个计划的子模块，递归生成子架构师来初始化相应的节点。相同的不动点收敛与断路器适用。
 

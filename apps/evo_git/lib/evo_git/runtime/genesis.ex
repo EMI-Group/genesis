@@ -4,8 +4,12 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Core.ContextNode
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
-  alias EvoGit.Agents.CodebaseArchitect
+  alias EvoGit.Agents.CodebaseLead
+  alias EvoGit.Agents.Manager
   alias EvoGit.Agents.ContextExtractor
+  alias EvoGit.Agent.Usage
+  alias EvoGit.Agent.Result
+  alias EvoGit.AgentScheduler.Lifecycle
   alias EvoGit.ProjectConfig
   alias EvoGit.Runtime
   alias EvoGit.Runtime.Helpers
@@ -60,11 +64,16 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  # Mode B: New Codebase
+  # Mode B: New Codebase — two-phase: Architecture (CodebaseLead) then Implementation (Manager)
   defp run_new_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode B (New Codebase)")
-    phylo_node = PhyloGraphNode.new(repo_path, current_sha)
-    context_node = ContextNode.load("./", repo_path)
+
+    # Generate task_id upfront so both root agents share it
+    task_id =
+      Keyword.get(opts, :task_id) ||
+        :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+
+    opts = Keyword.put(opts, :task_id, task_id)
 
     # Write a predefined worktree init script to genesis.toml so the existing
     # per-worktree init-script infrastructure copies deps/build cache into new
@@ -89,20 +98,109 @@ defmodule EvoGit.Runtime.Genesis do
     cli_repos = Keyword.get(opts, :foreign_repos, [])
     foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
 
-    case AgentSpec.new(context_node, phylo_node, CodebaseArchitect, objective,
-           foreign_repos: foreign_repos,
-           archive: Keyword.get(opts, :archive, false),
-           task_id: Keyword.get(opts, :task_id),
-           model_id: Keyword.get(opts, :model_id)
-         )
-         |> AgentScheduler.run_agent() do
-      {:ok, agent_output} ->
-        Helpers.notify_finalizing(Keyword.get(opts, :task_id))
-        Helpers.merge_and_report(repo_path, agent_output, "genesis")
+    # --- Phase 1: Architecture (CodebaseLead as root agent) ---
+    phylo_node = PhyloGraphNode.new(repo_path, current_sha)
+    context_node = ContextNode.load("./", repo_path)
+
+    architect_spec =
+      AgentSpec.new(context_node, phylo_node, CodebaseLead, objective,
+        foreign_repos: foreign_repos,
+        archive: Keyword.get(opts, :archive, false),
+        task_id: task_id,
+        model_id: Keyword.get(opts, :model_id)
+      )
+
+    case AgentScheduler.run_agent(architect_spec) do
+      {:ok, architect_output} ->
+        run_implementation_phase(
+          objective,
+          repo_path,
+          current_sha,
+          architect_output,
+          opts,
+          foreign_repos,
+          task_id
+        )
 
       error ->
-        Logger.error("Genesis Mode B failed: #{inspect(error)}")
+        Logger.error("Genesis Mode B architecture phase failed: #{inspect(error)}")
         error
+    end
+  end
+
+  # --- Phase 2: Implementation (Manager as second root agent) ---
+  defp run_implementation_phase(
+         objective,
+         repo_path,
+         base_sha,
+         architect_output,
+         opts,
+         foreign_repos,
+         task_id
+       ) do
+    # Clear the architect's archive records from ETS to prevent double-counting
+    # when the Manager (second root agent, same task_id) completes.
+    Lifecycle.clear_archive_records(task_id)
+
+    # Start the Manager from the architect's final commit (or original base if no commit)
+    architect_commit = architect_output.commit_sha || base_sha
+    phylo_node = PhyloGraphNode.new(repo_path, architect_commit)
+    context_node = ContextNode.load("./", repo_path)
+
+    architect_report = architect_output.result || "(No report provided by the architect)"
+
+    impl_objective = """
+    Original objective:
+    #{objective}
+
+    The architecture phase is complete. The architect established the following structure and design:
+    #{architect_report}
+
+    Your job is to COMPLETE the implementation of this codebase. The architecture, directory structure, and public APIs are already in place. Review what has been created, identify what remains unimplemented, and implement all remaining work needed to fulfill the original objective. Focus on writing actual functional code, fixing any issues, and ensuring the codebase is complete and functional.
+    """
+
+    manager_spec =
+      AgentSpec.new(context_node, phylo_node, Manager, impl_objective,
+        foreign_repos: foreign_repos,
+        archive: Keyword.get(opts, :archive, false),
+        task_id: task_id,
+        model_id: Keyword.get(opts, :model_id)
+      )
+
+    case AgentScheduler.run_agent(manager_spec) do
+      {:ok, manager_output} ->
+        Helpers.notify_finalizing(task_id)
+
+        # Combine usage, agent_count, and archive_records from both agents
+        combined_usage =
+          Usage.add(architect_output.usage || Usage.zero(), manager_output.usage || Usage.zero())
+
+        combined_agent_count =
+          (architect_output.agent_count || 0) + (manager_output.agent_count || 0)
+
+        combined_archive_records =
+          (architect_output.archive_records || []) ++ (manager_output.archive_records || [])
+
+        merged_result = %Result{
+          result:
+            "## Architecture Phase\n#{architect_report}\n\n## Implementation Phase\n#{manager_output.result || "(No report)"}",
+          commit_sha: manager_output.commit_sha,
+          tag: manager_output.tag || architect_output.tag,
+          usage: combined_usage,
+          agent_count: combined_agent_count,
+          archive_records: combined_archive_records
+        }
+
+        Helpers.merge_and_report(repo_path, merged_result, "genesis")
+
+      error ->
+        Logger.warning(
+          "Genesis Mode B implementation phase failed: #{inspect(error)}. " <>
+            "Returning architecture phase result as partial success."
+        )
+
+        Helpers.notify_finalizing(task_id)
+        Helpers.merge_and_report(repo_path, architect_output, "genesis")
     end
   end
 

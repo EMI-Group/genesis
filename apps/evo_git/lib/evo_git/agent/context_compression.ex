@@ -130,13 +130,12 @@ defmodule EvoGit.Agent.ContextCompression do
     - Repeated or redundant information
     - Raw tool syntax/JSON that isn't essential
 
+    The original objective is preserved verbatim in the first user message above. Do NOT reproduce, restate, or paraphrase it in your summary. Reference it directly when needed.
+
     First, silently identify the most critical information. Then output a structured summary using EXACTLY this format:
 
-    ## Original Objective
-    [The COMPLETE original objective/task from the user, reproduced as close to verbatim as possible. NEVER abbreviate or replace this with a sub-task — this is the ground truth for the entire task.]
-
-    ## Overall Progress
-    [Cumulative high-level status of the ORIGINAL objective. Which major milestones/parts are complete? What remains? This MUST reflect ALL work done across the entire session — not just recent work. Update this each time compression occurs.]
+    ## Current State
+    [Your current state within the overall objective: what major milestones/parts are complete, what remains to be done, and what you should focus on next. This MUST reflect ALL work done across the entire session — not just recent work.]
 
     ## Completed
     [Bulleted list of what has been done. If possible, include the node paths or file paths where work was completed.]
@@ -156,7 +155,9 @@ defmodule EvoGit.Agent.ContextCompression do
     ## Next Steps
     [Precise, actionable next steps. Reference specific files and functions.]
 
-    IMPORTANT: When you eventually call complete_task, your final report MUST summarize the status of the ORIGINAL objective as a whole (refer to "Original Objective" and "Overall Progress" above) — NOT just the most recent sub-task you worked on.
+    CRITICAL: You are working on the SAME original objective as when you started — it is preserved verbatim in the first user message above. Do NOT drift, redefine, narrow, or expand the objective. If your current work seems disconnected from the original objective, STOP and realign to it.
+
+    IMPORTANT: When you eventually call complete_task, your final report MUST summarize the status of the ORIGINAL objective as a whole (refer to the first user message and "Current State" above) — NOT just the most recent sub-task you worked on.
     </context_compression>
     """
   end

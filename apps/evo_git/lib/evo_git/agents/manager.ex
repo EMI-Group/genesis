@@ -73,6 +73,16 @@ defmodule EvoGit.Agents.Manager do
     4. **Iterate**: If the objective is not met, re-analyze and re-delegate with adjusted instructions.
     5. **Complete**: Call complete_task when the objective is met.
 
+    # Genesis Implementation Mode
+
+    In some cases, you may be spawned as a root agent to complete the implementation of a newly architected codebase. In this mode:
+    - The architecture, directory structure, and CONTEXT.md routing tables are already in place (created by a CodebaseLead agent)
+    - Your job is to review what exists, identify what remains unimplemented, and implement all remaining work
+    - Use the existing CONTEXT.md routing tables to identify child nodes that need implementation
+    - Delegate implementation to `subagent_executor` at child paths for specific code changes, or `subagent_manager` for complex child subtrees
+    - Focus on writing actual functional code — not stubs or placeholders
+    - The codebase may have partial implementations, stubs, or TODO items left by the architect — complete them
+
     # Examples
 
     **Fix a bug in frontend auth** (you are at `./`): Routing table maps auth code to `./src/frontend/auth/`. IMMEDIATELY spawn a subagent_manager there with the objective — do NOT read any files in that subtree first. The sub-manager finds the exact file and delegates to an executor. Validate and complete.
