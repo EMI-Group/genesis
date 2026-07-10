@@ -663,6 +663,259 @@ defmodule EvoDash.StoreTest do
     end
   end
 
+  describe "safe_select_paginated_tasks with filters" do
+    # Helper: inserts a task with configurable fields and a distinct started_at
+    # (index 0 = oldest). Returns the task id.
+    defp insert_filtered!(i, opts) do
+      id = Keyword.get(opts, :id, "f-#{i}")
+      started = ~U[2026-01-01 00:00:00Z] |> DateTime.add(i, :second)
+
+      task =
+        %TaskInfo{
+          id: id,
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/proj"],
+          ref: nil,
+          started_at: started,
+          finished_at: DateTime.add(started, 1, :second),
+          logs: [],
+          result: nil
+        }
+        |> Map.merge(Enum.into(opts, %{}))
+
+      :ok = Store.put_task(Store, task)
+      id
+    end
+
+    test "status filter returns correct count" do
+      for _ <- 1..3, do: insert_filtered!(System.unique_integer([:positive]), status: :completed)
+      for _ <- 1..2, do: insert_filtered!(System.unique_integer([:positive]), status: :failed)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0, filters: [status: "failed"])
+
+      assert length(tasks) == 2
+      assert total == 2
+      assert Enum.all?(tasks, &(&1.status == :failed))
+    end
+
+    test "status 'all' returns all tasks" do
+      for _ <- 1..3, do: insert_filtered!(System.unique_integer([:positive]), status: :completed)
+      for _ <- 1..2, do: insert_filtered!(System.unique_integer([:positive]), status: :failed)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0, filters: [status: "all"])
+
+      assert length(tasks) == 5
+      assert total == 5
+    end
+
+    test "status filter + pagination slicing" do
+      for i <- 0..19, do: insert_filtered!(i, id: "comp-#{i}", status: :completed)
+      for i <- 0..9, do: insert_filtered!(i, id: "fail-#{i}", status: :failed)
+
+      {page1, total1} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 5,
+          offset: 0,
+          filters: [status: "failed"]
+        )
+
+      assert length(page1) == 5
+      assert total1 == 10
+
+      {page2, total2} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 5,
+          offset: 5,
+          filters: [status: "failed"]
+        )
+
+      assert length(page2) == 5
+      assert total2 == 10
+
+      {page3, total3} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 5,
+          offset: 10,
+          filters: [status: "failed"]
+        )
+
+      assert page3 == []
+      assert total3 == 10
+    end
+
+    test "project path filter returns only matching tasks" do
+      for i <- 0..2,
+          do: insert_filtered!(i, id: "a-#{i}", opts: [path: "/tmp/proj_a", prompt: "proj a #{i}"])
+
+      for i <- 0..1,
+          do: insert_filtered!(i, id: "b-#{i}", opts: [path: "/tmp/proj_b", prompt: "proj b #{i}"])
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [project_path: "/tmp/proj_a"]
+        )
+
+      assert length(tasks) == 3
+      assert total == 3
+
+      ids = Enum.map(tasks, & &1.id)
+      assert Enum.all?(ids, &String.starts_with?(&1, "a-"))
+    end
+
+    test "search by id returns only matching tasks" do
+      insert_filtered!(0, id: "search-aaa-001")
+      insert_filtered!(1, id: "search-bbb-002")
+      insert_filtered!(2, id: "search-aaa-003")
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [search: "aaa"]
+        )
+
+      assert length(tasks) == 2
+      assert total == 2
+
+      ids = Enum.map(tasks, & &1.id)
+      assert "search-aaa-001" in ids
+      assert "search-aaa-003" in ids
+      refute "search-bbb-002" in ids
+    end
+
+    test "search by prompt text in opts returns matching tasks" do
+      insert_filtered!(0, opts: [prompt: "build a web application"])
+      insert_filtered!(1, opts: [prompt: "write a database migration"])
+      insert_filtered!(2, opts: [prompt: "refactor the auth module"])
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [search: "database"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).opts[:prompt] == "write a database migration"
+    end
+
+    test "empty search returns all (no filtering)" do
+      insert_filtered!(0, opts: [prompt: "alpha task"])
+      insert_filtered!(1, opts: [prompt: "beta task"])
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [search: ""]
+        )
+
+      assert length(tasks) == 2
+      assert total == 2
+    end
+
+    test "review status exact match returns only matching tasks" do
+      insert_filtered!(0, id: "rs-merged", status: :completed, review_status: :merged)
+      insert_filtered!(1, id: "rs-rejected", status: :completed, review_status: :rejected)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [review_status: "merged"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "rs-merged"
+    end
+
+    test "review 'pending' composite: completed + null review + branch_name in result" do
+      # Matches "pending": completed, review_status nil, result has branch_name.
+      insert_filtered!(0,
+        id: "pending-yes",
+        status: :completed,
+        review_status: nil,
+        result: {:ok, %{branch_name: "feat-123", commit_sha: "abc", result: "done"}}
+      )
+
+      # Does NOT match "pending": completed, nil review, but nil result (no branch).
+      insert_filtered!(1,
+        id: "pending-no-result",
+        status: :completed,
+        review_status: nil,
+        result: nil
+      )
+
+      # Does NOT match "pending": completed but already reviewed (merged).
+      insert_filtered!(2,
+        id: "pending-merged",
+        status: :completed,
+        review_status: :merged,
+        result: {:ok, %{branch_name: "feat-456"}}
+      )
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [review_status: "pending"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "pending-yes"
+    end
+
+    test "combined filters (status AND project_path)" do
+      insert_filtered!(0,
+        id: "combo-1",
+        status: :completed,
+        opts: [path: "/tmp/alpha", prompt: "combo one"]
+      )
+
+      insert_filtered!(1,
+        id: "combo-2",
+        status: :failed,
+        opts: [path: "/tmp/alpha", prompt: "combo two"]
+      )
+
+      insert_filtered!(2,
+        id: "combo-3",
+        status: :completed,
+        opts: [path: "/tmp/beta", prompt: "combo three"]
+      )
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [status: "completed", project_path: "/tmp/alpha"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "combo-1"
+    end
+
+    test "backward compatibility — no filters key behaves as before (no WHERE clause)" do
+      for i <- 0..2, do: insert_filtered!(i, status: :completed)
+      for i <- 0..1, do: insert_filtered!(i + 10, id: "nf-#{i}", status: :failed)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0)
+
+      assert length(tasks) == 5
+      assert total == 5
+    end
+  end
+
   describe "integrity check" do
     test "returns :ok on a healthy store" do
       assert Store.integrity_check(Store) == :ok

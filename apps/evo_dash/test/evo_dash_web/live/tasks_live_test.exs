@@ -205,16 +205,17 @@ defmodule EvoDashWeb.TasksLiveTest do
     # Inserts a task with a deterministic, distinct started_at so ordering is
     # predictable. Index 0 is the oldest; higher indices are more recent and
     # appear first (ORDER BY started_at DESC). Each task gets a unique prompt
-    # so tests can assert which page shows what.
-    defp insert_timed_fixture!(i) do
+    # so tests can assert which page shows what. Optional overrides allow
+    # customizing status and prompt for filtering tests.
+    defp insert_timed_fixture!(i, opts \\ []) do
       id = "page_fixture_#{System.unique_integer([:positive])}"
       started = ~U[2026-01-01 00:00:00Z] |> DateTime.add(i, :second)
 
       task = %TaskInfo{
         id: id,
         type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test", prompt: "task number #{i}"],
+        status: Keyword.get(opts, :status, :completed),
+        opts: [path: "/tmp/test", prompt: Keyword.get(opts, :prompt, "task number #{i}")],
         ref: nil,
         started_at: started,
         finished_at: DateTime.add(started, 1, :second),
@@ -299,6 +300,36 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = render_click(view, "goto_page", %{"page" => "2"})
       assert html =~ "Page 2 of 2"
       assert html =~ "task number 0"
+    end
+
+    test "status filter works across pages (server-side filtering)", %{conn: conn} do
+      # Insert 30 tasks: 20 completed + 10 failed. Each gets a distinct
+      # started_at so ordering is deterministic, and a unique prompt that
+      # encodes the status so we can assert which appear/disappear.
+      for i <- 0..19 do
+        insert_timed_fixture!(i, status: :completed, prompt: "completed task number #{i}")
+      end
+
+      for i <- 0..9 do
+        insert_timed_fixture!(i, status: :failed, prompt: "failed task number #{i}")
+      end
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      html = render_hook(view, "filter_tasks", %{"status_filter" => "failed"})
+
+      # 10 failed tasks, page_size 25 → 1 page.
+      assert html =~ "Page 1 of 1"
+      # "Showing 1–10 of 10 tasks"
+      assert html =~ "Showing 1–10 of 10 tasks"
+
+      # The failed prompts should appear.
+      assert html =~ "failed task number 9"
+      assert html =~ "failed task number 0"
+
+      # The completed prompts should NOT appear.
+      refute html =~ "completed task number 19"
+      refute html =~ "completed task number 0"
     end
   end
 end
