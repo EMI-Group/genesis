@@ -216,42 +216,19 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
           # For foreign repo subagents, we need the foreign repo's HEAD commit (the primary
           # repo's commit SHA doesn't exist in the foreign repo's git database).
-          sub_phylo_node =
-            if target_repo_id == "primary" do
-              # Same-repo subagent: inherit parent's commit chain
-              base_commit = commit_id || parent_state.phylo_node.current_commit
+          case build_subagent_phylo_node(target_repo_id, commit_id, repo_path,
+                 target_repo_root, foreign_repo_commits, parent_state) do
+            {:ok, sub_phylo_node} ->
+              AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
+                repo_id: target_repo_id,
+                foreign_repos: foreign_repos,
+                archive: parent_state.archive,
+                model_id: parent_state.model_id
+              )
 
-              %PhyloGraphNode{
-                repo: repo_path,
-                base_commit: base_commit,
-                current_commit: base_commit
-              }
-            else
-              # Foreign repo subagent: use tracked commit from previous subagent completions,
-              # falling back to the foreign repo's HEAD if no tracked commit exists.
-              tracked_commit = Map.get(foreign_repo_commits, target_repo_id)
-
-              {base, current} =
-                if tracked_commit do
-                  {tracked_commit, tracked_commit}
-                else
-                  {:ok, foreign_head} = Git.rev_parse(target_repo_root)
-                  {foreign_head, foreign_head}
-                end
-
-              %PhyloGraphNode{
-                repo: target_repo_root,
-                base_commit: base,
-                current_commit: current
-              }
-            end
-
-          AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
-            repo_id: target_repo_id,
-            foreign_repos: foreign_repos,
-            archive: parent_state.archive,
-            model_id: parent_state.model_id
-          )
+            {:error, error_msg} ->
+              {:error, {call, index, error_msg}}
+          end
 
         {:error, error_msg} ->
           {:error, {call, index, error_msg}}
@@ -397,7 +374,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
   end
 
   def format_subagent_result({:error, :agent_max_retries_exceeded}) do
-    "Error: Subagent failed due to an infrastructure/runtime issue (repeated crashes). Hint: this may be a transient system error — retry the spawn once, and if it persists report the issue to the user."
+    "Error: Subagent failed due to an infrastructure/runtime issue (repeated crashes). " <>
+      "Hint: this may be a transient system error — retry the spawn once, and if it persists report the issue to the user. " <>
+      "Note: one common cause is an invalid commit_id — verify that any commit SHA you provided exists in the repository."
   end
 
   def format_subagent_result({:error, :unknown_error}) do
@@ -513,6 +492,62 @@ defmodule EvoGit.Agent.SubagentProcessing do
         #{output}
         """
     end
+  end
+
+  # Builds a PhyloGraphNode for a subagent, validating the commit_id for same-repo
+  # subagents. For cross-repo subagents, uses tracked commits or foreign repo HEAD.
+  #
+  # Returns `{:ok, PhyloGraphNode.t()}` on success, or `{:error, error_message}` when
+  # a user-provided commit_id does not exist in the repository (early validation so the
+  # LLM gets a clear, actionable error instead of a generic retry-exhausted crash).
+  defp build_subagent_phylo_node("primary", commit_id, repo_path, _target_repo_root,
+         _foreign_repo_commits, parent_state) do
+    if commit_id do
+      case Git.rev_parse(repo_path, commit_id) do
+        {:ok, _sha} ->
+          {:ok,
+           %PhyloGraphNode{
+             repo: repo_path,
+             base_commit: commit_id,
+             current_commit: commit_id
+           }}
+
+        {:error, _code, msg} ->
+          {:error,
+           "Error: The specified commit ID '#{commit_id}' does not exist in the repository. Please verify the commit SHA is correct and exists in the current repository's git history. Git error: #{msg}"}
+      end
+    else
+      base = parent_state.phylo_node.current_commit
+
+      {:ok,
+       %PhyloGraphNode{
+         repo: repo_path,
+         base_commit: base,
+         current_commit: base
+       }}
+    end
+  end
+
+  defp build_subagent_phylo_node(target_repo_id, _commit_id, _repo_path, target_repo_root,
+         foreign_repo_commits, _parent_state) do
+    # Foreign repo subagent: use tracked commit from previous subagent completions,
+    # falling back to the foreign repo's HEAD if no tracked commit exists.
+    tracked_commit = Map.get(foreign_repo_commits, target_repo_id)
+
+    {base, current} =
+      if tracked_commit do
+        {tracked_commit, tracked_commit}
+      else
+        {:ok, foreign_head} = Git.rev_parse(target_repo_root)
+        {foreign_head, foreign_head}
+      end
+
+    {:ok,
+     %PhyloGraphNode{
+       repo: target_repo_root,
+       base_commit: base,
+       current_commit: current
+     }}
   end
 
   # Looks up the agent module for a given subagent tool name.
