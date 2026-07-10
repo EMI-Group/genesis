@@ -587,6 +587,82 @@ defmodule EvoDash.StoreTest do
     end
   end
 
+  describe "safe_select_paginated_tasks" do
+    # Helper: inserts a task with a distinct started_at so ordering is
+    # deterministic. Index 0 is the oldest.
+    defp insert_timed!(i) do
+      started = ~U[2026-01-01 00:00:00Z] |> DateTime.add(i, :second)
+
+      :ok =
+        Store.put_task(Store, %TaskInfo{
+          id: "page-#{i}",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/t"],
+          started_at: started,
+          finished_at: nil,
+          logs: [],
+          result: nil
+        })
+    end
+
+    test "returns {tasks, total_count} tuple" do
+      insert_timed!(0)
+      insert_timed!(1)
+
+      result = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 0)
+
+      assert {tasks, total} = result
+      assert is_list(tasks)
+      assert length(tasks) == 2
+      assert total == 2
+    end
+
+    test "respects LIMIT and OFFSET" do
+      for i <- 0..4, do: insert_timed!(i)
+
+      {page1, total1} = Store.safe_select_paginated_tasks(Store, limit: 2, offset: 0)
+      assert length(page1) == 2
+      assert total1 == 5
+
+      {page3, total3} = Store.safe_select_paginated_tasks(Store, limit: 2, offset: 4)
+      assert length(page3) == 1
+      assert total3 == 5
+    end
+
+    test "orders most-recent-first (started_at DESC)" do
+      for i <- 0..4, do: insert_timed!(i)
+
+      {tasks, _total} = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 0)
+      ids = Enum.map(tasks, & &1.id)
+
+      # page-4 has the latest started_at, so it should be first.
+      assert hd(ids) == "page-4"
+      # Followed by 3, 2, 1, 0.
+      assert List.last(ids) == "page-0"
+    end
+
+    test "nil/invalid opts don't crash (default limit/offset)" do
+      insert_timed!(0)
+
+      {tasks, total} = Store.safe_select_paginated_tasks(Store, [])
+      assert is_list(tasks)
+      assert total >= 1
+
+      {tasks2, total2} = Store.safe_select_paginated_tasks(Store, limit: nil, offset: nil)
+      assert is_list(tasks2)
+      assert total2 == total
+    end
+
+    test "offset beyond total returns empty list but total_count still correct" do
+      for i <- 0..2, do: insert_timed!(i)
+
+      {tasks, total} = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 9999)
+      assert tasks == []
+      assert total == 3
+    end
+  end
+
   describe "integrity check" do
     test "returns :ok on a healthy store" do
       assert Store.integrity_check(Store) == :ok
@@ -831,16 +907,33 @@ defmodule EvoDash.StoreTest do
       # that was quarantined due to a codec bug (e.g. String.to_existing_atom/1
       # for opt keys that weren't yet loaded in the atom table) that has since
       # been fixed.
-      columns = ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id)
+      columns =
+        ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id)
 
       now = DateTime.utc_now() |> DateTime.to_iso8601()
-      opts_json = Jason.encode!([["path", "/tmp/test"], ["mode", "simple"], ["resume_from", "abc123"]])
+
+      opts_json =
+        Jason.encode!([["path", "/tmp/test"], ["mode", "simple"], ["resume_from", "abc123"]])
+
       logs_json = Jason.encode!(["log line 1"])
 
       row = [
-        "rec-task-1", "genesis", "completed", opts_json,
-        now, now, logs_json, nil, nil, nil, 1,
-        "base123", "commit456", nil, nil, "gpt-4o"
+        "rec-task-1",
+        "genesis",
+        "completed",
+        opts_json,
+        now,
+        now,
+        logs_json,
+        nil,
+        nil,
+        nil,
+        1,
+        "base123",
+        "commit456",
+        nil,
+        nil,
+        "gpt-4o"
       ]
 
       data_json =
@@ -850,7 +943,13 @@ defmodule EvoDash.StoreTest do
         |> Jason.encode!()
 
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["rec-task-1", data_json])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)",
+        ["rec-task-1", data_json]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       # Verify the row is NOT in the live tasks table yet
@@ -873,7 +972,10 @@ defmodule EvoDash.StoreTest do
 
       # And gone from quarantine
       {:ok, conn2} = Xqlite.open(sqlite_path)
-      {:ok, %{rows: quarantine_rows}} = XqliteNIF.query(conn2, "SELECT id FROM tasks_quarantine WHERE id = ?1", ["rec-task-1"])
+
+      {:ok, %{rows: quarantine_rows}} =
+        XqliteNIF.query(conn2, "SELECT id FROM tasks_quarantine WHERE id = ?1", ["rec-task-1"])
+
       assert quarantine_rows == []
       :ok = XqliteNIF.close(conn2)
     end
@@ -891,7 +993,13 @@ defmodule EvoDash.StoreTest do
         |> Jason.encode!()
 
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)", ["/home/user/my_project", data_json])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)",
+        ["/home/user/my_project", data_json]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       # Verify not in live table
@@ -917,9 +1025,22 @@ defmodule EvoDash.StoreTest do
       task_data =
         EvoDash.Store.Codec.task_columns()
         |> Enum.zip([
-          "both-task", "genesis", "completed", task_opts,
-          now, now, task_logs, nil, nil, nil, 2,
-          "sha1", "sha2", nil, nil, nil
+          "both-task",
+          "genesis",
+          "completed",
+          task_opts,
+          now,
+          now,
+          task_logs,
+          nil,
+          nil,
+          nil,
+          2,
+          "sha1",
+          "sha2",
+          nil,
+          nil,
+          nil
         ])
         |> Map.new()
         |> Jason.encode!()
@@ -931,8 +1052,19 @@ defmodule EvoDash.StoreTest do
         |> Jason.encode!()
 
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["both-task", task_data])
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)", ["/both/project", project_data])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)",
+        ["both-task", task_data]
+      )
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)",
+        ["/both/project", project_data]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       assert {:ok, 2} = Store.recover_quarantine(Store)
@@ -951,7 +1083,13 @@ defmodule EvoDash.StoreTest do
       corrupt_json = Jason.encode!(%{"garbage" => "value", "id" => "corrupt-task"})
 
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["corrupt-task", corrupt_json])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)",
+        ["corrupt-task", corrupt_json]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       # Recovery should report 0 recovered
@@ -959,7 +1097,10 @@ defmodule EvoDash.StoreTest do
 
       # Row should still be in quarantine
       {:ok, conn2} = Xqlite.open(sqlite_path)
-      {:ok, %{rows: [[qd]]}} = XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["corrupt-task"])
+
+      {:ok, %{rows: [[qd]]}} =
+        XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["corrupt-task"])
+
       assert qd == corrupt_json
       :ok = XqliteNIF.close(conn2)
 
@@ -969,14 +1110,23 @@ defmodule EvoDash.StoreTest do
 
     test "leaves rows with unparseable JSON in quarantine", %{sqlite_path: sqlite_path} do
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["bad-json", "not valid json {{{"])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)",
+        ["bad-json", "not valid json {{{"]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       assert {:ok, 0} = Store.recover_quarantine(Store)
 
       # Still in quarantine
       {:ok, conn2} = Xqlite.open(sqlite_path)
-      {:ok, %{rows: [[qd]]}} = XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["bad-json"])
+
+      {:ok, %{rows: [[qd]]}} =
+        XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["bad-json"])
+
       assert qd == "not valid json {{{"
       :ok = XqliteNIF.close(conn2)
     end

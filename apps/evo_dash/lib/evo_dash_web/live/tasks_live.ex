@@ -7,6 +7,8 @@ defmodule EvoDashWeb.TasksLive do
   alias EvoDash.TaskRegistry
   use EvoDashWeb.ModalHelpers
 
+  @default_page_size 25
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -166,6 +168,59 @@ defmodule EvoDashWeb.TasksLive do
         <% end %>
       </div>
 
+      <!-- Pagination Controls -->
+      <%= if @total_count > 0 do %>
+        <% offset = (@current_page - 1) * @page_size %>
+        <% range_start = offset + 1 %>
+        <% range_end = min(offset + @page_size, @total_count) %>
+        <% pages = page_window(@current_page, @total_pages) %>
+        <div class="mt-4 flex flex-col items-center gap-3">
+          <p class="text-sm text-base-content/60">
+            {gettext("Showing %{start}–%{end} of %{total} tasks",
+              start: range_start,
+              end: range_end,
+              total: @total_count
+            )}
+          </p>
+          <div class="flex items-center gap-2">
+            <div class="join">
+              <button
+                class="join-item btn btn-sm"
+                phx-click="prev_page"
+                disabled={@current_page <= 1}
+              >
+                <.icon name="hero-chevron-left" class="size-4" />
+              </button>
+              <%= for p <- pages do %>
+                <%= if p == @current_page do %>
+                  <button class="join-item btn btn-sm btn-primary" disabled>
+                    {p}
+                  </button>
+                <% else %>
+                  <button
+                    class="join-item btn btn-sm"
+                    phx-click="goto_page"
+                    phx-value-page={p}
+                  >
+                    {p}
+                  </button>
+                <% end %>
+              <% end %>
+              <button
+                class="join-item btn btn-sm"
+                phx-click="next_page"
+                disabled={@current_page >= @total_pages}
+              >
+                <.icon name="hero-chevron-right" class="size-4" />
+              </button>
+            </div>
+          </div>
+          <p class="text-xs text-base-content/50">
+            {gettext("Page %{current} of %{total}", current: @current_page, total: @total_pages)}
+          </p>
+        </div>
+      <% end %>
+
       <!-- Clear History (moved to bottom for safety) -->
       <div class="mt-6 flex justify-center sm:justify-end">
         <button type="button" class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1" phx-click="clear_task_history" phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}>
@@ -204,7 +259,8 @@ defmodule EvoDashWeb.TasksLive do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end
 
-    tasks = TaskRegistry.list_tasks()
+    # Project paths are cheap-ish and needed for the filter dropdown regardless
+    # of pagination. Tasks are loaded in handle_params (server-side pagination).
     project_paths = TaskRegistry.get_unique_paths()
 
     config_status = config_status()
@@ -212,7 +268,7 @@ defmodule EvoDashWeb.TasksLive do
     socket =
       socket
       |> assign(
-        tasks: tasks,
+        tasks: [],
         project_paths: project_paths,
         status_filter: "all",
         project_filter: "all",
@@ -221,19 +277,34 @@ defmodule EvoDashWeb.TasksLive do
         expanded_task_ids: MapSet.new(),
         selected_result: nil,
         selected_options: nil,
-        config_status: config_status
+        config_status: config_status,
+        current_page: 1,
+        page_size: @default_page_size,
+        total_count: 0,
+        total_pages: 1
       )
-      |> assign_filtered_tasks()
 
     {:ok, socket}
   end
 
   @impl true
   def handle_params(params, _url, socket) do
+    page_size = socket.assigns.page_size
+    requested_page = parse_page(params["page"])
+
+    {tasks, current_page, total_count, total_pages} =
+      load_page(requested_page, page_size)
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/tasks")
+      |> assign(:tasks, tasks)
+      |> assign(:current_page, current_page)
+      |> assign(:total_count, total_count)
+      |> assign(:total_pages, total_pages)
+      |> assign(:project_paths, TaskRegistry.get_unique_paths())
+      |> assign_filtered_tasks()
 
     {:noreply, socket}
   end
@@ -250,28 +321,14 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_info({:tasks_updated}, socket) do
-    tasks = TaskRegistry.list_tasks()
-    project_paths = TaskRegistry.get_unique_paths()
-
-    {:noreply,
-     socket
-     |> assign(:tasks, tasks)
-     |> assign(:project_paths, project_paths)
-     |> assign_filtered_tasks()}
+    {:noreply, reload_current_page(socket)}
   end
 
   @impl true
   def handle_info({:task_status, _task_id, _status}, socket) do
     # Task status transitions (e.g. :finalizing, :running) are broadcast on the
-    # "tasks" PubSub topic. Re-fetch the task list so the UI reflects the change.
-    tasks = TaskRegistry.list_tasks()
-    project_paths = TaskRegistry.get_unique_paths()
-
-    {:noreply,
-     socket
-     |> assign(:tasks, tasks)
-     |> assign(:project_paths, project_paths)
-     |> assign_filtered_tasks()}
+    # "tasks" PubSub topic. Re-fetch the current page so the UI reflects the change.
+    {:noreply, reload_current_page(socket)}
   end
 
   @impl true
@@ -357,15 +414,30 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
+  def handle_event("goto_page", %{"page" => page}, socket) do
+    {:noreply, push_patch(socket, to: ~p"/tasks?page=#{page}")}
+  end
+
+  @impl true
+  def handle_event("prev_page", _params, socket) do
+    page = max(1, socket.assigns.current_page - 1)
+    {:noreply, push_patch(socket, to: ~p"/tasks?page=#{page}")}
+  end
+
+  @impl true
+  def handle_event("next_page", _params, socket) do
+    page = min(socket.assigns.total_pages, socket.assigns.current_page + 1)
+    {:noreply, push_patch(socket, to: ~p"/tasks?page=#{page}")}
+  end
+
+  @impl true
   def handle_event("clear_task_history", _params, socket) do
     TaskRegistry.clear_finished_tasks()
-    tasks = TaskRegistry.list_tasks()
 
     {:noreply,
      socket
-     |> assign(:tasks, tasks)
      |> assign(:expanded_task_ids, MapSet.new())
-     |> assign_filtered_tasks()}
+     |> load_page_into_socket(1)}
   end
 
   @impl true
@@ -405,13 +477,11 @@ defmodule EvoDashWeb.TasksLive do
     case TaskRegistry.cancel_task(task_id) do
       :ok ->
         expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-        tasks = TaskRegistry.list_tasks()
 
         {:noreply,
          socket
-         |> assign(:tasks, tasks)
          |> assign(:expanded_task_ids, expanded)
-         |> assign_filtered_tasks()}
+         |> reload_current_page()}
 
       {:error, reason} ->
         {:noreply,
@@ -427,16 +497,86 @@ defmodule EvoDashWeb.TasksLive do
   def handle_event("delete_task", %{"task_id" => task_id}, socket) do
     TaskRegistry.delete_task(task_id)
     expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-    tasks = TaskRegistry.list_tasks()
 
     {:noreply,
      socket
-     |> assign(:tasks, tasks)
      |> assign(:expanded_task_ids, expanded)
-     |> assign_filtered_tasks()}
+     |> reload_current_page()}
   end
 
   # Helpers
+
+  # Parses the ?page= query param into a positive integer (default 1).
+  # Uses Integer.parse/1 (returns :error for non-integers) — no try/rescue,
+  # no String.to_existing_atom.
+  defp parse_page(nil), do: 1
+
+  defp parse_page(raw) when is_binary(raw) do
+    case Integer.parse(raw) do
+      {n, ""} when n >= 1 -> n
+      _ -> 1
+    end
+  end
+
+  defp parse_page(_), do: 1
+
+  # Fetches one page of tasks (server-side LIMIT/OFFSET). Returns
+  # {tasks, clamped_page, total_count, total_pages}. The requested page is
+  # clamped against the actual total_pages derived from the returned count.
+  # If clamping changes the page, a second fetch is performed for the
+  # clamped page. This is at most one extra fetch and only on edge cases
+  # (e.g. a stale/high page number).
+  defp load_page(requested_page, page_size) do
+    offset = (requested_page - 1) * page_size
+    {tasks, total_count} = TaskRegistry.list_tasks_paginated(limit: page_size, offset: offset)
+    total_pages = total_pages(total_count, page_size)
+    clamped_page = min(max(1, requested_page), total_pages)
+
+    if clamped_page != requested_page do
+      clamped_offset = (clamped_page - 1) * page_size
+
+      {clamped_tasks, ^total_count} =
+        TaskRegistry.list_tasks_paginated(limit: page_size, offset: clamped_offset)
+
+      {clamped_tasks, clamped_page, total_count, total_pages}
+    else
+      {tasks, clamped_page, total_count, total_pages}
+    end
+  end
+
+  defp total_pages(total_count, page_size) when page_size > 0 do
+    max(1, ceil(total_count / page_size))
+  end
+
+  # Returns a windowed range of page numbers around the current page for the
+  # pagination button group. Shows up to 7 page buttons centered on the
+  # current page, clamped to the valid range 1..total_pages.
+  defp page_window(current_page, total_pages) do
+    window = 3
+    start_page = max(1, current_page - window)
+    end_page = min(total_pages, current_page + window)
+    Enum.to_list(start_page..end_page)
+  end
+
+  # Reloads the current page's tasks into the socket assigns and recomputes
+  # the filtered view. Used by PubSub handlers and mutating events so the UI
+  # stays consistent after changes.
+  defp reload_current_page(socket) do
+    load_page_into_socket(socket, socket.assigns.current_page)
+  end
+
+  defp load_page_into_socket(socket, page) do
+    {tasks, current_page, total_count, total_pages} =
+      load_page(page, socket.assigns.page_size)
+
+    socket
+    |> assign(:tasks, tasks)
+    |> assign(:current_page, current_page)
+    |> assign(:total_count, total_count)
+    |> assign(:total_pages, total_pages)
+    |> assign(:project_paths, TaskRegistry.get_unique_paths())
+    |> assign_filtered_tasks()
+  end
 
   defp assign_filtered_tasks(socket) do
     filtered =

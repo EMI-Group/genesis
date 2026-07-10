@@ -27,7 +27,7 @@ defmodule EvoDash.Store do
     * `terminate/2` — graceful connection close during shutdown. GenServer
       terminate/2 must never raise; a crash here could prevent clean
       supervision shutdown.
-    * `do_safe_select_all_rows`, `scan_and_repair` — quarantine/data-recovery
+    * `safe_select_all_rows`, `safe_decode_rows`, `scan_and_repair` — quarantine/data-recovery
       boundaries that deliberately catch decode failures to quarantine corrupt
       rows rather than crashing. The decoder raises by design; quarantine is the
       deliberate recovery boundary.
@@ -106,6 +106,25 @@ defmodule EvoDash.Store do
   @doc "Returns the number of task rows."
   def count_tasks(store \\ __MODULE__) do
     GenServer.call(store, :count_tasks)
+  end
+
+  @doc """
+  Returns a paginated slice of tasks (most-recent-first) together with the
+  total task count.
+
+  `opts` is a keyword list accepting:
+    * `:limit` — max number of tasks to return (positive integer; defaults
+      to 50 when `nil` or invalid).
+    * `:offset` — number of tasks to skip (non-negative integer; defaults
+      to 0 when `nil` or invalid).
+
+  Returns `{tasks, total_count}` where `tasks` is a list of `TaskInfo`
+  structs and `total_count` is an integer (total rows in the table,
+  independent of the page). Rows that fail to decode are quarantined (same
+  quarantine boundary as `safe_select_all_tasks/1`).
+  """
+  def safe_select_paginated_tasks(store \\ __MODULE__, opts) do
+    GenServer.call(store, {:safe_select_paginated_tasks, opts})
   end
 
   @doc "Deletes all task rows."
@@ -321,6 +340,27 @@ defmodule EvoDash.Store do
   def handle_call(:count_tasks, _from, state) do
     {:ok, %{rows: [[count]]}} = XqliteNIF.query(state.conn, "SELECT COUNT(*) FROM tasks", [])
     {:reply, count, state}
+  end
+
+  @impl true
+  def handle_call({:safe_select_paginated_tasks, opts}, _from, state) do
+    limit = clamp_limit(Keyword.get(opts, :limit))
+    offset = clamp_offset(Keyword.get(opts, :offset))
+
+    rows =
+      case XqliteNIF.query(
+             state.conn,
+             task_select_sql() <> " ORDER BY started_at DESC LIMIT ?1 OFFSET ?2",
+             [limit, offset]
+           ) do
+        {:ok, %{rows: rows}} -> rows
+        _ -> []
+      end
+
+    # Reuse the SAME quarantine-safe decode boundary as safe_select_all_rows.
+    tasks = safe_decode_rows(state.conn, "tasks", rows, &Codec.decode_task/1)
+    total_count = count_table(state.conn, "tasks")
+    {:reply, {tasks, total_count}, state}
   end
 
   @impl true
@@ -608,42 +648,63 @@ defmodule EvoDash.Store do
     count
   end
 
+  ## Private — Pagination clamping helpers
+
+  # Ensures limit is a positive integer (default 50). Non-integer or
+  # non-positive values fall back to the default.
+  defp clamp_limit(nil), do: 50
+  defp clamp_limit(n) when is_integer(n) and n > 0, do: n
+  defp clamp_limit(_), do: 50
+
+  # Ensures offset is a non-negative integer (default 0). Non-integer or
+  # negative values fall back to 0.
+  defp clamp_offset(nil), do: 0
+  defp clamp_offset(n) when is_integer(n) and n >= 0, do: n
+  defp clamp_offset(_), do: 0
+
   ## Private — Safe select (quarantine bad rows)
 
   defp safe_select_all_rows(conn, table, decoder) do
     columns = table_columns(table)
     col_list = Enum.join(columns, ", ")
-    pk = pk_column(table)
 
     case XqliteNIF.query(conn, "SELECT #{col_list} FROM #{table}", []) do
-      {:ok, %{rows: rows}} ->
-        Enum.flat_map(rows, fn row ->
-          id = hd(row)
-
-          # Justified try/rescue — quarantine/data-recovery boundary.
-          # (1) Do we expect this? Yes — DB rows may contain corrupt or legacy
-          # data that fails to decode. (2) Cleanest approach? The decoder raises
-          # by design (Codec decode philosophy); quarantine is the deliberate
-          # recovery boundary that moves bad rows aside rather than crashing the
-          # entire select.
-          try do
-            [decoder.(row)]
-          rescue
-            e ->
-              quarantine_row(conn, table, id, pk, columns, row)
-
-              Logger.warning(
-                "Store: skipping undecodable row in #{table} " <>
-                  "(id: #{inspect(id)}): #{Exception.message(e)}"
-              )
-
-              []
-          end
-        end)
-
-      _ ->
-        []
+      {:ok, %{rows: rows}} -> safe_decode_rows(conn, table, rows, decoder)
+      _ -> []
     end
+  end
+
+  # Runs the per-row decode+quarantine loop over an already-fetched list of
+  # rows. Shared by safe_select_all_rows/3 (full-table select) and the
+  # paginated task select handler. Quarantines rows that fail decode rather
+  # than crashing — the same justified try/rescue recovery boundary.
+  defp safe_decode_rows(conn, table, rows, decoder) do
+    columns = table_columns(table)
+    pk = pk_column(table)
+
+    Enum.flat_map(rows, fn row ->
+      id = hd(row)
+
+      # Justified try/rescue — quarantine/data-recovery boundary.
+      # (1) Do we expect this? Yes — DB rows may contain corrupt or legacy
+      # data that fails to decode. (2) Cleanest approach? The decoder raises
+      # by design (Codec decode philosophy); quarantine is the deliberate
+      # recovery boundary that moves bad rows aside rather than crashing the
+      # entire select.
+      try do
+        [decoder.(row)]
+      rescue
+        e ->
+          quarantine_row(conn, table, id, pk, columns, row)
+
+          Logger.warning(
+            "Store: skipping undecodable row in #{table} " <>
+              "(id: #{inspect(id)}): #{Exception.message(e)}"
+          )
+
+          []
+      end
+    end)
   end
 
   ## Private — Integrity check
@@ -701,7 +762,9 @@ defmodule EvoDash.Store do
     total = tasks_recovered + projects_recovered
 
     if total > 0 do
-      Logger.info("Store: recovered #{total} rows from quarantine (#{tasks_recovered} tasks, #{projects_recovered} projects)")
+      Logger.info(
+        "Store: recovered #{total} rows from quarantine (#{tasks_recovered} tasks, #{projects_recovered} projects)"
+      )
     end
 
     {:ok, total}
