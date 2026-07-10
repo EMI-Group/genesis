@@ -157,15 +157,6 @@ defmodule EvoGit.Core.ContextNode do
   """
   @spec build_context(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def build_context(relative_path, repo_path) do
-    location_info =
-      """
-      Current Repository (worktree): '#{repo_path}'. The current working directory (cwd) is also set to the repository path.
-      Current Assigned Node: '#{relative_path}'. You should be focusing on the context and files under this node.
-      IMPORTANT: The worktree path is fixed for this agent's lifetime and the cwd is set to it. Always use relative paths when referring to files in this repository.
-      IMPORTANT: Subagents you spawn each get their OWN isolated worktree with cwd automatically set correctly. Never include worktree paths or `cd` commands in subagent objectives — just tell them what to do (e.g., "run `mix test`").
-      """
-      |> String.trim_trailing()
-
     case hierarchy_nodes(relative_path, repo_path) do
       {:ok, nodes} ->
         context_max = context_max_bytes()
@@ -210,10 +201,19 @@ defmodule EvoGit.Core.ContextNode do
           end)
           |> Enum.join("\n\n")
 
+        location_info =
+          """
+          Current Repository (worktree): '#{repo_path}'. The current working directory (cwd) is also set to the repository path.
+          Current Assigned Node: '#{relative_path}'. You should be focusing on the context and files under this node.
+          IMPORTANT: The worktree path is fixed for this agent's lifetime and the cwd is set to it. Always use relative paths when referring to files in this repository.
+          IMPORTANT: Subagents you spawn each get their OWN isolated worktree with cwd automatically set correctly. Never include worktree paths or `cd` commands in subagent objectives — just tell them what to do (e.g., "run `mix test`").
+          """
+          |> String.trim_trailing()
+
         if context_contents == "" do
           {:ok, location_info}
         else
-          {:ok, location_info <> "\n\n# Context Tree\n" <> context_contents}
+          {:ok, "# Context Tree\n" <> context_contents <> "\n\n" <> location_info}
         end
 
       {:error, reason} ->
