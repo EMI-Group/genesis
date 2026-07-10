@@ -495,7 +495,7 @@ defmodule EvoGit.RemoteConnection do
   end
 
   defp build_ssh_opts(target) do
-    base = [silently_accept_hosts: true]
+    base = [silently_accept_hosts: true, user_interaction: false]
 
     base =
       case Map.get(target, :user) do
@@ -505,8 +505,7 @@ defmodule EvoGit.RemoteConnection do
 
     case Map.get(target, :identity_file) do
       path when is_binary(path) and path != "" ->
-        dir = path |> Path.dirname() |> String.to_charlist()
-        [{:user_dir, dir} | base]
+        [{:identity, String.to_charlist(path)} | base]
 
       _ ->
         base
