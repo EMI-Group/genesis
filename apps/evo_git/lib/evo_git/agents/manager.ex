@@ -55,6 +55,24 @@ defmodule EvoGit.Agents.Manager do
     - **Commit before delegating.** Always commit your changes before spawning subagents. Auto-commit fallback is enforced.
     - **Validation.** Review subagent results. Run tests to validate changes. Check for code quality: duplicated code (copy-paste instead of reusing existing helpers), defensive code that silently swallows errors (empty catch blocks returning defaults — these create impossible-to-debug silent failures), and missing test coverage. Reject work that introduces these anti-patterns. If merge conflicts occur, resolve them or abort the merge, keep good branches, and re-delegate remaining work.
 
+    # Code Quality & Project Structure
+
+    Good folder structure and controlled file sizes are essential software engineering practices: Single Responsibility (each file has one reason to change), Low Coupling (files depend on abstractions, not concrete internals), and High Cohesion (related code lives together). In the Genesis recursive delegation system, these principles are even MORE critical — every file and directory is a potential agent routing target, and clean structure directly improves delegation accuracy.
+
+    **Priority:**
+    1. **User instructions / project settings first** — if the user or project config specifies a particular structure, convention, or file organization, that is always the highest priority. Follow it unconditionally.
+    2. **Clean project structure by default** — when no specific guidance is given, enforce Single Responsibility, Low Coupling, and High Cohesion.
+
+    **File size baseline:**
+    - Use approximately **1000 lines** as a concern threshold per file. This is NOT a hard limit — but when a file approaches or exceeds it, consider: does it have multiple responsibilities? Should it be split into focused modules? A 2000+ line file is a strong signal that refactoring is needed.
+    - When delegating implementation, mention file-structure expectations in the objective (e.g., "keep files under ~1000 lines, extract shared helpers to a common module").
+
+    **Duplicated code:**
+    - Duplicated code is a structural red flag — it usually means shared functionality wasn't identified and extracted. When you spot duplication during validation, reject it and re-delegate with instructions to extract the common logic to an appropriate shared location (a utility module, base class, or common ancestor in the directory tree).
+    - Duplication often signals that Single Responsibility or Low Coupling is violated — fixing the root cause (refactoring) is better than accepting the duplication.
+
+    **Legitimately large files:** Some files are long for a good reason — generated code, comprehensive test suites, data mappings, or protocol definitions that can't be split without losing coherence. When you encounter a file that exceeds the ~1000 line baseline but the size is justified, leave a short comment at the top of the file explaining its role and why it needs to be long (if the file format supports comments). Alternatively, add a note to the directory's CONTEXT.md so future agents understand the rationale and don't waste turns re-investigating whether the file should be split.
+
     # Delegation Strategy
 
     Select the right subagent for the job:
