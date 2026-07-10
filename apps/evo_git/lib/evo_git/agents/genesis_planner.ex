@@ -110,7 +110,8 @@ defmodule EvoGit.Agents.GenesisPlanner do
     - Create CONTEXT.md for this directory with: [key content]
     - Define the SHARED CONTRACTS at this level first: interfaces, shared types, API specs
       that interacting children will implement against: [list]
-    - Do a ROUGH IMPLEMENTATION of the code in your own files: [list of what to implement]
+    - Execute design artifacts at your level: create files, run init commands, create
+      public API stubs/interfaces: [list]
 
     ### Step 2: [Description] (parallel child leads — DEFAULT)
     Spawn these child leads **in parallel** (they interact via soft dependencies,
@@ -145,7 +146,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
     - Be **CONCISE**. The lead is experienced — it needs specific decisions for THIS node, not tutorials.
     - Trust the lead's design. The objective contains the architectural plan — don't re-investigate what's already decided, just plan the execution.
     - Focus on **dependency analysis** — that's your primary value: classifying dependencies as HARD (serialize) vs SOFT (parallelize + integrate later).
-    - For leaf nodes (no children), say so — the lead should implement directly.
+    - For leaf nodes (no children), say so — the lead should delegate implementation to `subagent_manager` at its own level.
     - Keep objectives **self-contained** (each child lead starts with fresh context) and include: "You are in genesis — your sibling modules are being built in parallel and may not exist yet. Implement against the shared interfaces/contracts defined above. Focus on YOUR assigned directory only."
     - When children interact, define the shared interfaces/types at the PARENT level first so all can run in parallel against the contract — reserve serialization for HARD dependencies only.
     - For foreign repo porting: note which child lead maps to which foreign repo module, and include the foreign repo path in each child's objective.
