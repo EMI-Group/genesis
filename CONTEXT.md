@@ -99,25 +99,25 @@ This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, and `Cargo.lock` in one
 Genesis supports a VSCode Remote-SSH-like workflow: a lightweight headless daemon runs on a remote server, and the local Phoenix dashboard controls it over an SSH tunnel via Erlang distribution.
 
 **Architecture:**
-- **Remote daemon** (`genesis_remote` release): a Burrito-wrapped `evo_git`-only binary (no Phoenix/Tauri). Launched via `systemd-run --user` as an independent daemon — survives dashboard disconnection. Enables EPMD-less distribution on a pinned port (default 9000) via `rel/remote/vm.args.eex`.
+- **Remote daemon** (`genesis_remote` release): a Burrito-wrapped `evo_git`-only binary (no Phoenix/Tauri). Launched via `systemd-run --user` (Linux) or `launchctl` with a launchd plist (macOS) as an independent daemon — survives dashboard disconnection. Enables EPMD-less distribution on a pinned port (default 9000) via `rel/remote/vm.args.eex`.
 - **Local dashboard**: connects to the remote daemon by (1) establishing an SSH port-forwarding tunnel (`ssh -L <dist_port>:127.0.0.1:<dist_port> -N`), then (2) `Node.connect/1` over the tunnel. The `EvoGit.RemoteConnection` GenServer manages this lifecycle.
 - **Data access**: the dashboard reads remote agent state/config via `:erpc.call/5` to `EvoGit.AgentScheduler.RemoteAPI` on the remote node (`:erpc` transfers native BEAM terms — atoms, structs, maps — directly, so the API returns native structs like `%ReqLLM.Message{}`, `%Usage{}`, `%AgentState{}` without any serialization). PubSub uses the existing PG2 adapter backed by `:pg`, which is cluster-aware — broadcasts on the remote node's `EvoGit.PubSub` propagate to the local dashboard.
-- **Bootstrap vs Connect**: deliberately separate. **Bootstrap** (`EvoGit.RemoteConnection.bootstrap/1`) pushes the binary via `:ssh_sftp` and starts the daemon — first-time setup. **Connect** (`EvoGit.RemoteConnection.connect/1`) assumes the daemon is already running and only establishes the tunnel + distribution link.
+- **Bootstrap vs Connect**: deliberately separate. **Bootstrap** (`EvoGit.RemoteConnection.bootstrap/1`) SCPs the local binary to the remote host via CLI `scp`, sets it executable via `ssh chmod +x`, detects the remote OS, and launches it as a daemon (`systemd-run --user` on Linux, `launchctl` + launchd plist on macOS) — first-time setup. **Connect** (`EvoGit.RemoteConnection.connect/1`) assumes the daemon is already running and only establishes the tunnel + distribution link. All SSH operations use CLI `ssh`/`scp` via `Port.open` — no Erlang `:ssh`/`:ssh_sftp` modules. SSH port, identity file, and other options are handled by the user's `~/.ssh/config`; the target stores only an `ssh_target` string (e.g. `gpu-server` or `user@host`).
 
 **Key modules:**
 | Module | App | Purpose |
 |--------|-----|---------|
-| `EvoGit.RemoteConnections` | evo_git | TOML-based SSH target persistence (`~/.config/genesis/remote_connections.toml`) |
-| `EvoGit.RemoteConnection` | evo_git | GenServer — bootstrap + connection lifecycle, SSH tunnel Port, heartbeat |
+| `EvoGit.RemoteConnections` | evo_git | TOML-based SSH target persistence (`~/.config/genesis/remote_connections.toml`). Schema: `ssh_target` (SSH host string), `local_binary_path` (path to local binary), `dist_port`, `remote_path`, `name`, `id`, `last_connected`. No SSH config parsing — port/keys handled by `~/.ssh/config`. |
+| `EvoGit.RemoteConnection` | evo_git | GenServer — bootstrap (CLI `scp` + `ssh`) + connection lifecycle (CLI `ssh -L` tunnel), heartbeat |
 | `EvoGit.AgentScheduler.RemoteAPI` | evo_git | Read-only RPC API over scheduler ETS (list_agents, get_agent_history, get_config, etc.) |
 | `EvoDash.NodeContext` | evo_dash | Thin client — wraps RemoteConnections + RemoteConnection + cross-node RPC helpers |
 | `EvoDashWeb.LiveHooks.NodeAware` | evo_dash | On-mount hook — resolves `?node=` param to remote BEAM node name for RPC routing |
-| `EvoDashWeb.NodeSelectorComponent` | evo_dash | Navbar node indicator/selector + connection manager modal |
+| `EvoDashWeb.NodeSelectorComponent` | evo_dash | Navbar node indicator/selector dropdown (links to Settings page for full connection management) |
 
 **Dashboard UX:**
 - Node indicator/selector next to the brand logo in the navbar — shows green dot "Local" or blue dot + target name when remote.
 - All navigation links carry `?node=<target_id>` when viewing a remote node.
-- Connection manager modal: add/edit/delete SSH targets, bootstrap remote daemon, connect/disconnect.
+- Connection management on Settings page (`/settings?category=remote_connections`): add/edit/delete SSH targets (ssh_target, local_binary_path, dist_port, remote_path), bootstrap remote daemon, connect/disconnect.
 - When viewing a remote node: Agents page shows remote agents via RPC, Settings is read-only, System controls are disabled (restart/stop), config banner shows remote config status.
 - SSH targets are persisted and remembered across sessions.
 
