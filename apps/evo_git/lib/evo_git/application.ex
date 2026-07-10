@@ -21,6 +21,7 @@ defmodule EvoGit.Application do
       {Phoenix.PubSub, name: EvoGit.PubSub},
       {Registry, keys: :unique, name: EvoGit.RemoteConnection.Registry},
       {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one},
+      {EvoGit.AgentScheduler.WorktreeManager, []},
       {EvoGit.AgentGroupSupervisor, []}
     ]
 

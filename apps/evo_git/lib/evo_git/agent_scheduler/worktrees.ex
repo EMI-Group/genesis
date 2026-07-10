@@ -14,6 +14,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentScheduler.WorktreeManager
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
 
@@ -75,8 +76,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
           "creating worker directory for new repo"
       end)
 
-      worker_base = workers_dir(new_root)
-      File.mkdir_p!(worker_base)
+      WorktreeManager.init_worktrees(new_root)
 
       %State{state | initialized_repos: Map.put(state.initialized_repos, new_root, true)}
     else
@@ -93,30 +93,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     worker_base = workers_dir(repo_root)
 
     Logger.info("AgentScheduler: Initializing worktree directory at #{worker_base}")
-
-    # Use the non-bang variant of File.rm_rf — when the scheduler crashes and
-    # restarts while agents from the previous instance are still running, the
-    # workers directory may be in use and rm_rf can fail with :eexist (or other
-    # errors). In that case we log a warning and continue — File.mkdir_p! on
-    # the next line is a no-op since the directory already exists, and existing
-    # worktrees within it may still be usable.
-    case File.rm_rf(worker_base) do
-      {:ok, _} ->
-        :ok
-
-      {:error, reason, path} ->
-        Logger.warning(
-          "AgentScheduler: Could not remove worker directory #{worker_base}: " <>
-            "#{inspect(reason)} at #{path} — continuing with existing directory"
-        )
-    end
-
-    Git.prune_worktrees(repo_root)
-
-    # Clean up orphaned evogit-agent branches from previous runs
-    clean_orphaned_branches(repo_root)
-
-    File.mkdir_p!(worker_base)
+    WorktreeManager.init_worktrees(repo_root)
 
     %State{
       state
@@ -134,20 +111,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @spec teardown_worktrees(State.t(), String.t()) :: State.t()
 
   def teardown_worktrees(%State{} = state, repo_root) when is_binary(repo_root) do
-    worker_base = workers_dir(repo_root)
-
-    case File.rm_rf(worker_base) do
-      {:ok, _} ->
-        :ok
-
-      {:error, reason, path} ->
-        Logger.warning(
-          "AgentScheduler: Could not remove worker directory during teardown: " <>
-            "#{inspect(reason)} at #{path}"
-        )
-    end
-
-    Git.prune_worktrees(repo_root)
+    WorktreeManager.teardown_worktrees(repo_root)
     %State{state | initialized: false}
   end
 
@@ -273,50 +237,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   @spec delete(String.t(), String.t()) :: :ok
 
   def delete(path, repo_root) do
-    Logger.info("AgentScheduler: Deleting worktree #{path}")
-    # Derive branch name from directory name (e.g., worker_T1_A42 → evogit-agent-T1-A42)
-    branch_name =
-      path
-      |> Path.basename()
-      |> then(
-        &Regex.replace(~r/^worker_(.+)$/, &1, fn _, rest ->
-          "evogit-agent-" <> String.replace(rest, "_", "-")
-        end)
-      )
-
-    case File.rm_rf(path) do
-      {:ok, _} ->
-        :ok
-
-      {:error, reason, failed_path} ->
-        Logger.warning(
-          "AgentScheduler: Failed to remove worktree #{path}: #{inspect(reason)} at #{failed_path}"
-        )
-    end
-
-    Git.prune_worktrees(repo_root)
-    Git.delete_branch(repo_root, branch_name)
-  end
-
-  # --- Orphaned Branch Cleanup ---
-
-  @doc """
-  Cleans up orphaned `evogit-agent-*` branches from previous runs.
-
-  Matches all branches with the `evogit-agent-` prefix (e.g., `evogit-agent-T1-A1`,
-  `evogit-agent-T2-A5`) and deletes each one. This is called during initialization
-  to prevent stale branches from accumulating.
-  """
-  @spec clean_orphaned_branches(String.t()) :: :ok
-
-  def clean_orphaned_branches(repo_root) do
-    Git.list_branches(repo_root, "evogit-agent-*")
-    |> Enum.each(fn branch ->
-      Logger.info("AgentScheduler: Cleaning up orphaned branch #{branch}")
-      Git.delete_branch(repo_root, branch)
-    end)
-
-    :ok
+    Logger.info("AgentScheduler: Requesting worktree deletion for #{path}")
+    WorktreeManager.delete_worktree(path, repo_root)
   end
 
   # --- Commit Sync ---

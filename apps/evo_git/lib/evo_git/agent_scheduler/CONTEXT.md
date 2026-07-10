@@ -12,7 +12,8 @@ Contains data structs and extracted helper modules used internally by `EvoGit.Ag
 | `EvoGit.AgentScheduler.AgentState` | Live agent state in `:evogit_agent_state` ETS — context_node, phylo_node, objective, repo_id |
 | `EvoGit.AgentScheduler.SchedMeta` | Scheduler-private metadata in `:evogit_sched_meta` ETS — status, depth, worktree, subagent tracking |
 | `EvoGit.AgentScheduler.Slots` | Pure-function LLM/tool slot management using holder MapSets with FIFO queuing and rate-limit backoff |
-| `EvoGit.AgentScheduler.Worktrees` | Pure-function worktree lifecycle: init, assign, prepare, sync, delete, teardown |
+| `EvoGit.AgentScheduler.Worktrees` | Pure-function worktree lifecycle: init, assign, prepare, sync, delete, teardown. Delegates filesystem I/O to `WorktreeManager`. |
+| `EvoGit.AgentScheduler.WorktreeManager` | GenServer for async worktree I/O — init, delete (cast), teardown |
 | `EvoGit.AgentScheduler.Dispatch` | Agent registration, dispatching, agent-process git commit, repo root resolution, queue processing |
 | `EvoGit.AgentScheduler.Subagents` | Subagent validation/spawning, spatial contract checks, result tracking, parent resumption |
 | `EvoGit.AgentScheduler.Lifecycle` | Agent recycling (cleanup) and crash handling (retry logic, permanent failure) |
@@ -58,9 +59,11 @@ Worktrees are **persistent per-agent** (created on dispatch, reused on retry, de
 2. `assign_and_prepare_worktree/2` — Cleans worktree, checks out agent branch, binds repo path
 3. `run_init_script/3` — Runs optional init script from `genesis.toml` (primary repo only). Accepts `opts` keyword list with `:source_worktree_path` (parent agent's worktree or repo root for top-level). Sets env vars: `SOURCE_REPO_PATH`, `TARGET_WORKTREE_PATH`, `SOURCE_WORKTREE_PATH`.
 4. `sync_current_commit/2` — Reads HEAD SHA and updates both ETS tables if changed
-5. `delete/2` — Removes worktree directory, prunes, deletes branch (takes explicit `repo_root` param)
-6. `teardown_worktrees/2` — Removes entire worker base directory for a given repo root
+5. `delete/2` — Removes worktree directory, prunes, deletes branch (delegates to `WorktreeManager.delete_worktree/2` via `cast` — fire and forget)
+6. `teardown_worktrees/2` — Removes entire worker base directory for a given repo root (delegates to `WorktreeManager.teardown_worktrees/1` via `call` — synchronous)
 7. `teardown_worktrees/1` — Resets the `initialized` flag without filesystem cleanup (for when repo root is unknown)
+
+All filesystem operations (rm_rf, prune_worktrees, delete_branch, mkdir_p) are handled by the dedicated `WorktreeManager` GenServer process, called synchronously for init/teardown (`call`) and asynchronously for deletion (`cast`).
 
 ### Agent Dispatching (Dispatch module)
 
@@ -103,7 +106,7 @@ Handles agent completion and crash recovery:
 - `AgentState` is shared (scheduler + agent processes); `SchedMeta` is scheduler-exclusive.
 - Both ETS tables are created by **`EvoGit.Application`** (the application process), NOT by the `AgentScheduler` GenServer (see `application.ex:13-15`). This is deliberate: the tables have **no heir**, so ownership must outlive a scheduler crash. Because they are owned by the long-lived application process, the tables **SURVIVE an `AgentScheduler` restart** — stale `SchedMeta` entries from the crashed instance remain. (Restart semantics: `AgentGroupSupervisor` is `strategy: :one_for_all`, so a scheduler crash also kills `EvoGit.TaskSupervisor` and all running agent Tasks. The GenServer `%State{}` is reset fresh on restart, but the ETS tables persist.)
 - GenServer state must always be `%State{}`; use struct update syntax, not `Map.put/3`.
-- The scheduler process NEVER calls git directly — all git operations (auto-commit, sync) happen in the agent (Task) process. The scheduler only does filesystem operations (worktree creation/deletion).
+- The scheduler process NEVER calls git or does blocking filesystem I/O directly — all git operations (auto-commit, sync) happen in the agent (Task) process, and all worktree filesystem operations (rm_rf, mkdir_p, prune_worktrees, delete_branch) are offloaded to the dedicated `WorktreeManager` GenServer (synchronous `call` for init/teardown, asynchronous `cast` for deletion).
 - Slot availability is derived from holder MapSets, never stored as a counter — this eliminates leak/deadlock bugs by construction.
 - `SchedMeta.task_ref` stores a `%Task{}` struct (for `Task.shutdown/2`), NOT a bare reference. The `ref_to_agent` map still keys on `task.ref` (the monitor reference).
 - `case`/`with` guards on ETS lookups are used ONLY where a genuine race can cause the entry to be absent (recycle_agent, try_dispatch, cancel_agent). Not used defensively everywhere.
