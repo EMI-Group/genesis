@@ -7,6 +7,10 @@ defmodule EvoDash.Application do
 
   @impl true
   def start(_type, _args) do
+    # Configure Floki to use html5ever (Rust NIF, precompiled — no build tools
+    # needed) for robust HTML parsing of Lumis syntax-highlighter output.
+    Application.put_env(:floki, :html_parser, Floki.HTMLParser.Html5ever)
+
     data_dir = Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir())
 
     children = [
