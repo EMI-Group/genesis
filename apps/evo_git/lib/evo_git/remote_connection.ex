@@ -62,9 +62,12 @@ defmodule EvoGit.RemoteConnection do
             phase: :disconnected,
             ssh_tunnel_port: nil,
             last_error: nil,
-            heartbeat_ref: nil
+            heartbeat_ref: nil,
+            bootstrap_stage: nil
 
   @type phase :: :disconnected | :bootstrapping | :connecting | :connected | :error
+
+  @type bootstrap_stage :: :uploading | :setting_permissions | :detecting_os | :starting_daemon | nil
 
   @type t :: %__MODULE__{
           target: map() | nil,
@@ -72,7 +75,8 @@ defmodule EvoGit.RemoteConnection do
           phase: phase(),
           ssh_tunnel_port: port() | nil,
           last_error: String.t() | nil,
-          heartbeat_ref: reference() | nil
+          heartbeat_ref: reference() | nil,
+          bootstrap_stage: bootstrap_stage() | nil
         }
 
   # ── Public API ─────────────────────────────────────────────────────
@@ -347,19 +351,61 @@ defmodule EvoGit.RemoteConnection do
   end
 
   defp do_bootstrap_with_binary(%__MODULE__{} = state, target, local_path) do
-    bootstrapping = %{state | phase: :bootstrapping}
     ssh_target = target.ssh_target
     remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
 
-    with :ok <- scp_binary(ssh_target, local_path, remote_path),
-         :ok <- chmod_executable(ssh_target, remote_path),
-         {:ok, os} <- detect_os(ssh_target),
-         :ok <- maybe_start_daemon(ssh_target, remote_path, os) do
-      EvoGit.RemoteConnections.touch(target.id)
-      {:ok, %{bootstrapping | phase: :disconnected}}
-    else
+    # Start bootstrapping — broadcast uploading stage
+    state = %{state | phase: :bootstrapping, bootstrap_stage: :uploading}
+    broadcast_status(target, state)
+
+    # Step 1: SCP upload
+    case scp_binary(ssh_target, local_path, remote_path) do
+      :ok ->
+        state = %{state | bootstrap_stage: :setting_permissions}
+        broadcast_status(target, state)
+
+        # Step 2: chmod
+        case chmod_executable(ssh_target, remote_path) do
+          :ok ->
+            state = %{state | bootstrap_stage: :detecting_os}
+            broadcast_status(target, state)
+
+            # Step 3: detect OS
+            case detect_os(ssh_target) do
+              {:ok, os} ->
+                state = %{state | bootstrap_stage: :starting_daemon}
+                broadcast_status(target, state)
+
+                # Step 4: start daemon
+                case maybe_start_daemon(ssh_target, remote_path, os) do
+                  :ok ->
+                    EvoGit.RemoteConnections.touch(target.id)
+                    completed = %{state | phase: :disconnected, bootstrap_stage: nil}
+                    broadcast_status(target, completed)
+                    {:ok, completed}
+
+                  {:error, reason} ->
+                    error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
+                    broadcast_status(target, error_state)
+                    {:error, reason, error_state}
+                end
+
+              {:error, reason} ->
+                error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
+                broadcast_status(target, error_state)
+                {:error, reason, error_state}
+            end
+
+          {:error, reason} ->
+            error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
+            broadcast_status(target, error_state)
+            {:error, reason, error_state}
+        end
+
       {:error, reason} ->
-        {:error, reason, %{bootstrapping | phase: :error, last_error: format_error(reason)}}
+        error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
+        broadcast_status(target, error_state)
+        {:error, reason, error_state}
     end
   end
 
@@ -629,7 +675,8 @@ defmodule EvoGit.RemoteConnection do
       phase: state.phase,
       node: state.node,
       last_error: state.last_error,
-      target: state.target
+      target: state.target,
+      bootstrap_stage: state.bootstrap_stage
     }
   end
 
