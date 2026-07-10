@@ -44,22 +44,29 @@ defmodule EvoGit.Agent.ContextCompressionTest do
       assert is_binary(ContextCompression.compression_instruction())
     end
 
-    test "contains the Original Objective section" do
+    test "does NOT reproduce the original objective (anti-drift: no Original Objective section)" do
       instruction = ContextCompression.compression_instruction()
 
-      assert instruction =~ ~s(## Original Objective)
-
-      assert instruction =~
-               ~s(The COMPLETE original objective/task from the user, reproduced as close to verbatim as possible.)
+      # The "## Original Objective" section was removed — the verbatim
+      # objective is preserved in the first user message instead.
+      refute instruction =~ ~s(## Original Objective)
+      refute instruction =~ ~s(reproduced as close to verbatim as possible)
     end
 
-    test "contains the Overall Progress section" do
+    test "contains the Current State section (replaces Overall Progress)" do
       instruction = ContextCompression.compression_instruction()
 
-      assert instruction =~ ~s(## Overall Progress)
+      assert instruction =~ ~s(## Current State)
 
       assert instruction =~
-               ~s(Cumulative high-level status of the ORIGINAL objective.)
+               ~s(Your current state within the overall objective: what major milestones/parts are complete, what remains to be done, and what you should focus on next.)
+    end
+
+    test "does NOT contain the old Overall Progress section" do
+      instruction = ContextCompression.compression_instruction()
+
+      refute instruction =~ ~s(## Overall Progress)
+      refute instruction =~ ~s(Cumulative high-level status of the ORIGINAL objective.)
     end
 
     test "contains the Completed section" do
@@ -72,6 +79,9 @@ defmodule EvoGit.Agent.ContextCompressionTest do
 
       assert instruction =~
                ~s(your final report MUST summarize the status of the ORIGINAL objective as a whole)
+
+      # The reminder now references the first user message and "Current State".
+      assert instruction =~ ~s(refer to the first user message and "Current State" above)
     end
 
     test "does NOT contain the old objective drift phrasing" do
@@ -80,6 +90,27 @@ defmodule EvoGit.Agent.ContextCompressionTest do
       refute instruction =~ ~s(the current goal being worked on)
       # The old section header should also be gone
       refute instruction =~ ~s(## Objective\n)
+    end
+
+    test "contains anti-drift note: objective preserved in first user message" do
+      instruction = ContextCompression.compression_instruction()
+
+      assert instruction =~
+               ~s(Do NOT reproduce, restate, or paraphrase)
+
+      assert instruction =~
+               ~s(The original objective is preserved verbatim in the first user message above.)
+    end
+
+    test "contains the CRITICAL anti-drift instruction" do
+      instruction = ContextCompression.compression_instruction()
+
+      assert instruction =~
+               ~s(CRITICAL: You are working on the SAME original objective as when you started)
+
+      assert instruction =~ ~s(Do NOT drift, redefine, narrow, or expand the objective.)
+
+      assert instruction =~ ~s(STOP and realign to it.)
     end
 
     test "preserves all other structural sections" do
