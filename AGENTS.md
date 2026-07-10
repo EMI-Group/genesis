@@ -61,7 +61,7 @@ Agents are divided into specialized roles, each with its own system prompt, tool
 | **Manager** | Gradual improvements, bug fixing, refining | Read-Write | Does NOT do initial implementation; coordinates refinements via subagents |
 | **Generalist** | Versatile full-stack agent | Read-Write | Investigates, plans, and implements autonomously |
 | **Executor** | Precise, targeted code changes | Read-Write | Focused implementation from well-defined objectives |
-| **CodebaseArchitect** | Greenfield architecture design and rough implementation | Read-Write | Initializes sub-trees with structure + working code; 3-phase: structure & public API → rough implementation → review & refinement |
+| **CodebaseLead** | Greenfield architecture & accountability | Read-Write | Accountable for all code in its node path; directly responsible for architecture only (structure, CONTEXT.md, public API). Delegates implementation to Manager. Uses Executor for design artifacts. 3-phase: architecture & design → implementation delegation → review & accountability |
 | **CodebaseInvestigator** | Deep codebase analysis | Read-Only | Read-only investigation; can update CONTEXT.md |
 | **ContextExtractor** | Semantic context extraction | Read-Only | Builds CONTEXT.md tree from existing codebases |
 | **TaskScheduler** | Execution sequence planning | Read-Only | Transforms objectives into ordered task sequences |
@@ -96,9 +96,13 @@ Initialize the Context Tree and Phylogenetic Graph, starting from either an exis
 - **Fixed Point Convergence:** The parent agent aggregates context. If discrepancies exist, it spawns subagents to modify child nodes. This loop repeats until a fixed point is reached.
 - **Convergence Circuit Breaker:** To prevent infinite loops of subjective semantic tweaking, agents evaluate context changes based *only* on functional API surface modifications, not phrasing. A hard iteration limit guarantees termination.
 
-**Mode B: New Codebase**
-- A `CodebaseArchitect` agent interprets the user's prompt at the root node, drafts the initial architectural plan, creates the folder tree with CONTEXT.md files, and then recursively delegates to child architects for subdirectories.
-- After the context hierarchy is established, the architect proceeds through a 3-phase cycle: **structure & public API → rough implementation → review & refinement**. The architect does rough implementation of real, functional code itself (not just empty stubs); the Manager is used only for fixing/refining/polishing afterward.
+**Mode B: New Codebase (Two-Root-Agent Mode)**
+Genesis Mode B spawns TWO sequential root agents sharing a single `task_id`:
+
+1. **Architecture root agent (`CodebaseLead`)**: Interprets the user's prompt at the root node, drafts the initial architectural plan, creates the folder tree with CONTEXT.md files, defines the public API (interfaces, shared types, directory structure), and recursively delegates child directory architecture to `subagent_codebase_lead` subagents. Uses `subagent_executor` for design artifacts (creating files, running init commands). Does NOT implement code — its direct responsibility is architecture only.
+2. **Implementation root agent (`Manager`)**: Starts from the architect's final commit. Receives a combined objective (original user prompt + architect's result report). Reviews the established architecture, identifies unimplemented work, and delegates implementation to Executor subagents. Completes the codebase to fulfill the original objective.
+
+Usage/cost tracking is aggregated across both root agents: combined token usage, agent count, and archive records are merged into the final result. Archive records from the architecture phase are cleared from ETS before the implementation phase to prevent double-counting (both agents share the same `task_id`).
 - Fixed Point Convergence applies identically, with the same circuit breaker.
 
 ### **4.2 Phase 2: Evolution**
