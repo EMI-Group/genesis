@@ -17,7 +17,8 @@ defmodule EvoDashWeb.DiffViewerTest do
 
       assert map_size(result) == 2
       assert result[1] == ~s(<span style="color:#keyword">def</span> foo)
-      assert result[2] == ~s(<span style="color:#string">"bar"</span>)
+      # Floki's raw_html/1 HTML-encodes quotes in text content as &quot;
+      assert result[2] == ~s(<span style="color:#string">&quot;bar&quot;</span>)
     end
 
     test "preserves inner span tags (syntax highlighting)" do
@@ -74,7 +75,8 @@ defmodule EvoDashWeb.DiffViewerTest do
 
       assert map_size(result) == 2
       assert result[1] == ~s(<span style="color:#keyword">def</span> foo)
-      assert result[2] == ~s(<span style="color:#string">"bar"</span>)
+      # Floki's raw_html/1 HTML-encodes quotes in text content as &quot;
+      assert result[2] == ~s(<span style="color:#string">&quot;bar&quot;</span>)
     end
 
     test "content is preserved" do
@@ -92,8 +94,9 @@ defmodule EvoDashWeb.DiffViewerTest do
       result = DiffViewer.parse_lumis_lines(lumis_output)
 
       assert map_size(result) == 2
-      assert result[1] == ~s(<span style="color:#string">\"\"\"line1</span>)
-      assert result[2] == ~s(<span style="color:#string">line2\"\"\"</span>)
+      # Floki's raw_html/1 HTML-encodes quotes in text content as &quot;
+      assert result[1] == ~s(<span style="color:#string">&quot;&quot;&quot;line1</span>)
+      assert result[2] == ~s(<span style="color:#string">line2&quot;&quot;&quot;</span>)
     end
   end
 
@@ -344,6 +347,240 @@ defmodule EvoDashWeb.DiffViewerTest do
       # file-level is skipped and hunk-level fallback is used.
       addition_line = Enum.find(lines, &(&1.type == :addition))
       assert unwrap(Map.get(result, addition_line.line_number)) == "line2_new"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Split-view pairing: build_split_pairs/1
+  #
+  # Tests the algorithm that converts hunk body lines into side-by-side pairs
+  # for the GitHub-style split diff view.
+  # ---------------------------------------------------------------------------
+
+  describe "build_split_pairs/1" do
+    # Helper: build a parsed diff line map.
+    defp line(idx, prefix, content, type) do
+      %{line_number: idx, prefix: prefix, content: content, type: type}
+    end
+
+    test "context lines appear on both sides with advancing line numbers" do
+      # @@ -1,3 +1,3 @@
+      #  line1
+      #  line2
+      #  line3
+      body = [
+        line(2, " ", "line1", :context),
+        line(3, " ", "line2", :context),
+        line(4, " ", "line3", :context)
+      ]
+
+      pairs = DiffViewer.build_split_pairs(body, 1, 1)
+
+      assert length(pairs) == 3
+
+      for {{pair, _exp_num}, i} <- Enum.with_index(pairs, 1) do
+        assert pair.type == :context
+        assert pair.left.line_num == i
+        assert pair.right.line_num == i
+        assert pair.left.line.content == "line#{i}"
+        assert pair.right.line.content == "line#{i}"
+      end
+    end
+
+    test "deletion lines appear only on the left (right is nil)" do
+      # @@ -1,2 +1,1 @@
+      #  ctx
+      # -del
+      body = [
+        line(2, " ", "ctx", :context),
+        line(3, "-", "del", :deletion)
+      ]
+
+      pairs = DiffViewer.build_split_pairs(body, 1, 1)
+
+      assert length(pairs) == 2
+
+      # First pair: context on both sides
+      [p1, p2] = pairs
+      assert p1.type == :context
+      assert p1.left.line_num == 1
+      assert p1.right.line_num == 1
+
+      # Second pair: deletion on left, nil on right
+      assert p2.type == :deletion
+      assert p2.left.line_num == 2
+      assert p2.left.line.content == "del"
+      assert p2.right == nil
+    end
+
+    test "addition lines appear only on the right (left is nil)" do
+      # @@ -1,1 +1,2 @@
+      #  ctx
+      # +add
+      body = [
+        line(2, " ", "ctx", :context),
+        line(3, "+", "add", :addition)
+      ]
+
+      pairs = DiffViewer.build_split_pairs(body, 1, 1)
+
+      assert length(pairs) == 2
+
+      [p1, p2] = pairs
+      assert p1.type == :context
+      assert p1.left.line_num == 1
+      assert p1.right.line_num == 1
+
+      assert p2.type == :addition
+      assert p2.right.line_num == 2
+      assert p2.right.line.content == "add"
+      assert p2.left == nil
+    end
+
+    test "consecutive deletions followed by additions are zipped together" do
+      # 3 deletions then 2 additions → 3 paired rows (del+add, del+add, del+blank)
+      body = [
+        line(2, "-", "del1", :deletion),
+        line(3, "-", "del2", :deletion),
+        line(4, "-", "del3", :deletion),
+        line(5, "+", "add1", :addition),
+        line(6, "+", "add2", :addition)
+      ]
+
+      pairs = DiffViewer.build_split_pairs(body, 1, 1)
+
+      assert length(pairs) == 3
+
+      [p1, p2, p3] = pairs
+
+      # First two pairs: mixed (deletion on left, addition on right)
+      assert p1.type == :mixed
+      assert p1.left.line.content == "del1"
+      assert p1.right.line.content == "add1"
+
+      assert p2.type == :mixed
+      assert p2.left.line.content == "del2"
+      assert p2.right.line.content == "add2"
+
+      # Third pair: deletion only (right is nil — extra deletion)
+      assert p3.type == :deletion
+      assert p3.left.line.content == "del3"
+      assert p3.right == nil
+    end
+
+    test "more additions than deletions pads left with nil" do
+      # 2 deletions then 3 additions → 3 paired rows
+      body = [
+        line(2, "-", "del1", :deletion),
+        line(3, "-", "del2", :deletion),
+        line(4, "+", "add1", :addition),
+        line(5, "+", "add2", :addition),
+        line(6, "+", "add3", :addition)
+      ]
+
+      pairs = DiffViewer.build_split_pairs(body, 1, 1)
+
+      assert length(pairs) == 3
+
+      [p1, p2, p3] = pairs
+
+      assert p1.type == :mixed
+      assert p1.left.line.content == "del1"
+      assert p1.right.line.content == "add1"
+
+      assert p2.type == :mixed
+      assert p2.left.line.content == "del2"
+      assert p2.right.line.content == "add2"
+
+      # Third pair: addition only (left is nil)
+      assert p3.type == :addition
+      assert p3.left == nil
+      assert p3.right.line.content == "add3"
+    end
+
+    test "line numbers advance correctly for context + addition + deletion" do
+      # @@ -5,3 +5,4 @@
+      #  ctx          (old:5, new:5)
+      # -del          (old:6)
+      # +add1         (     new:6)
+      # +add2         (     new:7)
+      body = [
+        line(2, " ", "ctx", :context),
+        line(3, "-", "del", :deletion),
+        line(4, "+", "add1", :addition),
+        line(5, "+", "add2", :addition)
+      ]
+
+      pairs = DiffViewer.build_split_pairs(body, 5, 5)
+
+      assert length(pairs) == 3
+
+      [p1, p2, p3] = pairs
+
+      # Context: both sides at line 5
+      assert p1.type == :context
+      assert p1.left.line_num == 5
+      assert p1.right.line_num == 5
+
+      # Deletion + addition zipped: old line 6, new line 6
+      assert p2.type == :mixed
+      assert p2.left.line_num == 6
+      assert p2.right.line_num == 6
+
+      # Extra addition: new line 7, left is nil
+      assert p3.type == :addition
+      assert p3.left == nil
+      assert p3.right.line_num == 7
+    end
+
+    test "returns empty list for empty body" do
+      assert DiffViewer.build_split_pairs([], 1, 1) == []
+    end
+
+    test "deletions only (deleted file)" do
+      # @@ -1,3 +0,0 @@
+      # -line1
+      # -line2
+      # -line3
+      body = [
+        line(2, "-", "line1", :deletion),
+        line(3, "-", "line2", :deletion),
+        line(4, "-", "line3", :deletion)
+      ]
+
+      pairs = DiffViewer.build_split_pairs(body, 1, 0)
+
+      assert length(pairs) == 3
+
+      for {{pair, i}, exp_num} <- Enum.with_index(pairs, 1) do
+        assert pair.type == :deletion
+        assert pair.left.line_num == exp_num
+        assert pair.left.line.content == "line#{i}"
+        assert pair.right == nil
+      end
+    end
+
+    test "additions only (new file)" do
+      # @@ -0,0 +1,3 @@
+      # +line1
+      # +line2
+      # +line3
+      body = [
+        line(2, "+", "line1", :addition),
+        line(3, "+", "line2", :addition),
+        line(4, "+", "line3", :addition)
+      ]
+
+      pairs = DiffViewer.build_split_pairs(body, 0, 1)
+
+      assert length(pairs) == 3
+
+      for {{pair, i}, exp_num} <- Enum.with_index(pairs, 1) do
+        assert pair.type == :addition
+        assert pair.right.line_num == exp_num
+        assert pair.right.line.content == "line#{i}"
+        assert pair.left == nil
+      end
     end
   end
 

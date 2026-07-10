@@ -2,7 +2,7 @@
 ## Intent
 Sub-component modules extracted from `EvoDashWeb.ReviewComponents` to keep each component focused.
 ## Modules
-- `DiffViewer` — Diff viewer system (file tree sidebar, syntax-highlighted diffs, split/commit layouts)
+- `DiffViewer` — Diff viewer system (file tree sidebar, syntax-highlighted split-view diffs, split/commit layouts)
 - `Header` — Review header, task summary, and agent summary
 - `Actions` — Action buttons (merge/reject/continue/create PR) and skills extraction modal
 - `Stats` — Diff stats bar and commit list
@@ -16,9 +16,28 @@ The diff viewer highlights code via Tree-sitter (Lumis). It uses a **file-level-
 
 Entry point: `precompute_highlights(lines, language, full_new_content, full_old_content)` dispatches to the appropriate path.
 
-Helpers reused by both paths: `highlight_code_block/2` (single Lumis-call helper), `split_html_by_newline/1`, `strip_lumis_wrappers/1`. The `highlight_code_block/2` try/rescue is the ONLY justified try/rescue in this subtree (Lumis.highlight!/2 raises, non-bang variant also raises internally).
+Helpers reused by both paths: `highlight_code_block/2` (single Lumis-call helper that calls `parse_lumis_lines/1`). The `highlight_code_block/2` try/rescue is the ONLY justified try/rescue in this subtree (Lumis.highlight!/2 raises, non-bang variant also raises internally).
 
-`split_html_by_newline/1` uses a fast binary-based algorithm: `String.split("\n")` + `Regex.scan` for span rebalancing (reopening incoming open spans at line start, closing outgoing spans at line end). The earlier charlist-based recursive walker was catastrophically slow on full-file HTML (50KB–500KB+) and was replaced.
+### Lumis HTML Parsing (Floki-based)
+
+`parse_lumis_lines/1` parses Lumis's `html_multi_themes` formatter output into a map `%{line_number => inner_html}`. It uses **Floki** (configured with the **html5ever** Rust NIF parser via `Application.put_env(:floki, :html_parser, Floki.HTMLParser.Html5ever)` in `EvoDash.Application.start/2`). The previous regex-based approach was replaced because Lumis HTML can contain nested `<div>` tags and multi-line spans that broke regex matching.
+
+The parser:
+1. Calls `Floki.parse_document/1` on the raw Lumis HTML (returns `{:ok, document}` or `{:error, _}`)
+2. Uses `Floki.find(".l-line")` with a CSS selector to find all line divs
+3. Reads the `data-line` attribute via `Floki.attribute("data-line")` for the 1-based line number
+4. Extracts inner HTML via `Floki.children()` + `Floki.raw_html/1` (preserves `<span>` highlighting tags)
+5. Returns `%{}` on parse failure
+
+### Split View Rendering (GitHub-style)
+
+`render_diff_content/3` renders a **split view** (old version on left, new version on right, side by side) instead of a unified single-column diff. The layout uses a 4-column CSS grid (`.diff-split-table`): old gutter | old content | new gutter | new content.
+
+Key functions:
+- `build_diff_segments/1` — Groups parsed diff lines into `{:pre_hunk, lines}` (meta/header before first hunk) and `{:hunk, hunk_line, pairs}` segments.
+- `build_split_pairs/2` — Converts a hunk's body lines into paired rows for the split view. Walks the hunk maintaining `old_line_num`/`new_line_num` counters (from the `@@` header). Context lines appear on both sides; deletions only on the left (with blank right); additions only on the right (with blank left). Consecutive del+add blocks are zipped together, padding the shorter side with `nil` placeholders.
+- `diff_split_row/1` — Renders a single split-view row (4 grid cells).
+- Hunk headers (`@@ -x,y +a,b @@`) and expand bars span all 4 columns via `grid-column: 1 / -1`.
 
 ### Full-content fields
 `EvoGit.Review.FileInfo` carries `full_new_content` (content at the head/new commit) and `full_old_content` (content at the base/old commit), both nil by default. These are populated by `ReviewLive` on initial lazy-load (`maybe_load_review_diff`/`maybe_load_commit_diff`) via `Review.get_file_content/3`, and preserved across context-expansion (`expand_context` passes `:preserve` so the existing values are carried forward — content doesn't change, only the diff context window).
