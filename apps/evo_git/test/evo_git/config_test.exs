@@ -276,7 +276,7 @@ defmodule EvoGit.ConfigTest do
       assert length(models) == 1
       profile = hd(models)
       assert profile.id == "default"
-      assert profile.model == %{provider: :anthropic, id: "claude-sonnet-4"}
+      assert profile.model == "anthropic:claude-sonnet-4"
       assert profile.concurrency == 3
       assert profile.temperature == 0.5
     end
@@ -393,7 +393,7 @@ defmodule EvoGit.ConfigTest do
         |> Config.__migrate_llm_models__()
 
       # The flat [llm].model should mirror the default profile's model
-      assert get_in(config, [:llm, :model]) == %{provider: :anthropic, id: "claude-sonnet-4"}
+      assert get_in(config, [:llm, :model]) == "anthropic:claude-sonnet-4"
     end
 
     test "returns first profile's model when using new format" do
@@ -407,7 +407,7 @@ defmodule EvoGit.ConfigTest do
         |> Config.__migrate_llm_models__()
 
       # [llm].model mirrors the first/default profile's model
-      assert get_in(config, [:llm, :model]) == %{provider: :google, id: "gemini-flash"}
+      assert get_in(config, [:llm, :model]) == "google:gemini-flash"
     end
   end
 
@@ -642,7 +642,7 @@ defmodule EvoGit.ConfigTest do
   end
 
   describe "model map normalization in profiles" do
-    test "provider string is atomized in each profile's model map" do
+    test "simple model map (only provider+id) is normalized to a provider:id string" do
       config =
         Config.defaults()
         |> put_in([:llm, :models], [
@@ -653,12 +653,10 @@ defmodule EvoGit.ConfigTest do
       models = EvoGit.Config.Schema.model_profiles(config)
       profile = hd(models)
       assert profile.id == "default"
-      assert is_map(profile.model)
-      assert profile.model.provider == :openai
-      assert profile.model.id == "my-model"
+      assert profile.model == "openai:my-model"
     end
 
-    test "multiple profiles each get normalized model maps" do
+    test "multiple profiles each get normalized model specs (map→string, string passes through)" do
       config =
         Config.defaults()
         |> put_in([:llm, :models], [
@@ -670,9 +668,9 @@ defmodule EvoGit.ConfigTest do
       models = EvoGit.Config.Schema.model_profiles(config)
       [p1, p2] = models
       assert p1.id == "a"
-      assert p1.model.provider == :openai
+      assert p1.model == "openai:m1"
       assert p2.id == "b"
-      assert p2.model == %{provider: :anthropic, id: "claude-sonnet-4"}
+      assert p2.model == "anthropic:claude-sonnet-4"
     end
   end
 
@@ -792,28 +790,14 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "string to model map normalization" do
-    # Exercises the @doc false test wrappers that expose the private config
-    # pipeline steps: string_to_model_map/1, atomize_enum_values/1, and
-    # migrate_llm_models/1. These cover the map model-spec generalization
-    # where "provider:model" strings are normalized to %{provider: atom, id: string}.
+  describe "model spec normalization (LLMDB-compatible output)" do
+    # Model specs are now normalized to LLMDB-compatible formats instead of
+    # plain maps. String model specs pass through as-is (ReqLLM resolves them
+    # through LLMDB natively). Map model specs are normalized: simple models
+    # (only :provider + :id) become "provider:id" strings; models with override
+    # keys become {:provider, opts} tuples.
 
-    test "string_to_model_map splits a provider:model string on the first colon" do
-      assert Config.__string_to_model_map__("anthropic:claude-sonnet-4") ==
-               %{provider: :anthropic, id: "claude-sonnet-4"}
-    end
-
-    test "string_to_model_map only splits on the first colon (rest is the id)" do
-      assert Config.__string_to_model_map__("a:b:c") == %{provider: :a, id: "b:c"}
-    end
-
-    test "string_to_model_map on a no-colon string returns %{id: string} with no provider key" do
-      # Confirmed by reading string_to_model_map/1: a single-element split
-      # returns %{id: string} (no :provider key — provider is nil downstream).
-      assert Config.__string_to_model_map__("just-a-model") == %{id: "just-a-model"}
-    end
-
-    test "end-to-end flat config: model string becomes a map in both profile and mirror" do
+    test "end-to-end flat config: model string passes through as-is (both profile and mirror)" do
       config =
         %{llm: %{model: "anthropic:claude-x"}}
         |> Config.__atomize_enum_values__()
@@ -822,13 +806,13 @@ defmodule EvoGit.ConfigTest do
       models = EvoGit.Config.Schema.model_profiles(config)
       assert length(models) == 1
       profile = hd(models)
-      assert profile.model == %{provider: :anthropic, id: "claude-x"}
+      assert profile.model == "anthropic:claude-x"
 
-      # The flat [llm].model mirror is also the map form (not the string).
-      assert get_in(config, [:llm, :model]) == %{provider: :anthropic, id: "claude-x"}
+      # The flat [llm].model mirror is also the string (passes through).
+      assert get_in(config, [:llm, :model]) == "anthropic:claude-x"
     end
 
-    test "[[llm.models]] profile model string becomes a map through atomize_enum_values" do
+    test "[[llm.models]] profile model string passes through as-is" do
       config =
         %{llm: %{models: [%{id: "default", model: "google:gflash"}]}}
         |> Config.__atomize_enum_values__()
@@ -836,10 +820,10 @@ defmodule EvoGit.ConfigTest do
       models = EvoGit.Config.Schema.model_profiles(config)
       assert length(models) == 1
       profile = hd(models)
-      assert profile.model == %{provider: :google, id: "gflash"}
+      assert profile.model == "google:gflash"
     end
 
-    test "atomize_enum_values passes an atom-keyed map model through unchanged" do
+    test "atomize_enum_values normalizes an atom-keyed map model with overrides to a tuple" do
       model_map = %{provider: :openai, id: "x", base_url: "https://u/v1"}
 
       config =
@@ -847,11 +831,11 @@ defmodule EvoGit.ConfigTest do
         |> Config.__atomize_enum_values__()
 
       profile = hd(EvoGit.Config.Schema.model_profiles(config))
-      assert profile.model == %{provider: :openai, id: "x", base_url: "https://u/v1"}
-      assert profile.model.provider == :openai
+      assert profile.model == {:openai, [id: "x", base_url: "https://u/v1"]}
+      assert elem(profile.model, 0) == :openai
     end
 
-    test "atomize_enum_values normalizes a string-keyed model map to atom keys with atom provider" do
+    test "atomize_enum_values normalizes a string-keyed model map with overrides to LLMDB-compatible tuple" do
       config =
         %{
           llm: %{
@@ -871,9 +855,9 @@ defmodule EvoGit.ConfigTest do
 
       profile = hd(EvoGit.Config.Schema.model_profiles(config))
       assert profile.id == "default"
-      assert profile.model.provider == :openai
-      assert profile.model.id == "x"
-      assert profile.model.base_url == "https://u/v1"
+      assert elem(profile.model, 0) == :openai
+      assert profile.model |> elem(1) |> Keyword.get(:id) == "x"
+      assert profile.model |> elem(1) |> Keyword.get(:base_url) == "https://u/v1"
     end
   end
 end

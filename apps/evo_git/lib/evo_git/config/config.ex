@@ -126,9 +126,6 @@ defmodule EvoGit.Config do
   def __migrate_llm_models__(config), do: migrate_llm_models(config)
 
   @doc false
-  def __string_to_model_map__(string), do: string_to_model_map(string)
-
-  @doc false
   def __strip_flat_llm_fields__(config), do: strip_flat_llm_fields(config)
 
   @doc false
@@ -180,18 +177,15 @@ defmodule EvoGit.Config do
         put_in(acc, [:sandbox, :mode], new_mode)
 
       # LLM model normalization:
-      # 1. Flat [llm].model map → normalize provider atom
-      # 2. [[llm.models]] → normalize model maps in each profile
+      # 1. Flat [llm].model map → normalize to string or tuple
+      # 2. [[llm.models]] → normalize model maps in each profile; strings pass through
       {:llm, llm_config}, acc when is_map(llm_config) ->
-        # Normalize the flat model (backward compat). Both map and string
-        # forms are normalized to a map model spec.
+        # Normalize the flat model (backward compat). Map model specs are
+        # normalized to string or tuple; strings pass through as-is.
         acc =
           case Map.get(llm_config, :model) do
             model when is_map(model) ->
               put_in(acc, [:llm, :model], normalize_model_map(model))
-
-            model when is_binary(model) ->
-              put_in(acc, [:llm, :model], string_to_model_map(model))
 
             _ ->
               acc
@@ -210,9 +204,6 @@ defmodule EvoGit.Config do
                   case Map.get(profile, :model) do
                     model when is_map(model) ->
                       Map.put(profile, :model, normalize_model_map(model))
-
-                    model when is_binary(model) ->
-                      Map.put(profile, :model, string_to_model_map(model))
 
                     _ ->
                       profile
@@ -339,7 +330,11 @@ defmodule EvoGit.Config do
   end
 
   # Normalizes a model map so that keys are atoms and the :provider value is
-  # an atom. req_llm's ReqLLM.model/1 expects the provider to be an atom.
+  # an atom. Produces LLMDB-compatible output instead of a plain map:
+  #   - Simple models (only :provider + :id) → "provider:id" string
+  #   - Models with override keys (:base_url, :extra, etc.) → {:provider, opts} tuple
+  # req_llm's ReqLLM.model/1 natively resolves both formats through LLMDB for
+  # cost tracking and model metadata.
   defp normalize_model_map(model) when is_map(model) do
     # Ensure atom keys (atomize_keys may have left string keys if the atom
     # didn't exist yet — e.g. "base_url").
@@ -350,24 +345,36 @@ defmodule EvoGit.Config do
       end)
 
     # Convert the provider VALUE to an atom if it's a string.
-    case Map.get(atomized, :provider) do
-      provider when is_binary(provider) -> Map.put(atomized, :provider, safe_atomize(provider))
-      _ -> atomized
-    end
-  end
+    atomized =
+      case Map.get(atomized, :provider) do
+        provider when is_binary(provider) -> Map.put(atomized, :provider, safe_atomize(provider))
+        _ -> atomized
+      end
 
-  # Parses a "provider:model" string into a map model spec
-  # %{provider: atom, id: string}. Splits on the FIRST colon. The provider part
-  # is atomized via safe_atomize/1 (unknown atoms stay as strings); the rest is
-  # the id string. Defensive: if there is no colon, returns %{id: string} with
-  # no :provider key (provider will be nil downstream — never crashes).
-  defp string_to_model_map(string) when is_binary(string) do
-    case :binary.split(string, ":") do
-      [provider, id] ->
-        %{provider: safe_atomize(provider), id: id}
+    provider = Map.get(atomized, :provider)
+    id = Map.get(atomized, :id)
 
-      [_no_colon] ->
-        %{id: string}
+    # Collect override keys (anything beyond :provider and :id).
+    override_keys = Map.keys(atomized) -- [:provider, :id]
+
+    cond do
+      provider != nil and id != nil and override_keys == [] ->
+        # Simple model: format as "provider:id" string (resolved through LLMDB).
+        "#{provider}:#{id}"
+
+      provider != nil and id != nil ->
+        # Model with overrides: format as {:provider, keyword_list} tuple.
+        overrides =
+          Enum.map(override_keys, fn key ->
+            {key, Map.get(atomized, key)}
+          end)
+
+        {provider, [{:id, id} | overrides]}
+
+      true ->
+        # Fallback: return the atomized map as-is (defensive — missing provider
+        # or id; the schema validator will report the error).
+        atomized
     end
   end
 
@@ -584,7 +591,21 @@ defmodule EvoGit.Config do
   end
 
   defp stringify_keys(nil), do: nil
+
+  defp stringify_keys({provider, opts}) when is_atom(provider) and is_list(opts) do
+    stringify_model_tuple({provider, opts})
+  end
+
   defp stringify_keys(value), do: value
+
+  # Convert an LLMDB-compatible model tuple back to a map for TOML serialization.
+  # {:provider, [id: "x", base_url: "..."]} → %{"provider" => "provider", "id" => "x", ...}
+  defp stringify_model_tuple({provider, opts}) when is_atom(provider) and is_list(opts) do
+    Enum.reduce(opts, %{"provider" => Atom.to_string(provider)}, fn {key, value}, acc ->
+      key_str = if is_atom(key), do: Atom.to_string(key), else: key
+      Map.put(acc, key_str, stringify_keys(value))
+    end)
+  end
 
   @doc """
   Returns the status of critical configuration values.
