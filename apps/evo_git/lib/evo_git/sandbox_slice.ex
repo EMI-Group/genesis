@@ -62,23 +62,62 @@ defmodule EvoGit.SandboxSlice do
     GenServer.call(__MODULE__, :stop_slice, 10_000)
   end
 
+  @doc """
+  Registers a sandbox run for process-lifetime monitoring.
+
+  Sets up a `Process.monitor` on `caller_pid` BEFORE the systemd-run command
+  starts, so a caller crash mid-tool-call triggers immediate cleanup of the
+  orphaned `.service` unit. The monitor is torn down via `unregister_run/1`
+  when the command completes normally.
+  """
+  @spec register_run(String.t(), pid()) :: :ok
+  def register_run(unit_name, caller_pid) do
+    GenServer.call(__MODULE__, {:register_run, unit_name, caller_pid})
+  end
+
+  @doc """
+  Unregisters a sandbox run after normal completion.
+
+  Fire-and-forget cast: demonitors the caller and removes the run entry.
+  """
+  @spec unregister_run(String.t()) :: :ok
+  def unregister_run(unit_name) do
+    GenServer.cast(__MODULE__, {:unregister_run, unit_name})
+    :ok
+  end
+
+  @doc """
+  Stops a specific systemd unit by name.
+
+  Used for timeout cleanup: when a sandboxed command exceeds its timeout,
+  this kills the `.service` unit that survives `Task.shutdown/1`. The
+  `unit_name` may or may not include the `.service` suffix.
+  """
+  @spec stop_run(String.t()) :: :ok
+  def stop_run(unit_name) do
+    GenServer.call(__MODULE__, {:stop_run, unit_name})
+  end
+
   # --- GenServer callbacks ---
 
   @impl true
   def init(_opts) do
     # SandboxSlice is Linux/systemd-specific — no-op on other platforms
     if not EvoGit.Platform.linux?() do
-      {:ok, %{slice_active: false, resources: %{}}}
+      {:ok, %{slice_active: false, resources: %{}, runs: %{}}}
     else
       # Load initial resource config from TOML config
       resources = load_config_resources()
 
       state = %{
         slice_active: false,
-        resources: resources
+        resources: resources,
+        runs: %{}
       }
 
       # If sandbox is enabled, create the slice eagerly (fail fast)
+      cleanup_stale_services()
+
       state =
         if sandbox_enabled?() do
           case do_create_slice(resources) do
@@ -145,6 +184,47 @@ defmodule EvoGit.SandboxSlice do
   end
 
   @impl true
+  def handle_call({:register_run, unit_name, caller_pid}, _from, state) do
+    ref = Process.monitor(caller_pid)
+    new_runs = Map.put(state.runs, unit_name, %{pid: caller_pid, ref: ref})
+    {:reply, :ok, %{state | runs: new_runs}}
+  end
+
+  @impl true
+  def handle_call({:stop_run, unit_name}, _from, state) do
+    do_stop_unit(unit_name)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_cast({:unregister_run, unit_name}, state) do
+    new_runs =
+      case Map.get(state.runs, unit_name) do
+        %{ref: ref} ->
+          Process.demonitor(ref, [:flush])
+          Map.delete(state.runs, unit_name)
+
+        nil ->
+          state.runs
+      end
+
+    {:noreply, %{state | runs: new_runs}}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    # A monitored caller process died — find its unit and stop the orphaned service.
+    case Enum.find(state.runs, fn {_unit, %{ref: r}} -> r == ref end) do
+      {unit_name, _} ->
+        do_stop_unit(unit_name)
+        {:noreply, %{state | runs: Map.delete(state.runs, unit_name)}}
+
+      nil ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
   def terminate(_reason, state) do
     if state.slice_active do
       do_stop_slice()
@@ -157,6 +237,29 @@ defmodule EvoGit.SandboxSlice do
 
   defp load_config_resources do
     EvoGit.Config.resolve([:sandbox, :resources])
+  end
+
+  defp cleanup_stale_services do
+    # Stop the entire slice — kills any leftover services from a previous
+    # BEAM VM crash. If the slice doesn't exist, systemctl returns non-zero
+    # which we ignore (the error is harmless).
+    _ = system_cmd("systemctl", ["--user", "stop", "#{@slice_name}.slice"])
+    # Brief delay to let systemd actually clean up before we recreate the slice.
+    :timer.sleep(100)
+    :ok
+  end
+
+  defp do_stop_unit(unit_name) do
+    unit =
+      if String.ends_with?(unit_name, ".service"), do: unit_name, else: "#{unit_name}.service"
+
+    case system_cmd("systemctl", ["--user", "stop", unit]) do
+      {:ok, _} ->
+        Logger.debug("SandboxSlice: Stopped orphaned unit '#{unit}'")
+
+      {:error, output} ->
+        Logger.warning("SandboxSlice: Failed to stop unit '#{unit}': #{String.trim(output)}")
+    end
   end
 
   defp sandbox_enabled? do

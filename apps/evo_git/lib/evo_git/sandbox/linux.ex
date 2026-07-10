@@ -18,6 +18,26 @@ defmodule EvoGit.Sandbox.Linux do
     end
   end
 
+  @doc """
+  Inserts `--unit=<name>` into a systemd-run argument list, immediately after
+  the `--user` flag. This is a pure function with no side effects.
+
+  ## Example
+
+      iex> EvoGit.Sandbox.Linux.inject_unit(["--user", "--slice=evogit", "--wait"], "evogit-run-123")
+      ["--user", "--unit=evogit-run-123", "--slice=evogit", "--wait"]
+  """
+  @spec inject_unit([String.t()], String.t()) :: [String.t()]
+  def inject_unit(["--user" | rest], unit_name) do
+    ["--user", "--unit=#{unit_name}" | rest]
+  end
+
+  defp unit_name do
+    ts = System.system_time(:millisecond) |> Integer.to_string()
+    unique = System.unique_integer([:positive]) |> Integer.to_string()
+    "evogit-run-#{ts}-#{unique}"
+  end
+
   @doc "Creates the evogit.slice if not already active."
   @spec ensure_initialized() :: :ok | {:error, term()}
   def ensure_initialized do
@@ -34,7 +54,15 @@ defmodule EvoGit.Sandbox.Linux do
   def run(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
     if enabled?() do
       ensure_initialized()
-      System.cmd("systemd-run", args(cwd, executable, args, repo_root), stderr_to_stdout: true)
+      unit = unit_name()
+      full_args = inject_unit(args(cwd, executable, args, repo_root), unit)
+      EvoGit.SandboxSlice.register_run(unit, self())
+
+      try do
+        System.cmd("systemd-run", full_args, stderr_to_stdout: true)
+      after
+        EvoGit.SandboxSlice.unregister_run(unit)
+      end
     else
       if EvoGit.GitEnv.git_command?(executable) do
         System.cmd(executable, args,
@@ -346,24 +374,35 @@ defmodule EvoGit.Sandbox.Linux do
 
     if enabled?() do
       ensure_initialized()
-      sandbox_args = args(cwd, "bash", ["-c", wrapped_cmd], repo_root)
+      unit = unit_name()
+      sandbox_args = inject_unit(args(cwd, "bash", ["-c", wrapped_cmd], repo_root), unit)
 
       # Append git env vars for the inner command (args/4 won't detect git on "bash")
       sandbox_args = maybe_append_git_env(sandbox_args, is_git)
+
+      EvoGit.SandboxSlice.register_run(unit, self())
 
       task = Task.async(fn ->
         System.cmd("systemd-run", sandbox_args, stderr_to_stdout: true)
       end)
 
-      case Task.yield(task, timeout) || Task.shutdown(task) do
-        {:ok, {_output, exit_code}} ->
-          content = read_tempfile(tmpfile, max_bytes)
-          {:ok, content, exit_code}
+      result =
+        case Task.yield(task, timeout) || Task.shutdown(task) do
+          {:ok, {_output, exit_code}} ->
+            content = read_tempfile(tmpfile, max_bytes)
+            {:ok, content, exit_code}
 
-        nil ->
-          partial = read_tempfile(tmpfile, max_bytes)
-          {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
-      end
+          nil ->
+            # CRITICAL: Task.shutdown killed the systemd-run CLIENT, but the
+            # .service unit keeps running. Stop it explicitly to prevent
+            # orphaned processes from leaking past the timeout.
+            EvoGit.SandboxSlice.stop_run(unit)
+            partial = read_tempfile(tmpfile, max_bytes)
+            {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
+        end
+
+      EvoGit.SandboxSlice.unregister_run(unit)
+      result
     else
       # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
       git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []

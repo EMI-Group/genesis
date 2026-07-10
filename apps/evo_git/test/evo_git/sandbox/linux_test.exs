@@ -227,4 +227,27 @@ defmodule EvoGit.Sandbox.LinuxTest do
       assert Enum.any?(args, &(&1 == "--setenv=LC_ALL=C"))
     end
   end
+
+  describe "inject_unit/2" do
+    test "inserts --unit= immediately after --user" do
+      args = ["--user", "--slice=evogit", "--wait", "--pipe"]
+      result = Linux.inject_unit(args, "evogit-run-42")
+
+      assert result == ["--user", "--unit=evogit-run-42", "--slice=evogit", "--wait", "--pipe"]
+    end
+
+    test "preserves all other arguments in order" do
+      args = ["--user", "--collect", "-q", "-p", "WorkingDirectory=/tmp"]
+      result = Linux.inject_unit(args, "my-unit")
+
+      assert List.first(result) == "--user"
+      assert Enum.at(result, 1) == "--unit=my-unit"
+      assert Enum.drop(result, 2) == ["--collect", "-q", "-p", "WorkingDirectory=/tmp"]
+    end
+
+    test "handles a minimal args list" do
+      assert Linux.inject_unit(["--user", "true"], "test-unit") ==
+               ["--user", "--unit=test-unit", "true"]
+    end
+  end
 end
