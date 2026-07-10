@@ -1,5 +1,8 @@
 defmodule EvoGit.AgentScheduler.WorktreesTest do
-  use ExUnit.Case, async: true
+  # async: false — WorktreeManager is a named GenServer (EvoGit.AgentScheduler.WorktreeManager).
+  # With async: true, concurrent tests would conflict on the registered name.
+  # The Application starts the WorktreeManager, so it is available.
+  use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.Worktrees
