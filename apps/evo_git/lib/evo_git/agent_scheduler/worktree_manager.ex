@@ -118,6 +118,26 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   end
 
   @impl true
+  def handle_call({:teardown_worktrees, repo_root}, _from, state) do
+    worker_base = workers_dir(repo_root)
+
+    case File.rm_rf(worker_base) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason, path} ->
+        Logger.warning(
+          "WorktreeManager: Could not remove worker directory during teardown: " <>
+            "#{inspect(reason)} at #{path}"
+        )
+    end
+
+    Git.prune_worktrees(repo_root)
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_cast({:delete_worktree, path, repo_root}, state) do
     Logger.info("WorktreeManager: Deleting worktree #{path}")
 
@@ -149,34 +169,11 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     {:noreply, state}
   end
 
-  @impl true
-  def handle_call({:teardown_worktrees, repo_root}, _from, state) do
-    worker_base = workers_dir(repo_root)
-
-    case File.rm_rf(worker_base) do
-      {:ok, _} ->
-        :ok
-
-      {:error, reason, path} ->
-        Logger.warning(
-          "WorktreeManager: Could not remove worker directory during teardown: " <>
-            "#{inspect(reason)} at #{path}"
-        )
-    end
-
-    Git.prune_worktrees(repo_root)
-
-    {:reply, :ok, state}
-  end
-
   # --- Private Helpers ---
 
-  @doc """
-  Cleans up orphaned `evogit-agent-*` branches from previous runs.
-
-  Matches all branches with the `evogit-agent-` prefix and deletes each one.
-  Called during initialization to prevent stale branches from accumulating.
-  """
+  # Cleans up orphaned `evogit-agent-*` branches from previous runs.
+  # Matches all branches with the `evogit-agent-` prefix and deletes each one.
+  # Called during initialization to prevent stale branches from accumulating.
   defp clean_orphaned_branches(repo_root) do
     Git.list_branches(repo_root, "evogit-agent-*")
     |> Enum.each(fn branch ->
