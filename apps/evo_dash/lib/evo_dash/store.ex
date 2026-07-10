@@ -344,22 +344,34 @@ defmodule EvoDash.Store do
 
   @impl true
   def handle_call({:safe_select_paginated_tasks, opts}, _from, state) do
+    filters = Keyword.get(opts, :filters, [])
+    {where_clause, where_params} = build_where(filters)
     limit = clamp_limit(Keyword.get(opts, :limit))
     offset = clamp_offset(Keyword.get(opts, :offset))
 
+    limit_idx = length(where_params) + 1
+    offset_idx = length(where_params) + 2
+
+    select_sql =
+      task_select_sql() <> where_clause <>
+        " ORDER BY started_at DESC LIMIT ?" <> Integer.to_string(limit_idx) <>
+        " OFFSET ?" <> Integer.to_string(offset_idx)
+
+    select_params = where_params ++ [limit, offset]
+
     rows =
-      case XqliteNIF.query(
-             state.conn,
-             task_select_sql() <> " ORDER BY started_at DESC LIMIT ?1 OFFSET ?2",
-             [limit, offset]
-           ) do
+      case XqliteNIF.query(state.conn, select_sql, select_params) do
         {:ok, %{rows: rows}} -> rows
         _ -> []
       end
 
     # Reuse the SAME quarantine-safe decode boundary as safe_select_all_rows.
     tasks = safe_decode_rows(state.conn, "tasks", rows, &Codec.decode_task/1)
-    total_count = count_table(state.conn, "tasks")
+
+    # COUNT with the SAME WHERE clause so total_count reflects filtered results.
+    count_sql = "SELECT COUNT(*) FROM tasks" <> where_clause
+    {:ok, %{rows: [[total_count]]}} = XqliteNIF.query(state.conn, count_sql, where_params)
+
     {:reply, {tasks, total_count}, state}
   end
 
@@ -661,6 +673,84 @@ defmodule EvoDash.Store do
   defp clamp_offset(nil), do: 0
   defp clamp_offset(n) when is_integer(n) and n >= 0, do: n
   defp clamp_offset(_), do: 0
+
+  ## Private — WHERE clause builder for filtered pagination
+
+  # Builds a SQL WHERE clause (with leading space) and an ordered param list
+  # from the filters keyword list. Returns `{"", []}` when no filters apply.
+  #
+  # Filters:
+  #   - :status         — atom/string status or "all" (default "all")
+  #   - :project_path   — path string or "all" (default "all"); matches the
+  #                       `path` key embedded in the JSON opts column
+  #   - :review_status  — "all", "pending", "merged", "rejected", "continued"
+  #   - :search         — non-empty search string; matches id or opts JSON text
+  #
+  # Placeholders use incremental ?N indexing so LIMIT/OFFSET can append their
+  # own placeholders after the WHERE params.
+  defp build_where(filters) do
+    # status filter
+    {clauses, params, idx} =
+      case Keyword.get(filters, :status, "all") do
+        "all" ->
+          {[], [], 1}
+
+        status ->
+          {["status = ?1"], [status], 2}
+      end
+
+    # project_path filter — matches the "path" key embedded in opts JSON
+    {clauses, params, idx} =
+      case Keyword.get(filters, :project_path, "all") do
+        "all" ->
+          {clauses, params, idx}
+
+        path ->
+          pattern = "%" <> "\"path\",\"#{path}\"" <> "%"
+          {clauses ++ ["opts LIKE ?" <> Integer.to_string(idx)], params ++ [pattern], idx + 1}
+      end
+
+    # review_status filter ("pending" is a composite of completed + null review + branch)
+    {clauses, params, idx} =
+      case Keyword.get(filters, :review_status, "all") do
+        "all" ->
+          {clauses, params, idx}
+
+        "pending" ->
+          # Completed tasks with no review status whose result contains a
+          # branch_name (meaning they're awaiting review).
+          c1 = "status = ?" <> Integer.to_string(idx)
+          c2 = "review_status IS NULL"
+          c3 = "result LIKE ?" <> Integer.to_string(idx + 1)
+
+          {clauses ++ [c1, c2, c3],
+           params ++ ["completed", "%" <> "\"branch_name\"" <> "%"], idx + 2}
+
+        rs ->
+          {clauses ++ ["review_status = ?" <> Integer.to_string(idx)], params ++ [rs], idx + 1}
+      end
+
+    # search filter — matches id or the raw opts JSON text
+    {clauses, params, _idx} =
+      case Keyword.get(filters, :search) do
+        nil ->
+          {clauses, params, idx}
+
+        "" ->
+          {clauses, params, idx}
+
+        search ->
+          pat = "%#{search}%"
+          c1 = "id LIKE ?" <> Integer.to_string(idx)
+          c2 = "opts LIKE ?" <> Integer.to_string(idx + 1)
+          {clauses ++ ["(#{c1} OR #{c2})"], params ++ [pat, pat], idx + 2}
+      end
+
+    case clauses do
+      [] -> {"", []}
+      _ -> {" WHERE " <> Enum.join(clauses, " AND "), params}
+    end
+  end
 
   ## Private — Safe select (quarantine bad rows)
 
