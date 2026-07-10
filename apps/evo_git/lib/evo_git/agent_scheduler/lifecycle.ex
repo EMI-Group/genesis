@@ -346,6 +346,26 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   end
 
   @doc """
+  Clears all archive records for the given task ID from the
+  `:evogit_archive_records` ETS table.
+
+  Used when multiple root agents share the same task_id (e.g., genesis two-phase
+  mode where a CodebaseLead runs first, then a Manager runs second with the same
+  task_id) to prevent the first agent's archive records from being collected again
+  when the second agent completes.
+  """
+  def clear_archive_records(task_id) do
+    case :ets.whereis(:evogit_archive_records) do
+      :undefined ->
+        :ok
+
+      _tid ->
+        :ets.match_delete(:evogit_archive_records, {task_id, :_})
+        :ok
+    end
+  end
+
+  @doc """
   Injects archive records into a successful `%EvoGit.Agent.Result{}` tuple.
   Non-success results pass through unchanged.
   """
