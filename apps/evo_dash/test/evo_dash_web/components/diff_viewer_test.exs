@@ -255,7 +255,8 @@ defmodule EvoDashWeb.DiffViewerTest do
     end
 
     test "multi-hunk offsets are tracked independently" do
-      full_new = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10"
+      # full_new reflects the modifications: l2->l2_mod (line 2), l7->l7_mod (line 7)
+      full_new = "l1\nl2_mod\nl3\nl4\nl5\nl6\nl7_mod\nl8\nl9\nl10"
       full_old = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10"
 
       # Two hunks: first changes line 2, second changes line 7.
@@ -288,6 +289,40 @@ defmodule EvoDashWeb.DiffViewerTest do
       # The second hunk's deletion should map to "l7" (old file line 7).
       second_deletion = Enum.find(deletions, &(&1.content == "l7"))
       assert unwrap(Map.get(result, second_deletion.line_number)) == "l7"
+    end
+
+    test "file-level highlighting applies syntax highlighting with a real language" do
+      full_new = "def foo do\n  :bar\nend\n"
+      full_old = "def foo do\n  :old\nend\n"
+
+      diff = """
+      @@ -1,3 +1,3 @@
+       def foo do
+      -:old
+      +:bar
+       end
+      """
+
+      lines = DiffViewer.parse_diff_lines(diff_file(diff))
+      result = DiffViewer.precompute_highlights(lines, "elixir", full_new, full_old)
+
+      # The addition line should have syntax highlighting (spans).
+      addition_line = Enum.find(lines, &(&1.type == :addition))
+      addition_hl = unwrap(Map.get(result, addition_line.line_number))
+      assert String.contains?(addition_hl, "<span"),
+             "expected highlighted HTML, got: #{inspect(addition_hl)}"
+
+      # Context lines should also be highlighted.
+      context_line = Enum.find(lines, &(&1.type == :context and &1.content == "def foo do"))
+      context_hl = unwrap(Map.get(result, context_line.line_number))
+      assert String.contains?(context_hl, "<span"),
+             "expected highlighted HTML, got: #{inspect(context_hl)}"
+
+      # Deletion lines should be highlighted from the old file's highlighting.
+      deletion_line = Enum.find(lines, &(&1.type == :deletion))
+      deletion_hl = unwrap(Map.get(result, deletion_line.line_number))
+      assert String.contains?(deletion_hl, "<span"),
+             "expected highlighted HTML, got: #{inspect(deletion_hl)}"
     end
   end
 
