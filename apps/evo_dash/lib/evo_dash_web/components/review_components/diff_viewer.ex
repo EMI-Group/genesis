@@ -454,18 +454,18 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         # Context lines appear in both old and new files; prefer the NEW file's
         # highlighting (the "after" version) so surrounding code matches the
         # final result. Both offsets advance (the line exists in both sides).
-        idx = new_start - 1 + new_off
-        hl = lookup_highlight(new_hl, idx) || line.content
+        line_num = new_start + new_off
+        hl = lookup_highlight(new_hl, line_num) || line.content
         map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off + 1, new_off + 1)
 
       :addition ->
-        idx = new_start - 1 + new_off
-        hl = lookup_highlight(new_hl, idx) || line.content
+        line_num = new_start + new_off
+        hl = lookup_highlight(new_hl, line_num) || line.content
         map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off, new_off + 1)
 
       :deletion ->
-        idx = old_start - 1 + old_off
-        hl = lookup_highlight(old_hl, idx) || line.content
+        line_num = old_start + old_off
+        hl = lookup_highlight(old_hl, line_num) || line.content
         map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off + 1, new_off)
 
       _ ->
@@ -474,10 +474,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     end
   end
 
-  # Index into the highlight array; returns nil for out-of-bounds or nil array.
-  defp lookup_highlight(nil, _idx), do: nil
-  defp lookup_highlight(hl_array, idx) when idx >= 0, do: Enum.at(hl_array, idx)
-  defp lookup_highlight(_hl_array, _idx), do: nil
+  # Index into the highlight map; returns nil for missing key or nil map.
+  defp lookup_highlight(nil, _line_num), do: nil
+  defp lookup_highlight(hl_map, line_num) when is_map(hl_map), do: Map.get(hl_map, line_num)
+  defp lookup_highlight(_hl_map, _line_num), do: nil
 
   # Parse the @@ header to extract old_start and new_start line numbers.
   # Format: "@@ -<old_start>[,<count>] +<new_start>[,<count>] @@ <context>"
@@ -540,21 +540,23 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     new_highlighted = highlight_code_block(new_code, language)
 
     # Walk the hunk lines and map each code line to its highlighted counterpart.
+    # highlight_code_block/2 now returns a map %{line_number => html}, and the
+    # hunk code is built fresh so data-line numbers start at 1 within each hunk.
     {_old_i, _new_i, result} =
       Enum.reduce(hunk_lines, {0, 0, acc}, fn
         %{type: :hunk}, counters ->
           counters
 
         %{type: :context, line_number: ln}, {old_i, new_i, acc2} ->
-          hl = Enum.at(old_highlighted, old_i) || Enum.at(new_highlighted, new_i) || ""
+          hl = Map.get(old_highlighted, old_i + 1) || Map.get(new_highlighted, new_i + 1) || ""
           {old_i + 1, new_i + 1, Map.put(acc2, ln, raw(hl))}
 
         %{type: :addition, line_number: ln}, {old_i, new_i, acc2} ->
-          hl = Enum.at(new_highlighted, new_i) || ""
+          hl = Map.get(new_highlighted, new_i + 1) || ""
           {old_i, new_i + 1, Map.put(acc2, ln, raw(hl))}
 
         %{type: :deletion, line_number: ln}, {old_i, new_i, acc2} ->
-          hl = Enum.at(old_highlighted, old_i) || ""
+          hl = Map.get(old_highlighted, old_i + 1) || ""
           {old_i + 1, new_i, Map.put(acc2, ln, raw(hl))}
 
         %{type: :no_newline, line_number: ln} = line, {old_i, new_i, acc2} ->
@@ -582,10 +584,17 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     |> Enum.map_join("\n", & &1.content)
   end
 
-  # Call Lumis once for a whole code block, return per-line highlighted HTML.
+  # Call Lumis once for a whole code block, return per-line highlighted HTML as
+  # a map %{line_number => inner_html}. Returns %{1 => plain, ...} for nil
+  # language or empty code (1-based line numbers).
   defp highlight_code_block(code, language) do
     if code == "" or is_nil(language) do
-      String.split(code, "\n")
+      code
+      |> String.split("\n")
+      |> Enum.with_index(1)
+      |> Enum.reduce(%{}, fn {content, line_num}, acc ->
+        Map.put(acc, line_num, content)
+      end)
     else
       try do
         Lumis.highlight!(code,
@@ -595,81 +604,41 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
              themes: [light: "github_light", dark: "github_dark"],
              default_theme: "light-dark()"}
         )
-        |> strip_lumis_wrappers()
-        |> String.trim_trailing("\n")
-        |> split_html_by_newline()
+        |> parse_lumis_lines()
       rescue
-        _ -> String.split(code, "\n")
+        _ ->
+          code
+          |> String.split("\n")
+          |> Enum.with_index(1)
+          |> Enum.reduce(%{}, fn {content, line_num}, acc ->
+            Map.put(acc, line_num, content)
+          end)
       end
     end
   end
 
-  # Split highlighted HTML by newlines while keeping <span> tags balanced per
-  # line. Tree-sitter/Lumis produces multi-line spans (for multi-line strings,
-  # block comments, etc.) whose \n falls *inside* a <span>. A naive
-  # String.split("\n") would split those spans into orphaned fragments. Instead
-  # we split by newline (binary, fast), then for each line track span
-  # open/close tags via Regex.scan and rebalance: reopen incoming spans at the
-  # start, close outgoing spans at the end.
-  @span_tag_regex ~r/<\/?span\b[^>]*>/
-
+  # Parse Lumis HTML output into a map of %{line_number => inner_html}.
+  #
+  # Lumis output format:
+  #   <pre class="lumis" ...><code ...>
+  #   <div class="l-line" data-line="1"><span>...</span></div>
+  #   <div class="l-line" data-line="2"><span>...</span></div>
+  #   </code></pre>
+  #
+  # We strip the outer <pre><code> and </code></pre> wrappers, then use a regex
+  # to extract each line's inner HTML keyed by its data-line attribute number.
   @doc false
-  def split_html_by_newline(""), do: [""]
+  def parse_lumis_lines(html) do
+    inner =
+      html
+      |> String.replace(~r/^<pre[^>]*><code[^>]*>\n?/, "")
+      |> String.replace(~r/\n?<\/code><\/pre>$/, "")
 
-  def split_html_by_newline(html) do
-    html
-    |> String.split("\n")
-    |> rebalance_lines([])
-  end
-
-  defp rebalance_lines([], _open), do: []
-
-  defp rebalance_lines([line | rest], open_tags) do
-    # Scan this line for all <span ...> and </span> tags, in document order.
-    tags = Regex.scan(@span_tag_regex, line, capture: :first) |> Enum.map(&hd/1)
-    # Update the open-span stack by processing the line's own span tags.
-    outgoing = apply_span_tags(open_tags, tags)
-    # Reconstruct a balanced HTML fragment for this line:
-    #   - Reopen any spans that were open coming INTO this line.
-    #   - Close any spans that remain open going OUT of this line.
-    #
-    # `open_tags` is a stack built newest-first (prepend), so we must reverse
-    # it before joining: the outermost (oldest) span must be reopened first so
-    # that the nesting order matches the LIFO closing order of
-    # close_open_spans/1. Joining the stack as-is would reopen the innermost
-    # span first, producing invalid nesting.
-    balanced = (open_tags |> Enum.reverse() |> Enum.join()) <> line <> close_open_spans(outgoing)
-    [balanced | rebalance_lines(rest, outgoing)]
-  end
-
-  # Walk a list of span tags, maintaining a stack of open span tag strings.
-  defp apply_span_tags(stack, []), do: stack
-
-  defp apply_span_tags(stack, [tag | rest]) do
-    if String.starts_with?(tag, "</") do
-      apply_span_tags(drop_one(stack), rest)
-    else
-      apply_span_tags([tag | stack], rest)
-    end
-  end
-
-  defp close_open_spans([]), do: ""
-  defp close_open_spans([_ | rest]), do: "</span>" <> close_open_spans(rest)
-
-  defp drop_one([]), do: []
-  defp drop_one([_ | rest]), do: rest
-
-  # Strip <pre class="lumis" ...><code ...>...</code></pre> wrappers AND the
-  # per-line <div class="l-line" data-line="N">...</div> wrappers that Lumis
-  # emits around each highlighted line, keeping only the inner <span> elements
-  # with syntax colors. The div wrappers are block-level elements that would
-  # break the flex diff-line layout, so they must be removed before splitting.
-  @doc false
-  def strip_lumis_wrappers(html) do
-    html
-    |> String.replace(~r/^<pre[^>]*><code[^>]*>/, "")
-    |> String.replace(~r/<\/code><\/pre>$/, "")
-    |> String.replace(~r/<\/?div[^>]*>/, "")
+    ~r/<div class="l-line" data-line="(\d+)">(.*?)<\/div>/s
+    |> Regex.scan(inner, capture: :all_but_first)
+    |> Enum.reduce(%{}, fn [line_num_str, inner_html], acc ->
+      Map.put(acc, String.to_integer(line_num_str), inner_html)
+    end)
   end
 
   # Convert a file path to a valid HTML id (replace / and . with -)
