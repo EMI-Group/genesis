@@ -70,7 +70,7 @@ defmodule EvoDash.MixProject do
       {:lumis, "~> 0.5"},
       {:mdex, "~> 0.1"},
       {:floki, "~> 0.38.0"},
-      {:html5ever, "~> 0.16.0"}
+      {:html5ever, "~> 0.18.0"}
     ]
   end
 
