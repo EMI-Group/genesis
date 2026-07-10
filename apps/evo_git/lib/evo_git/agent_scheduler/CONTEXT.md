@@ -28,12 +28,12 @@ Two independent slot pools tracked as `MapSet`s of agent IDs. Available capacity
 
 Key functions:
 - `handle_request_llm_slot/3`, `handle_request_tool_slot/3` — Grant if capacity available, else enqueue
-- `handle_release_llm_slot/2`, `handle_release_tool_slot/2` — Remove from holder set, grant pending
+- `handle_release_llm_slot/2`, `handle_release_tool_slot/2` — Remove from holder set, grant pending. Called via `handle_cast` (fire-and-forget); return `{state, status_updates}`.
 - `release_agent_slots/2` — Called on agent death (`:DOWN` handler): removes from both holder sets, purges from queues, grants pending slots
 - `purge_agents_from_queues/2` — Removes agents from waiting queues, replies `{:error, :cancelled}` to each
 - `grant_pending_on_resume/1` — Grants all available slots when resuming from pause
 
-All slot functions return `{result, state, status_updates}` where `status_updates` is a list of `{agent_id, :blocked | :running}` tuples applied to ETS SchedMeta for dashboard visibility.
+Slot functions return `{:reply, :ok, state, status_updates}` or `{:noreply, state, status_updates}` for synchronous operations, and `{state, status_updates}` for asynchronous release operations (`handle_cast`). The `status_updates` list contains `{agent_id, :blocked | :running}` tuples applied to ETS SchedMeta for dashboard visibility.
 
 ### Running Count
 

@@ -131,16 +131,20 @@ defmodule EvoGit.AgentScheduler.Slots do
   Handles an LLM slot release.
 
   Removes the agent from the per-model holder set and grants pending requests
-  for that model. Returns `{:reply, :ok, state, status_updates}`.
+  for that model. Returns `{state, status_updates}`.
+
+  Note: This function is called via `handle_cast`, so it returns a plain
+  `{state, status_updates}` tuple rather than the `{:reply, ...}` format
+  used by synchronous (`handle_call`) slot operations.
   """
   @spec handle_release_llm_slot(pos_integer(), State.t()) ::
-          {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
+          {State.t(), [{pos_integer(), atom()}]}
   def handle_release_llm_slot(agent_id, %State{} = state) do
     model_id = resolve_model_id(agent_id, state)
     holders = State.holders_for(state, model_id)
     state = State.update_holders(state, model_id, MapSet.delete(holders, agent_id))
     {state, unblocked} = grant_pending_llm_slots(state)
-    {:reply, :ok, state, unblocked}
+    {state, unblocked}
   end
 
   @doc """
@@ -225,14 +229,18 @@ defmodule EvoGit.AgentScheduler.Slots do
   Handles a tool slot release.
 
   Removes the agent from the holder set and grants pending requests.
-  Returns `{:reply, :ok, state, status_updates}`.
+  Returns `{state, status_updates}`.
+
+  Note: This function is called via `handle_cast`, so it returns a plain
+  `{state, status_updates}` tuple rather than the `{:reply, ...}` format
+  used by synchronous (`handle_call`) slot operations.
   """
   @spec handle_release_tool_slot(pos_integer(), State.t()) ::
-          {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
+          {State.t(), [{pos_integer(), atom()}]}
   def handle_release_tool_slot(agent_id, %State{} = state) do
     state = %State{state | tool_holders: MapSet.delete(state.tool_holders, agent_id)}
     {state, unblocked} = grant_pending_tool_slots(state)
-    {:reply, :ok, state, unblocked}
+    {state, unblocked}
   end
 
   # --- Agent Death Cleanup ---

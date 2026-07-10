@@ -249,10 +249,16 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Releases an LLM execution slot back to the scheduler. Call this after the LLM
   call completes (success or failure).
+
+  Uses `GenServer.cast` (fire-and-forget) rather than `GenServer.call` to avoid
+  blocking the agent on slot release. A synchronous call here can time out when
+  the scheduler GenServer is busy processing another synchronous call (e.g.,
+  worktree initialization in `handle_call({:run_agent, ...})`), causing agent
+  crashes with 5-second `:timeout` exits.
   """
   @spec release_llm_slot(pos_integer()) :: :ok
   def release_llm_slot(agent_id) do
-    GenServer.call(__MODULE__, {:release_llm_slot, agent_id})
+    GenServer.cast(__MODULE__, {:release_llm_slot, agent_id})
   end
 
   @doc """
@@ -276,10 +282,13 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Releases a tool execution slot back to the scheduler. Call this after tool
   execution completes.
+
+  Uses `GenServer.cast` (fire-and-forget) rather than `GenServer.call` to avoid
+  blocking the agent on slot release. See `release_llm_slot/1` for rationale.
   """
   @spec release_tool_slot(pos_integer()) :: :ok
   def release_tool_slot(agent_id) do
-    GenServer.call(__MODULE__, {:release_tool_slot, agent_id})
+    GenServer.cast(__MODULE__, {:release_tool_slot, agent_id})
   end
 
   @doc """
@@ -747,10 +756,10 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:release_llm_slot, agent_id}, _from, %State{} = state) do
-    {:reply, :ok, new_state, status_updates} = Slots.handle_release_llm_slot(agent_id, state)
+  def handle_cast({:release_llm_slot, agent_id}, %State{} = state) do
+    {new_state, status_updates} = Slots.handle_release_llm_slot(agent_id, state)
     Lifecycle.apply_status_updates(status_updates)
-    {:reply, :ok, new_state}
+    {:noreply, new_state}
   end
 
   @impl true
@@ -776,10 +785,10 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:release_tool_slot, agent_id}, _from, %State{} = state) do
-    {:reply, :ok, new_state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
+  def handle_cast({:release_tool_slot, agent_id}, %State{} = state) do
+    {new_state, status_updates} = Slots.handle_release_tool_slot(agent_id, state)
     Lifecycle.apply_status_updates(status_updates)
-    {:reply, :ok, new_state}
+    {:noreply, new_state}
   end
 
   # Retry LLM waiting queue after backoff expiry (delegated to Slots module)

@@ -136,7 +136,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
           llm_waiting: %{@default_model => :queue.from_list([{2, from, nil}])}
         )
 
-      assert {:reply, :ok, new_state, status_updates} =
+      assert {new_state, status_updates} =
                Slots.handle_release_llm_slot(1, state)
 
       # Agent 2 now holds the slot, agent 1 released
@@ -224,7 +224,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
 
       # Now release the fast model slot — agent 2 should be granted immediately
       # because the fast model has no backoff.
-      assert {:reply, :ok, granted_state, [{2, :running}]} =
+      assert {granted_state, [{2, :running}]} =
                Slots.handle_release_llm_slot(99, new_state)
 
       assert MapSet.member?(State.holders_for(granted_state, @fast_model), 2)
@@ -272,7 +272,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
           llm_last_granted: %{@default_model => %{3 => 5000}}
         )
 
-      assert {:reply, :ok, new_state, _status_updates} =
+      assert {new_state, _status_updates} =
                Slots.handle_release_llm_slot(1, state)
 
       # Agent 3 (more recent) should get the slot first
@@ -305,7 +305,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
           }
         )
 
-      assert {:reply, :ok, new_state, _status_updates} =
+      assert {new_state, _status_updates} =
                Slots.handle_release_llm_slot(1, state)
 
       # Agent 4 (depth 0, lower) should get the slot first
@@ -338,7 +338,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
           llm_last_granted: %{@default_model => %{3 => 9000}}
         )
 
-      assert {:reply, :ok, new_state, _status_updates} =
+      assert {new_state, _status_updates} =
                Slots.handle_release_llm_slot(1, state)
 
       assert MapSet.member?(State.holders_for(new_state, @default_model), 3)
@@ -372,7 +372,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
           llm_last_granted: %{@default_model => %{3 => 5000}}
         )
 
-      assert {:reply, :ok, new_state, _status_updates} =
+      assert {new_state, _status_updates} =
                Slots.handle_release_llm_slot(1, state)
 
       # Agent 4 should get the slot (agent 3 is in backoff)
@@ -409,7 +409,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
           }
         )
 
-      assert {:reply, :ok, new_state, []} =
+      assert {new_state, []} =
                Slots.handle_release_llm_slot(1, state)
 
       # No slots granted
@@ -464,7 +464,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
           tool_waiting: :queue.from_list([{2, from}])
         )
 
-      assert {:reply, :ok, new_state, status_updates} =
+      assert {new_state, status_updates} =
                Slots.handle_release_tool_slot(1, state)
 
       # Agent 2 now holds the slot, agent 1 released
