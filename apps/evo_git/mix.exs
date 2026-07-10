@@ -17,7 +17,7 @@ defmodule EvoGit.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :ssh],
+      extra_applications: [:logger],
       mod: {EvoGit.Application, []}
     ]
   end

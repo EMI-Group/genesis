@@ -3,14 +3,13 @@ defmodule EvoGit.RemoteConnectionTest do
   Tests for `EvoGit.RemoteConnection` — the GenServer managing a single SSH
   remote connection's lifecycle.
 
-  Uses `async: false` because the tests mutate global application env
-  (`:remote_binary_path`) and interact with the Registry / DynamicSupervisor
-  that are part of the application supervision tree.
+  Uses `async: false` because the tests interact with the Registry /
+  DynamicSupervisor that are part of the application supervision tree.
   """
 
   use ExUnit.Case, async: false
 
-  # --- Setup: isolate config dir + clear remote_binary_path ---
+  # --- Setup: isolate config dir ---
 
   setup do
     original_xdg = System.get_env("XDG_CONFIG_HOME")
@@ -20,9 +19,6 @@ defmodule EvoGit.RemoteConnectionTest do
 
     File.mkdir_p!(tmp_xdg)
     System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    original_binary_path = Application.get_env(:evo_git, :remote_binary_path)
-    Application.put_env(:evo_git, :remote_binary_path, nil)
 
     on_exit(fn ->
       # Disconnect any connection managers started during this test so they
@@ -35,12 +31,6 @@ defmodule EvoGit.RemoteConnectionTest do
         System.put_env("XDG_CONFIG_HOME", original_xdg)
       else
         System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      if original_binary_path do
-        Application.put_env(:evo_git, :remote_binary_path, original_binary_path)
-      else
-        Application.delete_env(:evo_git, :remote_binary_path)
       end
 
       File.rm_rf!(tmp_xdg)
@@ -62,8 +52,12 @@ defmodule EvoGit.RemoteConnectionTest do
   end
 
   # Saves a test target and returns its id.
-  defp save_test_target do
-    {:ok, target} = EvoGit.RemoteConnections.save(%{host: "test@example.com", dist_port: 9999})
+  # Uses a unique ssh_target so each test gets a distinct target_id, avoiding
+  # stale GenServer lookups from prior tests sharing the same id.
+  defp save_test_target(opts \\ []) do
+    unique = System.unique_integer([:positive])
+    base = %{ssh_target: "test#{unique}@example.com", dist_port: 9999}
+    {:ok, target} = EvoGit.RemoteConnections.save(Map.merge(base, Map.new(opts)))
     target.id
   end
 
@@ -115,13 +109,20 @@ defmodule EvoGit.RemoteConnectionTest do
   end
 
   describe "bootstrap/1" do
-    test "returns {:error, :no_binary_configured} when remote_binary_path is nil" do
+    test "returns {:error, :no_binary_path} when local_binary_path is nil" do
       ensure_registry_and_supervisor()
       target_id = save_test_target()
 
-      assert Application.get_env(:evo_git, :remote_binary_path) == nil
+      assert {:error, :no_binary_path} = EvoGit.RemoteConnection.bootstrap(target_id)
 
-      assert {:error, :no_binary_configured} = EvoGit.RemoteConnection.bootstrap(target_id)
+      cleanup_connections()
+    end
+
+    test "returns {:error, :binary_not_found} when the file doesn't exist" do
+      ensure_registry_and_supervisor()
+      target_id = save_test_target(local_binary_path: "/nonexistent/path/to/binary")
+
+      assert {:error, :binary_not_found} = EvoGit.RemoteConnection.bootstrap(target_id)
 
       cleanup_connections()
     end

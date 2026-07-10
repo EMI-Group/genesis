@@ -32,52 +32,66 @@ defmodule EvoGit.RemoteConnectionsTest do
   end
 
   describe "save/1" do
-    test "succeeds with just a host, auto-generating id and name, applying defaults" do
-      assert {:ok, target} = EvoGit.RemoteConnections.save(%{host: "example.com"})
+    test "succeeds with just an ssh_target, auto-generating id and name, applying defaults" do
+      assert {:ok, target} = EvoGit.RemoteConnections.save(%{ssh_target: "example.com"})
 
-      assert target.host == "example.com"
+      assert target.ssh_target == "example.com"
       assert target.name == "example.com"
       assert is_binary(target.id)
       # dots are non-alphanumeric, so slugified to underscores
       assert target.id == "example_com"
-      assert target.port == 22
       assert target.dist_port == 9000
-      assert target.remote_path == "/tmp/genesis_engine"
-      assert is_nil(target.identity_file)
+      assert target.remote_path == "/tmp/genesis_remote"
+      assert is_nil(target.local_binary_path)
       assert is_nil(target.last_connected)
     end
 
-    test "extracts user from user@host.com when user not provided" do
-      assert {:ok, target} = EvoGit.RemoteConnections.save(%{host: "alice@example.com"})
+    test "accepts user@host ssh_target" do
+      assert {:ok, target} = EvoGit.RemoteConnections.save(%{ssh_target: "alice@example.com"})
 
-      assert target.host == "alice@example.com"
-      assert target.user == "alice"
+      assert target.ssh_target == "alice@example.com"
       assert target.name == "alice@example.com"
     end
 
-    test "preserves an explicit user over the host-derived one" do
+    test "uses provided name over ssh_target for name and id" do
       assert {:ok, target} =
-               EvoGit.RemoteConnections.save(%{host: "alice@example.com", user: "bob"})
+               EvoGit.RemoteConnections.save(%{ssh_target: "example.com", name: "Prod Server"})
 
-      assert target.user == "bob"
+      assert target.name == "Prod Server"
+      assert target.id == "prod_server"
     end
 
-    test "returns {:error, :missing_host} when host is absent" do
-      assert {:error, :missing_host} = EvoGit.RemoteConnections.save(%{name: "no host"})
+    test "preserves local_binary_path" do
+      assert {:ok, target} =
+               EvoGit.RemoteConnections.save(%{
+                 ssh_target: "example.com",
+                 local_binary_path: "burrito_out/genesis_remote_linux_x64"
+               })
+
+      assert target.local_binary_path == "burrito_out/genesis_remote_linux_x64"
     end
 
-    test "returns {:error, :missing_host} when host is empty" do
-      assert {:error, :missing_host} = EvoGit.RemoteConnections.save(%{host: ""})
+    test "returns {:error, :missing_ssh_target} when ssh_target is absent" do
+      assert {:error, :missing_ssh_target} = EvoGit.RemoteConnections.save(%{name: "no target"})
+    end
+
+    test "returns {:error, :missing_ssh_target} when ssh_target is empty" do
+      assert {:error, :missing_ssh_target} = EvoGit.RemoteConnections.save(%{ssh_target: ""})
     end
 
     test "updates an existing target when the same id is saved again" do
-      assert {:ok, _target} = EvoGit.RemoteConnections.save(%{host: "example.com", port: 2222})
+      assert {:ok, _target} =
+               EvoGit.RemoteConnections.save(%{ssh_target: "example.com", name: "Prod"})
 
       assert {:ok, updated} =
-               EvoGit.RemoteConnections.save(%{host: "example.com", port: 2222, name: "Prod"})
+               EvoGit.RemoteConnections.save(%{
+                 ssh_target: "example.com",
+                 name: "Prod",
+                 dist_port: 9100
+               })
 
       assert updated.name == "Prod"
-      assert updated.port == 2222
+      assert updated.dist_port == 9100
 
       list = EvoGit.RemoteConnections.list()
       assert length(list) == 1
@@ -85,8 +99,8 @@ defmodule EvoGit.RemoteConnectionsTest do
     end
 
     test "appends a new target when the id does not exist" do
-      assert {:ok, _t1} = EvoGit.RemoteConnections.save(%{host: "a.com"})
-      assert {:ok, _t2} = EvoGit.RemoteConnections.save(%{host: "b.com"})
+      assert {:ok, _t1} = EvoGit.RemoteConnections.save(%{ssh_target: "a.com"})
+      assert {:ok, _t2} = EvoGit.RemoteConnections.save(%{ssh_target: "b.com"})
 
       list = EvoGit.RemoteConnections.list()
       assert length(list) == 2
@@ -95,9 +109,9 @@ defmodule EvoGit.RemoteConnectionsTest do
 
   describe "get/1" do
     test "returns the target when found" do
-      assert {:ok, saved} = EvoGit.RemoteConnections.save(%{host: "example.com"})
+      assert {:ok, saved} = EvoGit.RemoteConnections.save(%{ssh_target: "example.com"})
       assert {:ok, fetched} = EvoGit.RemoteConnections.get(saved.id)
-      assert fetched.host == "example.com"
+      assert fetched.ssh_target == "example.com"
     end
 
     test "returns {:error, :not_found} for an unknown id" do
@@ -107,7 +121,7 @@ defmodule EvoGit.RemoteConnectionsTest do
 
   describe "delete/1" do
     test "removes the target and returns :ok" do
-      assert {:ok, saved} = EvoGit.RemoteConnections.save(%{host: "example.com"})
+      assert {:ok, saved} = EvoGit.RemoteConnections.save(%{ssh_target: "example.com"})
       assert :ok = EvoGit.RemoteConnections.delete(saved.id)
       assert EvoGit.RemoteConnections.list() == []
     end
@@ -119,7 +133,7 @@ defmodule EvoGit.RemoteConnectionsTest do
 
   describe "touch/1" do
     test "sets the last_connected timestamp and returns :ok" do
-      assert {:ok, saved} = EvoGit.RemoteConnections.save(%{host: "example.com"})
+      assert {:ok, saved} = EvoGit.RemoteConnections.save(%{ssh_target: "example.com"})
       assert is_nil(saved.last_connected)
 
       assert :ok = EvoGit.RemoteConnections.touch(saved.id)
@@ -136,18 +150,56 @@ defmodule EvoGit.RemoteConnectionsTest do
     end
   end
 
+  describe "backward compatibility" do
+    test "migrates old host field to ssh_target (host only)" do
+      assert {:ok, target} = EvoGit.RemoteConnections.save(%{host: "example.com"})
+
+      assert target.ssh_target == "example.com"
+      refute Map.has_key?(target, :host)
+      refute Map.has_key?(target, :user)
+      refute Map.has_key?(target, :port)
+      refute Map.has_key?(target, :identity_file)
+    end
+
+    test "migrates old host+user fields to ssh_target (user@host)" do
+      assert {:ok, target} =
+               EvoGit.RemoteConnections.save(%{host: "example.com", user: "alice"})
+
+      assert target.ssh_target == "alice@example.com"
+    end
+
+    test "migrates old host+user+port fields, ignoring port" do
+      assert {:ok, target} =
+               EvoGit.RemoteConnections.save(%{host: "example.com", user: "bob", port: 2222})
+
+      assert target.ssh_target == "bob@example.com"
+      # port is not stored in the new schema
+      refute Map.has_key?(target, :port)
+    end
+
+    test "prefers ssh_target over old host field when both present" do
+      assert {:ok, target} =
+               EvoGit.RemoteConnections.save(%{
+                 ssh_target: "new@example.com",
+                 host: "old.example.com",
+                 user: "olduser"
+               })
+
+      assert target.ssh_target == "new@example.com"
+    end
+  end
+
   describe "persistence round-trip" do
     test "writes [[connections]] TOML and re-reads it via list/0" do
       assert {:ok, _t1} =
                EvoGit.RemoteConnections.save(%{
-                 host: "deploy@prod.example.com",
-                 port: 2222,
-                 dist_port: 9100,
-                 identity_file: "/home/user/.ssh/id_ed25519"
+                 ssh_target: "deploy@prod.example.com",
+                 local_binary_path: "burrito_out/genesis_remote_linux_x64",
+                 dist_port: 9100
                })
 
       assert {:ok, _t2} =
-               EvoGit.RemoteConnections.save(%{host: "staging.example.com", user: "ci"})
+               EvoGit.RemoteConnections.save(%{ssh_target: "staging.example.com"})
 
       # The TOML file should exist on disk with array-of-tables format.
       config_dir = EvoGit.Config.config_dir()
@@ -162,18 +214,15 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert length(list) == 2
 
       prod =
-        Enum.find(list, fn c -> String.contains?(c.host, "prod.example.com") end)
+        Enum.find(list, fn c -> String.contains?(c.ssh_target, "prod.example.com") end)
 
       assert prod != nil
-      assert prod.host == "deploy@prod.example.com"
-      assert prod.user == "deploy"
-      assert prod.port == 2222
+      assert prod.ssh_target == "deploy@prod.example.com"
       assert prod.dist_port == 9100
-      assert prod.identity_file == "/home/user/.ssh/id_ed25519"
+      assert prod.local_binary_path == "burrito_out/genesis_remote_linux_x64"
 
-      staging = Enum.find(list, fn c -> c.host == "staging.example.com" end)
+      staging = Enum.find(list, fn c -> c.ssh_target == "staging.example.com" end)
       assert staging != nil
-      assert staging.user == "ci"
     end
 
     test "survives reading string-keyed data with fields in any order" do
@@ -183,8 +232,7 @@ defmodule EvoGit.RemoteConnectionsTest do
       toml = """
       [[connections]]
       id = "manual-id"
-      host = "manual.example.com"
-      port = 2200
+      ssh_target = "manual.example.com"
       dist_port = 9022
       name = "Manual Box"
       remote_path = "/opt/genesis"
@@ -198,8 +246,7 @@ defmodule EvoGit.RemoteConnectionsTest do
 
       conn = hd(list)
       assert conn.id == "manual-id"
-      assert conn.host == "manual.example.com"
-      assert conn.port == 2200
+      assert conn.ssh_target == "manual.example.com"
       assert conn.dist_port == 9022
       assert conn.name == "Manual Box"
       assert conn.remote_path == "/opt/genesis"
