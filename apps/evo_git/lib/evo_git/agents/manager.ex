@@ -71,6 +71,8 @@ defmodule EvoGit.Agents.Manager do
     - Duplicated code is a structural red flag — it usually means shared functionality wasn't identified and extracted. When you spot duplication during validation, reject it and re-delegate with instructions to extract the common logic to an appropriate shared location (a utility module, base class, or common ancestor in the directory tree).
     - Duplication often signals that Single Responsibility or Low Coupling is violated — fixing the root cause (refactoring) is better than accepting the duplication.
 
+    **Legitimately large files:** Some files are long for a good reason — generated code, comprehensive test suites, data mappings, or protocol definitions that can't be split without losing coherence. When you encounter a file that exceeds the ~1000 line baseline but the size is justified, leave a short comment at the top of the file explaining its role and why it needs to be long (if the file format supports comments). Alternatively, add a note to the directory's CONTEXT.md so future agents understand the rationale and don't waste turns re-investigating whether the file should be split.
+
     # Delegation Strategy
 
     Select the right subagent for the job:
