@@ -19,11 +19,33 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     Git.add(tmp_dir, "README.md")
     Git.commit(tmp_dir, "initial commit")
 
+    # Start WorktreeManager so delete/2 casts are handled.
+    start_supervised!({EvoGit.AgentScheduler.WorktreeManager, []})
+
     on_exit(fn ->
       File.rm_rf!(tmp_dir)
     end)
 
     {:ok, %{tmp_dir: tmp_dir}}
+  end
+
+  # Helper: waits up to 500ms for a branch to be deleted (delete/2 delegates
+  # to WorktreeManager via cast, which is async).
+  defp wait_for_branch_deletion(tmp_dir, branch_name, timeout \\ 500) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    Enum.reduce_while(1..100//1, nil, fn _, _ ->
+      if branch_name in Git.list_branches(tmp_dir) do
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(10)
+          {:cont, nil}
+        else
+          {:halt, nil}
+        end
+      else
+        {:halt, :done}
+      end
+    end)
   end
 
   # ==========================================================================
@@ -53,8 +75,9 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
       Worktrees.delete(worktree_path, tmp_dir)
 
-      # The branch must be gone — this fails if the underscore-to-hyphen
-      # translation in delete/2 is missing or incorrect.
+      # Deletion is async (cast via WorktreeManager). Wait for the branch
+      # to be removed before asserting.
+      wait_for_branch_deletion(tmp_dir, branch_name)
       refute branch_name in Git.list_branches(tmp_dir)
     end
 
@@ -68,6 +91,10 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       File.mkdir_p!(worktree_path)
 
       Worktrees.delete(worktree_path, tmp_dir)
+
+      # Deletion is async (cast via WorktreeManager). Wait for the branch
+      # to be removed before asserting.
+      wait_for_branch_deletion(tmp_dir, branch_name)
       refute branch_name in Git.list_branches(tmp_dir)
     end
   end
