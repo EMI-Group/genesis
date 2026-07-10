@@ -175,7 +175,7 @@ defmodule EvoDashWeb.SettingsLive do
                           <div class="min-w-0">
                             <p class="font-semibold text-sm truncate">{target.name}</p>
                             <p class="text-xs text-base-content/50 font-mono truncate">
-                              {target.user}{maybe_at_remote()}{target.host}{if target.port && target.port != 22, do: ":#{target.port}", else: ""}
+                              {target[:ssh_target] || "#{target[:user]}@#{target[:host]}#{if target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: ""}"}
                             </p>
                           </div>
                         </div>
@@ -243,6 +243,22 @@ defmodule EvoDashWeb.SettingsLive do
                     <p class="text-sm">{gettext("No remote connections configured.")}</p>
                   </div>
 
+                  <%!-- SSH config help banner --%>
+                  <div class="rounded-lg border border-base-300 bg-base-200 p-3 flex items-start gap-3">
+                    <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
+                    <div class="space-y-1.5">
+                      <p class="text-sm text-base-content/80">
+                        {gettext("Configure your SSH server in `~/.ssh/config` and set up SSH key authentication.")}
+                      </p>
+                      <p class="text-sm text-base-content/80">
+                        {gettext("Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`).")}
+                      </p>
+                      <p class="text-sm text-base-content/80">
+                        {gettext("SSH port, identity file, and other options are read from your SSH config — no need to enter them here.")}
+                      </p>
+                    </div>
+                  </div>
+
                   <%!-- Add / Edit target form --%>
                   <div class="border-t border-base-200 pt-5">
                     <%= if @remote_form_target do %>
@@ -264,45 +280,33 @@ defmodule EvoDashWeb.SettingsLive do
                               type="text"
                               name="name"
                               value={@remote_form_target[:name]}
-                              placeholder={gettext("e.g. dev-server")}
+                              placeholder={gettext("e.g. GPU Server")}
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
                               disabled={@remote_config}
                             />
                           </div>
-                          <div class="form-control">
+                          <div class="form-control col-span-2">
                             <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Host")}</span>
+                              <span class="label-text font-semibold text-xs">{gettext("SSH Target")}</span>
                             </label>
                             <input
                               type="text"
-                              name="host"
-                              value={@remote_form_target[:host]}
-                              placeholder="192.168.1.10"
+                              name="ssh_target"
+                              value={@remote_form_target[:ssh_target]}
+                              placeholder={gettext("gpu-server or user@host")}
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
                               disabled={@remote_config}
                             />
                           </div>
-                          <div class="form-control">
+                          <div class="form-control col-span-2">
                             <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("User")}</span>
+                              <span class="label-text font-semibold text-xs">{gettext("Local Binary Path")}</span>
                             </label>
                             <input
                               type="text"
-                              name="user"
-                              value={@remote_form_target[:user]}
-                              placeholder={gettext("e.g. ubuntu")}
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-                              disabled={@remote_config}
-                            />
-                          </div>
-                          <div class="form-control">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("SSH Port")}</span>
-                            </label>
-                            <input
-                              type="number"
-                              name="port"
-                              value={@remote_form_target[:port] || 22}
+                              name="local_binary_path"
+                              value={@remote_form_target[:local_binary_path]}
+                              placeholder="burrito_out/genesis_remote_linux_x64"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
                               disabled={@remote_config}
                             />
@@ -315,25 +319,12 @@ defmodule EvoDashWeb.SettingsLive do
                               type="number"
                               name="dist_port"
                               value={@remote_form_target[:dist_port]}
-                              placeholder="9100"
+                              placeholder="9000"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
                               disabled={@remote_config}
                             />
                           </div>
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Identity File")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="identity_file"
-                              value={@remote_form_target[:identity_file]}
-                              placeholder="~/.ssh/id_rsa"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-                              disabled={@remote_config}
-                            />
-                          </div>
-                          <div class="form-control col-span-2">
+                          <div class="form-control">
                             <label class="label">
                               <span class="label-text font-semibold text-xs">{gettext("Remote Path")}</span>
                             </label>
@@ -341,7 +332,7 @@ defmodule EvoDashWeb.SettingsLive do
                               type="text"
                               name="remote_path"
                               value={@remote_form_target[:remote_path]}
-                              placeholder="~/genesis"
+                              placeholder="/tmp/genesis_remote"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
                               disabled={@remote_config}
                             />
@@ -1168,7 +1159,7 @@ defmodule EvoDashWeb.SettingsLive do
     if socket.assigns.remote_config do
       {:noreply, put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
     else
-      {:noreply, assign(socket, :remote_form_target, %{port: 22})}
+      {:noreply, assign(socket, :remote_form_target, %{dist_port: 9000, remote_path: "/tmp/genesis_remote"})}
     end
   end
 
@@ -1181,8 +1172,13 @@ defmodule EvoDashWeb.SettingsLive do
   def handle_event("edit_remote_target", %{"id" => id}, socket) do
     form_target =
       case EvoDash.NodeContext.get_target(id) do
-        {:ok, target} -> target
-        {:error, :not_found} -> nil
+        {:ok, target} ->
+          target
+          |> Map.put_new(:dist_port, 9000)
+          |> Map.put_new(:remote_path, "/tmp/genesis_remote")
+
+        {:error, :not_found} ->
+          nil
       end
 
     {:noreply, assign(socket, :remote_form_target, form_target)}
@@ -1437,12 +1433,10 @@ defmodule EvoDashWeb.SettingsLive do
     %{
       id: id,
       name: params["name"] || "",
-      host: params["host"] || "",
-      user: params["user"] || "",
-      port: parse_remote_port(params["port"]),
+      ssh_target: params["ssh_target"] || "",
+      local_binary_path: params["local_binary_path"] || "",
       dist_port: parse_remote_port(params["dist_port"]),
-      identity_file: params["identity_file"] || "",
-      remote_path: params["remote_path"] || ""
+      remote_path: params["remote_path"] || "/tmp/genesis_remote"
     }
   end
 
@@ -1545,6 +1539,4 @@ defmodule EvoDashWeb.SettingsLive do
       _ -> gettext("Unknown")
     end
   end
-
-  defp maybe_at_remote, do: "@"
 end

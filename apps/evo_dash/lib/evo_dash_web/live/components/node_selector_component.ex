@@ -68,7 +68,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
             <span class="flex-1 text-left">
               <span class="block">{target.name}</span>
               <span class="block text-xs text-base-content/50">
-                {target.user}{maybe_at()}{target.host}{if(target.port && target.port != 22, do: ":#{target.port}", else: "")}
+                {target[:ssh_target] || "#{target[:user]}#{maybe_at()}#{target[:host]}#{if(target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: "")}"}
               </span>
             </span>
             <.icon :if={@current_node_id == target.id} name="hero-check-solid" class="size-4 text-indigo-500 shrink-0" />
