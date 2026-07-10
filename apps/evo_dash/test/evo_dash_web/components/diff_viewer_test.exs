@@ -3,227 +3,97 @@ defmodule EvoDashWeb.DiffViewerTest do
 
   alias EvoDashWeb.ReviewComponents.DiffViewer
 
-  # These tests cover the bug fix where Lumis's per-line
-  # `<div class="l-line" data-line="N">...</div>` wrappers were never stripped,
-  # causing extra whitespace and misaligned DOM in the diff viewer.
-  #
-  # The functions under test are pure helpers:
-  #   - strip_lumis_wrappers/1 — strips <pre>, <code>, and <div> wrappers
-  #   - split_html_by_newline/1 — splits highlighted HTML by newline while
-  #     keeping <span> tags balanced per line.
+  # These tests cover the `parse_lumis_lines/1` function, which parses
+  # Lumis's per-line `<div class="l-line" data-line="N">...</div>` output
+  # (wrapped in `<pre><code>...</code></pre>`) into a map of
+  # `%{line_number => inner_html}`.
 
-  describe "strip_lumis_wrappers/1" do
-    test "strips <pre>, <code>, and <div> wrappers, leaving spans and text" do
+  describe "parse_lumis_lines/1" do
+    test "parses a simple highlighted code block into a line-number map" do
       html =
         ~s(<pre class="lumis"><code class="lang-elixir"><div class="l-line" data-line="1"><span style="color:#keyword">def</span> foo</div>\n<div class="l-line" data-line="2"><span style="color:#string">"bar"</span></div></code></pre>)
 
-      result = DiffViewer.strip_lumis_wrappers(html)
+      result = DiffViewer.parse_lumis_lines(html)
 
-      refute String.contains?(result, "<pre")
-      refute String.contains?(result, "<code")
-      refute String.contains?(result, "<div")
-      refute String.contains?(result, "</div>")
-      refute String.contains?(result, "</code>")
-      refute String.contains?(result, "</pre>")
-      # spans and text content are preserved
-      assert String.contains?(result, "<span")
-      assert String.contains?(result, "</span>")
-      assert String.contains?(result, "def")
-      assert String.contains?(result, "bar")
+      assert map_size(result) == 2
+      assert result[1] == ~s(<span style="color:#keyword">def</span> foo)
+      assert result[2] == ~s(<span style="color:#string">"bar"</span>)
     end
 
-    test "strips opening and closing div tags with attributes" do
+    test "preserves inner span tags (syntax highlighting)" do
       html =
-        ~s(<div class="l-line" data-line="42">hello</div>)
+        ~s(<pre class="lumis"><code><div class="l-line" data-line="1"><span style="color:#keyword">def</span> foo</div></code></pre>)
 
-      result = DiffViewer.strip_lumis_wrappers(html)
+      result = DiffViewer.parse_lumis_lines(html)
 
-      refute String.contains?(result, "<div")
-      refute String.contains?(result, "</div>")
-      assert String.contains?(result, "hello")
+      assert String.contains?(result[1], "<span")
+      assert String.contains?(result[1], "</span>")
+      assert String.contains?(result[1], "def")
+      assert String.contains?(result[1], "foo")
+      # No div wrappers should survive
+      refute String.contains?(result[1], "<div")
+      refute String.contains?(result[1], "</div>")
     end
 
-    test "returns empty string unchanged" do
-      assert DiffViewer.strip_lumis_wrappers("") == ""
-    end
-
-    test "leaves plain span-only content untouched (no wrappers to strip)" do
-      html = ~s(<span style="color:#keyword">def</span>)
-
-      result = DiffViewer.strip_lumis_wrappers(html)
-
-      assert result == html
-    end
-
-    test "handles wrappers with no inner divs" do
+    test "handles multi-line input returning multiple entries" do
       html =
-        ~s(<pre class="lumis"><code><span style="color:#keyword">def</span> foo</code></pre>)
+        ~s(<pre class="lumis"><code><div class="l-line" data-line="10"><span>a</span></div>\n<div class="l-line" data-line="11"><span>b</span></div>\n<div class="l-line" data-line="12"><span>c</span></div></code></pre>)
 
-      result = DiffViewer.strip_lumis_wrappers(html)
+      result = DiffViewer.parse_lumis_lines(html)
 
-      assert result == ~s(<span style="color:#keyword">def</span> foo)
+      assert map_size(result) == 3
+      assert result[10] == "<span>a</span>"
+      assert result[11] == "<span>b</span>"
+      assert result[12] == "<span>c</span>"
+    end
+
+    test "returns empty map for empty input" do
+      assert DiffViewer.parse_lumis_lines("") == %{}
+    end
+
+    test "returns empty map for HTML without l-line divs" do
+      html = ~s(<pre><code>plain text</code></pre>)
+
+      assert DiffViewer.parse_lumis_lines(html) == %{}
+    end
+
+    test "handles <pre> without <code> gracefully" do
+      html = ~s(<pre><div class="l-line" data-line="1"><span>hello</span></div></pre>)
+
+      result = DiffViewer.parse_lumis_lines(html)
+
+      assert result[1] == "<span>hello</span>"
     end
   end
 
-  describe "split_html_by_newline/1" do
-    test "splits single line (no newline) returning a one-element list" do
-      html = ~s(<span style="color:#keyword">def</span> foo)
-
-      result = DiffViewer.split_html_by_newline(html)
-
-      assert length(result) == 1
-      assert List.first(result) == html
-    end
-
-    test "splits multiple lines with balanced spans per line" do
-      html =
-        ~s(<span style="color:#keyword">def</span> foo\n<span style="color:#string">"bar"</span>)
-
-      result = DiffViewer.split_html_by_newline(html)
-
-      assert length(result) == 2
-      [line1, line2] = result
-      assert line1 == ~s(<span style="color:#keyword">def</span> foo)
-      assert line2 == ~s(<span style="color:#string">"bar"</span>)
-    end
-
-    test "each split line has balanced spans (open count == close count)" do
-      html =
-        ~s(<span style="color:#keyword">def</span> foo\n<span style="color:#string">"bar"</span>)
-
-      for line <- DiffViewer.split_html_by_newline(html) do
-        assert balanced_spans?(line)
-      end
-    end
-
-    test "multi-line span (e.g. triple-quoted string) is closed and reopened" do
-      # A span whose \n falls *inside* it — simulating a multi-line string.
-      html =
-        ~s(<span style="color:#string">\"\"\"multi\nline\"\"\"</span>)
-
-      result = DiffViewer.split_html_by_newline(html)
-
-      assert length(result) == 2
-      [line1, line2] = result
-
-      # Line 1: the span is opened and then closed at the newline.
-      assert String.starts_with?(line1, "<span")
-      assert String.ends_with?(line1, "</span>")
-      assert balanced_spans?(line1)
-
-      # Line 2: the span is reopened and then closed at end of input.
-      assert String.starts_with?(line2, "<span")
-      assert String.ends_with?(line2, "</span>")
-      assert balanced_spans?(line2)
-    end
-
-    test "returns a single empty string for empty input" do
-      result = DiffViewer.split_html_by_newline("")
-
-      assert result == [""]
-    end
-
-    test "handles nested spans that span newlines" do
-      # Simulates nested highlighting (e.g. interpolation inside a string)
-      # where the outer span spans two lines.
-      html =
-        ~s(<span style="color:#string">prefix<span style="color:#interp">\#{</span>\n<span style="color:#interp">}</span>suffix</span>)
-
-      result = DiffViewer.split_html_by_newline(html)
-
-      assert length(result) == 2
-
-      for line <- result do
-        assert balanced_spans?(line)
-      end
-    end
-
-    test "nested multi-line spans are reopened in outer-first order (proper nesting)" do
-      # Two nested spans where the \n falls inside BOTH: the outer (red) span
-      # wraps a section of text, and the inner (blue) span crosses the newline.
-      # When line 2 is reconstructed, the outer (red) span must be reopened
-      # FIRST so that nesting is valid (matching the LIFO close order).
-      html =
-        ~s(<span style="color:red">outer<span style="color:blue">cross\nline</span>back</span>)
-
-      result = DiffViewer.split_html_by_newline(html)
-      assert length(result) == 2
-      [line1, line2] = result
-
-      # Each line must still be a balanced HTML fragment.
-      assert balanced_spans?(line1)
-      assert balanced_spans?(line2)
-
-      # Line 2 reopens both spans (they were open coming into line 2). The
-      # outer (red) span must appear at a lower byte index than the inner
-      # (blue) span — i.e. red is reopened before blue (FIFO order).
-      {red_idx, _} = :binary.match(line2, "color:red")
-      {blue_idx, _} = :binary.match(line2, "color:blue")
-      assert red_idx < blue_idx,
-             "expected outer (red) span to be reopened before inner (blue), " <>
-               "got red at #{red_idx}, blue at #{blue_idx} in:\n#{line2}"
-    end
-  end
-
-  describe "end-to-end: strip_lumis_wrappers then split_html_by_newline" do
-    # Simulated Lumis output exactly as described in the bug report.
+  describe "end-to-end: parse_lumis_lines/1 — realistic Lumis output" do
     @lumis_output ~s(<pre class="lumis"><code class="lang-elixir"><div class="l-line" data-line="1"><span style="color:#keyword">def</span> foo</div>\n<div class="l-line" data-line="2"><span style="color:#string">"bar"</span></div></code></pre>)
 
-    test "produces clean lines with no div wrappers" do
-      lines =
-        @lumis_output
-        |> DiffViewer.strip_lumis_wrappers()
-        |> DiffViewer.split_html_by_newline()
+    test "produces a map with correct line numbers and no div wrappers" do
+      result = DiffViewer.parse_lumis_lines(@lumis_output)
 
-      # No div wrappers should survive in any line.
-      for line <- lines do
-        refute String.contains?(line, "<div")
-        refute String.contains?(line, "</div>")
-      end
-
-      assert length(lines) == 2
+      assert map_size(result) == 2
+      assert result[1] == ~s(<span style="color:#keyword">def</span> foo)
+      assert result[2] == ~s(<span style="color:#string">"bar"</span>)
     end
 
-    test "each resulting line is a valid balanced HTML fragment" do
-      lines =
-        @lumis_output
-        |> DiffViewer.strip_lumis_wrappers()
-        |> DiffViewer.split_html_by_newline()
+    test "content is preserved" do
+      result = DiffViewer.parse_lumis_lines(@lumis_output)
 
-      for line <- lines do
-        assert balanced_spans?(line)
-      end
+      assert String.contains?(result[1], "def")
+      assert String.contains?(result[1], "foo")
+      assert String.contains?(result[2], "bar")
     end
 
-    test "content is preserved through the pipeline" do
-      lines =
-        @lumis_output
-        |> DiffViewer.strip_lumis_wrappers()
-        |> DiffViewer.split_html_by_newline()
-
-      joined = Enum.join(lines, "\n")
-      assert String.contains?(joined, "def")
-      assert String.contains?(joined, "foo")
-      assert String.contains?(joined, "bar")
-    end
-
-    test "multi-line span through the full pipeline stays balanced and div-free" do
-      # A triple-quoted-style multi-line string where the highlighting span
-      # crosses newlines, wrapped in per-line divs (as Lumis emits).
+    test "multi-line content parsed correctly" do
       lumis_output =
-        ~s(<pre class="lumis"><code><div class="l-line" data-line="1"><span style="color:#string">\"\"\"line1</div>\n<div class="l-line" data-line="2">line2\"\"\"</span></div></code></pre>)
+        ~s(<pre class="lumis"><code><div class="l-line" data-line="1"><span style="color:#string">\"\"\"line1</span></div>\n<div class="l-line" data-line="2"><span style="color:#string">line2\"\"\"</span></div></code></pre>)
 
-      lines =
-        lumis_output
-        |> DiffViewer.strip_lumis_wrappers()
-        |> DiffViewer.split_html_by_newline()
+      result = DiffViewer.parse_lumis_lines(lumis_output)
 
-      assert length(lines) == 2
-
-      for line <- lines do
-        refute String.contains?(line, "<div")
-        assert balanced_spans?(line)
-      end
+      assert map_size(result) == 2
+      assert result[1] == ~s(<span style="color:#string">\"\"\"line1</span>)
+      assert result[2] == ~s(<span style="color:#string">line2\"\"\"</span>)
     end
   end
 
@@ -477,22 +347,8 @@ defmodule EvoDashWeb.DiffViewerTest do
     end
   end
 
-  # Helper: a span-balanced fragment has an equal number of opening and
-  # closing <span> tags.
-  defp balanced_spans?(html) do
-    open = count_occurrences(html, "<span")
-    close = count_occurrences(html, "</span>")
-    open == close
-  end
-
   # Helper: unwrap {:safe, html} that raw/1 wraps around highlighted values.
   defp unwrap({:safe, html}), do: html
   defp unwrap(other), do: other
 
-  defp count_occurrences(html, needle) do
-    html
-    |> String.split(needle, parts: :infinity)
-    |> length()
-    |> Kernel.-(1)
-  end
 end
