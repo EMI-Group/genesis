@@ -19,9 +19,6 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     Git.add(tmp_dir, "README.md")
     Git.commit(tmp_dir, "initial commit")
 
-    # Start WorktreeManager so delete/2 casts are handled.
-    start_supervised!({EvoGit.AgentScheduler.WorktreeManager, []})
-
     on_exit(fn ->
       File.rm_rf!(tmp_dir)
     end)
