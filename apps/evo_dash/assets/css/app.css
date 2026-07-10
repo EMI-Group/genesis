@@ -842,6 +842,19 @@ button, a, input, textarea, select, summary,
   background-color: oklch(58% 0.22 25 / 0.12);
 }
 
+.diff-split-row-mixed .diff-split-cell-left {
+  background-color: oklch(58% 0.22 25 / 0.08);
+}
+.diff-split-row-mixed .diff-split-gutter-left {
+  background-color: oklch(58% 0.22 25 / 0.12);
+}
+.diff-split-row-mixed .diff-split-cell-right {
+  background-color: oklch(62% 0.15 160 / 0.08);
+}
+.diff-split-row-mixed .diff-split-gutter-right {
+  background-color: oklch(62% 0.15 160 / 0.12);
+}
+
 /* Mixed rows (paired del+add) — light tint on both sides */
 .diff-split-row-context .diff-split-cell {
   /* no special background */

@@ -282,6 +282,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         :addition -> "diff-split-row diff-split-row-addition"
         :deletion -> "diff-split-row diff-split-row-deletion"
         :context -> "diff-split-row diff-split-row-context"
+        :mixed -> "diff-split-row diff-split-row-mixed"
         _ -> "diff-split-row"
       end
 
