@@ -798,8 +798,14 @@ button, a, input, textarea, select, summary,
 
 .diff-split-table {
   display: grid;
-  grid-template-columns: minmax(40px, auto) 1fr minmax(40px, auto) 1fr;
-  width: 100%;
+  /* Fixed-width gutters + content columns that size to the longest line
+     (max-content). width: max-content lets the whole table grow beyond the
+     container -- the parent overflow-x-auto handles horizontal scrolling so
+     old/new columns stay aligned row-by-row. min-width: 100% prevents the
+     table from being narrower than the viewport for short diffs. */
+  grid-template-columns: 50px minmax(100px, max-content) 50px minmax(100px, max-content);
+  width: max-content;
+  min-width: 100%;
   font-family: monospace;
   font-size: 12px;
 }

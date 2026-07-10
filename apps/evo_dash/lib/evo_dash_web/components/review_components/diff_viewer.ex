@@ -640,7 +640,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   defp map_hunk_file_level(chunk, new_hl, old_hl, acc) do
     # Split the hunk header from the body. Header/meta lines before the first
     # hunk (diff/index/---/+++) are mapped as plain text.
-    case Enum.split_with(chunk, &(&1.type != :hunk)) do
+    #
+    # IMPORTANT: use split_while (not split_with). split_with partitions ALL
+    # non-hunk lines into the first list regardless of position — since each
+    # chunk starts with the :hunk header, that would put the entire body into
+    # `pre`, bypassing map_hunk_body and dropping all syntax highlighting.
+    # split_while stops at the FIRST element that fails the predicate, giving
+    # {pre_hunk_meta_lines, [hunk_header | body]}.
+    case Enum.split_while(chunk, &(&1.type != :hunk)) do
       {pre, [%{type: :hunk} = hdr | body]} ->
         pre_acc = Enum.reduce(pre, acc, fn l, a -> Map.put(a, l.line_number, l.content) end)
         header_acc = Map.put(pre_acc, hdr.line_number, hdr.content)
