@@ -18,7 +18,7 @@ defmodule EvoDashWeb.ReviewLive do
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
           <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
           <p class="text-sm text-base-content/60 mb-4">{@error}</p>
-          <.link navigate={~p"/"} class="btn btn-primary rounded-md px-6 gap-2">
+          <.link navigate={~p"/"} class="btn btn-primary px-6 gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
           </.link>
         </div>
@@ -27,11 +27,11 @@ defmodule EvoDashWeb.ReviewLive do
           <!-- Back button -->
           <div class="flex items-center gap-3">
             <%= if @live_action == :commit do %>
-              <.link navigate={~p"/review/#{@task_id}"} class="btn btn-ghost rounded-full btn-sm gap-1 px-4">
+              <.link navigate={~p"/review/#{@task_id}"} class="btn btn-ghost btn-sm gap-1 px-4">
                 <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Review")}
               </.link>
             <% else %>
-              <.link navigate={~p"/"} class="btn btn-ghost rounded-full btn-sm gap-1 px-4">
+              <.link navigate={~p"/"} class="btn btn-ghost btn-sm gap-1 px-4">
                 <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
               </.link>
             <% end %>
@@ -115,7 +115,7 @@ defmodule EvoDashWeb.ReviewLive do
                           is_no_changes={@is_no_changes}
                         />
                         <%= if @archive_metadata not in [nil, []] do %>
-                          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-full gap-2" download>
+                          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary gap-2" download>
                             <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext("Export JSON")}
                           </.link>
                         <% end %>
@@ -320,7 +320,8 @@ defmodule EvoDashWeb.ReviewLive do
         # Context expansion doesn't change the file content — preserve the
         # full_new_content/full_old_content already fetched on the initial
         # lazy-load so file-level highlighting stays effective.
-        {:noreply, update_file_diff_in_socket(socket, path, diff_string, new_level, :preserve, :preserve)}
+        {:noreply,
+         update_file_diff_in_socket(socket, path, diff_string, new_level, :preserve, :preserve)}
 
       {:error, reason} ->
         {:noreply,
@@ -414,7 +415,9 @@ defmodule EvoDashWeb.ReviewLive do
           sha: String.slice(commit_sha, 0..7)
         )
       else
-        gettext("Continuing from investigation task. A new evolve task form has been prepared for you.")
+        gettext(
+          "Continuing from investigation task. A new evolve task form has been prepared for you."
+        )
       end
 
     {:noreply,
@@ -593,9 +596,12 @@ defmodule EvoDashWeb.ReviewLive do
 
         title = pr_title || objective || branch_name || gettext("Review Changes")
 
-        branch_exists = !!(branch_name && repo_path && File.dir?(repo_path) && Review.branch_exists?(repo_path, branch_name))
+        branch_exists =
+          !!(branch_name && repo_path && File.dir?(repo_path) &&
+               Review.branch_exists?(repo_path, branch_name))
 
-        can_continue = repo_path != nil && File.dir?(repo_path) && (commit_sha != nil || branch_name == nil)
+        can_continue =
+          repo_path != nil && File.dir?(repo_path) && (commit_sha != nil || branch_name == nil)
 
         rs = task.review_status
 

@@ -576,7 +576,7 @@ button, a, input, textarea, select, summary,
 
 /* Unified review card — tab bar + content as one visual box */
 .review-card {
-  @apply border border-base-200 overflow-hidden bg-base-100;
+  @apply border-y border-base-200  bg-base-100;
 }
 
 /* Tab bar section — top portion of the card */
@@ -798,7 +798,7 @@ button, a, input, textarea, select, summary,
 
 .diff-split-table {
   display: grid;
-  grid-template-columns: 50px minmax(0, 1fr) 50px minmax(0, 1fr);
+  grid-template-columns: 50px calc(50% - 50px) 50px calc(50% - 50px);
   width: 100%;
   font-family: monospace;
   font-size: 12px;
