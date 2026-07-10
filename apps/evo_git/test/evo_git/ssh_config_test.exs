@@ -265,6 +265,74 @@ defmodule EvoGit.SSHConfigTest do
         assert length(blocks) >= 1
       end)
     end
+
+    test "silently ignores unknown directives inside Host blocks" do
+      config = """
+      Host myserver
+          HostName example.com
+          User myuser
+          IdentitiesOnly yes
+          ForwardAgent no
+          ServerAliveInterval 60
+          Port 2222
+      """
+
+      with_ssh_config(config, fn config_path, _tmp_dir ->
+        blocks = EvoGit.SSHConfig.parse(config_path)
+        assert length(blocks) == 1
+
+        {_patterns, entries} = hd(blocks)
+        # Known directives are still parsed
+        assert entries[:hostname] == "example.com"
+        assert entries[:user] == "myuser"
+        assert entries[:port] == "2222"
+        # Unknown directives are NOT in the entries
+        refute Keyword.has_key?(entries, :identitiesonly)
+        refute Keyword.has_key?(entries, :forwardagent)
+        refute Keyword.has_key?(entries, :serveraliveinterval)
+      end)
+    end
+
+    test "handles Key=Value syntax for directives" do
+      config = """
+      Host myserver
+          HostName=example.com
+          User=myuser
+          Port=2222
+      """
+
+      with_ssh_config(config, fn config_path, _tmp_dir ->
+        blocks = EvoGit.SSHConfig.parse(config_path)
+        assert length(blocks) == 1
+
+        {_patterns, entries} = hd(blocks)
+        assert entries[:hostname] == "example.com"
+        assert entries[:user] == "myuser"
+        assert entries[:port] == "2222"
+      end)
+    end
+
+    test "handles Key=Value syntax for unknown directives without crashing" do
+      config = """
+      Host myserver
+          HostName example.com
+          IdentitiesOnly=yes
+          ForwardAgent=no
+          User myuser
+      """
+
+      with_ssh_config(config, fn config_path, _tmp_dir ->
+        blocks = EvoGit.SSHConfig.parse(config_path)
+        assert length(blocks) == 1
+
+        {_patterns, entries} = hd(blocks)
+        assert entries[:hostname] == "example.com"
+        assert entries[:user] == "myuser"
+        # Unknown directives are not stored
+        refute Keyword.has_key?(entries, :identitiesonly)
+        refute Keyword.has_key?(entries, :forwardagent)
+      end)
+    end
   end
 
   describe "lookup/2" do

@@ -180,7 +180,7 @@ defmodule EvoGit.SSHConfig do
         included_blocks = handle_include(value, base_dir, visited)
         parse_lines_loop(rest, base_dir, visited, blocks ++ included_blocks, nil)
 
-      {directive, value} when current != nil ->
+      {directive, value} when current != nil and directive in @known_directives ->
         atom = String.to_existing_atom(directive)
         {patterns, entries} = current
         current = {patterns, Keyword.put(entries, atom, value)}
@@ -256,6 +256,22 @@ defmodule EvoGit.SSHConfig do
       case String.split(line, ~r/\s+/, parts: 2) do
         [k, r] -> {k, r}
         [k] -> {k, ""}
+      end
+
+    # Handle "Key=Value" syntax (e.g., "IdentitiesOnly=yes").
+    # Split on the first "=" if the key contains one and is not quoted.
+    {key, rest} =
+      if String.contains?(key, "=") and not String.starts_with?(key, ~s(")) do
+        case String.split(key, "=", parts: 2) do
+          [k, v] ->
+            # Prepend any remaining rest (from whitespace split) back to the value
+            value = if rest == "", do: v, else: "#{v} #{rest}"
+            {k, value}
+          _ ->
+            {key, rest}
+        end
+      else
+        {key, rest}
       end
 
     key = String.downcase(key)
