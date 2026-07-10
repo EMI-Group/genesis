@@ -5,14 +5,21 @@ defmodule EvoGit.RemoteConnection do
   There are two distinct operations, kept deliberately separate:
 
     * **Bootstrap** (`bootstrap/1`) — "first time setup": pushes the local
-      `genesis_remote` binary to the remote host over SFTP and launches it as a
-      `systemd-run --user` daemon. The daemon then runs independently and stays
-      up even after the local side disconnects. Bootstrap does NOT connect.
+      `genesis_remote` binary to the remote host via CLI `scp`, sets it
+      executable via `ssh chmod +x`, detects the remote OS, and launches it
+      as a daemon (`systemd-run --user` on Linux, `launchctl` on macOS). The
+      daemon then runs independently and stays up even after the local side
+      disconnects. Bootstrap does NOT connect.
 
     * **Connection** (`connect/1`) — establishes an SSH tunnel forwarding the
       remote distribution port to loopback, then performs Erlang distribution
       (`Node.connect/1`) to the remote node so that RPC (`:erpc.call/4`) and
       PubSub can flow over the tunnel.
+
+  All SSH operations use CLI `ssh`/`scp` via `Port.open` — no Erlang `:ssh`
+  or `:ssh_sftp` modules are used. The `ssh_target` field is just a string
+  (host alias or `user@host`); port and identity file are handled by the
+  user's `~/.ssh/config`.
 
   One `EvoGit.RemoteConnection` GenServer is started per active connection
   target (looked up / started on demand via the `EvoGit.RemoteConnection.Registry`
@@ -32,14 +39,17 @@ defmodule EvoGit.RemoteConnection do
 
   require Logger
 
-  import Bitwise
-
   @registry EvoGit.RemoteConnection.Registry
   @supervisor EvoGit.RemoteConnection.Supervisor
   @pubsub_topic "remote_connections"
   @heartbeat_interval_ms 10_000
   @tunnel_settle_ms 500
   @launch_receive_timeout_ms 5_000
+  @bootstrap_call_timeout_ms 120_000
+
+  # Default per-command timeout (30s). SCP gets a longer timeout.
+  @cmd_timeout_ms 30_000
+  @scp_timeout_ms 120_000
 
   # The remote daemon always binds loopback; the SSH tunnel forwards the dist
   # port to loopback on both sides, so the node name is fixed.
@@ -52,8 +62,7 @@ defmodule EvoGit.RemoteConnection do
             phase: :disconnected,
             ssh_tunnel_port: nil,
             last_error: nil,
-            heartbeat_ref: nil,
-            bootstrap_port: nil
+            heartbeat_ref: nil
 
   @type phase :: :disconnected | :bootstrapping | :connecting | :connected | :error
 
@@ -63,8 +72,7 @@ defmodule EvoGit.RemoteConnection do
           phase: phase(),
           ssh_tunnel_port: port() | nil,
           last_error: String.t() | nil,
-          heartbeat_ref: reference() | nil,
-          bootstrap_port: port() | nil
+          heartbeat_ref: reference() | nil
         }
 
   # ── Public API ─────────────────────────────────────────────────────
@@ -163,10 +171,10 @@ defmodule EvoGit.RemoteConnection do
   end
 
   @doc """
-  Executes the bootstrap process ONLY (push binary + launch daemon).
+  Executes the bootstrap process ONLY (upload binary + launch daemon).
 
   Does NOT connect. Looks up the target, finds-or-starts the manager, then
-  performs the first-time setup.
+  performs the first-time setup using CLI `scp` and `ssh`.
 
   Returns `{:ok, :daemon_started}` on success or `{:error, reason}`.
   """
@@ -174,7 +182,8 @@ defmodule EvoGit.RemoteConnection do
   def bootstrap(target_id) do
     with {:ok, target} <- fetch_target(target_id),
          {:ok, pid} <- ensure_started(target) do
-      GenServer.call(pid, :bootstrap)
+      # 120s timeout — binary upload via scp can be slow.
+      GenServer.call(pid, :bootstrap, @bootstrap_call_timeout_ms)
     end
   end
 
@@ -247,11 +256,6 @@ defmodule EvoGit.RemoteConnection do
       end
 
     {:noreply, new_state}
-  end
-
-  def handle_info({:EXIT, port, _reason}, %__MODULE__{bootstrap_port: port} = state) do
-    # Bootstrap launch port exited — expected (fire-and-forget).
-    {:noreply, %{state | bootstrap_port: nil}}
   end
 
   def handle_info({port, {:exit_status, _status}}, %__MODULE__{ssh_tunnel_port: port} = state) do
@@ -327,95 +331,186 @@ defmodule EvoGit.RemoteConnection do
   # ── Bootstrap ──────────────────────────────────────────────────────
 
   defp do_bootstrap(%__MODULE__{} = state) do
-    case Application.get_env(:evo_git, :remote_binary_path) do
-      nil -> {:error, :no_binary_configured, state}
-      "" -> {:error, :no_binary_configured, state}
-      local_path -> do_bootstrap_with_binary(state, local_path)
+    target = state.target
+    local_path = Map.get(target, :local_binary_path)
+
+    cond do
+      is_nil(local_path) or local_path == "" ->
+        {:error, :no_binary_path, state}
+
+      not File.exists?(local_path) ->
+        {:error, :binary_not_found, state}
+
+      true ->
+        do_bootstrap_with_binary(state, target, local_path)
     end
   end
 
-  defp do_bootstrap_with_binary(%__MODULE__{} = state, local_path) do
-    target = state.target
+  defp do_bootstrap_with_binary(%__MODULE__{} = state, target, local_path) do
     bootstrapping = %{state | phase: :bootstrapping}
-    host = String.to_charlist(target.host)
-    ssh_port = Map.get(target, :port) || 22
-    ssh_opts = build_ssh_opts(target)
-    remote_path_cl = String.to_charlist(Map.get(target, :remote_path) || "/tmp/genesis_engine")
+    ssh_target = target.ssh_target
+    remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
 
-    case :ssh.connect(host, ssh_port, ssh_opts) do
-      {:ok, ssh_conn} ->
-        result = upload_and_launch(bootstrapping, ssh_conn, local_path, remote_path_cl, target)
-        :ssh.close(ssh_conn)
-        result
-
+    with :ok <- scp_binary(ssh_target, local_path, remote_path),
+         :ok <- chmod_executable(ssh_target, remote_path),
+         {:ok, os} <- detect_os(ssh_target),
+         :ok <- maybe_start_daemon(ssh_target, remote_path, os) do
+      EvoGit.RemoteConnections.touch(target.id)
+      {:ok, %{bootstrapping | phase: :disconnected}}
+    else
       {:error, reason} ->
         {:error, reason, %{bootstrapping | phase: :error, last_error: format_error(reason)}}
     end
   end
 
-  defp upload_and_launch(state, ssh_conn, local_path, remote_path_cl, target) do
-    case :ssh_sftp.start_channel(ssh_conn) do
-      {:ok, channel} ->
-        result = do_upload(state, channel, local_path, remote_path_cl, target)
-        :ssh_sftp.stop_channel(channel)
-        result
+  # SCPs the local binary to the remote path.
+  defp scp_binary(ssh_target, local_path, remote_path) do
+    cmd = "scp #{local_path} #{ssh_target}:#{remote_path}"
 
-      {:error, reason} ->
-        {:error, reason, %{state | phase: :error, last_error: format_error(reason)}}
+    case run_cmd(cmd, @scp_timeout_ms) do
+      {:ok, _output, 0} -> :ok
+      {:ok, _output, status} -> {:error, {:scp_failed, status}}
+      :timeout -> {:error, {:scp_failed, :timeout}}
     end
   end
 
-  defp do_upload(state, channel, local_path, remote_path_cl, target) do
-    with {:ok, binary} <- File.read(local_path),
-         :ok <- :ssh_sftp.write_file(channel, remote_path_cl, binary),
-         :ok <- set_executable(channel, remote_path_cl) do
-      launch_daemon(state, target)
-    else
-      {:error, reason} ->
-        {:error, reason, %{state | phase: :error, last_error: format_error(reason)}}
+  # Sets the remote binary executable via `ssh <target> 'chmod +x <path>'`.
+  defp chmod_executable(ssh_target, remote_path) do
+    cmd = "ssh #{ssh_target} 'chmod +x #{remote_path}'"
+
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, _output, 0} -> :ok
+      {:ok, _output, status} -> {:error, {:chmod_failed, status}}
+      :timeout -> {:error, {:chmod_failed, :timeout}}
     end
   end
 
-  # Sets the remote file permissions to 0o755 by reading the existing
-  # file_info record and replacing the permission bits while preserving the
-  # file-type bits.
-  defp set_executable(channel, remote_path_cl) do
-    case :ssh_sftp.read_file_info(channel, remote_path_cl) do
-      {:ok, info} ->
-        # The :file_info tuple is {:file_info, size, type, access, atime, mtime,
-        # ctime, mode, links, major_device, minor_device, inode, uid, gid}.
-        # Index 7 is the mode. Preserve type bits (0o777000), set perms to 0o755.
-        old_mode = elem(info, 7)
-        new_mode = (old_mode &&& 0o777000) ||| 0o755
-        new_info = put_elem(info, 7, new_mode)
-        :ssh_sftp.write_file_info(channel, remote_path_cl, new_info)
+  # Detects the remote OS via `ssh <target> 'uname -s'`.
+  # Returns {:ok, "Linux"} or {:ok, "Darwin"} or {:error, :unsupported_os, os}.
+  defp detect_os(ssh_target) do
+    cmd = "ssh #{ssh_target} 'uname -s'"
 
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, output, 0} ->
+        os = String.trim(output)
 
-  # Launches the remote daemon via `systemd-run --user`. This is fire-and-forget:
-  # systemd-run returns once the unit is queued. We do a short receive to check
-  # for immediate failure, then succeed.
-  defp launch_daemon(state, target) do
-    cmd = build_launch_command(target)
-    port = Port.open({:spawn, cmd}, [:binary, :exit_status, :stream])
+        cond do
+          os == "Linux" -> {:ok, "Linux"}
+          os == "Darwin" -> {:ok, "Darwin"}
+          true -> {:error, {:unsupported_os, os}}
+        end
 
-    case drain_port_exit(port, @launch_receive_timeout_ms) do
-      {:ok, 0} ->
-        EvoGit.RemoteConnections.touch(target.id)
-        {:ok, %{state | bootstrap_port: nil}}
-
-      {:ok, status} ->
-        reason = {:daemon_launch_failed, status}
-        {:error, reason, %{state | phase: :error, last_error: format_error(reason)}}
+      {:ok, _output, status} ->
+        {:error, {:unsupported_os, {:exit_status, status}}}
 
       :timeout ->
+        {:error, {:unsupported_os, :timeout}}
+    end
+  end
+
+  # Checks if the daemon is already running; starts it only if not.
+  defp maybe_start_daemon(ssh_target, remote_path, os) do
+    if daemon_running?(ssh_target, os) do
+      :ok
+    else
+      start_daemon(ssh_target, remote_path, os)
+    end
+  end
+
+  # Checks if the genesis-remote daemon is already running on the remote.
+  defp daemon_running?(ssh_target, "Linux") do
+    cmd = "ssh #{ssh_target} 'systemctl --user is-active genesis-remote 2>/dev/null'"
+
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, output, _status} -> String.trim(output) == "active"
+      :timeout -> false
+    end
+  end
+
+  defp daemon_running?(ssh_target, "Darwin") do
+    cmd = "ssh #{ssh_target} 'launchctl list com.genesis.remote 2>/dev/null'"
+
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, output, _status} -> String.trim(output) != ""
+      :timeout -> false
+    end
+  end
+
+  # Starts the daemon on the remote.
+  # Linux: systemd-run --user --unit=genesis-remote <remote_path> start
+  # macOS: write launchd plist, scp it, load it via launchctl.
+  defp start_daemon(ssh_target, remote_path, "Linux") do
+    cmd = "ssh #{ssh_target} 'systemd-run --user --unit=genesis-remote #{remote_path} start'"
+
+    case run_cmd(cmd, @launch_receive_timeout_ms) do
+      {:ok, _output, 0} -> :ok
+      {:ok, _output, status} -> {:error, {:daemon_launch_failed, status}}
+      :timeout ->
         # systemd-run may keep the SSH channel open; assume success.
-        close_port(port)
-        EvoGit.RemoteConnections.touch(target.id)
-        {:ok, %{state | bootstrap_port: nil}}
+        :ok
+    end
+  end
+
+  defp start_daemon(ssh_target, remote_path, "Darwin") do
+    plist_path = write_launchd_plist(remote_path)
+
+    if plist_path == nil do
+      {:error, {:daemon_launch_failed, :plist_write_failed}}
+    else
+      result = deploy_launchd_plist(ssh_target, plist_path)
+      File.rm(plist_path)
+      result
+    end
+  end
+
+  # Writes the launchd plist to a local temp file. Returns the path or nil.
+  defp write_launchd_plist(remote_path) do
+    plist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>Label</key>
+        <string>com.genesis.remote</string>
+        <key>ProgramArguments</key>
+        <array>
+            <string>#{remote_path}</string>
+            <string>start</string>
+        </array>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <true/>
+    </dict>
+    </plist>
+    """
+
+    tmp_path = Path.join(System.tmp_dir!(), "genesis-remote-plist-#{System.unique_integer([:positive])}.plist")
+
+    case File.write(tmp_path, plist) do
+      :ok -> tmp_path
+      {:error, _reason} -> nil
+    end
+  end
+
+  # SCPs the plist to ~/Library/LaunchAgents/ and loads it via launchctl.
+  defp deploy_launchd_plist(ssh_target, plist_path) do
+    remote_plist = "~/Library/LaunchAgents/com.genesis.remote.plist"
+
+    scp_cmd = "scp #{plist_path} #{ssh_target}:#{remote_plist}"
+
+    with {:ok, _output, 0} <- run_cmd(scp_cmd, @scp_timeout_ms) do
+      load_cmd =
+        "ssh #{ssh_target} 'launchctl unload #{remote_plist} 2>/dev/null; launchctl load #{remote_plist}'"
+
+      case run_cmd(load_cmd, @cmd_timeout_ms) do
+        {:ok, _output, 0} -> :ok
+        {:ok, _output, status} -> {:error, {:daemon_launch_failed, status}}
+        :timeout -> {:error, {:daemon_launch_failed, :timeout}}
+      end
+    else
+      {:ok, _output, status} -> {:error, {:daemon_launch_failed, {:scp_plist, status}}}
+      :timeout -> {:error, {:daemon_launch_failed, {:scp_plist, :timeout}}}
     end
   end
 
@@ -442,7 +537,6 @@ defmodule EvoGit.RemoteConnection do
     cancel_heartbeat(state.heartbeat_ref)
     disconnect_node(state.node)
     close_port(state.ssh_tunnel_port)
-    close_port(state.bootstrap_port)
 
     broadcast_status(state.target, %{state | phase: :disconnected})
 
@@ -450,16 +544,43 @@ defmodule EvoGit.RemoteConnection do
       state
       | phase: :disconnected,
         ssh_tunnel_port: nil,
-        heartbeat_ref: nil,
-        bootstrap_port: nil
+        heartbeat_ref: nil
     }
+  end
+
+  # ── Command runner ─────────────────────────────────────────────────
+
+  # Runs a command via Port.open and collects stdout output, waiting for the
+  # exit status. Returns {:ok, output, exit_status} or :timeout.
+  #
+  # The port is linked to this process (trap_exit is set in init/1), but we
+  # explicitly receive data and exit_status messages rather than relying on
+  # EXIT messages, so we can collect stdout.
+  defp run_cmd(cmd, timeout) do
+    port = Port.open({:spawn, cmd}, [:binary, :exit_status, :stream])
+    collect_port_output(port, timeout, "")
+  end
+
+  defp collect_port_output(port, timeout, acc) do
+    receive do
+      {^port, {:data, data}} ->
+        collect_port_output(port, timeout, acc <> data)
+
+      {^port, {:exit_status, status}} ->
+        close_port(port)
+        {:ok, acc, status}
+    after
+      timeout ->
+        close_port(port)
+        :timeout
+    end
   end
 
   # ── Command builders ───────────────────────────────────────────────
 
   defp build_tunnel_command(target) do
     dist_port = Map.get(target, :dist_port) || 9000
-    ssh_port = Map.get(target, :port) || 22
+    ssh_target = target.ssh_target
 
     parts =
       [
@@ -468,48 +589,10 @@ defmodule EvoGit.RemoteConnection do
         "-N",
         "-o ServerAliveInterval=30",
         "-o ServerAliveCountMax=3",
-        identity_flag(target),
-        "-p #{ssh_port}",
-        user_host(target)
+        ssh_target
       ]
-      |> Enum.reject(&(&1 == ""))
 
     Enum.join(parts, " ")
-  end
-
-  defp build_launch_command(target) do
-    remote_path = Map.get(target, :remote_path) || "/tmp/genesis_engine"
-    ssh_port = Map.get(target, :port) || 22
-
-    parts =
-      [
-        "ssh",
-        identity_flag(target),
-        "-p #{ssh_port}",
-        user_host(target),
-        "'systemd-run --user --unit=genesis-remote #{remote_path} start'"
-      ]
-      |> Enum.reject(&(&1 == ""))
-
-    Enum.join(parts, " ")
-  end
-
-  defp build_ssh_opts(target) do
-    base = [silently_accept_hosts: true, user_interaction: false]
-
-    base =
-      case Map.get(target, :user) do
-        user when is_binary(user) and user != "" -> [{:user, String.to_charlist(user)} | base]
-        _ -> base
-      end
-
-    case Map.get(target, :identity_file) do
-      path when is_binary(path) and path != "" ->
-        [{:identity, String.to_charlist(path)} | base]
-
-      _ ->
-        base
-    end
   end
 
   # ── Helpers ────────────────────────────────────────────────────────
@@ -587,32 +670,6 @@ defmodule EvoGit.RemoteConnection do
     end
 
     :ok
-  end
-
-  # Drains the exit_status message from a port with a timeout.
-  # Returns {:ok, status} or :timeout.
-  defp drain_port_exit(port, timeout) do
-    receive do
-      {^port, {:exit_status, status}} -> {:ok, status}
-    after
-      timeout -> :timeout
-    end
-  end
-
-  defp identity_flag(target) do
-    case Map.get(target, :identity_file) do
-      path when is_binary(path) and path != "" -> "-i #{path}"
-      _ -> ""
-    end
-  end
-
-  defp user_host(target) do
-    host = Map.get(target, :host)
-
-    case Map.get(target, :user) do
-      user when is_binary(user) and user != "" -> "#{user}@#{host}"
-      _ -> host
-    end
   end
 
   defp format_error(reason) do

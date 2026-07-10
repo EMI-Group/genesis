@@ -14,14 +14,12 @@ defmodule EvoGit.RemoteConnections do
 
   | Field | Type | Required | Default | Description |
   |---|---|---|---|---|
-  | `id` | string | no | auto-generated | Unique identifier (slugified from host/user) |
-  | `name` | string | no | `host` | Display name |
-  | `host` | string | **yes** | — | SSH host (`user@example.com` or `example.com`) |
-  | `user` | string | no | extracted from host | SSH user |
-  | `port` | integer | no | `22` | SSH port |
+  | `id` | string | no | auto-generated | Unique identifier (slugified from name/ssh_target, max 40 chars) |
+  | `name` | string | no | `ssh_target` | Display name |
+  | `ssh_target` | string | **yes** | — | The SSH host string (e.g. `gpu-server`, `user@192.168.1.10`) — just what you'd type after `ssh`. Port/keys handled by `~/.ssh/config` |
+  | `local_binary_path` | string | **yes** | — | Path to local `genesis_remote` binary to upload (e.g. `burrito_out/genesis_remote_linux_x64`) |
   | `dist_port` | integer | no | `9000` | Erlang distribution port for tunneling |
-  | `identity_file` | string | no | `nil` | Path to SSH key |
-  | `remote_path` | string | no | `/tmp/genesis_engine` | Where to place the binary on the remote |
+  | `remote_path` | string | no | `/tmp/genesis_remote` | Where to place the binary on the remote |
   | `last_connected` | string | no | `nil` | ISO8601 timestamp of last successful connection |
 
   Connection maps use **atom keys** internally; keys are stringified only when
@@ -30,20 +28,17 @@ defmodule EvoGit.RemoteConnections do
 
   @config_filename "remote_connections.toml"
 
-  @default_port 22
   @default_dist_port 9000
-  @default_remote_path "/tmp/genesis_engine"
+  @default_remote_path "/tmp/genesis_remote"
 
   # Maps TOML string keys to atoms for the known connection schema. Unknown
   # keys are left as strings so we never raise on unexpected data.
   @key_map %{
     "id" => :id,
     "name" => :name,
-    "host" => :host,
-    "user" => :user,
-    "port" => :port,
+    "ssh_target" => :ssh_target,
+    "local_binary_path" => :local_binary_path,
     "dist_port" => :dist_port,
-    "identity_file" => :identity_file,
     "remote_path" => :remote_path,
     "last_connected" => :last_connected
   }
@@ -90,15 +85,13 @@ defmodule EvoGit.RemoteConnections do
   @doc """
   Saves a connection target, creating or updating it.
 
-  Validates that `:host` is present and non-empty. When missing, returns
-  `{:error, :missing_host}`. Otherwise:
+  Validates that `:ssh_target` is present and non-empty. When missing, returns
+  `{:error, :missing_ssh_target}`. Otherwise:
 
-    * extracts `:user` from `host` when `host` contains `@` and no `:user`
-      is provided,
-    * auto-generates `:id` (slugified from host/user) when missing,
-    * defaults `:name` to `host` when missing,
-    * applies defaults for `:port` (22), `:dist_port` (9000), and
-      `:remote_path` (`/tmp/genesis_engine`) when absent.
+    * auto-generates `:id` (slugified from name/ssh_target) when missing,
+    * defaults `:name` to `ssh_target` when missing,
+    * applies defaults for `:dist_port` (9000) and `:remote_path`
+      (`/tmp/genesis_remote`) when absent.
 
   If an existing connection shares the same id it is updated; otherwise the
   connection is appended. Returns `{:ok, target}` on success.
@@ -106,14 +99,19 @@ defmodule EvoGit.RemoteConnections do
   @spec save(map()) :: {:ok, map()} | {:error, term()}
   def save(target) when is_map(target) do
     conn = atomize_connection(target)
-    host = Map.get(conn, :host)
+
+    # Backward compatibility: migrate old host/user fields to ssh_target.
+    conn = migrate_old_fields(conn)
+
+    ssh_target = Map.get(conn, :ssh_target)
 
     cond do
-      is_nil(host) or host == "" ->
-        {:error, :missing_host}
+      is_nil(ssh_target) or ssh_target == "" ->
+        {:error, :missing_ssh_target}
 
       true ->
-        normalized = normalize_target(conn, host)
+        normalized = normalize_target(conn)
+
         connections = list()
 
         updated_connections =
@@ -184,32 +182,52 @@ defmodule EvoGit.RemoteConnections do
     Path.join(EvoGit.Config.config_dir(), @config_filename)
   end
 
+  # Backward compatibility: if a loaded/saved target has the old `host` field
+  # but no `ssh_target`, construct `ssh_target` from the old fields.
+  # If `user` is present → "user@host", else just "host".
+  # Old `port` and `identity_file` are ignored (user should configure these
+  # in ~/.ssh/config).
+  defp migrate_old_fields(conn) do
+    ssh_target = Map.get(conn, :ssh_target)
+    host = Map.get(conn, :host)
+
+    if (is_nil(ssh_target) or ssh_target == "") and is_binary(host) and host != "" do
+      user = Map.get(conn, :user)
+
+      constructed =
+        case user do
+          u when is_binary(u) and u != "" -> "#{u}@#{host}"
+          _ -> host
+        end
+
+      conn
+      |> Map.put(:ssh_target, constructed)
+      |> Map.delete(:host)
+      |> Map.delete(:user)
+      |> Map.delete(:port)
+      |> Map.delete(:identity_file)
+    else
+      # Drop old fields if ssh_target is already present.
+      conn
+      |> Map.delete(:host)
+      |> Map.delete(:user)
+      |> Map.delete(:port)
+      |> Map.delete(:identity_file)
+    end
+  end
+
   # Normalizes a raw connection map into a fully-populated target with all
-  # defaults applied. `host` is the already-extracted host value.
-  defp normalize_target(conn, host) do
-    user =
-      case Map.get(conn, :user) do
-        nil -> extract_user_from_host(host)
-        "" -> extract_user_from_host(host)
-        user -> user
-      end
-
-    # Look up SSH config for auto-population of user, port, identity_file.
-    # SSH config values only fill in when the field is nil/empty.
-    ssh_conf = EvoGit.SSHConfig.lookup(host)
-
-    resolved_user = user || Map.get(ssh_conf, :user)
-    resolved_port = get_or_default(conn, :port, Map.get(ssh_conf, :port) || @default_port)
-    resolved_identity_file = Map.get(conn, :identity_file) || Map.get(ssh_conf, :identity_file)
+  # defaults applied.
+  defp normalize_target(conn) do
+    ssh_target = Map.get(conn, :ssh_target)
+    name = Map.get(conn, :name) || ssh_target
 
     %{
-      id: Map.get(conn, :id) || slugify_host(host, resolved_user),
-      name: Map.get(conn, :name) || host,
-      host: host,
-      user: resolved_user,
-      port: resolved_port,
+      id: Map.get(conn, :id) || slugify(name),
+      name: name,
+      ssh_target: ssh_target,
+      local_binary_path: Map.get(conn, :local_binary_path),
       dist_port: get_or_default(conn, :dist_port, @default_dist_port),
-      identity_file: resolved_identity_file,
       remote_path: get_or_default(conn, :remote_path, @default_remote_path),
       last_connected: Map.get(conn, :last_connected)
     }
@@ -222,21 +240,6 @@ defmodule EvoGit.RemoteConnections do
       value -> value
     end
   end
-
-  # Extracts the SSH user from a "user@host" style string. Returns nil when
-  # the host has no `@`.
-  defp extract_user_from_host(host) do
-    case String.split(host, "@", parts: 2) do
-      [user, _host] -> user
-      [_host] -> nil
-    end
-  end
-
-  # Builds a slug id from the host (and optional user), joining them and
-  # slugifying. Modeled on `slugify_domain/1` in ConceptExpander.
-  defp slugify_host(host, nil), do: slugify(host)
-  defp slugify_host(host, ""), do: slugify(host)
-  defp slugify_host(host, user), do: slugify("#{host}-#{user}")
 
   defp slugify(str) do
     str
