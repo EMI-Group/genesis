@@ -186,10 +186,14 @@ defmodule EvoDashWeb.SettingsComponents do
 
                     <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
                     <% shortcut_prefill_base_url =
-                      if is_map(current_model) do
-                        to_string(current_model[:base_url] || current_model["base_url"] || "")
-                      else
-                        ""
+                      cond do
+                        is_map(current_model) ->
+                          to_string(current_model[:base_url] || current_model["base_url"] || "")
+                        is_tuple(current_model) and tuple_size(current_model) == 2 ->
+                          opts = elem(current_model, 1)
+                          if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
+                        true ->
+                          ""
                       end %>
                     <div class="form-control">
                       <label class="label">
@@ -227,21 +231,29 @@ defmodule EvoDashWeb.SettingsComponents do
                   <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
                   <%!-- Pre-fill helpers: read the current flat model for the selected provider --%>
                   <% custom_prefill_id =
-                    if is_map(current_model) do
-                      to_string(current_model[:id] || current_model["id"] || "")
-                    else
-                      if is_binary(current_model) and String.contains?(current_model, ":") do
+                    cond do
+                      is_map(current_model) ->
+                        to_string(current_model[:id] || current_model["id"] || "")
+                      is_tuple(current_model) and tuple_size(current_model) == 2 ->
+                        opts = elem(current_model, 1)
+                        if is_list(opts), do: to_string(Keyword.get(opts, :id, "")), else: ""
+                      is_binary(current_model) and String.contains?(current_model, ":") ->
                         [_provider, id] = :binary.split(current_model, ":")
                         id
-                      else
-                        if is_binary(current_model), do: current_model, else: ""
-                      end
+                      is_binary(current_model) ->
+                        current_model
+                      true ->
+                        ""
                     end %>
                   <% custom_prefill_base_url =
-                    if is_map(current_model) do
-                      to_string(current_model[:base_url] || current_model["base_url"] || "")
-                    else
-                      ""
+                    cond do
+                      is_map(current_model) ->
+                        to_string(current_model[:base_url] || current_model["base_url"] || "")
+                      is_tuple(current_model) and tuple_size(current_model) == 2 ->
+                        opts = elem(current_model, 1)
+                        if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
+                      true ->
+                        ""
                     end %>
                   <form phx-submit="save_custom_model" class="mb-5 space-y-4">
                     <input type="hidden" name="provider_id" value={@selected_provider_id} />

@@ -216,11 +216,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "provider_id" => "openrouter"
         })
 
-      # The model is persisted as a ReqLLM-native map spec (normalized to a map
-      # with atom provider after config resolve/reload).
+      # The model is persisted and normalized via config resolve: simple maps
+      # (provider + id only) become "provider:id" strings.
       models = current_models(view)
       assert length(models) == 1
-      assert hd(models).model == %{provider: :openrouter, id: "anthropic/claude-3.5-sonnet"}
+      assert hd(models).model == "openrouter:anthropic/claude-3.5-sonnet"
       # After saving, the re-rendered HTML pre-fills the model_id input from the map
       assert html =~ ~s(value="anthropic/claude-3.5-sonnet")
     end
@@ -241,12 +241,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ ~s(value="https://api.example.com/v1")
 
       # openai_compatible catalog entry resolves to the canonical :openai atom.
+      # With base_url, the model has overrides → normalized to a tuple.
       models = current_models(view)
-      assert hd(models).model == %{
-               provider: :openai,
-               id: "my-model",
-               base_url: "https://api.example.com/v1"
-             }
+      assert hd(models).model == {:openai, [id: "my-model", base_url: "https://api.example.com/v1"]}
     end
 
     test "rejects empty model name", %{conn: conn} do
@@ -484,7 +481,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Model profile saved."
       [profile] = current_models(view)
       assert profile.id == "default"
-      assert profile.model == %{provider: :anthropic, id: "claude-sonnet-4-6"}
+      assert profile.model == "anthropic:claude-sonnet-4-6"
       assert profile.concurrency == 5
       assert profile.temperature == 0.7
       assert profile.max_tokens == 4096
@@ -609,13 +606,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Model selected and saved."
       models = current_models(view)
       assert length(models) == 1
-      # After save + resolve, the model string is normalized to a map spec with
-      # an atom provider.
-      assert hd(models).model == %{provider: :anthropic, id: "claude-sonnet-4-6"}
+      # After save + resolve, the model string is normalized: simple models
+      # (no overrides) become "provider:id" strings.
+      assert hd(models).model == "anthropic:claude-sonnet-4-6"
       assert hd(models).concurrency == 3
-      # Flat [:llm, :model] mirrors the default profile (also normalized to map)
+      # Flat [:llm, :model] mirrors the default profile (also normalized to string)
       assert get_in(assigns(view).file_config, [:llm, :model]) ==
-               %{provider: :anthropic, id: "claude-sonnet-4-6"}
+               "anthropic:claude-sonnet-4-6"
     end
 
     test "save_custom_model adds a profile for OpenRouter", %{conn: conn} do
@@ -630,7 +627,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Custom model saved."
       models = current_models(view)
       assert length(models) == 1
-      assert hd(models).model == %{provider: :openrouter, id: "anthropic/claude-3.5-sonnet"}
+      assert hd(models).model == "openrouter:anthropic/claude-3.5-sonnet"
     end
 
     test "save_model_profile composes map spec with provider, id, and base_url", %{conn: conn} do
@@ -649,7 +646,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Model profile saved."
       [profile] = current_models(view)
-      assert profile.model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+      assert profile.model == {:openai, [id: "gpt-4o", base_url: "https://my-proxy.com/v1"]}
     end
 
     test "save_model_profile rejects empty model id", %{conn: conn} do
@@ -682,7 +679,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Custom model saved."
       models = current_models(view)
-      assert hd(models).model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+      assert hd(models).model == {:openai, [id: "gpt-4o", base_url: "https://my-proxy.com/v1"]}
     end
 
     test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do

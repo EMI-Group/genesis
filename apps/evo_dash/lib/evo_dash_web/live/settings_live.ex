@@ -1289,11 +1289,18 @@ defmodule EvoDashWeb.SettingsLive do
   # ───────────────────────────────────────────────────────────────────────────
 
   # Composes a model string like "provider:id" from a profile's :model field.
-  # Handles both map specs (%{provider: a, id: s}) and legacy binary strings.
+  # Handles map specs (%{provider: a, id: s}), tuples ({:provider, opts}),
+  # and legacy binary strings.
   defp profile_model_string(%{model: model}) when is_map(model) do
     provider = model[:provider] || model["provider"]
     id = model[:id] || model["id"]
     if provider && id, do: "#{provider}:#{id}"
+  end
+
+  defp profile_model_string(%{model: {provider, opts}})
+       when is_atom(provider) and is_list(opts) do
+    id = Keyword.get(opts, :id)
+    if id && id != "", do: "#{provider}:#{id}"
   end
 
   defp profile_model_string(%{model: model}) when is_binary(model) and model != "", do: model

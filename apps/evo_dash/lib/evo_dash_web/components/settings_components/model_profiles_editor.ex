@@ -438,6 +438,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     end
   end
 
+  defp model_model_fields({provider, opts}) when is_atom(provider) and is_list(opts) do
+    provider_str = to_string(provider)
+    id_str = Keyword.get(opts, :id, "") |> to_string()
+    base_url_str = Keyword.get(opts, :base_url, "") |> to_string()
+    {provider_str, id_str, base_url_str}
+  end
+
   # Builds a compact summary string of generation params, e.g.
   # "temp: 0.7, max_tokens: 4096". Returns nil if no params are set.
   defp profile_params_summary(profile) when is_map(profile) do
