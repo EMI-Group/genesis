@@ -38,7 +38,7 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="conversation"
-        class={["review-tab rounded-md px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :conversation && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :conversation && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
         {gettext("Conversation")}
@@ -46,30 +46,30 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="commits"
-        class={["review-tab rounded-md px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :commits && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :commits && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-clock" class="size-4 mr-2" />
         <%!-- zh_CN: Commit → "提交" --%>{gettext("Commits")}
-        <span class="badge badge-sm badge-ghost rounded-md ml-2">{@commits_count}</span>
+        <span class="badge badge-sm badge-ghost ml-2">{@commits_count}</span>
       </button>
       <button
         phx-click="switch_tab"
         phx-value-tab="files_changed"
-        class={["review-tab rounded-md px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :files_changed && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :files_changed && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
         <.icon name="hero-code-bracket" class="size-4 mr-2" />
         {gettext("Files Changed")}
-        <span class="badge badge-sm badge-ghost rounded-md ml-2">{@files_count}</span>
+        <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
       </button>
       <%= if @show_archive do %>
         <button
           phx-click="switch_tab"
           phx-value-tab="archive"
-          class={["review-tab rounded-md px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :archive && "bg-base-200 text-base-content shadow-sm ring-1 ring-base-content/5" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+          class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :archive && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
         >
           <.icon name="hero-archive-box-arrow-down" class="size-4 mr-2" />
           {gettext("Archive")}
-          <span class="badge badge-sm badge-ghost rounded-md ml-2">{@agents_count}</span>
+          <span class="badge badge-sm badge-ghost ml-2">{@agents_count}</span>
         </button>
       <% end %>
     </div>
@@ -89,7 +89,7 @@ defmodule EvoDashWeb.ReviewComponents do
     assigns = assign(assigns, :archive_tree, tree)
 
     ~H"""
-    <div class="bg-base-100 rounded-lg shadow-sm border border-base-200/60 overflow-hidden">
+    <div class="bg-base-100 border border-base-200 ">
       <!-- Header -->
       <div class="flex items-center justify-between gap-3 p-5 md:p-6 border-b border-base-200/50 bg-base-200/20">
         <div class="flex items-center gap-3">
@@ -97,7 +97,7 @@ defmodule EvoDashWeb.ReviewComponents do
           <%!-- zh_CN: Agent → "智能体" --%><h3 class="font-semibold text-base">{gettext("Archived Agent Details")}</h3>
         </div>
         <%= if @task_id do %>
-          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary rounded-md gap-2" download>
+          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary gap-2" download>
             <.icon name="hero-arrow-down-tray" class="size-4" />
             {gettext("Export JSON")}
           </.link>
@@ -120,7 +120,7 @@ defmodule EvoDashWeb.ReviewComponents do
   def archive_tree_node(assigns) do
     ~H"""
     <div class="ml-0">
-      <div class="bg-base-200/30 rounded-lg border border-base-200/60 p-4 sm:p-5">
+      <div class="bg-base-200/30 border border-base-200/60 p-4 sm:p-5">
         <!-- Agent header -->
         <div class="flex flex-wrap items-center gap-2 mb-3">
           <span class="font-mono font-bold text-sm text-base-content">{@agent[:agent_id]}</span>
@@ -200,19 +200,19 @@ defmodule EvoDashWeb.ReviewComponents do
         <!-- Token usage -->
         <%= if @agent[:usage] do %>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-            <div class="bg-base-200/40 rounded-xl p-2.5 text-center">
+            <div class="bg-base-200/40 p-2.5 text-center">
               <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Input Tokens")}</p>
               <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:input_tokens] || 0)}</p>
             </div>
-            <div class="bg-base-200/40 rounded-xl p-2.5 text-center">
+            <div class="bg-base-200/40 p-2.5 text-center">
               <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Output Tokens")}</p>
               <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:output_tokens] || 0)}</p>
             </div>
-            <div class="bg-base-200/40 rounded-xl p-2.5 text-center">
+            <div class="bg-base-200/40 p-2.5 text-center">
               <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Total Tokens")}</p>
               <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:total_tokens] || 0)}</p>
             </div>
-            <div class="bg-base-200/40 rounded-xl p-2.5 text-center">
+            <div class="bg-base-200/40 p-2.5 text-center">
               <p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Cost")}</p>
               <p class="text-sm font-mono font-semibold text-base-content/80">${format_cost(@agent[:usage][:cost])}</p>
             </div>

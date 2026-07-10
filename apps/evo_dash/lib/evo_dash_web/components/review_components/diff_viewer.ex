@@ -151,14 +151,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   def commit_detail_header(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-200 bg-base-100 overflow-hidden">
+    <div class="border-y border-base-200 bg-base-100 ">
       <div class="p-4">
         <div class="flex items-start gap-3">
           <.icon name="hero-code-bracket-square" class="size-5 text-base-content/50 shrink-0 mt-0.5" />
           <div class="flex-1 min-w-0">
             <h1 class="text-lg font-bold leading-tight">{@commit.message}</h1>
             <div class="flex flex-wrap items-center gap-2 mt-2">
-              <span class="badge badge-sm badge-ghost rounded-md px-2 py-1.5 font-mono">
+              <span class="badge badge-sm badge-ghost px-2 py-1.5 font-mono">
                 <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" />
                 {String.slice(@commit.sha, 0..7)}
               </span>
@@ -206,9 +206,16 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     # gives Tree-sitter full context; fall back to hunk-level highlighting when
     # full content is unavailable.
     lines = if file.diff, do: parse_diff_lines(file), else: []
+
     highlighted =
       if file.diff,
-        do: precompute_highlights(lines, file.language, file.full_new_content, file.full_old_content),
+        do:
+          precompute_highlights(
+            lines,
+            file.language,
+            file.full_new_content,
+            file.full_old_content
+          ),
         else: %{}
 
     # Group lines into segments: pre-hunk lines (meta/header) and hunk blocks.
@@ -391,11 +398,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       Enum.reduce(hunk_body, state, fn
         %{type: :context} = line, {acc, old_num, new_num, old_buf, new_buf} ->
           {flushed, o_num, n_num} = flush_buffers(old_buf, new_buf, old_num, new_num, acc)
+
           pair = %{
             left: %{line: line, line_num: o_num},
             right: %{line: line, line_num: n_num},
             type: :context
           }
+
           {flushed ++ [pair], o_num + 1, n_num + 1, [], []}
 
         %{type: :deletion} = line, {acc, old_num, new_num, old_buf, new_buf} ->
@@ -406,11 +415,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
         %{type: :no_newline} = line, {acc, old_num, new_num, old_buf, new_buf} ->
           {flushed, o_num, n_num} = flush_buffers(old_buf, new_buf, old_num, new_num, acc)
+
           pair = %{
             left: %{line: line, line_num: nil},
             right: %{line: line, line_num: nil},
             type: :no_newline
           }
+
           {flushed ++ [pair], o_num, n_num, [], []}
 
         _line, acc ->
@@ -672,21 +683,60 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         # final result. Both offsets advance (the line exists in both sides).
         line_num = new_start + new_off
         hl = lookup_highlight(new_hl, line_num) || line.content
-        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off + 1, new_off + 1)
+
+        map_hunk_body(
+          rest,
+          new_hl,
+          old_hl,
+          Map.put(acc, line.line_number, raw(hl)),
+          old_start,
+          new_start,
+          old_off + 1,
+          new_off + 1
+        )
 
       :addition ->
         line_num = new_start + new_off
         hl = lookup_highlight(new_hl, line_num) || line.content
-        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off, new_off + 1)
+
+        map_hunk_body(
+          rest,
+          new_hl,
+          old_hl,
+          Map.put(acc, line.line_number, raw(hl)),
+          old_start,
+          new_start,
+          old_off,
+          new_off + 1
+        )
 
       :deletion ->
         line_num = old_start + old_off
         hl = lookup_highlight(old_hl, line_num) || line.content
-        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, raw(hl)), old_start, new_start, old_off + 1, new_off)
+
+        map_hunk_body(
+          rest,
+          new_hl,
+          old_hl,
+          Map.put(acc, line.line_number, raw(hl)),
+          old_start,
+          new_start,
+          old_off + 1,
+          new_off
+        )
 
       _ ->
         # no_newline / header / meta — plain text, don't advance code offsets.
-        map_hunk_body(rest, new_hl, old_hl, Map.put(acc, line.line_number, line.content), old_start, new_start, old_off, new_off)
+        map_hunk_body(
+          rest,
+          new_hl,
+          old_hl,
+          Map.put(acc, line.line_number, line.content),
+          old_start,
+          new_start,
+          old_off,
+          new_off
+        )
     end
   end
 

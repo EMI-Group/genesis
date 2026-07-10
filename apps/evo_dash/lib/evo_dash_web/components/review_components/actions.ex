@@ -15,7 +15,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
 
   def action_buttons(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-lg shadow-sm border border-base-200/60 p-5 md:p-6">
+    <div class="bg-base-100 border-b border-base-200 p-5 md:p-6">
       <div class="flex items-center gap-3 mb-5">
         <.icon name="hero-hand-raised" class="size-5 text-base-content/60" />
         <h3 class="font-semibold text-base">{gettext("Actions")}</h3>

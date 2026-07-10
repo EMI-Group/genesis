@@ -576,7 +576,7 @@ button, a, input, textarea, select, summary,
 
 /* Unified review card — tab bar + content as one visual box */
 .review-card {
-  @apply rounded-3xl shadow-sm border border-base-200/60 overflow-hidden bg-base-100;
+  @apply border-y border-base-200  bg-base-100;
 }
 
 /* Tab bar section — top portion of the card */
@@ -798,14 +798,8 @@ button, a, input, textarea, select, summary,
 
 .diff-split-table {
   display: grid;
-  /* Fixed-width gutters + content columns that size to the longest line
-     (max-content). width: max-content lets the whole table grow beyond the
-     container -- the parent overflow-x-auto handles horizontal scrolling so
-     old/new columns stay aligned row-by-row. min-width: 100% prevents the
-     table from being narrower than the viewport for short diffs. */
-  grid-template-columns: 50px minmax(100px, max-content) 50px minmax(100px, max-content);
-  width: max-content;
-  min-width: 100%;
+  grid-template-columns: 50px calc(50% - 50px) 50px calc(50% - 50px);
+  width: 100%;
   font-family: monospace;
   font-size: 12px;
 }
@@ -826,7 +820,8 @@ button, a, input, textarea, select, summary,
 }
 
 .diff-split-cell {
-  white-space: pre;
+  white-space: pre-wrap;
+  word-break: break-all;
   padding: 0 8px;
   line-height: 20px;
   min-height: 20px;
@@ -860,7 +855,8 @@ button, a, input, textarea, select, summary,
   padding: 0 8px;
   line-height: 20px;
   font-size: 12px;
-  white-space: pre;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* Expand bar spans all columns in split view */
@@ -874,7 +870,8 @@ button, a, input, textarea, select, summary,
   grid-column: 1 / -1;
   padding: 0 8px;
   line-height: 20px;
-  white-space: pre;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 .diff-split-pre-hunk.diff-line-meta {
   color: oklch(0.5 0 0 / 0.3);

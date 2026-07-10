@@ -16,7 +16,7 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
 
   def diff_stats_bar(assigns) do
     ~H"""
-    <div class="bg-base-100 rounded-lg shadow-sm border border-base-200/60 px-5 py-4 md:px-6 md:py-4">
+    <div class="bg-base-100 border-b border-base-200 px-5 py-4 md:px-6 md:py-4">
       <div class="flex items-center gap-4 flex-wrap text-sm">
         <div class="flex items-center gap-2.5">
           <.icon name="hero-document-text" class="size-4.5 text-base-content/50" />
