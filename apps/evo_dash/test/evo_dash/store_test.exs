@@ -767,6 +767,25 @@ defmodule EvoDash.StoreTest do
       assert Enum.all?(ids, &String.starts_with?(&1, "a-"))
     end
 
+    test "project path filter treats underscores literally (LIKE wildcard escaping)" do
+      # Two paths that differ only by the underscore position: `/tmp/proj_a`
+      # vs `/tmp/projXa`. Without LIKE escaping, the `_` in the filter would
+      # act as a single-char wildcard and match BOTH rows.
+      insert_filtered!(0, id: "underscore-a", opts: [path: "/tmp/proj_a"])
+      insert_filtered!(1, id: "underscore-x", opts: [path: "/tmp/projXa"])
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [project_path: "/tmp/proj_a"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "underscore-a"
+    end
+
     test "search by id returns only matching tasks" do
       insert_filtered!(0, id: "search-aaa-001")
       insert_filtered!(1, id: "search-bbb-002")

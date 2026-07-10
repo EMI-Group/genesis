@@ -706,8 +706,10 @@ defmodule EvoDash.Store do
           {clauses, params, idx}
 
         path ->
-          pattern = "%" <> "\"path\",\"#{path}\"" <> "%"
-          {clauses ++ ["opts LIKE ?" <> Integer.to_string(idx)], params ++ [pattern], idx + 1}
+          pattern = "%" <> "\"path\",\"#{escape_like(path)}\"" <> "%"
+
+          {clauses ++ ["opts LIKE ?" <> Integer.to_string(idx) <> " ESCAPE '\\'"],
+           params ++ [pattern], idx + 1}
       end
 
     # review_status filter ("pending" is a composite of completed + null review + branch)
@@ -740,9 +742,9 @@ defmodule EvoDash.Store do
           {clauses, params, idx}
 
         search ->
-          pat = "%#{search}%"
-          c1 = "id LIKE ?" <> Integer.to_string(idx)
-          c2 = "opts LIKE ?" <> Integer.to_string(idx + 1)
+          pat = "%#{escape_like(search)}%"
+          c1 = "id LIKE ?" <> Integer.to_string(idx) <> " ESCAPE '\\'"
+          c2 = "opts LIKE ?" <> Integer.to_string(idx + 1) <> " ESCAPE '\\'"
           {clauses ++ ["(#{c1} OR #{c2})"], params ++ [pat, pat], idx + 2}
       end
 
@@ -750,6 +752,17 @@ defmodule EvoDash.Store do
       [] -> {"", []}
       _ -> {" WHERE " <> Enum.join(clauses, " AND "), params}
     end
+  end
+
+  # Escapes the SQL LIKE-special characters (`%`, `_`, `\`) by prefixing them
+  # with a backslash. Used together with `ESCAPE '\'` on LIKE clauses so that
+  # user-supplied values (e.g. project paths containing underscores) are matched
+  # literally instead of being interpreted as wildcards.
+  defp escape_like(value) do
+    value
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
   end
 
   ## Private — Safe select (quarantine bad rows)
