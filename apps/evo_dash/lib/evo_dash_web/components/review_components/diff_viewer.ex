@@ -211,11 +211,15 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         do: precompute_highlights(lines, file.language, file.full_new_content, file.full_old_content),
         else: %{}
 
+    # Group lines into segments: pre-hunk lines (meta/header) and hunk blocks.
+    # Each hunk block becomes a list of split-view pairs.
+    segments = build_diff_segments(lines)
+
     assigns = %{
       file: file,
       file_path: file_path,
       context_level: context_level,
-      lines: lines,
+      segments: segments,
       highlighted: highlighted
     }
 
@@ -227,32 +231,239 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <span>{gettext("Loading diff...")}</span>
         </div>
       <% else %>
-        <% {hunk_starts, _} =
-          Enum.reduce(@lines, {[], 0}, fn line, {acc, idx} ->
-            if line.type == :hunk, do: {[idx | acc], idx + 1}, else: {acc, idx + 1}
-          end) %>
-        <% hunk_indices = Enum.reverse(hunk_starts) %>
-        <% show_top_expand = length(hunk_indices) > 0 %>
         <% show_bottom_expand = @context_level != :all %>
-        <%= if show_top_expand do %>
-          <.diff_expand_bar path={@file_path} context_level={@context_level} />
-        <% end %>
-        <%= for {line, i} <- Enum.with_index(@lines) do %>
-          <%= if i in hunk_indices and i > 0 do %>
+        <div class="diff-split-table">
+          <%= if length(@segments) > 0 and @context_level != :all do %>
             <.diff_expand_bar path={@file_path} context_level={@context_level} />
           <% end %>
-          <div class={["diff-line", diff_line_class(line.type)]}>
-            <span class="diff-line-gutter">{line.line_number}</span>
-            <span class={["diff-line-prefix", diff_prefix_color(line.type)]}>{line.prefix}</span>
-            <span class="diff-line-content" phx-no-format>{Map.get(@highlighted, line.line_number, line.content)}</span>
-          </div>
-        <% end %>
-        <%= if show_bottom_expand do %>
-          <.diff_expand_bar path={@file_path} context_level={@context_level} />
-        <% end %>
+          <%= for segment <- @segments do %>
+            <%= case segment do %>
+              <% {:pre_hunk, pre_lines} -> %>
+                <%= for line <- pre_lines do %>
+                  <div class={["diff-split-pre-hunk", diff_line_class(line.type)]}>
+                    <span class="diff-line-content" phx-no-format>{Map.get(@highlighted, line.line_number, line.content)}</span>
+                  </div>
+                <% end %>
+              <% {:hunk, hunk_line, pairs} -> %>
+                <div class="diff-split-hunk">
+                  <span class="diff-line-content" phx-no-format>{hunk_line.content}</span>
+                </div>
+                <%= for pair <- pairs do %>
+                  <.diff_split_row pair={pair} highlighted={@highlighted} />
+                <% end %>
+            <% end %>
+          <% end %>
+          <%= if show_bottom_expand do %>
+            <.diff_expand_bar path={@file_path} context_level={@context_level} />
+          <% end %>
+        </div>
       <% end %>
     </div>
     """
+  end
+
+  # A single row in the split-view diff. Renders 4 grid cells: old gutter,
+  # old content, new gutter, new content. Either side may be nil (blank).
+  attr(:pair, :map, required: true)
+  attr(:highlighted, :map, required: true)
+
+  defp diff_split_row(assigns) do
+    %{left: left, right: right, type: type} = assigns.pair
+
+    row_class =
+      case type do
+        :addition -> "diff-split-row diff-split-row-addition"
+        :deletion -> "diff-split-row diff-split-row-deletion"
+        :context -> "diff-split-row diff-split-row-context"
+        _ -> "diff-split-row"
+      end
+
+    left_num = if left, do: left.line_num, else: ""
+    right_num = if right, do: right.line_num, else: ""
+
+    left_content =
+      if left,
+        do: Map.get(assigns.highlighted, left.line.line_number, left.line.content),
+        else: ""
+
+    right_content =
+      if right,
+        do: Map.get(assigns.highlighted, right.line.line_number, right.line.content),
+        else: ""
+
+    assigns =
+      assigns
+      |> assign(:row_class, row_class)
+      |> assign(:left_num, left_num)
+      |> assign(:right_num, right_num)
+      |> assign(:left_content, left_content)
+      |> assign(:right_content, right_content)
+
+    ~H"""
+    <div class={@row_class}>
+      <span class="diff-split-gutter diff-split-gutter-left">{@left_num}</span>
+      <span class="diff-split-cell diff-split-cell-left" phx-no-format>{@left_content}</span>
+      <span class="diff-split-gutter diff-split-gutter-right">{@right_num}</span>
+      <span class="diff-split-cell diff-split-cell-right" phx-no-format>{@right_content}</span>
+    </div>
+    """
+  end
+
+  # Group parsed diff lines into segments for split-view rendering.
+  # Returns a list of:
+  #   {:pre_hunk, [lines]}  — meta/header lines before the first hunk
+  #   {:hunk, hunk_line, [pairs]} — a hunk header + its split-view pairs
+  #
+  # Lines before the first @@ hunk header (diff/index/---/+++) are collected
+  # as :pre_hunk. Each hunk is split into its header line and a body that
+  # gets converted to split-view pairs via build_split_pairs/1.
+  defp build_diff_segments(lines) do
+    {pre, first_hunk_idx} =
+      case Enum.find_index(lines, &(&1.type == :hunk)) do
+        nil -> {lines, nil}
+        idx -> {Enum.take(lines, idx), idx}
+      end
+
+    hunk_lines = if first_hunk_idx, do: Enum.drop(lines, first_hunk_idx), else: []
+
+    pre_segment = if pre == [], do: [], else: [{:pre_hunk, pre}]
+
+    hunk_segments =
+      hunk_lines
+      |> Enum.chunk_while(
+        [],
+        fn
+          %{type: :hunk} = line, [] ->
+            {:cont, [line]}
+
+          %{type: :hunk} = line, acc ->
+            {:cont, Enum.reverse(acc), [line]}
+
+          line, acc ->
+            {:cont, [line | acc]}
+        end,
+        fn
+          [] -> {:cont, []}
+          acc -> {:cont, Enum.reverse(acc), []}
+        end
+      )
+      |> Enum.map(fn chunk ->
+        [hdr | body] = chunk
+        {old_start, new_start} = parse_hunk_header(hdr.content)
+        pairs = build_split_pairs(body, old_start, new_start)
+        {:hunk, hdr, pairs}
+      end)
+
+    pre_segment ++ hunk_segments
+  end
+
+  # Build split-view pairs from a hunk's body lines.
+  #
+  # Walks the hunk body, maintaining old_line_num and new_line_num counters
+  # (initialized from the @@ header's old_start/new_start). Context lines
+  # appear on both sides; deletions only on the left; additions only on the
+  # right. Consecutive deletions and additions are zipped together (padding
+  # the shorter side with blank placeholders).
+  #
+  # Returns a list of pairs:
+  #   %{left: %{line: line, line_num: n} | nil, right: %{...} | nil, type: atom}
+  @doc false
+  def build_split_pairs(hunk_body, old_start \\ nil, new_start \\ nil)
+
+  def build_split_pairs([], _old_start, _new_start), do: []
+
+  def build_split_pairs(hunk_body, old_start, new_start) do
+    {old_start, new_start} =
+      case {old_start, new_start} do
+        {nil, nil} ->
+          case Enum.find(hunk_body, &(&1.type == :hunk)) do
+            %{type: :hunk, content: content} -> parse_hunk_header(content)
+            _ -> {1, 1}
+          end
+
+        _ ->
+          {old_start || 1, new_start || 1}
+      end
+
+    state = {[], old_start, new_start, [], []}
+
+    {pairs, old_num, new_num, old_buf, new_buf} =
+      Enum.reduce(hunk_body, state, fn
+        %{type: :context} = line, {acc, old_num, new_num, old_buf, new_buf} ->
+          {flushed, o_num, n_num} = flush_buffers(old_buf, new_buf, old_num, new_num, acc)
+          pair = %{
+            left: %{line: line, line_num: o_num},
+            right: %{line: line, line_num: n_num},
+            type: :context
+          }
+          {flushed ++ [pair], o_num + 1, n_num + 1, [], []}
+
+        %{type: :deletion} = line, {acc, old_num, new_num, old_buf, new_buf} ->
+          {acc, old_num, new_num, [line | old_buf], new_buf}
+
+        %{type: :addition} = line, {acc, old_num, new_num, old_buf, new_buf} ->
+          {acc, old_num, new_num, old_buf, [line | new_buf]}
+
+        %{type: :no_newline} = line, {acc, old_num, new_num, old_buf, new_buf} ->
+          {flushed, o_num, n_num} = flush_buffers(old_buf, new_buf, old_num, new_num, acc)
+          pair = %{
+            left: %{line: line, line_num: nil},
+            right: %{line: line, line_num: nil},
+            type: :no_newline
+          }
+          {flushed ++ [pair], o_num, n_num, [], []}
+
+        _line, acc ->
+          acc
+      end)
+
+    {final, _, _} = flush_buffers(old_buf, new_buf, old_num, new_num, pairs)
+    final
+  end
+
+  # Zip old_buf and new_buf into split-view pairs, padding the shorter side
+  # with nil placeholders. old_buf and new_buf are in reverse order (built
+  # with prepend), so we reverse them first. Returns {pairs ++ new_pairs,
+  # advanced_old_num, advanced_new_num}.
+  defp flush_buffers([], [], old_num, new_num, acc) do
+    {acc, old_num, new_num}
+  end
+
+  defp flush_buffers(old_buf, new_buf, old_num, new_num, acc) do
+    old_list = Enum.reverse(old_buf)
+    new_list = Enum.reverse(new_buf)
+    max_len = max(length(old_list), length(new_list))
+
+    {pairs, o_num, n_num} =
+      Enum.reduce(0..(max_len - 1), {[], old_num, new_num}, fn i, {p_acc, o, n} ->
+        old_line = Enum.at(old_list, i)
+        new_line = Enum.at(new_list, i)
+
+        {left, o2} =
+          if old_line do
+            {%{line: old_line, line_num: o}, o + 1}
+          else
+            {nil, o}
+          end
+
+        {right, n2} =
+          if new_line do
+            {%{line: new_line, line_num: n}, n + 1}
+          else
+            {nil, n}
+          end
+
+        type =
+          cond do
+            old_line != nil and new_line != nil -> :mixed
+            old_line != nil -> :deletion
+            new_line != nil -> :addition
+          end
+
+        {p_acc ++ [%{left: left, right: right, type: type}], o2, n2}
+      end)
+
+    {acc ++ pairs, o_num, n_num}
   end
 
   # ---------------------------------------------------------------------------
@@ -286,10 +497,6 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   defp diff_line_class(:header), do: "diff-line-meta"
   defp diff_line_class(:meta), do: "diff-line-meta"
   defp diff_line_class(_), do: ""
-
-  defp diff_prefix_color(:addition), do: "text-success/70"
-  defp diff_prefix_color(:deletion), do: "text-error/70"
-  defp diff_prefix_color(_), do: ""
 
   # Parse diff lines into structured data
   @doc false
@@ -627,20 +834,30 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   #   <div class="l-line" data-line="2"><span>...</span></div>
   #   </code></pre>
   #
-  # We strip the outer <pre><code> and </code></pre> wrappers, then use a regex
-  # to extract each line's inner HTML keyed by its data-line attribute number.
+  # Uses Floki (with the html5ever parser configured in Application.start/1)
+  # for robust HTML parsing instead of fragile regex. Each .l-line div's
+  # data-line attribute gives the 1-based line number; the children's raw HTML
+  # gives the highlighted inner content (preserving <span> elements).
   @doc false
   def parse_lumis_lines(html) do
-    inner =
-      html
-      |> String.replace(~r/^<pre[^>]*><code[^>]*>\n?/, "")
-      |> String.replace(~r/\n?<\/code><\/pre>$/, "")
+    case Floki.parse_document(html) do
+      {:ok, document} ->
+        document
+        |> Floki.find(".l-line")
+        |> Enum.reduce(%{}, fn line_div, acc ->
+          line_num =
+            line_div
+            |> Floki.attribute("data-line")
+            |> List.first()
+            |> String.to_integer()
 
-    ~r/<div class="l-line" data-line="(\d+)">(.*?)<\/div>/s
-    |> Regex.scan(inner, capture: :all_but_first)
-    |> Enum.reduce(%{}, fn [line_num_str, inner_html], acc ->
-      Map.put(acc, String.to_integer(line_num_str), inner_html)
-    end)
+          inner_html = line_div |> Floki.children() |> Floki.raw_html()
+          Map.put(acc, line_num, inner_html)
+        end)
+
+      {:error, _} ->
+        %{}
+    end
   end
 
   # Convert a file path to a valid HTML id (replace / and . with -)

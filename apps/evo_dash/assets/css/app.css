@@ -791,6 +791,110 @@ button, a, input, textarea, select, summary,
   color-scheme: light dark;
 }
 
+/* ---------------------------------------------------------------------------
+   Split-view diff — GitHub-style two-column side-by-side layout
+   Uses a CSS grid with 4 columns: old gutter | old content | new gutter | new content
+   --------------------------------------------------------------------------- */
+
+.diff-split-table {
+  display: grid;
+  grid-template-columns: minmax(40px, auto) 1fr minmax(40px, auto) 1fr;
+  width: 100%;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.diff-split-row {
+  display: contents; /* children become direct grid items */
+  line-height: 20px;
+}
+
+.diff-split-gutter {
+  text-align: right;
+  padding: 0 8px;
+  user-select: none;
+  color: oklch(0.5 0 0 / 0.25);
+  min-width: 40px;
+  white-space: nowrap;
+  line-height: 20px;
+}
+
+.diff-split-cell {
+  white-space: pre;
+  padding: 0 8px;
+  line-height: 20px;
+  min-height: 20px;
+}
+
+/* Row type backgrounds — subtle, GitHub-like */
+.diff-split-row-addition .diff-split-cell-right {
+  background-color: oklch(62% 0.15 160 / 0.08);
+}
+.diff-split-row-addition .diff-split-gutter-right {
+  background-color: oklch(62% 0.15 160 / 0.12);
+}
+
+.diff-split-row-deletion .diff-split-cell-left {
+  background-color: oklch(58% 0.22 25 / 0.08);
+}
+.diff-split-row-deletion .diff-split-gutter-left {
+  background-color: oklch(58% 0.22 25 / 0.12);
+}
+
+/* Mixed rows (paired del+add) — light tint on both sides */
+.diff-split-row-context .diff-split-cell {
+  /* no special background */
+}
+
+/* Hunk header spans all 4 columns */
+.diff-split-hunk {
+  grid-column: 1 / -1;
+  background-color: oklch(60% 0.18 255 / 0.06);
+  color: oklch(0.5 0.18 255 / 0.7);
+  padding: 0 8px;
+  line-height: 20px;
+  font-size: 12px;
+  white-space: pre;
+}
+
+/* Expand bar spans all columns in split view */
+.diff-split-expand,
+.diff-split-table .diff-expand-bar {
+  grid-column: 1 / -1;
+}
+
+/* Pre-hunk lines (diff/index/---/+++) span all columns */
+.diff-split-pre-hunk {
+  grid-column: 1 / -1;
+  padding: 0 8px;
+  line-height: 20px;
+  white-space: pre;
+}
+.diff-split-pre-hunk.diff-line-meta {
+  color: oklch(0.5 0 0 / 0.3);
+}
+
+/* Syntax highlight overrides for split-view cells — same as .diff-line-content */
+.diff-split-cell pre,
+.diff-split-cell pre *,
+.diff-split-cell code,
+.diff-split-cell code *,
+.diff-split-cell span {
+  display: inline !important;
+  background: transparent !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  vertical-align: baseline !important;
+}
+
+/* Lumis light-dark() support for split cells */
+.diff-split-cell {
+  color-scheme: light dark;
+}
+
 /* Tab bar styling */
 .review-tab-bar {
   @apply flex border-b border-base-200 bg-base-100;
