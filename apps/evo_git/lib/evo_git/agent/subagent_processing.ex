@@ -375,8 +375,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   def format_subagent_result({:error, :agent_max_retries_exceeded}) do
     "Error: Subagent failed due to an infrastructure/runtime issue (repeated crashes). " <>
-      "Hint: this may be a transient system error — retry the spawn once, and if it persists report the issue to the user. " <>
-      "Note: one common cause is an invalid commit_id — verify that any commit SHA you provided exists in the repository."
+      "Hint: this may be a transient system error — retry the spawn once, and if it persists report the issue to the user. "
   end
 
   def format_subagent_result({:error, :unknown_error}) do
