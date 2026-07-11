@@ -78,9 +78,12 @@ defmodule EvoGit.SandboxSlice do
         resources: resources
       }
 
-      # If sandbox is enabled, create the slice eagerly (fail fast)
       state =
         if sandbox_enabled?() do
+          # Clean up any stale services from a previous BEVM VM crash before
+          # recreating the slice. Only meaningful when we're about to create one.
+          cleanup_stale_services()
+
           case do_create_slice(resources) do
             :ok ->
               %{state | slice_active: true}
@@ -157,6 +160,16 @@ defmodule EvoGit.SandboxSlice do
 
   defp load_config_resources do
     EvoGit.Config.resolve([:sandbox, :resources])
+  end
+
+  defp cleanup_stale_services do
+    # Stop the entire slice — kills any leftover services from a previous
+    # BEAM VM crash. If the slice doesn't exist, systemctl returns non-zero
+    # which we ignore (the error is harmless).
+    _ = system_cmd("systemctl", ["--user", "stop", "#{@slice_name}.slice"])
+    # Brief delay to let systemd actually clean up before we recreate the slice.
+    :timer.sleep(100)
+    :ok
   end
 
   defp sandbox_enabled? do
