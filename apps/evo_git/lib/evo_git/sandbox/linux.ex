@@ -32,12 +32,6 @@ defmodule EvoGit.Sandbox.Linux do
     ["--user", "--unit=#{unit_name}" | rest]
   end
 
-  defp unit_name do
-    ts = System.system_time(:millisecond) |> Integer.to_string()
-    unique = System.unique_integer([:positive]) |> Integer.to_string()
-    "evogit-run-#{ts}-#{unique}"
-  end
-
   @doc "Creates the evogit.slice if not already active."
   @spec ensure_initialized() :: :ok | {:error, term()}
   def ensure_initialized do
@@ -54,15 +48,11 @@ defmodule EvoGit.Sandbox.Linux do
   def run(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
     if enabled?() do
       ensure_initialized()
-      unit = unit_name()
+      unit = EvoGit.SandboxProcessRegistry.register()
       full_args = inject_unit(args(cwd, executable, args, repo_root), unit)
-      EvoGit.SandboxSlice.register_run(unit, self())
-
-      try do
-        System.cmd("systemd-run", full_args, stderr_to_stdout: true)
-      after
-        EvoGit.SandboxSlice.unregister_run(unit)
-      end
+      result = System.cmd("systemd-run", full_args, stderr_to_stdout: true)
+      EvoGit.SandboxProcessRegistry.unregister(unit)
+      result
     else
       if EvoGit.GitEnv.git_command?(executable) do
         System.cmd(executable, args,
@@ -159,17 +149,17 @@ defmodule EvoGit.Sandbox.Linux do
     # the user's interactive shell. TMPDIR is forwarded to a path the sandbox actually
     # grants write access to (resolved by EvoGit.Sandbox.resolve_tmpdir/0) so that
     # LLM-generated temp-file writes don't fail.
+    # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
+    # automated operations that may open an interactive editor (e.g.
+    # `git merge --continue`, rebase, am, commit) never block inside the
+    # sandbox. Detection uses the ORIGINAL executable param (before any
+    # nix wrapping) since the nix-wrapped exec is `{"bash", ["-c", ...]}`.
     env_args =
       [
         {"PATH", System.get_env("PATH")},
         {"HOME", System.get_env("HOME")},
         {"TMPDIR", EvoGit.Sandbox.resolve_tmpdir()}
       ] ++
-        # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
-        # automated operations that may open an interactive editor (e.g.
-        # `git merge --continue`, rebase, am, commit) never block inside the
-        # sandbox. Detection uses the ORIGINAL executable param (before any
-        # nix wrapping) since the nix-wrapped exec is `{"bash", ["-c", ...]}`.
         if EvoGit.GitEnv.git_command?(executable),
           do: EvoGit.GitEnv.git_env_list(),
           else: []
@@ -284,9 +274,12 @@ defmodule EvoGit.Sandbox.Linux do
     system_call_filter =
       if Map.get(cfg, :system_call_filter, true) do
         [
-          "-p", "SystemCallArchitectures=native",
-          "-p", "SystemCallErrorNumber=EPERM",
-          "-p", "SystemCallFilter=~ @clock @module @mount @raw-io @reboot @swap"
+          "-p",
+          "SystemCallArchitectures=native",
+          "-p",
+          "SystemCallErrorNumber=EPERM",
+          "-p",
+          "SystemCallFilter=~ @clock @module @mount @raw-io @reboot @swap"
         ]
       else
         []
@@ -356,13 +349,22 @@ defmodule EvoGit.Sandbox.Linux do
     * `{:ok, output, exit_code}` — command completed within timeout
     * `{:timeout, partial_output}` — command timed out; partial_output may be empty
   """
-  @spec run_with_partial(String.t(), String.t(), [String.t()], String.t() | nil, pos_integer(), integer() | nil) ::
+  @spec run_with_partial(
+          String.t(),
+          String.t(),
+          [String.t()],
+          String.t() | nil,
+          pos_integer(),
+          integer() | nil
+        ) ::
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
   def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil)
       when is_list(args) and is_integer(timeout) and timeout > 0 do
     tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
     File.mkdir_p!(tmpdir)
-    tmpfile = Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
+
+    tmpfile =
+      Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
 
     inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
     wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1"
@@ -374,46 +376,42 @@ defmodule EvoGit.Sandbox.Linux do
 
     if enabled?() do
       ensure_initialized()
-      unit = unit_name()
+      unit = EvoGit.SandboxProcessRegistry.register()
       sandbox_args = inject_unit(args(cwd, "bash", ["-c", wrapped_cmd], repo_root), unit)
 
       # Append git env vars for the inner command (args/4 won't detect git on "bash")
       sandbox_args = maybe_append_git_env(sandbox_args, is_git)
 
-      EvoGit.SandboxSlice.register_run(unit, self())
+      task =
+        Task.async(fn ->
+          System.cmd("systemd-run", sandbox_args, stderr_to_stdout: true)
+        end)
 
-      task = Task.async(fn ->
-        System.cmd("systemd-run", sandbox_args, stderr_to_stdout: true)
-      end)
+      case Task.yield(task, timeout) || Task.shutdown(task) do
+        {:ok, {_output, exit_code}} ->
+          EvoGit.SandboxProcessRegistry.unregister(unit)
+          content = read_tempfile(tmpfile, max_bytes)
+          {:ok, content, exit_code}
 
-      result =
-        case Task.yield(task, timeout) || Task.shutdown(task) do
-          {:ok, {_output, exit_code}} ->
-            content = read_tempfile(tmpfile, max_bytes)
-            {:ok, content, exit_code}
-
-          nil ->
-            # CRITICAL: Task.shutdown killed the systemd-run CLIENT, but the
-            # .service unit keeps running. Stop it explicitly to prevent
-            # orphaned processes from leaking past the timeout.
-            EvoGit.SandboxSlice.stop_run(unit)
-            partial = read_tempfile(tmpfile, max_bytes)
-            {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
-        end
-
-      EvoGit.SandboxSlice.unregister_run(unit)
-      result
+        nil ->
+          # CRITICAL: Task.shutdown killed the systemd-run CLIENT, but the
+          # .service unit keeps running. Release spawns an async Task to stop it.
+          EvoGit.SandboxProcessRegistry.release(unit)
+          partial = read_tempfile(tmpfile, max_bytes)
+          {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
+      end
     else
       # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
       git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []
 
-      task = Task.async(fn ->
-        System.cmd("bash", ["-c", wrapped_cmd],
-          cd: cwd,
-          stderr_to_stdout: true,
-          env: git_env
-        )
-      end)
+      task =
+        Task.async(fn ->
+          System.cmd("bash", ["-c", wrapped_cmd],
+            cd: cwd,
+            stderr_to_stdout: true,
+            env: git_env
+          )
+        end)
 
       case Task.yield(task, timeout) || Task.shutdown(task) do
         {:ok, {_output, exit_code}} ->

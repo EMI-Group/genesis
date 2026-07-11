@@ -12,7 +12,13 @@ defmodule EvoGit.Application do
     # application restart after a soft crash), creation is a no-op.
     ensure_ets_table(:evogit_agent_state, [:named_table, :public, :set, read_concurrency: true])
     ensure_ets_table(:evogit_sched_meta, [:named_table, :public, :set, read_concurrency: true])
-    ensure_ets_table(:evogit_archive_records, [:named_table, :public, :duplicate_bag, read_concurrency: true])
+
+    ensure_ets_table(:evogit_archive_records, [
+      :named_table,
+      :public,
+      :duplicate_bag,
+      read_concurrency: true
+    ])
 
     # Start the PubSub throttle process (coalesces rapid agent-update signals)
     EvoGit.AgentScheduler.PubSub.start_throttle()
@@ -28,7 +34,7 @@ defmodule EvoGit.Application do
     # SandboxSlice is only needed on Linux (systemd-run backend)
     children =
       if EvoGit.Platform.linux?() do
-        children ++ [{EvoGit.SandboxSlice, []}]
+        children ++ [{EvoGit.SandboxProcessRegistry, []}, {EvoGit.SandboxSlice, []}]
       else
         children
       end
