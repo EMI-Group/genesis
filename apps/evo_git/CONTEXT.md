@@ -18,7 +18,7 @@ Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightwei
 | Module | Description |
 |---|---|
 | `EvoGit` | Sandboxed command execution via `EvoGit.Sandbox` (`sandbox_run/4`, `sandbox_args/4` delegates to platform backend) |
-| `EvoGit.Application` | OTP application callback (starts `AgentScheduler`, conditionally `SandboxSlice` on Linux) |
+| `EvoGit.Application` | OTP application callback (starts `AgentScheduler`, conditionally `SandboxProcessRegistry` + `SandboxSlice` on Linux) |
 | `EvoGit.CLI` | Command-line interface entry point |
 | `EvoGit.Agent` | Behaviour module for agents; injects agent loop, tool dispatch, subagent management |
 | `EvoGit.Agent.Usage` | Cumulative token and cost usage tracking (`Usage` struct with `add/2`, `from_response_usage/1`, `zero/0`) |
