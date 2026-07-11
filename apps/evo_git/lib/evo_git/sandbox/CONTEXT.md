@@ -14,7 +14,7 @@ Provides platform-specific sandboxing for agent-executed commands. Dispatches to
 
 ## Constraints
 - All backends implement the same behaviour: `enabled?/0`, `ensure_initialized/0`, `run/4`
-- `EvoGit.Sandbox.Linux` depends on `EvoGit.SandboxSlice` for systemd slice management
+- `EvoGit.Sandbox.Linux` depends on `EvoGit.SandboxProcessRegistry` (caller-process monitoring) and `EvoGit.SandboxSlice` (systemd slice management) — both started in Application supervision tree on Linux only
 - `EvoGit.Sandbox.MacOS` uses inline SBPL profile generation (no external template files)
 - `EvoGit.Sandbox.None` is the fallback for Windows and unsupported platforms
 - Callers use `EvoGit.sandbox_run/4` (delegates to `EvoGit.Sandbox.run/4`) — tool modules do not need to know about backends
