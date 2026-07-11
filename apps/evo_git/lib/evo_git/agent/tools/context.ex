@@ -19,7 +19,12 @@ defmodule EvoGit.Agent.Tools.Context do
           "and rules for code within it (Constraints). " <>
           "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories, " <>
           "so parent agents know where to delegate work. " <>
-          "Use this to read the context to understand the semantic meaning and expectations for a directory.",
+          "Use this to read the context to understand the semantic meaning and expectations for a directory. " <>
+          "IMPORTANT: Prefer spawning a subagent (subagent_manager or subagent_codebase_investigator) at " <>
+          "the target path instead of manually calling read_context on it. The subagent automatically " <>
+          "inherits that path's CONTEXT.md and can do work or investigation directly — it's far more " <>
+          "efficient than reading context yourself and then re-communicating findings. Only use read_context " <>
+          "for quick lookups when you need routing information to decide where to delegate.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
