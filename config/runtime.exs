@@ -58,7 +58,11 @@ config :req_llm,
   stream_pool_protocols: [:http1],
   stream_pool_timeout: 120_000
 
-if config_env() == :prod do
+# The genesis_remote release is a headless evo_git-only daemon for SSH remote
+# development. It has NO Phoenix/evo_dash, so SECRET_KEY_BASE and endpoint config
+# are not needed. The compile-time `:remote_release` flag is baked into sys.config
+# by the genesis_remote release definition in mix.exs.
+if config_env() == :prod and not Application.get_env(:evo_git, :remote_release, false) do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want

@@ -215,24 +215,40 @@ defmodule EvoDashWeb.SettingsLive do
                             {gettext("Disconnect")}
                           </button>
                         <% else %>
-                          <button
-                            class="btn btn-xs btn-ghost gap-1"
-                            phx-click="bootstrap_remote_target"
-                            phx-value-id={target.id}
-                            disabled={@remote_config}
-                          >
-                            <.icon name="hero-rocket-launch" class="size-3.5" />
-                            {gettext("Bootstrap")}
-                          </button>
-                          <button
-                            class="btn btn-xs btn-primary gap-1"
-                            phx-click="connect_remote_target"
-                            phx-value-id={target.id}
-                            disabled={@remote_config}
-                          >
-                            <.icon name="hero-arrow-right-end-on-rectangle" class="size-3.5" />
-                            {gettext("Connect")}
-                          </button>
+                          <%= if get_in(@bootstrap_progress, [target.id, :active]) do %>
+                            <% stage_idx = case get_in(@bootstrap_progress, [target.id, :stage]) do
+                              :uploading -> 0
+                              :setting_permissions -> 1
+                              :detecting_os -> 2
+                              :starting_daemon -> 3
+                              _ -> -1
+                            end %>
+                            <ul class="steps steps-horizontal text-xs w-full">
+                              <li class={["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])}>{gettext("Uploading binary")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])}>{gettext("Setting permissions")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])}>{gettext("Detecting OS")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])}>{gettext("Starting daemon")}</li>
+                            </ul>
+                          <% else %>
+                            <button
+                              class="btn btn-xs btn-ghost gap-1"
+                              phx-click="bootstrap_remote_target"
+                              phx-value-id={target.id}
+                              disabled={@remote_config}
+                            >
+                              <.icon name="hero-rocket-launch" class="size-3.5" />
+                              {gettext("Bootstrap")}
+                            </button>
+                            <button
+                              class="btn btn-xs btn-primary gap-1"
+                              phx-click="connect_remote_target"
+                              phx-value-id={target.id}
+                              disabled={@remote_config}
+                            >
+                              <.icon name="hero-arrow-right-end-on-rectangle" class="size-3.5" />
+                              {gettext("Connect")}
+                            </button>
+                          <% end %>
                         <% end %>
                       </div>
                     </div>
@@ -441,6 +457,7 @@ defmodule EvoDashWeb.SettingsLive do
         editing_profile_id: nil,
         test_profile_id: test_profile_id,
         remote_config: false,
+        bootstrap_progress: %{},
         remote_targets: EvoDash.NodeContext.list_targets(),
         remote_statuses: EvoDash.NodeContext.connection_status(),
         remote_form_target: nil
@@ -500,14 +517,26 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_info({:remote_connection_status, _, _} = msg, socket) do
+  def handle_info({:remote_connection_status, target_id, status} = msg, socket) do
     {:noreply, socket} = EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
 
-    if socket.assigns.active_category == :remote_connections do
-      {:noreply, assign(socket, :remote_statuses, EvoDash.NodeContext.connection_status())}
-    else
-      {:noreply, socket}
-    end
+    socket =
+      if socket.assigns.active_category == :remote_connections do
+        assign(socket, :remote_statuses, EvoDash.NodeContext.connection_status())
+      else
+        socket
+      end
+
+    bootstrap_progress =
+      case status do
+        %{phase: :bootstrapping, bootstrap_stage: stage} when not is_nil(stage) ->
+          Map.put(socket.assigns.bootstrap_progress, target_id, %{stage: stage, active: true})
+
+        _ ->
+          Map.put(socket.assigns.bootstrap_progress, target_id, %{stage: nil, active: false})
+      end
+
+    {:noreply, assign(socket, :bootstrap_progress, bootstrap_progress)}
   end
 
   @impl true
