@@ -38,6 +38,10 @@ msgid "%{count} child"
 msgid_plural "%{count} children"
 msgstr[0] "%{count} طفل"
 msgstr[1] "%{count} طفل"
+msgstr[2] "%{count} طفلين"
+msgstr[3] "%{count} أطفال"
+msgstr[4] "%{count} طفلاً"
+msgstr[5] "%{count} طفل"
 
 #: lib/evo_dash_web/components/review_components/stats.ex:40
 #: lib/evo_dash_web/components/review_components/stats.ex:61
@@ -46,6 +50,10 @@ msgid "%{count} commit"
 msgid_plural "%{count} commits"
 msgstr[0] "%{count} إيداع"
 msgstr[1] "%{count} إيداع"
+msgstr[2] "%{count} إيداعان"
+msgstr[3] "%{count} إيداعات"
+msgstr[4] "%{count} إيداعاً"
+msgstr[5] "%{count} إيداع"
 
 #: lib/evo_dash_web/components/review_components/diff_viewer.ex:46
 #, elixir-autogen, elixir-format
@@ -53,6 +61,10 @@ msgid "%{count} file"
 msgid_plural "%{count} files"
 msgstr[0] "ملف %{count}"
 msgstr[1] "ملف %{count}"
+msgstr[2] "ملفان %{count}"
+msgstr[3] "%{count} ملفات"
+msgstr[4] "%{count} ملفاً"
+msgstr[5] "%{count} ملف"
 
 #: lib/evo_dash_web/components/review_components/stats.ex:24
 #, elixir-autogen, elixir-format
@@ -73,15 +85,23 @@ msgstr "%{count} إعدادات تطابق \"%{query}\""
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
 msgid_plural "%{count} tasks found"
-msgstr[0] "تم العثور على %{count} مهمة"
+msgstr[0] "لم يتم العثور على مهام"
 msgstr[1] "تم العثور على %{count} مهمة"
+msgstr[2] "تم العثور على مهمتين"
+msgstr[3] "تم العثور على %{count} مهام"
+msgstr[4] "تم العثور على %{count} مهمة"
+msgstr[5] "تم العثور على %{count} مهمة"
 
 #: lib/evo_dash_web/live/system_live.ex:281
 #, elixir-autogen, elixir-format
 msgid "%{count} validation warning"
 msgid_plural "%{count} validation warnings"
-msgstr[0] "%{count} تحذير تحقق"
+msgstr[0] "لا تحذيرات تحقق"
 msgstr[1] "%{count} تحذير تحقق"
+msgstr[2] "تحذيرا تحقق"
+msgstr[3] "%{count} تحذيرات تحقق"
+msgstr[4] "%{count} تحذيراً تحقق"
+msgstr[5] "%{count} تحذير تحقق"
 
 #: lib/evo_dash_web/helpers.ex:212
 #, elixir-autogen, elixir-format

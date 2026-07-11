@@ -37,22 +37,25 @@ msgstr "%{count} агентов"
 msgid "%{count} child"
 msgid_plural "%{count} children"
 msgstr[0] "%{count} дочерний элемент"
-msgstr[1] "%{count} дочерний элемент"
+msgstr[1] "%{count} дочерних элемента"
+msgstr[2] "%{count} дочерних элементов"
 
 #: lib/evo_dash_web/components/review_components/stats.ex:40
 #: lib/evo_dash_web/components/review_components/stats.ex:61
 #, elixir-autogen, elixir-format
 msgid "%{count} commit"
 msgid_plural "%{count} commits"
-msgstr[0] "%{count} коммита"
+msgstr[0] "%{count} коммит"
 msgstr[1] "%{count} коммита"
+msgstr[2] "%{count} коммитов"
 
 #: lib/evo_dash_web/components/review_components/diff_viewer.ex:46
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
 msgstr[0] "%{count} файл"
-msgstr[1] "%{count} файл"
+msgstr[1] "%{count} файла"
+msgstr[2] "%{count} файлов"
 
 #: lib/evo_dash_web/components/review_components/stats.ex:24
 #, elixir-autogen, elixir-format
@@ -73,15 +76,17 @@ msgstr "%{count} параметр(ов), соответствующих \"%{quer
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
 msgid_plural "%{count} tasks found"
-msgstr[0] "Найдено задач: %{count}"
-msgstr[1] "Найдено задач: %{count}"
+msgstr[0] "Найдена %{count} задача"
+msgstr[1] "Найдено %{count} задачи"
+msgstr[2] "Найдено %{count} задач"
 
 #: lib/evo_dash_web/live/system_live.ex:281
 #, elixir-autogen, elixir-format
 msgid "%{count} validation warning"
 msgid_plural "%{count} validation warnings"
 msgstr[0] "%{count} предупреждение проверки"
-msgstr[1] "%{count} предупреждение проверки"
+msgstr[1] "%{count} предупреждения проверки"
+msgstr[2] "%{count} предупреждений проверки"
 
 #: lib/evo_dash_web/helpers.ex:212
 #, elixir-autogen, elixir-format
