@@ -68,6 +68,15 @@ defmodule EvoDash.TaskRegistry.RuntimeOpts do
         do: Keyword.put(runtime_opts, :model_id, model_id),
         else: runtime_opts
 
+    # Per-task build system selection: threads the selected build system atom
+    # into the runtime opts for genesis tasks.
+    build_system = Keyword.get(opts, :build_system)
+
+    runtime_opts =
+      if build_system,
+        do: Keyword.put(runtime_opts, :build_system, build_system),
+        else: runtime_opts
+
     {nil, runtime_opts}
   end
 

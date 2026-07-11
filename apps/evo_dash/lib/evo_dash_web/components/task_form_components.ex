@@ -24,6 +24,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:archive, :boolean, default: false)
   attr(:model_profiles, :list, default: [])
   attr(:selected_model_id, :string, default: nil)
+  attr(:build_systems, :list, default: [])
+  attr(:selected_build_system, :string, default: nil)
 
   def task_form(assigns) do
     ~H"""
@@ -88,6 +90,30 @@ defmodule EvoDashWeb.TaskFormComponents do
               </div>
             <% end %>
           </div>
+
+          <%= if String.starts_with?(@mode, "genesis") do %>
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3 mt-4">
+              <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
+                <.icon name="hero-cog-6-tooth" class="size-5 text-base-content/60" />
+                {gettext("Build System")}
+                <.tip text={gettext("Pre-configured worktree init scripts for your tech stack")} />
+              </label>
+              <select
+                name="build_system"
+                class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
+              >
+                <option value="">{gettext("None (no build system)")}</option>
+                <%= for bs <- @build_systems do %>
+                  <option value={to_string(bs.id)} selected={@selected_build_system == to_string(bs.id)}>
+                    {bs.name}
+                  </option>
+                <% end %>
+              </select>
+              <div class="hidden sm:block">
+                <.tip text={gettext("Pre-configured worktree init scripts for your tech stack")} />
+              </div>
+            </div>
+          <% end %>
         </div>
 
         <%= if String.starts_with?(@mode, "evolve") do %>
