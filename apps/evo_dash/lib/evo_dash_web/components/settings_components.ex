@@ -644,6 +644,38 @@ defmodule EvoDashWeb.SettingsComponents do
                     <% end %>
                   </div>
                 <% end %>
+
+                <%!-- Linux Security sub-header --%>
+                <% linux_schemas = Enum.filter(@schemas, &(&1.sub_category == :linux)) %>
+                <%= if linux_schemas != [] do %>
+                  <div class="flex items-center gap-4 mb-6 mt-10">
+                    <div class="h-px bg-base-200 flex-1"></div>
+                    <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
+                      {gettext("Linux Security")}
+                    </h3>
+                    <div class="h-px bg-base-200 flex-1"></div>
+                  </div>
+
+                  <%= if @sandbox_backend != :systemd_run do %>
+                    <div class="bg-info/5 border border-info/20 rounded-lg p-4 mb-6 flex items-start gap-3">
+                      <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
+                      <p class="text-sm font-medium text-info/90 leading-relaxed">
+                        {gettext("Linux security features are only available on Linux with systemd-run.")}
+                      </p>
+                    </div>
+                  <% end %>
+
+                  <div class="rounded-lg border border-base-200 overflow-hidden mb-8">
+                    <%= for schema <- linux_schemas do %>
+                      <.setting_card
+                        schema={schema}
+                        value={get_in(@file_config, schema.key_path)}
+                        error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
+                        disabled={@disabled or @sandbox_mode == :disabled}
+                      />
+                    <% end %>
+                  </div>
+                <% end %>
               <% else %>
                 <%!-- Other categories: just list all setting cards --%>
                 <div class="rounded-lg border border-base-200 overflow-hidden">
