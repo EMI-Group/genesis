@@ -42,29 +42,38 @@ defmodule EvoGit.Sandbox.MacOS do
       # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
       # automated operations that may open an interactive editor (e.g.
       # `git merge --continue`, rebase, am, commit) never block. Detection
-      # uses the ORIGINAL executable param (before nix wrapping) since the
-      # nix-wrapped exec is `{"bash", ["-c", ...]}`.
+      # uses the ORIGINAL executable param (before nix/bash wrapping).
       git_env =
         if EvoGit.GitEnv.git_command?(executable),
           do: EvoGit.GitEnv.git_env_list(),
           else: []
 
-      # sandbox-exec -p <profile> -- <executable> <args...>
-      System.cmd("sandbox-exec", ["-p", profile, "--", exec | exec_args],
+      # Wrap in bash with stdin redirected from /dev/null so commands like rg
+      # that read stdin on missing args get immediate EOF instead of hanging.
+      inner_cmd = Enum.map_join([exec | exec_args], " ", &shell_escape/1)
+      wrapped_cmd = inner_cmd <> " < /dev/null"
+
+      # sandbox-exec -p <profile> -- bash -c <wrapped_cmd>
+      System.cmd("sandbox-exec", ["-p", profile, "--", "bash", "-c", wrapped_cmd],
         cd: cwd,
         stderr_to_stdout: true,
         env: [{"TMPDIR", resolved_tmpdir} | git_env]
       )
     else
-      if EvoGit.GitEnv.git_command?(executable) do
-        System.cmd(executable, args,
-          cd: cwd,
-          stderr_to_stdout: true,
-          env: EvoGit.GitEnv.git_env_list()
-        )
-      else
-        System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
-      end
+      # Disabled path: wrap in bash with stdin redirect from /dev/null.
+      git_env =
+        if EvoGit.GitEnv.git_command?(executable),
+          do: EvoGit.GitEnv.git_env_list(),
+          else: []
+
+      inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
+      wrapped_cmd = inner_cmd <> " < /dev/null"
+
+      System.cmd("bash", ["-c", wrapped_cmd],
+        cd: cwd,
+        stderr_to_stdout: true,
+        env: git_env
+      )
     end
   end
 
@@ -197,7 +206,7 @@ defmodule EvoGit.Sandbox.MacOS do
     tmpfile = Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
 
     inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
-    wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1"
+    wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1 < /dev/null"
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash)
     is_git = EvoGit.GitEnv.git_command?(executable)

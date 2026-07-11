@@ -49,19 +49,30 @@ defmodule EvoGit.Sandbox.Linux do
     if enabled?() do
       ensure_initialized()
       unit = EvoGit.SandboxProcessRegistry.register()
-      full_args = inject_unit(args(cwd, executable, args, repo_root), unit)
-      result = System.cmd("systemd-run", full_args, stderr_to_stdout: true)
+      # Wrap in bash with stdin redirect: systemd-run --pipe connects stdin as a
+      # pipe (overriding StandardInput=null), so we redirect on our side.
+      is_git = EvoGit.GitEnv.git_command?(executable)
+      inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
+      wrapped_cmd = inner_cmd <> " < /dev/null"
+      sandbox_args = inject_unit(args(cwd, "bash", ["-c", wrapped_cmd], repo_root), unit)
+      # args/4 won't detect git on "bash", so append git env manually
+      sandbox_args = maybe_append_git_env(sandbox_args, is_git)
+      result = System.cmd("systemd-run", sandbox_args, stderr_to_stdout: true)
       EvoGit.SandboxProcessRegistry.unregister(unit)
       result
     else
+      # Disabled path: wrap in bash with stdin redirect from /dev/null.
+      inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
+      wrapped_cmd = inner_cmd <> " < /dev/null"
+
       if EvoGit.GitEnv.git_command?(executable) do
-        System.cmd(executable, args,
+        System.cmd("bash", ["-c", wrapped_cmd],
           cd: cwd,
           stderr_to_stdout: true,
           env: EvoGit.GitEnv.git_env_list()
         )
       else
-        System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
+        System.cmd("bash", ["-c", wrapped_cmd], cd: cwd, stderr_to_stdout: true)
       end
     end
   end
@@ -367,7 +378,7 @@ defmodule EvoGit.Sandbox.Linux do
       Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
 
     inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
-    wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1"
+    wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1 < /dev/null"
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash).
     # The sandbox args/4 won't detect git since it receives "bash", so we

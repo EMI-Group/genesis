@@ -228,6 +228,35 @@ defmodule EvoGit.Sandbox.LinuxTest do
     end
   end
 
+  describe "args/4 — bash wrapping for stdin redirection (run/4 pattern)" do
+    test "wraps the command in bash -c when called via the run/4 pattern" do
+      # When run/4 wraps the command in bash with stdin redirect, it calls
+      # args/4 with "bash" as the executable and ["-c", wrapped_cmd] as args.
+      # Verify args/4 passes these through correctly.
+      inner_cmd = "'rg' 'pattern'"
+      wrapped_cmd = inner_cmd <> " < /dev/null"
+      args = Linux.args(System.tmp_dir!(), "bash", ["-c", wrapped_cmd], nil)
+
+      assert "bash" in args, "expected 'bash' as the executable in args"
+      assert "-c" in args, "expected '-c' flag in args"
+
+      # The wrapped command string should be present and end with the stdin redirect
+      wrapped_arg = Enum.find(args, &String.ends_with?(&1, " < /dev/null"))
+      assert wrapped_arg != nil, "expected a wrapped command ending in ' < /dev/null'"
+    end
+
+    test "does not double-wrap bash in nix when nix is disabled" do
+      inner_cmd = "'git' 'status'"
+      wrapped_cmd = inner_cmd <> " < /dev/null"
+      args = Linux.args(System.tmp_dir!(), "bash", ["-c", wrapped_cmd], nil)
+
+      # With nix disabled, the executable should be plain "bash"
+      assert "bash" in args
+      # The -c and wrapped command should be passed as-is
+      assert "-c" in args
+    end
+  end
+
   describe "inject_unit/2" do
     test "inserts --unit= immediately after --user" do
       args = ["--user", "--slice=evogit", "--wait", "--pipe"]

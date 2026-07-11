@@ -31,19 +31,23 @@ defmodule EvoGit.Sandbox.None do
         {executable, args}
       end
 
+    # Wrap in bash with stdin redirected from /dev/null so commands like rg
+    # that read stdin on missing args get immediate EOF instead of hanging.
+    inner_cmd = Enum.map_join([exec | exec_args], " ", &shell_escape/1)
+    wrapped_cmd = inner_cmd <> " < /dev/null"
+
     # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
     # automated operations that may open an interactive editor (e.g.
     # `git merge --continue`, rebase, am, commit) never block. Detection uses
-    # the ORIGINAL executable param (before nix wrapping) since the nix-wrapped
-    # exec is `{"bash", ["-c", ...]}`.
+    # the ORIGINAL executable param (before nix/bash wrapping).
     if EvoGit.GitEnv.git_command?(executable) do
-      System.cmd(exec, exec_args,
+      System.cmd("bash", ["-c", wrapped_cmd],
         cd: cwd,
         stderr_to_stdout: true,
         env: EvoGit.GitEnv.git_env_list()
       )
     else
-      System.cmd(exec, exec_args, cd: cwd, stderr_to_stdout: true)
+      System.cmd("bash", ["-c", wrapped_cmd], cd: cwd, stderr_to_stdout: true)
     end
   end
 
@@ -67,7 +71,7 @@ defmodule EvoGit.Sandbox.None do
     tmpfile = Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
 
     inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
-    wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1"
+    wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1 < /dev/null"
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash)
     is_git = EvoGit.GitEnv.git_command?(executable)

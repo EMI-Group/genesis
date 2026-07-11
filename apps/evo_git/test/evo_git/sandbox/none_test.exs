@@ -37,6 +37,25 @@ defmodule EvoGit.Sandbox.NoneTest do
     # is tested separately.
   end
 
+  describe "run/4 — stdin redirection" do
+    test "disables stdin so commands that read stdin don't hang" do
+      # `cat` with no args reads from stdin. With stdin redirected from /dev/null,
+      # it gets immediate EOF and exits with code 0 (empty output).
+      {output, exit_code} = None.run(System.tmp_dir!(), "cat", [])
+
+      assert exit_code == 0
+      assert output == ""
+    end
+  end
+
+  describe "run_with_partial — stdin redirection" do
+    test "disables stdin so commands that read stdin return immediately" do
+      result = None.run_with_partial(System.tmp_dir!(), "cat", [], nil, 5000, nil)
+
+      assert {:ok, "", 0} = result
+    end
+  end
+
   describe "run/4 — GIT_EDITOR injection for git commands" do
     setup do
       tmp_dir =
