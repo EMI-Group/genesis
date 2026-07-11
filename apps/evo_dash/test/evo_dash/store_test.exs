@@ -587,6 +587,354 @@ defmodule EvoDash.StoreTest do
     end
   end
 
+  describe "safe_select_paginated_tasks" do
+    # Helper: inserts a task with a distinct started_at so ordering is
+    # deterministic. Index 0 is the oldest.
+    defp insert_timed!(i) do
+      started = ~U[2026-01-01 00:00:00Z] |> DateTime.add(i, :second)
+
+      :ok =
+        Store.put_task(Store, %TaskInfo{
+          id: "page-#{i}",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/t"],
+          started_at: started,
+          finished_at: nil,
+          logs: [],
+          result: nil
+        })
+    end
+
+    test "returns {tasks, total_count} tuple" do
+      insert_timed!(0)
+      insert_timed!(1)
+
+      result = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 0)
+
+      assert {tasks, total} = result
+      assert is_list(tasks)
+      assert length(tasks) == 2
+      assert total == 2
+    end
+
+    test "respects LIMIT and OFFSET" do
+      for i <- 0..4, do: insert_timed!(i)
+
+      {page1, total1} = Store.safe_select_paginated_tasks(Store, limit: 2, offset: 0)
+      assert length(page1) == 2
+      assert total1 == 5
+
+      {page3, total3} = Store.safe_select_paginated_tasks(Store, limit: 2, offset: 4)
+      assert length(page3) == 1
+      assert total3 == 5
+    end
+
+    test "orders most-recent-first (started_at DESC)" do
+      for i <- 0..4, do: insert_timed!(i)
+
+      {tasks, _total} = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 0)
+      ids = Enum.map(tasks, & &1.id)
+
+      # page-4 has the latest started_at, so it should be first.
+      assert hd(ids) == "page-4"
+      # Followed by 3, 2, 1, 0.
+      assert List.last(ids) == "page-0"
+    end
+
+    test "nil/invalid opts don't crash (default limit/offset)" do
+      insert_timed!(0)
+
+      {tasks, total} = Store.safe_select_paginated_tasks(Store, [])
+      assert is_list(tasks)
+      assert total >= 1
+
+      {tasks2, total2} = Store.safe_select_paginated_tasks(Store, limit: nil, offset: nil)
+      assert is_list(tasks2)
+      assert total2 == total
+    end
+
+    test "offset beyond total returns empty list but total_count still correct" do
+      for i <- 0..2, do: insert_timed!(i)
+
+      {tasks, total} = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 9999)
+      assert tasks == []
+      assert total == 3
+    end
+  end
+
+  describe "safe_select_paginated_tasks with filters" do
+    # Helper: inserts a task with configurable fields and a distinct started_at
+    # (index 0 = oldest). Returns the task id.
+    defp insert_filtered!(i, opts) do
+      id = Keyword.get(opts, :id, "f-#{i}")
+      started = ~U[2026-01-01 00:00:00Z] |> DateTime.add(i, :second)
+
+      task =
+        %TaskInfo{
+          id: id,
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/proj"],
+          ref: nil,
+          started_at: started,
+          finished_at: DateTime.add(started, 1, :second),
+          logs: [],
+          result: nil
+        }
+        |> Map.merge(Enum.into(opts, %{}))
+
+      :ok = Store.put_task(Store, task)
+      id
+    end
+
+    test "status filter returns correct count" do
+      for _ <- 1..3, do: insert_filtered!(System.unique_integer([:positive]), status: :completed)
+      for _ <- 1..2, do: insert_filtered!(System.unique_integer([:positive]), status: :failed)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0, filters: [status: "failed"])
+
+      assert length(tasks) == 2
+      assert total == 2
+      assert Enum.all?(tasks, &(&1.status == :failed))
+    end
+
+    test "status 'all' returns all tasks" do
+      for _ <- 1..3, do: insert_filtered!(System.unique_integer([:positive]), status: :completed)
+      for _ <- 1..2, do: insert_filtered!(System.unique_integer([:positive]), status: :failed)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0, filters: [status: "all"])
+
+      assert length(tasks) == 5
+      assert total == 5
+    end
+
+    test "status filter + pagination slicing" do
+      for i <- 0..19, do: insert_filtered!(i, id: "comp-#{i}", status: :completed)
+      for i <- 0..9, do: insert_filtered!(i, id: "fail-#{i}", status: :failed)
+
+      {page1, total1} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 5,
+          offset: 0,
+          filters: [status: "failed"]
+        )
+
+      assert length(page1) == 5
+      assert total1 == 10
+
+      {page2, total2} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 5,
+          offset: 5,
+          filters: [status: "failed"]
+        )
+
+      assert length(page2) == 5
+      assert total2 == 10
+
+      {page3, total3} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 5,
+          offset: 10,
+          filters: [status: "failed"]
+        )
+
+      assert page3 == []
+      assert total3 == 10
+    end
+
+    test "project path filter returns only matching tasks" do
+      for i <- 0..2,
+          do: insert_filtered!(i, id: "a-#{i}", opts: [path: "/tmp/proj_a", prompt: "proj a #{i}"])
+
+      for i <- 0..1,
+          do: insert_filtered!(i, id: "b-#{i}", opts: [path: "/tmp/proj_b", prompt: "proj b #{i}"])
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [project_path: "/tmp/proj_a"]
+        )
+
+      assert length(tasks) == 3
+      assert total == 3
+
+      ids = Enum.map(tasks, & &1.id)
+      assert Enum.all?(ids, &String.starts_with?(&1, "a-"))
+    end
+
+    test "project path filter treats underscores literally (LIKE wildcard escaping)" do
+      # Two paths that differ only by the underscore position: `/tmp/proj_a`
+      # vs `/tmp/projXa`. Without LIKE escaping, the `_` in the filter would
+      # act as a single-char wildcard and match BOTH rows.
+      insert_filtered!(0, id: "underscore-a", opts: [path: "/tmp/proj_a"])
+      insert_filtered!(1, id: "underscore-x", opts: [path: "/tmp/projXa"])
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [project_path: "/tmp/proj_a"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "underscore-a"
+    end
+
+    test "search by id returns only matching tasks" do
+      insert_filtered!(0, id: "search-aaa-001")
+      insert_filtered!(1, id: "search-bbb-002")
+      insert_filtered!(2, id: "search-aaa-003")
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [search: "aaa"]
+        )
+
+      assert length(tasks) == 2
+      assert total == 2
+
+      ids = Enum.map(tasks, & &1.id)
+      assert "search-aaa-001" in ids
+      assert "search-aaa-003" in ids
+      refute "search-bbb-002" in ids
+    end
+
+    test "search by prompt text in opts returns matching tasks" do
+      insert_filtered!(0, opts: [prompt: "build a web application"])
+      insert_filtered!(1, opts: [prompt: "write a database migration"])
+      insert_filtered!(2, opts: [prompt: "refactor the auth module"])
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [search: "database"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).opts[:prompt] == "write a database migration"
+    end
+
+    test "empty search returns all (no filtering)" do
+      insert_filtered!(0, opts: [prompt: "alpha task"])
+      insert_filtered!(1, opts: [prompt: "beta task"])
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [search: ""]
+        )
+
+      assert length(tasks) == 2
+      assert total == 2
+    end
+
+    test "review status exact match returns only matching tasks" do
+      insert_filtered!(0, id: "rs-merged", status: :completed, review_status: :merged)
+      insert_filtered!(1, id: "rs-rejected", status: :completed, review_status: :rejected)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [review_status: "merged"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "rs-merged"
+    end
+
+    test "review 'pending' composite: completed + null review + branch_name in result" do
+      # Matches "pending": completed, review_status nil, result has branch_name.
+      insert_filtered!(0,
+        id: "pending-yes",
+        status: :completed,
+        review_status: nil,
+        result: {:ok, %{branch_name: "feat-123", commit_sha: "abc", result: "done"}}
+      )
+
+      # Does NOT match "pending": completed, nil review, but nil result (no branch).
+      insert_filtered!(1,
+        id: "pending-no-result",
+        status: :completed,
+        review_status: nil,
+        result: nil
+      )
+
+      # Does NOT match "pending": completed but already reviewed (merged).
+      insert_filtered!(2,
+        id: "pending-merged",
+        status: :completed,
+        review_status: :merged,
+        result: {:ok, %{branch_name: "feat-456"}}
+      )
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [review_status: "pending"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "pending-yes"
+    end
+
+    test "combined filters (status AND project_path)" do
+      insert_filtered!(0,
+        id: "combo-1",
+        status: :completed,
+        opts: [path: "/tmp/alpha", prompt: "combo one"]
+      )
+
+      insert_filtered!(1,
+        id: "combo-2",
+        status: :failed,
+        opts: [path: "/tmp/alpha", prompt: "combo two"]
+      )
+
+      insert_filtered!(2,
+        id: "combo-3",
+        status: :completed,
+        opts: [path: "/tmp/beta", prompt: "combo three"]
+      )
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [status: "completed", project_path: "/tmp/alpha"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "combo-1"
+    end
+
+    test "backward compatibility — no filters key behaves as before (no WHERE clause)" do
+      for i <- 0..2, do: insert_filtered!(i, status: :completed)
+      for i <- 0..1, do: insert_filtered!(i + 10, id: "nf-#{i}", status: :failed)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0)
+
+      assert length(tasks) == 5
+      assert total == 5
+    end
+  end
+
   describe "integrity check" do
     test "returns :ok on a healthy store" do
       assert Store.integrity_check(Store) == :ok
@@ -831,16 +1179,33 @@ defmodule EvoDash.StoreTest do
       # that was quarantined due to a codec bug (e.g. String.to_existing_atom/1
       # for opt keys that weren't yet loaded in the atom table) that has since
       # been fixed.
-      columns = ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id)
+      columns =
+        ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id)
 
       now = DateTime.utc_now() |> DateTime.to_iso8601()
-      opts_json = Jason.encode!([["path", "/tmp/test"], ["mode", "simple"], ["resume_from", "abc123"]])
+
+      opts_json =
+        Jason.encode!([["path", "/tmp/test"], ["mode", "simple"], ["resume_from", "abc123"]])
+
       logs_json = Jason.encode!(["log line 1"])
 
       row = [
-        "rec-task-1", "genesis", "completed", opts_json,
-        now, now, logs_json, nil, nil, nil, 1,
-        "base123", "commit456", nil, nil, "gpt-4o"
+        "rec-task-1",
+        "genesis",
+        "completed",
+        opts_json,
+        now,
+        now,
+        logs_json,
+        nil,
+        nil,
+        nil,
+        1,
+        "base123",
+        "commit456",
+        nil,
+        nil,
+        "gpt-4o"
       ]
 
       data_json =
@@ -850,7 +1215,13 @@ defmodule EvoDash.StoreTest do
         |> Jason.encode!()
 
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["rec-task-1", data_json])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)",
+        ["rec-task-1", data_json]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       # Verify the row is NOT in the live tasks table yet
@@ -873,7 +1244,10 @@ defmodule EvoDash.StoreTest do
 
       # And gone from quarantine
       {:ok, conn2} = Xqlite.open(sqlite_path)
-      {:ok, %{rows: quarantine_rows}} = XqliteNIF.query(conn2, "SELECT id FROM tasks_quarantine WHERE id = ?1", ["rec-task-1"])
+
+      {:ok, %{rows: quarantine_rows}} =
+        XqliteNIF.query(conn2, "SELECT id FROM tasks_quarantine WHERE id = ?1", ["rec-task-1"])
+
       assert quarantine_rows == []
       :ok = XqliteNIF.close(conn2)
     end
@@ -891,7 +1265,13 @@ defmodule EvoDash.StoreTest do
         |> Jason.encode!()
 
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)", ["/home/user/my_project", data_json])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)",
+        ["/home/user/my_project", data_json]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       # Verify not in live table
@@ -917,9 +1297,22 @@ defmodule EvoDash.StoreTest do
       task_data =
         EvoDash.Store.Codec.task_columns()
         |> Enum.zip([
-          "both-task", "genesis", "completed", task_opts,
-          now, now, task_logs, nil, nil, nil, 2,
-          "sha1", "sha2", nil, nil, nil
+          "both-task",
+          "genesis",
+          "completed",
+          task_opts,
+          now,
+          now,
+          task_logs,
+          nil,
+          nil,
+          nil,
+          2,
+          "sha1",
+          "sha2",
+          nil,
+          nil,
+          nil
         ])
         |> Map.new()
         |> Jason.encode!()
@@ -931,8 +1324,19 @@ defmodule EvoDash.StoreTest do
         |> Jason.encode!()
 
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["both-task", task_data])
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)", ["/both/project", project_data])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)",
+        ["both-task", task_data]
+      )
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO projects_quarantine (id, data) VALUES (?1, ?2)",
+        ["/both/project", project_data]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       assert {:ok, 2} = Store.recover_quarantine(Store)
@@ -951,7 +1355,13 @@ defmodule EvoDash.StoreTest do
       corrupt_json = Jason.encode!(%{"garbage" => "value", "id" => "corrupt-task"})
 
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["corrupt-task", corrupt_json])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)",
+        ["corrupt-task", corrupt_json]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       # Recovery should report 0 recovered
@@ -959,7 +1369,10 @@ defmodule EvoDash.StoreTest do
 
       # Row should still be in quarantine
       {:ok, conn2} = Xqlite.open(sqlite_path)
-      {:ok, %{rows: [[qd]]}} = XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["corrupt-task"])
+
+      {:ok, %{rows: [[qd]]}} =
+        XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["corrupt-task"])
+
       assert qd == corrupt_json
       :ok = XqliteNIF.close(conn2)
 
@@ -969,14 +1382,23 @@ defmodule EvoDash.StoreTest do
 
     test "leaves rows with unparseable JSON in quarantine", %{sqlite_path: sqlite_path} do
       {:ok, conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(conn, "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)", ["bad-json", "not valid json {{{"])
+
+      XqliteNIF.execute(
+        conn,
+        "INSERT OR REPLACE INTO tasks_quarantine (id, data) VALUES (?1, ?2)",
+        ["bad-json", "not valid json {{{"]
+      )
+
       :ok = XqliteNIF.close(conn)
 
       assert {:ok, 0} = Store.recover_quarantine(Store)
 
       # Still in quarantine
       {:ok, conn2} = Xqlite.open(sqlite_path)
-      {:ok, %{rows: [[qd]]}} = XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["bad-json"])
+
+      {:ok, %{rows: [[qd]]}} =
+        XqliteNIF.query(conn2, "SELECT data FROM tasks_quarantine WHERE id = ?1", ["bad-json"])
+
       assert qd == "not valid json {{{"
       :ok = XqliteNIF.close(conn2)
     end

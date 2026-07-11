@@ -50,6 +50,16 @@ defmodule EvoDash.TaskRegistry do
     GenServer.call(__MODULE__, :list_tasks)
   end
 
+  @doc """
+  Returns a paginated slice of tasks (most-recent-first) with the total count.
+
+  `opts` is a keyword list accepting `:limit` and `:offset` (both forwarded
+  to `EvoDash.Store.safe_select_paginated_tasks/2`). Returns `{tasks, total_count}`.
+  """
+  def list_tasks_paginated(opts \\ []) do
+    GenServer.call(__MODULE__, {:list_tasks_paginated, opts})
+  end
+
   def cancel_task(task_id) do
     GenServer.call(__MODULE__, {:cancel_task, task_id})
   end
@@ -215,6 +225,12 @@ defmodule EvoDash.TaskRegistry do
   def handle_call(:list_tasks, _from, state) do
     tasks = select_all_tasks(state)
     {:reply, tasks, state}
+  end
+
+  @impl true
+  def handle_call({:list_tasks_paginated, opts}, _from, state) do
+    result = select_paginated_tasks(state, opts)
+    {:reply, result, state}
   end
 
   @impl true
@@ -489,6 +505,10 @@ defmodule EvoDash.TaskRegistry do
     EvoDash.Store.safe_select_all_tasks(state.task_store)
   end
 
+  defp select_paginated_tasks(state, opts) do
+    EvoDash.Store.safe_select_paginated_tasks(state.task_store, opts)
+  end
+
   defp select_all_projects(state) do
     EvoDash.Store.safe_select_all_projects(state.task_store)
   end
@@ -580,8 +600,8 @@ defmodule EvoDash.TaskRegistry do
               ]
             )
 
-            {%{task | status: :failed, ref: nil, lease_expires_at: nil} |> Lease.set_crash_details(),
-             state}
+            {%{task | status: :failed, ref: nil, lease_expires_at: nil}
+             |> Lease.set_crash_details(), state}
           end
         end
     end
@@ -621,7 +641,9 @@ defmodule EvoDash.TaskRegistry do
       end
 
     if final_status == :failed do
-      Diagnostics.log_failed_transition(task_id, :recheck_resolve, task.status, result: final_result)
+      Diagnostics.log_failed_transition(task_id, :recheck_resolve, task.status,
+        result: final_result
+      )
     end
 
     finished_at = DateTime.utc_now()
@@ -680,7 +702,9 @@ defmodule EvoDash.TaskRegistry do
             # Log any transition INTO :failed. The core runtime normally only
             # broadcasts :finalizing on this topic, so :failed here is unexpected.
             if status == :failed do
-              Diagnostics.log_failed_transition(task_id, :task_status_pubsub, task.status, result: nil)
+              Diagnostics.log_failed_transition(task_id, :task_status_pubsub, task.status,
+                result: nil
+              )
             end
 
             finished_at =
