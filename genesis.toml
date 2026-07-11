@@ -1,0 +1,52 @@
+# genesis.toml — EvoGit project configuration file.
+# This file controls per-project settings for EvoGit agents, including worktree
+# initialization scripts, foreign repository references, and dashboard commands.
+# EvoGit agents read this file automatically; most users do not need to edit it.
+
+# ─── Worktree Init Script ───────────────────────────────────────────────────
+# This script runs automatically after each new git worktree is created. It
+# copies dependencies and build artifacts from the source repo into the new
+# worktree so builds start with a warm cache (avoiding re-download/recompile).
+#
+# Environment variables available to the script:
+#   SOURCE_REPO_PATH      — main repository checkout (where genesis.toml lives)
+#   SOURCE_WORKTREE_PATH  — parent agent's worktree path
+#   TARGET_WORKTREE_PATH  — newly created worktree (copy destination)
+#
+# WARNING: Do NOT modify or remove this section unless you know what you are
+# doing. EvoGit manages it automatically based on the build system selected
+# during project creation. Removing it will cause every new worktree to build
+# from scratch (much slower).
+
+[worktree]
+# Copy Rust build artifacts
+if [ -d "$SOURCE_REPO_PATH/target" ]; then
+  cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+fi
+'''
+# Copy Rust build artifacts
+if [ -d "$SOURCE_REPO_PATH/target" ]; then
+  cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+fi
+'''
+if (Test-Path "$env:SOURCE_REPO_PATH/target") {
+    Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/target" "$env:TARGET_WORKTREE_PATH/"
+}
+'''
+script.linux = '''#!/bin/bash
+# Copy Rust build artifacts
+if [ -d "$SOURCE_REPO_PATH/target" ]; then
+  cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+fi
+'''
+script.macos = '''#!/bin/bash
+# Copy Rust build artifacts
+if [ -d "$SOURCE_REPO_PATH/target" ]; then
+  cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+fi
+'''
+script.windows = '''# Copy Rust build artifacts
+if (Test-Path "$env:SOURCE_REPO_PATH/target") {
+    Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/target" "$env:TARGET_WORKTREE_PATH/"
+}
+'''
