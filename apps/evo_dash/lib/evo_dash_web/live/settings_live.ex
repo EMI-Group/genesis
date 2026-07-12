@@ -1152,18 +1152,28 @@ defmodule EvoDashWeb.SettingsLive do
        )}
     else
       profile_id = params["profile_id"]
-      models = get_in(socket.assigns.file_config, [:llm, :models])
+      models = get_in(socket.assigns.file_config, [:llm, :models]) || []
 
       profile = Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == profile_id end)
 
-      model_string =
-        if profile, do: profile_model_string(profile)
+      # Extract the raw model value as-is (map spec with base_url, or binary string).
+      model = if profile, do: Map.get(profile, :model) || Map.get(profile, "model")
 
-      if model_string do
+      if model do
+        # Collect profile-specific generation params to pass alongside the model spec.
+        gen_opts =
+          []
+          |> maybe_put_gen_opt(:temperature, profile)
+          |> maybe_put_gen_opt(:max_tokens, profile)
+          |> maybe_put_gen_opt(:top_p, profile)
+          |> maybe_put_gen_opt(:top_k, profile)
+          |> maybe_put_gen_opt(:frequency_penalty, profile)
+          |> maybe_put_gen_opt(:presence_penalty, profile)
+
         parent = self()
 
         Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          result = EvoGit.SystemCheck.llm_test(model_string)
+          result = EvoGit.SystemCheck.llm_test(model, gen_opts)
           send(parent, {:llm_test_result, result})
         end)
 
@@ -1314,12 +1324,20 @@ defmodule EvoDashWeb.SettingsLive do
   # ───────────────────────────────────────────────────────────────────────────
 
   # Composes a model string like "provider:id" from a profile's :model field.
-  # Handles map specs (%{provider: a, id: s}), tuples ({:provider, opts}),
+  # Handles map specs (%{provider: a, id: s, base_url: s}), tuples ({:provider, opts}),
   # and legacy binary strings.
+  #
+  # For map specs with a custom base_url, the URL is appended (e.g.
+  # "openai_compatible:gpt-4o (custom)").
   defp profile_model_string(%{model: model}) when is_map(model) do
     provider = model[:provider] || model["provider"]
     id = model[:id] || model["id"]
-    if provider && id, do: "#{provider}:#{id}"
+    base_url = model[:base_url] || model["base_url"]
+
+    if provider && id do
+      base = "#{provider}:#{id}"
+      if base_url && base_url != "", do: "#{base} (custom)", else: base
+    end
   end
 
   defp profile_model_string(%{model: {provider, opts}})
@@ -1330,6 +1348,13 @@ defmodule EvoDashWeb.SettingsLive do
 
   defp profile_model_string(%{model: model}) when is_binary(model) and model != "", do: model
   defp profile_model_string(_), do: nil
+
+  # Conditionally adds a generation param from a profile map to a keyword list.
+  # Skips keys whose value is nil or absent in the profile.
+  defp maybe_put_gen_opt(opts, key, profile) do
+    value = Map.get(profile, key) || Map.get(profile, to_string(key))
+    if value != nil, do: Keyword.put(opts, key, value), else: opts
+  end
 
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config persistence
