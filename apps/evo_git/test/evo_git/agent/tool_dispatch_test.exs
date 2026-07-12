@@ -148,4 +148,138 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       assert second.role == :user
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # dedupe_tool_calls/2
+  # ---------------------------------------------------------------------------
+
+  describe "dedupe_tool_calls/2" do
+    test "removes calls with duplicate ids, keeping the first" do
+      calls = [
+        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./a.ex"}},
+        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./b.ex"}}
+      ]
+
+      [only] = ToolDispatch.dedupe_tool_calls(calls, "agent")
+
+      assert only.id == "call_1"
+      assert only.arguments == %{"file_path" => "./a.ex"}
+    end
+
+    test "removes calls with identical content but different ids, keeping the first" do
+      calls = [
+        %{
+          id: "call_1",
+          name: "subagent_manager",
+          arguments: %{"path" => "./src", "objective" => "foo"}
+        },
+        %{
+          id: "call_2",
+          name: "subagent_manager",
+          arguments: %{"path" => "./src", "objective" => "foo"}
+        }
+      ]
+
+      [only] = ToolDispatch.dedupe_tool_calls(calls, "agent")
+
+      assert only.id == "call_1"
+    end
+
+    test "keeps all calls when there are no duplicates" do
+      calls = [
+        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./a.ex"}},
+        %{id: "call_2", name: "run_bash", arguments: %{"command" => "echo hi"}}
+      ]
+
+      result = ToolDispatch.dedupe_tool_calls(calls, "agent")
+
+      assert length(result) == 2
+      assert Enum.map(result, & &1.id) == ["call_1", "call_2"]
+    end
+
+    test "logs a warning when duplicates are removed" do
+      calls = [
+        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./a.ex"}},
+        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./b.ex"}}
+      ]
+
+      log =
+        capture_log(fn ->
+          ToolDispatch.dedupe_tool_calls(calls, "my-agent")
+        end)
+
+      assert log =~ "Removed 1 duplicate tool call"
+      assert log =~ "Agent my-agent"
+      assert log =~ "read_file"
+    end
+
+    test "does not log a warning when there are no duplicates" do
+      calls = [
+        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./a.ex"}},
+        %{id: "call_2", name: "run_bash", arguments: %{"command" => "echo hi"}}
+      ]
+
+      log =
+        capture_log(fn ->
+          ToolDispatch.dedupe_tool_calls(calls, "agent")
+        end)
+
+      refute log =~ "duplicate tool call"
+    end
+
+    test "handles an empty list" do
+      assert ToolDispatch.dedupe_tool_calls([], "agent") == []
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # sync_context_tool_calls/2
+  # ---------------------------------------------------------------------------
+
+  # Build an assistant message (the last message in a context) carrying a list
+  # of %ReqLLM.ToolCall{} structs in its tool_calls field.
+  defp assistant_msg_with_tool_calls(tool_call_structs) do
+    %ReqLLM.Message{
+      role: :assistant,
+      content: [ReqLLM.Message.ContentPart.text("Calling tools.")],
+      tool_calls: tool_call_structs
+    }
+  end
+
+  describe "sync_context_tool_calls/2" do
+    test "filters last message tool_calls to match deduped set" do
+      tc1 = ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"}))
+      tc2 = ReqLLM.ToolCall.new("call_2", "run_bash", ~s({"command":"echo hi"}))
+      tc3 = ReqLLM.ToolCall.new("call_3", "write_file", ~s({"file_path":"./c.ex"}))
+
+      ctx = ReqLLM.Context.new([assistant_msg_with_tool_calls([tc1, tc2, tc3])])
+
+      # Deduped set keeps only call_1 and call_3.
+      deduped = [%{id: "call_1"}, %{id: "call_3"}]
+
+      updated = ToolDispatch.sync_context_tool_calls(ctx, deduped)
+
+      last_msg = List.last(updated.messages)
+      assert length(last_msg.tool_calls) == 2
+      assert Enum.map(last_msg.tool_calls, & &1.id) == ["call_1", "call_3"]
+    end
+
+    test "returns context unchanged when last message tool_calls is nil" do
+      ctx =
+        ReqLLM.Context.new([
+          assistant_msg_with_tool_calls(nil)
+        ])
+
+      deduped = [%{id: "call_1"}]
+
+      assert ToolDispatch.sync_context_tool_calls(ctx, deduped) == ctx
+    end
+
+    test "returns context unchanged for empty messages" do
+      ctx = ReqLLM.Context.new([])
+      deduped = [%{id: "call_1"}]
+
+      assert ToolDispatch.sync_context_tool_calls(ctx, deduped) == ctx
+    end
+  end
 end
