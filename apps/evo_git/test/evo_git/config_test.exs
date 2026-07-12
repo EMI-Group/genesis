@@ -823,7 +823,7 @@ defmodule EvoGit.ConfigTest do
       assert profile.model == "google:gflash"
     end
 
-    test "atomize_enum_values normalizes an atom-keyed map model with overrides to a tuple" do
+    test "atomize_enum_values normalizes an atom-keyed map model with overrides to an atomized map" do
       model_map = %{provider: :openai, id: "x", base_url: "https://u/v1"}
 
       config =
@@ -831,11 +831,11 @@ defmodule EvoGit.ConfigTest do
         |> Config.__atomize_enum_values__()
 
       profile = hd(EvoGit.Config.Schema.model_profiles(config))
-      assert profile.model == {:openai, [id: "x", base_url: "https://u/v1"]}
-      assert elem(profile.model, 0) == :openai
+      assert profile.model == %{provider: :openai, id: "x", base_url: "https://u/v1"}
+      assert profile.model.provider == :openai
     end
 
-    test "atomize_enum_values normalizes a string-keyed model map with overrides to LLMDB-compatible tuple" do
+    test "atomize_enum_values normalizes a string-keyed model map with overrides to an atomized map" do
       config =
         %{
           llm: %{
@@ -855,9 +855,9 @@ defmodule EvoGit.ConfigTest do
 
       profile = hd(EvoGit.Config.Schema.model_profiles(config))
       assert profile.id == "default"
-      assert elem(profile.model, 0) == :openai
-      assert profile.model |> elem(1) |> Keyword.get(:id) == "x"
-      assert profile.model |> elem(1) |> Keyword.get(:base_url) == "https://u/v1"
+      assert profile.model.provider == :openai
+      assert profile.model.id == "x"
+      assert profile.model.base_url == "https://u/v1"
     end
   end
 end

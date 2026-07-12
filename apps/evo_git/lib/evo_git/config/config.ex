@@ -177,11 +177,11 @@ defmodule EvoGit.Config do
         put_in(acc, [:sandbox, :mode], new_mode)
 
       # LLM model normalization:
-      # 1. Flat [llm].model map → normalize to string or tuple
+      # 1. Flat [llm].model map → normalize to string or atomized map
       # 2. [[llm.models]] → normalize model maps in each profile; strings pass through
       {:llm, llm_config}, acc when is_map(llm_config) ->
         # Normalize the flat model (backward compat). Map model specs are
-        # normalized to string or tuple; strings pass through as-is.
+        # normalized to string or atomized map; strings pass through as-is.
         acc =
           case Map.get(llm_config, :model) do
             model when is_map(model) ->
@@ -332,7 +332,8 @@ defmodule EvoGit.Config do
   # Normalizes a model map so that keys are atoms and the :provider value is
   # an atom. Produces LLMDB-compatible output instead of a plain map:
   #   - Simple models (only :provider + :id) → "provider:id" string
-  #   - Models with override keys (:base_url, :extra, etc.) → {:provider, opts} tuple
+  #   - Models with override keys (:base_url, :extra, etc.) → atomized map
+  #     (returned as-is so ReqLLM.model/1's map clause handles overrides correctly)
   # req_llm's ReqLLM.model/1 natively resolves both formats through LLMDB for
   # cost tracking and model metadata.
   defp normalize_model_map(model) when is_map(model) do
@@ -363,13 +364,9 @@ defmodule EvoGit.Config do
         "#{provider}:#{id}"
 
       provider != nil and id != nil ->
-        # Model with overrides: format as {:provider, keyword_list} tuple.
-        overrides =
-          Enum.map(override_keys, fn key ->
-            {key, Map.get(atomized, key)}
-          end)
-
-        {provider, [{:id, id} | overrides]}
+        # Model with overrides: keep as atomized map so ReqLLM.model/1's
+        # map clause handles base_url and other overrides correctly.
+        atomized
 
       true ->
         # Fallback: return the atomized map as-is (defensive — missing provider
