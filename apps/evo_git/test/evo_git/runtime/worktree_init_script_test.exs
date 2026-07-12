@@ -115,7 +115,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "elixir linux script has bash shebang and copies deps and _build" do
       scripts = WorktreeInitScript.scripts_for(:elixir)
 
-      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert String.starts_with?(scripts.linux, "#!/usr/bin/env bash")
       assert scripts.linux =~ "deps"
       assert scripts.linux =~ "_build"
       assert scripts.linux =~ "$SOURCE_REPO_PATH"
@@ -131,7 +131,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "elixir macos script has bash shebang and copies deps and _build" do
       scripts = WorktreeInitScript.scripts_for(:elixir)
 
-      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert String.starts_with?(scripts.macos, "#!/usr/bin/env bash")
       assert scripts.macos =~ "deps"
       assert scripts.macos =~ "_build"
       assert scripts.macos =~ "$SOURCE_REPO_PATH"
@@ -156,7 +156,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "node linux script has bash shebang and copies node_modules" do
       scripts = WorktreeInitScript.scripts_for(:node)
 
-      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert String.starts_with?(scripts.linux, "#!/usr/bin/env bash")
       assert scripts.linux =~ "node_modules"
       assert scripts.linux =~ "$SOURCE_REPO_PATH"
       assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
@@ -171,7 +171,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "node macos script has bash shebang and copies node_modules" do
       scripts = WorktreeInitScript.scripts_for(:node)
 
-      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert String.starts_with?(scripts.macos, "#!/usr/bin/env bash")
       assert scripts.macos =~ "node_modules"
       assert scripts.macos =~ "$SOURCE_REPO_PATH"
       assert scripts.macos =~ "$TARGET_WORKTREE_PATH"
@@ -194,7 +194,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "python linux script has bash shebang and copies .venv" do
       scripts = WorktreeInitScript.scripts_for(:python)
 
-      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert String.starts_with?(scripts.linux, "#!/usr/bin/env bash")
       assert scripts.linux =~ ".venv"
       assert scripts.linux =~ "$SOURCE_REPO_PATH"
       assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
@@ -209,7 +209,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "python macos script has bash shebang and copies .venv" do
       scripts = WorktreeInitScript.scripts_for(:python)
 
-      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert String.starts_with?(scripts.macos, "#!/usr/bin/env bash")
       assert scripts.macos =~ ".venv"
       assert scripts.macos =~ "$SOURCE_REPO_PATH"
       assert scripts.macos =~ "$TARGET_WORKTREE_PATH"
@@ -232,7 +232,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "rust linux script has bash shebang and copies target" do
       scripts = WorktreeInitScript.scripts_for(:rust)
 
-      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert String.starts_with?(scripts.linux, "#!/usr/bin/env bash")
       assert scripts.linux =~ "target"
       assert scripts.linux =~ "$SOURCE_REPO_PATH"
       assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
@@ -247,7 +247,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "rust macos script has bash shebang and copies target" do
       scripts = WorktreeInitScript.scripts_for(:rust)
 
-      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert String.starts_with?(scripts.macos, "#!/usr/bin/env bash")
       assert scripts.macos =~ "target"
       assert scripts.macos =~ "$SOURCE_REPO_PATH"
       assert scripts.macos =~ "$TARGET_WORKTREE_PATH"
@@ -270,7 +270,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "go linux script has bash shebang and copies vendor" do
       scripts = WorktreeInitScript.scripts_for(:go)
 
-      assert String.starts_with?(scripts.linux, "#!/bin/bash")
+      assert String.starts_with?(scripts.linux, "#!/usr/bin/env bash")
       assert scripts.linux =~ "vendor"
       assert scripts.linux =~ "$SOURCE_REPO_PATH"
       assert scripts.linux =~ "$TARGET_WORKTREE_PATH"
@@ -285,7 +285,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "go macos script has bash shebang and copies vendor" do
       scripts = WorktreeInitScript.scripts_for(:go)
 
-      assert String.starts_with?(scripts.macos, "#!/bin/bash")
+      assert String.starts_with?(scripts.macos, "#!/usr/bin/env bash")
       assert scripts.macos =~ "vendor"
       assert scripts.macos =~ "$SOURCE_REPO_PATH"
       assert scripts.macos =~ "$TARGET_WORKTREE_PATH"

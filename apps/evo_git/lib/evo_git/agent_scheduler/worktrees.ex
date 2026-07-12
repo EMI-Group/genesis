@@ -179,11 +179,19 @@ defmodule EvoGit.AgentScheduler.Worktrees do
       script_content ->
         Logger.info("AgentScheduler: Running worktree init script")
 
-        # Detect shell from shebang, default to /bin/sh
-        shell =
+        # Detect shell from shebang, defaulting to platform shell.
+        # Split into executable + extra args so that shebangs like
+        # "#!/usr/bin/env bash" work correctly (executable=/usr/bin/env,
+        # extra_args=["bash"]) rather than treating the whole line as one
+        # binary path.
+        {shell, extra_args} =
           case String.split(script_content, "\n", parts: 2) |> List.first() do
-            "#!" <> rest -> String.trim(rest)
-            _ -> Platform.shell()
+            "#!" <> rest ->
+              parts = String.trim(rest) |> String.split(~r/\s+/, trim: true)
+              {List.first(parts), tl(parts)}
+
+            _ ->
+              {Platform.shell(), []}
           end
 
         cmd =
@@ -205,7 +213,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
             """
           end
 
-        case System.cmd(shell, Platform.shell_args(cmd),
+        case System.cmd(shell, extra_args ++ Platform.shell_args(cmd),
                cd: repo_root,
                stderr_to_stdout: true
              ) do

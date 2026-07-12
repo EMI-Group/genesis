@@ -36,7 +36,7 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       name: "Elixir / Erlang (Mix)",
       dirs: ["deps", "_build"],
       linux_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Elixir dependencies and build artifacts
       if [ -d "$SOURCE_REPO_PATH/deps" ]; then
         cp -R --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
@@ -46,7 +46,7 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       fi
       """,
       macos_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Elixir dependencies and build artifacts
       if [ -d "$SOURCE_REPO_PATH/deps" ]; then
         cp -cR "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
@@ -70,14 +70,14 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       name: "Node.js (npm/yarn)",
       dirs: ["node_modules"],
       linux_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Node.js dependencies
       if [ -d "$SOURCE_REPO_PATH/node_modules" ]; then
         cp -R --reflink=auto "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Node.js dependencies
       if [ -d "$SOURCE_REPO_PATH/node_modules" ]; then
         cp -cR "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
@@ -95,14 +95,14 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       name: "Python (venv)",
       dirs: [".venv"],
       linux_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Python virtual environment
       if [ -d "$SOURCE_REPO_PATH/.venv" ]; then
         cp -R --reflink=auto "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Python virtual environment
       if [ -d "$SOURCE_REPO_PATH/.venv" ]; then
         cp -cR "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
@@ -120,14 +120,14 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       name: "Rust (Cargo)",
       dirs: ["target"],
       linux_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Rust build artifacts
       if [ -d "$SOURCE_REPO_PATH/target" ]; then
         cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Rust build artifacts
       if [ -d "$SOURCE_REPO_PATH/target" ]; then
         cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
@@ -145,14 +145,14 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       name: "Go (modules)",
       dirs: ["vendor"],
       linux_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Go vendored dependencies
       if [ -d "$SOURCE_REPO_PATH/vendor" ]; then
         cp -R --reflink=auto "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
-      #!/bin/bash
+      #!/usr/bin/env bash
       # Copy Go vendored dependencies
       if [ -d "$SOURCE_REPO_PATH/vendor" ]; then
         cp -cR "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
