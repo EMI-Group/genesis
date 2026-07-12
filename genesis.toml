@@ -19,6 +19,12 @@
 # from scratch (much slower).
 
 [worktree]
+script.linux = '''#!/usr/bin/env bash
+# Copy Rust build artifacts
+if [ -d "$SOURCE_REPO_PATH/target" ]; then
+  cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+fi
+'''
 script.macos = '''#!/bin/bash
 # Copy Rust build artifacts
 if [ -d "$SOURCE_REPO_PATH/target" ]; then
