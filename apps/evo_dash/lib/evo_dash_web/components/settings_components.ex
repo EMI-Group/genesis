@@ -422,34 +422,72 @@ defmodule EvoDashWeb.SettingsComponents do
                     <span class="loading loading-spinner loading-sm text-primary"></span>
                     <span class="text-sm text-base-content/80">{gettext("Testing LLM connection...")}</span>
                   <% {:ok, data} -> %>
-                    <.icon name="hero-check-circle" class="size-5 text-success" />
-                    <span class="text-sm text-success font-medium">{gettext("Connected")}</span>
-                    <span class="text-xs text-base-content/70">({model_display(data.model)})</span>
-                    <span class="text-xs text-base-content/70 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(
-                      data.response,
-                      50
-                    )}"</span>
-                    <button
-                      phx-click="test_llm"
-                      phx-value-profile_id={@test_profile_id}
-                      class="btn btn-ghost btn-xs gap-1 ml-2"
-                      disabled={@disabled}
-                    >
-                      <.icon name="hero-arrow-path" class="size-3" />
-                      {gettext("Retest")}
-                    </button>
+                    <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>
+                    <div class="flex flex-col gap-3 w-full">
+                      <div class="flex items-center gap-2">
+                        <.icon name="hero-check-circle" class="size-5 text-success" />
+                        <span class="text-sm text-success font-medium">{gettext("Connected")}</span>
+                        <span class="text-xs text-base-content/70">({model_display(data.model)})</span>
+                        <span class="text-xs text-base-content/70 bg-base-200/50 px-2 py-0.5 rounded">"{truncate_string(
+                          data.response,
+                          50
+                        )}"</span>
+                      </div>
+                      <form phx-submit="noop" class="flex items-center gap-2">
+                        <select
+                          name="profile_id"
+                          phx-change="select_test_profile"
+                          class="select select-bordered select-sm rounded-md max-w-[300px]"
+                        >
+                          <%= for profile <- @model_profiles do %>
+                            <% pid = profile_id_str(profile) %>
+                            <option value={pid} selected={pid == profile_id_val}>
+                              {profile_option_label(profile)}
+                            </option>
+                          <% end %>
+                        </select>
+                        <button
+                          phx-click="test_llm"
+                          phx-value-profile_id={profile_id_val}
+                          class="btn btn-primary btn-sm gap-2"
+                          disabled={@disabled}
+                        >
+                          <.icon name="hero-arrow-path" class="size-4" />
+                          {gettext("Retest")}
+                        </button>
+                      </form>
+                    </div>
                   <% {:error, reason} -> %>
-                    <.icon name="hero-x-circle" class="size-5 text-error" />
-                    <span class="text-sm text-error">{reason}</span>
-                    <button
-                      phx-click="test_llm"
-                      phx-value-profile_id={@test_profile_id}
-                      class="btn btn-ghost btn-xs gap-1 ml-2"
-                      disabled={@disabled}
-                    >
-                      <.icon name="hero-arrow-path" class="size-3" />
-                      {gettext("Retry")}
-                    </button>
+                    <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>
+                    <div class="flex flex-col gap-3 w-full">
+                      <div class="flex items-center gap-2">
+                        <.icon name="hero-x-circle" class="size-5 text-error" />
+                        <span class="text-sm text-error">{reason}</span>
+                      </div>
+                      <form phx-submit="noop" class="flex items-center gap-2">
+                        <select
+                          name="profile_id"
+                          phx-change="select_test_profile"
+                          class="select select-bordered select-sm rounded-md max-w-[300px]"
+                        >
+                          <%= for profile <- @model_profiles do %>
+                            <% pid = profile_id_str(profile) %>
+                            <option value={pid} selected={pid == profile_id_val}>
+                              {profile_option_label(profile)}
+                            </option>
+                          <% end %>
+                        </select>
+                        <button
+                          phx-click="test_llm"
+                          phx-value-profile_id={profile_id_val}
+                          class="btn btn-primary btn-sm gap-2"
+                          disabled={@disabled}
+                        >
+                          <.icon name="hero-arrow-path" class="size-4" />
+                          {gettext("Retry")}
+                        </button>
+                      </form>
+                    </div>
                 <% end %>
               </div>
             </div>
