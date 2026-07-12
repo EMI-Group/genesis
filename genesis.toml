@@ -19,20 +19,6 @@
 # from scratch (much slower).
 
 [worktree]
-# Copy Rust build artifacts
-if [ -d "$SOURCE_REPO_PATH/target" ]; then
-  cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
-fi
-'''
-# Copy Rust build artifacts
-if [ -d "$SOURCE_REPO_PATH/target" ]; then
-  cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
-fi
-'''
-if (Test-Path "$env:SOURCE_REPO_PATH/target") {
-    Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/target" "$env:TARGET_WORKTREE_PATH/"
-}
-'''
 script.linux = '''#!/bin/bash
 # Copy Rust build artifacts
 if [ -d "$SOURCE_REPO_PATH/target" ]; then
