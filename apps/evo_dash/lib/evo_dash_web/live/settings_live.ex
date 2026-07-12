@@ -1320,34 +1320,8 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: Model profile string composition
+  # Helpers: Generation params
   # ───────────────────────────────────────────────────────────────────────────
-
-  # Composes a model string like "provider:id" from a profile's :model field.
-  # Handles map specs (%{provider: a, id: s, base_url: s}), tuples ({:provider, opts}),
-  # and legacy binary strings.
-  #
-  # For map specs with a custom base_url, the URL is appended (e.g.
-  # "openai_compatible:gpt-4o (custom)").
-  defp profile_model_string(%{model: model}) when is_map(model) do
-    provider = model[:provider] || model["provider"]
-    id = model[:id] || model["id"]
-    base_url = model[:base_url] || model["base_url"]
-
-    if provider && id do
-      base = "#{provider}:#{id}"
-      if base_url && base_url != "", do: "#{base} (custom)", else: base
-    end
-  end
-
-  defp profile_model_string(%{model: {provider, opts}})
-       when is_atom(provider) and is_list(opts) do
-    id = Keyword.get(opts, :id)
-    if id && id != "", do: "#{provider}:#{id}"
-  end
-
-  defp profile_model_string(%{model: model}) when is_binary(model) and model != "", do: model
-  defp profile_model_string(_), do: nil
 
   # Conditionally adds a generation param from a profile map to a keyword list.
   # Skips keys whose value is nil or absent in the profile.
