@@ -480,6 +480,84 @@ defmodule EvoGit.Config.SchemaTest do
     end
   end
 
+  describe "model_spec tuple format for [:llm, :model]" do
+    # Tuple-format model specs: {provider_atom, opts_keyword}
+    # opts must include an :id string key and may include optional
+    # :base_url string and :extra map keys.
+
+    test "accepts a valid tuple with id + base_url override" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {:openai, [id: "gpt-5.6", base_url: "https://sub.yeluo.cloud/v1"]})
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts a valid tuple with id + extra map" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {:openai, [id: "gpt-5.6", extra: %{family: "glm"}]})
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts a valid tuple with just id" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {:openai, [id: "gpt-5.6"]})
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "rejects a tuple missing the id key" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {:openai, [base_url: "https://x"]})
+
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "rejects a tuple with empty id string" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {:openai, [id: ""]})
+
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "rejects a tuple with nil id" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {:openai, [id: nil]})
+
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "rejects a tuple with non-map extra" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {:openai, [id: "gpt-5.6", extra: "not-a-map"]})
+
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "rejects a 3-element tuple" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {:openai, :whatever, [id: "x"]})
+
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "rejects a tuple with non-atom first element" do
+      config =
+        put_in(Schema.defaults(), [:llm, :model],
+          {"openai", [id: "x"]})
+
+      assert {:error, _} = Schema.validate(config)
+    end
+  end
+
   describe "model_profiles type for [:llm, :models]" do
     test "the schema entry for [:llm, :models] has type: :model_profiles" do
       entry =
