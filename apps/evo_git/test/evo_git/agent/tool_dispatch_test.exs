@@ -282,4 +282,145 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       assert ToolDispatch.sync_context_tool_calls(ctx, deduped) == ctx
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # dedupe_and_sync/3
+  # ---------------------------------------------------------------------------
+
+  # Build a ReqLLM.Response that has BOTH a context (with messages) AND a
+  # message, where the message's tool_calls are %ReqLLM.ToolCall{} structs
+  # with a duplicate (same id and content).
+  defp response_with_duplicate_tool_calls do
+    tc1 = ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"}))
+    tc1_dup = ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"}))
+
+    msg = %ReqLLM.Message{
+      role: :assistant,
+      content: [ReqLLM.Message.ContentPart.text("calling")],
+      tool_calls: [tc1, tc1_dup]
+    }
+
+    %ReqLLM.Response{
+      id: "test-resp",
+      model: "test:model",
+      context: ReqLLM.Context.new([msg]),
+      message: msg,
+      usage: nil
+    }
+  end
+
+  # Build a ReqLLM.Response with two distinct tool calls (no duplicates).
+  defp response_with_distinct_tool_calls do
+    tc1 = ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"}))
+    tc2 = ReqLLM.ToolCall.new("call_2", "run_bash", ~s({"command":"echo hi"}))
+
+    msg = %ReqLLM.Message{
+      role: :assistant,
+      content: [ReqLLM.Message.ContentPart.text("calling")],
+      tool_calls: [tc1, tc2]
+    }
+
+    %ReqLLM.Response{
+      id: "test-resp",
+      model: "test:model",
+      context: ReqLLM.Context.new([msg]),
+      message: msg,
+      usage: nil
+    }
+  end
+
+  # Build a ReqLLM.Response with a nil message but a valid context carrying
+  # duplicate tool calls.
+  defp response_with_nil_message do
+    tc1 = ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"}))
+    tc1_dup = ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"}))
+
+    msg = %ReqLLM.Message{
+      role: :assistant,
+      content: [ReqLLM.Message.ContentPart.text("calling")],
+      tool_calls: [tc1, tc1_dup]
+    }
+
+    %ReqLLM.Response{
+      id: "test-resp",
+      model: "test:model",
+      context: ReqLLM.Context.new([msg]),
+      message: nil,
+      usage: nil
+    }
+  end
+
+  describe "dedupe_and_sync/3" do
+    test "dedupes both context and message tool_calls" do
+      response = response_with_duplicate_tool_calls()
+
+      # Replicate how process_llm_response builds the tool_calls argument
+      tool_calls =
+        ReqLLM.Response.tool_calls(response)
+        |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+
+      {deduped, updated_response} = ToolDispatch.dedupe_and_sync(tool_calls, response, "agent")
+
+      assert length(deduped) == 1
+
+      last_msg = List.last(updated_response.context.messages)
+      assert length(last_msg.tool_calls) == 1
+
+      assert length(updated_response.message.tool_calls) == 1
+    end
+
+    test "returns response unchanged when there are no duplicates" do
+      response = response_with_distinct_tool_calls()
+
+      tool_calls =
+        ReqLLM.Response.tool_calls(response)
+        |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+
+      {_deduped, updated_response} = ToolDispatch.dedupe_and_sync(tool_calls, response, "agent")
+
+      # message.tool_calls unchanged
+      assert length(updated_response.message.tool_calls) == 2
+      assert Enum.map(updated_response.message.tool_calls, & &1.id) == ["call_1", "call_2"]
+
+      # context last message tool_calls unchanged
+      last_msg = List.last(updated_response.context.messages)
+      assert length(last_msg.tool_calls) == 2
+    end
+
+    test "handles nil message without crashing and still dedups context" do
+      response = response_with_nil_message()
+
+      # When message is nil, ReqLLM.Response.tool_calls/1 returns [], so we
+      # build the tool_calls argument independently (as process_llm_response
+      # would when the context carries the tool calls).
+      tool_calls =
+        ReqLLM.Response.tool_calls(%{response | message: hd(response.context.messages)})
+        |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+
+      {deduped, updated_response} = ToolDispatch.dedupe_and_sync(tool_calls, response, "agent")
+
+      assert length(deduped) == 1
+      assert is_nil(updated_response.message)
+
+      last_msg = List.last(updated_response.context.messages)
+      assert length(last_msg.tool_calls) == 1
+    end
+
+    test "logs a warning when duplicates are removed via dedupe_and_sync" do
+      response = response_with_duplicate_tool_calls()
+
+      tool_calls =
+        ReqLLM.Response.tool_calls(response)
+        |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+
+      log =
+        capture_log(fn ->
+          ToolDispatch.dedupe_and_sync(tool_calls, response, "my-agent")
+        end)
+
+      assert log =~ "Removed 1 duplicate tool call"
+      assert log =~ "Agent my-agent"
+      assert log =~ "read_file"
+    end
+  end
 end

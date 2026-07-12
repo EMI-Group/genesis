@@ -272,11 +272,12 @@ defmodule EvoGit.Agent.ToolDispatch do
   def dedupe_and_sync(tool_calls, response, agent_id) do
     deduped = dedupe_tool_calls(tool_calls, agent_id)
 
-    if deduped == tool_calls do
+    if length(deduped) == length(tool_calls) do
       {tool_calls, response}
     else
       updated_context = sync_context_tool_calls(response.context, deduped)
-      {deduped, %{response | context: updated_context}}
+      updated_message = sync_message_tool_calls(response.message, deduped)
+      {deduped, %{response | context: updated_context, message: updated_message}}
     end
   end
 
@@ -293,19 +294,21 @@ defmodule EvoGit.Agent.ToolDispatch do
   def dedupe_tool_calls(tool_calls, agent_id) when is_list(tool_calls) do
     original_count = length(tool_calls)
 
-    # Pass 1 — dedupe by :id (primary signal: "duplicated tool call ids")
-    {by_id, removed_by_id} =
-      dedupe_keeping_first(tool_calls, & &1.id)
+    # Pass 1 — dedupe by :id (primary signal: "duplicated tool call ids").
+    # Enum.dedup_by/2 removes consecutive duplicates, keeping the first.
+    by_id = Enum.dedup_by(tool_calls, & &1.id)
 
     # Pass 2 — dedupe by identical content {name, arguments}
-    {final, removed_by_content} =
-      dedupe_keeping_first(by_id, fn call -> {call.name, call.arguments} end)
+    final = Enum.dedup_by(by_id, fn call -> {call.name, call.arguments} end)
 
     final_count = length(final)
     removed_count = original_count - final_count
 
     if removed_count > 0 do
-      removed_list = Enum.map(removed_by_id ++ removed_by_content, &"#{&1.name}(id=#{&1.id})")
+      # Enum.dedup_by keeps the same struct references, so list difference
+      # yields exactly the removed items.
+      removed = tool_calls -- final
+      removed_list = Enum.map(removed, &"#{&1.name}(id=#{&1.id})")
 
       Logger.warning(
         "Agent #{agent_id}: Removed #{removed_count} duplicate tool call(s) " <>
@@ -314,22 +317,6 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
 
     final
-  end
-
-  # Single-pass dedup keyed by `key_fn`. Returns `{kept, removed}`.
-  defp dedupe_keeping_first(calls, key_fn) do
-    {kept_acc, seen, removed_acc} =
-      Enum.reduce(calls, {[], MapSet.new(), []}, fn call, {kept, seen, removed} ->
-        key = key_fn.(call)
-
-        if MapSet.member?(seen, key) do
-          {kept, seen, [call | removed]}
-        else
-          {[call | kept], MapSet.put(seen, key), removed}
-        end
-      end)
-
-    {Enum.reverse(kept_acc), Enum.reverse(removed_acc)}
   end
 
   @doc """
@@ -354,13 +341,48 @@ defmodule EvoGit.Agent.ToolDispatch do
             context
 
           structs when is_list(structs) ->
-            kept_ids = MapSet.new(deduped_tool_calls, & &1.id)
-            filtered = Enum.filter(structs, &MapSet.member?(kept_ids, &1.id))
+            filtered = filter_tool_call_structs(structs, deduped_tool_calls)
 
             updated_msg = %{last_msg | tool_calls: filtered}
             %{context | messages: List.replace_at(messages, length(messages) - 1, updated_msg)}
         end
     end
+  end
+
+  # Filters a single message's tool_calls to keep only entries whose :id is in
+  # the deduped set. This keeps response.message in sync with the deduplicated
+  # set we actually execute (response.context and response.message are separate
+  # struct references in ReqLLM). Handles nil message and nil tool_calls.
+  defp sync_message_tool_calls(nil, _deduped), do: nil
+
+  defp sync_message_tool_calls(%ReqLLM.Message{tool_calls: nil} = msg, _deduped), do: msg
+
+  defp sync_message_tool_calls(%ReqLLM.Message{tool_calls: structs} = msg, deduped)
+       when is_list(structs) do
+    %{msg | tool_calls: filter_tool_call_structs(structs, deduped)}
+  end
+
+  # Filters a list of tool-call structs to keep at most as many per :id as
+  # appear in the deduped list. This correctly handles same-id duplicates
+  # (where two structs share one id) — a plain id-membership check would keep
+  # both, but we need to respect the deduped count.
+  defp filter_tool_call_structs(structs, deduped) do
+    counts = Enum.frequencies_by(deduped, & &1.id)
+
+    {kept, _acc} =
+      Enum.map_reduce(structs, counts, fn struct, acc ->
+        id = struct.id
+
+        case acc do
+          %{^id => n} when n > 0 ->
+            {struct, Map.put(acc, id, n - 1)}
+
+          _ ->
+            {nil, acc}
+        end
+      end)
+
+    Enum.reject(kept, &is_nil/1)
   end
 
   @doc false
