@@ -222,6 +222,33 @@ defmodule EvoGit.Config.Schema do
     end
   end
 
+  # Accept tuple model specs (e.g. {:openai, [id: "gpt-5.6", base_url: "..."]}).
+  # These are produced by normalize_model_map/1 when a model has override keys.
+  # Must be a 2-element tuple: {provider_atom, keyword_list}. The keyword list
+  # must have at least :id with a non-empty string. :extra is optional but,
+  # if present, must be a map.
+  defp type_errors(key_path, :model_spec, {provider, opts}) when is_atom(provider) and is_list(opts) do
+    id = Keyword.get(opts, :id)
+    has_extra = Keyword.has_key?(opts, :extra)
+    extra = Keyword.get(opts, :extra)
+
+    id_errors =
+      if is_binary(id) and id != "" do
+        []
+      else
+        [error(key_path, "model tuple must have a valid non-empty 'id' string, got #{inspect(id)}", {provider, opts}, :model_spec)]
+      end
+
+    extra_errors =
+      if has_extra and not is_map(extra) do
+        [error(key_path, "model tuple 'extra' must be a map, got #{inspect(extra)}", {provider, opts}, :model_spec)]
+      else
+        []
+      end
+
+    id_errors ++ extra_errors
+  end
+
   defp type_errors(key_path, :model_spec, value) do
     cond do
       is_binary(value) ->
@@ -255,7 +282,7 @@ defmodule EvoGit.Config.Schema do
         end
 
       true ->
-        [error(key_path, "must be a string (e.g. \"provider:model\") or a map (e.g. %{provider: :openai, id: \"...\", base_url: \"...\", extra: %{...}}), got #{inspect(value)}", value, :model_spec)]
+        [error(key_path, "must be a string (e.g. \"provider:model\"), a map (e.g. %{provider: :openai, id: \"...\", base_url: \"...\", extra: %{...}}), or a tuple (e.g. {:openai, [id: \"...\", base_url: \"...\"]}), got #{inspect(value)}", value, :model_spec)]
     end
   end
 
