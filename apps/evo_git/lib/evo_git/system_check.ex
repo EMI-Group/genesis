@@ -158,9 +158,9 @@ defmodule EvoGit.SystemCheck do
   Returns `{:ok, %{model: String.t(), response: String.t()}}` on success,
   or `{:error, String.t()}` on failure.
   """
-  @spec llm_test(String.t()) :: {:ok, map()} | {:error, String.t()}
-  def llm_test(model) when is_binary(model) do
-    if model == "" do
+  @spec llm_test(String.t() | map()) :: {:ok, map()} | {:error, String.t()}
+  def llm_test(model) when is_binary(model) or is_map(model) do
+    if model == "" or model == %{} do
       {:error, "No LLM model configured"}
     else
       do_llm_test(model)
@@ -179,9 +179,9 @@ defmodule EvoGit.SystemCheck do
   Returns `{:ok, %{model: String.t(), response: String.t()}}` on success,
   or `{:error, String.t()}` on failure.
   """
-  @spec llm_test(String.t(), keyword()) :: {:ok, map()} | {:error, String.t()}
-  def llm_test(model, opts) when is_binary(model) and is_list(opts) do
-    if model == "" do
+  @spec llm_test(String.t() | map(), keyword()) :: {:ok, map()} | {:error, String.t()}
+  def llm_test(model, opts) when (is_binary(model) or is_map(model)) and is_list(opts) do
+    if model == "" or model == %{} do
       {:error, "No LLM model configured"}
     else
       do_llm_test(model, opts)
