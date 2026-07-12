@@ -540,6 +540,16 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_info({:bootstrap_complete, _id, result}, socket) do
+    socket =
+      socket
+      |> reload_remote_statuses()
+      |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:scheduler_config_updated}, socket) do
     {:noreply, assign(socket, :scheduler_config, ConfigIO.load_scheduler_config())}
   end
@@ -1276,14 +1286,25 @@ defmodule EvoDashWeb.SettingsLive do
     if socket.assigns.remote_config do
       {:noreply, put_flash(socket, :error, gettext("Configuration is read-only on a remote node."))}
     else
-      result = EvoDash.NodeContext.bootstrap(id)
+      # Double-click guard — already bootstrapping
+      if get_in(socket.assigns.bootstrap_progress, [id, :active]) do
+        {:noreply, socket}
+      else
+        # Immediately show the progress bar so the user sees feedback right away
+        bootstrap_progress =
+          Map.put(socket.assigns.bootstrap_progress, id, %{stage: nil, active: true})
 
-      socket =
-        socket
-        |> reload_remote_statuses()
-        |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+        socket = assign(socket, :bootstrap_progress, bootstrap_progress)
 
-      {:noreply, socket}
+        lv_pid = self()
+
+        Task.start(fn ->
+          result = EvoDash.NodeContext.bootstrap(id)
+          send(lv_pid, {:bootstrap_complete, id, result})
+        end)
+
+        {:noreply, socket}
+      end
     end
   end
 
