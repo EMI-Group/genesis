@@ -254,6 +254,115 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   # --- Post-LLM Response Processing ---
 
+  @doc """
+  Removes duplicate tool calls emitted by buggy LLM models and syncs the
+  assistant message's `tool_calls` in the response context so everything
+  stays self-consistent.
+
+  Duplicates are detected two ways (both keep the first occurrence):
+
+    1. By `:id` — the primary signal for the described bug
+       ("duplicated tool call ids").
+    2. By identical content `{name, arguments}` — catches the case where the
+       LLM emits two exactly identical calls with different ids.
+
+  Returns `{deduped_tool_calls, updated_response}`. When no duplicates are
+  found, the response is returned unchanged.
+  """
+  def dedupe_and_sync(tool_calls, response, agent_id) do
+    deduped = dedupe_tool_calls(tool_calls, agent_id)
+
+    if deduped == tool_calls do
+      {tool_calls, response}
+    else
+      updated_context = sync_context_tool_calls(response.context, deduped)
+      {deduped, %{response | context: updated_context}}
+    end
+  end
+
+  @doc """
+  Deduplicates a list of tool call maps (the output of
+  `ReqLLM.ToolCall.from_map/1`, each with `:id`, `:name`, `:arguments` keys).
+
+  Deduplicates by `:id` first, then by identical content tuple
+  `{name, arguments}`. Keeps the first occurrence in each pass. Logs a
+  `Logger.warning/1` whenever duplicates are removed, including the agent id,
+  the count removed, the before/after totals, and a description of what was
+  removed.
+  """
+  def dedupe_tool_calls(tool_calls, agent_id) when is_list(tool_calls) do
+    original_count = length(tool_calls)
+
+    # Pass 1 — dedupe by :id (primary signal: "duplicated tool call ids")
+    {by_id, removed_by_id} =
+      dedupe_keeping_first(tool_calls, & &1.id)
+
+    # Pass 2 — dedupe by identical content {name, arguments}
+    {final, removed_by_content} =
+      dedupe_keeping_first(by_id, fn call -> {call.name, call.arguments} end)
+
+    final_count = length(final)
+    removed_count = original_count - final_count
+
+    if removed_count > 0 do
+      removed_list = Enum.map(removed_by_id ++ removed_by_content, &"#{&1.name}(id=#{&1.id})")
+
+      Logger.warning(
+        "Agent #{agent_id}: Removed #{removed_count} duplicate tool call(s) " <>
+          "(before: #{original_count}, after: #{final_count}). Removed: #{Enum.join(removed_list, ", ")}"
+      )
+    end
+
+    final
+  end
+
+  # Single-pass dedup keyed by `key_fn`. Returns `{kept, removed}`.
+  defp dedupe_keeping_first(calls, key_fn) do
+    {kept_acc, seen, removed_acc} =
+      Enum.reduce(calls, {[], MapSet.new(), []}, fn call, {kept, seen, removed} ->
+        key = key_fn.(call)
+
+        if MapSet.member?(seen, key) do
+          {kept, seen, [call | removed]}
+        else
+          {[call | kept], MapSet.put(seen, key), removed}
+        end
+      end)
+
+    {Enum.reverse(kept_acc), Enum.reverse(removed_acc)}
+  end
+
+  @doc """
+  Updates the last (assistant) message in `context` so its `tool_calls` list
+  contains only the entries whose `:id` is present in `deduped_tool_calls`.
+
+  This keeps the assistant message that ReqLLM appends to the context
+  consistent with the deduplicated set we actually execute. Handles the `nil`
+  tool_calls case (returns context unchanged) and empty-message lists.
+  """
+  def sync_context_tool_calls(%ReqLLM.Context{} = context, deduped_tool_calls)
+      when is_list(deduped_tool_calls) do
+    messages = context.messages
+
+    case List.last(messages) do
+      nil ->
+        context
+
+      last_msg ->
+        case last_msg.tool_calls do
+          nil ->
+            context
+
+          structs when is_list(structs) ->
+            kept_ids = MapSet.new(deduped_tool_calls, & &1.id)
+            filtered = Enum.filter(structs, &MapSet.member?(kept_ids, &1.id))
+
+            updated_msg = %{last_msg | tool_calls: filtered}
+            %{context | messages: List.replace_at(messages, length(messages) - 1, updated_msg)}
+        end
+    end
+  end
+
   @doc false
   def process_llm_response(
         response,
@@ -285,6 +394,10 @@ defmodule EvoGit.Agent.ToolDispatch do
     tool_calls =
       ReqLLM.Response.tool_calls(response)
       |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+
+    # Deduplicate tool calls (handles buggy models that emit identical
+    # duplicate calls — e.g. two identical subagent spawns)
+    {tool_calls, response} = dedupe_and_sync(tool_calls, response, state.agent_id)
 
     # Validate tool calls have IDs
     invalid_calls = Enum.filter(tool_calls, fn call -> is_nil(Map.get(call, :id)) end)
