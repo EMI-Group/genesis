@@ -20,19 +20,28 @@
 
 [worktree]
 script.linux = '''#!/usr/bin/env bash
-# Copy Rust build artifacts
-if [ -d "$SOURCE_REPO_PATH/target" ]; then
-  cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+# Copy Elixir dependencies and build artifacts
+if [ -d "$SOURCE_REPO_PATH/deps" ]; then
+  cp -R --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+fi
+if [ -d "$SOURCE_REPO_PATH/_build" ]; then
+  cp -R --reflink=auto "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
 fi
 '''
-script.macos = '''#!/bin/bash
-# Copy Rust build artifacts
-if [ -d "$SOURCE_REPO_PATH/target" ]; then
-  cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+script.macos = '''#!/usr/bin/env bash
+# Copy Elixir dependencies and build artifacts
+if [ -d "$SOURCE_REPO_PATH/deps" ]; then
+  cp -cR "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+fi
+if [ -d "$SOURCE_REPO_PATH/_build" ]; then
+  cp -cR "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
 fi
 '''
-script.windows = '''# Copy Rust build artifacts
-if (Test-Path "$env:SOURCE_REPO_PATH/target") {
-    Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/target" "$env:TARGET_WORKTREE_PATH/"
+script.windows = '''# Copy Elixir dependencies and build artifacts
+if (Test-Path "$env:SOURCE_REPO_PATH/deps") {
+    Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/deps" "$env:TARGET_WORKTREE_PATH/"
+}
+if (Test-Path "$env:SOURCE_REPO_PATH/_build") {
+    Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/_build" "$env:TARGET_WORKTREE_PATH/"
 }
 '''
