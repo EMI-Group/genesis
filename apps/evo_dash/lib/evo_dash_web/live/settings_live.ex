@@ -1091,6 +1091,12 @@ defmodule EvoDashWeb.SettingsLive do
 
             {:error, "model_id_empty"} ->
               {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
+
+            {:error, "invalid_extra_json"} ->
+              {:noreply, put_flash(socket, :error, gettext("Extra Config must be valid JSON."))}
+
+            {:error, "extra_must_be_object"} ->
+              {:noreply, put_flash(socket, :error, gettext("Extra Config must be a JSON object (map)."))}
           end
       end
     end

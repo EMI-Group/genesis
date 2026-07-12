@@ -136,7 +136,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       </div>
 
       <%!-- id + provider/model-id/base-url (required fields) ── ── --%>
-      <% {provider_val, model_id_val, base_url_val} = profile_model_fields(@profile) %>
+      <% {provider_val, model_id_val, base_url_val, extra_val} = profile_model_fields(@profile) %>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="form-control">
           <label class="label pb-1">
@@ -358,6 +358,22 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </div>
       </div>
 
+      <%!-- Extra config ── --%>
+      <div class="form-control pt-2">
+        <label class="label pb-1">
+          <span class="label-text font-semibold text-xs">{gettext("Extra Config (JSON)")}</span>
+        </label>
+        <textarea
+          name="extra"
+          placeholder='{"wire": {"protocol": "openai_responses"}}'
+          class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm h-20 resize-y"
+          rows="3"
+        ><%= extra_val %></textarea>
+        <p class="text-[11px] text-base-content/60 mt-1">
+          {gettext("Advanced provider-specific options merged into the model spec map.")}
+        </p>
+      </div>
+
       <%!-- Action buttons ── --%>
       <div class="flex items-center justify-end gap-2 pt-2 border-t border-base-200">
         <button type="button" phx-click="cancel_edit_model_profile" class="btn btn-ghost btn-sm">
@@ -412,29 +428,38 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     model_model_fields(model)
   end
 
-  defp profile_model_fields(_), do: {"", "", ""}
+  defp profile_model_fields(_), do: {"", "", "", ""}
 
-  defp model_model_fields(nil), do: {"", "", ""}
+  defp model_model_fields(nil), do: {"", "", "", ""}
 
   defp model_model_fields(model) when is_map(model) do
     provider = model[:provider] || model["provider"]
     id = model[:id] || model["id"]
     base_url = model[:base_url] || model["base_url"]
+    extra = model[:extra] || model["extra"]
 
     provider_str = if is_nil(provider), do: "", else: to_string(provider)
     id_str = if is_nil(id), do: "", else: to_string(id)
     base_url_str = if is_nil(base_url), do: "", else: to_string(base_url)
+    extra_str = cond do
+      is_nil(extra) -> ""
+      true ->
+        case Jason.encode(extra) do
+          {:ok, json} -> json
+          {:error, _} -> ""
+        end
+    end
 
-    {provider_str, id_str, base_url_str}
+    {provider_str, id_str, base_url_str, extra_str}
   end
 
   defp model_model_fields(model) when is_binary(model) do
     case :binary.split(model, ":") do
       [provider, id] ->
-        {provider, id, ""}
+        {provider, id, "", ""}
 
       [_no_colon] ->
-        {"", model, ""}
+        {"", model, "", ""}
     end
   end
 
@@ -442,7 +467,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     provider_str = to_string(provider)
     id_str = Keyword.get(opts, :id, "") |> to_string()
     base_url_str = Keyword.get(opts, :base_url, "") |> to_string()
-    {provider_str, id_str, base_url_str}
+    {provider_str, id_str, base_url_str, ""}
   end
 
   # Builds a compact summary string of generation params, e.g.

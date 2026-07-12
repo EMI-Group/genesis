@@ -128,19 +128,41 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
         spec = if base_url == "", do: spec, else: Map.put(spec, :base_url, base_url)
 
-        profile =
-          %{id: id}
-          |> Map.put(:model, spec)
-          |> maybe_put_int(:concurrency, params["concurrency"], 3)
-          |> maybe_put_float(:temperature, params["temperature"])
-          |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])
-          |> maybe_put_int(:max_tokens, params["max_tokens"])
-          |> maybe_put_float(:top_p, params["top_p"])
-          |> maybe_put_int(:top_k, params["top_k"])
-          |> maybe_put_float(:frequency_penalty, params["frequency_penalty"])
-          |> maybe_put_float(:presence_penalty, params["presence_penalty"])
+        # Parse extra JSON config
+        extra_raw = String.trim(params["extra"] || "")
+        spec_result =
+          if extra_raw == "" do
+            {:ok, spec}
+          else
+            case Jason.decode(extra_raw) do
+              {:ok, extra_map} when is_map(extra_map) ->
+                {:ok, Map.put(spec, :extra, extra_map)}
+              {:ok, _} ->
+                {:error, "extra_must_be_object"}
+              {:error, _} ->
+                {:error, "invalid_extra_json"}
+            end
+          end
 
-        {:ok, profile}
+        case spec_result do
+          {:ok, spec} ->
+            profile =
+              %{id: id}
+              |> Map.put(:model, spec)
+              |> maybe_put_int(:concurrency, params["concurrency"], 3)
+              |> maybe_put_float(:temperature, params["temperature"])
+              |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])
+              |> maybe_put_int(:max_tokens, params["max_tokens"])
+              |> maybe_put_float(:top_p, params["top_p"])
+              |> maybe_put_int(:top_k, params["top_k"])
+              |> maybe_put_float(:frequency_penalty, params["frequency_penalty"])
+              |> maybe_put_float(:presence_penalty, params["presence_penalty"])
+
+            {:ok, profile}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
     end
   end
 
