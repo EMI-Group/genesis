@@ -394,26 +394,29 @@ defmodule EvoDashWeb.SettingsComponents do
                       </button>
                     <% else %>
                       <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>
-                      <select
-                        phx-change="select_test_profile"
-                        class="select select-bordered select-sm rounded-md max-w-[300px]"
-                      >
-                        <%= for profile <- @model_profiles do %>
-                          <% pid = profile_id_str(profile) %>
-                          <option value={pid} selected={pid == profile_id_val}>
-                            {profile_option_label(profile)}
-                          </option>
-                        <% end %>
-                      </select>
-                      <button
-                        phx-click="test_llm"
-                        phx-value-profile_id={profile_id_val}
-                        class="btn btn-primary btn-sm gap-2"
-                        disabled={@disabled}
-                      >
-                        <.icon name="hero-signal" class="size-4" />
-                        {gettext("Test Connection")}
-                      </button>
+                      <form phx-submit="noop" class="contents">
+                        <select
+                          name="profile_id"
+                          phx-change="select_test_profile"
+                          class="select select-bordered select-sm rounded-md max-w-[300px]"
+                        >
+                          <%= for profile <- @model_profiles do %>
+                            <% pid = profile_id_str(profile) %>
+                            <option value={pid} selected={pid == profile_id_val}>
+                              {profile_option_label(profile)}
+                            </option>
+                          <% end %>
+                        </select>
+                        <button
+                          phx-click="test_llm"
+                          phx-value-profile_id={profile_id_val}
+                          class="btn btn-primary btn-sm gap-2"
+                          disabled={@disabled}
+                        >
+                          <.icon name="hero-signal" class="size-4" />
+                          {gettext("Test Connection")}
+                        </button>
+                      </form>
                     <% end %>
                   <% :testing -> %>
                     <span class="loading loading-spinner loading-sm text-primary"></span>

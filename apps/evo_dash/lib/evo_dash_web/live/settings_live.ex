@@ -1185,7 +1185,7 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("select_test_profile", %{"value" => profile_id}, socket) do
+  def handle_event("select_test_profile", %{"profile_id" => profile_id}, socket) do
     {:noreply, assign(socket, :test_profile_id, profile_id)}
   end
 
