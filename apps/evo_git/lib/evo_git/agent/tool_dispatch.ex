@@ -255,16 +255,14 @@ defmodule EvoGit.Agent.ToolDispatch do
   # --- Post-LLM Response Processing ---
 
   @doc """
-  Removes duplicate tool calls emitted by buggy LLM models and syncs the
-  assistant message's `tool_calls` in the response context so everything
-  stays self-consistent.
+  Removes duplicate tool calls emitted by buggy LLM models and replaces the
+  last assistant message's `tool_calls` with the deduplicated list in both the
+  response context and the response message.
 
-  Duplicates are detected two ways (both keep the first occurrence):
-
-    1. By `:id` — the primary signal for the described bug
-       ("duplicated tool call ids").
-    2. By identical content `{name, arguments}` — catches the case where the
-       LLM emits two exactly identical calls with different ids.
+  Since `response.message` and the last message in `response.context.messages`
+  are the same struct reference (ReqLLM's response builder appends the message
+  to the context), we update the `tool_calls` once and apply the same updated
+  message struct to both places — no separate "sync context" step is needed.
 
   Returns `{deduped_tool_calls, updated_response}`. When no duplicates are
   found, the response is returned unchanged.
@@ -275,17 +273,27 @@ defmodule EvoGit.Agent.ToolDispatch do
     if length(deduped) == length(tool_calls) do
       {tool_calls, response}
     else
-      updated_context = sync_context_tool_calls(response.context, deduped)
+      messages = response.context.messages
+      count = length(messages)
 
-      # The last message in updated_context now carries the correctly filtered
-      # tool_calls.  Copy them to response.message instead of re-filtering
-      # (response.message and the last context message are the same struct).
-      updated_message =
-        if response.message do
-          %{response.message | tool_calls: List.last(updated_context.messages).tool_calls}
+      # Replace the last message's tool_calls with the deduped list directly.
+      # The deduped list already contains the exact %ReqLLM.ToolCall{} structs
+      # we want to keep, so there is no need to re-filter the message's
+      # original structs.
+      updated_response =
+        case List.last(messages) do
+          nil ->
+            response
+
+          last_msg ->
+            updated_msg = %{last_msg | tool_calls: deduped}
+            updated_messages = List.replace_at(messages, count - 1, updated_msg)
+            updated_context = %{response.context | messages: updated_messages}
+
+            %{response | context: updated_context, message: response.message && updated_msg}
         end
 
-      {deduped, %{response | context: updated_context, message: updated_message}}
+      {deduped, updated_response}
     end
   end
 
@@ -325,59 +333,6 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
 
     final
-  end
-
-  @doc """
-  Updates the last (assistant) message in `context` so its `tool_calls` list
-  contains only the entries whose `:id` is present in `deduped_tool_calls`.
-
-  This keeps the assistant message that ReqLLM appends to the context
-  consistent with the deduplicated set we actually execute. Handles the `nil`
-  tool_calls case (returns context unchanged) and empty-message lists.
-  """
-  def sync_context_tool_calls(%ReqLLM.Context{} = context, deduped_tool_calls)
-      when is_list(deduped_tool_calls) do
-    messages = context.messages
-
-    case List.last(messages) do
-      nil ->
-        context
-
-      last_msg ->
-        case last_msg.tool_calls do
-          nil ->
-            context
-
-          structs when is_list(structs) ->
-            filtered = filter_tool_call_structs(structs, deduped_tool_calls)
-
-            updated_msg = %{last_msg | tool_calls: filtered}
-            %{context | messages: List.replace_at(messages, length(messages) - 1, updated_msg)}
-        end
-    end
-  end
-
-  # Filters a list of tool-call structs to keep at most as many per :id as
-  # appear in the deduped list. This correctly handles same-id duplicates
-  # (where two structs share one id) — a plain id-membership check would keep
-  # both, but we need to respect the deduped count.
-  defp filter_tool_call_structs(structs, deduped) do
-    counts = Enum.frequencies_by(deduped, & &1.id)
-
-    {kept, _acc} =
-      Enum.map_reduce(structs, counts, fn struct, acc ->
-        id = struct.id
-
-        case acc do
-          %{^id => n} when n > 0 ->
-            {struct, Map.put(acc, id, n - 1)}
-
-          _ ->
-            {nil, acc}
-        end
-      end)
-
-    Enum.reject(kept, &is_nil/1)
   end
 
   @doc false
