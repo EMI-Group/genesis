@@ -16,7 +16,7 @@ import Config
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
-if System.get_env("PHX_SERVER") do
+if System.get_env("PHX_SERVER") or Application.get_env(:evo_dash, :desktop_release, false) do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
 
@@ -68,17 +68,34 @@ if config_env() == :prod and not Application.get_env(:evo_git, :remote_release, 
   # want to use a different value for prod and you most likely don't want
   # to check this value into version control, so we use an environment
   # variable instead.
+  # Desktop releases use a fixed local key (set by the Tauri sidecar via
+  # SECRET_KEY_BASE env var). If Burrito fails to forward that env var, fall
+  # back to the same hardcoded key so the backend can still boot. This is safe
+  # for local, single-user desktop usage only and is never used for real prod.
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
-      raise """
-      environment variable SECRET_KEY_BASE is missing.
-      You can generate one by calling: mix phx.gen.secret
-      """
+      if Application.get_env(:evo_dash, :desktop_release, false) do
+        "GenesisDesktopLocalSecretKeyBaseDoNotUseInProduction2025abcdef1234567890"
+      else
+        raise """
+        environment variable SECRET_KEY_BASE is missing.
+        You can generate one by calling: mix phx.gen.secret
+        """
+      end
 
   port =
     case System.get_env("PORT") do
-      nil -> EvoGit.Config.resolve([:server, :listen_port])
-      port_str -> String.to_integer(port_str)
+      nil ->
+        if Application.get_env(:evo_dash, :desktop_release, false) do
+          # Desktop release: PORT env var not forwarded by Burrito — use the
+          # fixed desktop port (must match Tauri WebView's localhost:9999).
+          9999
+        else
+          EvoGit.Config.resolve([:server, :listen_port])
+        end
+
+      port_str ->
+        String.to_integer(port_str)
     end
 
   # Detect desktop mode from two independent signals so detection is robust
