@@ -610,7 +610,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:server, :listen_port],
         type: :pos_integer,
-        default: 4000,
+        default: 9999,
         validation: [min: 1024, max: 65535],
         category: :server,
         sub_category: nil,

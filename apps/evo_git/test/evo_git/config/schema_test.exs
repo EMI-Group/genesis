@@ -175,7 +175,7 @@ defmodule EvoGit.Config.SchemaTest do
 
       # Server
       assert defaults.server.listen_ip == "127.0.0.1"
-      assert defaults.server.listen_port == 4000
+      assert defaults.server.listen_port == 9999
     end
 
     test "llm model has nil default" do

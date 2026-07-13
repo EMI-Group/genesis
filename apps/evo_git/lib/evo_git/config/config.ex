@@ -86,7 +86,7 @@ defmodule EvoGit.Config do
       # IP address the web dashboard binds to. Defaults to loopback for security.
       listen_ip = "127.0.0.1"
       # Port the web dashboard listens on. Must be between 1024 and 65535.
-      listen_port = 4000
+      listen_port = 9999
 
       [tools.search]
       enabled = false   # Enable web search tool for agents
