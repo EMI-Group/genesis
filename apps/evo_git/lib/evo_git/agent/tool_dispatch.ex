@@ -276,7 +276,15 @@ defmodule EvoGit.Agent.ToolDispatch do
       {tool_calls, response}
     else
       updated_context = sync_context_tool_calls(response.context, deduped)
-      updated_message = sync_message_tool_calls(response.message, deduped)
+
+      # The last message in updated_context now carries the correctly filtered
+      # tool_calls.  Copy them to response.message instead of re-filtering
+      # (response.message and the last context message are the same struct).
+      updated_message =
+        if response.message do
+          %{response.message | tool_calls: List.last(updated_context.messages).tool_calls}
+        end
+
       {deduped, %{response | context: updated_context, message: updated_message}}
     end
   end
@@ -347,19 +355,6 @@ defmodule EvoGit.Agent.ToolDispatch do
             %{context | messages: List.replace_at(messages, length(messages) - 1, updated_msg)}
         end
     end
-  end
-
-  # Filters a single message's tool_calls to keep only entries whose :id is in
-  # the deduped set. This keeps response.message in sync with the deduplicated
-  # set we actually execute (response.context and response.message are separate
-  # struct references in ReqLLM). Handles nil message and nil tool_calls.
-  defp sync_message_tool_calls(nil, _deduped), do: nil
-
-  defp sync_message_tool_calls(%ReqLLM.Message{tool_calls: nil} = msg, _deduped), do: msg
-
-  defp sync_message_tool_calls(%ReqLLM.Message{tool_calls: structs} = msg, deduped)
-       when is_list(structs) do
-    %{msg | tool_calls: filter_tool_call_structs(structs, deduped)}
   end
 
   # Filters a list of tool-call structs to keep at most as many per :id as
