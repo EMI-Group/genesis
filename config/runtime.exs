@@ -16,7 +16,7 @@ import Config
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
-if System.get_env("PHX_SERVER") or Application.get_env(:evo_dash, :desktop_release, false) do
+if System.get_env("PHX_SERVER") || Application.get_env(:evo_dash, :desktop_release, false) do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
 
