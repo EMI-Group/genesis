@@ -22,7 +22,7 @@ defmodule EvoGit.Agents.ContextExtractor do
   def subagent_modules, do: [__MODULE__]
 
   def available_tools do
-    Tools.read_only_schemas() ++ subagent_schemas() ++ [CompleteTask.schema()]
+    Tools.read_only_schemas() ++ EvoGit.Agent.SubagentSchemas.schemas(__MODULE__) ++ [CompleteTask.schema()]
   end
 
   def system_prompt do

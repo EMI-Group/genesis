@@ -23,7 +23,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
   end
 
   def available_tools do
-    Tools.read_only_schemas() ++ subagent_schemas() ++ [CompleteTask.schema()]
+    Tools.read_only_schemas() ++ EvoGit.Agent.SubagentSchemas.schemas(__MODULE__) ++ [CompleteTask.schema()]
   end
 
   def subagent_modules, do: [__MODULE__]
