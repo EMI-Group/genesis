@@ -164,9 +164,9 @@ jobs:
       - name: Create portable tarball
         run: |
           cd desktop/src-tauri/target/x86_64-unknown-linux-gnu/release
-          tar -czf /tmp/genesis-desktop-x86_64-unknown-linux-gnu.tar.gz genesis-desktop
+          tar -czf /tmp/genesis_desktop_linux_x64.tar.gz genesis-desktop
           echo "Tarball created:"
-          ls -la /tmp/genesis-desktop-*.tar.gz
+          ls -la /tmp/genesis_desktop_linux_x64.tar.gz
 
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v3
@@ -176,7 +176,7 @@ jobs:
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-            /tmp/genesis-desktop-x86_64-unknown-linux-gnu.tar.gz
+            /tmp/genesis_desktop_linux_x64.tar.gz
             /tmp/genesis_remote_linux_x64.tar.gz
 
   # ── Linux ARM64 ────────────────────────────────────────────────────────

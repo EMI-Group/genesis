@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "genesis",
+  "productName": "genesis-desktop",
   "version": "0.6.6",
   "identifier": "com.genesis.desktop",
   "build": {
