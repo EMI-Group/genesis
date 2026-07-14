@@ -12,11 +12,11 @@ defmodule EvoGit.Agent.DelegationHintsTest do
     use EvoGit.Agent
 
     def test_path_to_child_dir(dir_path, node_path, repo_path) do
-      path_to_child_dir(dir_path, node_path, repo_path)
+      EvoGit.Agent.DelegationHints.path_to_child_dir(dir_path, node_path, repo_path)
     end
 
     def test_file_path_to_child_dir(file_path, node_path, repo_path) do
-      file_path_to_child_dir(file_path, node_path, repo_path)
+      EvoGit.Agent.DelegationHints.file_path_to_child_dir(file_path, node_path, repo_path)
     end
   end
 

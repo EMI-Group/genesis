@@ -1,12 +1,14 @@
 # EvoGit Agent Behaviour & Tools
 
 ## Intent
-Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data structs for agent state and results, and extracted helper modules for context compression and subagent processing. Each agent is a transient Elixir module that `use EvoGit.Agent` and provides a system prompt, optional tool overrides, and subagent delegation configuration. The `use` macro injects the complete agent loop (LLM turn cycle, tool dispatch, subagent management, context compression, budget warnings, and completion).
+Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data structs for agent state and results, and extracted helper modules for context compression and subagent processing. Each agent is a transient Elixir module that `use EvoGit.Agent` and provides a system prompt, optional tool overrides, and subagent delegation configuration. The `use` macro injects thin defaults and overridable callbacks; the actual agent loop logic lives in the shared `EvoGit.Agent.Runner` module (extracted from the macro to avoid duplicating ~400 lines across 9 agent modules).
 
 **Note:** Agent type implementations (Manager, Executor, etc.) have been moved to `../agents/`. This directory retains the behaviour module, tool library, data structs, and extracted helper modules.
 
 ## Routing Table
 - `./tools/` → LLM tool modules (17+ tools for file I/O, context, search, shell, etc.)
+- `./runner.ex` → `EvoGit.Agent.Runner` — shared agent loop runner extracted from the `__using__` macro (run/3, do_run/2, loop/1, do_turn/1, effective_tools/1, trigger_recovery/2, etc.)
+- `./subagent_schemas.ex` → `EvoGit.Agent.SubagentSchemas` — shared subagent tool/schema generation (tools/1, schemas/1), parameterized by agent_module
 - `./context_compression.ex` → Context compression helper (compresses chat history when token threshold exceeded)
 - `./subagent_processing.ex` → Subagent call processing (builds specs, spawns subagents, merges results)
 - `./loop_state.ex` → `LoopState` struct — agent loop state threaded through every turn
@@ -45,7 +47,7 @@ The framework tracks TWO independent hinting mechanisms, both following the same
 
 Both hints are shown only once per child directory (tracked via `hint_shown` flag), and both are suppressed during merge conflict resolution (via `filter_child_paths_if_conflicts/2`).
 
-The hinting logic is implemented inside the `__using__` macro in `agent.ex`:
+The hinting logic is implemented in `EvoGit.Agent.ToolDispatch` and `EvoGit.Agent.DelegationHints`:
 - `batch_execute_tools/3` threads `delegation_hints` through sequential tool execution via `Enum.reduce`
 - `extract_child_paths/4` determines the target child directory from write tool arguments
 - `maybe_append_delegation_hint/4` increments counts and appends the hint message
