@@ -47,7 +47,7 @@ The framework tracks TWO independent hinting mechanisms, both following the same
 
 Both hints are shown only once per child directory (tracked via `hint_shown` flag), and both are suppressed during merge conflict resolution (via `filter_child_paths_if_conflicts/2`).
 
-The hinting logic is implemented inside the `__using__` macro in `agent.ex`:
+The hinting logic is implemented in `EvoGit.Agent.ToolDispatch` and `EvoGit.Agent.DelegationHints`:
 - `batch_execute_tools/3` threads `delegation_hints` through sequential tool execution via `Enum.reduce`
 - `extract_child_paths/4` determines the target child directory from write tool arguments
 - `maybe_append_delegation_hint/4` increments counts and appends the hint message
