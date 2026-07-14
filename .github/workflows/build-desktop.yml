@@ -27,7 +27,7 @@ permissions:
 #
 # Each platform builds its own native Elixir release (mix release --include_erts
 # bundles the host ERTS) and then packages it with Tauri.  No cross-compilation
-# or third-party wrapper (Burrito) is used — every job runs on a native runner
+# or third-party wrapper is used — every job runs on a native runner
 # for its target platform.
 #
 # Each job also builds the genesis_remote headless daemon and uploads it as a
