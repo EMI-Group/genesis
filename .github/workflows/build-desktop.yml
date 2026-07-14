@@ -490,10 +490,20 @@ jobs:
           MIX_ENV=prod mix release genesis_remote
 
       - name: Place desktop release in Tauri resources
+        shell: pwsh
         run: |
-          RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
-          rm -rf "${RESOURCE_DIR}"
-          cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
+          $resourceDir = "desktop/src-tauri/resources/genesis-backend"
+          if (Test-Path $resourceDir) { Remove-Item -Recurse -Force $resourceDir }
+          # Use robocopy instead of MSYS2 cp -a to avoid .exe interpolation
+          # issues: MSYS2 treats extension-less files like 'erl' as equivalent
+          # to 'erl.exe', causing "File exists" errors when both exist in the
+          # ERTS bin/ directory of the release.
+          robocopy "_build/prod/rel/genesis_desktop" $resourceDir /E /NFL /NDL /NJH /NJS /NP
+          # robocopy uses non-zero exit codes for success (0-7); 8+ = failure
+          if ($LASTEXITCODE -ge 8) {
+            Write-Error "robocopy failed with exit code $LASTEXITCODE"
+            exit 1
+          }
 
       - name: Create genesis_remote tarball
         run: |
