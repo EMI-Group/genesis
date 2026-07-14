@@ -17,48 +17,34 @@ concurrency:
 env:
   ELIXIR_VERSION: "1.20.2"
   OTP_VERSION: "29"
-  # Burrito 1.5.0 (pinned in mix.lock) requires exactly Zig 0.15.2; it will
-  # hard-fail on any other version. Pin it here so CI doesn't grab the latest.
-  ZIG_VERSION: "0.15.2"
   RIPGREP_VERSION: "15.1.0"
   MINGIT_VERSION: "2.54.0.windows.1"
 
 permissions:
   contents: write
 
-jobs:
-  # ── Stage 1: Build all Burrito binaries ──────────────────────────────────
-  #
-  # Single job that builds every Burrito target sequentially on ubuntu-24.04
-  # and uploads the resulting sidecar + remote binaries as workflow artifacts.
-  #
-  # Setup (Elixir, Zig, deps, assets) is done once and shared across all
-  # targets.  Burrito builds are fast once _build is compiled, so running
-  # them sequentially avoids the 5× overhead of duplicating setup.
-  #
-  # Rust, Tauri CLI, and webkit2gtk dev libs are NOT needed here — those are
-  # only required by the downstream Tauri packaging jobs.
-  #
-  # ── NIF cross-compilation note ───────────────────────────────────────────
-  #
-  # Burrito's Linux targets use a musl-based Erlang/OTP runtime (see Burrito's
-  # fetch_musl.ex / target.ex).  However, `mix release` runs on a glibc host
-  # (Ubuntu), so by default rustler_precompiled detects the host as
-  # *-linux-gnu and downloads glibc-linked NIF binaries.  Those NIFs fail to
-  # load inside the musl Burrito binary at runtime.
-  #
-  # Furthermore, Burrito's RecompileNIFs build step only handles :elixir_make
-  # NIFs — it does NOT recompile rustler_precompiled NIFs.  So we must
-  # force-recompile the NIF deps (xqlite, html5ever, lumis, mdex_native) with
-  # the TARGET_ABI=musl (and TARGET_ARCH=aarch64 for arm64) env vars before
-  # each Linux release.  This makes rustler_precompiled download the correct
-  # musl-linked NIF variants and bakes the right load path into the BEAM.
-  build-burrito-all:
-    name: Burrito (all targets)
-    runs-on: ubuntu-24.04
+# ── Architecture ────────────────────────────────────────────────────────────
+#
+# Each platform builds its own native Elixir release (mix release --include_erts
+# bundles the host ERTS) and then packages it with Tauri.  No cross-compilation
+# or third-party wrapper (Burrito) is used — every job runs on a native runner
+# for its target platform.
+#
+# Each job also builds the genesis_remote headless daemon and uploads it as a
+# tarball alongside the desktop installers.
+#
+# Jobs:
+#   build-linux-x64     ubuntu-24.04      deb, rpm, AppImage, tarball
+#   build-linux-arm64   ubuntu-24.04-arm  deb, rpm
+#   build-macos-arm64   macos-14          dmg, app
+#   build-windows-x64   windows-2022      msi, exe (NSIS)
 
+jobs:
+  # ── Linux x86_64 ────────────────────────────────────────────────────────
+  build-linux-x64:
+    name: Linux (x86_64)
+    runs-on: ubuntu-24.04
     steps:
-      # ── Common setup (once for all targets) ──────────────────────────────
       - name: Checkout
         uses: actions/checkout@v5
 
@@ -68,10 +54,14 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             curl \
-            wget \
             file \
-            unzip \
-            p7zip-full
+            libayatana-appindicator3-dev \
+            libdbus-1-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            wget
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -95,11 +85,6 @@ jobs:
           restore-keys: |
             mix-build-linux-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
       - name: Install Elixir dependencies
         run: mix deps.get
 
@@ -108,282 +93,44 @@ jobs:
           mix assets.setup
           mix assets.deploy
 
-      # ── Target: darwin_arm64 ─────────────────────────────────────────────
-      - name: Vendor + Burrito (darwin_arm64)
+      - name: Bundle vendor binaries
         env:
-          BURRITO_TARGET: darwin_arm64
-          VENDOR_PLATFORM: macos-arm64
-          RG_TARGET: aarch64-apple-darwin
-          RG_EXT: .tar.gz
-        run: |
-          set -euo pipefail
-          # --- ripgrep ---
-          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
-          mkdir -p "${VENDOR_DIR}"
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
-          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
-          echo "Downloading ${RG_URL}..."
-          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
-          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
-          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
-          chmod +x "${VENDOR_DIR}/rg"
-          echo "ripgrep installed:"
-          ls -la "${VENDOR_DIR}/"
-
-          # --- Burrito builds ---
-          MIX_ENV=prod mix release genesis_desktop --overwrite
-          MIX_ENV=prod mix release genesis_remote --overwrite
-
-      # ── Target: darwin_amd64 ─────────────────────────────────────────────
-      - name: Vendor + Burrito (darwin_amd64)
-        env:
-          BURRITO_TARGET: darwin_amd64
-          VENDOR_PLATFORM: macos-x86_64
-          RG_TARGET: x86_64-apple-darwin
-          RG_EXT: .tar.gz
-        run: |
-          set -euo pipefail
-          # --- ripgrep ---
-          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
-          mkdir -p "${VENDOR_DIR}"
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
-          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
-          echo "Downloading ${RG_URL}..."
-          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
-          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
-          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
-          chmod +x "${VENDOR_DIR}/rg"
-          echo "ripgrep installed:"
-          ls -la "${VENDOR_DIR}/"
-
-          # --- Burrito builds ---
-          MIX_ENV=prod mix release genesis_desktop --overwrite
-          MIX_ENV=prod mix release genesis_remote --overwrite
-
-      # ── Target: linux_x64 ────────────────────────────────────────────────
-      - name: Vendor + Burrito (linux_x64)
-        env:
-          BURRITO_TARGET: linux_x64
           VENDOR_PLATFORM: linux-x86_64
           RG_TARGET: x86_64-unknown-linux-musl
-          RG_EXT: .tar.gz
         run: |
           set -euo pipefail
-          # --- recompile NIF deps for musl target ---
-          # Burrito uses a musl-based Erlang/OTP runtime for Linux targets, but
-          # `mix release` runs on a glibc host (Ubuntu).  By default
-          # rustler_precompiled detects the host as *-linux-gnu and downloads
-          # glibc-linked NIF binaries that fail to load inside the musl Burrito
-          # binary at runtime.  Force-recompile the NIF deps with TARGET_ABI=musl
-          # so they download musl-linked variants instead.  All NIF deps
-          # (xqlite, html5ever, lumis, mdex_native) publish musl precompiles.
-          rm -rf _build/prod/lib/xqlite _build/prod/lib/html5ever _build/prod/lib/lumis _build/prod/lib/mdex_native
-          TARGET_ABI=musl MIX_ENV=prod mix deps.compile xqlite html5ever lumis mdex_native
-
-          # --- ripgrep ---
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
           mkdir -p "${VENDOR_DIR}"
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
-          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
-          echo "Downloading ${RG_URL}..."
-          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
+          # --- ripgrep (musl target for a fully-static binary) ---
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "/tmp/${RG_ARCHIVE}"
           tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
           cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
           chmod +x "${VENDOR_DIR}/rg"
-          echo "ripgrep installed:"
-          ls -la "${VENDOR_DIR}/"
-
           # --- system git ---
           cp "$(which git)" "${VENDOR_DIR}/git"
           chmod +x "${VENDOR_DIR}/git"
-          echo "Git bundled: $(ls -la "${VENDOR_DIR}/git")"
-
-          # --- Burrito builds ---
-          MIX_ENV=prod mix release genesis_desktop --overwrite
-          MIX_ENV=prod mix release genesis_remote --overwrite
-
-      # ── Target: linux_arm64 ──────────────────────────────────────────────
-      - name: Vendor + Burrito (linux_arm64)
-        env:
-          BURRITO_TARGET: linux_arm64
-          VENDOR_PLATFORM: linux-arm64
-          RG_TARGET: aarch64-unknown-linux-gnu
-          RG_EXT: .tar.gz
-        run: |
-          set -euo pipefail
-          # --- recompile NIF deps for musl aarch64 target ---
-          # Burrito uses a musl-based Erlang/OTP runtime for Linux targets, but
-          # `mix release` runs on a glibc x86_64 host (Ubuntu).  By default
-          # rustler_precompiled detects the host as x86_64-unknown-linux-gnu and
-          # downloads glibc-linked x86_64 NIF binaries.  Force-recompile the NIF
-          # deps with TARGET_ARCH=aarch64 TARGET_ABI=musl so they download the
-          # musl-linked ARM64 variants instead.
-          rm -rf _build/prod/lib/xqlite _build/prod/lib/html5ever _build/prod/lib/lumis _build/prod/lib/mdex_native
-          TARGET_ARCH=aarch64 TARGET_ABI=musl MIX_ENV=prod mix deps.compile xqlite html5ever lumis mdex_native
-
-          # --- ripgrep ---
-          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
-          mkdir -p "${VENDOR_DIR}"
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
-          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
-          echo "Downloading ${RG_URL}..."
-          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
-          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
-          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
-          chmod +x "${VENDOR_DIR}/rg"
-          echo "ripgrep installed:"
+          echo "Vendor binaries:"
           ls -la "${VENDOR_DIR}/"
 
-          # --- Burrito builds ---
-          MIX_ENV=prod mix release genesis_desktop --overwrite
-          MIX_ENV=prod mix release genesis_remote --overwrite
-
-      # ── Target: windows_x64 ──────────────────────────────────────────────
-      - name: Vendor + Burrito (windows_x64)
-        env:
-          BURRITO_TARGET: windows_x64
-          VENDOR_PLATFORM: windows-x64
-          RG_TARGET: x86_64-pc-windows-msvc
-          RG_EXT: .zip
+      - name: Build Elixir releases
         run: |
-          set -euo pipefail
-          # --- restore host-default NIF deps ---
-          # The previous linux_arm64 step recompiled NIF deps for
-          # aarch64-unknown-linux-musl.  Restore the host-default (x86_64-linux)
-          # NIFs so the release assembles with the correct binaries.
-          rm -rf _build/prod/lib/xqlite _build/prod/lib/html5ever _build/prod/lib/lumis _build/prod/lib/mdex_native
-          MIX_ENV=prod mix deps.compile xqlite html5ever lumis mdex_native
+          MIX_ENV=prod mix release genesis_desktop
+          MIX_ENV=prod mix release genesis_remote
 
-          # --- ripgrep (.zip) ---
-          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
-          mkdir -p "${VENDOR_DIR}"
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}${RG_EXT}"
-          RG_URL="https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}"
-          echo "Downloading ${RG_URL}..."
-          curl -fsSL "${RG_URL}" -o "/tmp/${RG_ARCHIVE}"
-          unzip -o "/tmp/${RG_ARCHIVE}" -d /tmp/rg-extract
-          cp "/tmp/rg-extract/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg.exe" "${VENDOR_DIR}/rg.exe"
-          echo "ripgrep installed:"
-          ls -la "${VENDOR_DIR}/"
-
-          # --- MinGit ---
-          MINGIT_VERSION_CLEAN="${MINGIT_VERSION%.windows.*}"
-          MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION_CLEAN}-64-bit.zip"
-          MINGIT_URL="https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}/${MINGIT_ARCHIVE}"
-          echo "Downloading ${MINGIT_URL}..."
-          curl -fsSL "${MINGIT_URL}" -o "/tmp/${MINGIT_ARCHIVE}"
-          unzip -o "/tmp/${MINGIT_ARCHIVE}" -d "${VENDOR_DIR}/mingit"
-          echo "MinGit installed:"
-          ls "${VENDOR_DIR}/mingit/cmd/git.exe"
-
-          # --- Burrito builds ---
-          MIX_ENV=prod mix release genesis_desktop --overwrite
-          MIX_ENV=prod mix release genesis_remote --overwrite
-
-      # ── Summary ──────────────────────────────────────────────────────────
-      - name: Locate Burrito binaries
+      - name: Place desktop release in Tauri resources
         run: |
-          echo "Contents of burrito_out directory:"
-          ls -la burrito_out/ || true
+          RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
+          rm -rf "${RESOURCE_DIR}"
+          cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
+          echo "Release directory placed:"
+          ls "${RESOURCE_DIR}/"
 
-      # ── Upload sidecar & remote artifacts ────────────────────────────────
-      - name: Upload sidecar (darwin_arm64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: sidecar-darwin_arm64
-          path: burrito_out/genesis_desktop_darwin_arm64
-          retention-days: 1
-
-      - name: Upload remote (darwin_arm64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-darwin_arm64
-          path: burrito_out/genesis_remote_darwin_arm64
-          retention-days: 1
-
-      - name: Upload sidecar (darwin_amd64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: sidecar-darwin_amd64
-          path: burrito_out/genesis_desktop_darwin_amd64
-          retention-days: 1
-
-      - name: Upload remote (darwin_amd64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-darwin_amd64
-          path: burrito_out/genesis_remote_darwin_amd64
-          retention-days: 1
-
-      - name: Upload sidecar (linux_x64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: sidecar-linux_x64
-          path: burrito_out/genesis_desktop_linux_x64
-          retention-days: 1
-
-      - name: Upload remote (linux_x64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-linux_x64
-          path: burrito_out/genesis_remote_linux_x64
-          retention-days: 1
-
-      - name: Upload sidecar (linux_arm64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: sidecar-linux_arm64
-          path: burrito_out/genesis_desktop_linux_arm64
-          retention-days: 1
-
-      - name: Upload remote (linux_arm64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-linux_arm64
-          path: burrito_out/genesis_remote_linux_arm64
-          retention-days: 1
-
-      - name: Upload sidecar (windows_x64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: sidecar-windows_x64
-          path: burrito_out/genesis_desktop_windows_x64.exe
-          retention-days: 1
-
-      - name: Upload remote (windows_x64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-windows_x64
-          path: burrito_out/genesis_remote_windows_x64.exe
-          retention-days: 1
-
-  # ── Stage 2a: Linux Tauri (x86_64, native) ──────────────────────────────
-  #
-  # Downloads the linux_x64 sidecar from Stage 1, builds native x86_64
-  # Tauri installers (.rpm, .AppImage) plus a portable tarball, and uploads
-  # them to the GitHub release.
-  build-tauri-linux-x64:
-    name: Tauri Linux (x86_64)
-    needs: build-burrito-all
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Linux system dependencies
+      - name: Create genesis_remote tarball
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            file \
-            libayatana-appindicator3-dev \
-            libdbus-1-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            wget
+          tar -czf /tmp/genesis_remote_linux_x64.tar.gz -C _build/prod/rel genesis_remote
+          echo "Remote tarball created:"
+          ls -la /tmp/genesis_remote_linux_x64.tar.gz
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -409,28 +156,12 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall tauri-cli --version "^2.0" --no-confirm
 
-      - name: Download linux_x64 sidecar
-        uses: actions/download-artifact@v4
-        with:
-          name: sidecar-linux_x64
-          path: sidecars/
-
-      - name: Place sidecar binary
-        run: |
-          SIDECAR_DIR="desktop/src-tauri/sidecars"
-          mkdir -p "${SIDECAR_DIR}"
-          cp sidecars/genesis_desktop_linux_x64 "${SIDECAR_DIR}/genesis-backend-x86_64-unknown-linux-gnu"
-          chmod +x "${SIDECAR_DIR}/genesis-backend-x86_64-unknown-linux-gnu"
-
-          echo "Sidecar binary:"
-          ls -la "${SIDECAR_DIR}/"
-
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
           cargo tauri build --target x86_64-unknown-linux-gnu --bundles deb,rpm,appimage
 
-      - name: Create tarball
+      - name: Create portable tarball
         run: |
           cd desktop/src-tauri/target/x86_64-unknown-linux-gnu/release
           tar -czf /tmp/genesis-desktop-x86_64-unknown-linux-gnu.tar.gz genesis-desktop
@@ -445,20 +176,21 @@ jobs:
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-            /tmp/genesis-desktop-*.tar.gz
+            /tmp/genesis-desktop-x86_64-unknown-linux-gnu.tar.gz
+            /tmp/genesis_remote_linux_x64.tar.gz
 
-  # ── Stage 2b: Linux Tauri (ARM64, native) ───────────────────────────────
-  #
-  # Downloads the linux_arm64 sidecar from Stage 1, builds native ARM64
-  # Tauri .rpm installer, and uploads it to the GitHub release.
-  # AppImage is excluded — appimagetool is x86_64-only.
-  build-tauri-linux-arm64:
-    name: Tauri Linux (ARM64)
-    needs: build-burrito-all
+  # ── Linux ARM64 ────────────────────────────────────────────────────────
+  build-linux-arm64:
+    name: Linux (ARM64)
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      # GitHub-hosted ARM runners report an ImageOS value that setup-beam does
+      # not recognise.  Override it to the base value before setup-beam runs.
+      - name: Fix ImageOS for ARM runner
+        run: echo "ImageOS=ubuntu24" >> $GITHUB_ENV
 
       - name: Install Linux system dependencies
         run: |
@@ -474,6 +206,71 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             wget
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+
+      - name: Cache mix deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: mix-deps-linux-arm64-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-deps-linux-arm64-
+
+      - name: Cache mix build
+        uses: actions/cache@v4
+        with:
+          path: _build
+          key: mix-build-linux-arm64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-build-linux-arm64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
+      - name: Install Elixir dependencies
+        run: mix deps.get
+
+      - name: Build assets
+        run: |
+          mix assets.setup
+          mix assets.deploy
+
+      - name: Bundle vendor binaries
+        env:
+          VENDOR_PLATFORM: linux-arm64
+          RG_TARGET: aarch64-unknown-linux-gnu
+        run: |
+          set -euo pipefail
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          mkdir -p "${VENDOR_DIR}"
+          # --- ripgrep ---
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "/tmp/${RG_ARCHIVE}"
+          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
+          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          chmod +x "${VENDOR_DIR}/rg"
+          # --- system git ---
+          cp "$(which git)" "${VENDOR_DIR}/git"
+          chmod +x "${VENDOR_DIR}/git"
+          echo "Vendor binaries:"
+          ls -la "${VENDOR_DIR}/"
+
+      - name: Build Elixir releases
+        run: |
+          MIX_ENV=prod mix release genesis_desktop
+          MIX_ENV=prod mix release genesis_remote
+
+      - name: Place desktop release in Tauri resources
+        run: |
+          RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
+          rm -rf "${RESOURCE_DIR}"
+          cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
+
+      - name: Create genesis_remote tarball
+        run: |
+          tar -czf /tmp/genesis_remote_linux_arm64.tar.gz -C _build/prod/rel genesis_remote
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -499,22 +296,6 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall tauri-cli --version "^2.0" --no-confirm
 
-      - name: Download linux_arm64 sidecar
-        uses: actions/download-artifact@v4
-        with:
-          name: sidecar-linux_arm64
-          path: sidecars/
-
-      - name: Place sidecar binary
-        run: |
-          SIDECAR_DIR="desktop/src-tauri/sidecars"
-          mkdir -p "${SIDECAR_DIR}"
-          cp sidecars/genesis_desktop_linux_arm64 "${SIDECAR_DIR}/genesis-backend-aarch64-unknown-linux-gnu"
-          chmod +x "${SIDECAR_DIR}/genesis-backend-aarch64-unknown-linux-gnu"
-
-          echo "Sidecar binary:"
-          ls -la "${SIDECAR_DIR}/"
-
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
@@ -527,63 +308,77 @@ jobs:
           files: |
             desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
             desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
+            /tmp/genesis_remote_linux_arm64.tar.gz
 
-  # ── Stage 2c: Upload genesis_remote binaries ────────────────────────────
-  #
-  # Collects all genesis_remote binaries from Stage 1 and uploads them to
-  # the GitHub release as standalone assets.
-  upload-remote-binaries:
-    name: Upload Remote Binaries
-    needs: build-burrito-all
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Download all genesis_remote binaries
-        uses: actions/download-artifact@v4
-        with:
-          pattern: remote-*
-          path: remote-binaries/
-          merge-multiple: true
-
-      - name: List remote binaries
-        run: |
-          echo "=== Remote binaries ==="
-          ls -la remote-binaries/ 2>/dev/null || true
-
-      - name: Upload to GitHub release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-          files: |
-            remote-binaries/*
-
-  # ── Stage 2d: macOS Tauri (ARM64) ───────────────────────────────────────
-  #
-  # Downloads the darwin_arm64 sidecar from Stage 1, builds the native
-  # macOS .dmg / .app bundles, and uploads them to the release.
-  # Does NOT need Elixir, Zig, or mix — just Rust + Tauri CLI.
-  build-tauri-macos:
-    name: Tauri macOS (ARM64)
-    needs: build-burrito-all
+  # ── macOS ARM64 ────────────────────────────────────────────────────────
+  build-macos-arm64:
+    name: macOS (ARM64)
     runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Download darwin_arm64 sidecar
-        uses: actions/download-artifact@v4
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
         with:
-          name: sidecar-darwin_arm64
-          path: sidecars/
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
 
-      - name: Place sidecar binary
+      - name: Cache mix deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: mix-deps-macos-arm64-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-deps-macos-arm64-
+
+      - name: Cache mix build
+        uses: actions/cache@v4
+        with:
+          path: _build
+          key: mix-build-macos-arm64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-build-macos-arm64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
+      - name: Install Elixir dependencies
+        run: mix deps.get
+
+      - name: Build assets
         run: |
-          SIDECAR_DIR="desktop/src-tauri/sidecars"
-          mkdir -p "${SIDECAR_DIR}"
-          cp sidecars/genesis_desktop_darwin_arm64 "${SIDECAR_DIR}/genesis-backend-aarch64-apple-darwin"
-          chmod +x "${SIDECAR_DIR}/genesis-backend-aarch64-apple-darwin"
+          mix assets.setup
+          mix assets.deploy
 
-          echo "Sidecar binary:"
-          ls -la "${SIDECAR_DIR}/"
+      - name: Bundle vendor binaries
+        env:
+          VENDOR_PLATFORM: macos-arm64
+          RG_TARGET: aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          mkdir -p "${VENDOR_DIR}"
+          # --- ripgrep ---
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "/tmp/${RG_ARCHIVE}"
+          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
+          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          chmod +x "${VENDOR_DIR}/rg"
+          echo "Vendor binaries:"
+          ls -la "${VENDOR_DIR}/"
+
+      - name: Build Elixir releases
+        run: |
+          MIX_ENV=prod mix release genesis_desktop
+          MIX_ENV=prod mix release genesis_remote
+
+      - name: Place desktop release in Tauri resources
+        run: |
+          RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
+          rm -rf "${RESOURCE_DIR}"
+          cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
+
+      - name: Create genesis_remote tarball
+        run: |
+          tar -czf /tmp/genesis_remote_darwin_arm64.tar.gz -C _build/prod/rel genesis_remote
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -621,15 +416,11 @@ jobs:
           files: |
             desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+            /tmp/genesis_remote_darwin_arm64.tar.gz
 
-  # ── Stage 2e: Windows Tauri (x86_64) ────────────────────────────────────
-  #
-  # Downloads the windows_x64 sidecar from Stage 1, builds the native
-  # Windows .msi / .exe installers, and uploads them to the release.
-  # Does NOT need Elixir, Zig, or mix — just Rust + Tauri CLI.
-  build-tauri-windows:
-    name: Tauri Windows (x86_64)
-    needs: build-burrito-all
+  # ── Windows x86_64 ─────────────────────────────────────────────────────
+  build-windows-x64:
+    name: Windows (x86_64)
     runs-on: windows-2022
     defaults:
       run:
@@ -638,20 +429,75 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Download windows_x64 sidecar
-        uses: actions/download-artifact@v4
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
         with:
-          name: sidecar-windows_x64
-          path: sidecars/
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
 
-      - name: Place sidecar binary
+      - name: Cache mix deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: mix-deps-windows-x86_64-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-deps-windows-x86_64-
+
+      - name: Cache mix build
+        uses: actions/cache@v4
+        with:
+          path: _build
+          key: mix-build-windows-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-build-windows-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
+      - name: Install Elixir dependencies
+        run: mix deps.get
+
+      - name: Build assets
         run: |
-          SIDECAR_DIR="desktop/src-tauri/sidecars"
-          mkdir -p "${SIDECAR_DIR}"
-          cp sidecars/genesis_desktop_windows_x64.exe "${SIDECAR_DIR}/genesis-backend-x86_64-pc-windows-msvc.exe"
+          mix assets.setup
+          mix assets.deploy
 
-          echo "Sidecar binary:"
-          ls -la "${SIDECAR_DIR}/"
+      - name: Bundle vendor binaries
+        env:
+          VENDOR_PLATFORM: windows-x64
+          RG_TARGET: x86_64-pc-windows-msvc
+        run: |
+          set -euo pipefail
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          mkdir -p "${VENDOR_DIR}"
+          # --- ripgrep (.zip) ---
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.zip"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "/tmp/${RG_ARCHIVE}"
+          unzip -o "/tmp/${RG_ARCHIVE}" -d /tmp/rg-extract
+          cp "/tmp/rg-extract/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg.exe" "${VENDOR_DIR}/rg.exe"
+          echo "ripgrep installed:"
+          ls -la "${VENDOR_DIR}/"
+          # --- MinGit ---
+          MINGIT_VERSION_CLEAN="${MINGIT_VERSION%.windows.*}"
+          MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION_CLEAN}-64-bit.zip"
+          MINGIT_URL="https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}/${MINGIT_ARCHIVE}"
+          echo "Downloading ${MINGIT_URL}..."
+          curl -fsSL "${MINGIT_URL}" -o "/tmp/${MINGIT_ARCHIVE}"
+          unzip -o "/tmp/${MINGIT_ARCHIVE}" -d "${VENDOR_DIR}/mingit"
+          echo "MinGit installed:"
+          ls "${VENDOR_DIR}/mingit/cmd/git.exe"
+
+      - name: Build Elixir releases
+        run: |
+          MIX_ENV=prod mix release genesis_desktop
+          MIX_ENV=prod mix release genesis_remote
+
+      - name: Place desktop release in Tauri resources
+        run: |
+          RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
+          rm -rf "${RESOURCE_DIR}"
+          cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
+
+      - name: Create genesis_remote tarball
+        run: |
+          tar -czf /tmp/genesis_remote_windows_x64.tar.gz -C _build/prod/rel genesis_remote
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -689,3 +535,4 @@ jobs:
           files: |
             desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            /tmp/genesis_remote_windows_x64.tar.gz

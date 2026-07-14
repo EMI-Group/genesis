@@ -1,20 +1,12 @@
 {
-  description = "EvoGit desktop app — NixOS development environment for building and testing the Tauri + Burrito desktop app locally";
+  description = "Genesis desktop app — NixOS development environment for building and testing the Tauri desktop app locally";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    # Burrito 1.5.0 (pinned in mix.lock) hard-requires exactly Zig 0.15.2 —
-    # it calls exit(1) on any other version. nixpkgs does not ship 0.15.x yet,
-    # so we use the zig-overlay which mirrors official Zig binaries.
-    zig-overlay = {
-      url = "github:mitchellh/zig-overlay";
-      # Share nixpkgs to avoid a duplicate download.
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, zig-overlay }:
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -25,10 +17,6 @@
         beamPkgs = pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_29;
         erlang = beamPkgs.erlang;
         elixir = beamPkgs.elixir_1_20;
-
-        # ── Zig ─────────────────────────────────────────────────────
-        # Burrito 1.5.0 requires exactly Zig 0.15.2.
-        zig = zig-overlay.packages.${system}."0.15.2";
 
         # ── Tauri v2 native dependencies (Linux only) ──────────────
         # These are the NixOS equivalents of the apt packages installed by
@@ -69,14 +57,10 @@
             pkgs.rustfmt
             pkgs.clippy
 
-            # ── Zig (Burrito wrapper compiler) ──
-            zig
-
             # ── Core build tools ──
             pkgs.gnumake
             pkgs.gcc # C compiler for NIF compilation (mdex, lumis)
             pkgs.file # required by Tauri's bundling step
-            pkgs.xz # required by Burrito for payload compression
             pkgs.curl # for downloading vendor binaries
 
             # ── Vendor binaries (bundled into the release) ──
@@ -93,18 +77,14 @@
               export WEBKIT_DISABLE_DMABUF_RENDERER=1
             ''}
 
-            # Default to native Linux x86_64 for Burrito (change to linux_arm64 on aarch64).
-            export BURRITO_TARGET="''${BURRITO_TARGET:-linux_x64}"
-
             echo ""
             echo "  ┌─────────────────────────────────────────────┐"
-            echo "  │  EvoGit Desktop — NixOS Development Shell    │"
+            echo "  │  Genesis Desktop — NixOS Development Shell   │"
             echo "  └─────────────────────────────────────────────┘"
             echo ""
             echo "  Toolchain:"
             echo "    Erlang/OTP : $(erl -noshell -eval '{ok,V}=file:read_file(filename:join([code:root_dir(),"releases",erlang:system_info(otp_release),"OTP_VERSION"])), io:format("OTP ~s",[string:trim(V)]), halt()' 2>/dev/null || echo 'unknown')"
             echo "    Elixir     : $(elixir --version 2>/dev/null | tail -1 || echo 'unknown')"
-            echo "    Zig        : $(zig version 2>/dev/null || echo 'unknown')"
             echo "    Rust       : $(rustc --version 2>/dev/null || echo 'unknown')"
             echo ""
             echo "  ── Build the desktop app ─────────────────────"
@@ -121,12 +101,12 @@
             echo "  # 4. Bundle vendor binaries into the release"
             echo "  ./nix/bundle-vendor.sh"
             echo ""
-            echo "  # 5. Build the Burrito-wrapped Elixir release"
+            echo "  # 5. Build the Elixir release"
             echo "  MIX_ENV=prod mix release genesis_desktop"
             echo ""
-            echo "  # 6. Place the sidecar binary where Tauri expects it"
-            echo "  mkdir -p desktop/src-tauri/sidecars"
-            echo "  cp burrito_out/genesis_desktop_* desktop/src-tauri/sidecars/genesis-backend-$(rustc -vV | sed -n 's/host: //p')"
+            echo "  # 6. Place the release directory where Tauri expects it"
+            echo "  rm -rf desktop/src-tauri/resources/genesis-backend"
+            echo "  cp -a _build/prod/rel/genesis_desktop desktop/src-tauri/resources/genesis-backend"
             echo ""
             echo "  # 7. Build the Tauri desktop app"
             echo "  cd desktop/src-tauri && cargo tauri build"
