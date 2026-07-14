@@ -497,7 +497,7 @@
         <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
           <%= case @selected_history_entry.type do %>
             <% "USER_PROMPT" -> %>
-              <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.content %></pre>
+              <pre class="text-sm whitespace-pre-wrap"><%= safe_text(@selected_history_entry.data.content) %></pre>
             <% "THOUGHT_CHUNK" -> %>
               <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.text %></pre>
             <% "TOOL_CALL_START" -> %>
@@ -517,11 +517,11 @@
               </div>
               <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.reason %></pre>
             <% "CONTEXT_TREE" -> %>
-              <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.content %></pre>
+              <pre class="text-sm whitespace-pre-wrap"><%= safe_text(@selected_history_entry.data.content) %></pre>
             <% "system" -> %>
-              <pre class="text-sm whitespace-pre-wrap text-accent"><%= @selected_history_entry.data.content %></pre>
+              <pre class="text-sm whitespace-pre-wrap text-accent"><%= safe_text(@selected_history_entry.data.content) %></pre>
             <% "user" -> %>
-              <pre class="text-sm whitespace-pre-wrap text-info"><%= @selected_history_entry.data.content %></pre>
+              <pre class="text-sm whitespace-pre-wrap text-info"><%= safe_text(@selected_history_entry.data.content) %></pre>
             <% "assistant" -> %>
               <div class="space-y-4">
                 <% reasoning_details = Map.get(@selected_history_entry.data, :reasoning_details) %>
@@ -534,7 +534,7 @@
                 <%= if @selected_history_entry.data.content && String.trim(@selected_history_entry.data.content) != "" do %>
                   <div>
                     <h4 class="font-semibold text-warning mb-2"><%= gettext("Response") %></h4>
-                    <pre class="text-sm whitespace-pre-wrap bg-warning/10 p-3 rounded"><%= @selected_history_entry.data.content %></pre>
+                    <pre class="text-sm whitespace-pre-wrap bg-warning/10 p-3 rounded"><%= safe_text(@selected_history_entry.data.content) %></pre>
                   </div>
                 <% end %>
                 <%= if @selected_history_entry.data.tool_calls && @selected_history_entry.data.tool_calls != [] do %>
@@ -544,7 +544,7 @@
                       <%= for call <- @selected_history_entry.data.tool_calls do %>
                         <div class="bg-secondary/10 p-3 rounded">
                           <div class="font-mono font-semibold mb-1">{tool_call_name(call)}</div>
-                          <pre class="text-xs overflow-x-auto"><%= tool_call_arguments(call) %></pre>
+                          <pre class="text-xs overflow-x-auto"><%= safe_text(tool_call_arguments(call)) %></pre>
                         </div>
                       <% end %>
                     </div>
@@ -557,7 +557,7 @@
                 <%= if tool_name do %>
                   <h4 class="font-semibold text-success"><%= gettext("Tool Result: %{name}", name: tool_name) %></h4>
                 <% end %>
-                <pre class="text-sm whitespace-pre-wrap bg-success/10 p-3 rounded max-h-[60vh] overflow-y-auto"><%= @selected_history_entry.data.content %></pre>
+                <pre class="text-sm whitespace-pre-wrap bg-success/10 p-3 rounded max-h-[60vh] overflow-y-auto"><%= safe_text(@selected_history_entry.data.content) %></pre>
               </div>
             <% _ -> %>
               <pre class="text-sm"><%= inspect(@selected_history_entry.data, pretty: true, limit: :infinity) %></pre>

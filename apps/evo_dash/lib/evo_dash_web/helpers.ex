@@ -585,6 +585,52 @@ defmodule EvoDashWeb.Helpers do
   # ---------------------------------------------------------------------------
 
   @doc """
+  Converts any value into an HTML-safe string so it can be rendered in a HEEx
+  template without crashing.
+
+  Message content and tool-call arguments may arrive as a Map (or other
+  non-string term) instead of a String. Rendering such a value directly via
+  `<%= ... %>` raises `Protocol.UndefinedError` for `Phoenix.HTML.Safe`. This
+  helper guarantees a string is always returned.
+
+  Returns:
+    * `""` for `nil`
+    * the binary as-is for strings
+    * a human-readable `"key: value"` representation (sorted by key, one pair
+      per line) for plain maps — nested non-string leaf values use
+      `inspect(value, pretty: true)`
+    * newline-joined for lists whose elements are all strings, otherwise
+      `inspect(value, pretty: true)`
+    * `inspect(value, pretty: true)` for structs and any other term
+  """
+  def safe_text(nil), do: ""
+  def safe_text(value) when is_binary(value), do: value
+
+  # Structs are maps, but they carry a meaningful `inspect/1` representation,
+  # so fall through to inspect rather than the key/value rendering below.
+  def safe_text(%{__struct__: _} = value), do: inspect(value, pretty: true)
+
+  def safe_text(value) when is_map(value) do
+    value
+    |> Enum.sort_by(fn {k, _v} -> to_string(k) end)
+    |> Enum.map(fn {k, v} -> "#{k}: #{safe_map_leaf(v)}" end)
+    |> Enum.join("\n")
+  end
+
+  def safe_text(value) when is_list(value) do
+    if Enum.all?(value, &is_binary/1) do
+      Enum.join(value, "\n")
+    else
+      inspect(value, pretty: true)
+    end
+  end
+
+  def safe_text(value), do: inspect(value, pretty: true)
+
+  defp safe_map_leaf(v) when is_binary(v), do: v
+  defp safe_map_leaf(v), do: inspect(v, pretty: true)
+
+  @doc """
   Truncates a string to `len` characters, appending "..." if truncated.
   """
   def truncate_string(nil, _len), do: ""

@@ -35,4 +35,65 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "Agent Tree"
     end
   end
+
+  describe "safe_text/1" do
+    # BUG fix: message content / tool-call arguments that are Maps (not strings)
+    # crashed the LiveView with Protocol.UndefinedError: protocol
+    # Phoenix.HTML.Safe not implemented for Map. safe_text/1 converts any value
+    # to an HTML-safe string before it is rendered in HEEx.
+
+    alias EvoDashWeb.Helpers
+
+    test "returns empty string for nil" do
+      assert Helpers.safe_text(nil) == ""
+    end
+
+    test "returns a plain string as-is" do
+      assert Helpers.safe_text("hello world") == "hello world"
+    end
+
+    test "renders a flat map as sorted key: value lines without crashing" do
+      result =
+        Helpers.safe_text(%{
+          "commit_id" => "",
+          "objective" => "foo",
+          "path" => "./x"
+        })
+
+      assert is_binary(result)
+
+      # Keys are sorted alphabetically.
+      assert result == "commit_id: \nobjective: foo\npath: ./x"
+
+      # Must be HTML-safe (a Map would previously crash Phoenix.HTML.Safe).
+      assert match?({:safe, _}, Phoenix.HTML.html_escape(result))
+    end
+
+    test "renders a nested map with inspect for non-string leaf values" do
+      result =
+        Helpers.safe_text(%{
+          "args" => %{"limit" => 10},
+          "name" => "sub_agent"
+        })
+
+      assert is_binary(result)
+      # The nested map leaf is rendered via inspect/1.
+      assert result =~ "args:"
+      assert result =~ "%{\"limit\" => 10}"
+      assert result =~ "name: sub_agent"
+    end
+
+    test "handles lists of strings by joining them" do
+      assert Helpers.safe_text(["a", "b", "c"]) == "a\nb\nc"
+    end
+
+    test "handles lists with non-string elements via inspect" do
+      assert Helpers.safe_text([1, 2, 3]) =~ "[1, 2, 3]"
+    end
+
+    test "falls back to inspect for arbitrary terms" do
+      assert Helpers.safe_text(:an_atom) == ":an_atom"
+      assert Helpers.safe_text(42) == "42"
+    end
+  end
 end
