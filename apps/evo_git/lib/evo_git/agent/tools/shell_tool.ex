@@ -180,10 +180,15 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     case EvoGit.Sandbox.run_with_partial(repo_path, shell, shell_args, repo_root, timeout, max_bytes) do
       {:ok, output, exit_code} ->
         base =
-          if exit_code == 0 do
-            "Command executed successfully.\nOutput:\n#{output}"
-          else
-            "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+          cond do
+            exit_code == 0 ->
+              "Command executed successfully.\nOutput:\n#{output}"
+
+            desc = describe_exit_code(exit_code) ->
+              "#{desc.header}\n#{desc.description}\nOutput:\n#{output}"
+
+            true ->
+              "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
           end
 
         case detect_cd_warnings(command, repo_path, repo_root) do
@@ -200,6 +205,75 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         end
     end
   end
+
+  # Unix exit codes >= 128 indicate the process was terminated by a signal.
+  # The signal number is `exit_code - 128`. This map covers well-known signals;
+  # any other code >= 128 falls back to a generic signal explanation.
+  @known_signal_exits %{
+    129 => {1, "SIGHUP", "hangup"},
+    130 => {2, "SIGINT", "interrupt (typically Ctrl+C)"},
+    131 => {3, "SIGQUIT", "quit"},
+    132 => {4, "SIGILL", "illegal instruction"},
+    133 => {5, "SIGTRAP", "trace/breakpoint trap"},
+    134 => {6, "SIGABRT",
+     "an assertion failure, a fatal internal error, or an explicit call to abort()"},
+    135 => {7, "SIGBUS", "a bus error — typically an unaligned memory access or mapping error"},
+    136 => {8, "SIGFPE", "a floating point exception — typically an integer division by zero or an invalid arithmetic operation"},
+    137 => {9, "SIGKILL",
+     "an **Out-Of-Memory (OOM)** condition — the process consumed too much memory and was terminated by the kernel's OOM killer or the sandbox memory limit (MemoryMax). The output below is everything captured before the process was killed. Consider reducing memory usage"},
+    138 => {10, "SIGUSR1", "user-defined signal 1"},
+    139 => {11, "SIGSEGV",
+     "a segmentation fault — a memory access violation. The process tried to read or write an invalid memory address. This is a crash in the program itself, not a normal error"},
+    140 => {12, "SIGUSR2", "user-defined signal 2"},
+    141 => {13, "SIGPIPE", "a broken pipe — writing to a pipe with no readers"},
+    142 => {14, "SIGALRM", "an alarm clock signal"},
+    143 => {15, "SIGTERM",
+     "a termination signal. This can be sent by the system, a process manager, or another process"}
+  }
+
+  @doc """
+  Detects when an exit code indicates the process was terminated by a Unix signal
+  (exit codes >= 128, where signal number = exit_code - 128).
+
+  Returns `%{header: ..., description: ...}` for signal-based exits, or `nil` for
+  exit codes that are not signal-based (0, or non-zero codes below 128). The result
+  is only meaningful on Unix shells (bash); on Windows, exit codes don't follow
+  this convention, but since signal-based codes are rare in PowerShell the detection
+  is harmless to apply universally.
+  """
+  def describe_exit_code(exit_code) when exit_code >= 128 do
+    {signal_num, signame, detail} =
+      case Map.get(@known_signal_exits, exit_code) do
+        nil ->
+          signal_number = exit_code - 128
+          {signal_number, nil, "an abnormal termination, not a normal error exit"}
+
+        {num, name, desc} ->
+          {num, name, desc}
+      end
+
+    header =
+      case signame do
+        nil ->
+          "Command was killed by signal (exit code #{exit_code} — signal #{signal_num})."
+
+        name ->
+          "Command was killed by signal (exit code #{exit_code} — #{name})."
+      end
+
+    description =
+      case signame do
+        nil ->
+          "The process was terminated by signal #{signal_num} (exit code #{exit_code}). This is #{detail}."
+
+        name ->
+          "The process was killed by the operating system (#{name}). This is typically #{detail}."
+      end
+
+    %{header: header, description: description}
+  end
+
+  def describe_exit_code(_exit_code), do: nil
 
   @doc false
   def detect_cd_warnings(command, repo_path, repo_root) do

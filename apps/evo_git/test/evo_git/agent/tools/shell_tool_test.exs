@@ -104,4 +104,104 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert result =~ @repo_path
     end
   end
+
+  describe "describe_exit_code/1" do
+    test "returns nil for exit code 0" do
+      assert ShellTool.describe_exit_code(0) == nil
+    end
+
+    test "returns nil for non-signal exit codes below 128" do
+      assert ShellTool.describe_exit_code(1) == nil
+      assert ShellTool.describe_exit_code(2) == nil
+      assert ShellTool.describe_exit_code(127) == nil
+    end
+
+    test "detects SIGKILL (137) as OOM" do
+      result = ShellTool.describe_exit_code(137)
+
+      assert result.header =~ "exit code 137"
+      assert result.header =~ "SIGKILL"
+      assert result.description =~ "Out-Of-Memory"
+      assert result.description =~ "OOM"
+      assert result.description =~ "memory"
+    end
+
+    test "detects SIGSEGV (139) as segmentation fault" do
+      result = ShellTool.describe_exit_code(139)
+
+      assert result.header =~ "exit code 139"
+      assert result.header =~ "SIGSEGV"
+      assert result.description =~ "segmentation fault"
+      assert result.description =~ "memory access violation"
+    end
+
+    test "detects SIGABRT (134) as abort" do
+      result = ShellTool.describe_exit_code(134)
+
+      assert result.header =~ "exit code 134"
+      assert result.header =~ "SIGABRT"
+      assert result.description =~ "assertion failure"
+    end
+
+    test "detects SIGFPE (136) as floating point exception" do
+      result = ShellTool.describe_exit_code(136)
+
+      assert result.header =~ "exit code 136"
+      assert result.header =~ "SIGFPE"
+      assert result.description =~ "floating point exception"
+    end
+
+    test "detects SIGBUS (135) as bus error" do
+      result = ShellTool.describe_exit_code(135)
+
+      assert result.header =~ "exit code 135"
+      assert result.header =~ "SIGBUS"
+      assert result.description =~ "bus error"
+    end
+
+    test "detects SIGTERM (143) as termination signal" do
+      result = ShellTool.describe_exit_code(143)
+
+      assert result.header =~ "exit code 143"
+      assert result.header =~ "SIGTERM"
+      assert result.description =~ "termination signal"
+    end
+
+    test "detects SIGINT (130) as interrupt" do
+      result = ShellTool.describe_exit_code(130)
+
+      assert result.header =~ "exit code 130"
+      assert result.header =~ "SIGINT"
+      assert result.description =~ "Ctrl+C"
+    end
+
+    test "detects SIGILL (132) as illegal instruction" do
+      result = ShellTool.describe_exit_code(132)
+
+      assert result.header =~ "exit code 132"
+      assert result.header =~ "SIGILL"
+      assert result.description =~ "illegal instruction"
+    end
+
+    test "provides generic message for unknown signals >= 128" do
+      # 200 - 128 = 72 (a high/unknown signal number)
+      result = ShellTool.describe_exit_code(200)
+
+      assert result.header =~ "exit code 200"
+      assert result.header =~ "signal 72"
+      refute Map.has_key?(result, :signame)
+      assert result.description =~ "signal 72"
+      assert result.description =~ "abnormal termination"
+    end
+
+    test "result is a map with header and description keys" do
+      result = ShellTool.describe_exit_code(137)
+
+      assert is_map(result)
+      assert Map.has_key?(result, :header)
+      assert Map.has_key?(result, :description)
+      assert is_binary(result.header)
+      assert is_binary(result.description)
+    end
+  end
 end
