@@ -65,10 +65,10 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert {:ok, target} =
                EvoGit.RemoteConnections.save(%{
                  ssh_target: "example.com",
-                 local_binary_path: "burrito_out/genesis_remote_linux_x64"
+                 local_binary_path: "_build/prod/rel/genesis_remote.tar.gz"
                })
 
-      assert target.local_binary_path == "burrito_out/genesis_remote_linux_x64"
+      assert target.local_binary_path == "_build/prod/rel/genesis_remote.tar.gz"
     end
 
     test "returns {:error, :missing_ssh_target} when ssh_target is absent" do
@@ -194,7 +194,7 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert {:ok, _t1} =
                EvoGit.RemoteConnections.save(%{
                  ssh_target: "deploy@prod.example.com",
-                 local_binary_path: "burrito_out/genesis_remote_linux_x64",
+                 local_binary_path: "_build/prod/rel/genesis_remote.tar.gz",
                  dist_port: 9100
                })
 
@@ -219,7 +219,7 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert prod != nil
       assert prod.ssh_target == "deploy@prod.example.com"
       assert prod.dist_port == 9100
-      assert prod.local_binary_path == "burrito_out/genesis_remote_linux_x64"
+      assert prod.local_binary_path == "_build/prod/rel/genesis_remote.tar.gz"
 
       staging = Enum.find(list, fn c -> c.ssh_target == "staging.example.com" end)
       assert staging != nil
