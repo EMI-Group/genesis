@@ -159,11 +159,9 @@ defmodule EvoDash.TaskRegistry do
 
     # Normalize SQLite entries in place (backfill fields, reset crashed tasks,
     # and re-monitor any tasks whose processes are still alive under the sibling
-    # TaskSupervisor).
-    state = normalize_tasks(state)
-
-    # Cleanup expired tasks on startup
-    Cleanup.cleanup_expired_tasks(state.task_store)
+    # TaskSupervisor), AND cleanup expired tasks — in a single pass over the
+    # loaded task list to avoid a second full-table scan that inflates the heap.
+    state = normalize_and_cleanup_tasks(state)
 
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
@@ -174,6 +172,12 @@ defmodule EvoDash.TaskRegistry do
     # startup. After that, any new foreign instance does its own pair of checks.
     Process.send_after(self(), :heartbeat, @heartbeat_interval)
     Process.send_after(self(), :lease_sweep, @sweep_after)
+
+    # Reclaim transient heap allocation from the init-time full-table scan.
+    # The normalized task list (logs, result maps, archive_metadata decoded into
+    # structs) is garbage after processing, but BEAM's generational GC may not
+    # immediately reclaim it — a forced fullsweep shrinks the heap to steady-state.
+    :erlang.garbage_collect()
 
     {:ok, state}
   end
@@ -515,19 +519,27 @@ defmodule EvoDash.TaskRegistry do
 
   # --- Task Normalization ---
 
-  defp normalize_tasks(state) do
-    objects = select_all_tasks(state)
+  # Combined normalize + cleanup in a single pass over the loaded task list.
+  # This avoids loading the entire table twice during init (each load decodes
+  # every row into a full %TaskInfo{} struct, inflating the heap). The
+  # normalized tasks (post-reconcile) are passed directly to cleanup so it
+  # doesn't need to re-read from the store.
+  defp normalize_and_cleanup_tasks(state) do
+    tasks = select_all_tasks(state)
 
-    Enum.reduce(objects, state, fn %TaskInfo{} = task, acc ->
-      # Backfill safety: Map.merge ensures any newly-added TaskInfo fields
-      # get their default values even if the codec produced a struct missing
-      # them. When task is already a complete %TaskInfo{}, this is a no-op.
-      task = Map.merge(%TaskInfo{}, task)
-      {task, acc} = reconcile_task_status(task, acc)
-      # Persist with ref nulled (ref is runtime-only data)
-      EvoDash.Store.put_task(state.task_store, %{task | ref: nil})
-      acc
-    end)
+    # Normalize each task: backfill fields, reconcile status, persist.
+    {state, normalized_tasks} =
+      Enum.reduce(tasks, {state, []}, fn %TaskInfo{} = task, {acc_state, acc_tasks} ->
+        task = Map.merge(%TaskInfo{}, task)
+        {task, acc_state} = reconcile_task_status(task, acc_state)
+        EvoDash.Store.put_task(state.task_store, %{task | ref: nil})
+        {acc_state, [task | acc_tasks]}
+      end)
+
+    # Cleanup expired tasks from the already-loaded list — no second store read.
+    Cleanup.cleanup_expired_tasks(normalized_tasks, state.task_store)
+
+    state
   end
 
   # Reconcile a task's status after a registry restart.
