@@ -93,7 +93,7 @@ size(store) :: non_neg_integer()                          # total across both ta
 - Runtime-only task references (`%Task{}`) are kept in an in-memory `task_refs` map (`%{task_id => %Task{}}`), not persisted.
 - All store-touching `handle_*` callbacks have NO try/rescue — if the Store is down, the GenServer crashes and the supervisor restarts it. This is correct process isolation and prevents silent data loss.
 - **try/rescue anti-pattern cleanup**: `init/1` calls `Store.integrity_check/1` directly (no try/rescue — it returns `{:error, _}` rather than raising). `normalize_and_cleanup_tasks/1` has no try/rescue (crashes propagate to supervisor). `sched_meta_has_active_agents?/1` uses `:ets.info/1` (returns `:undefined` for missing tables, non-crashing) instead of try/rescue. `cancel_task_agents` uses `catch :exit` (legitimate for cross-app GenServer calls to a possibly-dead process) with logging instead of silent `rescue _ -> :ok`.
-- **Memory-optimized init**: `init/1` consolidates the two sequential full-table scans (normalize + cleanup) into a single-pass `normalize_and_cleanup_tasks/1` that loads the task list once, normalizes each task (backfill fields, reconcile status, persist), then passes the already-loaded (post-reconcile) list to `Cleanup.cleanup_expired_tasks/2` — eliminating the second store read entirely. A `:erlang.garbage_collect()` call at the end of `init/1` reclaims the transient heap allocation from the decoded task structs, shrinking the heap to steady-state immediately.
+- **Memory-optimized init**: `init/1` consolidates the two sequential full-table scans (normalize + cleanup) into a single-pass `normalize_and_cleanup_tasks/1` that loads the task list once, normalizes each task (backfill fields, reconcile status, persist), then passes the already-loaded (post-reconcile) list to `Cleanup.cleanup_expired_tasks/2` — eliminating the second store read entirely.
 
 **Client API:**
 | Function | Description |
@@ -207,13 +207,13 @@ The Store's `init/1` immediately runs `create_tables` + `migrate_schema` + (call
 
 The TaskRegistry does NOT own a SQLite connection, so its memory is **BEAM heap**, not NIF/SQLite cache. The primary driver was `init/1` (`task_registry.ex:133-178`), which triggered **sequential full-table scans** that each loaded ALL tasks into the TaskRegistry process heap as decoded `%TaskInfo{}` structs.
 
-**FIXED — single-pass consolidation + forced GC:** The init flow now consolidates the normalize + cleanup scans into a single pass (`normalize_and_cleanup_tasks/1` at lines 522-543), and forces a `:erlang.garbage_collect()` at the end of `init/1` to reclaim the transient heap. The original issue was:
+**FIXED — single-pass consolidation:** The init flow now consolidates the normalize + cleanup scans into a single pass (`normalize_and_cleanup_tasks/1` at lines 522-543). The original issue was:
 
 1. **`EvoDash.Store.integrity_check/1`** (line 158) → Store's `do_integrity_check` → `scan_and_repair` does `SELECT * FROM tasks` + `SELECT * FROM projects`. Raw rows flow through the Store process, but the *return value* is just `:ok`/`{:repaired, n}` — minimal heap impact on TaskRegistry. (KEPT AS-IS.)
 
 2. **`normalize_tasks/1`** + **`Cleanup.cleanup_expired_tasks/1`** → These were **two** sequential full-table scans. `normalize_tasks/1` loaded ALL tasks into the TaskRegistry heap (each `%TaskInfo{}` with decoded `logs`, `result`, `archive_metadata`), then `cleanup_expired_tasks/1` loaded them **again**. After the reduce completed, the list became garbage, but BEAM's generational GC did not immediately reclaim it — the heap high-water mark persisted.
 
-The fix combines these into `normalize_and_cleanup_tasks/1`, which loads the task list **once**, normalizes each task (backfill, reconcile, persist), and passes the already-loaded (post-reconcile) list directly to `Cleanup.cleanup_expired_tasks/2` — no second store read. A `:erlang.garbage_collect()` call at the end of `init/1` forces a fullsweep to shrink the heap to steady-state immediately.
+The fix combines these into `normalize_and_cleanup_tasks/1`, which loads the task list **once**, normalizes each task (backfill, reconcile, persist), and passes the already-loaded (post-reconcile) list directly to `Cleanup.cleanup_expired_tasks/2` — no second store read.
 
 **Secondary contributors:**
 - **PubSub subscription** (`task_registry.ex:169`): `Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")` — the PG2 adapter (`:pg`) tracks the subscriber; negligible per-process cost but adds monitor entries.
