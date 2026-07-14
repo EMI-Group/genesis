@@ -173,12 +173,6 @@ defmodule EvoDash.TaskRegistry do
     Process.send_after(self(), :heartbeat, @heartbeat_interval)
     Process.send_after(self(), :lease_sweep, @sweep_after)
 
-    # Reclaim transient heap allocation from the init-time full-table scan.
-    # The normalized task list (logs, result maps, archive_metadata decoded into
-    # structs) is garbage after processing, but BEAM's generational GC may not
-    # immediately reclaim it — a forced fullsweep shrinks the heap to steady-state.
-    :erlang.garbage_collect()
-
     {:ok, state}
   end
 
