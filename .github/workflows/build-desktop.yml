@@ -498,12 +498,23 @@ jobs:
           # issues: MSYS2 treats extension-less files like 'erl' as equivalent
           # to 'erl.exe', causing "File exists" errors when both exist in the
           # ERTS bin/ directory of the release.
+          #
+          # robocopy exit codes: 0 = no copies needed, 1-7 = success (files
+          # copied), 8+ = failure.  Two things make this tricky in pwsh:
+          #   1. PS 7.4+ sets $PSNativeCommandErrorActionPreference=$true (via
+          #      the GHA wrapper), which turns robocopy's non-zero success
+          #      codes into terminating errors.
+          #   2. pwsh -Command propagates $LASTEXITCODE as the process exit
+          #      code when no explicit `exit` is called — so a robocopy exit
+          #      code of 1 would fail the step even though it succeeded.
+          $PSNativeCommandErrorActionPreference = $false
           robocopy "_build/prod/rel/genesis_desktop" $resourceDir /E /NFL /NDL /NJH /NJS /NP
-          # robocopy uses non-zero exit codes for success (0-7); 8+ = failure
-          if ($LASTEXITCODE -ge 8) {
-            Write-Error "robocopy failed with exit code $LASTEXITCODE"
+          $rc = $LASTEXITCODE
+          if ($rc -ge 8) {
+            Write-Error "robocopy failed with exit code $rc"
             exit 1
           }
+          exit 0
 
       - name: Create genesis_remote tarball
         run: |
