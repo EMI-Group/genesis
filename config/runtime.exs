@@ -69,9 +69,9 @@ if config_env() == :prod and not Application.get_env(:evo_git, :remote_release, 
   # to check this value into version control, so we use an environment
   # variable instead.
   # Desktop releases use a fixed local key (set by the Tauri sidecar via
-  # SECRET_KEY_BASE env var). If Burrito fails to forward that env var, fall
-  # back to the same hardcoded key so the backend can still boot. This is safe
-  # for local, single-user desktop usage only and is never used for real prod.
+  # SECRET_KEY_BASE env var). Fall back to the same hardcoded key so the
+  # backend can still boot. This is safe for local, single-user desktop usage
+  # only and is never used for real prod.
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
       if Application.get_env(:evo_dash, :desktop_release, false) do
@@ -87,8 +87,8 @@ if config_env() == :prod and not Application.get_env(:evo_git, :remote_release, 
     case System.get_env("PORT") do
       nil ->
         if Application.get_env(:evo_dash, :desktop_release, false) do
-          # Desktop release: PORT env var not forwarded by Burrito — use the
-          # fixed desktop port (must match Tauri WebView's localhost:9999).
+          # Desktop release: PORT env var not forwarded by the launcher — use
+          # the fixed desktop port (must match Tauri WebView's localhost:9999).
           9999
         else
           EvoGit.Config.resolve([:server, :listen_port])
@@ -98,8 +98,7 @@ if config_env() == :prod and not Application.get_env(:evo_git, :remote_release, 
         String.to_integer(port_str)
     end
 
-  # Detect desktop mode from two independent signals so detection is robust
-  # against env var forwarding issues through the Burrito Zig wrapper:
+  # Detect desktop mode from two independent signals so detection is robust:
   #   1. The compile-time `:desktop_release` flag baked into sys.config by the
   #      genesis_desktop release definition in mix.exs (loaded before
   #      runtime.exs evaluates).
