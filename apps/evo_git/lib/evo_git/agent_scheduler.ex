@@ -352,11 +352,6 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def init(opts) do
-    # The scheduler processes large prompt/result data during task execution.
-    # Low fullsweep_after ensures periodic full GC to reclaim residual heap.
-    # GC cost is negligible since message handling is not high-frequency.
-    Process.flag(:fullsweep_after, 20)
-
     # ETS tables (:evogit_agent_state, :evogit_sched_meta, :evogit_archive_records)
     # are created by EvoGit.Application before the scheduler starts so they survive
     # scheduler crashes. Defensive check: warn if any table is unexpectedly missing.
@@ -807,17 +802,13 @@ defmodule EvoGit.AgentScheduler do
   # Task returned a result
   @impl true
   def handle_info({ref, result}, %State{} = state) when is_reference(ref) do
-    ret = Lifecycle.handle_task_result(ref, result, state)
-    :erlang.garbage_collect()
-    ret
+    Lifecycle.handle_task_result(ref, result, state)
   end
 
   # Task process exited (monitor :DOWN).
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, %State{} = state) do
-    ret = Lifecycle.handle_agent_down(ref, pid, reason, state)
-    :erlang.garbage_collect()
-    ret
+    Lifecycle.handle_agent_down(ref, pid, reason, state)
   end
 
   # --- ETS Helpers (Agent History Table) ---
