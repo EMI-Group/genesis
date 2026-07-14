@@ -322,7 +322,7 @@ defmodule EvoDashWeb.SettingsLive do
                               type="text"
                               name="local_binary_path"
                               value={@remote_form_target[:local_binary_path]}
-                              placeholder="burrito_out/genesis_remote_linux_x64"
+                              placeholder="_build/prod/rel/genesis_remote.tar.gz"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
                               disabled={@remote_config}
                             />

@@ -17,9 +17,9 @@ defmodule EvoGit.RemoteConnections do
   | `id` | string | no | auto-generated | Unique identifier (slugified from name/ssh_target, max 40 chars) |
   | `name` | string | no | `ssh_target` | Display name |
   | `ssh_target` | string | **yes** | — | The SSH host string (e.g. `gpu-server`, `user@192.168.1.10`) — just what you'd type after `ssh`. Port/keys handled by `~/.ssh/config` |
-  | `local_binary_path` | string | **yes** | — | Path to local `genesis_remote` binary to upload (e.g. `burrito_out/genesis_remote_linux_x64`) |
+  | `local_binary_path` | string | **yes** | — | Path to local `genesis_remote` tarball to upload (e.g. `_build/prod/rel/genesis_remote.tar.gz`) |
   | `dist_port` | integer | no | `9000` | Erlang distribution port for tunneling |
-  | `remote_path` | string | no | `/tmp/genesis_remote` | Where to place the binary on the remote |
+  | `remote_path` | string | no | `/tmp/genesis_remote` | Where to extract the release on the remote |
   | `last_connected` | string | no | `nil` | ISO8601 timestamp of last successful connection |
 
   Connection maps use **atom keys** internally; keys are stringified only when

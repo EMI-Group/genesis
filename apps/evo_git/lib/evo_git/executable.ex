@@ -2,13 +2,9 @@ defmodule EvoGit.Executable do
   @moduledoc """
   Resolves executable paths with a system-first, bundled-fallback strategy.
 
-  For desktop releases (standard and Burrito-wrapped), git and ripgrep binaries
-  are bundled in priv/vendor/{platform}/. This module tries the system PATH first,
-  then falls back to the bundled version.
-
-  Under Burrito (Tauri sidecar), the release is extracted to a temporary directory
-  at runtime. Application.app_dir/2 resolves correctly because BEAM's application
-  directory resolution is path-based and Burrito preserves the release structure.
+  For desktop releases, git and ripgrep binaries are bundled in
+  priv/vendor/{platform}/. This module tries the system PATH first, then falls
+  back to the bundled version.
   """
 
   @doc """
@@ -40,13 +36,13 @@ defmodule EvoGit.Executable do
   defp resolve_vendor_dir do
     platform_path = Path.join("vendor", vendor_platform())
 
-    # Primary: Application.app_dir (works for standard and Burrito releases)
+    # Primary: Application.app_dir (works for standard mix releases)
     app_path = Application.app_dir(:evo_git, Path.join("priv", platform_path))
 
     if File.dir?(app_path) do
       app_path
     else
-      # Fallback: :code.priv_dir/1 for edge cases in Burrito extraction
+      # Fallback: :code.priv_dir/1 for edge cases
       case :code.priv_dir(:evo_git) do
         {:error, _} -> app_path
         priv_dir -> Path.join(List.to_string(priv_dir), platform_path)

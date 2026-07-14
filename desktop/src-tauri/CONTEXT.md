@@ -2,17 +2,17 @@
 
 ## Intent
 
-The Rust source for the Genesis Tauri v2 desktop shell. It launches the Burrito-wrapped Phoenix backend as a sidecar, manages a native WebView window, and provides a **system tray** for background operation. The backend binds to `127.0.0.1` by default (configurable via `EVOGIT_BIND`).
+The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard Elixir release (via its launcher script) as a child process, manages a native WebView window, and provides a **system tray** for background operation. The backend binds to `127.0.0.1` by default (configurable via `EVOGIT_BIND`).
 
 ## API Surface
 
 | File | Purpose |
 |------|---------|
-| `src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns sidecar, opens window, intercepts close-to-tray |
-| `src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), spawn backend process, health-check polling, shutdown |
+| `src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns the Elixir release, opens window, intercepts close-to-tray |
+| `src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), spawn release launcher process, health-check polling, shutdown |
 | `Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-dialog, reqwest) |
-| `tauri.conf.json` | Tauri config: window settings, trayIcon config, sidecar reference, bundle metadata |
-| `capabilities/default.json` | Tauri v2 permissions: shell (sidecar), dialog (directory picker). No tray permission needed — tray managed from Rust. |
+| `tauri.conf.json` | Tauri config: window settings, trayIcon config, release resource reference, bundle metadata |
+| `capabilities/default.json` | Tauri v2 permissions: shell (release launcher), dialog (directory picker). No tray permission needed — tray managed from Rust. |
 | `icons/icon.png` | Tray icon (also used for window icon) |
 
 ## System Tray Behavior
@@ -35,5 +35,6 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the Burrito-
 - Tauri v2 — API differs significantly from v1 (tray builder, menu, window events all changed).
 - The `tray-icon` Cargo feature must be enabled for system tray support.
 - `capabilities/default.json` does NOT need a tray permission — tray icons are managed from Rust, not the frontend JS API.
-- The sidecar binary (`sidecars/genesis-backend-{target-triple}`) must exist before `cargo tauri build`.
+- The Elixir release directory (`resources/genesis-backend/`) — a standard `mix release` tree — must be placed in `src-tauri/resources/genesis-backend/` before `cargo tauri build`. Tauri bundles it as a resource.
 - The desktop shell contains NO Elixir code — only Rust.
+- The release is launched via its `bin/genesis_desktop` launcher script (`bin/genesis_desktop.bat` on Windows) with the `start` command, which is a **foreground** process (blocks until the BEAM VM exits). This gives the Rust parent clean ownership/kill semantics.

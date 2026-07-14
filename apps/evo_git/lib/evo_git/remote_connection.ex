@@ -5,11 +5,12 @@ defmodule EvoGit.RemoteConnection do
   There are two distinct operations, kept deliberately separate:
 
     * **Bootstrap** (`bootstrap/1`) — "first time setup": pushes the local
-      `genesis_remote` binary to the remote host via CLI `scp`, sets it
-      executable via `ssh chmod +x`, detects the remote OS, and launches it
-      as a daemon (`systemd-run --user` on Linux, `launchctl` on macOS). The
-      daemon then runs independently and stays up even after the local side
-      disconnects. Bootstrap does NOT connect.
+      `genesis_remote` tarball to the remote host via CLI `scp`, extracts it
+      on the remote, sets the launcher executable via `ssh chmod +x`, detects
+      the remote OS, and launches it as a daemon (`systemd-run --user` on
+      Linux, `launchctl` on macOS). The daemon then runs independently and
+      stays up even after the local side disconnects. Bootstrap does NOT
+      connect.
 
     * **Connection** (`connect/1`) — establishes an SSH tunnel forwarding the
       remote distribution port to loopback, then performs Erlang distribution
@@ -67,7 +68,7 @@ defmodule EvoGit.RemoteConnection do
 
   @type phase :: :disconnected | :bootstrapping | :connecting | :connected | :error
 
-  @type bootstrap_stage :: :uploading | :setting_permissions | :detecting_os | :starting_daemon | nil
+  @type bootstrap_stage :: :uploading | :extracting | :setting_permissions | :detecting_os | :starting_daemon | nil
 
   @type t :: %__MODULE__{
           target: map() | nil,
@@ -354,64 +355,88 @@ defmodule EvoGit.RemoteConnection do
     ssh_target = target.ssh_target
     remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
 
-    # Start bootstrapping — broadcast uploading stage
+    # The tarball is uploaded to a temp path, then extracted into remote_path's
+    # parent. The tarball contains a top-level genesis_remote/ directory.
+    remote_tarball = remote_tarball_path(remote_path)
+    remote_dir = Path.dirname(remote_path)
+    launcher_path = Path.join(remote_path, "bin/genesis_remote")
+
+    # :uploading stage
     state = %{state | phase: :bootstrapping, bootstrap_stage: :uploading}
     broadcast_status(target, state)
 
-    # Step 1: SCP upload
-    case scp_binary(ssh_target, local_path, remote_path) do
+    case scp_tarball(ssh_target, local_path, remote_tarball) do
       :ok ->
-        state = %{state | bootstrap_stage: :setting_permissions}
+        # :extracting stage
+        state = %{state | bootstrap_stage: :extracting}
         broadcast_status(target, state)
 
-        # Step 2: chmod
-        case chmod_executable(ssh_target, remote_path) do
+        case extract_tarball(ssh_target, remote_tarball, remote_dir) do
           :ok ->
-            state = %{state | bootstrap_stage: :detecting_os}
+            # :setting_permissions stage
+            state = %{state | bootstrap_stage: :setting_permissions}
             broadcast_status(target, state)
 
-            # Step 3: detect OS
-            case detect_os(ssh_target) do
-              {:ok, os} ->
-                state = %{state | bootstrap_stage: :starting_daemon}
+            case chmod_executable(ssh_target, launcher_path) do
+              :ok ->
+                # :detecting_os stage
+                state = %{state | bootstrap_stage: :detecting_os}
                 broadcast_status(target, state)
 
-                # Step 4: start daemon
-                case maybe_start_daemon(ssh_target, remote_path, os) do
-                  :ok ->
-                    EvoGit.RemoteConnections.touch(target.id)
-                    completed = %{state | phase: :disconnected, bootstrap_stage: nil}
-                    broadcast_status(target, completed)
-                    {:ok, completed}
+                case detect_os(ssh_target) do
+                  {:ok, os} ->
+                    # :starting_daemon stage
+                    state = %{state | bootstrap_stage: :starting_daemon}
+                    broadcast_status(target, state)
+
+                    case maybe_start_daemon(ssh_target, launcher_path, os) do
+                      :ok ->
+                        EvoGit.RemoteConnections.touch(target.id)
+                        completed = %{state | phase: :disconnected, bootstrap_stage: nil}
+                        broadcast_status(target, completed)
+                        {:ok, completed}
+
+                      {:error, reason} ->
+                        error_state = error_state(state, target, reason)
+                        {:error, reason, error_state}
+                    end
 
                   {:error, reason} ->
-                    error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
-                    broadcast_status(target, error_state)
+                    error_state = error_state(state, target, reason)
                     {:error, reason, error_state}
                 end
 
               {:error, reason} ->
-                error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
-                broadcast_status(target, error_state)
+                error_state = error_state(state, target, reason)
                 {:error, reason, error_state}
             end
 
           {:error, reason} ->
-            error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
-            broadcast_status(target, error_state)
+            error_state = error_state(state, target, reason)
             {:error, reason, error_state}
         end
 
       {:error, reason} ->
-        error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
-        broadcast_status(target, error_state)
+        error_state = error_state(state, target, reason)
         {:error, reason, error_state}
     end
   end
 
-  # SCPs the local binary to the remote path.
-  defp scp_binary(ssh_target, local_path, remote_path) do
-    cmd = "scp #{local_path} #{ssh_target}:#{remote_path}"
+  # Constructs the error state, broadcasts it, and returns it.
+  defp error_state(state, target, reason) do
+    error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
+    broadcast_status(target, error_state)
+    error_state
+  end
+
+  # Computes the temp tarball path on the remote from the remote_path.
+  defp remote_tarball_path(remote_path) do
+    "#{remote_path}.tar.gz"
+  end
+
+  # SCPs the local tarball to the remote temp path.
+  defp scp_tarball(ssh_target, local_path, remote_tarball) do
+    cmd = "scp #{local_path} #{ssh_target}:#{remote_tarball}"
 
     case run_cmd(cmd, @scp_timeout_ms) do
       {:ok, _output, 0} -> :ok
@@ -420,9 +445,20 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # Sets the remote binary executable via `ssh <target> 'chmod +x <path>'`.
-  defp chmod_executable(ssh_target, remote_path) do
-    cmd = "ssh #{ssh_target} 'chmod +x #{remote_path}'"
+  # Extracts the uploaded tarball on the remote host.
+  defp extract_tarball(ssh_target, remote_tarball, extract_dir) do
+    cmd = "ssh #{ssh_target} 'mkdir -p #{extract_dir} && tar -xzf #{remote_tarball} -C #{extract_dir}'"
+
+    case run_cmd(cmd, @scp_timeout_ms) do
+      {:ok, _output, 0} -> :ok
+      {:ok, _output, status} -> {:error, {:extract_failed, status}}
+      :timeout -> {:error, {:extract_failed, :timeout}}
+    end
+  end
+
+  # Sets the remote launcher executable via `ssh <target> 'chmod +x <path>'`.
+  defp chmod_executable(ssh_target, launcher_path) do
+    cmd = "ssh #{ssh_target} 'chmod +x #{launcher_path}'"
 
     case run_cmd(cmd, @cmd_timeout_ms) do
       {:ok, _output, 0} -> :ok
@@ -455,11 +491,11 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Checks if the daemon is already running; starts it only if not.
-  defp maybe_start_daemon(ssh_target, remote_path, os) do
+  defp maybe_start_daemon(ssh_target, launcher_path, os) do
     if daemon_running?(ssh_target, os) do
       :ok
     else
-      start_daemon(ssh_target, remote_path, os)
+      start_daemon(ssh_target, launcher_path, os)
     end
   end
 
@@ -483,10 +519,10 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Starts the daemon on the remote.
-  # Linux: systemd-run --user --unit=genesis-remote <remote_path> start
+  # Linux: systemd-run --user --unit=genesis-remote <launcher_path> start
   # macOS: write launchd plist, scp it, load it via launchctl.
-  defp start_daemon(ssh_target, remote_path, "Linux") do
-    cmd = "ssh #{ssh_target} 'systemd-run --user --unit=genesis-remote #{remote_path} start'"
+  defp start_daemon(ssh_target, launcher_path, "Linux") do
+    cmd = "ssh #{ssh_target} 'systemd-run --user --unit=genesis-remote #{launcher_path} start'"
 
     case run_cmd(cmd, @launch_receive_timeout_ms) do
       {:ok, _output, 0} -> :ok
@@ -497,8 +533,8 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  defp start_daemon(ssh_target, remote_path, "Darwin") do
-    plist_path = write_launchd_plist(remote_path)
+  defp start_daemon(ssh_target, launcher_path, "Darwin") do
+    plist_path = write_launchd_plist(launcher_path)
 
     if plist_path == nil do
       {:error, {:daemon_launch_failed, :plist_write_failed}}
@@ -510,7 +546,7 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Writes the launchd plist to a local temp file. Returns the path or nil.
-  defp write_launchd_plist(remote_path) do
+  defp write_launchd_plist(launcher_path) do
     plist = """
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -520,7 +556,7 @@ defmodule EvoGit.RemoteConnection do
         <string>com.genesis.remote</string>
         <key>ProgramArguments</key>
         <array>
-            <string>#{remote_path}</string>
+            <string>#{launcher_path}</string>
             <string>start</string>
         </array>
         <key>RunAtLoad</key>

@@ -40,8 +40,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "sidecars/genesis-backend"
+    "resources": [
+      "resources/genesis-backend"
     ],
     "publisher": "Genesis",
     "copyright": "Copyright © 2025 Genesis. All rights reserved.",
