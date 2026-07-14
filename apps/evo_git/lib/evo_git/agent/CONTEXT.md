@@ -7,6 +7,8 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 
 ## Routing Table
 - `./tools/` → LLM tool modules (17+ tools for file I/O, context, search, shell, etc.)
+- `./runner.ex` → `EvoGit.Agent.Runner` — shared agent loop runner extracted from the `__using__` macro (run/3, do_run/2, loop/1, do_turn/1, effective_tools/1, trigger_recovery/2, etc.)
+- `./subagent_schemas.ex` → `EvoGit.Agent.SubagentSchemas` — shared subagent tool/schema generation (tools/1, schemas/1), parameterized by agent_module
 - `./context_compression.ex` → Context compression helper (compresses chat history when token threshold exceeded)
 - `./subagent_processing.ex` → Subagent call processing (builds specs, spawns subagents, merges results)
 - `./loop_state.ex` → `LoopState` struct — agent loop state threaded through every turn
