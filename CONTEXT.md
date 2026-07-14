@@ -125,24 +125,22 @@ Genesis supports a VSCode Remote-SSH-like workflow: a lightweight headless daemo
 
 ### Desktop App Build Pipeline
 
-The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds native desktop app installers on every GitHub release. The build process uses a **Tauri + Burrito** architecture:
+The project includes a GitHub Actions workflow (`.github/workflows/build-desktop.yml`) that automatically builds native desktop app installers on every GitHub release. Each platform builds its own native Elixir release (with `include_erts`) and then packages it with Tauri — no cross-compilation or third-party wrapper is used.
 
 - **Trigger**: Release published (including pre-releases) or manual `workflow_dispatch`
-- **Build process**: Burrito-wrapped Elixir release (`mix release genesis_desktop`) → placed as a Tauri sidecar binary (`desktop/src-tauri/sidecars/`) → `cargo tauri build` produces native installers. A second Burrito release (`mix release genesis_remote`) — a headless `evo_git`-only daemon for SSH remote development, no Phoenix/Tauri — is built alongside and uploaded as a standalone binary directly to the GitHub release (not packaged into Tauri).
-- **Release configuration**: Three Burrito-wrapped releases are defined in `mix.exs`: `genesis_desktop` (full, for the Tauri sidecar), `genesis_remote` (headless `evo_git`-only, bakes `config: [evo_git: [remote_release: true]]` so the runtime detects remote-daemon mode and enables EPMD-less distribution via `rel/remote/vm.args.eex`), and the base `genesis`. The remote release excludes `evo_dash` entirely.
-- **Job structure**: Two jobs — `build-unix` (matrix: macOS arm64/x64 + Linux x64/arm64) and `build-windows` (matrix: x86_64 + ARM64). macOS and Linux share a common Unix step sequence; Windows is separate (bash shell, MinGit).
+- **Build process**: Each platform job runs `mix release genesis_desktop` (native, `include_erts` bundles the host ERTS into the release directory) → copies the release directory to `desktop/src-tauri/resources/genesis-backend/` → `cargo tauri build` produces native installers. The headless `genesis_remote` release is also built and uploaded as a `.tar.gz` tarball alongside the desktop installers.
+- **Release configuration**: Three standard mix releases are defined in `mix.exs`: `genesis_desktop` (full, bundled as Tauri resource), `genesis_remote` (headless `evo_git`-only, bakes `config: [evo_git: [remote_release: true]]` so the runtime detects remote-daemon mode and enables EPMD-less distribution via `rel/remote/vm.args.eex`), and the base `genesis`. The remote release excludes `evo_dash` entirely.
+- **Job structure**: Four parallel jobs, each on a native runner for its target platform.
 - **macOS**: Builds ARM64 (`macos-14`) → `.dmg` / `.app` bundles
 - **Linux**: Builds x86_64 (`ubuntu-24.04`) and ARM64 (`ubuntu-24.04-arm`) → `.deb` / `.rpm` / AppImage / `.tar.gz` portable archive (AppImage excluded on ARM64 — `appimagetool`/`linuxdeploy` are x86_64-only). Flatpak is not built — Tauri v2 has no native Flatpak bundle target (documented in the workflow).
-- **Windows**: Builds x86_64 (`windows-2022`) and ARM64 (`windows-11-arm`) → `.msi` / `.exe` (NSIS) installers. Both use the x64 Burrito/ERTS release (no native ARM64 Erlang/OTP build exists; x64 ERTS runs via Windows' emulation layer on ARM), while the Tauri shell compiles natively (`aarch64-pc-windows-msvc`).
-- **Caching**: Mix deps (`deps/`), Mix build (`_build/`), and Rust target (`Swatinem/rust-cache@v2`) are cached per platform/target to speed up CI. The Burrito release step uses `--overwrite` to ensure the `Burrito.wrap/1` step always re-runs even when `_build/` is cache-restored (otherwise the wrapped binary in `burrito_out/` is skipped and missing).
-- **ARM runner ImageOS fix**: GitHub-hosted ARM partner runners (`ubuntu-24.04-arm`, `windows-11-arm`) report `ImageOS` values (`ubuntu24-arm64`, `win11-arm64`) that `erlef/setup-beam` does not recognize. The workflow sets `ImageOS` to the base value (`ubuntu24` / `win22`) via `$GITHUB_ENV` before the setup-beam step for ARM targets only.
-- **Toolchains**: CI requires Elixir/OTP, Rust (Tauri), and Zig (Burrito wrapper compilation) on all platforms; Linux also needs system packages (webkit2gtk, libayatana-appindicator3-dev for system tray, libdbus-1-dev for tray-icon crate, etc.)
+- **Windows**: Builds x86_64 (`windows-2022`) → `.msi` / `.exe` (NSIS) installers.
+- **Caching**: Mix deps (`deps/`), Mix build (`_build/`), and Rust target (`Swatinem/rust-cache@v2`) are cached per platform/target to speed up CI. Tauri CLI binary is also cached.
+- **ARM runner ImageOS fix**: GitHub-hosted ARM partner runners (`ubuntu-24.04-arm`) report `ImageOS` values that `erlef/setup-beam` does not recognize. The workflow sets `ImageOS` to the base value (`ubuntu24`) via `$GITHUB_ENV` before the setup-beam step for the ARM64 target.
+- **Toolchains**: CI requires Elixir/OTP and Rust (Tauri) on all platforms; Linux also needs system packages (webkit2gtk, libayatana-appindicator3-dev for system tray, libdbus-1-dev for tray-icon crate, etc.)
 - **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
-- **Linux NIF musl cross-compilation**: Burrito's Linux targets use a statically-linked musl Erlang/OTP runtime, but `mix release` runs on a glibc host (Ubuntu CI). By default `rustler_precompiled` downloads glibc-linked NIF binaries that fail to load inside the musl Burrito binary. The workflow force-recompiles the NIF deps (xqlite, html5ever, lumis, mdex_native) with `TARGET_ABI=musl` (and `TARGET_ARCH=aarch64` for ARM64) before each Linux release, then restores host-default NIFs before the Windows step. Burrito's built-in `RecompileNIFs` step only handles `:elixir_make` NIFs, not `rustler_precompiled` ones, so this manual step is required.
-- **Burrito targets**: `darwin_arm64`, `darwin_amd64`, `windows_x64`, `linux_x64`, `linux_arm64` (defined in `mix.exs`). Both `genesis_desktop` and `genesis_remote` use the same 5 targets; the remote binary is named `genesis_remote_<target>` (e.g. `genesis_remote_linux_x64`) and uploaded straight to the release assets.
 - **Version pinning**: `.tool-versions` pins OTP 29 / Elixir 1.20.1
 
-The legacy launcher scripts and manual `.app`/zip packaging have been removed — Tauri generates native bundles and the Rust sidecar (`desktop/src-tauri/src/sidecar.rs`) handles backend lifecycle with the correct env vars.
+The Tauri Rust shell (`desktop/src-tauri/src/sidecar.rs`) spawns the release launcher script (`bin/genesis_desktop start`) as a child process and handles backend lifecycle with the correct env vars.
 
 ### NixOS Local Build
 
@@ -150,16 +148,14 @@ For building and testing the desktop app on NixOS, a `flake.nix` is provided at 
 
 ```bash
 # Enter the development shell with all native dependencies (Erlang/OTP 29,
-# Elixir 1.20, Rust, Zig 0.15.2, webkitgtk-4.1, etc.)
+# Elixir 1.20, Rust, webkitgtk-4.1, etc.)
 nix develop
 
 # Then follow the build steps printed by the shell hook:
 #   1. mix deps.get && mix assets.setup && mix assets.deploy
 #   2. cargo install tauri-cli --version "^2.0"   (first time only)
 #   3. ./nix/bundle-vendor.sh                      (vendor binaries)
-#   4. MIX_ENV=prod mix release genesis_desktop      (Burrito release)
-#   5. cp burrito_out/genesis_desktop_* desktop/src-tauri/sidecars/genesis-backend-<rust-target>
+#   4. MIX_ENV=prod mix release genesis_desktop      (standard release)
+#   5. cp -a _build/prod/rel/genesis_desktop desktop/src-tauri/resources/genesis-backend
 #   6. cd desktop/src-tauri && cargo tauri build    (native desktop app)
 ```
-
-**Key constraint:** Burrito 1.5.0 (pinned in `mix.lock`) hard-requires exactly Zig 0.15.2 — it calls `exit(1)` on any other version. Since nixpkgs does not yet ship Zig 0.15.x, the flake uses `mitchellh/zig-overlay` to provide the exact version. The flake locks this in `flake.lock`.
