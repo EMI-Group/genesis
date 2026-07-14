@@ -1,6 +1,7 @@
 // Prevents an additional console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::process::Child;
 use std::sync::Mutex;
 
 use tauri::{
@@ -8,7 +9,6 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
-use tauri_plugin_shell::process::CommandChild;
 
 mod sidecar;
 
@@ -17,10 +17,19 @@ const DEFAULT_PORT: u16 = 9999;
 /// How long (in seconds) to wait for the backend to become ready.
 const BACKEND_READY_TIMEOUT_SECS: u64 = 30;
 
+/// The OS-specific launcher script name inside the bundled release directory.
+///
+/// On Unix this is the POSIX shell script `genesis_desktop`; on Windows it is
+/// the batch-file variant `genesis_desktop.bat`.
+#[cfg(windows)]
+const LAUNCHER_NAME: &str = "genesis_desktop.bat";
+#[cfg(not(windows))]
+const LAUNCHER_NAME: &str = "genesis_desktop";
+
 /// Wraps the sidecar process handle so the window-event handler can take
-/// ownership of it (and thereby call the consuming `CommandChild::kill`) when
+/// ownership of it (and thereby call the consuming `Child::kill`) when
 /// the user quits via the tray. `None` once the sidecar has been terminated.
-type SidecarHandle = Mutex<Option<CommandChild>>;
+type SidecarHandle = Mutex<Option<Child>>;
 
 /// Returns the port the Phoenix backend listens on.
 ///
@@ -75,49 +84,34 @@ mod signal_handler {
     }
 }
 
-/// Returns the Rust target triple for the current platform (e.g.
-/// `x86_64-unknown-linux-gnu`).  Constructed from [`std::env::consts`]
-/// because the `TARGET` environment variable is not always available in
-/// all build contexts (e.g. inside Tauri's build script).
-fn target_triple() -> &'static str {
-    match (std::env::consts::ARCH, std::env::consts::OS) {
-        ("x86_64", "linux") => "x86_64-unknown-linux-gnu",
-        ("aarch64", "linux") => "aarch64-unknown-linux-gnu",
-        ("x86_64", "macos") => "x86_64-apple-darwin",
-        ("aarch64", "macos") => "aarch64-apple-darwin",
-        ("x86_64", "windows") => "x86_64-pc-windows-msvc",
-        ("aarch64", "windows") => "aarch64-pc-windows-msvc",
-        _ => "unknown-unknown-unknown",
-    }
-}
-
-/// Resolve the path to the Burrito sidecar binary.
+/// Resolve the path to the mix release launcher script.
 ///
 /// Looks next to the running executable first (production / bundled layout),
-/// and falls back to the source-tree `sidecars/` directory (development).
+/// and falls back to the source-tree `resources/` directory (development).
 fn resolve_sidecar_path() -> Result<std::path::PathBuf, String> {
-    let sidecar_name = format!("genesis-backend-{}", target_triple());
+    let launcher_rel = std::path::Path::new("resources")
+        .join("genesis-backend")
+        .join("bin")
+        .join(LAUNCHER_NAME);
 
-    // 1. Production: <exe_dir>/sidecars/<name>
+    // 1. Production: <exe_dir>/resources/genesis-backend/bin/<launcher>
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_default();
-    let prod_path = exe_dir.join("sidecars").join(&sidecar_name);
+    let prod_path = exe_dir.join(&launcher_rel);
     if prod_path.exists() {
         return Ok(prod_path);
     }
 
-    // 2. Development: <manifest_dir>/sidecars/<name>
-    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("sidecars")
-        .join(&sidecar_name);
+    // 2. Development: <manifest_dir>/resources/genesis-backend/bin/<launcher>
+    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(&launcher_rel);
     if dev_path.exists() {
         return Ok(dev_path);
     }
 
     Err(format!(
-        "sidecar binary '{sidecar_name}' not found — looked in {:?} and {:?}",
+        "release launcher '{LAUNCHER_NAME}' not found — looked in {:?} and {:?}",
         prod_path.parent().unwrap(),
         dev_path.parent().unwrap()
     ))
@@ -145,9 +139,10 @@ fn headless_sidecar_env() -> Vec<(String, String)> {
 
 /// Run the desktop app as a headless HTTP server (no window, no tray).
 ///
-/// Spawns the Burrito sidecar, waits for it to become ready, then blocks
-/// until the sidecar exits or a SIGTERM / SIGINT is received.  On signal the
-/// sidecar is killed gracefully before the process exits.
+/// Spawns the Elixir release launcher (`bin/genesis_desktop start`), waits for
+/// it to become ready, then blocks until the launcher exits or a SIGTERM /
+/// SIGINT is received.  On signal the sidecar is killed gracefully before the
+/// process exits.
 fn run_headless() {
     #[cfg(unix)]
     signal_handler::setup();
@@ -158,6 +153,7 @@ fn run_headless() {
     });
 
     let mut child = std::process::Command::new(&sidecar_path)
+        .arg("start")
         .envs(headless_sidecar_env())
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
@@ -212,7 +208,8 @@ fn run_gui() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // 1. Launch the Burrito-wrapped Phoenix backend as a sidecar process.
+            // 1. Launch the Phoenix backend via the Elixir release launcher
+            //    script (`bin/genesis_desktop start`).
             let child = sidecar::start(app)?;
 
             // 2. Keep the process handle in managed state so we can terminate the
@@ -238,7 +235,7 @@ fn run_gui() {
                     "quit" => {
                         if let Some(handle) = app.try_state::<SidecarHandle>() {
                             if let Ok(mut guard) = handle.lock() {
-                                if let Some(child) = guard.take() {
+                                if let Some(mut child) = guard.take() {
                                     let _ = child.kill();
                                     println!("[desktop] genesis-backend sidecar terminated");
                                 }

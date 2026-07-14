@@ -1,15 +1,14 @@
 //! Sidecar lifecycle management.
 //!
-//! This module spawns the Burrito-wrapped Elixir release binary
-//! (`genesis-backend`) as a child process, surfaces its output to the console,
-//! and polls its HTTP endpoint until it is ready to serve requests.
+//! This module spawns the standard Elixir release launcher script
+//! (`bin/genesis_desktop start`) as a child process, surfaces its output to the
+//! console, and polls its HTTP endpoint until it is ready to serve requests.
 
+use std::io::{BufRead, BufReader};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tauri::App;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+use tauri::{App, Manager};
 
 /// The local secret key base used by the desktop Phoenix backend.
 ///
@@ -23,6 +22,15 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Per-request timeout for a single health probe.
 const POLL_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// The OS-specific launcher script name inside the bundled release directory.
+///
+/// On Unix this is the POSIX shell script `genesis_desktop`; on Windows it is
+/// the batch-file variant `genesis_desktop.bat`.
+#[cfg(windows)]
+const LAUNCHER_NAME: &str = "genesis_desktop.bat";
+#[cfg(not(windows))]
+const LAUNCHER_NAME: &str = "genesis_desktop";
 
 /// Environment variables passed to the sidecar process.
 ///
@@ -46,42 +54,71 @@ fn sidecar_env() -> Vec<(String, String)> {
     ]
 }
 
-/// Spawns the Burrito-wrapped Phoenix backend as a sidecar process.
+/// Resolves the path to the mix release launcher script bundled as a Tauri
+/// resource.
 ///
-/// Returns a [`CommandChild`] handle that can later be used to kill the
-/// process. The sidecar's stdout/stderr are drained on a background task so
-/// the output channel never blocks and backend errors are surfaced in the
-/// console.
-pub fn start(app: &App) -> Result<CommandChild, Box<dyn std::error::Error>> {
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("genesis-backend")?
+/// The release directory is bundled under `resources/genesis-backend/` and
+/// contains the standard mix release tree. The launcher script lives at
+/// `resources/genesis-backend/bin/genesis_desktop` (`.bat` on Windows).
+fn launcher_path(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let resource_dir = app.path().resource_dir()?;
+    Ok(resource_dir
+        .join("resources")
+        .join("genesis-backend")
+        .join("bin")
+        .join(LAUNCHER_NAME))
+}
+
+/// Spawns the Phoenix backend by invoking the Elixir release launcher script
+/// (`bin/genesis_desktop start`).
+///
+/// `start` is a **foreground** command — it blocks until the BEAM VM exits,
+/// which is exactly what we need so that the spawned PID is the launcher (and
+/// ultimately the BEAM process), giving us clean kill semantics on shutdown.
+///
+/// Returns a [`std::process::Child`] handle that can later be used to kill the
+/// process. The child's stdout/stderr are drained on background threads so the
+/// output pipes never block and backend errors are surfaced in the console.
+pub fn start(app: &App) -> Result<std::process::Child, Box<dyn std::error::Error>> {
+    let launcher = launcher_path(app)?;
+
+    let mut child = std::process::Command::new(&launcher)
+        .arg("start")
         .envs(sidecar_env())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()?;
 
     println!(
         "[desktop] spawned genesis-backend sidecar (pid {})",
-        child.pid()
+        child.id()
     );
 
-    // Drain sidecar output on a background async task.
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stdout(bytes) => {
-                    println!("[backend] {}", String::from_utf8_lossy(&bytes).trim_end());
+    // Drain stdout on a background thread.
+    if let Some(stdout) = child.stdout.take() {
+        thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                match line {
+                    Ok(text) => println!("[backend] {}", text),
+                    Err(_) => break,
                 }
-                CommandEvent::Stderr(bytes) => {
-                    eprintln!("[backend] {}", String::from_utf8_lossy(&bytes).trim_end());
-                }
-                CommandEvent::Terminated(status) => {
-                    eprintln!("[backend] process terminated: {:?}", status);
-                    break;
-                }
-                _ => {}
             }
-        }
-    });
+        });
+    }
+
+    // Drain stderr on a background thread.
+    if let Some(stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                match line {
+                    Ok(text) => eprintln!("[backend] {}", text),
+                    Err(_) => break,
+                }
+            }
+        });
+    }
 
     Ok(child)
 }
