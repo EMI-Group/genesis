@@ -229,7 +229,7 @@ defmodule EvoDash.Store do
     dir = Path.dirname(data_dir)
     File.mkdir_p!(dir)
 
-    case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal) do
+    case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -2000) do
       {:ok, conn} ->
         create_tables(conn)
         migrate_schema(conn)
