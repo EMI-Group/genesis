@@ -194,28 +194,26 @@ cache_size: [
 ],
 ```
 
-This default is applied to **every** connection opened via `Xqlite.open/2` (the pragma is in `@pragma_order` at line 76, applied unconditionally in `apply_pragmas/1` at lines 271-280 via the catch-all `set_pragma_value/2` clause at line 312-313). The `EvoDash.Store` opens its connection at `store.ex:232`:
+This default is applied to **every** connection opened via `Xqlite.open/2` (the pragma is in `@pragma_order` at line 76, applied unconditionally in `apply_pragmas/1` at lines 271-280 via the catch-all `set_pragma_value/2` clause at line 312-313). **FIXED:** The `EvoDash.Store` now overrides this at `store.ex:232`:
 
 ```elixir
-# store.ex:232 — does NOT pass cache_size:, inherits the 64MB default
-case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal) do
+# store.ex:232 — cache_size: -2000 (~2MB) overrides xqlite's 64MB default
+case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -2000) do
 ```
 
-The `cache_size` is **never overridden** anywhere in EvoDash's code or config (confirmed: zero matches for `cache_size` in `apps/evo_dash/` and `config/`). The 64MB is a *maximum* (SQLite allocates page-cache memory lazily as pages are touched), but the Store's `init/1` immediately runs `create_tables` + `migrate_schema` + (called by TaskRegistry.init) `integrity_check` + `scan_and_repair` which `SELECT *` from all tables, populating the cache. This page-cache memory is allocated inside the SQLite C library via the NIF and is attributed to the Store GenServer process (the connection owner). **This is the primary source of the Store's ~7MB idle footprint.**
-
-**Mitigation (not yet applied):** Pass `cache_size: -2000` (8MB, SQLite's own default) or lower to `Xqlite.open/2` in `store.ex:232`. For a dashboard task-history DB with at most 100 rows, even `-512` (2MB) would be ample.
+The Store's `init/1` immediately runs `create_tables` + `migrate_schema` + (called by TaskRegistry.init) `integrity_check` + `scan_and_repair` which `SELECT *` from all tables, populating the cache. With `cache_size: -2000` (~2MB), the page cache is capped at ~2MB instead of 64MB — ample for a ≤100-row dashboard DB. This page-cache memory is allocated inside the SQLite C library via the NIF and is attributed to the Store GenServer process (the connection owner).
 
 ### Key finding 3 — `EvoDash.TaskRegistry` idle memory comes from init-time full-table scans inflating the BEAM heap
 
-The TaskRegistry does NOT own a SQLite connection, so its memory is **BEAM heap**, not NIF/SQLite cache. The primary driver is `init/1` (`task_registry.ex:133-178`), which triggers **three sequential full-table scans** that each load ALL tasks into the TaskRegistry process heap as decoded `%TaskInfo{}` structs:
+The TaskRegistry does NOT own a SQLite connection, so its memory is **BEAM heap**, not NIF/SQLite cache. The primary driver was `init/1` (`task_registry.ex:133-178`), which triggered **sequential full-table scans** that each loaded ALL tasks into the TaskRegistry process heap as decoded `%TaskInfo{}` structs.
 
-1. **`EvoDash.Store.integrity_check/1`** (line 158) → Store's `do_integrity_check` → `scan_and_repair` does `SELECT * FROM tasks` + `SELECT * FROM projects` (`store.ex:840-841`, `scan_and_repair` at lines 952-978). Raw rows flow through the Store process, but the *return value* is just `:ok`/`{:repaired, n}` — minimal heap impact on TaskRegistry.
+**FIXED — single-pass consolidation + forced GC:** The init flow now consolidates the normalize + cleanup scans into a single pass (`normalize_and_cleanup_tasks/1` at lines 522-543), and forces a `:erlang.garbage_collect()` at the end of `init/1` to reclaim the transient heap. The original issue was:
 
-2. **`normalize_tasks/1`** (line 163, defined at lines 518-531) → calls `select_all_tasks(state)` → `Store.safe_select_all_tasks` → `SELECT * FROM tasks` + decode **every row** into a full `%TaskInfo{}` struct (including `logs`, `result`, `archive_metadata` — all JSON-decoded). The **entire list of structs** is held in the TaskRegistry process heap during the `Enum.reduce`. Each `%TaskInfo{}` can be large: `logs` is a list of strings, `result` is a decoded map (possibly embedding `%EvoGit.Agent.Usage{}`), `archive_metadata` is a list of per-agent maps. After the reduce completes, the list becomes garbage, but **BEAM's generational GC may not immediately reclaim it** — the heap high-water mark persists until a major GC or fullsweep.
+1. **`EvoDash.Store.integrity_check/1`** (line 158) → Store's `do_integrity_check` → `scan_and_repair` does `SELECT * FROM tasks` + `SELECT * FROM projects`. Raw rows flow through the Store process, but the *return value* is just `:ok`/`{:repaired, n}` — minimal heap impact on TaskRegistry. (KEPT AS-IS.)
 
-3. **`Cleanup.cleanup_expired_tasks/1`** (line 166) → `EvoDash.Store.safe_select_all_tasks` → **another** `SELECT * FROM tasks` + full decode. This rebuilds the entire task list again in the TaskRegistry heap.
+2. **`normalize_tasks/1`** + **`Cleanup.cleanup_expired_tasks/1`** → These were **two** sequential full-table scans. `normalize_tasks/1` loaded ALL tasks into the TaskRegistry heap (each `%TaskInfo{}` with decoded `logs`, `result`, `archive_metadata`), then `cleanup_expired_tasks/1` loaded them **again**. After the reduce completed, the list became garbage, but BEAM's generational GC did not immediately reclaim it — the heap high-water mark persisted.
 
-After init, the TaskRegistry's heap has been inflated by holding the full decoded task dataset (potentially 100 tasks × multiple-KB each). The BEAM process memory (`:erlang.process_info(pid, :memory)`) reports the **current heap size including unreclaimed garbage**, which can remain elevated. This is the most likely source of the ~14MB idle figure.
+The fix combines these into `normalize_and_cleanup_tasks/1`, which loads the task list **once**, normalizes each task (backfill, reconcile, persist), and passes the already-loaded (post-reconcile) list directly to `Cleanup.cleanup_expired_tasks/2` — no second store read. A `:erlang.garbage_collect()` call at the end of `init/1` forces a fullsweep to shrink the heap to steady-state immediately.
 
 **Secondary contributors:**
 - **PubSub subscription** (`task_registry.ex:169`): `Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")` — the PG2 adapter (`:pg`) tracks the subscriber; negligible per-process cost but adds monitor entries.
