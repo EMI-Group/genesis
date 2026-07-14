@@ -95,5 +95,22 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert Helpers.safe_text(:an_atom) == ":an_atom"
       assert Helpers.safe_text(42) == "42"
     end
+
+    test "the exact map shape from the crash report is handled" do
+      # Regression: this was the value that caused
+      # Protocol.UndefinedError (Phoenix.HTML.Safe not implemented for Map)
+      # in the agents_live template.
+      map = %{
+        "commit_id" => "",
+        "objective" => "Investigate and fix the GitHub Actions...",
+        "path" => "./.github/workflows"
+      }
+
+      result = Helpers.safe_text(map)
+
+      assert is_binary(result)
+      assert result =~ "objective: Investigate"
+      assert result =~ "path: ./.github/workflows"
+    end
   end
 end

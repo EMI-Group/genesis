@@ -508,7 +508,7 @@
                 if is_map(@selected_history_entry.data.result),
                   do: @selected_history_entry.data.result.result,
                   else: @selected_history_entry.data.result %>
-              <pre class="text-sm whitespace-pre-wrap"><%= result_text %></pre>
+              <pre class="text-sm whitespace-pre-wrap"><%= safe_text(result_text) %></pre>
             <% "ERROR" -> %>
               <pre class="text-sm whitespace-pre-wrap text-error"><%= @selected_history_entry.data.error %></pre>
             <% "RETRY" -> %>
@@ -531,7 +531,7 @@
                     <pre class="text-sm bg-warning/10 p-3 rounded overflow-x-auto"><%= format_reasoning_details(reasoning_details) %></pre>
                   </div>
                 <% end %>
-                <%= if @selected_history_entry.data.content && String.trim(@selected_history_entry.data.content) != "" do %>
+                <%= if @selected_history_entry.data.content && (not is_binary(@selected_history_entry.data.content) || String.trim(@selected_history_entry.data.content) != "") do %>
                   <div>
                     <h4 class="font-semibold text-warning mb-2"><%= gettext("Response") %></h4>
                     <pre class="text-sm whitespace-pre-wrap bg-warning/10 p-3 rounded"><%= safe_text(@selected_history_entry.data.content) %></pre>
