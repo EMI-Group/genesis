@@ -169,6 +169,71 @@ Diagnostic logging was added to investigate the "task shows `:failed` mid-run wi
 - `cleanup_expired_tasks/1`: removes finished tasks older than `max_age_days` (default 14) and enforces `max_tasks` (default 100). Uses `delete_tasks/2` for batch deletion.
 - Recent projects capped at 10 via `trim_recent_projects/1`.
 
+## Memory Usage Patterns (Idle Footprint Investigation)
+
+**Reported idle cost:** `EvoDash.TaskRegistry` ~14MB, `EvoDash.Store` ~7MB (process memory, e.g. via `:erlang.process_info/2` or :observer).
+
+### Key finding 1 — Neither GenServer holds large in-memory state
+
+Both GenServers have **minimal state by design**:
+
+- **`EvoDash.TaskRegistry` state** (`task_registry.ex:149-153`): `%{data_dir, task_store, task_refs: %{}}`. The `task_refs` map holds only `%Task{}` refs for *currently running* tasks — empty when idle. Task data itself is NEVER cached in the GenServer state; every read (`get_task`, `list_tasks`, etc.) is a synchronous `GenServer.call` to `EvoDash.Store`. There is **no in-memory cache** of task data.
+- **`EvoDash.Store` state** (`store.ex:237`): `%{conn, data_dir}` — just the xqlite connection reference. No row cache, no pre-allocated buffers.
+
+### Key finding 2 — `EvoDash.Store` idle memory comes from the xqlite/SQLite page cache
+
+**Root cause:** The `xqlite` library (v0.8.0, `deps/xqlite/lib/xqlite.ex:41-46`) overrides SQLite's default `cache_size` PRAGMA to **`-64000` (64 MB)**:
+
+```elixir
+# deps/xqlite/lib/xqlite.ex:41-46
+cache_size: [
+  type: :integer,
+  default: -64_000,
+  doc: "Page cache size. Negative values mean KB (e.g., `-64000` = 64MB). SQLite default is 2MB."
+],
+```
+
+This default is applied to **every** connection opened via `Xqlite.open/2` (the pragma is in `@pragma_order` at line 76, applied unconditionally in `apply_pragmas/1` at lines 271-280 via the catch-all `set_pragma_value/2` clause at line 312-313). The `EvoDash.Store` opens its connection at `store.ex:232`:
+
+```elixir
+# store.ex:232 — does NOT pass cache_size:, inherits the 64MB default
+case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal) do
+```
+
+The `cache_size` is **never overridden** anywhere in EvoDash's code or config (confirmed: zero matches for `cache_size` in `apps/evo_dash/` and `config/`). The 64MB is a *maximum* (SQLite allocates page-cache memory lazily as pages are touched), but the Store's `init/1` immediately runs `create_tables` + `migrate_schema` + (called by TaskRegistry.init) `integrity_check` + `scan_and_repair` which `SELECT *` from all tables, populating the cache. This page-cache memory is allocated inside the SQLite C library via the NIF and is attributed to the Store GenServer process (the connection owner). **This is the primary source of the Store's ~7MB idle footprint.**
+
+**Mitigation (not yet applied):** Pass `cache_size: -2000` (8MB, SQLite's own default) or lower to `Xqlite.open/2` in `store.ex:232`. For a dashboard task-history DB with at most 100 rows, even `-512` (2MB) would be ample.
+
+### Key finding 3 — `EvoDash.TaskRegistry` idle memory comes from init-time full-table scans inflating the BEAM heap
+
+The TaskRegistry does NOT own a SQLite connection, so its memory is **BEAM heap**, not NIF/SQLite cache. The primary driver is `init/1` (`task_registry.ex:133-178`), which triggers **three sequential full-table scans** that each load ALL tasks into the TaskRegistry process heap as decoded `%TaskInfo{}` structs:
+
+1. **`EvoDash.Store.integrity_check/1`** (line 158) → Store's `do_integrity_check` → `scan_and_repair` does `SELECT * FROM tasks` + `SELECT * FROM projects` (`store.ex:840-841`, `scan_and_repair` at lines 952-978). Raw rows flow through the Store process, but the *return value* is just `:ok`/`{:repaired, n}` — minimal heap impact on TaskRegistry.
+
+2. **`normalize_tasks/1`** (line 163, defined at lines 518-531) → calls `select_all_tasks(state)` → `Store.safe_select_all_tasks` → `SELECT * FROM tasks` + decode **every row** into a full `%TaskInfo{}` struct (including `logs`, `result`, `archive_metadata` — all JSON-decoded). The **entire list of structs** is held in the TaskRegistry process heap during the `Enum.reduce`. Each `%TaskInfo{}` can be large: `logs` is a list of strings, `result` is a decoded map (possibly embedding `%EvoGit.Agent.Usage{}`), `archive_metadata` is a list of per-agent maps. After the reduce completes, the list becomes garbage, but **BEAM's generational GC may not immediately reclaim it** — the heap high-water mark persists until a major GC or fullsweep.
+
+3. **`Cleanup.cleanup_expired_tasks/1`** (line 166) → `EvoDash.Store.safe_select_all_tasks` → **another** `SELECT * FROM tasks` + full decode. This rebuilds the entire task list again in the TaskRegistry heap.
+
+After init, the TaskRegistry's heap has been inflated by holding the full decoded task dataset (potentially 100 tasks × multiple-KB each). The BEAM process memory (`:erlang.process_info(pid, :memory)`) reports the **current heap size including unreclaimed garbage**, which can remain elevated. This is the most likely source of the ~14MB idle figure.
+
+**Secondary contributors:**
+- **PubSub subscription** (`task_registry.ex:169`): `Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")` — the PG2 adapter (`:pg`) tracks the subscriber; negligible per-process cost but adds monitor entries.
+- **`EvoDash.TaskRegistry.ProcessRegistry`** (a `Registry`, started in `application.ex:21`): creates an internal ETS table for `:unique` key tracking. Owned by the Registry process (a sibling under `:one_for_one`), NOT by TaskRegistry. Empty when idle — negligible.
+
+### Key finding 4 — Coding patterns that amplify transient heap (not retained, but inflate high-water mark)
+
+- **`select_all_tasks(state)` helper** (`task_registry.ex:504-506`): Every call to `list_tasks`, `list_tasks_by_path`, `get_unique_paths`, `clear_finished_tasks` loads the **entire** tasks table into the GenServer heap. There is no streaming/cursor approach. With 100 tasks (the `max_tasks` retention cap), each carrying logs/result/usage JSON, a single `list_tasks` call can transiently allocate several MB.
+- **`append_log`** (`task_registry.ex:377-388`): Does a `get_task` (single row) then `put_task` with the **entire logs list** re-encoded — O(n) copy of the full log list on every log append.
+- **`handle_update_status`** (`task_registry.ex:432-494`): On terminal status, calls `Cleanup.cleanup_expired_tasks` which does **another** full `SELECT * FROM tasks`.
+
+### Key finding 5 — No other EvoDash modules hold significant state
+
+Only two GenServers exist in `apps/evo_dash/lib/evo_dash/`: `TaskRegistry` and `Store` (confirmed via grep for `use GenServer`). Other modules are pure functions (`Codec`, `Cleanup`, `Diagnostics`, `Lease`, `RuntimeOpts`, `ResumeContext`, `TaskExecutor`, `MarkdownRender`, `NodeContext`, `SettingsUtils`) or structs (`TaskInfo`, `RecentProject`). No `Agent`, no `persistent_term`, no ETS table creation in EvoDash domain code.
+
+### evo_git attribution (ruled out)
+
+The `:evo_git` core runtime creates 3 ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`) — all `:public`/`:named_table`, owned by the **evo_git application master process**, and **empty at idle**. EvoDash reads `:evogit_sched_meta` directly (via `Lease.sched_meta_has_active_agents?/1` using `:ets.tab2list/1`), but ETS memory is always attributed to the **owning** process, not readers. The evo_git AgentScheduler has minimal state (empty maps/queues at idle). **None of evo_git's memory is attributable to EvoDash processes.**
+
 ## Constraints
 - `TaskRegistry` is a singleton; do not start multiple instances.
 - `EvoDash.Store` is the single source of truth — all reads/writes go through the typed GenServer API.
