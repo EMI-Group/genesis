@@ -38,6 +38,21 @@ jobs:
   #
   # Rust, Tauri CLI, and webkit2gtk dev libs are NOT needed here — those are
   # only required by the downstream Tauri packaging jobs.
+  #
+  # ── NIF cross-compilation note ───────────────────────────────────────────
+  #
+  # Burrito's Linux targets use a musl-based Erlang/OTP runtime (see Burrito's
+  # fetch_musl.ex / target.ex).  However, `mix release` runs on a glibc host
+  # (Ubuntu), so by default rustler_precompiled detects the host as
+  # *-linux-gnu and downloads glibc-linked NIF binaries.  Those NIFs fail to
+  # load inside the musl Burrito binary at runtime.
+  #
+  # Furthermore, Burrito's RecompileNIFs build step only handles :elixir_make
+  # NIFs — it does NOT recompile rustler_precompiled NIFs.  So we must
+  # force-recompile the NIF deps (xqlite, html5ever, lumis, mdex_native) with
+  # the TARGET_ABI=musl (and TARGET_ARCH=aarch64 for arm64) env vars before
+  # each Linux release.  This makes rustler_precompiled download the correct
+  # musl-linked NIF variants and bakes the right load path into the BEAM.
   build-burrito-all:
     name: Burrito (all targets)
     runs-on: ubuntu-24.04
@@ -154,6 +169,17 @@ jobs:
           RG_EXT: .tar.gz
         run: |
           set -euo pipefail
+          # --- recompile NIF deps for musl target ---
+          # Burrito uses a musl-based Erlang/OTP runtime for Linux targets, but
+          # `mix release` runs on a glibc host (Ubuntu).  By default
+          # rustler_precompiled detects the host as *-linux-gnu and downloads
+          # glibc-linked NIF binaries that fail to load inside the musl Burrito
+          # binary at runtime.  Force-recompile the NIF deps with TARGET_ABI=musl
+          # so they download musl-linked variants instead.  All NIF deps
+          # (xqlite, html5ever, lumis, mdex_native) publish musl precompiles.
+          rm -rf _build/prod/lib/xqlite _build/prod/lib/html5ever _build/prod/lib/lumis _build/prod/lib/mdex_native
+          TARGET_ABI=musl MIX_ENV=prod mix deps.compile xqlite html5ever lumis mdex_native
+
           # --- ripgrep ---
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
           mkdir -p "${VENDOR_DIR}"
@@ -185,6 +211,16 @@ jobs:
           RG_EXT: .tar.gz
         run: |
           set -euo pipefail
+          # --- recompile NIF deps for musl aarch64 target ---
+          # Burrito uses a musl-based Erlang/OTP runtime for Linux targets, but
+          # `mix release` runs on a glibc x86_64 host (Ubuntu).  By default
+          # rustler_precompiled detects the host as x86_64-unknown-linux-gnu and
+          # downloads glibc-linked x86_64 NIF binaries.  Force-recompile the NIF
+          # deps with TARGET_ARCH=aarch64 TARGET_ABI=musl so they download the
+          # musl-linked ARM64 variants instead.
+          rm -rf _build/prod/lib/xqlite _build/prod/lib/html5ever _build/prod/lib/lumis _build/prod/lib/mdex_native
+          TARGET_ARCH=aarch64 TARGET_ABI=musl MIX_ENV=prod mix deps.compile xqlite html5ever lumis mdex_native
+
           # --- ripgrep ---
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
           mkdir -p "${VENDOR_DIR}"
@@ -211,6 +247,13 @@ jobs:
           RG_EXT: .zip
         run: |
           set -euo pipefail
+          # --- restore host-default NIF deps ---
+          # The previous linux_arm64 step recompiled NIF deps for
+          # aarch64-unknown-linux-musl.  Restore the host-default (x86_64-linux)
+          # NIFs so the release assembles with the correct binaries.
+          rm -rf _build/prod/lib/xqlite _build/prod/lib/html5ever _build/prod/lib/lumis _build/prod/lib/mdex_native
+          MIX_ENV=prod mix deps.compile xqlite html5ever lumis mdex_native
+
           # --- ripgrep (.zip) ---
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
           mkdir -p "${VENDOR_DIR}"
@@ -385,7 +428,7 @@ jobs:
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
-          cargo tauri build --target x86_64-unknown-linux-gnu --bundles rpm,appimage
+          cargo tauri build --target x86_64-unknown-linux-gnu --bundles deb,rpm,appimage
 
       - name: Create tarball
         run: |
@@ -399,6 +442,7 @@ jobs:
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: |
+            desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
             /tmp/genesis-desktop-*.tar.gz
@@ -474,13 +518,14 @@ jobs:
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
-          cargo tauri build --target aarch64-unknown-linux-gnu --bundles rpm
+          cargo tauri build --target aarch64-unknown-linux-gnu --bundles deb,rpm
 
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: |
+            desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
             desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
 
   # ── Stage 2c: Upload genesis_remote binaries ────────────────────────────
