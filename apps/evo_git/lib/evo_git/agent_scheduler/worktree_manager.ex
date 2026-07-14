@@ -82,6 +82,10 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
   @impl true
   def init(_opts) do
+    # Worktree operations produce large transient binaries (git output).
+    # Low fullsweep_after ensures periodic full GC to reclaim residual heap
+    # from these binaries. Worktree ops are infrequent, so the GC cost is negligible.
+    Process.flag(:fullsweep_after, 10)
     {:ok, %{}}
   end
 
@@ -114,6 +118,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
     File.mkdir_p!(worker_base)
 
+    :erlang.garbage_collect()
     {:reply, :ok, state}
   end
 
@@ -134,6 +139,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
     Git.prune_worktrees(repo_root)
 
+    :erlang.garbage_collect()
     {:reply, :ok, state}
   end
 
@@ -166,6 +172,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     Git.prune_worktrees(repo_root)
     Git.delete_branch(repo_root, branch_name)
 
+    :erlang.garbage_collect()
     {:noreply, state}
   end
 
