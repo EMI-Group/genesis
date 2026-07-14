@@ -318,16 +318,59 @@ defmodule EvoGit.ProjectConfig do
   # From a list of lines belonging to one TOML section (already stripped of its header),
   # keep key=value lines up to the first sub-section header, dropping `script` keys
   # (so the new string-form `script` takes precedence) and blank lines.
+  #
+  # Handles multi-line literal strings ('''...'''): when a script line opens a
+  # multi-line literal, all subsequent lines up to and including the closing '''
+  # delimiter are dropped.
   defp filter_section_keys(section_lines) do
-    section_lines
-    |> Enum.take_while(fn line -> not Regex.match?(~r/^\[[^\]]/, String.trim(line)) end)
-    |> Enum.reject(fn line ->
-      trimmed = String.trim(line)
-      # Drop existing script.* keys so the string form takes precedence.
-      String.starts_with?(trimmed, "script") and
-        Regex.match?(~r/^script[.\s=]/, trimmed)
-    end)
-    |> Enum.reject(fn line -> line == "" end)
+    {kept_rev, _} =
+      Enum.reduce_while(section_lines, {[], false}, fn line, {acc, in_multiline} ->
+        trimmed = String.trim(line)
+
+        cond do
+          # Currently inside a multi-line literal string — skip until closing '''.
+          in_multiline ->
+            if trimmed == "'''" do
+              {:cont, {acc, false}}
+            else
+              {:cont, {acc, true}}
+            end
+
+          # Stop at next section header (when not inside a multi-line literal).
+          Regex.match?(~r/^\[[^\]]/, trimmed) ->
+            {:halt, {acc, false}}
+
+          # Line is a script.* key — drop it.  If it opens a multi-line literal
+          # string (one ''' without a closing ''' on the same line), enter skip
+          # mode so we also drop the literal body and its closing delimiter.
+          String.starts_with?(trimmed, "script") and
+              Regex.match?(~r/^script[.\s=]/, trimmed) ->
+            if String.contains?(trimmed, "'''") do
+              parts = String.split(trimmed, "'''")
+
+              if length(parts) >= 3 do
+                # Opening and closing ''' on same line — single-line entry.
+                {:cont, {acc, false}}
+              else
+                # Only opening ''' — enter multi-line skip mode.
+                {:cont, {acc, true}}
+              end
+            else
+              # Single-line script entry without ''' (e.g. script = "value").
+              {:cont, {acc, false}}
+            end
+
+          # Blank line — drop.
+          trimmed == "" ->
+            {:cont, {acc, false}}
+
+          # Regular non-script line — keep.
+          true ->
+            {:cont, {[line | acc], false}}
+        end
+      end)
+
+    Enum.reverse(kept_rev)
   end
 
   # Encodes a string as a TOML multi-line literal string ('''...''').

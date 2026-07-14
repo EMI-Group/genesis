@@ -462,5 +462,111 @@ defmodule EvoGit.ProjectConfigTest do
 
       assert count == 1
     end
+
+    test "handles updating genesis.toml with multi-line literal string scripts without corruption",
+         %{tmp_dir: tmp_dir} do
+      # Use realistic multi-line scripts similar to Rust build system scripts
+      multi_line_scripts = %{
+        linux: """
+        #!/bin/bash
+        set -euo pipefail
+
+        # Copy Rust build artifacts for warm cache
+        if [ -d "$SOURCE_REPO_PATH/target" ]; then
+          cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+        fi
+
+        # Copy deps
+        if [ -d "$SOURCE_REPO_PATH/deps" ]; then
+          cp -R --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+        fi
+        """,
+        macos: """
+        #!/bin/bash
+        set -euo pipefail
+
+        if [ -d "$SOURCE_REPO_PATH/target" ]; then
+          cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+        fi
+
+        if [ -d "$SOURCE_REPO_PATH/deps" ]; then
+          cp -cR "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+        fi
+        """,
+        windows: """
+        # Copy Rust build artifacts
+        if (Test-Path "$env:SOURCE_REPO_PATH/target") {
+          Copy-Item -Recurse "$env:SOURCE_REPO_PATH/target" "$env:TARGET_WORKTREE_PATH/"
+        }
+        if (Test-Path "$env:SOURCE_REPO_PATH/deps") {
+          Copy-Item -Recurse "$env:SOURCE_REPO_PATH/deps" "$env:TARGET_WORKTREE_PATH/"
+        }
+        """
+      }
+
+      # First write: creates genesis.toml with multi-line literal string scripts
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, multi_line_scripts)
+
+      # Verify first write is valid TOML and readable
+      config1 = ProjectConfig.read(tmp_dir)
+      assert config1 != nil
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == multi_line_scripts.linux
+
+      # Second write with DIFFERENT scripts: this is where the corruption bug manifests
+      updated_scripts = %{
+        linux: "#!/bin/bash\necho 'updated linux script'\n",
+        macos: "#!/bin/bash\necho 'updated macos script'\n",
+        windows: "# PowerShell\necho 'updated windows script'\n"
+      }
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, updated_scripts)
+
+      # CRITICAL: The output must be valid TOML (not corrupted with raw content)
+      config2 = ProjectConfig.read(tmp_dir)
+      assert config2 != nil, "genesis.toml should be valid TOML after update"
+
+      # Updated scripts should be readable
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == updated_scripts.linux
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == updated_scripts.macos
+      assert ProjectConfig.worktree_script(tmp_dir, :windows) == updated_scripts.windows
+
+      # Verify no raw script content appears outside of proper entries
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      # Count lines that are EXACTLY "'''" — there should be exactly one closing
+      # delimiter per OS script (3 total).
+      closing_delim_count =
+        contents
+        |> String.split("\n")
+        |> Enum.count(&(String.trim(&1) == "'''"))
+
+      assert closing_delim_count == 3,
+             "Expected exactly 3 closing ''' delimiters (one per OS script), got #{closing_delim_count}"
+    end
+
+    test "idempotent: writing same multi-line scripts twice produces valid TOML", %{
+      tmp_dir: tmp_dir
+    } do
+      multi_line_scripts = %{
+        linux:
+          "#!/bin/bash\nif [ -d \"$SOURCE_REPO_PATH/deps\" ]; then\n  cp -R --reflink=auto \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\nfi\n",
+        macos:
+          "#!/bin/bash\nif [ -d \"$SOURCE_REPO_PATH/deps\" ]; then\n  cp -cR \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\nfi\n",
+        windows:
+          "if (Test-Path \"$env:SOURCE_REPO_PATH/deps\") {\n  Copy-Item -Recurse \"$env:SOURCE_REPO_PATH/deps\" \"$env:TARGET_WORKTREE_PATH/\"\n}\n"
+      }
+
+      # First write
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, multi_line_scripts)
+      assert ProjectConfig.read(tmp_dir) != nil
+
+      # Second write with same scripts
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, multi_line_scripts)
+
+      # Must still be valid TOML
+      config = ProjectConfig.read(tmp_dir)
+      assert config != nil, "genesis.toml should be valid TOML after second write"
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == multi_line_scripts.linux
+    end
   end
 end

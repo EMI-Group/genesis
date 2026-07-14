@@ -80,18 +80,22 @@ defmodule EvoGit.Runtime.Genesis do
     # worktrees. Skipped when no build system is selected or :none is chosen.
     build_system_id = Keyword.get(opts, :build_system)
 
-    cond do
-      is_nil(build_system_id) ->
-        Logger.info("Genesis: No build system selected, skipping worktree init script")
+    scripts =
+      cond do
+        is_nil(build_system_id) ->
+          Logger.info("Genesis: No build system selected, skipping worktree init script")
+          nil
 
-      build_system_id == :none ->
-        Logger.info("Genesis: Build system 'none' selected, skipping worktree init script")
+        build_system_id == :none ->
+          Logger.info("Genesis: Build system 'none' selected, skipping worktree init script")
+          nil
 
-      true ->
-        scripts = WorktreeInitScript.scripts_for(build_system_id)
-        ProjectConfig.write_worktree_script(repo_path, scripts)
-        Logger.info("Genesis: Saved worktree init script for #{build_system_id}")
-    end
+        true ->
+          scripts = WorktreeInitScript.scripts_for(build_system_id)
+          ProjectConfig.write_worktree_script(repo_path, scripts)
+          Logger.info("Genesis: Saved worktree init script for #{build_system_id}")
+          scripts
+      end
 
     # Load foreign repos: genesis.toml defaults merged with CLI-provided repos (CLI takes precedence)
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
@@ -112,6 +116,21 @@ defmodule EvoGit.Runtime.Genesis do
 
     case AgentScheduler.run_agent(architect_spec) do
       {:ok, architect_output} ->
+        # Validate genesis.toml integrity in case the CodebaseLead agent modified it.
+        if scripts != nil do
+          case ProjectConfig.read(repo_path) do
+            nil ->
+              Logger.warning(
+                "Genesis: genesis.toml corrupted after architecture phase, re-writing worktree script"
+              )
+
+              ProjectConfig.write_worktree_script(repo_path, scripts)
+
+            _ ->
+              :ok
+          end
+        end
+
         run_implementation_phase(
           objective,
           repo_path,
@@ -119,7 +138,8 @@ defmodule EvoGit.Runtime.Genesis do
           architect_output,
           opts,
           foreign_repos,
-          task_id
+          task_id,
+          scripts
         )
 
       error ->
@@ -136,7 +156,8 @@ defmodule EvoGit.Runtime.Genesis do
          architect_output,
          opts,
          foreign_repos,
-         task_id
+         task_id,
+         scripts
        ) do
     # Clear the architect's archive records from ETS to prevent double-counting
     # when the Manager (second root agent, same task_id) completes.
@@ -169,6 +190,21 @@ defmodule EvoGit.Runtime.Genesis do
 
     case AgentScheduler.run_agent(manager_spec) do
       {:ok, manager_output} ->
+        # Validate genesis.toml integrity in case the Manager agent modified it.
+        if scripts != nil do
+          case ProjectConfig.read(repo_path) do
+            nil ->
+              Logger.warning(
+                "Genesis: genesis.toml corrupted after implementation phase, re-writing worktree script"
+              )
+
+              ProjectConfig.write_worktree_script(repo_path, scripts)
+
+            _ ->
+              :ok
+          end
+        end
+
         Helpers.notify_finalizing(task_id)
 
         # Combine usage, agent_count, and archive_records from both agents
