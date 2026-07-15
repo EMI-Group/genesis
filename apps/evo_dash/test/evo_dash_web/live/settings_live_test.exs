@@ -241,9 +241,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ ~s(value="https://api.example.com/v1")
 
       # openai_compatible catalog entry resolves to the canonical :openai atom.
-      # With base_url, the model has overrides → normalized to a tuple.
+      # With base_url, the model has overrides → normalized to a map spec.
       models = current_models(view)
-      assert hd(models).model == {:openai, [id: "my-model", base_url: "https://api.example.com/v1"]}
+      assert hd(models).model == %{provider: :openai, id: "my-model", base_url: "https://api.example.com/v1"}
     end
 
     test "rejects empty model name", %{conn: conn} do
@@ -646,7 +646,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Model profile saved."
       [profile] = current_models(view)
-      assert profile.model == {:openai, [id: "gpt-4o", base_url: "https://my-proxy.com/v1"]}
+      assert profile.model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
     end
 
     test "save_model_profile rejects empty model id", %{conn: conn} do
@@ -679,7 +679,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Custom model saved."
       models = current_models(view)
-      assert hd(models).model == {:openai, [id: "gpt-4o", base_url: "https://my-proxy.com/v1"]}
+      assert hd(models).model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
     end
 
     test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do
