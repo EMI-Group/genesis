@@ -60,7 +60,7 @@ All communication from EvoDash to EvoGit is **direct function calls** (synchrono
 - `EvoGit.Runtime.Genesis.run(prompt, runtime_opts)` for genesis tasks
 - `EvoGit.Runtime.Evolution.run(objective, runtime_opts)` for evolution tasks
 
-Runtime opts passed: `[repo_path:, mode:, task_id:, node_path?:, seed_content?:]`
+Runtime opts passed: `[repo_path:, mode:, task_id:, node_path?:]`
 Task status updates are broadcast on `EvoGit.PubSub` topic `"tasks"` (e.g., `{:task_status, task_id, :finalizing}`). The TaskRegistry subscribes to this topic and handles status changes via `handle_info/2`.
 `Application.ensure_all_started(:evo_git)` is called before execution to guarantee the core runtime is up.
 
