@@ -218,7 +218,7 @@ defmodule EvoGit.Store.Codec do
   # Known opt keys that the application accesses — atomized safely on decode
   # via to_existing_atom/1 (these are all defined as literals in the codebase).
   # Unknown keys remain as strings to avoid blind atomization.
-  @known_opt_keys ~w(path mode prompt objective foreign_repos node_path seed_content starting_commit archive task_id repo_path concurrency tool_concurrency concepts resume_from)a
+  @known_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from)a
   @known_opt_key_strings MapSet.new(@known_opt_keys, &Atom.to_string/1)
 
   def encode_opts(nil), do: nil

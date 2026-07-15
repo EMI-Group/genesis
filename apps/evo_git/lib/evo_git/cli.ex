@@ -23,12 +23,6 @@ defmodule EvoGit.CLI do
           mode: :string,
           foreign_repo: [:string, :keep],
           node: :string,
-          pool_size: :integer,
-          generations: :integer,
-          crossover_rate: :float,
-          mutation_rate: :float,
-          seeds: [:string, :keep],
-          concepts: [:string, :keep],
           starting_commit: :string,
           archive: :boolean,
           build_system: :string
@@ -45,10 +39,6 @@ defmodule EvoGit.CLI do
           d: :mode,
           R: :foreign_repo,
           n: :node,
-          s: :pool_size,
-          g: :generations,
-          S: :seeds,
-          C: :concepts,
           b: :build_system
         ]
       )
@@ -194,7 +184,7 @@ defmodule EvoGit.CLI do
     mode = String.downcase(mode)
     objective = get_input(rest, opts)
 
-    if mode in ["simple", "complex"] do
+    if mode == "simple" do
       if objective do
         runtime_opts = []
         runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
@@ -203,16 +193,6 @@ defmodule EvoGit.CLI do
         foreign_repos = parse_foreign_repos(opts)
         runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
         runtime_opts = maybe_put(runtime_opts, :node_path, opts[:node])
-        runtime_opts = maybe_put(runtime_opts, :pool_size, opts[:pool_size])
-        runtime_opts = maybe_put(runtime_opts, :max_generations, opts[:generations])
-        runtime_opts = maybe_put(runtime_opts, :crossover_rate, opts[:crossover_rate])
-        runtime_opts = maybe_put(runtime_opts, :mutation_rate, opts[:mutation_rate])
-        seeds = parse_seeds(opts)
-        runtime_opts = if seeds, do: Keyword.put(runtime_opts, :seeds, seeds), else: runtime_opts
-        concepts = parse_concepts(opts)
-
-        runtime_opts =
-          if concepts, do: Keyword.put(runtime_opts, :concepts, concepts), else: runtime_opts
 
         runtime_opts = Keyword.put(runtime_opts, :starting_commit, opts[:starting_commit])
         runtime_opts = Keyword.put(runtime_opts, :archive, opts[:archive] == true)
@@ -225,7 +205,7 @@ defmodule EvoGit.CLI do
         print_help()
       end
     else
-      IO.puts("Error: Invalid mode for evolve. Use 'simple' or 'complex'.")
+      IO.puts("Error: Invalid mode for evolve. Use 'simple'.")
       print_help()
     end
   end
@@ -626,20 +606,6 @@ defmodule EvoGit.CLI do
     end
   end
 
-  defp parse_seeds(opts) do
-    case Keyword.get_values(opts, :seeds) do
-      [] -> nil
-      paths -> Enum.map(paths, &Path.expand/1)
-    end
-  end
-
-  defp parse_concepts(opts) do
-    case Keyword.get_values(opts, :concepts) do
-      [] -> nil
-      concepts -> concepts
-    end
-  end
-
   defp genesis_mode_atom("new"), do: :new
   defp genesis_mode_atom("existing"), do: :existing
 
@@ -713,7 +679,6 @@ defmodule EvoGit.CLI do
   end
 
   defp evolution_mode_atom("simple"), do: :simple
-  defp evolution_mode_atom("complex"), do: :complex
 
   defp evolution_mode_atom(other),
     do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
@@ -760,9 +725,8 @@ defmodule EvoGit.CLI do
                    'new'      (Default) Start a new codebase. Requires a <prompt>.
                    'existing' Analyze an existing codebase. <prompt> is optional.
       evolve     Mutate the codebase based on an objective.
-                 Modes:
+                 Mode:
                    'simple'   (Default) Top-down evolution for clear tasks.
-                   'complex'  Bottom-up evolution for open-ended tasks.
       setup      Configure LLM provider and API key interactively.
                  A guided wizard helps you select a provider, choose a
                  model, and set your API key without manual file editing.
@@ -777,7 +741,7 @@ defmodule EvoGit.CLI do
       -m, --model <model>         Override the LLM model (default profile).
                                   Format: "provider:model" (e.g. "anthropic:claude-sonnet-4-20250514")
                                   or "id:provider:model" to target a specific profile by id.
-      -d, --mode <mode>           Execution mode (new/existing for genesis, simple/complex for evolve).
+      -d, --mode <mode>           Execution mode (new/existing for genesis, simple for evolve).
       -b, --build-system <name>   Build system for dependency caching in worktrees (genesis 'new'
                                   mode only). One of: elixir, node, python, rust, go, none.
                                   If omitted, prompts interactively.
@@ -786,20 +750,8 @@ defmodule EvoGit.CLI do
                                   Can be specified multiple times. To assign a custom id,
                                   prefix the path with `id:`. If omitted, the directory
                                   basename is used as the id. (e.g., -R original:/Source/proj)
-      -S, --seeds <path>          Path to a seed code file for bottom-up evolution.
-                                  Can be specified multiple times. User seeds are
-                                  preferred over built-in seeds. (complex mode only)
-      -C, --concepts <idea>       Rough concept/idea for concept expansion seeding.
-                                  The LLM expands each concept into sub-topics, then
-                                  into concrete implementations, generating hundreds of
-                                  diverse code fragments. Can be specified multiple times.
-                                  (complex mode only)
       -n, --node <path>           Starting node path for evolution (subdirectory within
                                   repo, default: root). Only used with 'evolve'.
-      -s, --pool-size <n>         Max fragments in entropy pool (default: 50).
-      -g, --generations <n>       Max evolution generations (default: 20).
-          --crossover-rate <f>    Crossover probability 0.0-1.0 (default: 0.7).
-          --mutation-rate <f>     Mutation probability 0.0-1.0 (default: 0.3).
       -h, --help                  Show this help message.
       -v, --version               Print the evogit version and exit.
     Getting Started:
@@ -863,7 +815,6 @@ defmodule EvoGit.CLI do
       evogit genesis "Create a snake game in Python" --mode new
       evogit genesis --mode existing -p /path/to/legacy/repo
       evogit evolve "Fix the login bug" --mode simple
-      evogit evolve "Optimize database queries" --mode complex --concurrency 5
     """)
   end
 end
