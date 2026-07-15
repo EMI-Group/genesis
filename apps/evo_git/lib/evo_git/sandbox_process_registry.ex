@@ -8,6 +8,8 @@ defmodule EvoGit.SandboxProcessRegistry do
   use GenServer
   require Logger
 
+  alias EvoGit.Sandbox.Helpers
+
   @mix_env Mix.env()
 
   # --- Client API ---
@@ -133,7 +135,7 @@ defmodule EvoGit.SandboxProcessRegistry do
     unit =
       if String.ends_with?(unit_name, ".service"), do: unit_name, else: "#{unit_name}.service"
 
-    case system_cmd("systemctl", ["--user", "stop", unit]) do
+    case Helpers.system_cmd("systemctl", ["--user", "stop", unit]) do
       {:ok, _} ->
         Logger.debug("SandboxProcessRegistry: Stopped orphaned unit '#{unit}'")
 
@@ -157,20 +159,6 @@ defmodule EvoGit.SandboxProcessRegistry do
           :disabled -> false
           :auto -> EvoGit.Platform.systemd_available?()
         end
-    end
-  end
-
-  # Runs a System.cmd and normalizes the result into {:ok, output} | {:error, output}.
-  # System.cmd raises ErlangError(:enoent) when the binary is missing;
-  # we pre-check executability to avoid the exception.
-  defp system_cmd(cmd, args) do
-    if System.find_executable(cmd) do
-      case System.cmd(cmd, args, stderr_to_stdout: true) do
-        {output, 0} -> {:ok, output}
-        {output, _code} -> {:error, output}
-      end
-    else
-      {:error, "command not found: #{cmd}"}
     end
   end
 end
