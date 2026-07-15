@@ -144,8 +144,24 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
             end
           end
 
-        case spec_result do
-          {:ok, spec} ->
+        # Parse provider_options JSON config (profile-level, sibling of temperature etc.)
+        provider_options_raw = String.trim(params["provider_options"] || "")
+        provider_options_result =
+          if provider_options_raw == "" do
+            {:ok, nil}
+          else
+            case Jason.decode(provider_options_raw) do
+              {:ok, po_map} when is_map(po_map) ->
+                {:ok, po_map}
+              {:ok, _} ->
+                {:error, "provider_options_must_be_object"}
+              {:error, _} ->
+                {:error, "invalid_provider_options_json"}
+            end
+          end
+
+        case {spec_result, provider_options_result} do
+          {{:ok, spec}, {:ok, provider_options}} ->
             profile =
               %{id: id}
               |> Map.put(:model, spec)
@@ -157,10 +173,14 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
               |> maybe_put_int(:top_k, params["top_k"])
               |> maybe_put_float(:frequency_penalty, params["frequency_penalty"])
               |> maybe_put_float(:presence_penalty, params["presence_penalty"])
+              |> maybe_put_map(:provider_options, provider_options)
 
             {:ok, profile}
 
-          {:error, reason} ->
+          {{:error, reason}, _} ->
+            {:error, reason}
+
+          {_, {:error, reason}} ->
             {:error, reason}
         end
     end
@@ -205,6 +225,14 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   def maybe_put_string(map, _key, ""), do: map
   def maybe_put_string(map, _key, nil), do: map
   def maybe_put_string(map, key, value), do: Map.put(map, key, value)
+
+  @doc """
+  Conditionally puts a map value into the map. Skips the key when the value is nil
+  or not a map.
+  """
+  def maybe_put_map(map, _key, nil), do: map
+  def maybe_put_map(map, key, map_value) when is_map(map_value), do: Map.put(map, key, map_value)
+  def maybe_put_map(map, _key, _), do: map
 
   @doc """
   Safely reads the id from a profile map whether the key is an atom or string
