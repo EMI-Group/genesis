@@ -98,6 +98,8 @@ defmodule EvoGit.Task do
         p -> p
       end)
 
+    # git ls-tree output always uses "/" as path separator, so
+    # Windows backslash handling is not needed here.
     if bare_path == "." or bare_path in files or (bare_path <> "/") in files or
          Enum.any?(files, &EvoGit.Platform.path_under?(&1, bare_path)) do
       if bare_path == ".", do: "./", else: "./" <> bare_path

@@ -9,6 +9,8 @@ defmodule EvoGit.Agent.DelegationHints do
   directly.
   """
 
+  alias EvoGit.Platform
+
   # Write tools whose file paths should be tracked for delegation hints
   @write_tools_for_delegation ~w(write_file edit_file)
   # Read/investigation tools whose paths should be tracked for read delegation hints
@@ -95,7 +97,15 @@ defmodule EvoGit.Agent.DelegationHints do
       else
         if EvoGit.Platform.path_under?(normalized_target, normalized_node) do
           # Extract the first segment under node_path
-          remainder = String.replace_prefix(normalized_target, normalized_node <> "/", "")
+          node_clean = Platform.trim_trailing_separators(normalized_node)
+          remainder = String.replace_prefix(normalized_target, node_clean <> "/", "")
+
+          remainder =
+            if remainder == normalized_target do
+              String.replace_prefix(normalized_target, node_clean <> "\\", "")
+            else
+              remainder
+            end
           extract_first_segment_from_remainder(remainder, normalized_node)
         else
           []
@@ -112,7 +122,7 @@ defmodule EvoGit.Agent.DelegationHints do
     # Remove leading "./" and take first segment
     stripped = String.replace_prefix(path, "./", "")
 
-    case String.split(stripped, "/", parts: 2) do
+    case Platform.split_path(stripped, parts: 2) do
       [first | _] when first != "" ->
         normalized = "./" <> first
         [normalized]
@@ -123,7 +133,7 @@ defmodule EvoGit.Agent.DelegationHints do
   end
 
   def extract_first_segment_from_remainder(remainder, node_path) do
-    case String.split(remainder, "/", parts: 2) do
+    case Platform.split_path(remainder, parts: 2) do
       [first | _] when first != "" ->
         [node_path <> "/" <> first]
 

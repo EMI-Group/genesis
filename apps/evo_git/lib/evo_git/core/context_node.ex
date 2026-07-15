@@ -16,6 +16,7 @@ defmodule EvoGit.Core.ContextNode do
   defstruct [:path, :repo, repo_id: "primary"]
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.Platform
 
   @type t :: %__MODULE__{
           path: String.t(),
@@ -68,12 +69,12 @@ defmodule EvoGit.Core.ContextNode do
       raise "normalize_relpath expects a relative path, got absolute: #{inspect(path)}"
     end
 
-    trimmed = String.trim(path, "/")
+    normalized = path |> Platform.normalize_separators() |> Platform.trim_separators()
 
     cond do
-      trimmed in ["", "."] -> "./"
-      String.starts_with?(trimmed, "./") -> trimmed
-      true -> "./" <> trimmed
+      normalized in ["", "."] -> "./"
+      String.starts_with?(normalized, "./") -> normalized
+      true -> "./" <> normalized
     end
   end
 

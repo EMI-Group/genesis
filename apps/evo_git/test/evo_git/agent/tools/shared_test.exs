@@ -25,8 +25,22 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       assert message =~ "relative to the repository root"
     end
 
+    test "returns error tuple on Windows absolute paths" do
+      assert {:error, message} = Shared.normalize_relpath("C:\\Users\\file.txt")
+      assert message =~ "absolute"
+      assert message =~ "relative to the repository root"
+    end
+
     test "strips trailing slashes" do
       assert Shared.normalize_relpath("foo/") == "./foo"
+    end
+
+    test "trims backslash separators in relative paths" do
+      assert Shared.normalize_relpath("foo\\bar") == "./foo/bar"
+    end
+
+    test "trims leading and trailing backslashes" do
+      assert Shared.normalize_relpath("\\foo\\bar\\") == "./foo/bar"
     end
 
     test "handles single segment" do

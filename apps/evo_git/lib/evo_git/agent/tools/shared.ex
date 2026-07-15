@@ -5,6 +5,8 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   @curly_quotes ~r/\x{2018}|\x{2019}|\x{201C}|\x{201D}/u
 
+  alias EvoGit.Platform
+
   @doc """
   Safely fetches a required string argument from the args map.
   Returns {:ok, value} or {:error, message} with a helpful error message.
@@ -216,8 +218,9 @@ defmodule EvoGit.Agent.Tools.Shared do
        "Path #{inspect(path)} is absolute. All file paths must be relative to the repository root (e.g. './src/main.ex'), not absolute."}
     else
       path
-      |> String.trim_leading("/")
-      |> String.trim_trailing("/")
+      |> Platform.normalize_separators()
+      |> Platform.trim_leading_separators()
+      |> Platform.trim_trailing_separators()
       |> then(fn
         "" ->
           "./"
