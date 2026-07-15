@@ -107,6 +107,48 @@ if config_env() == :prod and not Application.get_env(:evo_git, :remote_release, 
     Application.get_env(:evo_dash, :desktop_release, false) or
       System.get_env("EVOGIT_DESKTOP") == "1"
 
+  # In desktop mode the backend runs as a Tauri sidecar process with no
+  # visible console — stdout is captured by the sidecar but the user has no
+  # terminal to read it. Redirect the Erlang/Elixir logger to a rotating log
+  # file in the platform data directory so logs are still accessible (e.g.
+  # for debugging via the filesystem). The default_formatter configured in
+  # config/config.exs is preserved — only the handler destination changes
+  # from stdout to a file.
+  if desktop_mode do
+    log_dir = Path.join(EvoGit.Platform.data_dir(), "logs")
+
+    case File.mkdir_p(log_dir) do
+      :ok ->
+        log_file_path = Path.join(log_dir, "backend.log")
+
+        # Configure the default logger handler (:logger_std_h) to write to a
+        # file instead of stdout. The file path MUST be a charlist because
+        # Erlang's logger expects charlists for paths, not Elixir binaries.
+        # max_no_bytes/max_no_files enable built-in log rotation (10 MB per
+        # file × 5 files = 50 MB max disk usage).
+        config :logger, :default_handler,
+          config: [
+            type: :file,
+            file: String.to_charlist(log_file_path),
+            max_no_bytes: 10_000_000,
+            max_no_files: 5
+          ]
+
+        # Announce the log path — visible in the captured stdout, useful for
+        # terminal debugging when running the backend manually.
+        IO.puts("[desktop] Logging to file: #{log_file_path}")
+
+      {:error, reason} ->
+        # If the log directory can't be created (e.g. permissions issue),
+        # fall back to console logging rather than crashing — the desktop app
+        # must still be able to boot.
+        IO.warn(
+          "[desktop] Could not create log directory #{inspect(log_dir)} " <>
+            "(#{inspect(reason)}); logging will fall back to console."
+        )
+    end
+  end
+
   # Bind address for the desktop server. Defaults to loopback (localhost only)
   # so the dashboard is never exposed to the network without explicit opt-in.
   # Priority: PHX_IP env var → config.toml [server] listen_ip → loopback default.
