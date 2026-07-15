@@ -18,12 +18,20 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   """
   def add_model_profile(file_config, model_value) do
     models = get_in(file_config, [:llm, :models]) || []
+
+    # Drop incomplete draft profiles when adding a COMPLETE profile (non-nil).
+    # This prevents stale drafts (from the "Add Profile" button) from
+    # contaminating subsequent saves (quick setup, shortcut, custom model).
+    # Draft creation (nil/empty model_value) preserves existing drafts.
+    models =
+      if draft_model_value?(model_value) do
+        models
+      else
+        Enum.reject(models, &incomplete_profile?/1)
+      end
+
     id = generate_profile_id(models)
-
-    profile =
-      %{id: id, concurrency: 3}
-      |> maybe_put_profile_model(model_value)
-
+    profile = %{id: id, concurrency: 3} |> maybe_put_profile_model(model_value)
     put_in_model_profiles(file_config, models ++ [profile])
   end
 
@@ -245,6 +253,20 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   defp maybe_put_profile_model(profile, nil), do: profile
   defp maybe_put_profile_model(profile, ""), do: profile
   defp maybe_put_profile_model(profile, model_value), do: Map.put(profile, :model, model_value)
+
+  defp draft_model_value?(nil), do: true
+  defp draft_model_value?(""), do: true
+  defp draft_model_value?(_), do: false
+
+  defp incomplete_profile?(profile) when is_map(profile) do
+    case Map.get(profile, :model) do
+      nil -> true
+      "" -> true
+      _ -> false
+    end
+  end
+
+  defp incomplete_profile?(_), do: true
 
   defp ensure_llm_key(file_config) do
     if is_map(get_in(file_config, [:llm])) do
