@@ -81,6 +81,14 @@ defmodule EvoGit.Config.SchemaTest do
       # Server
       assert [:server, :listen_ip] in paths
       assert [:server, :listen_port] in paths
+
+      # Node / Distribution
+      assert [:node, :enabled] in paths
+      assert [:node, :node_name] in paths
+      assert [:node, :shortnames] in paths
+      assert [:node, :cookie] in paths
+      assert [:node, :dist_port] in paths
+      assert [:node, :start_epmd] in paths
     end
 
     test "every schema has required fields" do
@@ -97,8 +105,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 58 schemas" do
-      assert length(Schema.all_schemas()) == 58
+    test "has exactly 64 schemas" do
+      assert length(Schema.all_schemas()) == 64
     end
   end
 
@@ -176,6 +184,14 @@ defmodule EvoGit.Config.SchemaTest do
       # Server
       assert defaults.server.listen_ip == "127.0.0.1"
       assert defaults.server.listen_port == 9999
+
+      # Node / Distribution
+      assert defaults.node.enabled == false
+      assert defaults.node.node_name == "genesis@127.0.0.1"
+      assert defaults.node.shortnames == false
+      assert defaults.node.cookie == "genesis_cookie"
+      assert defaults.node.dist_port == 9000
+      assert defaults.node.start_epmd == true
     end
 
     test "llm model has nil default" do
@@ -204,6 +220,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(grouped, :git)
       assert Map.has_key?(grouped, :server)
       assert Map.has_key?(grouped, :tools)
+      assert Map.has_key?(grouped, :node)
     end
 
     test "each category has expected count" do
@@ -218,6 +235,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:git]) == 1
       assert length(grouped[:server]) == 2
       assert length(grouped[:tools]) == 8
+      assert length(grouped[:node]) == 6
     end
 
     test "sandbox schemas include sub_category metadata" do
@@ -343,6 +361,40 @@ defmodule EvoGit.Config.SchemaTest do
         config = put_in(Schema.defaults(), [:sandbox, :mode], mode)
         assert {:ok, _} = Schema.validate(config)
       end
+    end
+
+    test "accepts valid node dist_port within range" do
+      config = put_in(Schema.defaults(), [:node, :dist_port], 9100)
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "catches node dist_port below minimum" do
+      config = put_in(Schema.defaults(), [:node, :dist_port], 80)
+      assert {:error, errors} = Schema.validate(config)
+      error = List.first(errors)
+      assert error.rule == {:min, 1024}
+    end
+
+    test "catches node dist_port above maximum" do
+      config = put_in(Schema.defaults(), [:node, :dist_port], 70_000)
+      assert {:error, errors} = Schema.validate(config)
+      error = List.first(errors)
+      assert error.rule == {:max, 65535}
+    end
+
+    test "catches non-boolean for node.enabled" do
+      config = put_in(Schema.defaults(), [:node, :enabled], "yes")
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "catches non-boolean for node.shortnames" do
+      config = put_in(Schema.defaults(), [:node, :shortnames], "true")
+      assert {:error, _} = Schema.validate(config)
+    end
+
+    test "catches non-string for node.node_name" do
+      config = put_in(Schema.defaults(), [:node, :node_name], 123)
+      assert {:error, _} = Schema.validate(config)
     end
 
     test "ValidationError has all required fields" do

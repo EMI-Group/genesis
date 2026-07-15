@@ -23,6 +23,12 @@ defmodule EvoGit.Application do
     # Start the PubSub throttle process (coalesces rapid agent-update signals)
     EvoGit.AgentScheduler.PubSub.start_throttle()
 
+    # Enable distributed Erlang at startup if configured.
+    # This must happen before starting RemoteConnection-related children,
+    # since RemoteConnection needs the local node in distributed mode to
+    # connect to remote nodes via SSH tunnels.
+    EvoGit.Distribution.maybe_enable()
+
     children = [
       {Phoenix.PubSub, name: EvoGit.PubSub},
       {Registry, keys: :unique, name: EvoGit.RemoteConnection.Registry},

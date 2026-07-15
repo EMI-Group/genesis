@@ -35,7 +35,7 @@ defmodule EvoGit.Config.Schema do
   @type key_path :: [atom()]
 
   @typedoc "Top-level config category"
-  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix | :git | :server | :tools
+  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix | :git | :server | :tools | :node
 
   @typedoc "Sub-category for sandbox keys; nil for all other categories"
   @type sub_category :: :resources | :process | :linux | nil
