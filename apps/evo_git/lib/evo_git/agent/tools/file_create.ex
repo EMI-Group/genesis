@@ -54,20 +54,10 @@ defmodule EvoGit.Agent.Tools.FileCreate do
   """
   def execute(args, repo_path, _repo_root, node_path \\ nil) do
     with {:ok, paths} <- Shared.fetch_array_arg(args, "paths"),
-         {:ok, commit?} <- fetch_commit(args),
-         {:ok, parents?} <- fetch_parents(args) do
+         {:ok, commit?} <- Shared.fetch_optional_boolean_arg(args, "commit", true),
+         {:ok, parents?} <- Shared.fetch_optional_boolean_arg(args, "parents", true) do
       do_create_files(paths, commit?, parents?, repo_path, node_path)
     end
-  end
-
-  defp fetch_commit(args) do
-    commit? = Map.get(args, "commit", true)
-    if is_boolean(commit?), do: {:ok, commit?}, else: {:error, "commit must be a boolean"}
-  end
-
-  defp fetch_parents(args) do
-    parents? = Map.get(args, "parents", true)
-    if is_boolean(parents?), do: {:ok, parents?}, else: {:error, "parents must be a boolean"}
   end
 
   defp do_create_files(paths, commit?, parents?, repo_path, node_path) do

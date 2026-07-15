@@ -56,8 +56,8 @@ defmodule EvoGit.Agent.Tools.SearchContext do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "pattern") do
       {:ok, pattern} ->
-        path = get_optional_string(args, "path", @default_path)
-        context = get_optional_integer(args, "context", @default_context)
+        path = Shared.get_optional_string(args, "path", @default_path)
+        context = Shared.get_optional_integer(args, "context", @default_context)
 
         rg_args = ["-n", "-C", to_string(context), pattern, "--glob", "CONTEXT.md", path]
 
@@ -71,21 +71,6 @@ defmodule EvoGit.Agent.Tools.SearchContext do
 
       {:error, message} ->
         message
-    end
-  end
-
-  defp get_optional_string(args, key, default) do
-    case Map.get(args, key, default) do
-      val when is_binary(val) -> val
-      val -> to_string(val)
-    end
-  end
-
-  defp get_optional_integer(args, key, default) do
-    case Map.get(args, key, default) do
-      val when is_integer(val) -> val
-      val when is_binary(val) -> String.to_integer(val)
-      _ -> default
     end
   end
 end
