@@ -665,6 +665,84 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Model ID cannot be empty."
     end
 
+    test "save_model_profile persists provider_options at profile level", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "profile-1",
+          "provider" => "openai",
+          "model_id" => "gpt-4o",
+          "concurrency" => "3",
+          "provider_options" => ~s({"store": false})
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      # provider_options is a profile-level field (sibling of temperature, max_tokens),
+      # NOT inside the model spec. After TOML round-trip the model spec is normalized
+      # to a string ("openai:gpt-4o"), but provider_options persists as a map at the
+      # profile level.
+      assert profile.provider_options == %{"store" => false}
+    end
+
+    test "save_model_profile rejects invalid provider_options JSON", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "profile-1",
+          "provider" => "openai",
+          "model_id" => "gpt-4o",
+          "concurrency" => "3",
+          "provider_options" => "{not valid json"
+        })
+
+      assert html =~ "Provider Options must be valid JSON."
+    end
+
+    test "save_model_profile rejects non-object provider_options", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "profile-1",
+          "provider" => "openai",
+          "model_id" => "gpt-4o",
+          "concurrency" => "3",
+          "provider_options" => "[1,2,3]"
+        })
+
+      assert html =~ "Provider Options must be a JSON object (map)."
+    end
+
+    test "save_model_profile then edit pre-fills provider_options from profile", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "provider" => "openai",
+        "model_id" => "gpt-4o",
+        "concurrency" => "3",
+        "provider_options" => ~s({"store": false})
+      })
+
+      # Re-open the edit form and verify provider_options pre-fills
+      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      assert html =~ ~s(name="provider_options")
+      # HEEx HTML-escapes the JSON in the textarea (&quot; for quotes)
+      assert html =~ "{&quot;store&quot;:false}"
+    end
+
     test "save_custom_model with base_url for OpenAI-compatible produces map spec", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})

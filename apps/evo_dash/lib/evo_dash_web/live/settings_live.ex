@@ -1097,6 +1097,12 @@ defmodule EvoDashWeb.SettingsLive do
 
             {:error, "extra_must_be_object"} ->
               {:noreply, put_flash(socket, :error, gettext("Extra Config must be a JSON object (map)."))}
+
+            {:error, "invalid_provider_options_json"} ->
+              {:noreply, put_flash(socket, :error, gettext("Provider Options must be valid JSON."))}
+
+            {:error, "provider_options_must_be_object"} ->
+              {:noreply, put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
           end
       end
     end

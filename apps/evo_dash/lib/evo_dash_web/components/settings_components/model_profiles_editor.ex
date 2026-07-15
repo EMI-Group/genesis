@@ -137,6 +137,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
       <%!-- id + provider/model-id/base-url (required fields) ── ── --%>
       <% {provider_val, model_id_val, base_url_val, extra_val} = profile_model_fields(@profile) %>
+      <% provider_options_val = profile_provider_options(@profile) %>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="form-control">
           <label class="label pb-1">
@@ -374,6 +375,22 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </p>
       </div>
 
+      <%!-- Provider Options config ── --%>
+      <div class="form-control pt-2">
+        <label class="label pb-1">
+          <span class="label-text font-semibold text-xs">{gettext("Provider Options (JSON)")}</span>
+        </label>
+        <textarea
+          name="provider_options"
+          placeholder='{"store": false}'
+          class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm h-20 resize-y"
+          rows="3"
+        ><%= provider_options_val %></textarea>
+        <p class="text-[11px] text-base-content/60 mt-1">
+          {gettext("Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically.")}
+        </p>
+      </div>
+
       <%!-- Action buttons ── --%>
       <div class="flex items-center justify-end gap-2 pt-2 border-t border-base-200">
         <button type="button" phx-click="cancel_edit_model_profile" class="btn btn-ghost btn-sm">
@@ -429,6 +446,22 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   end
 
   defp profile_model_fields(_), do: {"", "", "", ""}
+
+  # Extracts the profile-level provider_options value (a sibling of temperature,
+  # max_tokens, etc.) and JSON-encodes it for pre-filling the edit form.
+  # Returns "" if nil/absent.
+  defp profile_provider_options(profile) when is_map(profile) do
+    case Map.get(profile, :provider_options) || Map.get(profile, "provider_options") do
+      nil -> ""
+      options ->
+        case Jason.encode(options) do
+          {:ok, json} -> json
+          {:error, _} -> ""
+        end
+    end
+  end
+
+  defp profile_provider_options(_), do: ""
 
   defp model_model_fields(nil), do: {"", "", "", ""}
 
