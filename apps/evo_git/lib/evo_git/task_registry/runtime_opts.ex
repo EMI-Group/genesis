@@ -29,13 +29,6 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     runtime_opts =
       if node_path, do: Keyword.put(runtime_opts, :node_path, node_path), else: runtime_opts
 
-    seed_content = Keyword.get(opts, :seed_content)
-
-    runtime_opts =
-      if seed_content,
-        do: Keyword.put(runtime_opts, :seed_content, seed_content),
-        else: runtime_opts
-
     starting_commit = Keyword.get(opts, :starting_commit)
 
     runtime_opts =
@@ -84,7 +77,6 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   Converts an evolution mode string to its atom form.
   """
   def evolution_mode_atom("simple"), do: :simple
-  def evolution_mode_atom("complex"), do: :complex
 
   def evolution_mode_atom(other),
     do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
@@ -101,7 +93,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   @doc """
   Dispatches to the correct mode resolver based on the task type, mirroring
   the core CLI (`apps/evo_git/lib/evo_git/cli.ex`) which has separate
-  `genesis_mode_atom/1` (new/existing) and `evolution_mode_atom/1` (simple/complex)
+  `genesis_mode_atom/1` (new/existing) and `evolution_mode_atom/1` (simple)
   functions.
   """
   def mode_atom(:genesis, mode), do: genesis_mode_atom(mode)

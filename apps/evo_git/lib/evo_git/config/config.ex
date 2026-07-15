@@ -454,14 +454,12 @@ defmodule EvoGit.Config do
     cond do
       File.exists?(path) ->
         read_toml_file(path, %{}, read_opts)
-        |> Map.delete("evolution")
 
       true ->
         legacy_path = Path.join(legacy_config_dir(), @config_filename)
 
         if File.exists?(legacy_path) do
           read_toml_file(legacy_path, %{}, read_opts)
-          |> Map.delete("evolution")
         else
           %{}
         end
@@ -512,7 +510,6 @@ defmodule EvoGit.Config do
         dir = config_dir()
 
         with :ok <- File.mkdir_p(dir),
-             config = Map.delete(config, :evolution),
              config = strip_flat_llm_fields(config),
              string_config = stringify_keys(config),
              {:ok, toml} <- TomlElixir.encode(string_config) do
