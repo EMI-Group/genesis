@@ -10,6 +10,7 @@ defmodule EvoGit.MixProject do
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
       elixir: "~> 1.18",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]
@@ -30,9 +31,14 @@ defmodule EvoGit.MixProject do
       {:phoenix_pubsub, "~> 2.2"},
       # TomlElixir
       {:toml_elixir, "~> 3.1"},
-      {:yaml_elixir, "~> 2.11"}
+      {:yaml_elixir, "~> 2.11"},
+      {:xqlite, "~> 0.7"},
+      {:jason, "~> 1.2"}
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   # Read the version from the root VERSION file so all umbrella apps and the
   # Tauri desktop shell share a single source of truth.
