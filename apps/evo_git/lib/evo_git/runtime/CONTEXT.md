@@ -202,9 +202,9 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 - `node_path` validation in Evolution requires a `CONTEXT.md` at the target directory (except root).
 
 ### Task Status & Event Emission (Dashboard Contract)
-The dashboard (`EvoDash.TaskRegistry`) tracks task status via TWO mechanisms:
+`EvoGit.TaskRegistry` (in `:evo_git`, started by `EvoGit.Application`) tracks task status via TWO mechanisms:
 1. **PubSub** on topic `"tasks"`: the ONLY emitter is `Helpers.notify_finalizing/1` (`helpers.ex:102`, broadcast at line 104), broadcasting `{:task_status, task_id, :finalizing}`. This is called ONLY on the `{:ok, _}` success arm, immediately after `AgentScheduler.run_agent/1` returns and BEFORE `merge_and_report/3`. No `:failed`, `:completed`, or `:running` is EVER broadcast on `"tasks"` from the evo_git runtime. (`AgentScheduler.PubSub` broadcasts on *different* topics — `@agent_topic` (`"agents"`) / `@config_topic` (`"scheduler_config"`) — with different message shapes: `{:agents_updated}` and `{:scheduler_config_updated}`.) Callers of `notify_finalizing/1`: `genesis.ex:51` (Mode A) & `:78` (Mode B); `evolution.ex:58` (simple) & `:72` (complex, before engine delegation); `skill_extraction.ex:34`; `evolution/engine.ex:551` (complex engine apply phase).
-2. **Task monitor exit** (`Task.Supervisor.async_nolink` in EvoDash): when the runtime process exits, ANY non-`{:ok, _}` result (including `{:error, _}`) is mapped to `:failed` by the dashboard.
+2. **Task monitor exit** (`Task.Supervisor.async_nolink` in `EvoGit.TaskRegistry`): when the runtime process exits, ANY non-`{:ok, _}` result (including `{:error, _}`) is mapped to `:failed`.
 
 **Critical implication**: Every runtime entry point (`Genesis.run/2`, `Evolution.run/2`, `SkillExtraction.run/1`) returns whatever `AgentScheduler.run_agent/1` returns on the `error` arm — propagating `{:error, _}` to the dashboard, which marks the task `:failed`. The scheduler replies `{:error, _}` to the top-level caller in two cases:
 - Top-level agent permanently failed (crashed `agent_max_retries` times) → `{:error, :agent_max_retries_exceeded}` (lifecycle.ex:238).
