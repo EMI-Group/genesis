@@ -117,10 +117,7 @@ defmodule EvoGit.RemoteConnection do
   """
   @spec disconnect(String.t()) :: :ok
   def disconnect(target_id) do
-    case Registry.lookup(@registry, target_id) do
-      [{pid, _}] -> GenServer.call(pid, :disconnect)
-      [] -> :ok
-    end
+    call_registered(target_id, :disconnect, :ok)
   end
 
   @doc """
@@ -132,10 +129,7 @@ defmodule EvoGit.RemoteConnection do
   """
   @spec status(String.t()) :: map()
   def status(target_id) do
-    case Registry.lookup(@registry, target_id) do
-      [{pid, _}] -> GenServer.call(pid, :status)
-      [] -> %{phase: :disconnected, node: nil, last_error: nil, target: nil}
-    end
+    call_registered(target_id, :status, %{phase: :disconnected, node: nil, last_error: nil, target: nil})
   end
 
   @doc """
@@ -681,6 +675,29 @@ defmodule EvoGit.RemoteConnection do
 
   defp via(target_id) do
     {:via, Registry, {@registry, target_id}}
+  end
+
+  # Justified try/catch :exit: concurrency boundary — the GenServer may
+  # terminate between Registry.lookup and the call (e.g. supervisor teardown
+  # with reason :shutdown, or another caller invoked disconnect/1). A call to
+  # a dying process is expected during teardown and should not crash the
+  # caller; it degrades gracefully instead of masking an unexpected error.
+  defp call_registered(target_id, request, default) do
+    case Registry.lookup(@registry, target_id) do
+      [{pid, _}] ->
+        if Process.alive?(pid) do
+          try do
+            GenServer.call(pid, request)
+          catch
+            :exit, _ -> default
+          end
+        else
+          default
+        end
+
+      [] ->
+        default
+    end
   end
 
   defp fetch_target(target_id) do
