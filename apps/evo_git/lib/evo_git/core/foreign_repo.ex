@@ -20,6 +20,8 @@ defmodule EvoGit.Core.ForeignRepo do
   @enforce_keys [:id, :root]
   defstruct [:id, :root, :description]
 
+  alias EvoGit.Platform
+
   @type t :: %__MODULE__{
           id: String.t(),
           root: String.t(),
@@ -84,8 +86,8 @@ defmodule EvoGit.Core.ForeignRepo do
   """
   @spec normalize_path(t(), String.t()) :: {:ok, String.t()} | {:error, :not_in_repo}
   def normalize_path(%__MODULE__{root: root}, abs_path) when is_binary(abs_path) do
-    # Normalize both paths for safe comparison (strip trailing slashes)
-    root = root |> String.trim_trailing("/") |> String.trim_trailing("\\")
+    # Normalize both paths for safe comparison (strip trailing separators)
+    root = root |> Platform.trim_trailing_separators()
     abs_path = Path.expand(abs_path)
 
     if String.starts_with?(abs_path, root) and
@@ -138,8 +140,8 @@ defmodule EvoGit.Core.ForeignRepo do
   # Normalizes a relative path to "./foo/bar" format
   defp normalize_relative(path) do
     path
-    |> String.trim_leading("/")
-    |> String.trim_trailing("/")
+    |> Platform.trim_leading_separators()
+    |> Platform.trim_trailing_separators()
     |> then(fn
       "" -> "./"
       "." -> "./"

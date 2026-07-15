@@ -3,6 +3,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
   Manages the Temporal Dimension (Map the phylogenetic graph to git repo).
   """
   alias EvoGit.Adapters.Git
+  alias EvoGit.Platform
 
   defstruct [:repo, :base_commit, :current_commit]
 
@@ -130,11 +131,11 @@ defmodule EvoGit.Core.PhyloGraphNode do
         path in [".", "./"] ->
           ["ls-tree", "--name-only", node.current_commit]
 
-        String.ends_with?(path, "/") ->
+        Platform.trailing_separator?(path) ->
           ["ls-tree", "--name-only", node.current_commit, path]
 
         true ->
-          ["ls-tree", "--name-only", node.current_commit, path <> "/"]
+          ["ls-tree", "--name-only", node.current_commit, Platform.trim_trailing_separators(path) <> "/"]
       end
 
     case Git.run(args, node.repo) do

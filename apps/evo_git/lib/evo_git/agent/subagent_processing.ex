@@ -29,6 +29,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Adapters.Git
+  alias EvoGit.Platform
 
   @doc """
   Processes subagent tool calls: spawns subagents, merges results.
@@ -310,7 +311,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
   # Checks if an absolute path is under a given repo root.
   # Returns {:ok, relative_path} or :not_in_repo.
   defp foreign_repo_match_root(root, abs_path) when is_binary(root) and is_binary(abs_path) do
-    root = String.trim_trailing(root, "/")
+    root = Platform.trim_trailing_separators(root)
     expanded = Path.expand(abs_path)
 
     if EvoGit.Platform.path_under?(expanded, root) do

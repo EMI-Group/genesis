@@ -255,4 +255,82 @@ defmodule EvoGit.Platform do
       true -> :none
     end
   end
+
+  # --- Cross-Platform Path Helpers ---
+
+  @doc """
+  Converts all backslash (`\\`) characters to forward slashes (`/`) for
+  consistent internal path handling.
+
+  Returns `nil` if given `nil`.
+  """
+  @spec normalize_separators(String.t() | nil) :: String.t() | nil
+  def normalize_separators(nil), do: nil
+  def normalize_separators(path) when is_binary(path), do: String.replace(path, "\\", "/")
+
+  @doc """
+  Strips leading `/` and `\\` characters from a path.
+
+  Returns `nil` if given `nil`.
+  """
+  @spec trim_leading_separators(String.t() | nil) :: String.t() | nil
+  def trim_leading_separators(nil), do: nil
+
+  def trim_leading_separators(path) when is_binary(path) do
+    String.replace(path, ~r/^[\/\\]+/, "")
+  end
+
+  @doc """
+  Strips trailing `/` and `\\` characters from a path.
+
+  Returns `nil` if given `nil`.
+  """
+  @spec trim_trailing_separators(String.t() | nil) :: String.t() | nil
+  def trim_trailing_separators(nil), do: nil
+
+  def trim_trailing_separators(path) when is_binary(path) do
+    String.replace(path, ~r/[\/\\]+$/, "")
+  end
+
+  @doc """
+  Strips both leading and trailing `/` and `\\` characters from a path.
+
+  Composed from `trim_leading_separators/1` and `trim_trailing_separators/1`.
+  Returns `nil` if given `nil`.
+  """
+  @spec trim_separators(String.t() | nil) :: String.t() | nil
+  def trim_separators(nil), do: nil
+
+  def trim_separators(path) when is_binary(path) do
+    path |> trim_leading_separators() |> trim_trailing_separators()
+  end
+
+  @doc """
+  Splits a path on both `/` and `\\` separators.
+
+  First normalizes all separators to `/` via `normalize_separators/1`, then
+  delegates to `String.split/3` with `"/"` as the pattern. Accepts the same
+  options as `String.split/3` (e.g., `parts: 2`).
+
+  Returns `nil` if given `nil`. Returns `[]` if given an empty string.
+  """
+  @spec split_path(String.t() | nil, keyword()) :: [String.t()] | nil
+  def split_path(nil, _opts), do: nil
+  def split_path("", _opts), do: []
+
+  def split_path(path, opts) when is_binary(path) and is_list(opts) do
+    path |> normalize_separators() |> String.split("/", opts)
+  end
+
+  @doc """
+  Returns `true` if the path ends with `/` or `\\`.
+
+  Returns `false` if given `nil`.
+  """
+  @spec trailing_separator?(String.t() | nil) :: boolean()
+  def trailing_separator?(nil), do: false
+
+  def trailing_separator?(path) when is_binary(path) do
+    String.ends_with?(path, "/") or String.ends_with?(path, "\\")
+  end
 end

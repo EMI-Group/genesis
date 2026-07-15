@@ -74,9 +74,15 @@ defmodule EvoGit.Core.ContextNodeTest do
       assert ContextNode.normalize_relpath("foo") == "./foo"
     end
 
-    test "raises on absolute path" do
+    test "raises on Unix absolute path" do
       assert_raise RuntimeError, ~r/absolute/, fn ->
         ContextNode.normalize_relpath("/foo/bar")
+      end
+    end
+
+    test "raises on Windows absolute path" do
+      assert_raise RuntimeError, ~r/absolute/, fn ->
+        ContextNode.normalize_relpath("C:\\foo\\bar")
       end
     end
   end
