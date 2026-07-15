@@ -28,6 +28,7 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_display_name(:server), do: gettext("Server")
   def category_display_name(:nix), do: gettext("Nix")
   def category_display_name(:remote_connections), do: gettext("Remote Connections")
+  def category_display_name(:node), do: gettext("Node")
 
   def category_icon(:scheduler), do: "hero-cog-6-tooth"
   def category_icon(:llm), do: "hero-sparkles"
@@ -40,6 +41,7 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_icon(:server), do: "hero-server"
   def category_icon(:nix), do: "brand-nix"
   def category_icon(:remote_connections), do: "hero-globe-alt"
+  def category_icon(:node), do: "hero-server-stack"
 
   # Made public because category_section/1 in the parent module calls it.
   # zh_CN: agent → "智能体", concurrency → "并发"
@@ -79,6 +81,9 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_description(:remote_connections),
     do: gettext("Manage SSH connections to remote Genesis daemons.")
 
+  def category_description(:node),
+    do: gettext("Configure the local Genesis node identity and distribution settings.")
+
   def schema_matches?(_schema, ""), do: true
 
   def schema_matches?(schema, search_text) do
@@ -113,7 +118,8 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
       :server,
       :tools,
       :nix,
-      :remote_connections
+      :remote_connections,
+      :node
     ]
 
     Enum.sort_by(categories, fn {cat, _} -> Enum.find_index(order, &(&1 == cat)) || 99 end)
