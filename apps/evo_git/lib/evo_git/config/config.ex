@@ -304,10 +304,17 @@ defmodule EvoGit.Config do
 
     # Ensure the flat [llm].model mirrors the default profile's model for
     # backward compatibility (Config.resolve([:llm, :model]) still works).
+    # Defensive: the first profile may lack a :model key (e.g. a manually
+    # edited config.toml or an incomplete dashboard profile). Use Map.get
+    # so we don't crash on such profiles — the flat field is simply left
+    # unchanged when the first profile has no model.
     llm =
       case models do
-        [%{model: default_model} | _] ->
-          Map.put(llm, :model, default_model)
+        [first | _] when is_map(first) ->
+          case Map.get(first, :model) do
+            nil -> llm
+            default_model -> Map.put(llm, :model, default_model)
+          end
 
         _ ->
           llm
