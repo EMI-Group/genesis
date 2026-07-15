@@ -11,23 +11,17 @@ defmodule EvoDash.Application do
     # needed) for robust HTML parsing of Lumis syntax-highlighter output.
     Application.put_env(:floki, :html_parser, Floki.HTMLParser.Html5ever)
 
-    data_dir = Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir())
-
     children = [
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
-      {EvoDash.Store, data_dir: Path.join(data_dir, "tasks.sqlite")},
-      {Registry, keys: :unique, name: EvoDash.TaskRegistry.ProcessRegistry},
-      EvoDash.TaskRegistry,
       EvoDashWeb.Endpoint
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
-    # Use :one_for_one so Endpoint survives a TaskRegistry restart.
-    # Tune max_restarts to tolerate repeated transient crashes without
-    # shutting down the whole application.
+    # Use :one_for_one with a generous max_restarts to tolerate transient
+    # crashes without shutting down the whole application.
     opts = [
       strategy: :one_for_one,
       max_restarts: 10,

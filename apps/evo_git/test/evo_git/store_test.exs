@@ -1,16 +1,16 @@
-defmodule EvoDash.StoreTest do
+defmodule EvoGit.StoreTest do
   use ExUnit.Case, async: false
 
-  alias EvoDash.Store
-  alias EvoDash.TaskInfo
-  alias EvoDash.RecentProject
+  alias EvoGit.Store
+  alias EvoGit.TaskInfo
+  alias EvoGit.RecentProject
 
   # Terminate production children (TaskRegistry depends on Store) and start
   # an isolated Store with a unique tmp SQLite path. `async: false` because
   # we mutate the shared production supervision tree.
   setup do
-    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
-    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.Store)
+    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
+    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
 
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_store_#{unique}")
@@ -21,8 +21,8 @@ defmodule EvoDash.StoreTest do
 
     on_exit(fn ->
       File.rm_rf(root)
-      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.Store)
-      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     end)
 
     {:ok, %{store: Store, sqlite_path: sqlite_path, root: root}}
@@ -1295,7 +1295,7 @@ defmodule EvoDash.StoreTest do
       task_logs = Jason.encode!([])
 
       task_data =
-        EvoDash.Store.Codec.task_columns()
+        EvoGit.Store.Codec.task_columns()
         |> Enum.zip([
           "both-task",
           "genesis",
@@ -1318,7 +1318,7 @@ defmodule EvoDash.StoreTest do
         |> Jason.encode!()
 
       project_data =
-        EvoDash.Store.Codec.project_columns()
+        EvoGit.Store.Codec.project_columns()
         |> Enum.zip(["/both/project", "Both Project", now])
         |> Map.new()
         |> Jason.encode!()

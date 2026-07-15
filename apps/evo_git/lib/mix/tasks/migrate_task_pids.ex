@@ -40,7 +40,7 @@ defmodule Mix.Tasks.MigrateTaskPids do
 
   @impl Mix.Task
   def run(argv) do
-    # We do NOT call Application.ensure_all_started(:evo_dash) here because
+    # We do NOT call Application.ensure_all_started(:evo_git) here because
     # that would start the full EvoDash supervision tree (Store, TaskRegistry,
     # Endpoint), which is unnecessary and could interfere with a live system.
     # The @requirements ["app.config"] above ensures Application config is
@@ -264,11 +264,11 @@ defmodule Mix.Tasks.MigrateTaskPids do
   # --------------------------------------------------------------------------
 
   # Resolves the path to the EvoDash tasks SQLite database.
-  # Mirrors the logic in EvoDash.Application.start/2:
-  #   data_dir = Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir())
+  # Mirrors the logic in EvoGit.Application.start/2:
+  #   data_dir = Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir())
   #   Store is started with data_dir: Path.join(data_dir, "tasks.sqlite")
   defp resolve_db_path do
-    data_dir = Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir())
+    data_dir = Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir())
     Path.join(data_dir, "tasks.sqlite")
   end
 end

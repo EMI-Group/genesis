@@ -1,16 +1,16 @@
-defmodule EvoDash.TaskRegistry.TaskExecutor do
+defmodule EvoGit.TaskRegistry.TaskExecutor do
   @moduledoc """
-  Task execution functions for `EvoDash.TaskRegistry`.
+  Task execution functions for `EvoGit.TaskRegistry`.
 
   These functions run in spawned processes under `Task.Supervisor` — NOT in the
   GenServer process. They call into `EvoGit.Runtime.*` modules to perform the
   actual genesis, evolution, or skill extraction work.
   """
 
-  alias EvoDash.TaskRegistry.ResumeContext
-  alias EvoDash.TaskRegistry.RuntimeOpts
+  alias EvoGit.TaskRegistry.ResumeContext
+  alias EvoGit.TaskRegistry.RuntimeOpts
 
-  @process_registry EvoDash.TaskRegistry.ProcessRegistry
+  @process_registry EvoGit.TaskRegistry.ProcessRegistry
 
   @doc """
   Execute a genesis, evolve, or skill extraction task.
@@ -72,7 +72,7 @@ defmodule EvoDash.TaskRegistry.TaskExecutor do
 
   @doc """
   Registers the current process (the spawned task process) in the
-  `EvoDash.TaskRegistry.ProcessRegistry` under the `task_id` key. The Registry
+  `EvoGit.TaskRegistry.ProcessRegistry` under the `task_id` key. The Registry
   automatically monitors the registered process and removes the entry when it
   dies, providing O(1) lookup of "is this task's process alive?" by `task_id`.
   """

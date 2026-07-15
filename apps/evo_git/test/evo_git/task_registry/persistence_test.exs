@@ -1,5 +1,5 @@
-defmodule EvoDash.TaskRegistry.PersistenceTest do
-  use EvoDash.TaskRegistryCase, async: false
+defmodule EvoGit.TaskRegistry.PersistenceTest do
+  use EvoGit.TaskRegistryCase, async: false
 
   describe "set_review_metadata/3" do
     test "updates a task's base_sha and commit_sha in the store" do
@@ -18,7 +18,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       TaskRegistry.set_review_metadata(task_id, "abc123", "def456")
 
@@ -46,7 +46,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       TaskRegistry.set_review_metadata(task_id, "base_sha_1", "commit_sha_1")
 
@@ -54,7 +54,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
       TaskRegistry.list_tasks()
 
       # Read directly from the store to confirm persistence
-      stored_task = EvoDash.Store.get_task(EvoDash.Store, task_id)
+      stored_task = EvoGit.Store.get_task(EvoGit.Store, task_id)
 
       assert stored_task.base_sha == "base_sha_1"
       assert stored_task.commit_sha == "commit_sha_1"
@@ -87,7 +87,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       TaskRegistry.set_review_metadata(task_id, "base1", "commit1")
       TaskRegistry.list_tasks()
@@ -128,15 +128,15 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         model_id: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, old_task)
+      EvoGit.Store.put_task(EvoGit.Store, old_task)
 
       # Stop the supervised registry, then restart it so normalize_tasks runs.
       # KEEP the same store running so the backfilled data persists.
-      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoGit.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       # The backfilled task should exist with nil for the new fields
@@ -166,14 +166,14 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
           model_id: nil
         }
 
-      EvoDash.Store.put_task(EvoDash.Store, stripped)
+      EvoGit.Store.put_task(EvoGit.Store, stripped)
 
       # Restart the registry to trigger normalize_tasks on init.
       stop_supervised(TaskRegistry)
 
       start_supervised!(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -200,7 +200,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      :ok = EvoDash.Store.put_task(EvoDash.Store, task)
+      :ok = EvoGit.Store.put_task(EvoGit.Store, task)
 
       fetched = TaskRegistry.get_task(task_id)
       assert %TaskInfo{} = fetched
@@ -227,18 +227,18 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      :ok = EvoDash.Store.put_task(EvoDash.Store, task)
+      :ok = EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Confirm the task is visible before restart.
       assert %TaskInfo{} = TaskRegistry.get_task(task_id)
 
       # Stop the registry but KEEP the same store running (store is durable on disk).
-      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoGit.TaskRegistry)
 
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       # The task persisted in the store must survive the registry restart.
@@ -264,12 +264,12 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
       assert Enum.any?(projects_before, &(&1.path == path and &1.name == name))
 
       # Stop the registry but KEEP the same store running (store is durable on disk).
-      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoGit.TaskRegistry)
 
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       # The project must survive the registry restart.
@@ -297,9 +297,9 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
-      pid = GenServer.whereis(EvoDash.TaskRegistry)
+      pid = GenServer.whereis(EvoGit.TaskRegistry)
       assert is_pid(pid)
       assert Process.alive?(pid)
 
@@ -316,7 +316,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
 
     test "registry survives mutation operations" do
       unique = System.unique_integer([:positive])
-      pid = GenServer.whereis(EvoDash.TaskRegistry)
+      pid = GenServer.whereis(EvoGit.TaskRegistry)
       assert Process.alive?(pid)
 
       # Each delete_task cast mutates the store.
@@ -335,7 +335,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
           result: nil
         }
 
-        EvoDash.Store.put_task(EvoDash.Store, task)
+        EvoGit.Store.put_task(EvoGit.Store, task)
         TaskRegistry.delete_task(id)
       end
 
@@ -378,8 +378,8 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, good1)
-      EvoDash.Store.put_task(EvoDash.Store, good2)
+      EvoGit.Store.put_task(EvoGit.Store, good1)
+      EvoGit.Store.put_task(EvoGit.Store, good2)
 
       # Structurally corrupt entries (valid keys, wrong-shape values).
       # Inject corrupt rows via raw SQL (bypassing put_task validation).
@@ -389,12 +389,12 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
       XqliteNIF.execute(raw_conn, "INSERT OR REPLACE INTO tasks (id, status, type) VALUES (?1, ?2, ?3)", ["bad_map", "completed", "invalid_type_atom_xyz"])
       XqliteNIF.close(raw_conn)
 
-      EvoDash.Store.put_project(
-        EvoDash.Store,
-        %EvoDash.RecentProject{path: "/some/path", name: "test", last_opened_at: DateTime.utc_now()}
+      EvoGit.Store.put_project(
+        EvoGit.Store,
+        %EvoGit.RecentProject{path: "/some/path", name: "test", last_opened_at: DateTime.utc_now()}
       )
 
-      pid = GenServer.whereis(EvoDash.TaskRegistry)
+      pid = GenServer.whereis(EvoGit.TaskRegistry)
       assert Process.alive?(pid)
 
       # list_tasks must NOT crash — it should return only valid TaskInfo structs
@@ -435,7 +435,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, good)
+      EvoGit.Store.put_task(EvoGit.Store, good)
 
       # Corrupt entry
       # Inject a corrupt row via raw SQL (put_task rejects non-struct input)
@@ -443,7 +443,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
       XqliteNIF.execute(raw_conn2, "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)", ["bad_cleanup", "completed", "<<not json>>"])
       XqliteNIF.close(raw_conn2)
 
-      pid = GenServer.whereis(EvoDash.TaskRegistry)
+      pid = GenServer.whereis(EvoGit.TaskRegistry)
       assert Process.alive?(pid)
 
       # Trigger cleanup by doing mutations
@@ -485,7 +485,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Simulate completion via cast (this calls cleanup_expired_tasks internally)
       TaskRegistry.update_task_status(task_id, :completed, {:ok, %{usage: nil, agent_count: 1}})
@@ -500,7 +500,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
       assert fetched.status == :completed
 
       # Registry is alive
-      pid = GenServer.whereis(EvoDash.TaskRegistry)
+      pid = GenServer.whereis(EvoGit.TaskRegistry)
       assert Process.alive?(pid)
     end
   end
@@ -530,7 +530,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         archive_metadata: archive
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       fetched = TaskRegistry.get_task(task_id)
       assert %TaskInfo{} = fetched
@@ -562,7 +562,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
           archive_metadata: nil
         }
 
-      EvoDash.Store.put_task(EvoDash.Store, stripped)
+      EvoGit.Store.put_task(EvoGit.Store, stripped)
 
       # Restart the registry to trigger normalize_tasks on init. normalize_tasks
       # runs Map.merge(%TaskInfo{}, task), backfilling the missing field to its
@@ -571,7 +571,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
 
       start_supervised!(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -595,7 +595,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       archive_records = [
         %{"agent_id" => "T1_A1", "parent_id" => nil, "objective" => "Genesis", "role" => "manager"},
@@ -631,7 +631,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       usage = %EvoGit.Agent.Usage{input_tokens: 100, total_tokens: 100}
 
@@ -667,7 +667,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # The registry subscribes to the "tasks" PubSub topic on init.
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
@@ -696,7 +696,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # A late :failed update must NOT overwrite a terminal :completed.
       TaskRegistry.update_task_status(task_id, :failed, "late error")
@@ -723,7 +723,7 @@ defmodule EvoDash.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # A late :finalizing PubSub update must NOT overwrite a terminal :cancelled.
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})

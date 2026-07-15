@@ -3,12 +3,14 @@
 ## Intent
 
 Application source code for the EvoDash Phoenix LiveView dashboard. Split into two top-level namespaces:
-- `evo_dash/` — Domain logic (OTP application, task registry)
+- `evo_dash/` — Domain logic (OTP application, `NodeContext` remote-development thin client)
 - `evo_dash_web/` — Web interface (LiveView pages, components, templates, router, helpers)
+
+NOTE: The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo`, `RecentProject`, `TaskRegistry` and the `task_registry/` helper submodules) have been **migrated to the `:evo_git` app** and now live there as `EvoGit.Store`, `EvoGit.TaskInfo`, `EvoGit.RecentProject`, `EvoGit.TaskRegistry` (and friends). They are no longer present under `./evo_dash/`. EvoDash now only owns the web layer plus the `NodeContext` thin client and the OTP `Application` supervisor (which no longer starts Store/Registry/TaskRegistry — those are children of `EvoGit.Application`).
 
 ## Routing Table
 
-- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `Store` (SQLite persistence via xqlite), `Store.Codec` (pure serialization), `TaskInfo`/`RecentProject` (structs), `TaskRegistry` (SQLite-backed GenServer)
+- `./evo_dash/` → Domain modules: `Application` (OTP supervisor — Telemetry, PubSub, TaskSupervisor, Endpoint) and `NodeContext` (SSH remote-development thin client)
 - `./evo_dash_web/` → Web interface: LiveViews, components, router, endpoint, helpers
 - `./evo_dash_web.ex` → Web module macro (`use EvoDashWeb, :live_view` / `:html` / `:controller` etc.)
 
@@ -18,12 +20,8 @@ Application source code for the EvoDash Phoenix LiveView dashboard. Split into t
 
 | Module | Purpose |
 |--------|---------|
-| `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → Store → Registry → TaskRegistry → Endpoint) |
-| `EvoDash.Store` | SQLite-backed persistent store (single GenServer holding one xqlite connection; column-based `tasks`/`projects` tables with JSON encoding, explicit WAL+NORMAL durability PRAGMAs, graceful connection close in `terminate/2`). Delegates ALL serialization to `EvoDash.Store.Codec`. Callbacks have NO try/rescue — crashes propagate to supervisor for restart. Localized try/rescue only in: `terminate/2` (shutdown safety), quarantine/integrity-check helpers (deliberate data-recovery boundaries). |
-| `EvoDash.Store.Codec` | Pure serialization module (no GenServer, no I/O). Encode functions use non-crashing `Jason.encode/1` + `case` (TOTAL encode, never raise — fallback to `inspect/1`). Decode functions raise on bad data (Store's quarantine logic handles recovery). One justified try/rescue remains on decode side: `decode_reason` (best-effort atom recovery via `String.to_existing_atom`). |
-| `EvoDash.TaskInfo` | Struct representing a task in the registry (extracted from nested module) |
-| `EvoDash.RecentProject` | Struct for recently opened projects |
-| `EvoDash.TaskRegistry` | SQLite-backed GenServer for task tracking; spawns `EvoGit.Runtime.*` processes. Uses `EvoDash.TaskRegistry.ProcessRegistry` (Elixir `Registry`, `:unique` keys) to track live task processes by task_id at runtime — task processes self-register via `register_task_process/1` in `execute_task/3`. Callbacks have NO try/rescue. On restart, `reconcile_task_status/2` uses `Registry.lookup/2` to find surviving task processes (the Registry is a sibling under `:one_for_one`, so it survives TaskRegistry restarts), falling back to `:evogit_sched_meta` ETS check (via `:ets.info/1`, non-crashing) for active agents before marking running tasks as failed. PIDs are NOT persisted to the database. |
+| `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → Endpoint). Store/Registry/TaskRegistry now live in `EvoGit.Application`. |
+| `EvoDash.NodeContext` | Thin client for SSH remote development — wraps `EvoGit.RemoteConnections` (target persistence), `EvoGit.RemoteConnection` (connection lifecycle GenServer, graceful degradation), and `EvoGit.RemoteNode` (cross-node RPC helpers — agents, config, paused?). Public API is stable so web files need no changes. |
 
 ### Web Modules (`./evo_dash_web/`)
 
@@ -58,7 +56,7 @@ All communication from EvoDash to EvoGit is **direct function calls** (synchrono
 
 #### 1. Task Execution (TaskRegistry → EvoGit.Runtime)
 
-`TaskRegistry.execute_task/3` spawns a supervised task that calls:
+`EvoGit.TaskRegistry.execute_task/3` spawns a supervised task that calls:
 - `EvoGit.Runtime.Genesis.run(prompt, runtime_opts)` for genesis tasks
 - `EvoGit.Runtime.Evolution.run(objective, runtime_opts)` for evolution tasks
 
@@ -109,6 +107,6 @@ No `Application.put_env` calls to `:evo_git` exist in EvoDash. All config change
 
 - Domain modules in `./evo_dash/`, web modules in `./evo_dash_web/`
 - All LiveViews use `EvoDashWeb.Gettext` for i18n
-- Task state and recent projects persisted via SQLite (xqlite — Rust-based panic-free NIF bindings with precompiled binaries for Windows, macOS, and Linux); no external database server; project state also in socket assigns
+- Task state and recent projects are persisted via SQLite in the `:evo_git` app (`EvoGit.Store`); no persistence modules remain under `./evo_dash/`; project state also held in socket assigns
 - All EvoGit.PubSub subscriptions are conditional on `connected?(socket)` in LiveViews
 - EvoGit.PubSub is owned by the evo_git application; EvoDash subscribes as a consumer

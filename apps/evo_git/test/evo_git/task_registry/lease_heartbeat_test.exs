@@ -1,5 +1,5 @@
-defmodule EvoDash.TaskRegistry.LeaseHeartbeatTest do
-  use EvoDash.TaskRegistryCase, async: false
+defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
+  use EvoGit.TaskRegistryCase, async: false
 
   describe "lease & heartbeat" do
     test "startup reconciliation does NOT mark running task as failed if lease hasn't expired (THE KEY FIX)",
@@ -20,7 +20,7 @@ defmodule EvoDash.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: System.system_time(:second) + 300
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Restart the registry so init → normalize_tasks → reconcile_task_status runs.
       restart_registry!(root)
@@ -51,7 +51,7 @@ defmodule EvoDash.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: System.system_time(:second) - 300
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Restart the registry so init → normalize_tasks → reconcile_task_status runs.
       restart_registry!(root)
@@ -83,7 +83,7 @@ defmodule EvoDash.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: System.system_time(:second) + 300
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Transition to completed
       TaskRegistry.update_task_status("lease_complete_#{unique}", :completed, nil)
@@ -116,17 +116,17 @@ defmodule EvoDash.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: expired
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Send a heartbeat message directly to the registry process.
       # After the refactor, heartbeat ONLY renews owned leases — it does NOT
       # sweep. So even an expired-lease unowned task must remain :running.
-      send(EvoDash.TaskRegistry, :heartbeat)
+      send(EvoGit.TaskRegistry, :heartbeat)
 
       # Sync
       TaskRegistry.list_tasks()
 
-      found = EvoDash.Store.get_task(EvoDash.Store, "lease_heartbeat_#{unique}")
+      found = EvoGit.Store.get_task(EvoGit.Store, "lease_heartbeat_#{unique}")
       assert found != nil
       # Lease unchanged and task still :running (no sweep on heartbeat).
       assert found.status == :running,
@@ -153,15 +153,15 @@ defmodule EvoDash.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: System.system_time(:second) - 300
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Send a lease_sweep message directly to the registry process (one-shot).
-      send(EvoDash.TaskRegistry, :lease_sweep)
+      send(EvoGit.TaskRegistry, :lease_sweep)
 
       # Sync
       TaskRegistry.list_tasks()
 
-      found = EvoDash.Store.get_task(EvoDash.Store, "lease_sweep_#{unique}")
+      found = EvoGit.Store.get_task(EvoGit.Store, "lease_sweep_#{unique}")
       assert found != nil
       assert found.status == :failed,
              "task with expired lease should be swept to :failed, got #{inspect(found.status)}"

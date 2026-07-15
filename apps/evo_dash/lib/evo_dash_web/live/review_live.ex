@@ -6,7 +6,7 @@ defmodule EvoDashWeb.ReviewLive do
   reject, and continue actions, plus optional GitHub PR creation.
   """
   use EvoDashWeb, :live_view
-  alias EvoDash.TaskRegistry
+  alias EvoGit.TaskRegistry
   alias EvoGit.Review
 
   @impl true

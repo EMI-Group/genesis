@@ -1,4 +1,4 @@
-defmodule EvoDash.TaskRegistry do
+defmodule EvoGit.TaskRegistry do
   @moduledoc """
   Registry for tracking running EvoGit tasks.
   Tasks are identified by unique IDs and persisted to SQLite (the single source of truth)
@@ -12,14 +12,14 @@ defmodule EvoDash.TaskRegistry do
 
   require Logger
 
-  alias EvoDash.TaskInfo
+  alias EvoGit.TaskInfo
 
-  alias EvoDash.TaskRegistry.Cleanup
-  alias EvoDash.TaskRegistry.Diagnostics
-  alias EvoDash.TaskRegistry.Lease
-  alias EvoDash.TaskRegistry.TaskExecutor
+  alias EvoGit.TaskRegistry.Cleanup
+  alias EvoGit.TaskRegistry.Diagnostics
+  alias EvoGit.TaskRegistry.Lease
+  alias EvoGit.TaskRegistry.TaskExecutor
 
-  @process_registry EvoDash.TaskRegistry.ProcessRegistry
+  @process_registry EvoGit.TaskRegistry.ProcessRegistry
 
   @max_recent_projects 10
 
@@ -54,7 +54,7 @@ defmodule EvoDash.TaskRegistry do
   Returns a paginated slice of tasks (most-recent-first) with the total count.
 
   `opts` is a keyword list accepting `:limit` and `:offset` (both forwarded
-  to `EvoDash.Store.safe_select_paginated_tasks/2`). Returns `{tasks, total_count}`.
+  to `EvoGit.Store.safe_select_paginated_tasks/2`). Returns `{tasks, total_count}`.
   """
   def list_tasks_paginated(opts \\ []) do
     GenServer.call(__MODULE__, {:list_tasks_paginated, opts})
@@ -132,19 +132,19 @@ defmodule EvoDash.TaskRegistry do
   @impl true
   def init(opts) do
     # Allow data_dir to be overridden via opts (for testing), fallback to config
-    # then platform default. Tests set `config :evo_dash, :data_dir` to a temp dir.
+    # then platform default. Tests set `config :evo_git, :data_dir` to a temp dir.
     data_dir =
       Keyword.get(
         opts,
         :data_dir,
-        Application.get_env(:evo_dash, :data_dir, EvoGit.Platform.data_dir())
+        Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir())
       )
 
     File.mkdir_p!(data_dir)
 
     # The TaskStore is started by the supervisor; here just reference by name.
     # Tests may pass their own task_store: name pointing to a test store.
-    task_store = Keyword.get(opts, :task_store, EvoDash.Store)
+    task_store = Keyword.get(opts, :task_store, EvoGit.Store)
 
     state = %{
       data_dir: data_dir,
@@ -155,7 +155,7 @@ defmodule EvoDash.TaskRegistry do
     # Repair the store from any corrupt (un-deserializable) entries before we
     # read or normalize anything. integrity_check returns {:error, _} for
     # problems rather than raising, so no rescue is needed here.
-    EvoDash.Store.integrity_check(task_store)
+    EvoGit.Store.integrity_check(task_store)
 
     # Normalize SQLite entries in place (backfill fields, reset crashed tasks,
     # and re-monitor any tasks whose processes are still alive under the sibling
@@ -183,7 +183,7 @@ defmodule EvoDash.TaskRegistry do
   def handle_call({:start_task, task_id, task_type, opts}, _from, state) do
     task_ref =
       Task.Supervisor.async_nolink(
-        EvoDash.TaskSupervisor,
+        EvoGit.TaskSupervisor,
         TaskExecutor,
         :execute_task,
         [task_type, opts, task_id]
@@ -204,7 +204,7 @@ defmodule EvoDash.TaskRegistry do
     }
 
     # Persist to SQLite with ref nulled (ref is runtime-only data)
-    EvoDash.Store.put_task(state.task_store, %{task | ref: nil})
+    EvoGit.Store.put_task(state.task_store, %{task | ref: nil})
 
     # Keep the runtime ref in-memory only
     state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
@@ -266,7 +266,7 @@ defmodule EvoDash.TaskRegistry do
                     lease_expires_at: nil
                 }
 
-                EvoDash.Store.put_task(state.task_store, updated)
+                EvoGit.Store.put_task(state.task_store, updated)
                 Cleanup.cleanup_expired_tasks(state.task_store)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
@@ -320,7 +320,7 @@ defmodule EvoDash.TaskRegistry do
       |> Enum.filter(fn task -> task.status not in [:running, :pending] end)
       |> Enum.map(fn task -> task.id end)
 
-    EvoDash.Store.delete_tasks(state.task_store, task_ids)
+    EvoGit.Store.delete_tasks(state.task_store, task_ids)
 
     Cleanup.cleanup_expired_tasks(state.task_store)
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -333,9 +333,9 @@ defmodule EvoDash.TaskRegistry do
   def handle_call({:add_recent_project, path, name}, _from, state) do
     now = DateTime.utc_now()
 
-    EvoDash.Store.put_project(
+    EvoGit.Store.put_project(
       state.task_store,
-      %EvoDash.RecentProject{path: path, name: name, last_opened_at: now}
+      %EvoGit.RecentProject{path: path, name: name, last_opened_at: now}
     )
 
     # Enforce max limit
@@ -356,7 +356,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    EvoDash.Store.delete_project(state.task_store, path)
+    EvoGit.Store.delete_project(state.task_store, path)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
@@ -376,7 +376,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{logs: logs} = task ->
         updated = %{task | logs: [log_entry | logs]}
-        EvoDash.Store.put_task(state.task_store, updated)
+        EvoGit.Store.put_task(state.task_store, updated)
 
       nil ->
         :ok
@@ -387,7 +387,7 @@ defmodule EvoDash.TaskRegistry do
 
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
-    EvoDash.Store.delete_task(state.task_store, task_id)
+    EvoGit.Store.delete_task(state.task_store, task_id)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -398,7 +398,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{} = task ->
         updated = %{task | review_status: status}
-        EvoDash.Store.put_task(state.task_store, updated)
+        EvoGit.Store.put_task(state.task_store, updated)
 
       nil ->
         :ok
@@ -413,7 +413,7 @@ defmodule EvoDash.TaskRegistry do
     case task_get(state, task_id) do
       %TaskInfo{} = task ->
         updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        EvoDash.Store.put_task(state.task_store, updated)
+        EvoGit.Store.put_task(state.task_store, updated)
 
       nil ->
         :ok
@@ -475,7 +475,7 @@ defmodule EvoDash.TaskRegistry do
                 do: %{updated | lease_expires_at: nil},
                 else: updated
 
-            EvoDash.Store.put_task(state.task_store, updated)
+            EvoGit.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
               Cleanup.cleanup_expired_tasks(state.task_store)
@@ -496,19 +496,19 @@ defmodule EvoDash.TaskRegistry do
   # --- TaskStore Read Helpers ---
 
   defp task_get(state, task_id) do
-    EvoDash.Store.get_task(state.task_store, task_id)
+    EvoGit.Store.get_task(state.task_store, task_id)
   end
 
   defp select_all_tasks(state) do
-    EvoDash.Store.safe_select_all_tasks(state.task_store)
+    EvoGit.Store.safe_select_all_tasks(state.task_store)
   end
 
   defp select_paginated_tasks(state, opts) do
-    EvoDash.Store.safe_select_paginated_tasks(state.task_store, opts)
+    EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
   end
 
   defp select_all_projects(state) do
-    EvoDash.Store.safe_select_all_projects(state.task_store)
+    EvoGit.Store.safe_select_all_projects(state.task_store)
   end
 
   # --- Task Normalization ---
@@ -526,7 +526,7 @@ defmodule EvoDash.TaskRegistry do
       Enum.reduce(tasks, {state, []}, fn %TaskInfo{} = task, {acc_state, acc_tasks} ->
         task = Map.merge(%TaskInfo{}, task)
         {task, acc_state} = reconcile_task_status(task, acc_state)
-        EvoDash.Store.put_task(state.task_store, %{task | ref: nil})
+        EvoGit.Store.put_task(state.task_store, %{task | ref: nil})
         {acc_state, [task | acc_tasks]}
       end)
 
@@ -662,7 +662,7 @@ defmodule EvoDash.TaskRegistry do
         lease_expires_at: nil
     }
 
-    EvoDash.Store.put_task(state.task_store, updated)
+    EvoGit.Store.put_task(state.task_store, updated)
     Cleanup.cleanup_expired_tasks(state.task_store)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -685,7 +685,7 @@ defmodule EvoDash.TaskRegistry do
 
       {_kept, to_remove} ->
         paths = Enum.map(to_remove, fn project -> project.path end)
-        Enum.each(paths, &EvoDash.Store.delete_project(state.task_store, &1))
+        Enum.each(paths, &EvoGit.Store.delete_project(state.task_store, &1))
         :ok
     end
   end
@@ -725,7 +725,7 @@ defmodule EvoDash.TaskRegistry do
                 do: %{updated | lease_expires_at: nil},
                 else: updated
 
-            EvoDash.Store.put_task(state.task_store, updated)
+            EvoGit.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
               Cleanup.cleanup_expired_tasks(state.task_store)
@@ -892,7 +892,7 @@ defmodule EvoDash.TaskRegistry do
     Enum.each(state.task_refs, fn {task_id, _ref} ->
       case task_get(state, task_id) do
         %TaskInfo{status: s} = task when s in [:running, :pending] ->
-          EvoDash.Store.put_task(state.task_store, %{
+          EvoGit.Store.put_task(state.task_store, %{
             task
             | lease_expires_at: now + @lease_duration
           })
@@ -942,7 +942,7 @@ defmodule EvoDash.TaskRegistry do
               result: "Lease expired; owning instance no longer renewing"
           }
 
-          EvoDash.Store.put_task(state.task_store, updated)
+          EvoGit.Store.put_task(state.task_store, updated)
           true
         end
       end)

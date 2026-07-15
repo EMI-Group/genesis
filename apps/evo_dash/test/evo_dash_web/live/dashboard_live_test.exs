@@ -11,7 +11,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     on_exit(fn ->
       # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
       try do
-        EvoDash.TaskRegistry.remove_recent_project(tmp_dir)
+        EvoGit.TaskRegistry.remove_recent_project(tmp_dir)
       rescue
         _ -> :ok
       end
@@ -25,8 +25,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
   describe "dashboard without active project" do
     setup do
       # Clear all recent projects so auto-load doesn't activate a stale project
-      for project <- EvoDash.TaskRegistry.list_recent_projects() do
-        EvoDash.TaskRegistry.remove_recent_project(project.path)
+      for project <- EvoGit.TaskRegistry.list_recent_projects() do
+        EvoGit.TaskRegistry.remove_recent_project(project.path)
       end
 
       :ok
@@ -173,8 +173,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
   describe "opening invalid directory" do
     setup do
-      for project <- EvoDash.TaskRegistry.list_recent_projects() do
-        EvoDash.TaskRegistry.remove_recent_project(project.path)
+      for project <- EvoGit.TaskRegistry.list_recent_projects() do
+        EvoGit.TaskRegistry.remove_recent_project(project.path)
       end
 
       :ok
@@ -212,8 +212,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
   describe "restore_state restores foreign repositories from saved session" do
     setup do
-      for project <- EvoDash.TaskRegistry.list_recent_projects() do
-        EvoDash.TaskRegistry.remove_recent_project(project.path)
+      for project <- EvoGit.TaskRegistry.list_recent_projects() do
+        EvoGit.TaskRegistry.remove_recent_project(project.path)
       end
 
       :ok

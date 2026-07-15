@@ -616,6 +616,67 @@ defmodule EvoGit.Config.Schema.Definitions do
         sub_category: nil,
         description:
           "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
+      },
+      # ── Node / Distribution ─────────────────────────────────────────────
+      %{
+        key_path: [:node, :enabled],
+        type: :boolean,
+        default: false,
+        validation: [],
+        category: :node,
+        sub_category: nil,
+        description:
+          "Enable distributed Erlang at application startup. When enabled, the node starts EPMD, sets a distributed node name, and sets the magic cookie, allowing the local dashboard to connect to remote genesis_remote daemons over SSH tunnels."
+      },
+      %{
+        key_path: [:node, :node_name],
+        type: :string,
+        default: "genesis@127.0.0.1",
+        validation: [],
+        category: :node,
+        sub_category: nil,
+        description:
+          "The distributed Erlang node name. For longnames mode this must include the hostname (e.g. 'genesis@127.0.0.1'); for shortnames mode it should be a short name (e.g. 'genesis')."
+      },
+      %{
+        key_path: [:node, :shortnames],
+        type: :boolean,
+        default: false,
+        validation: [],
+        category: :node,
+        sub_category: nil,
+        description:
+          "Whether to use short names (:shortnames) or long names (:longnames) distribution mode. Short names are suitable for single-host or local network setups; long names are required for cross-network distribution."
+      },
+      %{
+        key_path: [:node, :cookie],
+        type: :string,
+        default: "genesis_cookie",
+        validation: [],
+        category: :node,
+        sub_category: nil,
+        description:
+          "The Erlang magic cookie for distribution authentication. Must match the cookie used by remote nodes you want to connect to."
+      },
+      %{
+        key_path: [:node, :dist_port],
+        type: :pos_integer,
+        default: 9000,
+        validation: [min: 1024, max: 65535],
+        category: :node,
+        sub_category: nil,
+        description:
+          "Distribution port used for EPMD-less distribution or inet_dist_listen configuration. Must match the port used by remote nodes for SSH tunnel forwarding."
+      },
+      %{
+        key_path: [:node, :start_epmd],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :node,
+        sub_category: nil,
+        description:
+          "Whether to start EPMD (Erlang Port Mapper Daemon) explicitly from the running ERTS. Set to false for EPMD-less distribution where nodes connect directly on a pinned port."
       }
     ]
   end

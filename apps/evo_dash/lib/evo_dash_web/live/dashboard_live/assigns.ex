@@ -6,7 +6,7 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   task lists, review button visibility, form defaults, and current task list.
   """
 
-  alias EvoDash.TaskRegistry
+  alias EvoGit.TaskRegistry
   alias EvoDashWeb.DashboardLive.Project
   import Phoenix.Component, only: [assign: 2, assign: 3]
 

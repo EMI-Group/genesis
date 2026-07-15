@@ -1,5 +1,5 @@
-defmodule EvoDash.TaskRegistry.CleanupTest do
-  use EvoDash.TaskRegistryCase, async: false
+defmodule EvoGit.TaskRegistry.CleanupTest do
+  use EvoGit.TaskRegistryCase, async: false
 
   describe "task_history_config/0 defaults" do
     test "returns default max_tasks and max_age_days when no config set" do
@@ -36,7 +36,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, old_task)
+      EvoGit.Store.put_task(EvoGit.Store, old_task)
 
       # Insert a recent finished task (today)
       recent_task = %TaskInfo{
@@ -51,7 +51,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, recent_task)
+      EvoGit.Store.put_task(EvoGit.Store, recent_task)
 
       # Verify both exist
       tasks = TaskRegistry.list_tasks()
@@ -85,7 +85,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -114,7 +114,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, running_task)
+      EvoGit.Store.put_task(EvoGit.Store, running_task)
 
       # Pending task
       pending_task = %TaskInfo{
@@ -129,7 +129,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, pending_task)
+      EvoGit.Store.put_task(EvoGit.Store, pending_task)
 
       # Old finished task (should be cleaned)
       old_finished = %TaskInfo{
@@ -144,7 +144,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, old_finished)
+      EvoGit.Store.put_task(EvoGit.Store, old_finished)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -178,7 +178,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, old_task)
+      EvoGit.Store.put_task(EvoGit.Store, old_task)
 
       # Recent tasks (within max_age_days) - should be kept
       for i <- 1..3 do
@@ -194,7 +194,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
           result: nil
         }
 
-        EvoDash.Store.put_task(EvoDash.Store, recent)
+        EvoGit.Store.put_task(EvoGit.Store, recent)
       end
 
       # Running task - should always be kept regardless of age
@@ -210,7 +210,7 @@ defmodule EvoDash.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, running)
+      EvoGit.Store.put_task(EvoGit.Store, running)
 
       # Trigger cleanup
       trigger_cleanup!()

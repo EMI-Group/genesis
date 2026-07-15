@@ -1,14 +1,14 @@
-defmodule EvoDash.Store do
+defmodule EvoGit.Store do
   @moduledoc """
   SQLite-backed persistent store for EvoDash tasks and recent projects.
 
   A single GenServer wrapping one xqlite (SQLite) connection. Data lives in
   column-based tables with JSON encoding for complex fields — no opaque
-  Erlang term BLOBs. All serialization is delegated to `EvoDash.Store.Codec`.
+  Erlang term BLOBs. All serialization is delegated to `EvoGit.Store.Codec`.
 
   Tables:
-    * `tasks` — one row per `EvoDash.TaskInfo`, one column per field.
-    * `projects` — one row per `EvoDash.RecentProject`.
+    * `tasks` — one row per `EvoGit.TaskInfo`, one column per field.
+    * `projects` — one row per `EvoGit.RecentProject`.
     * `tasks_quarantine` — undecodable task rows moved here (raw JSON) for recovery.
     * `projects_quarantine` — undecodable project rows moved here for recovery.
 
@@ -19,7 +19,7 @@ defmodule EvoDash.Store do
   supervisor restarts it with a fresh connection. Data is safe in SQLite WAL
   mode (`journal_mode=WAL`, `synchronous=NORMAL`).
 
-  The codec (`EvoDash.Store.Codec`) uses non-crashing `Jason.encode/1` + `case`
+  The codec (`EvoGit.Store.Codec`) uses non-crashing `Jason.encode/1` + `case`
   for TOTAL encode (no try/rescue). Decode functions raise on bad data by
   design — the quarantine/recovery logic below catches those failures.
 
@@ -42,9 +42,9 @@ defmodule EvoDash.Store do
 
   require Logger
 
-  alias EvoDash.Store.Codec
-  alias EvoDash.TaskInfo
-  alias EvoDash.RecentProject
+  alias EvoGit.Store.Codec
+  alias EvoGit.TaskInfo
+  alias EvoGit.RecentProject
 
   ## Child spec & start
 

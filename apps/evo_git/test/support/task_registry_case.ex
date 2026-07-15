@@ -1,49 +1,49 @@
-defmodule EvoDash.TaskRegistryCase do
+defmodule EvoGit.TaskRegistryCase do
   @moduledoc """
   Shared test case for TaskRegistry tests. Provides an isolated TaskRegistry +
   Store on a temporary SQLite database, plus common helper functions.
 
   Usage:
 
-      defmodule EvoDash.TaskRegistry.XxxTest do
-        use EvoDash.TaskRegistryCase, async: false
+      defmodule EvoGit.TaskRegistry.XxxTest do
+        use EvoGit.TaskRegistryCase, async: false
         # ...
       end
   """
 
   use ExUnit.CaseTemplate
 
-  alias EvoDash.TaskRegistry
-  alias EvoDash.TaskInfo
+  alias EvoGit.TaskRegistry
+  alias EvoGit.TaskInfo
 
   using do
     quote do
-      alias EvoDash.TaskRegistry
-      alias EvoDash.TaskInfo
-      import EvoDash.TaskRegistryCase
+      alias EvoGit.TaskRegistry
+      alias EvoGit.TaskInfo
+      import EvoGit.TaskRegistryCase
     end
   end
 
   setup do
     # Terminate production children to prevent auto-restarts and use isolated stores.
-    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
-    Supervisor.terminate_child(EvoDash.Supervisor, EvoDash.Store)
+    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
+    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
 
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_tasks_#{unique}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
 
-    start_supervised({EvoDash.Store, data_dir: sqlite_path})
+    start_supervised({EvoGit.Store, data_dir: sqlite_path})
 
     start_supervised(
-      {TaskRegistry, task_store: EvoDash.Store, data_dir: root, name: EvoDash.TaskRegistry}
+      {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
     )
 
     on_exit(fn ->
       File.rm_rf(root)
-      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.Store)
-      Supervisor.restart_child(EvoDash.Supervisor, EvoDash.TaskRegistry)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     end)
 
     {:ok, %{data_dir: root, sqlite_path: sqlite_path}}
@@ -67,7 +67,7 @@ defmodule EvoDash.TaskRegistryCase do
       result: nil
     }
 
-    EvoDash.Store.put_task(EvoDash.Store, trigger)
+    EvoGit.Store.put_task(EvoGit.Store, trigger)
     # update_task_status transitions to :completed which triggers cleanup_expired_tasks()
     TaskRegistry.update_task_status(trigger_id, :completed, nil)
     # Sync with a call to ensure all prior casts have been processed
@@ -103,11 +103,11 @@ defmodule EvoDash.TaskRegistryCase do
   # is invoked. Uses stop_supervised/1 to avoid auto-restart conflicts, then
   # starts a fresh supervised instance pointing at the same Store + data_dir.
   def restart_registry!(root) do
-    :ok = stop_supervised(EvoDash.TaskRegistry)
+    :ok = stop_supervised(EvoGit.TaskRegistry)
 
     {:ok, _} =
       start_supervised(
-        {TaskRegistry, task_store: EvoDash.Store, data_dir: root, name: EvoDash.TaskRegistry}
+        {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
       )
 
     :ok

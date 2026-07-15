@@ -1,14 +1,14 @@
-defmodule EvoDash.TaskRegistry.ResumeContext do
+defmodule EvoGit.TaskRegistry.ResumeContext do
   @moduledoc """
-  Resume context builder for `EvoDash.TaskRegistry`.
+  Resume context builder for `EvoGit.TaskRegistry`.
 
   When an evolve task resumes from a previous task, this module builds the
   context block (commits, objective, result) that gets prepended to the new
   task's objective.
   """
 
-  alias EvoDash.TaskInfo
-  alias EvoDash.TaskRegistry.RuntimeOpts
+  alias EvoGit.TaskInfo
+  alias EvoGit.TaskRegistry.RuntimeOpts
 
   @doc """
   Builds the objective and `runtime_opts` for an evolve task that resumes from
@@ -21,7 +21,7 @@ defmodule EvoDash.TaskRegistry.ResumeContext do
     # Strip :resume_from so it never leaks into the runtime opts.
     opts_without_resume = Keyword.delete(opts, :resume_from)
 
-    prev_task = EvoDash.TaskRegistry.get_task(resume_from_id)
+    prev_task = EvoGit.TaskRegistry.get_task(resume_from_id)
 
     {objective, runtime_opts} =
       if is_nil(prev_task) do

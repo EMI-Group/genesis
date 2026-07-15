@@ -1,6 +1,6 @@
-defmodule EvoDash.TaskRegistry.Diagnostics do
+defmodule EvoGit.TaskRegistry.Diagnostics do
   @moduledoc """
-  Failed-transition diagnostic logging functions for `EvoDash.TaskRegistry`.
+  Failed-transition diagnostic logging functions for `EvoGit.TaskRegistry`.
 
   When a task transitions to `:failed` from an unexpected path, it's hard to
   determine which code path triggered it. Every site that can set a task to

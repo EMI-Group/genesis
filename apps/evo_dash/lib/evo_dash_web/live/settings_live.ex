@@ -1156,47 +1156,46 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("test_llm", params, socket) do
     # The connection test button renders outside the disabled form, so it
-    # remains clickable on a remote node. Guard the handler: EvoGit.SystemCheck
-    # .llm_test/0 tests the LOCAL LLM, returning a misleading result when the
-    # user is viewing a remote node's read-only config.
-    if socket.assigns.remote_config do
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext("LLM connection test is not available for remote nodes")
-       )}
+    # remains clickable on a remote node. When viewing a remote node, route
+    # the test through the remote node's LLM instead of testing the local LLM
+    # (which would return a misleading result).
+    profile_id = params["profile_id"]
+    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+
+    profile = Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == profile_id end)
+
+    # Extract the raw model value as-is (map spec with base_url, or binary string).
+    model = if profile, do: Map.get(profile, :model) || Map.get(profile, "model")
+
+    if model do
+      # Collect profile-specific generation params to pass alongside the model spec.
+      gen_opts =
+        []
+        |> maybe_put_gen_opt(:temperature, profile)
+        |> maybe_put_gen_opt(:max_tokens, profile)
+        |> maybe_put_gen_opt(:top_p, profile)
+        |> maybe_put_gen_opt(:top_k, profile)
+        |> maybe_put_gen_opt(:frequency_penalty, profile)
+        |> maybe_put_gen_opt(:presence_penalty, profile)
+
+      parent = self()
+      remote? = socket.assigns.remote_config
+      node = socket.assigns.current_node
+
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        result =
+          if remote? do
+            EvoGit.RemoteNode.llm_test(node, model, gen_opts)
+          else
+            EvoGit.SystemCheck.llm_test(model, gen_opts)
+          end
+
+        send(parent, {:llm_test_result, result})
+      end)
+
+      {:noreply, assign(socket, :llm_test_status, :testing)}
     else
-      profile_id = params["profile_id"]
-      models = get_in(socket.assigns.file_config, [:llm, :models]) || []
-
-      profile = Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == profile_id end)
-
-      # Extract the raw model value as-is (map spec with base_url, or binary string).
-      model = if profile, do: Map.get(profile, :model) || Map.get(profile, "model")
-
-      if model do
-        # Collect profile-specific generation params to pass alongside the model spec.
-        gen_opts =
-          []
-          |> maybe_put_gen_opt(:temperature, profile)
-          |> maybe_put_gen_opt(:max_tokens, profile)
-          |> maybe_put_gen_opt(:top_p, profile)
-          |> maybe_put_gen_opt(:top_k, profile)
-          |> maybe_put_gen_opt(:frequency_penalty, profile)
-          |> maybe_put_gen_opt(:presence_penalty, profile)
-
-        parent = self()
-
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          result = EvoGit.SystemCheck.llm_test(model, gen_opts)
-          send(parent, {:llm_test_result, result})
-        end)
-
-        {:noreply, assign(socket, :llm_test_status, :testing)}
-      else
-        {:noreply, put_flash(socket, :error, gettext("Selected profile has no model configured."))}
-      end
+      {:noreply, put_flash(socket, :error, gettext("Selected profile has no model configured."))}
     end
   end
 

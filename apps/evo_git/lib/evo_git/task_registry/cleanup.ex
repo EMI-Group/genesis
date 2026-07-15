@@ -1,6 +1,6 @@
-defmodule EvoDash.TaskRegistry.Cleanup do
+defmodule EvoGit.TaskRegistry.Cleanup do
   @moduledoc """
-  Cleanup logic for `EvoDash.TaskRegistry`.
+  Cleanup logic for `EvoGit.TaskRegistry`.
 
   Handles expiry of finished tasks based on configurable age and count limits.
   """
@@ -18,8 +18,8 @@ defmodule EvoDash.TaskRegistry.Cleanup do
   @doc """
   Removes finished tasks that exceed the configured age or count limits.
 
-  Accepts a `task_store` name/pid (e.g. `EvoDash.Store`) and scans all tasks
-  via `EvoDash.Store.safe_select_all_tasks/1`. Age-expired finished tasks and
+  Accepts a `task_store` name/pid (e.g. `EvoGit.Store`) and scans all tasks
+  via `EvoGit.Store.safe_select_all_tasks/1`. Age-expired finished tasks and
   over-limit finished tasks (keeping only the newest `max_tasks`) are batched
   and deleted.
 
@@ -28,7 +28,7 @@ defmodule EvoDash.TaskRegistry.Cleanup do
   store read.
   """
   def cleanup_expired_tasks(task_store) do
-    cleanup_expired_tasks(EvoDash.Store.safe_select_all_tasks(task_store), task_store)
+    cleanup_expired_tasks(EvoGit.Store.safe_select_all_tasks(task_store), task_store)
   end
 
   @doc """
@@ -37,7 +37,7 @@ defmodule EvoDash.TaskRegistry.Cleanup do
 
   This variant avoids a redundant full-table scan at init time, where the task
   list has already been loaded (and normalized) by the caller. `tasks` should be
-  a list of `%EvoDash.TaskInfo{}` structs in their final (post-reconcile) state.
+  a list of `%EvoGit.TaskInfo{}` structs in their final (post-reconcile) state.
   """
   def cleanup_expired_tasks(tasks, task_store) do
     config = task_history_config()
@@ -64,7 +64,7 @@ defmodule EvoDash.TaskRegistry.Cleanup do
     all_keys = age_expired_keys ++ over_limit_keys
 
     if all_keys != [] do
-      EvoDash.Store.delete_tasks(task_store, all_keys)
+      EvoGit.Store.delete_tasks(task_store, all_keys)
     end
 
     :ok

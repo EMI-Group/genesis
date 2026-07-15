@@ -1,4 +1,4 @@
-defmodule EvoDash.TaskInfo do
+defmodule EvoGit.TaskInfo do
   @moduledoc """
   Struct representing a task in the registry.
   """

@@ -792,24 +792,37 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
-  describe "LLM connection test remote guard" do
-    # BUG 2 fix: The Connection Test button renders outside the disabled form, so
-    # clicking it on a remote node runs EvoGit.SystemCheck.llm_test/0 which tests
-    # the LOCAL LLM, returning a misleading result. The test_llm handler must
-    # guard on socket.assigns.remote_config and reject when remote.
+  describe "LLM connection test" do
+    # The Connection Test button renders outside the disabled form, so it
+    # remains clickable on a remote node. The test_llm handler extracts the
+    # model/gen_opts from the selected profile in the common path, then routes
+    # through EvoGit.RemoteNode.llm_test/3 when remote_config is true (testing
+    # the REMOTE node's LLM) or EvoGit.SystemCheck.llm_test/2 when false
+    # (testing the LOCAL LLM). Both branches set status to :testing.
 
-    test "test_llm handler rejects when remote_config is true (no async test spawned)" do
+    test "test_llm handler routes through remote node when remote_config is true" do
       alias EvoDashWeb.SettingsLive
 
+      file_config =
+        EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
+        |> put_in([:llm, :models], [%{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}])
+
       socket = %Phoenix.LiveView.Socket{
-        assigns: %{__changed__: nil, flash: %{}, remote_config: true, llm_test_status: :idle}
+        assigns: %{
+          __changed__: nil,
+          flash: %{},
+          remote_config: true,
+          llm_test_status: :idle,
+          file_config: file_config,
+          current_node: node()
+        }
       }
 
       assert {:noreply, result_socket} =
-               SettingsLive.handle_event("test_llm", %{}, socket)
+               SettingsLive.handle_event("test_llm", %{"profile_id" => "test_profile"}, socket)
 
-      # Status should remain :idle (no test was started)
-      assert result_socket.assigns.llm_test_status == :idle
+      # Status should move to :testing (the async task was spawned).
+      assert result_socket.assigns.llm_test_status == :testing
     end
 
     test "test_llm handler proceeds when remote_config is false" do
@@ -828,7 +841,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
           flash: %{},
           remote_config: false,
           llm_test_status: :idle,
-          file_config: file_config
+          file_config: file_config,
+          current_node: node()
         }
       }
 
@@ -836,6 +850,32 @@ defmodule EvoDashWeb.SettingsLiveTest do
                SettingsLive.handle_event("test_llm", %{"profile_id" => "test_profile"}, socket)
 
       assert result_socket.assigns.llm_test_status == :testing
+    end
+
+    test "test_llm handler flashes error when selected profile has no model" do
+      alias EvoDashWeb.SettingsLive
+
+      file_config =
+        EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
+        |> put_in([:llm, :models], [%{id: "empty_profile", model: nil}])
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: nil,
+          flash: %{},
+          remote_config: false,
+          llm_test_status: :idle,
+          file_config: file_config,
+          current_node: node()
+        }
+      }
+
+      assert {:noreply, result_socket} =
+               SettingsLive.handle_event("test_llm", %{"profile_id" => "empty_profile"}, socket)
+
+      # Status should remain :idle (no test was started) — the no-model branch
+      # is taken instead of the success branch that sets :testing.
+      assert result_socket.assigns.llm_test_status == :idle
     end
   end
 end

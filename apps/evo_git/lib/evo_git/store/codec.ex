@@ -1,4 +1,4 @@
-defmodule EvoDash.Store.Codec do
+defmodule EvoGit.Store.Codec do
   @moduledoc """
   Pure serialization functions for the EvoDash SQLite store.
 
@@ -25,8 +25,8 @@ defmodule EvoDash.Store.Codec do
 
   require Logger
 
-  alias EvoDash.TaskInfo
-  alias EvoDash.RecentProject
+  alias EvoGit.TaskInfo
+  alias EvoGit.RecentProject
 
   @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id)
   @project_columns ~w(path name last_opened_at)

@@ -1,6 +1,6 @@
-defmodule EvoDash.TaskRegistry.Lease do
+defmodule EvoGit.TaskRegistry.Lease do
   @moduledoc """
-  SchedMeta ETS and lease helper functions for `EvoDash.TaskRegistry`.
+  SchedMeta ETS and lease helper functions for `EvoGit.TaskRegistry`.
 
   These are pure or ETS-only functions with no GenServer state dependency.
   """

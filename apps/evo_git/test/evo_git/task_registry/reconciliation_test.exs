@@ -1,5 +1,5 @@
-defmodule EvoDash.TaskRegistry.ReconciliationTest do
-  use EvoDash.TaskRegistryCase, async: false
+defmodule EvoGit.TaskRegistry.ReconciliationTest do
+  use EvoGit.TaskRegistryCase, async: false
 
   describe "restart reconciliation (normalize_tasks liveness check)" do
     # These tests verify that when the TaskRegistry GenServer restarts, running
@@ -17,8 +17,8 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
       # that outlives the registry restart). It registers itself in the Registry
       # so that reconcile_task_status finds it via Registry.lookup.
       {:ok, agent_pid} =
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          Registry.register(EvoDash.TaskRegistry.ProcessRegistry, task_id, :task)
+        Task.Supervisor.start_child(EvoGit.TaskSupervisor, fn ->
+          Registry.register(EvoGit.TaskRegistry.ProcessRegistry, task_id, :task)
           Process.sleep(:infinity)
         end)
 
@@ -34,17 +34,17 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Confirm the process is alive before restart.
       assert Process.alive?(agent_pid)
 
       # Restart the registry so normalize_tasks re-runs.
-      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoGit.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       # The task should STILL be running (not failed) and re-monitored.
@@ -75,13 +75,13 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
         lease_expires_at: System.system_time(:second) - 300
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
-      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoGit.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -108,13 +108,13 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
         lease_expires_at: System.system_time(:second) - 300
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
-      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoGit.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -142,7 +142,7 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
         lease_expires_at: System.system_time(:second) - 300
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
       # Set up the :evogit_sched_meta ETS table with a fake active agent for
       # this task_id. This simulates AgentScheduler still running the task
@@ -165,11 +165,11 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
       :ets.insert(:evogit_sched_meta, {sched_meta_entry.id, sched_meta_entry})
 
       try do
-        stop_supervised(EvoDash.TaskRegistry)
+        stop_supervised(EvoGit.TaskRegistry)
 
         start_supervised(
           {TaskRegistry,
-           task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+           task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
         )
 
         # The task should STILL be :running — the ETS check found active agents.
@@ -195,8 +195,8 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
       # It registers itself in the Registry so that reconcile_task_status finds
       # it via Registry.lookup and re-monitors it.
       {:ok, _agent_pid} =
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          Registry.register(EvoDash.TaskRegistry.ProcessRegistry, task_id, :task)
+        Task.Supervisor.start_child(EvoGit.TaskSupervisor, fn ->
+          Registry.register(EvoGit.TaskRegistry.ProcessRegistry, task_id, :task)
           Process.sleep(50)
           :ok
         end)
@@ -213,13 +213,13 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
-      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoGit.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       # Wait for the process to exit and the DOWN handler to fire.
@@ -242,8 +242,8 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
       # It registers itself in the Registry so that reconcile_task_status finds
       # it via Registry.lookup and re-monitors it.
       {:ok, _agent_pid} =
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          Registry.register(EvoDash.TaskRegistry.ProcessRegistry, task_id, :task)
+        Task.Supervisor.start_child(EvoGit.TaskSupervisor, fn ->
+          Registry.register(EvoGit.TaskRegistry.ProcessRegistry, task_id, :task)
           Process.sleep(50)
           exit(:boom)
         end)
@@ -260,13 +260,13 @@ defmodule EvoDash.TaskRegistry.ReconciliationTest do
         result: nil
       }
 
-      EvoDash.Store.put_task(EvoDash.Store, task)
+      EvoGit.Store.put_task(EvoGit.Store, task)
 
-      stop_supervised(EvoDash.TaskRegistry)
+      stop_supervised(EvoGit.TaskRegistry)
 
       start_supervised(
         {TaskRegistry,
-         task_store: EvoDash.Store, data_dir: data_dir, name: EvoDash.TaskRegistry}
+         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       TaskRegistry.list_tasks()

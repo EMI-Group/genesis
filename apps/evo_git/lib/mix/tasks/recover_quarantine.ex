@@ -25,11 +25,11 @@ defmodule Mix.Tasks.RecoverQuarantine do
   @impl Mix.Task
   def run(_argv) do
     Mix.shell().info("Starting EvoDash application...")
-    {:ok, _apps} = Application.ensure_all_started(:evo_dash)
+    {:ok, _apps} = Application.ensure_all_started(:evo_git)
 
     Mix.shell().info("Running quarantine recovery...")
 
-    case EvoDash.Store.recover_quarantine() do
+    case EvoGit.Store.recover_quarantine() do
       {:ok, 0} ->
         Mix.shell().info("No quarantined rows found — nothing to recover.")
 

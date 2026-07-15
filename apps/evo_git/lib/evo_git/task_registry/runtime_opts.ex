@@ -1,6 +1,6 @@
-defmodule EvoDash.TaskRegistry.RuntimeOpts do
+defmodule EvoGit.TaskRegistry.RuntimeOpts do
   @moduledoc """
-  Runtime options builder for `EvoDash.TaskRegistry`.
+  Runtime options builder for `EvoGit.TaskRegistry`.
 
   Builds the `runtime_opts` keyword list passed to `EvoGit.Runtime.*` modules
   when executing genesis, evolve, or skill extraction tasks.
