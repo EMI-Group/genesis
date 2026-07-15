@@ -62,8 +62,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # Convert path-resolution errors to invalid result format for LLM feedback
     path_error_results =
       Enum.map(path_errors, fn {:error, {call, index, error_msg}} ->
-        tool_call_id = Map.get(call, :id) || call.name || "unknown"
-        {index, tool_call_id, call.name, "Error: #{error_msg}"}
+        name = ReqLLM.ToolCall.name(call)
+        tool_call_id = call.id || name || "unknown"
+        {index, tool_call_id, name, "Error: #{error_msg}"}
       end)
 
     # The parent agent commits its pending changes before spawning subagents.
@@ -78,8 +79,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
     if match?({:error, _}, results) do
       error_results =
         Enum.map(valid_calls, fn {call, index} ->
-          tool_call_id = Map.get(call, :id) || call.name || "unknown"
-          {index, tool_call_id, call.name, format_subagent_result(results)}
+          name = ReqLLM.ToolCall.name(call)
+          tool_call_id = call.id || name || "unknown"
+          {index, tool_call_id, name, format_subagent_result(results)}
         end)
 
       all_results = error_results ++ path_error_results ++ Enum.reverse(invalid_results)
@@ -187,10 +189,12 @@ defmodule EvoGit.Agent.SubagentProcessing do
     foreign_repos = state.foreign_repos
 
     Enum.map(indexed_calls, fn {call, index} ->
-      mod = subagent_module_for(call.name, state)
-      raw_path = Map.get(call.arguments, "path")
-      objective = Map.get(call.arguments, "objective")
-      commit_id = Map.get(call.arguments, "commit_id")
+      name = ReqLLM.ToolCall.name(call)
+      args = ReqLLM.ToolCall.args_map(call)
+      mod = subagent_module_for(name, state)
+      raw_path = Map.get(args, "path")
+      objective = Map.get(args, "objective")
+      commit_id = Map.get(args, "commit_id")
 
       # Determine if this is a cross-repo delegation (absolute path) or same-repo (relative)
       case resolve_subagent_path(raw_path, repo_path, foreign_repos) do
@@ -332,9 +336,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
         ) :: {non_neg_integer(), String.t(), String.t(), String.t()}
   def process_subagent_result(call, index, result, _state) do
     output = format_subagent_result(result)
+    name = ReqLLM.ToolCall.name(call)
 
-    tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
-    {index, tool_call_id, call.name, output}
+    tool_call_id = call.id || name || "unknown"
+    {index, tool_call_id, name, output}
   end
 
   @doc """
@@ -415,15 +420,17 @@ defmodule EvoGit.Agent.SubagentProcessing do
   defp split_valid_subagent_calls(indexed_calls) when is_list(indexed_calls) do
     Enum.reduce(indexed_calls, {[], []}, fn {call, index} = indexed_call,
                                             {valid_acc, invalid_acc} ->
-      raw_path = Map.get(call.arguments, "path")
+      name = ReqLLM.ToolCall.name(call)
+      args = ReqLLM.ToolCall.args_map(call)
+      raw_path = Map.get(args, "path")
 
       if is_nil(raw_path) or raw_path == "" do
-        tool_call_id = Map.get(call, :id) || call.name || "unknown"
+        tool_call_id = call.id || name || "unknown"
 
         error_msg =
-          "Error: Missing required 'path' argument for subagent tool '#{call.name}'. Please specify a relative or absolute path for the subagent to operate in."
+          "Error: Missing required 'path' argument for subagent tool '#{name}'. Please specify a relative or absolute path for the subagent to operate in."
 
-        {valid_acc, [{index, tool_call_id, call.name, error_msg} | invalid_acc]}
+        {valid_acc, [{index, tool_call_id, name, error_msg} | invalid_acc]}
       else
         {[indexed_call | valid_acc], invalid_acc}
       end

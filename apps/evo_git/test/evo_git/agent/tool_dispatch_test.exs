@@ -156,28 +156,20 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   describe "dedupe_tool_calls/2" do
     test "removes calls with duplicate ids, keeping the first" do
       calls = [
-        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./a.ex"}},
-        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./b.ex"}}
+        ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"})),
+        ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./b.ex"}))
       ]
 
       [only] = ToolDispatch.dedupe_tool_calls(calls, "agent")
 
       assert only.id == "call_1"
-      assert only.arguments == %{"file_path" => "./a.ex"}
+      assert ReqLLM.ToolCall.args_map(only) == %{"file_path" => "./a.ex"}
     end
 
     test "removes calls with identical content but different ids, keeping the first" do
       calls = [
-        %{
-          id: "call_1",
-          name: "subagent_manager",
-          arguments: %{"path" => "./src", "objective" => "foo"}
-        },
-        %{
-          id: "call_2",
-          name: "subagent_manager",
-          arguments: %{"path" => "./src", "objective" => "foo"}
-        }
+        ReqLLM.ToolCall.new("call_1", "subagent_manager", ~s({"path":"./src","objective":"foo"})),
+        ReqLLM.ToolCall.new("call_2", "subagent_manager", ~s({"path":"./src","objective":"foo"}))
       ]
 
       [only] = ToolDispatch.dedupe_tool_calls(calls, "agent")
@@ -187,8 +179,8 @@ defmodule EvoGit.Agent.ToolDispatchTest do
 
     test "keeps all calls when there are no duplicates" do
       calls = [
-        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./a.ex"}},
-        %{id: "call_2", name: "run_bash", arguments: %{"command" => "echo hi"}}
+        ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"})),
+        ReqLLM.ToolCall.new("call_2", "run_bash", ~s({"command":"echo hi"}))
       ]
 
       result = ToolDispatch.dedupe_tool_calls(calls, "agent")
@@ -199,8 +191,8 @@ defmodule EvoGit.Agent.ToolDispatchTest do
 
     test "logs a warning when duplicates are removed" do
       calls = [
-        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./a.ex"}},
-        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./b.ex"}}
+        ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"})),
+        ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./b.ex"}))
       ]
 
       log =
@@ -215,8 +207,8 @@ defmodule EvoGit.Agent.ToolDispatchTest do
 
     test "does not log a warning when there are no duplicates" do
       calls = [
-        %{id: "call_1", name: "read_file", arguments: %{"file_path" => "./a.ex"}},
-        %{id: "call_2", name: "run_bash", arguments: %{"command" => "echo hi"}}
+        ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"})),
+        ReqLLM.ToolCall.new("call_2", "run_bash", ~s({"command":"echo hi"}))
       ]
 
       log =
@@ -303,10 +295,10 @@ defmodule EvoGit.Agent.ToolDispatchTest do
     test "dedupes both context and message tool_calls" do
       response = response_with_duplicate_tool_calls()
 
-      # Replicate how process_llm_response builds the tool_calls argument
-      tool_calls =
-        ReqLLM.Response.tool_calls(response)
-        |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+      # Replicate how process_llm_response builds the tool_calls argument:
+      # it now keeps the %ReqLLM.ToolCall{} structs from message.tool_calls
+      # directly (no from_map/1 conversion).
+      tool_calls = ReqLLM.Response.tool_calls(response)
 
       {deduped, updated_response} = ToolDispatch.dedupe_and_sync(tool_calls, response, "agent")
 
@@ -321,9 +313,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
     test "returns response unchanged when there are no duplicates" do
       response = response_with_distinct_tool_calls()
 
-      tool_calls =
-        ReqLLM.Response.tool_calls(response)
-        |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+      tool_calls = ReqLLM.Response.tool_calls(response)
 
       {_deduped, updated_response} = ToolDispatch.dedupe_and_sync(tool_calls, response, "agent")
 
@@ -344,7 +334,6 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       # would when the context carries the tool calls).
       tool_calls =
         ReqLLM.Response.tool_calls(%{response | message: hd(response.context.messages)})
-        |> Enum.map(&ReqLLM.ToolCall.from_map/1)
 
       {deduped, updated_response} = ToolDispatch.dedupe_and_sync(tool_calls, response, "agent")
 
@@ -358,9 +347,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
     test "logs a warning when duplicates are removed via dedupe_and_sync" do
       response = response_with_duplicate_tool_calls()
 
-      tool_calls =
-        ReqLLM.Response.tool_calls(response)
-        |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+      tool_calls = ReqLLM.Response.tool_calls(response)
 
       log =
         capture_log(fn ->
@@ -370,6 +357,36 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       assert log =~ "Removed 1 duplicate tool call"
       assert log =~ "Agent my-agent"
       assert log =~ "read_file"
+    end
+
+    test "keeps tool calls as %ReqLLM.ToolCall{} structs after dedup (regression: OpenAI Responses API round-trip)" do
+      # Regression test for the bug where tool calls in the assistant message
+      # were down-cast to plain maps via ReqLLM.ToolCall.from_map/1, causing a
+      # "no function clause matching in ReqLLM.ToolCall.name/1" crash when the
+      # next turn built a request for the OpenAI Responses API (whose encoder
+      # calls ReqLLM.ToolCall.name/1 and args_json/1, both struct-only).
+      response = response_with_duplicate_tool_calls()
+
+      tool_calls = ReqLLM.Response.tool_calls(response)
+
+      {deduped, updated_response} = ToolDispatch.dedupe_and_sync(tool_calls, response, "agent")
+
+      # The deduped list must be %ReqLLM.ToolCall{} structs.
+      assert Enum.all?(deduped, &is_struct(&1, ReqLLM.ToolCall))
+
+      # The assistant message's tool_calls must also be structs — these are
+      # what the next turn's request encoder reads.
+      assert Enum.all?(updated_response.message.tool_calls, &is_struct(&1, ReqLLM.ToolCall))
+
+      last_msg = List.last(updated_response.context.messages)
+      assert Enum.all?(last_msg.tool_calls, &is_struct(&1, ReqLLM.ToolCall))
+
+      # The struct accessors must work (this is what the Responses API encoder
+      # calls; a plain map would raise FunctionClauseError here).
+      [only] = deduped
+      assert ReqLLM.ToolCall.name(only) == "read_file"
+      assert ReqLLM.ToolCall.args_json(only) == ~s({"file_path":"./a.ex"})
+      assert ReqLLM.ToolCall.args_map(only) == %{"file_path" => "./a.ex"}
     end
   end
 end
