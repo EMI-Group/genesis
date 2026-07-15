@@ -242,7 +242,7 @@ defmodule EvoGit.Runtime.Evolution.LLMSynthesis do
     context = C.new([C.user(prompt)])
 
     with {:ok, stream_response} <-
-           ReqLLM.stream_text(model, context, provider_options: EvoGit.Config.Schema.LLM.default_provider_options()),
+           ReqLLM.stream_text(model, context, provider_options: EvoGit.Config.Schema.LLM.provider_options_for_model(model)),
          {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
          text <- ReqLLM.Response.text(response) do
       {:ok, text}

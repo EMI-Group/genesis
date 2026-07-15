@@ -642,7 +642,7 @@ defmodule EvoGit.Runtime.Evolution.Engine do
     alias ReqLLM.Context, as: C
 
     context = C.new([C.user(prompt)])
-    opts = Keyword.put(opts, :provider_options, EvoGit.Config.Schema.LLM.default_provider_options())
+    opts = Keyword.put(opts, :provider_options, EvoGit.Config.Schema.LLM.provider_options_for_model(model))
 
     with {:ok, stream_response} <- ReqLLM.stream_text(model, context, opts),
          {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),

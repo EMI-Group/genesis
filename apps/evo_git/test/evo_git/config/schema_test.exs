@@ -628,6 +628,28 @@ defmodule EvoGit.Config.SchemaTest do
       config = put_in(Schema.defaults(), [:llm, :models], ["not-a-map"])
       assert {:error, _} = Schema.validate(config)
     end
+
+    test "accepts a profile with a valid provider_options map" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{id: "default", model: "openai:gpt-5", provider_options: %{store: false}}
+      ])
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "rejects a profile with a non-map provider_options" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{id: "default", model: "openai:gpt-5", provider_options: "not-a-map"}
+      ])
+      assert {:error, errors} = Schema.validate(config)
+      assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :provider_options]))
+    end
+
+    test "accepts a profile with no provider_options (optional)" do
+      config = put_in(Schema.defaults(), [:llm, :models], [
+        %{id: "default", model: "anthropic:claude"}
+      ])
+      assert {:ok, _} = Schema.validate(config)
+    end
   end
 
   describe "model_profiles/1" do
@@ -704,12 +726,37 @@ defmodule EvoGit.Config.SchemaTest do
       assert Keyword.get(params, :reasoning_effort) == :high
     end
 
-    test "returns only provider_options for profile with no gen params" do
-      profile = %{id: "default", model: "x:y"}
+    test "returns only provider_options for OpenAI profile with no gen params" do
+      profile = %{id: "default", model: "openai:x:y"}
       params = Schema.llm_generation_params(profile)
-      # provider_options (store: false) is always injected to disable OpenAI
+      # provider_options (store: false) is injected only for OpenAI to disable
       # Responses API server-side storage / previous_response_id chaining.
       assert params == [provider_options: [store: false]]
+    end
+
+    test "omits provider_options for non-OpenAI profile with no gen params" do
+      profile = %{id: "default", model: "anthropic:claude-sonnet-4"}
+      params = Schema.llm_generation_params(profile)
+      # Non-OpenAI providers must NOT get store: false.
+      assert params == []
+    end
+
+    test "uses explicit provider_options override from profile config" do
+      profile = %{id: "default", model: "openai:x", provider_options: %{store: true}}
+      params = Schema.llm_generation_params(profile)
+      assert Keyword.get(params, :provider_options) == [store: true]
+    end
+
+    test "uses explicit provider_options override for non-OpenAI" do
+      profile = %{id: "default", model: "anthropic:claude", provider_options: %{foo: "bar"}}
+      params = Schema.llm_generation_params(profile)
+      assert Keyword.get(params, :provider_options) == [foo: "bar"]
+    end
+
+    test "empty provider_options map yields no provider_options key" do
+      profile = %{id: "default", model: "openai:x", provider_options: %{}}
+      params = Schema.llm_generation_params(profile)
+      refute Keyword.has_key?(params, :provider_options)
     end
 
     test "delegates to default profile when given a config map" do
@@ -729,10 +776,84 @@ defmodule EvoGit.Config.SchemaTest do
       assert Schema.LLM.default_provider_options() == [store: false]
     end
 
-    test "is included in profile_generation_params output" do
-      profile = %{id: "default", temperature: 0.7}
+    test "is included in profile_generation_params output for OpenAI models" do
+      profile = %{id: "default", temperature: 0.7, model: "openai:gpt-5"}
       params = Schema.LLM.profile_generation_params(profile)
       assert Keyword.get(params, :provider_options) == [store: false]
+    end
+
+    test "is NOT included in profile_generation_params output for non-OpenAI models" do
+      profile = %{id: "default", temperature: 0.7, model: "anthropic:claude"}
+      params = Schema.LLM.profile_generation_params(profile)
+      refute Keyword.has_key?(params, :provider_options)
+    end
+  end
+
+  describe "provider_from_model/1" do
+    test "extracts provider from string spec" do
+      assert Schema.LLM.provider_from_model("openai:gpt-5") == :openai
+    end
+
+    test "extracts provider from string spec with colon in id" do
+      assert Schema.LLM.provider_from_model("anthropic:claude-sonnet-4") == :anthropic
+    end
+
+    test "returns nil for string spec without colon" do
+      assert Schema.LLM.provider_from_model("gpt-5") == nil
+    end
+
+    test "extracts provider from map spec with atom provider" do
+      assert Schema.LLM.provider_from_model(%{provider: :openai, id: "gpt-5"}) == :openai
+    end
+
+    test "extracts provider from map spec with string provider" do
+      assert Schema.LLM.provider_from_model(%{provider: "openai", id: "gpt-5"}) == :openai
+    end
+
+    test "returns nil for map spec without provider" do
+      assert Schema.LLM.provider_from_model(%{id: "gpt-5"}) == nil
+    end
+
+    test "extracts provider from tuple spec" do
+      assert Schema.LLM.provider_from_model({:openai, [id: "gpt-5"]}) == :openai
+    end
+
+    test "returns nil for nil input" do
+      assert Schema.LLM.provider_from_model(nil) == nil
+    end
+
+    test "returns nil for unrecognized format" do
+      assert Schema.LLM.provider_from_model(42) == nil
+    end
+  end
+
+  describe "provider_options_for_model/1" do
+    test "returns store: false for OpenAI string model" do
+      assert Schema.LLM.provider_options_for_model("openai:gpt-5") == [store: false]
+    end
+
+    test "returns store: false for OpenAI map model" do
+      assert Schema.LLM.provider_options_for_model(%{provider: :openai, id: "gpt-5"}) == [store: false]
+    end
+
+    test "returns store: false for OpenAI tuple model" do
+      assert Schema.LLM.provider_options_for_model({:openai, [id: "gpt-5"]}) == [store: false]
+    end
+
+    test "returns [] for non-OpenAI string model" do
+      assert Schema.LLM.provider_options_for_model("anthropic:claude") == []
+    end
+
+    test "returns [] for non-OpenAI map model" do
+      assert Schema.LLM.provider_options_for_model(%{provider: :anthropic, id: "claude"}) == []
+    end
+
+    test "returns [] for indeterminate provider (no colon string)" do
+      assert Schema.LLM.provider_options_for_model("gpt-5") == []
+    end
+
+    test "returns [] for nil" do
+      assert Schema.LLM.provider_options_for_model(nil) == []
     end
   end
 end

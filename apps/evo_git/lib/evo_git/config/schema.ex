@@ -360,7 +360,19 @@ defmodule EvoGit.Config.Schema do
           type_errors(path ++ [:model], :model_spec, model)
       end
 
-    errors ++ model_errors
+    provider_options_errors =
+      case Map.get(profile, :provider_options) do
+        nil ->
+          []
+
+        po when not is_map(po) ->
+          [error(path ++ [:provider_options], "provider_options must be a map, got #{inspect(po)}", po, :map)]
+
+        _po ->
+          []
+      end
+
+    errors ++ model_errors ++ provider_options_errors
   end
 
   defp validate_model_profile(path, profile) do

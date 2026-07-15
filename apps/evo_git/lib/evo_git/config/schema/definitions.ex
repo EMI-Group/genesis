@@ -236,7 +236,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         category: :llm,
         sub_category: nil,
         description:
-          "Array of model profiles, each defining an LLM model and its generation parameters. Each profile is a TOML table: id (required string), model (required, same format as [llm].model), concurrency (default 3), and optional generation params (temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty). When absent, the flat [llm] fields are migrated into a single 'default' profile during resolution."
+          "Array of model profiles, each defining an LLM model and its generation parameters. Each profile is a TOML table: id (required string), model (required, same format as [llm].model), concurrency (default 3), optional generation params (temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty), and an optional provider_options map for provider-specific options (e.g. {store: false} for OpenAI). When absent, the flat [llm] fields are migrated into a single 'default' profile during resolution."
       },
       # ── User ───────────────────────────────────────────────────────────
       %{

@@ -96,14 +96,67 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   @doc """
-  Default provider options for all ReqLLM.stream_text calls.
-  Disables OpenAI Responses API server-side storage (`store: false`), which in turn
+  Default provider options for OpenAI models.
+
+  Disables the OpenAI Responses API server-side storage (`store: false`), which in turn
   prevents the automatic injection of `previous_response_id` — a field only supported
   on WebSocket v2, not the default HTTP/SSE streaming transport. EvoGit manages its own
   full conversation history, so server-side response chaining/storage is never needed.
+
+  This is **OpenAI-specific** — the `store` option only exists for OpenAI's Responses API.
+  Applying it globally to all providers would break non-OpenAI providers. Use
+  `provider_options_for_model/1` at call sites instead, which returns this default only
+  when the model's provider is `:openai`.
   """
   @spec default_provider_options() :: keyword()
   def default_provider_options, do: [store: false]
+
+  @doc """
+  Extracts the provider atom from a model spec.
+
+  Supports the three model spec formats used throughout EvoGit:
+
+  - **String** like `"openai:gpt-5"` — splits on the first `":"` and atomizes the
+    provider part via `String.to_atom/1`.
+  - **Map** like `%{provider: :openai, id: "gpt-5"}` — returns `Map.get(model, :provider)`,
+    normalizing string values to atoms.
+  - **Tuple** `{:openai, opts}` — returns the first element (the provider atom).
+
+  Returns `nil` for string specs without a colon, or any unrecognized format.
+  """
+  @spec provider_from_model(String.t() | map() | tuple() | nil) :: atom() | nil
+  def provider_from_model(nil), do: nil
+
+  def provider_from_model(model) when is_binary(model) do
+    case String.split(model, ":", parts: 2) do
+      [provider, _id] when provider != "" -> String.to_atom(provider)
+      _ -> nil
+    end
+  end
+
+  def provider_from_model({provider, _opts}) when is_atom(provider), do: provider
+
+  def provider_from_model(model) when is_map(model) do
+    case Map.get(model, :provider) do
+      provider when is_atom(provider) and not is_nil(provider) -> provider
+      provider when is_binary(provider) -> String.to_atom(provider)
+      _ -> nil
+    end
+  end
+
+  def provider_from_model(_other), do: nil
+
+  @doc """
+  Returns the appropriate `provider_options` keyword list for a given model spec.
+
+  Returns `[store: false]` (via `default_provider_options/0`) when the model's
+  provider is `:openai`, otherwise `[]`. This prevents applying OpenAI-specific
+  options (like `store`) to non-OpenAI providers.
+  """
+  @spec provider_options_for_model(String.t() | map() | tuple() | nil) :: keyword()
+  def provider_options_for_model(model) do
+    if provider_from_model(model) == :openai, do: default_provider_options(), else: []
+  end
 
   @doc """
   Extracts generation params from a single profile map.
@@ -118,7 +171,35 @@ defmodule EvoGit.Config.Schema.LLM do
     |> maybe_param(:top_k, Map.get(profile, :top_k))
     |> maybe_param(:frequency_penalty, Map.get(profile, :frequency_penalty))
     |> maybe_param(:presence_penalty, Map.get(profile, :presence_penalty))
-    |> Keyword.put(:provider_options, default_provider_options())
+    |> maybe_provider_options(profile)
+  end
+
+  # Resolves provider_options for a profile, preferring an explicit user override
+  # over the provider-aware default.
+  #
+  # - Explicit `provider_options` map in config → converted to a keyword list (user override).
+  # - Explicit `provider_options` keyword list in config → used as-is.
+  # - Otherwise → `provider_options_for_model/1` (store: false only for OpenAI).
+  # When the resolved list is empty, the `:provider_options` key is omitted entirely
+  # (non-OpenAI profiles without an override must NOT get store: false).
+  defp maybe_provider_options(keyword_list, profile) do
+    case resolve_provider_options(profile) do
+      [] -> keyword_list
+      opts -> keyword_list ++ [{:provider_options, opts}]
+    end
+  end
+
+  defp resolve_provider_options(profile) do
+    case Map.get(profile, :provider_options) do
+      nil ->
+        provider_options_for_model(Map.get(profile, :model))
+
+      override when is_map(override) ->
+        Map.to_list(override)
+
+      override when is_list(override) ->
+        override
+    end
   end
 
   @doc """
