@@ -240,7 +240,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         </div>
 
         <!-- Inline execute button -->
-        <div class="flex items-center justify-between gap-4">
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
           <label class="label cursor-pointer flex items-center gap-3 justify-start">
             <input
               type="checkbox"
