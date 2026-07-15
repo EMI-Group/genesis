@@ -540,7 +540,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "accepts a valid tuple with id + base_url override" do
       config =
         put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: "gpt-5.6", base_url: "https://sub.yeluo.cloud/v1"]})
+          {:openai, [id: "gpt-5.6-sol", base_url: "https://sub.yeluo.cloud/v1"]})
 
       assert {:ok, _} = Schema.validate(config)
     end
@@ -548,7 +548,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "accepts a valid tuple with id + extra map" do
       config =
         put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: "gpt-5.6", extra: %{family: "glm"}]})
+          {:openai, [id: "gpt-5.6-sol", extra: %{family: "glm"}]})
 
       assert {:ok, _} = Schema.validate(config)
     end
@@ -556,7 +556,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "accepts a valid tuple with just id" do
       config =
         put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: "gpt-5.6"]})
+          {:openai, [id: "gpt-5.6-sol"]})
 
       assert {:ok, _} = Schema.validate(config)
     end
@@ -588,7 +588,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "rejects a tuple with non-map extra" do
       config =
         put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: "gpt-5.6", extra: "not-a-map"]})
+          {:openai, [id: "gpt-5.6-sol", extra: "not-a-map"]})
 
       assert {:error, _} = Schema.validate(config)
     end

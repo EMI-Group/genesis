@@ -222,7 +222,7 @@ defmodule EvoGit.Config.Schema do
     end
   end
 
-  # Accept tuple model specs (e.g. {:openai, [id: "gpt-5.6", base_url: "..."]}).
+  # Accept tuple model specs (e.g. {:openai, [id: "gpt-5.6-sol", base_url: "..."]}).
   # These are produced by normalize_model_map/1 when a model has override keys.
   # Must be a 2-element tuple: {provider_atom, keyword_list}. The keyword list
   # must have at least :id with a non-empty string. :extra is optional but,
