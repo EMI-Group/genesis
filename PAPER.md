@@ -6,7 +6,7 @@
 
 The rise of **"vibe coding"** — free-flowing, AI-assisted development powered by Large Language Models (LLMs) — has democratized software creation but inherits fundamental structural limitations: a hard scalability ceiling imposed by monolithic context windows, architectural blindness from flat-file perception, unconstrained editing scope, fragile session state, and single-path linear execution. As codebases grow beyond what a single conversation can hold, these limitations cause vibe coding to degrade from a productivity multiplier into an unreliable crutch.
 
-EvoX Genesis is a decentralized, evolutionary software development framework designed to transcend these limitations. The system introduces a **Dual-Dimension Architecture** that intersects a *Spatial Dimension* — a hierarchical Context Tree providing semantic structural awareness — with a *Temporal Dimension* — a phylogenetic Directed Acyclic Graph (DAG) of immutable Git commits tracking evolutionary history. Within this framework, **transient agents** serve as pure transformation functions over `{commit, node_path} × objective → new_commit`, recursively decomposing tasks along the Context Tree to achieve unbounded scalability without context window exhaustion. The system supports two execution phases — *Genesis* (bootstrapping) and *Evolution* (iterative modification) — with Evolution further divided into *Simple* (top-down planning) and *Complex* (bottom-up novelty search with quality diversity) modes. This report presents the Genesis system's design philosophy, architectural principles, agent taxonomy, runtime mechanics, and situates it within the broader landscape of evolutionary computation and autonomous coding agents.
+EvoX Genesis is a decentralized, evolutionary software development framework designed to transcend these limitations. The system introduces a **Dual-Dimension Architecture** that intersects a *Spatial Dimension* — a hierarchical Context Tree providing semantic structural awareness — with a *Temporal Dimension* — a phylogenetic Directed Acyclic Graph (DAG) of immutable Git commits tracking evolutionary history. Within this framework, **transient agents** serve as pure transformation functions over `{commit, node_path} × objective → new_commit`, recursively decomposing tasks along the Context Tree to achieve unbounded scalability without context window exhaustion. The system supports two execution phases — *Genesis* (bootstrapping) and *Evolution* (iterative modification). This report presents the Genesis system's design philosophy, architectural principles, agent taxonomy, runtime mechanics, and situates it within the broader landscape of evolutionary computation and autonomous coding agents.
 
 ## 1. Introduction
 
@@ -228,25 +228,6 @@ The decomposition follows the Context Tree: agents only edit files within their 
 
 Fixed Point Convergence applies: if the objective is not met after subagent completion, the parent spawns new subagents to continue iterating until completion or session limits are reached.
 
-**Mode B — Open-Ended Evolution (Bottom-Up):**
-Used for open-ended tasks requiring exploration and creative problem-solving (e.g., "optimize this algorithm for latency"). This mode runs a full evolutionary loop inspired by novelty search and quality diversity:
-
-1. **Entropy Pool Initialization:** The system populates a diverse pool of code fragments drawn from unrelated paradigms (physics engines, game loops, data pipelines, graph algorithms, etc.). These fragments are selected not for fitness but for diversity.
-
-2. **Novelty Search:** Fragments are evaluated based on how *differently* they behave compared to the rest of the pool. Novelty is measured via:
-   - **Structural features** — Abstract Syntax Tree (AST) analysis capturing code structure
-   - **Behavioral profiles** — LLM classification of functional behavior
-
-3. **LLM-Powered Variation:** The LLM acts as the variation operator:
-   - **Crossover** — semantically fuses two distinct fragments, extracting core logic from one domain and applying its structure to another (exaptation)
-   - **Mutation** — modifies a fragment's logic while preserving its behavioral profile
-
-4. **Quality Diversity (MAP-Elites):** A grid archive preserves diverse approaches. Each cell maps a behavior descriptor (complexity × paradigm) to its most novel fragment, ensuring that unconventional but unique solutions are preserved as valuable genetic material.
-
-5. **Solution Synthesis:** After the evolution converges (or reaches maximum generations), the system collects the most novel and diverse fragments and asks the LLM to synthesize a coherent solution. This solution is applied to the codebase via a Manager agent.
-
-This bottom-up mode embodies **Algorithmic Serendipity** — the system is designed to discover unexpected solutions by leveraging the LLM's semantic understanding to bridge disjoint domains.
-
 ---
 
 ## 5. The Agent Scheduler and Git Isolation
@@ -285,8 +266,8 @@ While Genesis draws inspiration from evolutionary computation, it differs fundam
 |-----------|---------------|---------|
 | **Representation** | Flat encodings (bit strings, real-valued vectors) | Hierarchical Context Tree with semantic nodes |
 | **Search Space** | Fixed-dimensional parameter space | Unbounded tree of architectural structures |
-| **Variation Operators** | Mathematical (crossover, mutation on encodings) | LLM-powered semantic synthesis |
-| **Selection** | Fitness-proportional or rank-based | Novelty-based + architectural coherence constraints |
+| **Variation Operators** | Mathematical (crossover, mutation on encodings) | LLM-powered code generation and refactoring |
+| **Selection** | Fitness-proportional or rank-based | Objective-based + architectural coherence constraints |
 | **Structure** | Linear population of individuals | Tree-structured, recursive decomposition |
 | **Convergence** | Fitness convergence to optima | Fixed-point convergence on architectural consistency |
 | **Operators** | Domain-agnostic, syntactic | Domain-aware, semantic (via LLM) |
@@ -299,12 +280,6 @@ Traditional EAs iterate over discrete generations: evaluate all individuals → 
 
 **3. Fixed-Point Convergence vs. Fitness Optimization:**
 Traditional EAs converge when the population's average fitness stabilizes near an optimum. Genesis converges when the Context Tree reaches a **fixed point** — a state where further agent iterations produce no functional API surface changes. This is analogous to the fixed-point semantics in denotational semantics or the convergence of iterative equation solvers. The Convergence Circuit Breaker (evaluation based only on functional changes, hard iteration limit) guarantees this process terminates.
-
-**4. LLM as Semantic Variation Operator:**
-In traditional EAs, crossover and mutation are syntactic operations on the encoding — they have no understanding of what the encoding *means*. In Genesis's complex evolution mode, the LLM serves as the variation operator, performing **semantic crossover** (extracting the core logic from one domain and applying its structure to another) and **semantic mutation** (modifying logic while understanding its implications). This transforms blind search into guided exploration.
-
-**5. Novelty Search and Quality Diversity:**
-Genesis's complex mode incorporates insights from the novelty search and quality diversity literature. Rather than optimizing toward a single fitness peak, it maintains a MAP-Elites archive that preserves diverse behavioral strategies. This is particularly suited for open-ended problems where the optimal approach is unknown, as it ensures the system explores a wide region of the solution space rather than converging prematurely.
 
 ### 6.2 Conceptual Positioning
 
@@ -451,13 +426,9 @@ EvoX Genesis represents a novel approach to autonomous software development that
 
 3. **Spatial Contract Enforcement** — hierarchical permission scoping that transforms architectural documentation into an active enforcement mechanism.
 
-4. **Multi-Modal Evolution** — supporting both top-down planning (simple mode) and bottom-up novelty search with quality diversity (complex mode), catering to both well-defined and open-ended tasks.
+4. **The Self-Evolving Context Tree** — the hierarchical context is not static documentation but a living artifact that agents both read and update, accumulating wisdom over time. This makes the system genuinely self-evolving: the knowledge governing agent behavior improves through use, creating a positive feedback loop between structure and agency.
 
-5. **LLM as Semantic Variation Operator** — using the LLM's semantic understanding to perform meaningful crossover and mutation across domain boundaries, enabling algorithmic serendipity.
-
-6. **The Self-Evolving Context Tree** — the hierarchical context is not static documentation but a living artifact that agents both read and update, accumulating wisdom over time. This makes the system genuinely self-evolving: the knowledge governing agent behavior improves through use, creating a positive feedback loop between structure and agency.
-
-These design choices position Genesis not merely as a coding assistant, but as an **evolutionary software development framework** — one that treats software creation as a hierarchical, recursive, evolutionary process guided by architectural contracts and powered by semantic AI operators. The framework's ability to scale to arbitrarily large codebases, recover from any failure, and explore solution spaces through both directed planning and open-ended novelty search makes it a distinct contribution to the field of autonomous software engineering.
+These design choices position Genesis not merely as a coding assistant, but as an **evolutionary software development framework** — one that treats software creation as a hierarchical, recursive, evolutionary process guided by architectural contracts and powered by semantic AI operators. The framework's ability to scale to arbitrarily large codebases, recover from any failure, and explore solution spaces through recursive decomposition makes it a distinct contribution to the field of autonomous software engineering.
 
 ---
 
@@ -469,7 +440,7 @@ These design choices position Genesis not merely as a coding assistant, but as a
 
 **"Vibe coding"**——由大语言模型（LLM）驱动的自由流式AI辅助开发——的兴起，虽然使软件创建民主化，但继承了根本性的结构限制：单体式上下文窗口带来的硬性可扩展性上限、扁平文件感知导致的架构盲目性、不受约束的编辑范围、脆弱的会话状态，以及单路径的线性执行。随着代码库增长超出单一对话所能容纳的范围，这些限制使vibe coding从生产力倍增器退化为不可靠的拐杖。
 
-EvoX Genesis是一个去中心化的演化式软件开发框架，旨在超越这些限制。该系统引入了**双维度架构**，将提供语义结构感知的*空间维度*——层次化上下文树——与追踪演化历史的*时间维度*——不可变Git提交的系统发育有向无环图（DAG）——相交融合。在此框架中，**无状态智能体**作为纯变换函数运行于 `{commit, node_path} × objective → new_commit`，沿上下文树递归分解任务，从而在无上下文窗口耗尽的情况下实现无界可扩展性。系统支持两个执行阶段——*创世*（引导）和*演化*（迭代修改），其中演化进一步分为*简单*（自顶向下规划）和*复杂*（基于新颖性搜索和质量多样性的自底向上）两种模式。本报告呈现Genesis系统的设计哲学、架构原理、智能体分类学、运行时机制，并将其置于演化计算和自主编程智能体的更广阔背景中。
+EvoX Genesis是一个去中心化的演化式软件开发框架，旨在超越这些限制。该系统引入了**双维度架构**，将提供语义结构感知的*空间维度*——层次化上下文树——与追踪演化历史的*时间维度*——不可变Git提交的系统发育有向无环图（DAG）——相交融合。在此框架中，**无状态智能体**作为纯变换函数运行于 `{commit, node_path} × objective → new_commit`，沿上下文树递归分解任务，从而在无上下文窗口耗尽的情况下实现无界可扩展性。系统支持两个执行阶段——*创世*（引导）和*演化*（迭代修改）。本报告呈现Genesis系统的设计哲学、架构原理、智能体分类学、运行时机制，并将其置于演化计算和自主编程智能体的更广阔背景中。
 
 ## 1. 引言
 
@@ -691,25 +662,6 @@ Genesis采用专门的智能体分类学，其中每种智能体类型具有不�
 
 不动点收敛适用：如果子智能体完成后目标未达成，父智能体生成新的子智能体继续迭代，直到完成或达到会话限制。
 
-**模式B — 开放式演化（自底向上）：**
-用于需要探索和创造性问题解决的开放式任务（如"优化此算法的延迟"）。此模式运行受新颖性搜索和质量多样性启发的完整演化循环：
-
-1. **熵池初始化：** 系统用来自不相关范式（物理引擎、游戏循环、数据管道、图算法等）的多样化代码片段填充池。这些片段不是因为适应度而是因为多样性被选择。
-
-2. **新颖性搜索：** 基于*不同*于池中其余片段的程度评估片段。新颖性通过以下方式测量：
-   - **结构特征** — 捕获代码结构的抽象语法树（AST）分析
-   - **行为特征** — 功能行为的LLM分类
-
-3. **LLM驱动的变异：** LLM作为变异算子：
-   - **交叉** — 语义上融合两个不同的片段，从一个领域提取核心逻辑并将其结构应用于另一个领域（扩展适应）
-   - **突变** — 在保留行为特征的同时修改片段的逻辑
-
-4. **质量多样性（MAP-Elites）：** 网格档案保留多样化的方法。每个单元格将行为描述符（复杂度 × 范式）映射到其最新颖的片段，确保非常规但独特的解决方案作为有价值的遗传物质被保留。
-
-5. **解合成：** 演化收敛（或达到最大代数）后，系统收集最新颖和最多样化的片段，并要求LLM合成一个连贯的解决方案。该解决方案通过Manager智能体应用于代码库。
-
-这种自底向上的模式体现了**算法意外发现**——系统被设计为通过利用LLM的语义理解来桥接不相交的领域，从而发现意想不到的解决方案。
-
 ---
 
 ## 5. 智能体调度器与Git隔离
@@ -748,8 +700,8 @@ Genesis通过类似于操作系统进程调度的**智能体调度器**管理执
 |------|--------|---------|
 | **表示** | 扁平编码（位串、实值向量） | 带有语义节点的层次化上下文树 |
 | **搜索空间** | 固定维度参数空间 | 无界的架构结构树 |
-| **变异算子** | 数学的（编码上的交叉、突变） | LLM驱动的语义合成 |
-| **选择** | 适应度比例或基于排名 | 基于新颖性 + 架构一致性约束 |
+| **变异算子** | 数学的（编码上的交叉、突变） | LLM驱动的代码生成与重构 |
+| **选择** | 适应度比例或基于排名 | 基于目标 + 架构一致性约束 |
 | **结构** | 个体线性种群 | 树状结构、递归分解 |
 | **收敛** | 适应度收敛到最优 | 对架构一致性的不动点收敛 |
 | **算子** | 领域无关、语法层面 | 领域感知、语义层面（通过LLM） |
@@ -762,12 +714,6 @@ Genesis通过类似于操作系统进程调度的**智能体调度器**管理执
 
 **3. 不动点收敛 vs. 适应度优化：**
 传统EA在种群的平均适应度稳定于最优附近时收敛。Genesis在上下文树达到**不动点**时收敛——即进一步智能体迭代不产生功能性API表面变更的状态。这类似于指称语义中的不动点语义或迭代方程求解器的收敛。收敛断路器（仅基于功能变更的评估、硬性迭代限制）保证此过程终止。
-
-**4. LLM作为语义变异算子：**
-在传统EA中，交叉和突变是编码上的语法操作——它们不理解编码*意味着*什么。在Genesis的复杂演化模式中，LLM作为变异算子，执行**语义交叉**（从一个领域提取核心逻辑并将其结构应用于另一个领域）和**语义突变**（在理解其含义的情况下修改逻辑）。这将盲目搜索转变为引导式探索。
-
-**5. 新颖性搜索与质量多样性：**
-Genesis的复杂模式融合了新颖性搜索和质量多样性文献的洞见。它不是优化向单一适应度峰值，而是维护一个MAP-Elites档案来保留多样化的行为策略。这特别适合最优方法未知的开放式问题，因为它确保系统探索解空间的广阔区域，而非过早收敛。
 
 ### 6.2 概念定位
 
@@ -914,13 +860,9 @@ EvoX Genesis代表了一种自主软件开发的全新方法，综合了演化�
 
 3. **空间契约强制执行** ——层次化权限范围限定，将架构文档转变为主动的强制执行机制。
 
-4. **多模态演化** ——同时支持自顶向下规划（简单模式）和基于新颖性搜索与质量多样性的自底向上（复杂模式），兼顾明确定义和开放式任务。
+4. **自我演化的上下文树** ——层次化上下文不是静态文档，而是智能体既读取又更新的活的制品，随时间积累智慧。这使系统真正实现自我演化：指导智能体行为的知识通过使用而改进，在结构与能动性之间创造正向反馈循环。
 
-5. **LLM作为语义变异算子** ——利用LLM的语义理解在领域边界间执行有意义的交叉和突变，实现算法意外发现。
-
-6. **自我演化的上下文树** ——层次化上下文不是静态文档，而是智能体既读取又更新的活的制品，随时间积累智慧。这使系统真正实现自我演化：指导智能体行为的知识通过使用而改进，在结构与能动性之间创造正向反馈循环。
-
-这些设计选择使Genesis不仅仅是一个编程助手，而是一个**演化式软件开发框架**——它将软件创建视为一个由架构契约指导、由语义AI算子驱动的层次化、递归的演化过程。该框架扩展到任意大代码库的能力、从任何故障中恢复的能力，以及通过定向规划和开放式新颖性搜索探索解空间的能力，使其成为自主软件工程领域的独特贡献。
+这些设计选择使Genesis不仅仅是一个编程助手，而是一个**演化式软件开发框架**——它将软件创建视为一个由架构契约指导、由语义AI算子驱动的层次化、递归的演化过程。该框架扩展到任意大代码库的能力、从任何故障中恢复的能力，以及通过递归分解探索解空间的能力，使其成为自主软件工程领域的独特贡献。
 
 ---
 
