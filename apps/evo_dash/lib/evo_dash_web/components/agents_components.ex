@@ -38,14 +38,11 @@ defmodule EvoDashWeb.AgentsComponents do
 
         <!-- This Node's Content Row -->
         <div class="relative z-10 flex flex-col xl:flex-row xl:items-start gap-3 py-1">
-          <!-- Trunk for this node's OWN children (if any) -->
-          <!-- Starts from center of folder icon (x=10px, y=18px) and goes to bottom of this content row -->
-          <%= if length(node.children) > 0 do %>
-            <div class="absolute left-2.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none"></div>
-          <% end %>
-
           <!-- Path info -->
-          <div class="flex items-center gap-2 h-7 shrink-0" style={"width: #{@max_width}ch; max-width: 100%;"}>
+          <div class="flex items-center gap-2 h-7 shrink-0 relative w-full xl:w-[var(--agent-max-width)]" style={"--agent-max-width: #{@max_width}ch"}>
+            <%= if length(node.children) > 0 do %>
+              <div class="absolute left-2.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none"></div>
+            <% end %>
             <.icon name="hero-folder" class="size-5 text-base-content/50 shrink-0 relative z-10 bg-base-100/50 rounded" />
             <span class="font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
             <%= if length(node.agents) > 0 do %>
