@@ -56,7 +56,7 @@ defmodule EvoGit.Core.ContextNode do
   Normalizes a relative path to canonical "./foo/bar" format.
 
   Rules:
-  - Raises if the path is absolute (starts with "/")
+  - Raises if the path is absolute (Unix: /foo, Windows: C:\\foo)
   - Strips leading/trailing slashes
   - `""` → `"./"`, `"."` → `"./"`
   - If already starts with `"./"`, keeps as-is

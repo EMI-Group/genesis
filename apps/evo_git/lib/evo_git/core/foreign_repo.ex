@@ -124,7 +124,8 @@ defmodule EvoGit.Core.ForeignRepo do
   end
 
   @doc """
-  Checks if a path string is absolute (starts with /).
+  Checks if a path string is absolute.
+  Handles both Unix (/foo) and Windows (C:\\foo, D:/bar) paths.
   Returns false for nil or non-binary values.
   """
   @spec absolute_path?(String.t() | nil) :: boolean()

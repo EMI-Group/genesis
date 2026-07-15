@@ -207,7 +207,7 @@ defmodule EvoGit.Agent.Tools.Shared do
   and ensuring all paths start with `./` (root is `./`).
 
   Returns the normalized path as a string for valid relative paths.
-  Returns `{:error, message}` if given an absolute path (starts with "/")
+  Returns `{:error, message}` if given an absolute path (Unix: /foo, Windows: C:\\foo)
   instead of raising, so callers can surface a graceful error message.
   """
   def normalize_relpath(path) when is_binary(path) do
