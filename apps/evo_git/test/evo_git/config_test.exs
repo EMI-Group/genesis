@@ -860,4 +860,55 @@ defmodule EvoGit.ConfigTest do
       assert profile.model.base_url == "https://u/v1"
     end
   end
+
+  describe "migrate_llm_models edge cases" do
+    # Bug fix: the pattern match `[%{model: default_model} | _]` raised a
+    # MatchError when the first profile in the :models list was a map that
+    # lacked a :model key (e.g. a manually edited config.toml or an incomplete
+    # dashboard profile). These tests verify the crash-safe Map.get approach.
+
+    test "does not crash when first profile lacks :model key" do
+      config = %{llm: %{models: [%{id: "profile-1", concurrency: 3}]}}
+      result = Config.__migrate_llm_models__(config)
+
+      assert is_map(result)
+      assert is_list(result.llm.models)
+      # The flat :model field is left unchanged (defaults to nil — absent).
+      assert get_in(result, [:llm, :model]) == nil
+    end
+
+    test "does not crash when a profile has model: nil" do
+      config = %{llm: %{models: [%{id: "profile-1", model: nil}]}}
+      result = Config.__migrate_llm_models__(config)
+
+      assert is_map(result)
+      assert is_list(result.llm.models)
+      # The flat :model field is left unchanged (nil → stays nil).
+      assert get_in(result, [:llm, :model]) == nil
+    end
+
+    test "still mirrors model when first profile has one" do
+      config = %{llm: %{models: [%{id: "profile-1", model: "openai:gpt-4"}]}}
+      result = Config.__migrate_llm_models__(config)
+
+      assert is_map(result)
+      # The flat [llm].model mirror should be set to the first profile's model.
+      assert get_in(result, [:llm, :model]) == "openai:gpt-4"
+    end
+
+    test "does not crash through full resolve/0 pipeline when first profile lacks :model" do
+      # Verify the end-to-end resolve/0 path (defaults + malformed models)
+      # does not raise — the schema validator reports the error gracefully.
+      malformed_override = %{llm: %{models: [%{id: "profile-1", concurrency: 3}]}}
+
+      config =
+        Config.defaults()
+        |> Config.__deep_merge__(malformed_override)
+        |> Config.__atomize_enum_values__()
+        |> Config.__migrate_llm_models__()
+
+      assert is_map(config)
+      assert is_list(config.llm.models)
+    end
+  end
 end
