@@ -57,6 +57,8 @@ Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightwei
 | `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, `Worktrees`, `RemoteAPI` — ETS schemas, helper logic, and RPC-readable state API for remote (SSH) dashboard connections |
 | `./lib/evo_git/config/` | `EvoGit.Config` — defaults, user TOML, credentials, API keys |
 | `./lib/evo_git/sandbox/` | `EvoGit.Sandbox` — multi-platform sandbox backends (Linux, macOS, None) |
+| `./lib/evo_git/store/` | `EvoGit.Store.Codec` — pure serialization for the SQLite store |
+| `./lib/evo_git/task_registry/` | `EvoGit.TaskRegistry` support modules — `Cleanup`, `Diagnostics`, `Lease`, `ResumeContext`, `RuntimeOpts`, `TaskExecutor` |
 
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
