@@ -96,6 +96,16 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   @doc """
+  Default provider options for all ReqLLM.stream_text calls.
+  Disables OpenAI Responses API server-side storage (`store: false`), which in turn
+  prevents the automatic injection of `previous_response_id` — a field only supported
+  on WebSocket v2, not the default HTTP/SSE streaming transport. EvoGit manages its own
+  full conversation history, so server-side response chaining/storage is never needed.
+  """
+  @spec default_provider_options() :: keyword()
+  def default_provider_options, do: [store: false]
+
+  @doc """
   Extracts generation params from a single profile map.
   """
   @spec profile_generation_params(map()) :: keyword()
@@ -108,6 +118,7 @@ defmodule EvoGit.Config.Schema.LLM do
     |> maybe_param(:top_k, Map.get(profile, :top_k))
     |> maybe_param(:frequency_penalty, Map.get(profile, :frequency_penalty))
     |> maybe_param(:presence_penalty, Map.get(profile, :presence_penalty))
+    |> Keyword.put(:provider_options, default_provider_options())
   end
 
   @doc """

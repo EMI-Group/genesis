@@ -704,9 +704,12 @@ defmodule EvoGit.Config.SchemaTest do
       assert Keyword.get(params, :reasoning_effort) == :high
     end
 
-    test "returns empty list for profile with no gen params" do
+    test "returns only provider_options for profile with no gen params" do
       profile = %{id: "default", model: "x:y"}
-      assert Schema.llm_generation_params(profile) == []
+      params = Schema.llm_generation_params(profile)
+      # provider_options (store: false) is always injected to disable OpenAI
+      # Responses API server-side storage / previous_response_id chaining.
+      assert params == [provider_options: [store: false]]
     end
 
     test "delegates to default profile when given a config map" do
@@ -718,6 +721,18 @@ defmodule EvoGit.Config.SchemaTest do
     test "returns empty list when no profiles in config" do
       config = %{llm: %{models: []}}
       assert Schema.llm_generation_params(config) == []
+    end
+  end
+
+  describe "default_provider_options/0" do
+    test "returns store: false to disable OpenAI server-side storage" do
+      assert Schema.LLM.default_provider_options() == [store: false]
+    end
+
+    test "is included in profile_generation_params output" do
+      profile = %{id: "default", temperature: 0.7}
+      params = Schema.LLM.profile_generation_params(profile)
+      assert Keyword.get(params, :provider_options) == [store: false]
     end
   end
 end
