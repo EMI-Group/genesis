@@ -17,120 +17,7 @@ defmodule EvoDashWeb.SystemLive do
 
   use EvoDashWeb, :live_view
 
-  @config_reference """
-  # Genesis Configuration Reference
-  # Save this as: __CONFIG_PATH__
-
-  [scheduler]
-  # Maximum concurrent LLM calls
-  max_concurrency = 3
-  # Maximum concurrent tool executions
-  max_tool_concurrency = 2
-  # Crash-retries per agent
-  agent_max_retries = 3
-  # Maximum subagent recursion depth
-  max_agent_depth = 8
-  # LLM API call retries
-  max_retries = 15
-
-  [llm]
-  # Token count threshold for context compression
-  compression_threshold_tokens = 100_000
-
-  # Model profiles — define one or more [[llm.models]] entries.
-  # The first profile is the default. Each task can select a profile
-  # via the dashboard task form's Model dropdown or the runtime :model_id opt.
-  [[llm.models]]
-  id = "default"
-  # LLM model identifier (format: "provider:model")
-  # Examples:
-  #   "anthropic:claude-sonnet-4-20250514"
-  #   "google:gemini-2.0-flash-exp"
-  #   "zai:glm-5.1"
-  model = "your-model-here"
-  concurrency = 3
-
-  [user]
-  # Your GitHub username (used for commit co-authoring)
-  github_username = "your-username"
-
-  [task_history]
-  # Maximum number of finished tasks to keep
-  max_tasks = 100
-  # Maximum age in days for finished tasks (whichever limit is smaller is applied)
-  max_age_days = 14
-
-  [sandbox]
-  # Sandbox mode: "auto" | "enabled" | "disabled"
-  mode = "auto"
-
-  [sandbox.resources]
-  # Slice-level limits (aggregate across all processes)
-  cpu_quota = "1000%"
-  cpu_weight = 30
-  memory_max = "16G"
-  tasks_max = 8196
-
-  [sandbox.process]
-  # Per-process limits (each tool call)
-  cpu_quota = "800%"
-  memory_max = "12G"
-  limit_nofile = 65536
-  oom_score_adjust = 1000
-  """
-
-  @credentials_reference """
-  # Genesis Credentials Reference
-  # Save this as: __CREDENTIALS_PATH__
-  # 
-  # API keys are stored separately from config.toml for security.
-  # Only ONE key is required — choose the provider matching your LLM model.
-  # Keys are set as environment variables on load.
-
-  # Google Gemini (e.g., "google:gemini-2.0-flash-exp")
-  GOOGLE_API_KEY = "AIza..."
-
-  # ZAI (e.g., "zai:glm-5.1")
-  ZAI_API_KEY = "sk-..."
-
-  # DeepSeek (e.g., "deepseek:deepseek-chat")
-  DEEPSEEK_API_KEY = "sk-..."
-
-  # Groq (e.g., "groq:llama-3.1-8b-instant")
-  GROQ_API_KEY = "gsk_..."
-
-  # Anthropic (e.g., "anthropic:claude-sonnet-4-20250514")
-  ANTHROPIC_API_KEY = "sk-ant-..."
-
-  # OpenAI (e.g., "openai:gpt-4o")
-  OPENAI_API_KEY = "sk-..."
-
-  # Tavily (optional — for web search tool)
-  TAVILY_API_KEY = "tvly-..."
-  """
-
-  @usage_reference """
-  # Genesis — Create a new codebase from a prompt
-  mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Build a REST API for task management"
-
-  # Genesis — Analyze an existing codebase
-  mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Analyze and document this project" -p /path/to/project
-
-  # Evolution — Modify an existing codebase
-  mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Add authentication with JWT tokens"
-
-  # With concurrency control
-  mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "Build a web scraper" -c 5
-
-  # With foreign repositories
-  mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Fix the login bug" -R original:/path/to/repo
-
-  # Common flags:
-  #   -c, --concurrency     Max parallel LLM calls (default: 3)
-  #   --tool-concurrency    Max parallel tool executions (default: 2)
-  #   -p, --path            Target project path
-  #   -R <id:>path         Foreign repository (repeatable)
-  """
+  alias EvoDashWeb.SystemLive.{Content, Status}
 
   @impl true
   def render(assigns) do
@@ -260,17 +147,17 @@ defmodule EvoDashWeb.SystemLive do
               <.system_check_row
                 title={gettext("Configuration")}
                 icon="hero-cog-6-tooth"
-                status={if config_ok?(@config_status), do: :ok, else: :error}
+                status={if Status.config_ok?(@config_status), do: :ok, else: :error}
               >
                 <:details>
-                  <%= if config_ok?(@config_status) do %>
+                  <%= if Status.config_ok?(@config_status) do %>
                     <span class="text-sm text-success">{gettext("All configured")}</span>
                   <% else %>
                     <div class="flex flex-wrap gap-1.5">
                       <%= for item <- (@config_status[:missing] || []) do %>
                         <span class="badge badge-warning badge-sm gap-1">
                           <.icon name="hero-x-mark" class="size-3" />
-                          {format_config_item(item)}
+                          {Status.format_config_item(item)}
                         </span>
                       <% end %>
                     </div>
@@ -291,7 +178,7 @@ defmodule EvoDashWeb.SystemLive do
               <.system_check_row
                 title={gettext("Required Tools")}
                 icon="brand-git"
-                status={tools_status(@tool_check)}
+                status={Status.tools_status(@tool_check)}
               >
                 <:details>
                   <div class="flex flex-wrap gap-3">
@@ -306,12 +193,12 @@ defmodule EvoDashWeb.SystemLive do
               <.system_check_row
                 title={gettext("Sandbox")}
                 icon="hero-lock-closed"
-                status={sandbox_status(@sandbox_check)}
+                status={Status.sandbox_status(@sandbox_check)}
               >
                 <:details>
                   <div class="flex flex-wrap gap-2 items-center">
                     <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
-                      {format_backend(@sandbox_check.backend)}
+                      {Status.format_backend(@sandbox_check.backend)}
                     </span>
                     <span class="text-sm text-base-content/60">
                       {if @sandbox_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
@@ -333,7 +220,7 @@ defmodule EvoDashWeb.SystemLive do
               <.system_check_row
                 title={gettext("EvoX Genesis Process Tree")}
                 icon="hero-server-stack"
-                status={if supervisor_healthy?(@supervisor_check), do: :ok, else: :error}
+                status={if Status.supervisor_healthy?(@supervisor_check), do: :ok, else: :error}
               >
                 <:details>
                   <div class="space-y-1">
@@ -353,7 +240,7 @@ defmodule EvoDashWeb.SystemLive do
               <.system_check_row
                 title={gettext("Nix Environment")}
                 icon="brand-nix"
-                status={nix_status(@nix_check)}
+                status={Status.nix_status(@nix_check)}
               >
                 <:details>
                   <div class="flex flex-wrap gap-2 items-center">
@@ -606,11 +493,10 @@ defmodule EvoDashWeb.SystemLive do
         config_dir: config_dir,
         config_path: config_path,
         credentials_path: credentials_path,
-        config_reference: String.replace(@config_reference, "__CONFIG_PATH__", config_path),
-        credentials_reference:
-          String.replace(@credentials_reference, "__CREDENTIALS_PATH__", credentials_path),
-        usage_reference: @usage_reference,
-        faq_content: faq_content(config_path, credentials_path)
+        config_reference: Content.config_reference(config_path),
+        credentials_reference: Content.credentials_reference(credentials_path),
+        usage_reference: Content.usage_reference(),
+        faq_content: Content.faq_content(config_path, credentials_path)
       )
 
     {:ok, socket}
@@ -953,46 +839,6 @@ defmodule EvoDashWeb.SystemLive do
 
   # --- Private Helper Functions ---
 
-  # Build FAQ content at runtime so the platform-specific config/credentials paths
-  # can be interpolated into the gettext strings.
-  defp faq_content(config_path, credentials_path) do
-    [
-      {
-        gettext("How do I set my API key?"),
-        # GENESIS_TERM: LLM Provider → 服务商
-        gettext(
-          "Create a credentials.toml file at %{path} with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...).",
-          path: credentials_path
-        )
-      },
-      {gettext("How do I change the LLM model?"),
-       gettext(
-         "Edit your config.toml file at %{path} and set the model field in a [[llm.models]] profile (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can define multiple profiles and select one per task from the dashboard's Model dropdown. You can also adjust the model temporarily from the Settings page in the dashboard.",
-         path: config_path
-       )},
-      # GENESIS_TERM: Sandbox → 沙箱, Genesis → 启元
-      {gettext("What is sandbox mode?"),
-       gettext(
-         "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
-       )},
-      # GENESIS_TERM: Context Tree → 上下文树, Genesis → 启元, Agent → 智能体
-      {gettext("How does the context tree work?"),
-       gettext(
-         "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
-       )},
-      # GENESIS_TERM: Genesis → 启元
-      {gettext("What happens if my config is missing?"),
-       gettext(
-         "Genesis uses built-in defaults for most settings, so a config file is not strictly required. However, an LLM model and a matching API key are essential to run tasks. The config status indicator at the top of this page shows whether all critical values are set. You can also check from the Settings page."
-       )},
-      # GENESIS_TERM: Sandbox → 沙箱
-      {gettext("How do I configure sandbox resources?"),
-       gettext(
-         "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
-       )}
-    ]
-  end
-
   # Status background colors for system_check_row
   defp status_bg(:ok), do: "bg-success/10"
   defp status_bg(:error), do: "bg-error/10"
@@ -1006,61 +852,4 @@ defmodule EvoDashWeb.SystemLive do
   defp status_text(:info), do: "text-info"
   defp status_text(:warning), do: "text-warning"
   defp status_text(_), do: "text-base-content/50"
-
-  # Determine tools overall status
-  defp tools_status(%{git: %{available: true}, rg: %{available: true}}), do: :ok
-  defp tools_status(%{git: %{available: false}}), do: :error
-  defp tools_status(%{rg: %{available: false}}), do: :error
-  defp tools_status(_), do: :warning
-
-  # Nil-safe config check (assigns are nil during loading)
-  defp config_ok?(nil), do: false
-  defp config_ok?(%{ok?: ok?}), do: ok?
-
-  # Nil-safe supervisor health check
-  defp supervisor_healthy?(nil), do: false
-  defp supervisor_healthy?(%{healthy: healthy}), do: healthy
-
-  # Determine nix environment overall status
-  # green/OK when enabled & flake valid; warning when enabled but flake invalid;
-  # neutral/info when nix is not available or not enabled
-  defp nix_status(%{enabled: true, dev_env_built: true}), do: :ok
-  defp nix_status(%{enabled: true}), do: :warning
-  defp nix_status(%{available: true}), do: :info
-  defp nix_status(_), do: :info
-
-  # Determine sandbox overall status
-  defp sandbox_status(%{backend: :systemd_run} = check) do
-    if check.systemd_available && check.capabilities.filesystem_isolation &&
-         check.capabilities.resource_limits do
-      :ok
-    else
-      :error
-    end
-  end
-
-  defp sandbox_status(%{backend: :sandbox_exec} = check) do
-    if check.sandbox_exec_available && check.capabilities.filesystem_isolation do
-      :ok
-    else
-      :error
-    end
-  end
-
-  defp sandbox_status(%{backend: :none}), do: :info
-  defp sandbox_status(_), do: :error
-
-  # Format backend name
-  defp format_backend(:systemd_run), do: "systemd-run (Linux)"
-  defp format_backend(:sandbox_exec), do: "sandbox-exec (macOS)"
-  defp format_backend(:none), do: gettext("None")
-
-  # Format config item names
-  defp format_config_item(:llm_model), do: gettext("LLM Model")
-  defp format_config_item(:api_key), do: gettext("API Key")
-  defp format_config_item(:github_username), do: gettext("GitHub Username")
-
-  defp format_config_item(item) do
-    item |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
-  end
 end
