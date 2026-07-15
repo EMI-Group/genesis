@@ -259,6 +259,12 @@ defmodule EvoGit.Agent.ToolDispatch do
   last assistant message's `tool_calls` with the deduplicated list in both the
   response context and the response message.
 
+  `tool_calls` are `%ReqLLM.ToolCall{}` structs (kept as structs so the OpenAI
+  Responses API request encoder — which calls `ReqLLM.ToolCall.name/1` and
+  `ReqLLM.ToolCall.args_json/1`, both struct-only — works on the next turn).
+  The deduped list is written back into the message's `tool_calls` as the same
+  structs; we never down-cast to plain maps.
+
   Since `response.message` and the last message in `response.context.messages`
   are the same struct reference (ReqLLM's response builder appends the message
   to the context), we update the `tool_calls` once and apply the same updated
@@ -298,8 +304,13 @@ defmodule EvoGit.Agent.ToolDispatch do
   end
 
   @doc """
-  Deduplicates a list of tool call maps (the output of
-  `ReqLLM.ToolCall.from_map/1`, each with `:id`, `:name`, `:arguments` keys).
+  Deduplicates a list of `%ReqLLM.ToolCall{}` structs.
+
+  Tool calls arrive as `%ReqLLM.ToolCall{}` structs (the canonical shape stored
+  in the assistant message so the OpenAI Responses API request encoder works on
+  the next turn). Deduplication uses the struct accessors
+  `ReqLLM.ToolCall.name/1` and `ReqLLM.ToolCall.args_map/1` rather than flat
+  `:name`/`:arguments` keys.
 
   Deduplicates by `:id` first, then by identical content tuple
   `{name, arguments}`. Keeps the first occurrence in each pass. Logs a
@@ -314,8 +325,11 @@ defmodule EvoGit.Agent.ToolDispatch do
     # Enum.dedup_by/2 removes consecutive duplicates, keeping the first.
     by_id = Enum.dedup_by(tool_calls, & &1.id)
 
-    # Pass 2 — dedupe by identical content {name, arguments}
-    final = Enum.dedup_by(by_id, fn call -> {call.name, call.arguments} end)
+    # Pass 2 — dedupe by identical content {name, arguments-as-decoded-map}
+    final =
+      Enum.dedup_by(by_id, fn call ->
+        {ReqLLM.ToolCall.name(call), ReqLLM.ToolCall.args_map(call)}
+      end)
 
     final_count = length(final)
     removed_count = original_count - final_count
@@ -324,7 +338,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       # Enum.dedup_by keeps the same struct references, so list difference
       # yields exactly the removed items.
       removed = tool_calls -- final
-      removed_list = Enum.map(removed, &"#{&1.name}(id=#{&1.id})")
+      removed_list = Enum.map(removed, &"#{ReqLLM.ToolCall.name(&1)}(id=#{&1.id})")
 
       Logger.warning(
         "Agent #{agent_id}: Removed #{removed_count} duplicate tool call(s) " <>
@@ -363,9 +377,13 @@ defmodule EvoGit.Agent.ToolDispatch do
     turn_usage = Usage.from_response_usage(usage)
     state = %{state | usage: Usage.add(state.usage, turn_usage)}
 
-    tool_calls =
-      ReqLLM.Response.tool_calls(response)
-      |> Enum.map(&ReqLLM.ToolCall.from_map/1)
+    # Keep tool calls as %ReqLLM.ToolCall{} structs (the shape already present
+    # in message.tool_calls). Do NOT convert them via ReqLLM.ToolCall.from_map/1,
+    # which returns plain maps — those would break the OpenAI Responses API
+    # request encoder (it calls ReqLLM.ToolCall.name/1 and args_json/1, which
+    # only match the struct) on the next turn. Access name/arguments via
+    # ReqLLM.ToolCall.name/1 and args_map/1 throughout the dispatch code.
+    tool_calls = ReqLLM.Response.tool_calls(response)
 
     # Deduplicate tool calls (handles buggy models that emit identical
     # duplicate calls — e.g. two identical subagent spawns)
@@ -421,7 +439,7 @@ defmodule EvoGit.Agent.ToolDispatch do
           # Detect subagent calls to reset the middle-warning counter
           had_subagent_call =
             Enum.any?(tool_calls, fn call ->
-              subagent_module_for(call.name, subagent_modules) != nil
+              subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
             end)
 
           new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
@@ -526,7 +544,7 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   def process_tool_calls(tool_calls, %LoopState{} = state, subagent_modules)
       when is_list(tool_calls) and tool_calls != [] do
-    complete_call = Enum.find(tool_calls, &(&1.name == @complete_tool))
+    complete_call = Enum.find(tool_calls, &(ReqLLM.ToolCall.name(&1) == @complete_tool))
 
     if complete_call do
       handle_complete_call(complete_call, state, tool_calls)
@@ -552,6 +570,8 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   def handle_complete_call(complete_call, %LoopState{in_grace_period: grace} = state, tool_calls) do
+    complete_args = ReqLLM.ToolCall.args_map(complete_call)
+
     # Check if git status validation is enabled (default: true).
     # During the grace period, skip the dirty workspace check entirely: the
     # agent gets exactly one recovery turn, and a dirty workspace would return
@@ -561,7 +581,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     # committed — the :end/:critical warnings already prompted a commit.
     check_git_status =
       not state.in_grace_period and
-        Map.get(complete_call.arguments, "check_git_status") != false
+        Map.get(complete_args, "check_git_status") != false
 
     if grace or not check_git_status do
       do_complete(complete_call, state)
@@ -576,8 +596,8 @@ defmodule EvoGit.Agent.ToolDispatch do
 
           tool_responses =
             Enum.map(tool_calls, fn call ->
-              tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
-              tool_result(tool_call_id, call.name, warning_msg)
+              tool_call_id = call.id || ReqLLM.ToolCall.name(call) || "unknown"
+              tool_result(tool_call_id, ReqLLM.ToolCall.name(call), warning_msg)
             end)
 
           {:continue, tool_responses, nil}
@@ -593,9 +613,11 @@ defmodule EvoGit.Agent.ToolDispatch do
     # Sync the current commit before completing
     commit_sha = sync_and_get_current_commit(state)
 
+    complete_args = ReqLLM.ToolCall.args_map(complete_call)
+
     result =
-      Map.get(complete_call.arguments, "result") ||
-        Map.get(complete_call.arguments, :result, "Task finished.")
+      Map.get(complete_args, "result") ||
+        Map.get(complete_args, :result, "Task finished.")
 
     # Get metadata from agent state
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -636,7 +658,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     # 3. Split: Partition into subagent and standard calls
     {indexed_subagent_calls, indexed_standard_calls} =
       Enum.split_with(indexed_calls, fn {call, _index} ->
-        subagent_module_for(call.name, subagent_modules) != nil
+        subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
       end)
 
     # 4. Batch: Process each batch
@@ -721,10 +743,12 @@ defmodule EvoGit.Agent.ToolDispatch do
       Enum.reduce(indexed_calls, {[], initial_hints, read_initial_hints}, fn {call, index},
                                                                              {acc_results, hints,
                                                                               read_hints} ->
-        tool_call_id = Map.get(call, :id) || call.name || call.id || "unknown"
+        name = ReqLLM.ToolCall.name(call)
+        args = ReqLLM.ToolCall.args_map(call)
+        tool_call_id = call.id || name || "unknown"
 
         tool_timeout =
-          Map.get(call.arguments, "timeout", EvoGit.Agent.DelegationHints.default_tool_timeout())
+          Map.get(args, "timeout", EvoGit.Agent.DelegationHints.default_tool_timeout())
 
         tool_timeout = min(tool_timeout, max_timeout)
 
@@ -733,8 +757,8 @@ defmodule EvoGit.Agent.ToolDispatch do
             task =
               Task.async(fn ->
                 EvoGit.Agent.Tools.execute(
-                  call.name,
-                  call.arguments,
+                  name,
+                  args,
                   repo_path,
                   repo_root,
                   node_path
@@ -747,12 +771,12 @@ defmodule EvoGit.Agent.ToolDispatch do
 
               {:ok, result} ->
                 {sanitized, truncation_info} =
-                  OutputSanitizer.sanitize_and_truncate(result, call.name, call.arguments)
+                  OutputSanitizer.sanitize_and_truncate(result, name, args)
 
                 EvoGit.Agent.TruncationFeedback.append_truncation_feedback(
                   sanitized,
                   truncation_info,
-                  call.name
+                  name
                 )
 
               {:exit, reason} ->
@@ -763,15 +787,15 @@ defmodule EvoGit.Agent.ToolDispatch do
             end
           end)
 
-        output = maybe_append_redundant_cd_warning(output, call, repo_path, repo_root)
+        output = maybe_append_redundant_cd_warning(output, name, args, repo_path, repo_root)
 
         # Track delegation hints for write tools (skip during conflict resolution)
         {output, hints} =
           if threshold > 0 do
             child_paths =
               EvoGit.Agent.DelegationHints.extract_child_paths(
-                call.name,
-                call.arguments,
+                name,
+                args,
                 node_path,
                 repo_path
               )
@@ -797,8 +821,8 @@ defmodule EvoGit.Agent.ToolDispatch do
           if read_threshold > 0 do
             read_child_paths =
               EvoGit.Agent.DelegationHints.extract_read_child_paths(
-                call.name,
-                call.arguments,
+                name,
+                args,
                 node_path,
                 repo_path
               )
@@ -820,7 +844,7 @@ defmodule EvoGit.Agent.ToolDispatch do
             {output, read_hints}
           end
 
-        {acc_results ++ [{index, tool_call_id, call.name, output}], hints, read_hints}
+        {acc_results ++ [{index, tool_call_id, name, output}], hints, read_hints}
       end)
 
     # Store updated hints in process dictionary for do_turn to pick up
@@ -836,9 +860,9 @@ defmodule EvoGit.Agent.ToolDispatch do
   # wrong-path cd warnings which fire every time.
 
   @doc false
-  def maybe_append_redundant_cd_warning(output, call, repo_path, repo_root) do
-    if call.name in ["run_bash", "run_powershell"] do
-      command = Map.get(call.arguments, "command", "")
+  def maybe_append_redundant_cd_warning(output, name, args, repo_path, repo_root) do
+    if name in ["run_bash", "run_powershell"] do
+      command = Map.get(args, "command", "")
 
       if EvoGit.Agent.Tools.ShellTool.redundant_cd?(command, repo_path, repo_root) and
            not Process.get(:redundant_cd_warned, false) do

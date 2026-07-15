@@ -301,11 +301,12 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         foreign_repos: []
       }
 
-      call = %{
-        id: "call_1",
-        name: "subagent_codebase_investigator",
-        arguments: %{"path" => "./src", "objective" => "investigate src"}
-      }
+      call =
+        ReqLLM.ToolCall.new(
+          "call_1",
+          "subagent_codebase_investigator",
+          ~s({"path":"./src","objective":"investigate src"})
+        )
 
       [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
 
@@ -335,11 +336,12 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         foreign_repos: []
       }
 
-      call = %{
-        id: "call_1",
-        name: "subagent_codebase_investigator",
-        arguments: %{"path" => "./lib", "objective" => "investigate lib"}
-      }
+      call =
+        ReqLLM.ToolCall.new(
+          "call_1",
+          "subagent_codebase_investigator",
+          ~s({"path":"./lib","objective":"investigate lib"})
+        )
 
       [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
 
