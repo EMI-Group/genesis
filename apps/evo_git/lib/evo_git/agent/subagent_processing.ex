@@ -195,7 +195,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
       mod = subagent_module_for(name, state)
       raw_path = Map.get(args, "path")
       objective = Map.get(args, "objective")
-      commit_id = Map.get(args, "commit_id")
+      commit_id =
+        case Map.get(args, "commit_id") do
+          "" -> nil
+          v -> v
+        end
 
       # Determine if this is a cross-repo delegation (absolute path) or same-repo (relative)
       case resolve_subagent_path(raw_path, repo_path, foreign_repos) do

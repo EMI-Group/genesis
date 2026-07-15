@@ -55,7 +55,7 @@ defmodule EvoGit.Agent.SubagentSchemas do
               "type" => "string",
               "description" =>
                 "Optional: The commit SHA to spawn the subagent on. " <>
-                  "Defaults to the current commit if not specified."
+                  "Defaults to HEAD if not specified or if set to an empty string."
             }
           },
           "required" => ["path", "objective"]
