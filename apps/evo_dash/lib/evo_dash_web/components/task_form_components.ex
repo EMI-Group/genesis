@@ -16,7 +16,6 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:mode, :string, default: "genesis_new")
   attr(:mode_info, :string, default: "")
   attr(:node_path, :string, default: "")
-  attr(:seeds, :string, default: "")
   attr(:starting_commit, :string, default: "")
   attr(:resume_from, :string, default: "")
   attr(:show_advanced, :boolean, default: false)

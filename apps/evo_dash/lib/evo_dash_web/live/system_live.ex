@@ -130,7 +130,6 @@ defmodule EvoDashWeb.SystemLive do
   #   --tool-concurrency    Max parallel tool executions (default: 2)
   #   -p, --path            Target project path
   #   -R <id:>path         Foreign repository (repeatable)
-  #   -C, --concepts        Concept expansion seeds (repeatable, complex mode)
   """
 
   @impl true

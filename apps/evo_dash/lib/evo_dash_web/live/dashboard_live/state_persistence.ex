@@ -20,7 +20,6 @@ defmodule EvoDashWeb.DashboardLive.StatePersistence do
       selected_model_id: socket.assigns.selected_model_id,
       task_prompt: socket.assigns.task_prompt,
       task_node_path: socket.assigns.task_node_path,
-      task_seeds: socket.assigns.task_seeds,
       task_starting_commit: socket.assigns.task_starting_commit,
       task_resume_from: socket.assigns.task_resume_from,
       show_advanced: socket.assigns.show_advanced,

@@ -167,7 +167,6 @@ defmodule EvoDashWeb.DashboardLive do
                 mode={@task_mode}
                 mode_info={@task_mode_info}
                 node_path={@task_node_path}
-                seeds={@task_seeds}
                 starting_commit={@task_starting_commit}
                 resume_from={@task_resume_from}
                 show_advanced={@show_advanced}
@@ -757,7 +756,6 @@ defmodule EvoDashWeb.DashboardLive do
     socket =
       socket
       |> StatePersistence.maybe_restore_assign(:task_prompt, params["task_prompt"])
-      |> StatePersistence.maybe_restore_assign(:task_seeds, params["task_seeds"])
       |> StatePersistence.maybe_restore_show_project_settings(params["show_project_settings"])
       |> StatePersistence.maybe_restore_task_archive(params["task_archive"])
       |> StatePersistence.maybe_restore_show_advanced(params["show_advanced"])
@@ -846,16 +844,6 @@ defmodule EvoDashWeb.DashboardLive do
         if task_type == :evolve and is_binary(starting_commit) and
              String.trim(starting_commit) != "" do
           Keyword.put(opts, :starting_commit, String.trim(starting_commit))
-        else
-          opts
-        end
-
-      seeds_content = params["seeds"]
-
-      opts =
-        if task_type == :evolve and mode == "complex" and is_binary(seeds_content) and
-             String.trim(seeds_content) != "" do
-          Keyword.put(opts, :seed_content, String.trim(seeds_content))
         else
           opts
         end
