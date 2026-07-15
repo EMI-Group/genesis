@@ -8,7 +8,8 @@ defmodule EvoGit.Runtime do
 
   @doc """
   Ensures a Git repository exists at the given path.
-  If not, initializes one and creates an initial commit with a .gitignore file.
+  If not, initializes one, stages all existing files, and creates an initial commit.
+  A `.gitignore` is written to exclude `/.genesis` worktrees.
   """
   def ensure_repo(repo_path) do
     if File.dir?(Path.join(repo_path, ".git")) do
@@ -21,7 +22,7 @@ defmodule EvoGit.Runtime do
       # Create .gitignore to ignore .genesis worktrees
       gitignore_path = Path.join(repo_path, ".gitignore")
       File.write!(gitignore_path, "/.genesis\n")
-      Git.add(repo_path, ".gitignore")
+      Git.add(repo_path)
 
       case Git.commit(repo_path, "Initial commit") do
         {:ok, _} -> :ok
