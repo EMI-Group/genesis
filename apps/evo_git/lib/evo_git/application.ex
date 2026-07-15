@@ -33,7 +33,6 @@ defmodule EvoGit.Application do
       {Phoenix.PubSub, name: EvoGit.PubSub},
       {Registry, keys: :unique, name: EvoGit.RemoteConnection.Registry},
       {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one},
-      {Task.Supervisor, name: EvoGit.TaskSupervisor},
       {EvoGit.Store,
        data_dir:
          Path.join(Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()), "tasks.sqlite")},
