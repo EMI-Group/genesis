@@ -158,7 +158,7 @@ defmodule EvoGit.Sandbox do
   # Uses `prefix <> "/"` so that `/tmpfoo` does NOT match the `/tmp` prefix.
   defp under_any?(path, prefixes) do
     Enum.any?(prefixes, fn prefix ->
-      path == prefix or String.starts_with?(path, prefix <> "/")
+      EvoGit.Platform.path_under?(path, prefix)
     end)
   end
 end

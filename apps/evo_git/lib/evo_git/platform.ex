@@ -1,7 +1,7 @@
 defmodule EvoGit.Platform do
   @moduledoc """
   Platform detection utilities for cross-platform support.
-  
+
   Detects the current operating system and provides helpers for
   platform-specific behavior throughout EvoGit.
   """
@@ -10,7 +10,7 @@ defmodule EvoGit.Platform do
 
   @doc """
   Detects the current operating system.
-  
+
   Returns one of:
   - `:linux` - Linux-based systems
   - `:macos` - macOS / Darwin
@@ -46,7 +46,7 @@ defmodule EvoGit.Platform do
 
   @doc """
   Returns the default shell executable for the current platform.
-  
+
   - Linux/macOS: `"bash"`
   - Windows: `"powershell"`
   """
@@ -60,7 +60,7 @@ defmodule EvoGit.Platform do
 
   @doc """
   Returns the shell arguments to execute a command string.
-  
+
   - Linux/macOS: `["-c", command]`
   - Windows: `["-Command", command]`
   """
@@ -74,7 +74,7 @@ defmodule EvoGit.Platform do
 
   @doc """
   Returns the system temporary directory in a platform-aware manner.
-  
+
   Uses `System.tmp_dir!/1` which is cross-platform, but also provides
   the known temp paths for use in sandbox configuration.
   """
@@ -85,7 +85,7 @@ defmodule EvoGit.Platform do
 
   @doc """
   Returns the list of known temporary directory paths for the current platform.
-  
+
   Used by the sandbox to configure ReadWritePaths.
   """
   @spec tmp_paths() :: [String.t()]
@@ -168,12 +168,56 @@ defmodule EvoGit.Platform do
 
   @doc """
   Returns true if `systemd-run` is likely available on this platform.
-  
+
   Only returns true on Linux where systemd is the init system.
   """
   @spec systemd_available?() :: boolean()
   def systemd_available? do
     linux?() and System.find_executable("systemd-run") != nil
+  end
+
+  @doc """
+  Returns true if the given path is an absolute path on any platform.
+  Handles Unix paths (/foo), Windows drive-letter paths (C:\\foo, D:/bar),
+  and UNC paths (\\\\server\\share).
+  """
+  @spec absolute_path?(String.t()) :: boolean()
+  def absolute_path?(path) when is_binary(path) do
+    Path.type(path) == :absolute or windows_absolute_path?(path)
+  end
+
+  def absolute_path?(_other), do: false
+
+  # Detects Windows-style absolute paths: drive letters (C:\\..., D:/...)
+  # and UNC paths (\\\\server\\share\\...)
+  @windows_absolute_regex ~r/^[A-Za-z]:[\/\\]|^\\\\/
+
+  defp windows_absolute_path?(path) do
+    String.match?(path, @windows_absolute_regex)
+  end
+
+  @doc """
+  Returns true if `child_path` is equal to `parent_path` or is a sub-path of it.
+  Handles both Unix and Windows path separators (/ and \\).
+  """
+  @spec path_under?(String.t(), String.t()) :: boolean()
+  def path_under?(child_path, parent_path)
+      when is_binary(child_path) and is_binary(parent_path) do
+    child = String.replace(child_path, "\\", "/")
+    parent = String.replace(parent_path, "\\", "/")
+    child == parent or String.starts_with?(child, parent <> "/")
+  end
+
+  @doc """
+  Returns true if the character at `prefix_len` in `path` is a path separator
+  (either / or \\).
+  """
+  @spec path_next_is_separator?(String.t(), non_neg_integer()) :: boolean()
+  def path_next_is_separator?(path, prefix_len) when is_binary(path) and is_integer(prefix_len) do
+    case String.at(path, prefix_len) do
+      nil -> false
+      char -> char == "/" or char == "\\"
+    end
   end
 
   @doc """

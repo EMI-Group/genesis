@@ -99,7 +99,7 @@ defmodule EvoGit.Task do
       end)
 
     if bare_path == "." or bare_path in files or (bare_path <> "/") in files or
-         Enum.any?(files, &String.starts_with?(&1, bare_path <> "/")) do
+         Enum.any?(files, &EvoGit.Platform.path_under?(&1, bare_path)) do
       if bare_path == ".", do: "./", else: "./" <> bare_path
     else
       Logger.warning("Agent: Diagnosed path '#{path}' not found in tree, falling back to root.")

@@ -54,7 +54,7 @@ defmodule EvoGit.Agent.DelegationHints do
   end
 
   def do_extract_child_paths(tool_name, args, node_path, repo_path)
-       when tool_name in ~w(write_context edit_context) do
+      when tool_name in ~w(write_context edit_context) do
     case EvoGit.Agent.Tools.Shared.fetch_string_arg(args, "dir_path") do
       {:ok, dir_path} -> path_to_child_dir(dir_path, node_path, repo_path)
       _ -> []
@@ -93,7 +93,7 @@ defmodule EvoGit.Agent.DelegationHints do
         # Root node: extract first path segment as child
         extract_first_segment(normalized_target)
       else
-        if String.starts_with?(normalized_target, normalized_node <> "/") do
+        if EvoGit.Platform.path_under?(normalized_target, normalized_node) do
           # Extract the first segment under node_path
           remainder = String.replace_prefix(normalized_target, normalized_node <> "/", "")
           extract_first_segment_from_remainder(remainder, normalized_node)
@@ -224,7 +224,7 @@ defmodule EvoGit.Agent.DelegationHints do
   end
 
   def do_extract_read_child_paths(tool_name, args, node_path, repo_path)
-       when tool_name in ~w(rg glob) do
+      when tool_name in ~w(rg glob) do
     case EvoGit.Agent.Tools.Shared.fetch_string_arg(args, "path") do
       {:ok, path} -> path_to_child_dir(path, node_path, repo_path)
       _ -> []
@@ -239,12 +239,12 @@ defmodule EvoGit.Agent.DelegationHints do
   end
 
   def maybe_append_read_delegation_hint(
-         output,
-         read_hints,
-         child_paths,
-         threshold,
-         delegation_level
-       ) do
+        output,
+        read_hints,
+        child_paths,
+        threshold,
+        delegation_level
+      ) do
     new_read_hints = update_read_delegation_hints(read_hints, child_paths)
 
     # Only emit read delegation hints for high-level agents

@@ -85,11 +85,11 @@ defmodule EvoGit.Core.ForeignRepo do
   @spec normalize_path(t(), String.t()) :: {:ok, String.t()} | {:error, :not_in_repo}
   def normalize_path(%__MODULE__{root: root}, abs_path) when is_binary(abs_path) do
     # Normalize both paths for safe comparison (strip trailing slashes)
-    root = String.trim_trailing(root, "/")
+    root = root |> String.trim_trailing("/") |> String.trim_trailing("\\")
     abs_path = Path.expand(abs_path)
 
     if String.starts_with?(abs_path, root) and
-         (abs_path == root or String.at(abs_path, byte_size(root)) == "/") do
+         (abs_path == root or EvoGit.Platform.path_next_is_separator?(abs_path, byte_size(root))) do
       relative = Path.relative_to(abs_path, root)
       {:ok, normalize_relative(relative)}
     else
@@ -106,7 +106,8 @@ defmodule EvoGit.Core.ForeignRepo do
   The primary repo is checked last, so foreign repos take precedence if paths
   overlap (unlikely but possible).
   """
-  @spec resolve_path([t()], String.t()) :: {:ok, String.t(), String.t()} | {:error, :not_in_any_repo}
+  @spec resolve_path([t()], String.t()) ::
+          {:ok, String.t(), String.t()} | {:error, :not_in_any_repo}
   def resolve_path(repos, abs_path) when is_list(repos) and is_binary(abs_path) do
     abs_path = Path.expand(abs_path)
 
@@ -128,7 +129,7 @@ defmodule EvoGit.Core.ForeignRepo do
   """
   @spec absolute_path?(String.t() | nil) :: boolean()
   def absolute_path?(path) when is_binary(path) do
-    String.starts_with?(path, "/")
+    EvoGit.Platform.absolute_path?(path)
   end
 
   def absolute_path?(_other), do: false

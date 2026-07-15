@@ -165,7 +165,14 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     case Shared.fetch_string_arg(args, "command") do
       {:ok, command} ->
         timeout = Map.get(args, "timeout", @default_timeout)
-        max_bytes = Map.get(args, "max_bytes", EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes]))
+
+        max_bytes =
+          Map.get(
+            args,
+            "max_bytes",
+            EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes])
+          )
+
         do_execute(command, repo_path, repo_root, timeout, max_bytes)
 
       {:error, message} ->
@@ -177,7 +184,14 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     shell = Platform.shell()
     shell_args = Platform.shell_args(command)
 
-    case EvoGit.Sandbox.run_with_partial(repo_path, shell, shell_args, repo_root, timeout, max_bytes) do
+    case EvoGit.Sandbox.run_with_partial(
+           repo_path,
+           shell,
+           shell_args,
+           repo_root,
+           timeout,
+           max_bytes
+         ) do
       {:ok, output, exit_code} ->
         base =
           cond do
@@ -215,20 +229,26 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     131 => {3, "SIGQUIT", "quit"},
     132 => {4, "SIGILL", "illegal instruction"},
     133 => {5, "SIGTRAP", "trace/breakpoint trap"},
-    134 => {6, "SIGABRT",
-     "an assertion failure, a fatal internal error, or an explicit call to abort()"},
+    134 =>
+      {6, "SIGABRT",
+       "an assertion failure, a fatal internal error, or an explicit call to abort()"},
     135 => {7, "SIGBUS", "a bus error — typically an unaligned memory access or mapping error"},
-    136 => {8, "SIGFPE", "a floating point exception — typically an integer division by zero or an invalid arithmetic operation"},
-    137 => {9, "SIGKILL",
-     "an **Out-Of-Memory (OOM)** condition — the process consumed too much memory and was terminated by the kernel's OOM killer or the sandbox memory limit (MemoryMax). The output below is everything captured before the process was killed. Consider reducing memory usage"},
+    136 =>
+      {8, "SIGFPE",
+       "a floating point exception — typically an integer division by zero or an invalid arithmetic operation"},
+    137 =>
+      {9, "SIGKILL",
+       "an **Out-Of-Memory (OOM)** condition — the process consumed too much memory and was terminated by the kernel's OOM killer or the sandbox memory limit (MemoryMax). The output below is everything captured before the process was killed. Consider reducing memory usage"},
     138 => {10, "SIGUSR1", "user-defined signal 1"},
-    139 => {11, "SIGSEGV",
-     "a segmentation fault — a memory access violation. The process tried to read or write an invalid memory address. This is a crash in the program itself, not a normal error"},
+    139 =>
+      {11, "SIGSEGV",
+       "a segmentation fault — a memory access violation. The process tried to read or write an invalid memory address. This is a crash in the program itself, not a normal error"},
     140 => {12, "SIGUSR2", "user-defined signal 2"},
     141 => {13, "SIGPIPE", "a broken pipe — writing to a pipe with no readers"},
     142 => {14, "SIGALRM", "an alarm clock signal"},
-    143 => {15, "SIGTERM",
-     "a termination signal. This can be sent by the system, a process manager, or another process"}
+    143 =>
+      {15, "SIGTERM",
+       "a termination signal. This can be sent by the system, a process manager, or another process"}
   }
 
   @doc """
@@ -283,7 +303,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     |> cd_targets()
     |> Enum.reduce([], fn target, acc ->
       cond do
-        target != repo_path and String.starts_with?(target, worktree_base <> "/") ->
+        target != repo_path and EvoGit.Platform.path_under?(target, worktree_base) ->
           [
             "⚠️ You are trying to `cd` into another agent's worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
             | acc

@@ -220,8 +220,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
           # For foreign repo subagents, we need the foreign repo's HEAD commit (the primary
           # repo's commit SHA doesn't exist in the foreign repo's git database).
-          case build_subagent_phylo_node(target_repo_id, commit_id, repo_path,
-                 target_repo_root, foreign_repo_commits, parent_state) do
+          case build_subagent_phylo_node(
+                 target_repo_id,
+                 commit_id,
+                 repo_path,
+                 target_repo_root,
+                 foreign_repo_commits,
+                 parent_state
+               ) do
             {:ok, sub_phylo_node} ->
               AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
                 repo_id: target_repo_id,
@@ -307,7 +313,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     root = String.trim_trailing(root, "/")
     expanded = Path.expand(abs_path)
 
-    if String.starts_with?(expanded, root <> "/") or expanded == root do
+    if EvoGit.Platform.path_under?(expanded, root) do
       relative =
         expanded
         |> Path.relative_to(root)
@@ -506,8 +512,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
   # Returns `{:ok, PhyloGraphNode.t()}` on success, or `{:error, error_message}` when
   # a user-provided commit_id does not exist in the repository (early validation so the
   # LLM gets a clear, actionable error instead of a generic retry-exhausted crash).
-  defp build_subagent_phylo_node("primary", commit_id, repo_path, _target_repo_root,
-         _foreign_repo_commits, parent_state) do
+  defp build_subagent_phylo_node(
+         "primary",
+         commit_id,
+         repo_path,
+         _target_repo_root,
+         _foreign_repo_commits,
+         parent_state
+       ) do
     if commit_id do
       case Git.rev_parse(repo_path, commit_id) do
         {:ok, _sha} ->
@@ -534,8 +546,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
     end
   end
 
-  defp build_subagent_phylo_node(target_repo_id, _commit_id, _repo_path, target_repo_root,
-         foreign_repo_commits, _parent_state) do
+  defp build_subagent_phylo_node(
+         target_repo_id,
+         _commit_id,
+         _repo_path,
+         target_repo_root,
+         foreign_repo_commits,
+         _parent_state
+       ) do
     # Foreign repo subagent: use tracked commit from previous subagent completions,
     # falling back to the foreign repo's HEAD if no tracked commit exists.
     tracked_commit = Map.get(foreign_repo_commits, target_repo_id)

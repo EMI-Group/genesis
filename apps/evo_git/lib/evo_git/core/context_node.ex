@@ -64,7 +64,7 @@ defmodule EvoGit.Core.ContextNode do
   """
   @spec normalize_relpath(String.t()) :: String.t()
   def normalize_relpath(path) when is_binary(path) do
-    if String.starts_with?(path, "/") do
+    if EvoGit.Platform.absolute_path?(path) do
       raise "normalize_relpath expects a relative path, got absolute: #{inspect(path)}"
     end
 

@@ -49,6 +49,11 @@ defmodule EvoGit.Core.ForeignRepoTest do
       assert ForeignRepo.absolute_path?("/")
     end
 
+    test "returns true for Windows absolute paths" do
+      assert ForeignRepo.absolute_path?("C:\\Source\\proj")
+      assert ForeignRepo.absolute_path?("D:/Source/proj")
+    end
+
     test "returns false for relative paths" do
       refute ForeignRepo.absolute_path?("./src")
       refute ForeignRepo.absolute_path?("src/main.ex")
@@ -82,12 +87,14 @@ defmodule EvoGit.Core.ForeignRepoTest do
 
     test "handles deeply nested paths" do
       repo = ForeignRepo.new("test", "/Source/proj")
+
       assert {:ok, "./a/b/c/d/e.ex"} =
                ForeignRepo.normalize_path(repo, "/Source/proj/a/b/c/d/e.ex")
     end
 
     test "does not match partial prefix" do
       repo = ForeignRepo.new("test", "/Source/proj")
+
       assert {:error, :not_in_repo} =
                ForeignRepo.normalize_path(repo, "/Source/project-other/file.ex")
     end
@@ -101,7 +108,8 @@ defmodule EvoGit.Core.ForeignRepoTest do
     test "handles path with parent directory segments" do
       repo = ForeignRepo.new("test", "/Source/proj")
       # Path.expand resolves .. segments, so the result is the resolved path
-      assert {:ok, "./lib/app.ex"} = ForeignRepo.normalize_path(repo, "/Source/proj/src/../lib/app.ex")
+      assert {:ok, "./lib/app.ex"} =
+               ForeignRepo.normalize_path(repo, "/Source/proj/src/../lib/app.ex")
     end
 
     test "handles empty string path" do
@@ -128,7 +136,9 @@ defmodule EvoGit.Core.ForeignRepoTest do
 
     test "resolves to primary repo" do
       repos = [ForeignRepo.new("primary", "/Source/proj")]
-      assert {:ok, "primary", "./lib/app.ex"} = ForeignRepo.resolve_path(repos, "/Source/proj/lib/app.ex")
+
+      assert {:ok, "primary", "./lib/app.ex"} =
+               ForeignRepo.resolve_path(repos, "/Source/proj/lib/app.ex")
     end
 
     test "with multiple repos, returns correct one" do
@@ -161,8 +171,10 @@ defmodule EvoGit.Core.ForeignRepoTest do
         ForeignRepo.new("short", "/Source/proj"),
         ForeignRepo.new("long", "/Source/proj-extended")
       ]
+
       # Path under the longer repo should NOT match the shorter one
-      assert {:ok, "long", "./lib/app.ex"} = ForeignRepo.resolve_path(repos, "/Source/proj-extended/lib/app.ex")
+      assert {:ok, "long", "./lib/app.ex"} =
+               ForeignRepo.resolve_path(repos, "/Source/proj-extended/lib/app.ex")
     end
 
     test "resolves repo root to ./" do
@@ -172,6 +184,7 @@ defmodule EvoGit.Core.ForeignRepoTest do
 
     test "resolves deeply nested path" do
       repos = [ForeignRepo.new("primary", "/Source/proj")]
+
       assert {:ok, "primary", "./a/b/c/d/e/f/g/h.ex"} =
                ForeignRepo.resolve_path(repos, "/Source/proj/a/b/c/d/e/f/g/h.ex")
     end
@@ -183,9 +196,14 @@ defmodule EvoGit.Core.ForeignRepoTest do
         ForeignRepo.new("tertiary", "/Source/proj-c")
       ]
 
-      assert {:ok, "primary", "./README.md"} = ForeignRepo.resolve_path(repos, "/Source/proj-a/README.md")
-      assert {:ok, "secondary", "./README.md"} = ForeignRepo.resolve_path(repos, "/Source/proj-b/README.md")
-      assert {:ok, "tertiary", "./README.md"} = ForeignRepo.resolve_path(repos, "/Source/proj-c/README.md")
+      assert {:ok, "primary", "./README.md"} =
+               ForeignRepo.resolve_path(repos, "/Source/proj-a/README.md")
+
+      assert {:ok, "secondary", "./README.md"} =
+               ForeignRepo.resolve_path(repos, "/Source/proj-b/README.md")
+
+      assert {:ok, "tertiary", "./README.md"} =
+               ForeignRepo.resolve_path(repos, "/Source/proj-c/README.md")
     end
   end
 end

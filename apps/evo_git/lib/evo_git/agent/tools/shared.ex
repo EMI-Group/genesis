@@ -211,7 +211,7 @@ defmodule EvoGit.Agent.Tools.Shared do
   instead of raising, so callers can surface a graceful error message.
   """
   def normalize_relpath(path) when is_binary(path) do
-    if String.starts_with?(path, "/") do
+    if EvoGit.Platform.absolute_path?(path) do
       {:error,
        "Path #{inspect(path)} is absolute. All file paths must be relative to the repository root (e.g. './src/main.ex'), not absolute."}
     else
@@ -247,7 +247,7 @@ defmodule EvoGit.Agent.Tools.Shared do
       if parent_path == child_path do
         true
       else
-        String.starts_with?(child_path, parent_path <> "/")
+        EvoGit.Platform.path_under?(child_path, parent_path)
       end
     end
   end
@@ -296,7 +296,7 @@ defmodule EvoGit.Agent.Tools.Shared do
   # base. If the result still starts with "/", the original expanded path was
   # outside the repository root.
   defp is_absolute_outside_repo?(relative_path) when is_binary(relative_path) do
-    String.starts_with?(relative_path, "/")
+    EvoGit.Platform.absolute_path?(relative_path)
   end
 
   defp format_outside_repo_error(path) do
