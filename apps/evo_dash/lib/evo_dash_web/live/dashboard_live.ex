@@ -7,7 +7,7 @@ defmodule EvoDashWeb.DashboardLive do
   project settings including foreign repositories.
   """
   use EvoDashWeb, :live_view
-  alias EvoDash.TaskRegistry
+  alias EvoGit.TaskRegistry
   alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns}
   alias EvoGit.Core.ForeignRepo
   use EvoDashWeb.ModalHelpers

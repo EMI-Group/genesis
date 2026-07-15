@@ -4,7 +4,7 @@ defmodule EvoDashWeb.TasksLive do
   """
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
-  alias EvoDash.TaskRegistry
+  alias EvoGit.TaskRegistry
   use EvoDashWeb.ModalHelpers
 
   @default_page_size 25

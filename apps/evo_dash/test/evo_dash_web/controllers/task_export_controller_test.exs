@@ -1,8 +1,8 @@
 defmodule EvoDashWeb.TaskExportControllerTest do
   use EvoDashWeb.ConnCase, async: false
 
-  alias EvoDash.TaskRegistry
-  alias EvoDash.TaskInfo
+  alias EvoGit.TaskRegistry
+  alias EvoGit.TaskInfo
 
   describe "GET /tasks/:task_id/export" do
     test "returns 404 when the task does not exist", %{conn: conn} do
@@ -113,7 +113,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       archive_metadata: archive_metadata
     }
 
-    EvoDash.Store.put_task(EvoDash.Store, task)
+    EvoGit.Store.put_task(EvoGit.Store, task)
 
     task_id
   end

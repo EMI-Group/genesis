@@ -3,7 +3,7 @@ defmodule EvoDashWeb.TaskExportController do
   use Gettext, backend: EvoDashWeb.Gettext
 
   def export(conn, %{"task_id" => task_id}) do
-    case EvoDash.TaskRegistry.get_task(task_id) do
+    case EvoGit.TaskRegistry.get_task(task_id) do
       nil ->
         conn
         |> put_status(:not_found)

@@ -66,7 +66,6 @@ defmodule EvoDash.MixProject do
       {:gettext, "~> 1.0"},
       {:phoenix_pubsub, "~> 2.2"},
       {:bandit, "~> 1.5"},
-      {:xqlite, "~> 0.7"},
       {:lumis, "~> 0.5"},
       {:mdex, "~> 0.1"},
       {:floki, "~> 0.38.0"},
