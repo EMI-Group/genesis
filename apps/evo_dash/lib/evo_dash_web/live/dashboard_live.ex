@@ -10,6 +10,7 @@ defmodule EvoDashWeb.DashboardLive do
   alias EvoGit.TaskRegistry
   alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns}
   alias EvoGit.Core.ForeignRepo
+  alias EvoGit.Platform
   use EvoDashWeb.ModalHelpers
 
   @impl true
@@ -1016,8 +1017,8 @@ defmodule EvoDashWeb.DashboardLive do
       path == "" ->
         {:noreply, put_flash(socket, :error, gettext("Path cannot be empty."))}
 
-      not String.starts_with?(path, "/") ->
-        {:noreply, put_flash(socket, :error, gettext("Path must be absolute (start with /)."))}
+      not Platform.absolute_path?(path) ->
+        {:noreply, put_flash(socket, :error, gettext("Path must be absolute."))}
 
       true ->
         repo_id = repo_id_str

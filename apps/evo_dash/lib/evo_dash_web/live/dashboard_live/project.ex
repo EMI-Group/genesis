@@ -67,10 +67,10 @@ defmodule EvoDashWeb.DashboardLive.Project do
 
     {dir, prefix} =
       cond do
-        String.ends_with?(expanded, "/") ->
+        String.ends_with?(expanded, "/") or String.ends_with?(expanded, "\\") ->
           {expanded, ""}
 
-        String.contains?(expanded, "/") ->
+        String.contains?(expanded, "/") or String.contains?(expanded, "\\") ->
           dir = Path.dirname(expanded)
           base = Path.basename(expanded)
           {dir, base}
@@ -135,7 +135,7 @@ defmodule EvoDashWeb.DashboardLive.Project do
 
     cond do
       trimmed == "" -> {:error, :invalid_name}
-      String.contains?(trimmed, "/") -> {:error, :invalid_name}
+      String.contains?(trimmed, "/") or String.contains?(trimmed, "\\") -> {:error, :invalid_name}
       true -> {:ok, trimmed}
     end
   end

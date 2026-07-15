@@ -10,6 +10,8 @@ defmodule EvoDashWeb.AgentsLive do
   """
   use EvoDashWeb, :live_view
 
+  alias EvoGit.Platform
+
   @agent_state_table :evogit_agent_state
   @sched_meta_table :evogit_sched_meta
 
@@ -698,14 +700,14 @@ defmodule EvoDashWeb.AgentsLive do
   defp repo_display_name(:primary), do: gettext("Primary Repo")
   defp repo_display_name(nil), do: gettext("Primary Repo")
 
-  # A repo root path is a binary starting with "/" — use the basename.
-  defp repo_display_name(key) when is_binary(key) and binary_part(key, 0, 1) == "/" do
-    Path.basename(key)
+  # An absolute path on any platform (Unix /foo or Windows C:\foo) — use the basename.
+  defp repo_display_name(key) when is_binary(key) do
+    if Platform.absolute_path?(key) do
+      Path.basename(key)
+    else
+      gettext("Repo: %{repo_id}", repo_id: key)
+    end
   end
-
-  # Any other binary is a string repo_id (e.g. "secondary").
-  defp repo_display_name(repo_id) when is_binary(repo_id),
-    do: gettext("Repo: %{repo_id}", repo_id: repo_id)
 
   # Backward compat / defensive: atom repo_ids from older ETS data.
   defp repo_display_name(repo_id) when is_atom(repo_id),
