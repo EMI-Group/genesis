@@ -6,7 +6,9 @@ defmodule EvoGit.Sandbox.Linux do
   syscall filtering, and process isolation. Requires systemd.
   """
 
-  alias EvoGit.{Nix, Platform}
+  @behaviour EvoGit.Sandbox.Behaviour
+
+  alias EvoGit.{Nix, Platform, Sandbox.Helpers}
 
   @doc "Returns true when sandbox mode allows systemd-run on Linux."
   @spec enabled?() :: boolean()
@@ -52,7 +54,7 @@ defmodule EvoGit.Sandbox.Linux do
       # Wrap in bash with stdin redirect: systemd-run --pipe connects stdin as a
       # pipe (overriding StandardInput=null), so we redirect on our side.
       is_git = EvoGit.GitEnv.git_command?(executable)
-      inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
+      inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
       wrapped_cmd = inner_cmd <> " < /dev/null"
       sandbox_args = inject_unit(args(cwd, "bash", ["-c", wrapped_cmd], repo_root), unit)
       # args/4 won't detect git on "bash", so append git env manually
@@ -62,7 +64,7 @@ defmodule EvoGit.Sandbox.Linux do
       result
     else
       # Disabled path: wrap in bash with stdin redirect from /dev/null.
-      inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
+      inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
       wrapped_cmd = inner_cmd <> " < /dev/null"
 
       if EvoGit.GitEnv.git_command?(executable) do
@@ -377,8 +379,8 @@ defmodule EvoGit.Sandbox.Linux do
     tmpfile =
       Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
 
-    inner_cmd = Enum.map_join([executable | args], " ", &shell_escape/1)
-    wrapped_cmd = inner_cmd <> " > " <> shell_escape(tmpfile) <> " 2>&1 < /dev/null"
+    inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
+    wrapped_cmd = inner_cmd <> " > " <> Helpers.shell_escape(tmpfile) <> " 2>&1 < /dev/null"
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash).
     # The sandbox args/4 won't detect git since it receives "bash", so we
@@ -401,14 +403,14 @@ defmodule EvoGit.Sandbox.Linux do
       case Task.yield(task, timeout) || Task.shutdown(task) do
         {:ok, {_output, exit_code}} ->
           EvoGit.SandboxProcessRegistry.unregister(unit)
-          content = read_tempfile(tmpfile, max_bytes)
+          content = Helpers.read_tempfile(tmpfile, max_bytes)
           {:ok, content, exit_code}
 
         nil ->
           # CRITICAL: Task.shutdown killed the systemd-run CLIENT, but the
           # .service unit keeps running. Release spawns an async Task to stop it.
           EvoGit.SandboxProcessRegistry.release(unit)
-          partial = read_tempfile(tmpfile, max_bytes)
+          partial = Helpers.read_tempfile(tmpfile, max_bytes)
           {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
       end
     else
@@ -426,11 +428,11 @@ defmodule EvoGit.Sandbox.Linux do
 
       case Task.yield(task, timeout) || Task.shutdown(task) do
         {:ok, {_output, exit_code}} ->
-          content = read_tempfile(tmpfile, max_bytes)
+          content = Helpers.read_tempfile(tmpfile, max_bytes)
           {:ok, content, exit_code}
 
         nil ->
-          partial = read_tempfile(tmpfile, max_bytes)
+          partial = Helpers.read_tempfile(tmpfile, max_bytes)
           {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
       end
     end
@@ -446,72 +448,4 @@ defmodule EvoGit.Sandbox.Linux do
   end
 
   defp maybe_append_git_env(sandbox_args, false), do: sandbox_args
-
-  # POSIX-safe shell escaping: wrap each argument in single quotes and
-  # replace every literal single-quote with the sequence '\\''.
-  defp shell_escape(arg) do
-    "'" <> String.replace(arg, "'", "'\\''") <> "'"
-  end
-
-  # Reads content from the temp file and deletes it. Returns empty string
-  # if the file does not exist or cannot be read.
-  #
-  # When `max_bytes` is nil, reads the entire file (current behavior).
-  # When `max_bytes` is set and the file exceeds it, reads only the first
-  # and last portions (never loading the entire file into memory).
-  defp read_tempfile(path, max_bytes) do
-    content =
-      case File.stat(path) do
-        {:ok, %{size: size}} ->
-          if is_nil(max_bytes) or size <= max_bytes do
-            case File.read(path) do
-              {:ok, data} -> data
-              {:error, _} -> ""
-            end
-          else
-            read_truncated(path, size, max_bytes)
-          end
-
-        {:error, _} ->
-          ""
-      end
-
-    _ = File.rm(path)
-    content
-  end
-
-  # Reads only the first and last portions of a large file directly from disk
-  # without loading the entire file into memory. Uses :file.pread/3 for
-  # positioned reads and :raw/:binary mode for speed. The truncation size
-  # (8192 bytes: 4096 first + 4096 last) matches OutputSanitizer.
-  defp read_truncated(path, file_size, max_bytes) do
-    truncate_size = 8192
-
-    if file_size <= truncate_size do
-      case File.read(path) do
-        {:ok, data} -> data
-        {:error, _} -> ""
-      end
-    else
-      half_size = div(truncate_size, 2)
-      omitted = file_size - truncate_size
-
-      {:ok, device} = File.open(path, [:read, :raw, :binary])
-
-      {:ok, first_part} = :file.pread(device, 0, half_size)
-      {:ok, last_part} = :file.pread(device, file_size - half_size, half_size)
-
-      File.close(device)
-
-      """
-      [WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{truncate_size} bytes]
-      The output was too large. Consider using more specific arguments
-      or alternative tools to retrieve only the relevant portion of data.
-      #{first_part}
-      ... [#{omitted} bytes omitted] ...
-      #{last_part}
-      """
-      |> String.trim()
-    end
-  end
 end
