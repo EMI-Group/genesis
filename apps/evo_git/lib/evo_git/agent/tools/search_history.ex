@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
           "commit_id" => %{
             "type" => "string",
             "description" =>
-              "The commit ID, branch, or ref to start the log from. Default: \"#{@default_commit_id}\"",
+              "The commit ID, branch, or ref to start the log from. Default: \"#{@default_commit_id}\". An empty string also defaults to \"#{@default_commit_id}\".",
             "default" => @default_commit_id
           },
           "search_notes" => %{
@@ -63,7 +63,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "pattern") do
       {:ok, pattern} ->
-        commit_id = get_optional_string(args, "commit_id", @default_commit_id)
+        commit_id = get_optional_string(args, "commit_id", @default_commit_id) |> blank_to_default(@default_commit_id)
         search_notes = get_optional_boolean(args, "search_notes", @default_search_notes)
         max_count = get_optional_integer(args, "max_count", @default_max_count)
 
@@ -82,6 +82,9 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
       val -> to_string(val)
     end
   end
+
+  defp blank_to_default("", default), do: default
+  defp blank_to_default(val, _default), do: val
 
   defp get_optional_boolean(args, key, default) do
     case Map.get(args, key, default) do
