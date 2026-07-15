@@ -227,10 +227,13 @@ defmodule EvoDashWeb.TaskFormComponents do
             phx-update="ignore"
             class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-base-content/20 resize-y bg-base-200/30"
             placeholder={
-              if String.starts_with?(@mode, "evolve") do
-                gettext("Describe what you want to change or improve...")
-              else
-                gettext("Describe the codebase you want to create...")
+              cond do
+                @mode == "genesis_existing" ->
+                  gettext("Optional — leave empty and click Execute to initialize an existing codebase")
+                String.starts_with?(@mode, "evolve") ->
+                  gettext("Describe what you want to change or improve...")
+                true ->
+                  gettext("Describe the codebase you want to create...")
               end
             }
           ><%= @prompt %></textarea>
