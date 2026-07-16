@@ -12,17 +12,10 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 | `EvoGit.Runtime` | `../runtime.ex` | `ensure_repo/1` | Top-level coordinator. `ensure_repo/1` initializes a git repo with `.gitignore` if missing. The CLI (`EvoGit.CLI`) calls `Genesis.run/2` and `Evolution.run/2` directly — there is no combined orchestration entry point. |
 | `EvoGit.Runtime.Helpers` | `helpers.ex` | `merge_and_report/3`, `notify_finalizing/1`, `generate_branch_name/1`, `new_codebase?/1`, `validate_node_path/2`, `resolve_starting_commit/2` | Shared helper functions for both runtime phases — branch creation, change detection, node path validation, commit resolution. |
 | `EvoGit.Runtime.Genesis` | `genesis.ex` | `run/2` | Stage 1 — Creation/Analysis. Auto-detects mode. Returns `{:ok, %{commit_sha, result, tag, branch_name, pr_url}}` or `{:ok, %{..., no_changes: true}}`. |
-| `EvoGit.Runtime.Evolution` | `evolution.ex` | `run/2` | Stage 2 — Evolutionary Loop. Supports `:simple` and `:complex` modes. Same return shape as Genesis. |
+| `EvoGit.Runtime.Evolution` | `evolution.ex` | `run/2` | Stage 2 — Evolutionary Loop. Supports `:simple` mode only. Same return shape as Genesis. |
 | `EvoGit.Runtime.PullRequest` | `pull_request.ex` | `try_create/4`, `generate_title/2`, `format_body/2` | Shared PR utilities: LLM-powered title generation, body formatting, push + PR creation via `gh` CLI. |
 | `EvoGit.Runtime.WorktreeInitScript` | `worktree_init_script.ex` | `build_systems/0`, `get_build_system/1`, `scripts_for/1` | Predefined catalog of Worktree Init Scripts for common build systems (Elixir, Node.js, Python, Rust, Go, None). Each entry provides unix (bash) and windows (PowerShell) scripts that copy dependencies/build artifacts from the source repo into new worktrees. Genesis Mode B writes the selected scripts to `genesis.toml` as OS-specific variants (`script.linux`, `script.macos`, `script.windows`) so the existing per-worktree init-script infrastructure picks them up. |
 | `EvoGit.Runtime.SkillExtraction` | `skill_extraction.ex` | `run/1` | Skill Extraction Phase — analyzes a completed PR's changes and distills reusable knowledge into EvoGit skills (`.agents/skills/`). Takes a keyword list of PR context opts (title, objective, summary, commit history, base_sha, commit_sha, user_note). Builds the objective from PR context and spawns a `SkillExtractor` agent. |
-| `EvoGit.Runtime.Evolution.Engine` | `evolution/engine.ex` | `run/5` | Complex Evolution orchestrator — novelty-driven evolution loop with MAP-Elites, LLM crossover/mutation, and solution synthesis. |
-| `EvoGit.Runtime.Evolution.Fragment` | `evolution/fragment.ex` | `new/2`, `extract_structural_features/1`, `to_feature_vector/1`, `summarize/1` | Code fragment data structure with AST feature extraction and feature vector conversion. |
-| `EvoGit.Runtime.Evolution.SeedFragments` | `evolution/seed_fragments.ex` | `all/0`, `by_category/1`, `random/1`, `generate_with_llm/3` | 15 built-in cross-domain seed fragments + LLM-powered diverse fragment generation. |
-| `EvoGit.Runtime.Evolution.EntropyPool` | `evolution/entropy_pool.ex` | `start_link/1`, `insert/1`, `insert_all/1`, `get/1`, `all/0`, `size/0`, `select_novel/1`, `select_random/1`, `evict_most_redundant/0`, `update_fragment/1`, `clear/0`, `stop/0` | ETS-backed GenServer for fragment storage with novelty-based selection and auto-eviction. |
-| `EvoGit.Runtime.Evolution.MapElites` | `evolution/map_elites.ex` | `start_link/1`, `insert/1`, `get_elites/0`, `get_elite/1`, `all_fragments/0`, `size/0`, `descriptor_for/1`, `clear/0`, `stop/0` | MAP-Elites quality diversity archive — grid indexed by complexity × paradigm. |
-| `EvoGit.Runtime.Evolution.NoveltyMetric` | `evolution/novelty_metric.ex` | `novelty_score/3`, `distance/2`, `batch_novelty_scores/3`, `structural_features/1`, `behavioral_profile/2`, `most_redundant/1` | k-NN novelty scoring in feature space, AST structural analysis, LLM behavioral profiling. |
-| `EvoGit.Runtime.Evolution.LLMSynthesis` | `evolution/llm_synthesis.ex` | `crossover/4`, `mutate/3`, `evaluate_viability/1`, `generate_diverse_fragments/4` | LLM-powered semantic crossover, mutation, syntax viability checking, and diverse fragment generation. |
 
 ### `Genesis.run/2` — Step by Step
 
@@ -44,9 +37,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 2. **Register foreign repos**: Same as Genesis.
 3. **Ensure repo + get HEAD**: Same as Genesis.
 4. **Validate node path**: `validate_node_path/2` ensures path is relative, directory exists, and contains `CONTEXT.md` (root `"./"` always passes).
-5. **Dispatch agent by mode**:
-   - **`:simple`** → `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents).
-   - **`:complex`** → `Engine.run/5` — novelty-driven evolution loop with MAP-Elites quality diversity, LLM-powered crossover/mutation, solution synthesis, and Manager agent application.
+5. **Dispatch agent**: Spawns a `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents).
 6. **Post-processing**: Same `merge_and_report/3` pattern — creates `evogit/evolve_<hex>` branch, optionally PR.
 
 ### `PullRequest.try_create/4` — Step by Step
@@ -117,17 +108,6 @@ Manager (target node)
   └── ...
 ```
 
-**Evolution Complex Mode**:
-```
-Engine.run/5 (orchestrator)
-  ├── EntropyPool (GenServer — fragment storage)
-  ├── MapElites (GenServer — quality diversity archive)
-  │   [NoveltyMetric, LLMSynthesis, SeedFragments — pure modules]
-  └── Manager (final phase — applies synthesized solution to codebase)
-        ├── subagent_executor (code changes)
-        └── ...
-```
-
 ### Subagent Spawning Mechanics
 
 Agents call `AgentScheduler.spawn_sub_agents/2` (from within the agent process). The scheduler:
@@ -136,19 +116,6 @@ Agents call `AgentScheduler.spawn_sub_agents/2` (from within the agent process).
 - Marks parent as `:waiting` (its worktree becomes reclaimable if pool is exhausted).
 - Dispatches each subagent with its own worktree and incremented task-local ID.
 - Blocks until all subagents complete, returns results in order.
-
-## Bottom-Up / Complex Evolution
-
-**Complex mode (`:complex`)** is implemented in `EvoGit.Runtime.Evolution.Engine`. When `Evolution.run/2` is called with `mode: :complex`, it delegates to `Engine.run/5` which runs the full novelty-driven evolution loop:
-
-1. **Initialize**: Populate the Entropy Pool with 15 built-in seed fragments + LLM-generated diverse fragments. Extract structural features (AST analysis) and behavioral profiles (LLM), compute novelty scores.
-2. **Evolve**: Iterate generations of parent selection (top-k novel), child synthesis (LLM crossover + mutation), viability filtering, novelty scoring, and pool/archive insertion with redundancy eviction. Stops at max generations or stagnation limit.
-3. **Synthesize**: LLM generates a coherent implementation plan from the most novel evolved fragments.
-4. **Apply**: Spawn a Manager agent with the synthesized solution as its objective; agent makes code changes, commits, and creates branch/PR.
-
-The two modes serve different use cases:
-- **`:simple` (Top-Down)**: Used for clear, well-defined tasks. Manager plans and delegates directly.
-- **`:complex` (Bottom-Up)**: For open-ended, creative tasks requiring exploration. Engine evolves diverse genetic material before applying a synthesized solution.
 
 ## Phase Transitions
 
@@ -182,28 +149,20 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Agents.TaskScheduler` | Lightweight task scheduling subagent (spawned by Manager for complex tasks) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
 | `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |
-| `ReqLLM` | LLM streaming for PR title generation in `PullRequest`, and for evolution synthesis/behavioral profiling |
-| `EvoGit.Runtime.Evolution.Engine` | Complex mode orchestrator — novelty-driven evolution loop |
-| `EvoGit.Runtime.Evolution.Fragment` | Code fragment data structure with structural features and behavioral profiles |
-| `EvoGit.Runtime.Evolution.SeedFragments` | Built-in + LLM-generated diverse seed fragments for pool initialization |
-| `EvoGit.Runtime.Evolution.EntropyPool` | ETS-backed GenServer for fragment storage with novelty-based selection |
-| `EvoGit.Runtime.Evolution.MapElites` | Quality diversity archive — grid of behavior descriptors to elite solutions |
-| `EvoGit.Runtime.Evolution.NoveltyMetric` | k-NN novelty scoring, AST structural analysis, LLM behavioral profiling |
-| `EvoGit.Runtime.Evolution.LLMSynthesis` | LLM-powered semantic crossover, mutation, and viability evaluation |
+| `ReqLLM` | LLM streaming for PR title generation in `PullRequest` |
 
 ## Constraints
 
 - Both phases follow the same pattern: ensure repo → create phylo node → load context node → build spec → run agent → handle result.
 - Agent changes go to **isolated branches** (`evogit/genesis_<hex>` / `evogit/evolve_<hex>`), never directly to the working tree. PR creation is optional (requires `gh` CLI).
 - `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — both phases delegate to `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"` or `"evolve"`.
-- Complex/Bottom-Up evolution mode delegates to `Engine.run/5` which manages its own temporary supervisor tree for `EntropyPool` and `MapElites` GenServers.
 - No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
 - PR creation is best-effort and never fails the overall phase — all PR errors are logged and return `nil`.
 - `node_path` validation in Evolution requires a `CONTEXT.md` at the target directory (except root).
 
 ### Task Status & Event Emission (Dashboard Contract)
 `EvoGit.TaskRegistry` (in `:evo_git`, started by `EvoGit.Application`) tracks task status via TWO mechanisms:
-1. **PubSub** on topic `"tasks"`: the ONLY emitter is `Helpers.notify_finalizing/1` (`helpers.ex:102`, broadcast at line 104), broadcasting `{:task_status, task_id, :finalizing}`. This is called ONLY on the `{:ok, _}` success arm, immediately after `AgentScheduler.run_agent/1` returns and BEFORE `merge_and_report/3`. No `:failed`, `:completed`, or `:running` is EVER broadcast on `"tasks"` from the evo_git runtime. (`AgentScheduler.PubSub` broadcasts on *different* topics — `@agent_topic` (`"agents"`) / `@config_topic` (`"scheduler_config"`) — with different message shapes: `{:agents_updated}` and `{:scheduler_config_updated}`.) Callers of `notify_finalizing/1`: `genesis.ex:51` (Mode A) & `:78` (Mode B); `evolution.ex:58` (simple) & `:72` (complex, before engine delegation); `skill_extraction.ex:34`; `evolution/engine.ex:551` (complex engine apply phase).
+1. **PubSub** on topic `"tasks"`: the ONLY emitter is `Helpers.notify_finalizing/1` (`helpers.ex:102`, broadcast at line 104), broadcasting `{:task_status, task_id, :finalizing}`. This is called ONLY on the `{:ok, _}` success arm, immediately after `AgentScheduler.run_agent/1` returns and BEFORE `merge_and_report/3`. No `:failed`, `:completed`, or `:running` is EVER broadcast on `"tasks"` from the evo_git runtime. (`AgentScheduler.PubSub` broadcasts on *different* topics — `@agent_topic` (`"agents"`) / `@config_topic` (`"scheduler_config"`) — with different message shapes: `{:agents_updated}` and `{:scheduler_config_updated}`.) Callers of `notify_finalizing/1`: `genesis.ex:51` (Mode A) & `:78` (Mode B); `evolution.ex:58`; `skill_extraction.ex:34`.
 2. **Task monitor exit** (`Task.Supervisor.async_nolink` in `EvoGit.TaskRegistry`): when the runtime process exits, ANY non-`{:ok, _}` result (including `{:error, _}`) is mapped to `:failed`.
 
 **Critical implication**: Every runtime entry point (`Genesis.run/2`, `Evolution.run/2`, `SkillExtraction.run/1`) returns whatever `AgentScheduler.run_agent/1` returns on the `error` arm — propagating `{:error, _}` to the dashboard, which marks the task `:failed`. The scheduler replies `{:error, _}` to the top-level caller in two cases:

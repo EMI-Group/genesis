@@ -173,4 +173,78 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       assert message =~ "Missing required argument"
     end
   end
+
+  describe "fetch_optional_boolean_arg/3" do
+    test "returns the value when it is a boolean" do
+      assert Shared.fetch_optional_boolean_arg(%{"commit" => false}, "commit", true) == {:ok, false}
+      assert Shared.fetch_optional_boolean_arg(%{"commit" => true}, "commit", false) == {:ok, true}
+    end
+
+    test "returns the default when the key is absent" do
+      assert Shared.fetch_optional_boolean_arg(%{}, "commit", true) == {:ok, true}
+      assert Shared.fetch_optional_boolean_arg(%{}, "parents", true) == {:ok, true}
+    end
+
+    test "returns an error when the value is not a boolean" do
+      assert {:error, message} = Shared.fetch_optional_boolean_arg(%{"commit" => "yes"}, "commit", true)
+      assert message =~ "commit must be a boolean"
+    end
+  end
+
+  describe "get_optional_string/3" do
+    test "returns the value directly when it is a binary" do
+      assert Shared.get_optional_string(%{"path" => "lib"}, "path", "./") == "lib"
+    end
+
+    test "returns the default when the key is absent" do
+      assert Shared.get_optional_string(%{}, "path", "./") == "./"
+    end
+
+    test "coerces non-binary values to string via to_string/1" do
+      assert Shared.get_optional_string(%{"path" => 42}, "path", "./") == "42"
+    end
+  end
+
+  describe "get_optional_integer/3" do
+    test "returns the value directly when it is an integer" do
+      assert Shared.get_optional_integer(%{"context" => 5}, "context", 3) == 5
+    end
+
+    test "returns the default when the key is absent" do
+      assert Shared.get_optional_integer(%{}, "context", 3) == 3
+    end
+
+    test "parses a valid integer binary" do
+      assert Shared.get_optional_integer(%{"context" => "5"}, "context", 3) == 5
+    end
+
+    test "falls back to default on an unparseable binary (does not crash)" do
+      assert Shared.get_optional_integer(%{"context" => "abc"}, "context", 3) == 3
+    end
+
+    test "falls back to default on a non-integer, non-binary value" do
+      assert Shared.get_optional_integer(%{"context" => true}, "context", 3) == 3
+    end
+  end
+
+  describe "get_optional_boolean/3" do
+    test "returns the value directly when it is a boolean" do
+      assert Shared.get_optional_boolean(%{"search_notes" => true}, "search_notes", true) == true
+      assert Shared.get_optional_boolean(%{"search_notes" => false}, "search_notes", true) == false
+    end
+
+    test "returns the default when the key is absent" do
+      assert Shared.get_optional_boolean(%{}, "search_notes", true) == true
+    end
+
+    test "interprets truthy string variants as true" do
+      for val <- ["true", "True", "TRUE", "1"] do
+        assert Shared.get_optional_boolean(%{"search_notes" => val}, "search_notes", false) == true
+      end
+    end
+
+    test "treats other strings as false (falls back to default)" do
+      assert Shared.get_optional_boolean(%{"search_notes" => "yes"}, "search_notes", false) == false
+    end
+  end
 end

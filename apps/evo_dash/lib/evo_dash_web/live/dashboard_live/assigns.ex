@@ -70,7 +70,6 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
       task_mode: mode,
       task_mode_info: "",
       task_node_path: "",
-      task_seeds: "",
       task_starting_commit: "",
       task_resume_from: "",
       task_archive: false,

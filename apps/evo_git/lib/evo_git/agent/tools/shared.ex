@@ -75,6 +75,72 @@ defmodule EvoGit.Agent.Tools.Shared do
   end
 
   @doc """
+  Fetches an optional boolean argument from the args map with a default.
+
+  Returns `{:ok, boolean}` when the value is a boolean (or absent — the default
+  is returned). Returns `{:error, message}` when the key is present but not a
+  boolean, so the caller can surface a clear error rather than silently coercing.
+
+  Shared by tools that expose a `commit` / `parents` flag (MakeDir, FileCreate,
+  Context, etc.) — previously each tool carried a byte-identical private copy.
+  """
+  def fetch_optional_boolean_arg(args, key, default) when is_map(args) do
+    case Map.get(args, key, default) do
+      value when is_boolean(value) -> {:ok, value}
+      _ -> {:error, "#{key} must be a boolean"}
+    end
+  end
+
+  @doc """
+  Leniently fetches an optional argument and coerces it to a string.
+
+  Returns the value directly when it is already a binary; otherwise coerces
+  with `to_string/1`. Used by the search tools where optional params arrive
+  from the LLM and a graceful coercion is preferable to a hard error.
+  """
+  def get_optional_string(args, key, default) do
+    case Map.get(args, key, default) do
+      val when is_binary(val) -> val
+      val -> to_string(val)
+    end
+  end
+
+  @doc """
+  Leniently fetches an optional argument and coerces it to an integer.
+
+  Returns the value directly when it is already an integer. A binary value is
+  parsed with `Integer.parse/1` (the safe, non-crashing variant) and falls back
+  to `default` when it cannot be parsed. Any other type also falls back to
+  `default`.
+  """
+  def get_optional_integer(args, key, default) do
+    case Map.get(args, key, default) do
+      val when is_integer(val) -> val
+      val when is_binary(val) ->
+        case Integer.parse(val) do
+          {int, _} -> int
+          :error -> default
+        end
+      _ -> default
+    end
+  end
+
+  @doc """
+  Leniently fetches an optional argument and coerces it to a boolean.
+
+  Returns the value directly when it is already a boolean. A binary value is
+  interpreted truthily ("true"/"True"/"TRUE"/"1"). Any other type falls back
+  to `default`.
+  """
+  def get_optional_boolean(args, key, default) do
+    case Map.get(args, key, default) do
+      val when is_boolean(val) -> val
+      val when is_binary(val) -> val in ["true", "True", "TRUE", "1"]
+      _ -> default
+    end
+  end
+
+  @doc """
   Wraps execution with argument validation. Returns error message on failure.
   """
   def with_valid_args(args, required_keys, fun) when is_list(required_keys) do

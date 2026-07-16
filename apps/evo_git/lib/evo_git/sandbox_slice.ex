@@ -15,6 +15,8 @@ defmodule EvoGit.SandboxSlice do
   use GenServer
   require Logger
 
+  alias EvoGit.Sandbox.Helpers
+
   @slice_name "evogit"
 
   # Compile-time Mix env — safe in releases (Mix.env/0 is evaluated at compile
@@ -166,7 +168,7 @@ defmodule EvoGit.SandboxSlice do
     # Stop the entire slice — kills any leftover services from a previous
     # BEAM VM crash. If the slice doesn't exist, systemctl returns non-zero
     # which we ignore (the error is harmless).
-    _ = system_cmd("systemctl", ["--user", "stop", "#{@slice_name}.slice"])
+    _ = Helpers.system_cmd("systemctl", ["--user", "stop", "#{@slice_name}.slice"])
     # Brief delay to let systemd actually clean up before we recreate the slice.
     :timer.sleep(100)
     :ok
@@ -198,7 +200,7 @@ defmodule EvoGit.SandboxSlice do
         "-q"
       ] ++ ["true"]
 
-    case system_cmd("systemd-run", args) do
+    case Helpers.system_cmd("systemd-run", args) do
       {:ok, _output} ->
         # Now set the resource properties on the slice itself
         case do_update_slice_properties(resources) do
@@ -225,7 +227,7 @@ defmodule EvoGit.SandboxSlice do
     # systemctl --user set-property evogit.slice CPUWeight=30 ...
     args = ["--user", "set-property", "#{@slice_name}.slice"] ++ property_args
 
-    case system_cmd("systemctl", args) do
+    case Helpers.system_cmd("systemctl", args) do
       {:ok, _output} ->
         Logger.info("SandboxSlice: Updated resource limits on slice '#{@slice_name}'")
         :ok
@@ -242,7 +244,7 @@ defmodule EvoGit.SandboxSlice do
     # failures are logged and swallowed — we cannot meaningfully recover.
     args = ["--user", "stop", "#{@slice_name}.slice"]
 
-    case system_cmd("systemctl", args) do
+    case Helpers.system_cmd("systemctl", args) do
       {:ok, _output} ->
         Logger.info("SandboxSlice: Stopped and cleaned up slice '#{@slice_name}'")
         :ok
@@ -281,19 +283,5 @@ defmodule EvoGit.SandboxSlice do
       end
 
     props
-  end
-
-  # Runs a System.cmd and normalizes the result into {:ok, output} | {:error, output}.
-  # System.cmd raises ErlangError(:enoent) when the binary is missing;
-  # we pre-check executability to avoid the exception.
-  defp system_cmd(cmd, args) do
-    if System.find_executable(cmd) do
-      case System.cmd(cmd, args, stderr_to_stdout: true) do
-        {output, 0} -> {:ok, output}
-        {output, _code} -> {:error, output}
-      end
-    else
-      {:error, "command not found: #{cmd}"}
-    end
   end
 end

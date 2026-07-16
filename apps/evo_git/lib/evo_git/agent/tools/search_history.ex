@@ -63,9 +63,9 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "pattern") do
       {:ok, pattern} ->
-        commit_id = get_optional_string(args, "commit_id", @default_commit_id) |> blank_to_default(@default_commit_id)
-        search_notes = get_optional_boolean(args, "search_notes", @default_search_notes)
-        max_count = get_optional_integer(args, "max_count", @default_max_count)
+        commit_id = Shared.get_optional_string(args, "commit_id", @default_commit_id) |> blank_to_default(@default_commit_id)
+        search_notes = Shared.get_optional_boolean(args, "search_notes", @default_search_notes)
+        max_count = Shared.get_optional_integer(args, "max_count", @default_max_count)
 
         do_search(pattern, commit_id, search_notes, max_count, repo_path, repo_root)
 
@@ -76,35 +76,8 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
 
   # --- Private helpers ---
 
-  defp get_optional_string(args, key, default) do
-    case Map.get(args, key, default) do
-      val when is_binary(val) -> val
-      val -> to_string(val)
-    end
-  end
-
   defp blank_to_default("", default), do: default
   defp blank_to_default(val, _default), do: val
-
-  defp get_optional_boolean(args, key, default) do
-    case Map.get(args, key, default) do
-      val when is_boolean(val) -> val
-      val when is_binary(val) -> val in ["true", "True", "TRUE", "1"]
-      _ -> default
-    end
-  end
-
-  defp get_optional_integer(args, key, default) do
-    case Map.get(args, key, default) do
-      val when is_integer(val) -> val
-      val when is_binary(val) ->
-        case Integer.parse(val) do
-          {int, _} -> int
-          :error -> default
-        end
-      _ -> default
-    end
-  end
 
   defp do_search(pattern, commit_id, search_notes, max_count, repo_path, repo_root) do
     separator = "---COMMIT-SEPARATOR---"

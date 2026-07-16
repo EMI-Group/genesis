@@ -114,17 +114,6 @@ Used for clear, well-defined tasks (e.g., fixing reproducible bugs, adding speci
 - **Recursive Realization:** Agents only edit/investigate files within their assigned node level and delegate to subagents for child nodes.
 - **Fixed Point Convergence:** The parent agent evaluates subagent results. If the objective is not met, it spawns new subagents until the task is complete or the session limit is reached.
 
-**Mode B: Open-Ended Evolution (Bottom-Up)**
-Used for open-ended tasks requiring exploration and creative problem-solving (e.g., system-wide optimization, algorithm discovery). Instead of planning and delegating, the system runs an evolutionary loop powered by novelty search and quality diversity.
-- **Core Philosophy — Algorithmic Serendipity:** The system maintains a chaotic repository of cross-domain code (the **Entropy Pool**) and uses the LLM as a semantic bridge to achieve **exaptation** — co-opting code from one domain to solve problems in entirely different domains.
-- **The Entropy Pool:** A diverse collection of code fragments drawn from unrelated paradigms. The LLM's semantic understanding recognizes abstract logic patterns across these disjointed pieces.
-- **Novelty Search Selection:** Fragments are selected based on how *differently* they behave compared to the rest of the pool — measured via structural features (AST analysis) and behavioral profiles (LLM classification).
-- **LLM Synthesis (Crossover/Mutation):** The LLM acts as the variation operator, semantically fusing distinct fragments into new functional code.
-- **Quality Diversity (MAP-Elites):** A grid archive preserves diverse approaches, mapping behavior descriptors (complexity × paradigm) to elite fragments.
-- **Solution Synthesis:** After convergence, the system collects the most novel fragments and asks the LLM to synthesize a coherent solution, applied to the codebase via a Manager agent.
-
-> **Note on "simple" vs "complex":** The distinction is based on task clarity and understanding, not code size. A "simple" evolution can involve thousands of lines if the path is clear; a "complex" evolution can be a one-line change if the path requires exploration.
-
 ---
 
 ## **5. Implementation Specifications**

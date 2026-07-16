@@ -23,7 +23,7 @@ defmodule EvoGit.Nix do
     rest of the session.
   """
 
-  alias EvoGit.{Config, Platform}
+  alias EvoGit.{Config, Platform, Sandbox.Helpers}
 
   @persistent_term_key :evogit_nix_dev_env_state
 
@@ -301,17 +301,10 @@ defmodule EvoGit.Nix do
   # --- Private: bash command building & shell escaping ---
 
   defp build_bash_command(dev_env_path, executable, args) do
-    escaped_exec = shell_escape(executable)
-    escaped_args = Enum.map_join(args, " ", &shell_escape/1)
-    cmd = "source #{shell_escape(dev_env_path)}; exec #{escaped_exec} #{escaped_args}"
+    escaped_exec = Helpers.shell_escape(executable)
+    escaped_args = Enum.map_join(args, " ", &Helpers.shell_escape/1)
+    cmd = "source #{Helpers.shell_escape(dev_env_path)}; exec #{escaped_exec} #{escaped_args}"
     {"bash", ["-c", cmd]}
-  end
-
-  # POSIX-safe shell escaping: wrap each argument in single quotes and
-  # replace every literal single-quote with the sequence '\''.
-  # e.g. `it's a test` → `'it'\''s a test'`
-  defp shell_escape(arg) do
-    "'" <> String.replace(arg, "'", "'\\''") <> "'"
   end
 
   # --- Private: config helpers ---
