@@ -23,4 +23,7 @@ config :phoenix_live_view,
 # write to the production database (~/.local/share/genesis/tasks.sqlite).
 # The XDG_DATA_HOME redirect in test_helper.exs serves as a belt-and-suspenders
 # fallback, but this config key is the canonical guard.
-config :evo_dash, :data_dir, Path.join(System.tmp_dir!(), "evogit_test_data/genesis")
+#
+# NOTE: Store and TaskRegistry were migrated from evo_dash to evo_git, so the
+# key must be :evo_git (the Store reads Application.get_env(:evo_git, :data_dir)).
+config :evo_git, :data_dir, Path.join(System.tmp_dir!(), "evogit_test_data/genesis")
