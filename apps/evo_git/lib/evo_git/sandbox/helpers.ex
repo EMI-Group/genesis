@@ -11,6 +11,10 @@ defmodule EvoGit.Sandbox.Helpers do
   responsible for (temp-file reads, `System.cmd` execution).
   """
 
+  # When truncating large output, keep this many bytes total (first half +
+  # last half). Matches OutputSanitizer's truncation window.
+  @truncate_size 8192
+
   # ---------------------------------------------------------------------------
   # Shell escaping
   # ---------------------------------------------------------------------------
@@ -31,50 +35,58 @@ defmodule EvoGit.Sandbox.Helpers do
     "'" <> String.replace(arg, "'", "'\\''") <> "'"
   end
 
+  # ---------------------------------------------------------------------------
+  # Output truncation (for large command outputs)
+  # ---------------------------------------------------------------------------
+
   @doc """
-  PowerShell-safe escaping for a single argument.
+  Truncates a binary to fit within `max_bytes`, keeping the first and last
+  portions so that both the beginning and end of the output remain visible.
 
-  Wraps the argument in double quotes for embedding inside a
-  `powershell -Command "<cmd>"` string. This is **security-sensitive** — it
-  prevents command injection when assembling PowerShell command strings.
+  - When `max_bytes` is `nil`, the binary is returned unchanged (no truncation).
+  - When the binary is at most `max_bytes` bytes, it is returned unchanged.
+  - When the binary exceeds `max_bytes` but is at most `#{@truncate_size}`
+    bytes, it is returned unchanged (not worth truncating such a small amount).
+  - Otherwise, the first and last `#{@truncate_size |> div(2)}` bytes are kept
+    with a truncation notice in between.
 
-  Inside PowerShell double-quoted strings the escape character is the backtick
-  (`` ` ``). The following transformations are applied **in order** (order
-  matters so that backticks added for `$` escaping are not themselves
-  double-escaped):
-
-    1. Backtick → double-backtick (`` ` `` → ``` `` ```)
-    2. Dollar sign → backtick-dollar (`$` → `` `$ ``) so variable expansion is
-       suppressed.
-    3. Double-quote → doubled (`"` → `""`).
-
-  The result is then wrapped in double quotes.
-
-  ## Examples
-
-      iex> powershell_escape("git")
-      "\\"git\\""
-
-      iex> powershell_escape("my file.txt")
-      "\\"my file.txt\\""
-
-      iex> powershell_escape("$HOME")
-      "\\"`$HOME\\""
+  This is used both for in-memory truncation (e.g. `run_with_partial` on
+  Windows where output comes directly from `System.cmd` rather than a temp
+  file) and indirectly by `read_tempfile/2`.
   """
-  @spec powershell_escape(String.t()) :: String.t()
-  def powershell_escape(arg) do
-    escaped =
-      arg
-      |> String.replace("`", "``")
-      |> String.replace("$", "`$")
-      |> String.replace("\"", "\"\"")
+  @spec truncate_output(binary(), integer() | nil) :: binary()
+  def truncate_output(output, max_bytes) do
+    size = byte_size(output)
 
-    "\"" <> escaped <> "\""
+    cond do
+      is_nil(max_bytes) or size <= max_bytes ->
+        output
+
+      size <= @truncate_size ->
+        output
+
+      true ->
+        half_size = div(@truncate_size, 2)
+        first_part = binary_part(output, 0, half_size)
+        last_part = binary_part(output, size - half_size, half_size)
+        omitted = size - @truncate_size
+        format_truncation_notice(first_part, last_part, omitted, max_bytes)
+    end
   end
 
-  # ---------------------------------------------------------------------------
-  # Temp-file reading (for run_with_partial/6 partial-output recovery)
-  # ---------------------------------------------------------------------------
+  # Shared truncation message formatting used by both truncate_output/2
+  # (in-memory binary_part) and read_truncated/3 (disk reads via :file.pread).
+  defp format_truncation_notice(first_part, last_part, omitted, max_bytes) do
+    """
+    [WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{@truncate_size} bytes]
+    The output was too large. Consider using more specific arguments
+    or alternative tools to retrieve only the needed portion of data.
+    #{first_part}
+    ... [#{omitted} bytes omitted] ...
+    #{last_part}
+    """
+    |> String.trim()
+  end
 
   @doc """
   Reads content from a temp file and deletes it.
@@ -111,19 +123,17 @@ defmodule EvoGit.Sandbox.Helpers do
 
   # Reads only the first and last portions of a large file directly from disk
   # without loading the entire file into memory. Uses :file.pread/3 for
-  # positioned reads and :raw/:binary mode for speed. The truncation size
-  # (8192 bytes: 4096 first + 4096 last) matches OutputSanitizer.
+  # positioned reads and :raw/:binary mode for speed. The truncation notice is
+  # formatted by the shared `format_truncation_notice/4` helper.
   defp read_truncated(path, file_size, max_bytes) do
-    truncate_size = 8192
-
-    if file_size <= truncate_size do
+    if file_size <= @truncate_size do
       case File.read(path) do
         {:ok, data} -> data
         {:error, _} -> ""
       end
     else
-      half_size = div(truncate_size, 2)
-      omitted = file_size - truncate_size
+      half_size = div(@truncate_size, 2)
+      omitted = file_size - @truncate_size
 
       {:ok, device} = File.open(path, [:read, :raw, :binary])
 
@@ -132,15 +142,7 @@ defmodule EvoGit.Sandbox.Helpers do
 
       File.close(device)
 
-      """
-      [WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{truncate_size} bytes]
-      The output was too large. Consider using more specific arguments
-      or alternative tools to retrieve only the needed portion of data.
-      #{first_part}
-      ... [#{omitted} bytes omitted] ...
-      #{last_part}
-      """
-      |> String.trim()
+      format_truncation_notice(first_part, last_part, omitted, max_bytes)
     end
   end
 

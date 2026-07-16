@@ -62,21 +62,14 @@ defmodule EvoGit.Sandbox.None do
   end
 
   defp run_windows(cwd, executable, args) do
-    # Nix is Linux/macOS only — skip the nix branch entirely on Windows.
-    # Use PowerShell with stdin redirected from NUL (the Windows null device)
-    # so commands like rg that read stdin on missing args get immediate EOF.
-    {exec, exec_args} = {executable, args}
-    inner_cmd = Enum.map_join([exec | exec_args], " ", &Helpers.powershell_escape/1)
-    wrapped_cmd = inner_cmd <> " < NUL"
-
+    # On Windows, System.cmd passes args as an array (no shell injection risk),
+    # so we call the executable directly without a shell wrapper. This avoids the
+    # need for shell escaping and avoids PowerShell's lack of input redirection
+    # (the `<` operator is reserved and throws a parser error).
     if EvoGit.GitEnv.git_command?(executable) do
-      System.cmd("powershell", ["-Command", wrapped_cmd],
-        cd: cwd,
-        stderr_to_stdout: true,
-        env: EvoGit.GitEnv.git_env_list()
-      )
+      System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: EvoGit.GitEnv.git_env_list())
     else
-      System.cmd("powershell", ["-Command", wrapped_cmd], cd: cwd, stderr_to_stdout: true)
+      System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
     end
   end
 
@@ -152,38 +145,23 @@ defmodule EvoGit.Sandbox.None do
   end
 
   defp run_with_partial_windows(cwd, executable, args, timeout, max_bytes) do
-    # Nix is Linux/macOS only — skip the nix branch entirely on Windows.
-    tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
-    File.mkdir_p!(tmpdir)
-
-    tmpfile =
-      Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
-
-    # PowerShell: redirect ALL output streams (*>) to the temp file and read
-    # stdin from NUL (the Windows null device) for immediate EOF.
-    inner_cmd = Enum.map_join([executable | args], " ", &Helpers.powershell_escape/1)
-    wrapped_cmd = inner_cmd <> " *> " <> Helpers.powershell_escape(tmpfile) <> " < NUL"
-
+    # On Windows, call System.cmd directly (no shell wrapper). Output is
+    # captured from the return value; on timeout, partial output produced
+    # before the OS kills the process is lost (we return a truncation notice).
     is_git = EvoGit.GitEnv.git_command?(executable)
     git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []
 
     task =
       Task.async(fn ->
-        System.cmd("powershell", ["-Command", wrapped_cmd],
-          cd: cwd,
-          stderr_to_stdout: true,
-          env: git_env
-        )
+        System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: git_env)
       end)
 
     case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, {_output, exit_code}} ->
-        content = Helpers.read_tempfile(tmpfile, max_bytes)
-        {:ok, content, exit_code}
+      {:ok, {output, exit_code}} ->
+        {:ok, Helpers.truncate_output(output, max_bytes), exit_code}
 
       nil ->
-        partial = Helpers.read_tempfile(tmpfile, max_bytes)
-        {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
+        {:timeout, "\n[TRUNCATED due to timeout]"}
     end
   end
 end

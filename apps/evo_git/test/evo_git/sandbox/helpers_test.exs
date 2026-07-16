@@ -42,59 +42,50 @@ defmodule EvoGit.Sandbox.HelpersTest do
     end
   end
 
-  describe "powershell_escape/1" do
-    test "wraps a simple argument in double quotes" do
-      assert Helpers.powershell_escape("git") == "\"git\""
+  describe "truncate_output/2" do
+    test "returns the binary unchanged when max_bytes is nil" do
+      assert Helpers.truncate_output("hello world", nil) == "hello world"
     end
 
-    test "wraps an empty string in double quotes" do
-      assert Helpers.powershell_escape("") == "\"\""
+    test "returns the binary unchanged when under max_bytes" do
+      assert Helpers.truncate_output("small", 100) == "small"
     end
 
-    test "wraps an argument with spaces in double quotes" do
-      assert Helpers.powershell_escape("my file.txt") == "\"my file.txt\""
+    test "returns the binary unchanged when it exactly equals max_bytes" do
+      data = String.duplicate("A", 50)
+      assert Helpers.truncate_output(data, 50) == data
     end
 
-    test "doubles embedded double quotes" do
-      # say "hi" → "say ""hi"""
-      assert Helpers.powershell_escape("say \"hi\"") == "\"say \"\"hi\"\"\""
+    test "returns the binary unchanged when it exceeds max_bytes but is under truncate_size (8192)" do
+      # 200 bytes exceeds max_bytes=100 but is well under the 8192 truncate_size
+      data = String.duplicate("E", 200)
+      assert Helpers.truncate_output(data, 100) == data
     end
 
-    test "escapes dollar signs with backtick to prevent variable expansion" do
-      # $HOME → "`$HOME"
-      assert Helpers.powershell_escape("$HOME") == "\"`$HOME\""
+    test "truncates with notice when exceeding both max_bytes and truncate_size" do
+      prefix = String.duplicate("X", 100)
+      suffix = String.duplicate("Z", 100)
+      middle = String.duplicate("M", 20_000 - 200)
+      output = Helpers.truncate_output(prefix <> middle <> suffix, 5000)
+
+      assert output =~ "[WARNING: Output exceeded 5000 bytes and was truncated to 8192 bytes]"
+      assert output =~ String.duplicate("X", 100)
+      assert output =~ String.duplicate("Z", 100)
+      omitted = 20_000 - 8192
+      assert output =~ "... [#{omitted} bytes omitted] ..."
     end
 
-    test "escapes backticks by doubling them" do
-      # a`b → "a``b"
-      assert Helpers.powershell_escape("a`b") == "\"a``b\""
-    end
+    test "keeps first 4096 and last 4096 bytes on truncation" do
+      first = String.duplicate("A", 4096)
+      middle = String.duplicate("B", 10_000)
+      last = String.duplicate("C", 4096)
+      output = Helpers.truncate_output(first <> middle <> last, 1000)
 
-    test "escapes shell metacharacters safely within double quotes" do
-      # Dangerous metacharacters must be safely contained inside double quotes
-      # so PowerShell treats them literally (no command injection).
-      escaped = Helpers.powershell_escape("; rm -rf /")
-
-      assert String.starts_with?(escaped, "\"")
-      assert String.ends_with?(escaped, "\"")
-      assert escaped == "\"; rm -rf /\""
-    end
-
-    test "handles a combination of backtick, dollar, and double quote" do
-      # Order matters: backtick first, then $, then "
-      # Input: a`$b"c
-      # Step 1 (backtick doubled):       a``$b"c
-      # Step 2 ($ → backtick-dollar):    a```$b"c  (3 backticks: 2 literal + 1 escaping $)
-      # Step 3 (" doubled):              a```$b""c
-      # Wrapped:                         "a```$b""c"
-      assert Helpers.powershell_escape("a`$b\"c") == "\"a```$b\"\"c\""
-    end
-
-    test "escapes git args list correctly for PowerShell" do
-      # Simulates escaping the args ["git", "add", "./CONTEXT.md"]
-      escaped = Enum.map_join(["git", "add", "./CONTEXT.md"], " ", &Helpers.powershell_escape/1)
-
-      assert escaped == "\"git\" \"add\" \"./CONTEXT.md\""
+      # The first and last 4096 bytes should be present
+      assert output =~ String.duplicate("A", 4096)
+      assert output =~ String.duplicate("C", 4096)
+      # The middle should be omitted
+      refute output =~ String.duplicate("B", 100)
     end
   end
 
