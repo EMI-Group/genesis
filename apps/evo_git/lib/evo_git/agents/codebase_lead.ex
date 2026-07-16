@@ -133,7 +133,7 @@ defmodule EvoGit.Agents.CodebaseLead do
 
     **IMPORTANT: Handling Large Objectives** — If the objective feels too large, that's exactly the signal to decompose MORE aggressively and delegate MORE. Large objectives don't mean more work for YOU — they mean more delegation. The recursive chain will handle it. Never give up or say a task is too big — just decompose it further.
 
-    When finished with your assigned scope (all phases), call `complete_task` with a summary of the architecture created and the implementation delegated.
+    When finished with your assigned scope (all phases), call `complete_task` with a summary of the architecture created and the implementation delegated. Your report is the handoff to the implementation phase — make it actionable and complete: clearly enumerate (1) what architecture and scaffolding is now in place, and (2) what implementation work remains to fully realize the original objective. A clear, thorough handoff ensures the implementation agent can drive the codebase to full completion without guessing what's left.
     """
   end
 end
