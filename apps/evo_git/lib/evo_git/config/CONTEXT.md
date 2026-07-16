@@ -49,7 +49,7 @@ Delegates all calls to `EvoGit.Config.resolve/1`. Functions: `max_concurrency`, 
 ### `EvoGit.ProjectConfig` (per-repo genesis.toml)
 | Function | Description |
 |----------|-------------|
-| `read/1` | Parses `genesis.toml` from repo root (falls back to legacy `evogit.toml`) |
+| `read/1` | Parses `genesis.toml` from repo root |
 | `worktree_script/1` | Returns worktree init script for current OS (backward-compat wrapper) |
 | `worktree_script/2` | Returns worktree init script for given OS, with variant resolution |
 | `write_worktree_script/2` | Writes/merges worktree init script (inline content) into `genesis.toml` `[worktree].script`; preserves existing sections/keys |
