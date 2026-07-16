@@ -340,6 +340,11 @@ defmodule EvoGit.ProjectConfig do
           Regex.match?(~r/^\[[^\]]/, trimmed) ->
             {:halt, {acc, false}}
 
+          # Stray ''' delimiter while NOT in multiline mode — corrupted content.
+          # Enter skip mode to consume subsequent garbage until the next '''.
+          trimmed == "'''" ->
+            {:cont, {acc, true}}
+
           # Line is a script.* key — drop it.  If it opens a multi-line literal
           # string (one ''' without a closing ''' on the same line), enter skip
           # mode so we also drop the literal body and its closing delimiter.
@@ -364,9 +369,17 @@ defmodule EvoGit.ProjectConfig do
           trimmed == "" ->
             {:cont, {acc, false}}
 
-          # Regular non-script line — keep.
-          true ->
+          # Comment line — keep.
+          String.starts_with?(trimmed, "#") ->
             {:cont, {[line | acc], false}}
+
+          # Valid TOML key=value pair — keep.
+          Regex.match?(~r/^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*\s*=/, trimmed) ->
+            {:cont, {[line | acc], false}}
+
+          # Everything else (raw script body fragments, stray delimiters) — drop.
+          true ->
+            {:cont, {acc, false}}
         end
       end)
 

@@ -568,5 +568,132 @@ defmodule EvoGit.ProjectConfigTest do
       assert config != nil, "genesis.toml should be valid TOML after second write"
       assert ProjectConfig.worktree_script(tmp_dir, :linux) == multi_line_scripts.linux
     end
+
+    test "cleans up corrupted genesis.toml with raw script fragments and stray delimiters",
+         %{tmp_dir: tmp_dir} do
+      # This simulates a corrupted [worktree] section: raw script body fragments
+      # and stray ''' delimiters BEFORE the proper script entries. The classic
+      # corruption pattern where the old multi-line content was not fully stripped.
+      corrupted_toml = """
+      [commands]
+      dev = "mix test"
+
+      [worktree]
+      # Copy Rust build artifacts
+      if [ -d "$SOURCE_REPO_PATH/target" ]; then
+        cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+      fi
+      '''
+      # Copy Rust build artifacts
+      if [ -d "$SOURCE_REPO_PATH/target" ]; then
+        cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+      fi
+      '''
+      if (Test-Path "$env:SOURCE_REPO_PATH/target") {
+          Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/target" "$env:TARGET_WORKTREE_PATH/"
+      }
+      '''
+      script.linux = '''#!/usr/bin/env bash
+      echo hello
+      '''
+      script.macos = '''#!/usr/bin/env bash
+      echo hello
+      '''
+      script.windows = '''# PowerShell
+      echo hello
+      '''
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), corrupted_toml)
+
+      new_scripts = %{
+        linux: "#!/bin/bash\necho 'clean linux'\n",
+        macos: "#!/bin/bash\necho 'clean macos'\n",
+        windows: "# PowerShell\necho 'clean windows'\n"
+      }
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, new_scripts)
+
+      # Output must be valid TOML
+      config = ProjectConfig.read(tmp_dir)
+      assert config != nil, "genesis.toml should be valid TOML after cleanup"
+
+      # Other sections preserved
+      assert config["commands"]["dev"] == "mix test"
+
+      # New scripts are readable
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == new_scripts.linux
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == new_scripts.macos
+      assert ProjectConfig.worktree_script(tmp_dir, :windows) == new_scripts.windows
+
+      # Verify exactly 6 triple-quote delimiters (2 per OS script: open + close)
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+
+      # Count ''' occurrences: split on the delimiter, subtract 1 for the parts count
+      delim_count = max(0, length(String.split(contents, "'''")) - 1)
+
+      assert delim_count == 6,
+             "Expected exactly 6 ''' delimiters (open+close per 3 OS scripts), got #{delim_count}"
+
+      # No raw script body fragments should appear outside proper entries
+      refute contents =~ "cp -R --reflink=auto",
+             "Raw script body should have been cleaned up"
+      refute contents =~ "cp -cR",
+             "Raw script body should have been cleaned up"
+      refute contents =~ "Copy-Item -Recurse -Force",
+             "Raw script body should have been cleaned up"
+    end
+
+    test "cleans up corrupted genesis.toml with only raw fragments (no proper script entries)",
+         %{tmp_dir: tmp_dir} do
+      # Only raw script bodies and stray ''' — no script.* entries at all.
+      corrupted_toml = """
+      [commands]
+      test = "mix test"
+
+      [worktree]
+      if [ -d "$SOURCE_REPO_PATH/target" ]; then
+        cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+      fi
+      '''
+      if (Test-Path "$env:SOURCE_REPO_PATH/target") {
+          Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/target" "$env:TARGET_WORKTREE_PATH/"
+      }
+      '''
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), corrupted_toml)
+
+      new_scripts = %{
+        linux: "#!/bin/bash\necho 'clean linux'\n",
+        macos: "#!/bin/bash\necho 'clean macos'\n",
+        windows: "# PowerShell\necho 'clean windows'\n"
+      }
+
+      assert :ok == ProjectConfig.write_worktree_script(tmp_dir, new_scripts)
+
+      # Output must be valid TOML
+      config = ProjectConfig.read(tmp_dir)
+      assert config != nil, "genesis.toml should be valid TOML after cleanup"
+
+      # Other sections preserved
+      assert config["commands"]["test"] == "mix test"
+
+      # New scripts are readable
+      assert ProjectConfig.worktree_script(tmp_dir, :linux) == new_scripts.linux
+      assert ProjectConfig.worktree_script(tmp_dir, :macos) == new_scripts.macos
+      assert ProjectConfig.worktree_script(tmp_dir, :windows) == new_scripts.windows
+
+      # No raw fragments
+      contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
+      refute contents =~ "cp -R --reflink=auto"
+      refute contents =~ "Copy-Item -Recurse -Force"
+
+      # Exactly 6 triple-quote delimiters
+      delim_count = max(0, length(String.split(contents, "'''")) - 1)
+
+      assert delim_count == 6,
+             "Expected exactly 6 ''' delimiters, got #{delim_count}"
+    end
   end
 end
