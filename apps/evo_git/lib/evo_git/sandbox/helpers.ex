@@ -31,6 +31,47 @@ defmodule EvoGit.Sandbox.Helpers do
     "'" <> String.replace(arg, "'", "'\\''") <> "'"
   end
 
+  @doc """
+  PowerShell-safe escaping for a single argument.
+
+  Wraps the argument in double quotes for embedding inside a
+  `powershell -Command "<cmd>"` string. This is **security-sensitive** — it
+  prevents command injection when assembling PowerShell command strings.
+
+  Inside PowerShell double-quoted strings the escape character is the backtick
+  (`` ` ``). The following transformations are applied **in order** (order
+  matters so that backticks added for `$` escaping are not themselves
+  double-escaped):
+
+    1. Backtick → double-backtick (`` ` `` → ``` `` ```)
+    2. Dollar sign → backtick-dollar (`$` → `` `$ ``) so variable expansion is
+       suppressed.
+    3. Double-quote → doubled (`"` → `""`).
+
+  The result is then wrapped in double quotes.
+
+  ## Examples
+
+      iex> powershell_escape("git")
+      "\\"git\\""
+
+      iex> powershell_escape("my file.txt")
+      "\\"my file.txt\\""
+
+      iex> powershell_escape("$HOME")
+      "\\"`$HOME\\""
+  """
+  @spec powershell_escape(String.t()) :: String.t()
+  def powershell_escape(arg) do
+    escaped =
+      arg
+      |> String.replace("`", "``")
+      |> String.replace("$", "`$")
+      |> String.replace("\"", "\"\"")
+
+    "\"" <> escaped <> "\""
+  end
+
   # ---------------------------------------------------------------------------
   # Temp-file reading (for run_with_partial/6 partial-output recovery)
   # ---------------------------------------------------------------------------

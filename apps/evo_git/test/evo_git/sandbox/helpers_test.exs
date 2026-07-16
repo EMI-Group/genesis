@@ -42,6 +42,62 @@ defmodule EvoGit.Sandbox.HelpersTest do
     end
   end
 
+  describe "powershell_escape/1" do
+    test "wraps a simple argument in double quotes" do
+      assert Helpers.powershell_escape("git") == "\"git\""
+    end
+
+    test "wraps an empty string in double quotes" do
+      assert Helpers.powershell_escape("") == "\"\""
+    end
+
+    test "wraps an argument with spaces in double quotes" do
+      assert Helpers.powershell_escape("my file.txt") == "\"my file.txt\""
+    end
+
+    test "doubles embedded double quotes" do
+      # say "hi" → "say ""hi"""
+      assert Helpers.powershell_escape("say \"hi\"") == "\"say \"\"hi\"\"\""
+    end
+
+    test "escapes dollar signs with backtick to prevent variable expansion" do
+      # $HOME → "`$HOME"
+      assert Helpers.powershell_escape("$HOME") == "\"`$HOME\""
+    end
+
+    test "escapes backticks by doubling them" do
+      # a`b → "a``b"
+      assert Helpers.powershell_escape("a`b") == "\"a``b\""
+    end
+
+    test "escapes shell metacharacters safely within double quotes" do
+      # Dangerous metacharacters must be safely contained inside double quotes
+      # so PowerShell treats them literally (no command injection).
+      escaped = Helpers.powershell_escape("; rm -rf /")
+
+      assert String.starts_with?(escaped, "\"")
+      assert String.ends_with?(escaped, "\"")
+      assert escaped == "\"; rm -rf /\""
+    end
+
+    test "handles a combination of backtick, dollar, and double quote" do
+      # Order matters: backtick first, then $, then "
+      # Input: a`$b"c
+      # Step 1 (backtick doubled):       a``$b"c
+      # Step 2 ($ → backtick-dollar):    a```$b"c  (3 backticks: 2 literal + 1 escaping $)
+      # Step 3 (" doubled):              a```$b""c
+      # Wrapped:                         "a```$b""c"
+      assert Helpers.powershell_escape("a`$b\"c") == "\"a```$b\"\"c\""
+    end
+
+    test "escapes git args list correctly for PowerShell" do
+      # Simulates escaping the args ["git", "add", "./CONTEXT.md"]
+      escaped = Enum.map_join(["git", "add", "./CONTEXT.md"], " ", &Helpers.powershell_escape/1)
+
+      assert escaped == "\"git\" \"add\" \"./CONTEXT.md\""
+    end
+  end
+
   describe "read_tempfile/2" do
     setup do
       dir = Path.join(System.tmp_dir!(), "helpers_test_#{System.unique_integer([:positive])}")

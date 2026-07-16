@@ -102,8 +102,20 @@ defmodule EvoGit.Skills.Executor do
 
   Writes the script to a temporary file, makes it executable, executes it,
   and returns the output. The temporary file is cleaned up afterwards.
+
+  On Windows, bash may be available if Git for Windows is installed; the chmod
+  step is skipped (Windows does not need/honor it). If bash is not found on
+  Windows, a clear error message is returned.
   """
   def run_script(script, repo_path) do
+    if EvoGit.Platform.windows?() do
+      run_script_windows(script, repo_path)
+    else
+      run_script_unix(script, repo_path)
+    end
+  end
+
+  defp run_script_unix(script, repo_path) do
     tmp_file = Path.join(System.tmp_dir!(), "evogit_skill_#{System.unique_integer()}.sh")
 
     result =
@@ -127,5 +139,37 @@ defmodule EvoGit.Skills.Executor do
 
     File.rm(tmp_file)
     result
+  end
+
+  defp run_script_windows(script, repo_path) do
+    case System.find_executable("bash") do
+      nil ->
+        "Error: This skill uses a bash script, but bash is not available on this Windows installation. Install Git for Windows to enable bash skill execution."
+
+      bash_path ->
+        # Git for Windows ships bash — skip chmod (Windows does not need/honor it).
+        tmp_file = Path.join(System.tmp_dir!(), "evogit_skill_#{System.unique_integer()}.sh")
+
+        result =
+          with :ok <- File.write(tmp_file, script) do
+            case System.cmd(bash_path, [tmp_file],
+                   cd: repo_path,
+                   stderr_to_stdout: true,
+                   parallelism: false
+                 ) do
+              {output, 0} ->
+                "Skill executed successfully:\n#{String.trim(output)}"
+
+              {output, exit_code} ->
+                "Skill failed with exit code #{exit_code}:\n#{String.trim(output)}"
+            end
+          else
+            {:error, reason} ->
+              "Error setting up skill script at #{tmp_file}: #{:file.format_error(reason)}"
+          end
+
+        File.rm(tmp_file)
+        result
+    end
   end
 end
