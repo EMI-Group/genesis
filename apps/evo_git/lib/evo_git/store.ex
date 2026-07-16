@@ -234,6 +234,9 @@ defmodule EvoGit.Store do
         create_tables(conn)
         migrate_schema(conn)
 
+        # Best-effort: checkpoint any leftover WAL from a previous ungraceful shutdown
+        XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
+
         {:ok, %{conn: conn, data_dir: data_dir}}
 
       {:error, reason} ->
@@ -249,6 +252,7 @@ defmodule EvoGit.Store do
     # a crash here could prevent clean supervision shutdown and leave the process
     # in a half-dead state.
     try do
+      XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
       XqliteNIF.close(conn)
     rescue
       _ -> :ok
@@ -773,7 +777,8 @@ defmodule EvoGit.Store do
 
     case XqliteNIF.query(conn, "SELECT #{col_list} FROM #{table}", []) do
       {:ok, %{rows: rows}} -> safe_decode_rows(conn, table, rows, decoder)
-      _ -> []
+      {:error, reason} -> Logger.error("Store: query failed for table #{table}: #{inspect(reason)}, returning empty list"); []
+      _ -> Logger.error("Store: unexpected query result for table #{table}, returning empty list"); []
     end
   end
 

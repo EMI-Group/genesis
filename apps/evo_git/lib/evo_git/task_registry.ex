@@ -349,7 +349,7 @@ defmodule EvoGit.TaskRegistry do
   def handle_call(:list_recent_projects, _from, state) do
     reply =
       select_all_projects(state)
-      |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
+      |> sort_projects_by_recency()
 
     {:reply, reply, state}
   end
@@ -677,7 +677,7 @@ defmodule EvoGit.TaskRegistry do
   defp trim_recent_projects(state) do
     projects =
       select_all_projects(state)
-      |> Enum.sort_by(& &1.last_opened_at, {:desc, DateTime})
+      |> sort_projects_by_recency()
 
     case Enum.split(projects, @max_recent_projects) do
       {_kept, []} ->
@@ -688,6 +688,19 @@ defmodule EvoGit.TaskRegistry do
         Enum.each(paths, &EvoGit.Store.delete_project(state.task_store, &1))
         :ok
     end
+  end
+
+  # Sorts projects by last_opened_at descending (most recent first), handling nil
+  # timestamps safely. A nil last_opened_at sorts LAST (oldest). This avoids the
+  # ArgumentError that DateTime.compare/2 raises when comparing against nil.
+  defp sort_projects_by_recency(projects) do
+    Enum.sort(projects, fn a, b ->
+      cond do
+        a.last_opened_at == nil -> false
+        b.last_opened_at == nil -> true
+        true -> DateTime.after?(a.last_opened_at, b.last_opened_at)
+      end
+    end)
   end
 
   ## GenServer Info Handlers
