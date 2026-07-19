@@ -109,20 +109,20 @@ defmodule EvoGit.RemoteConnectionTest do
   end
 
   describe "bootstrap/1" do
-    test "returns {:error, :no_binary_path} when local_binary_path is nil" do
+    test "returns {:error, :no_tarball_path} when local_binary_path is nil" do
       ensure_registry_and_supervisor()
       target_id = save_test_target()
 
-      assert {:error, :no_binary_path} = EvoGit.RemoteConnection.bootstrap(target_id)
+      assert {:error, :no_tarball_path} = EvoGit.RemoteConnection.bootstrap(target_id)
 
       cleanup_connections()
     end
 
-    test "returns {:error, :binary_not_found} when the file doesn't exist" do
+    test "returns {:error, :tarball_not_found} when the file doesn't exist" do
       ensure_registry_and_supervisor()
-      target_id = save_test_target(local_binary_path: "/nonexistent/path/to/binary")
+      target_id = save_test_target(local_binary_path: "/nonexistent/path/to/tarball.tar.gz")
 
-      assert {:error, :binary_not_found} = EvoGit.RemoteConnection.bootstrap(target_id)
+      assert {:error, :tarball_not_found} = EvoGit.RemoteConnection.bootstrap(target_id)
 
       cleanup_connections()
     end
