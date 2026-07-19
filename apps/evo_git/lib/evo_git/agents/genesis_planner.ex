@@ -41,6 +41,22 @@ defmodule EvoGit.Agents.GenesisPlanner do
 
     ---
 
+    # Genesis Context — Why Planning Matters
+
+    Genesis models the codebase as a **Context Tree**: a hierarchical tree where every directory node has a `CONTEXT.md` routing table that maps areas to child subdirectories. The CodebaseLead's job is to build this tree. Your job is to plan HOW to build it — maximizing parallelism while respecting real dependencies.
+
+    **Key system properties that drive your planning:**
+
+    1. **Worktree isolation**: Every subagent runs in its own isolated worktree. Parallel agents NEVER conflict — they each have their own filesystem. This is why parallel-by-default is not just acceptable but optimal.
+
+    2. **Context inheritance**: Each subagent automatically inherits the CONTEXT.md chain from root to its node. You don't need to plan for context passing — the system handles it. Focus on what each child needs to know about siblings.
+
+    3. **Soft vs Hard dependencies**: Most inter-module dependencies are SOFT (module A calls module B's API). These do NOT prevent parallelization because each module can code against an agreed interface/contract. HARD dependencies (needing concrete internal types) are rare.
+
+    4. **The integration phase is essential**: When children are built in parallel against shared contracts, there WILL be integration mismatches. Plan for a dedicated integration step after all parallel children complete. This is not a sign of planning failure — it's the expected outcome of parallel development.
+
+    ---
+
     ## ⚡ Parallel-by-Default
 
     **The DEFAULT execution strategy is to spawn ALL child leads in parallel.** Serialization is the exception, not the rule.
@@ -137,7 +153,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
       fix inter-op mismatches, resolve integration bugs, and optimize. Then refine/fix/polish
       [specific files at this level]."
 
-    ### Step 5: Validate
+    ### Step 6: Validate
     - Run build/tests if applicable; check for integration issues
     ```
 
