@@ -1468,7 +1468,7 @@ msgstr "로컬"
 
 #: lib/evo_dash_web/live/settings_live.ex:319
 #, elixir-autogen, elixir-format
-msgid "Local Binary Path"
+msgid "Local Release Tarball"
 msgstr "로컬 바이너리 경로"
 
 #: lib/evo_dash_web/components/project_components.ex:153

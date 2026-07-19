@@ -1473,7 +1473,7 @@ msgstr "Локально"
 
 #: lib/evo_dash_web/live/settings_live.ex:319
 #, elixir-autogen, elixir-format
-msgid "Local Binary Path"
+msgid "Local Release Tarball"
 msgstr "Путь к локальному бинарному файлу"
 
 #: lib/evo_dash_web/components/project_components.ex:153

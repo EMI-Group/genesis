@@ -316,7 +316,7 @@ defmodule EvoDashWeb.SettingsLive do
                           </div>
                           <div class="form-control col-span-2">
                             <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Local Binary Path")}</span>
+                              <span class="label-text font-semibold text-xs">{gettext("Local Release Tarball")}</span>
                             </label>
                             <input
                               type="text"
