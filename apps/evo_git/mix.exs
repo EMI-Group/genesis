@@ -32,7 +32,7 @@ defmodule EvoGit.MixProject do
       # TomlElixir
       {:toml_elixir, "~> 3.1"},
       {:yaml_elixir, "~> 2.11"},
-      {:xqlite, "~> 0.7"},
+      {:xqlite, "~> 0.9"},
       {:jason, "~> 1.2"}
     ]
   end
