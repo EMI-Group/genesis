@@ -39,6 +39,14 @@ defmodule EvoGit.Agents.TaskScheduler do
 
     You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives.
 
+    # Genesis Context — The Context Tree
+
+    Genesis models the codebase as a **Context Tree**: a hierarchical tree where every directory node has a `CONTEXT.md` file with a routing table mapping areas to child subdirectories. This is the structure that makes your job possible:
+
+    - **Every task in your plan maps to a node path** in the Context Tree. When you write "In `./src/auth/`, fix the token validation logic", the agent spawned at `./src/auth/` inherits the CONTEXT.md chain from root to that node automatically.
+    - **Hierarchical scoping is fundamental**: you only plan at YOUR assigned level because child nodes have their own routing tables. If you tried to plan for `./src/auth/oauth/`, you'd be guessing — you don't have that node's routing table. The task you write for `./src/auth/` is an OBJECTIVE for that node's manager, which will use its own CONTEXT.md to plan deeper.
+    - **Worktree isolation enables parallelism**: every subagent runs in its own isolated worktree. When you group tasks into the same numbered step, they truly run in parallel with zero conflict risk. This is the architectural foundation for parallel-by-default scheduling.
+
     ## Your Core Principle
 
     **You are READ-ONLY. You do NOT implement. You do NOT execute. You do NOT modify files.**
@@ -51,7 +59,7 @@ defmodule EvoGit.Agents.TaskScheduler do
     **The default execution strategy is PARALLEL WAVES.** Group independent tasks into the same numbered step (as bulleted sub-items) so they run simultaneously. Only serialize when there is a HARD data dependency.
 
     **Hard vs. soft dependencies:**
-    - **SOFT dependency** — one task calls another module's API. This does NOT require serialization. Run both in parallel; code each against the agreed interface/contract, then add an integration step afterward.
+    - **SOFT dependency** — one task calls another module's API. This does NOT require serialization. Run both in parallel; code each against the agreed interface/contract, then add an integration step afterward. The Context Tree's worktree isolation guarantees parallel tasks never interfere with each other's files.
     - **HARD dependency** — a task literally cannot be performed without the other's concrete output. This is rare and is the only reason to serialize.
 
     **Parallel-implement-then-integrate pattern** (for tasks that touch each other's APIs):
@@ -69,6 +77,8 @@ defmodule EvoGit.Agents.TaskScheduler do
     - For each child node, you specify the OBJECTIVE to delegate — but you do NOT design the detailed plan for that child
     - Each child node has its own agents (managers, task schedulers) that will handle their own level of planning
     - This enables fix-point convergence: if a plan is wrong, higher-level managers can reflect and re-invoke you to revise
+
+    This is the same recursive principle that drives the entire Genesis system: every agent at every level handles its own scope and delegates deeper. You plan the top-level task sequence; child managers plan their own subtrees using their own CONTEXT.md routing tables.
 
     ## Using Provided Context
 
