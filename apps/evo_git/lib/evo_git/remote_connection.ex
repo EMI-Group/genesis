@@ -170,7 +170,7 @@ defmodule EvoGit.RemoteConnection do
   end
 
   @doc """
-  Executes the bootstrap process ONLY (upload binary + launch daemon).
+  Executes the bootstrap process ONLY (upload tarball + launch daemon).
 
   Does NOT connect. Looks up the target, finds-or-starts the manager, then
   performs the first-time setup using CLI `scp` and `ssh`.
@@ -181,7 +181,7 @@ defmodule EvoGit.RemoteConnection do
   def bootstrap(target_id) do
     with {:ok, target} <- fetch_target(target_id),
          {:ok, pid} <- ensure_started(target) do
-      # 120s timeout — binary upload via scp can be slow.
+      # 120s timeout — tarball upload via scp can be slow.
       GenServer.call(pid, :bootstrap, @bootstrap_call_timeout_ms)
     end
   end
@@ -335,17 +335,17 @@ defmodule EvoGit.RemoteConnection do
 
     cond do
       is_nil(local_path) or local_path == "" ->
-        {:error, :no_binary_path, state}
+        {:error, :no_tarball_path, state}
 
       not File.exists?(local_path) ->
-        {:error, :binary_not_found, state}
+        {:error, :tarball_not_found, state}
 
       true ->
-        do_bootstrap_with_binary(state, target, local_path)
+        do_bootstrap_with_tarball(state, target, local_path)
     end
   end
 
-  defp do_bootstrap_with_binary(%__MODULE__{} = state, target, local_path) do
+  defp do_bootstrap_with_tarball(%__MODULE__{} = state, target, local_path) do
     ssh_target = target.ssh_target
     remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
 
