@@ -144,6 +144,18 @@ defmodule EvoGit.Config.LLMCatalog do
       ]
     },
     %{
+      id: :moonshotai,
+      display_name: "Moonshot AI (Kimi)",
+      provider_atoms: [:moonshotai],
+      credential_key: "moonshotai_api_key",
+      variants: nil,
+      models: [
+        %{id: "kimi-k3", display_name: "Kimi K3"},
+        %{id: "kimi-k2.7", display_name: "Kimi K2.7"},
+        %{id: "kimi-k2.7-code", display_name: "Kimi K2.7 Code"}
+      ]
+    },
+    %{
       id: :xai,
       display_name: "xAI",
       provider_atoms: [:xai],
