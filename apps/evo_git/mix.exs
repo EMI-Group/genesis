@@ -25,7 +25,7 @@ defmodule EvoGit.MixProject do
 
   defp deps do
     [
-      {:req_llm, "~> 1.17.0"},
+      {:req_llm, git: "https://github.com/agentjido/req_llm.git", branch: "main"},
       {:retry, "~> 0.19"},
       {:req, "~> 0.6.0"},
       {:phoenix_pubsub, "~> 2.2"},
