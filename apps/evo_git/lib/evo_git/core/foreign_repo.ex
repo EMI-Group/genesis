@@ -18,6 +18,7 @@ defmodule EvoGit.Core.ForeignRepo do
   """
 
   @enforce_keys [:id, :root]
+  @derive {Jason.Encoder, only: [:id, :root, :description]}
   defstruct [:id, :root, :description]
 
   alias EvoGit.Platform
