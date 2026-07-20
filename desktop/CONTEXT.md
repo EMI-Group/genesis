@@ -21,6 +21,16 @@ This is the native application layer — it contains NO Elixir code. The actual 
 | `src-tauri/capabilities/default.json` | Tauri v2 permissions: dialog (directory picker) |
 | `src-tauri/resources/genesis-backend/` | Placeholder directory where the built Elixir release (`_build/prod/rel/genesis_desktop/`) is placed before `cargo tauri build` |
 
+## Constraints
+
+- Tauri v2 (not v1) — API and config schema differ significantly. Pinned in `Cargo.lock`: `tauri` 2.11.3, `tauri-build` 2.x. The `"tray-icon"` Cargo feature **is** enabled alongside `"devtools"`.
+- **System tray support**: closing the window hides it to the tray (via `WindowEvent::CloseRequested` → `api.prevent_close()` + `window.hide()`). The tray icon has "Show Window" and "Quit" menu items; left-clicking the tray icon also shows the window. "Quit" kills the backend process and exits.
+- **Configurable binding address**: the backend binds to `127.0.0.1` (localhost) by default. Set `EVOGIT_BIND=0.0.0.0` before launching for remote access. The `PORT` env var (default 9999) controls the backend port. The WebView always connects via `localhost` regardless of bind address.
+- The desktop shell contains NO Elixir code — only Rust
+- `withGlobalTauri: true` — the webview gets `window.__TAURI__` API without npm imports
+- Requires Rust toolchain to build
+- The Elixir release directory must be placed at `src-tauri/resources/genesis-backend/` before `cargo tauri build`
+
 ## Architecture
 
 ```
@@ -62,13 +72,3 @@ cd desktop/src-tauri && cargo tauri build
 ```
 
 The Tauri config references the release directory at `resources: ["resources/genesis-backend"]`. Tauri bundles the entire directory tree as an application resource, accessible at runtime via `app.path().resource_dir()`.
-
-## Constraints
-
-- Tauri v2 (not v1) — API and config schema differ significantly. Pinned in `Cargo.lock`: `tauri` 2.11.3, `tauri-build` 2.x. The `"tray-icon"` Cargo feature **is** enabled alongside `"devtools"`.
-- **System tray support**: closing the window hides it to the tray (via `WindowEvent::CloseRequested` → `api.prevent_close()` + `window.hide()`). The tray icon has "Show Window" and "Quit" menu items; left-clicking the tray icon also shows the window. "Quit" kills the backend process and exits.
-- **Configurable binding address**: the backend binds to `127.0.0.1` (localhost) by default. Set `EVOGIT_BIND=0.0.0.0` before launching for remote access. The `PORT` env var (default 9999) controls the backend port. The WebView always connects via `localhost` regardless of bind address.
-- The desktop shell contains NO Elixir code — only Rust
-- `withGlobalTauri: true` — the webview gets `window.__TAURI__` API without npm imports
-- Requires Rust toolchain to build
-- The Elixir release directory must be placed at `src-tauri/resources/genesis-backend/` before `cargo tauri build`
