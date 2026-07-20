@@ -151,8 +151,8 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.sandbox.linux.protect_control_groups == true
       assert defaults.sandbox.linux.system_call_filter == true
       assert defaults.sandbox.linux.no_new_privileges == true
-      assert defaults.sandbox.linux.private_pids == true
-      assert defaults.sandbox.linux.protect_proc == true
+      assert defaults.sandbox.linux.private_pids == false
+      assert defaults.sandbox.linux.protect_proc == false
 
       # Truncation
       assert defaults.truncation.tool_output_max_bytes == 131_072

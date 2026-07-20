@@ -404,7 +404,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:sandbox, :linux, :private_pids],
         type: :boolean,
-        default: true,
+        default: false,
         validation: [],
         category: :sandbox,
         sub_category: :linux,
@@ -414,7 +414,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:sandbox, :linux, :protect_proc],
         type: :boolean,
-        default: true,
+        default: false,
         validation: [],
         category: :sandbox,
         sub_category: :linux,

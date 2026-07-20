@@ -306,14 +306,14 @@ defmodule EvoGit.Sandbox.Linux do
       end
 
     private_pids =
-      if Map.get(cfg, :private_pids, true) do
+      if Map.get(cfg, :private_pids, false) do
         ["-p", "PrivatePIDs=yes"]
       else
         []
       end
 
     protect_proc =
-      if Map.get(cfg, :protect_proc, true) do
+      if Map.get(cfg, :protect_proc, false) do
         ["-p", "ProtectProc=invisible"]
       else
         []

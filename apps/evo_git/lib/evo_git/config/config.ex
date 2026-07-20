@@ -60,8 +60,8 @@ defmodule EvoGit.Config do
       # protect_control_groups = true   # ProtectControlGroups=yes (v214+)
       # system_call_filter = true       # SystemCallFilter=~ @clock @module ... (v214+)
       # no_new_privileges = true        # NoNewPrivileges=yes (v214+)
-      # private_pids = true             # PrivatePIDs=yes (v239+)
-      # protect_proc = true             # ProtectProc=invisible (v247+)
+      # private_pids = false            # PrivatePIDs=yes (v239+)
+      # protect_proc = false            # ProtectProc=invisible (v247+)
 
       [truncation]
       tool_output_max_bytes = 131_072    # 128 KB — threshold to trigger truncation
