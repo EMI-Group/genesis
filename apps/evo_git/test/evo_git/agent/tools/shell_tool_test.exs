@@ -6,6 +6,42 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
   @repo_root "/home/user/my-project"
   @repo_path "/home/user/my-project/.genesis/workers/worker_T1_A1"
 
+  describe "format_duration/1" do
+    test "0 ms" do
+      assert ShellTool.format_duration(0) == "0 ms"
+    end
+
+    test "sub-second values in milliseconds" do
+      assert ShellTool.format_duration(1) == "1 ms"
+      assert ShellTool.format_duration(456) == "456 ms"
+      assert ShellTool.format_duration(999) == "999 ms"
+    end
+
+    test "values in seconds (2 decimal places)" do
+      assert ShellTool.format_duration(1000) == "1.00 s"
+      assert ShellTool.format_duration(1234) == "1.23 s"
+      assert ShellTool.format_duration(1500) == "1.50 s"
+    end
+
+    test "values in minutes and seconds" do
+      assert ShellTool.format_duration(60000) == "1m 0s"
+      assert ShellTool.format_duration(65000) == "1m 5s"
+      assert ShellTool.format_duration(125000) == "2m 5s"
+    end
+
+    test "values in hours, minutes, and seconds" do
+      assert ShellTool.format_duration(3600000) == "1h 0m 0s"
+      assert ShellTool.format_duration(3723000) == "1h 2m 3s"
+      assert ShellTool.format_duration(7384000) == "2h 3m 4s"
+    end
+
+    test "large value" do
+      # 25 hours, 30 minutes, 15 seconds
+      ms = 25 * 3_600_000 + 30 * 60_000 + 15_000
+      assert ShellTool.format_duration(ms) == "25h 30m 15s"
+    end
+  end
+
   describe "detect_cd_warnings/3" do
     test "returns nil when no cd in command" do
       assert ShellTool.detect_cd_warnings("ls -la", @repo_path, @repo_root) == nil
