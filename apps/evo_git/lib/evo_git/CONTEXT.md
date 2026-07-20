@@ -9,7 +9,12 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 - `./agent_scheduler/` → AgentState, SchedMeta, Slots, Worktrees — ETS schemas and helpers
 - `./core/` → ContextNode, PhyloGraphNode, ForeignRepo data structures
 - `./adapters/` → Git CLI adapter — all git operations go through this module
-- `./runtime/` → Genesis, Evolution, Prompts (LLM templates)
+- `./runtime/` → Genesis, Evolution, PR helpers, Skill Extraction
+- `./config/` → Unified 3-level configuration resolver (defaults → user TOML → runtime overrides), schema definitions, LLM catalog, platform detection, project config
+- `./sandbox/` → Multi-platform sandbox backends (Linux systemd-run, macOS sandbox-exec, passthrough)
+- `./skills/` → Dynamic skill tools system — YAML-frontmatter markdown skills as LLM-callable tools
+- `./store/` → SQLite persistence codec — pure serialization for `EvoGit.Store`
+- `./task_registry/` → TaskRegistry support modules — Cleanup, Diagnostics, Lease, ResumeContext, RuntimeOpts, TaskExecutor
 
 ## API Surface
 
