@@ -4,6 +4,10 @@
 
 Configuration schema definitions — pure data describing every config key, its type, default, and validation rules. Also handles LLM parameter extraction from model profiles.
 
+## Routing Table
+
+None — leaf directory.
+
 ## API Surface
 
 ### `EvoGit.Config.Schema.Definitions`
@@ -29,10 +33,6 @@ Extracts LLM generation parameters from config/model profiles. Accepts either a 
 - Schema modules must be pure functions with no side effects.
 - Do not add I/O, GenServer, or process logic here.
 - Schema definitions are the single source of truth for all config keys.
-
-## Routing Table
-
-None — leaf directory.
 
 ## Notes for Agents
 

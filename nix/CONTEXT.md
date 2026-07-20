@@ -1,8 +1,12 @@
-# `nix/` — NixOS Build Support
+# Nix — NixOS Build Support
 
 ## Intent
 
 Helper scripts for building the EvoGit desktop app on NixOS. The primary entry point is the flake at the repository root (`flake.nix`), which provides a complete development shell. The scripts in this directory replicate CI build steps that need adaptation for local NixOS use.
+
+## Routing Table
+
+- None — leaf directory (single script: `bundle-vendor.sh`).
 
 ## API Surface
 

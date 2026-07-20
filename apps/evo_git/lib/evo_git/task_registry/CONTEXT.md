@@ -4,6 +4,10 @@
 
 Support modules extracted from `EvoGit.TaskRegistry` GenServer to keep the main module focused. These are pure-function or ETS-only modules — none maintain their own GenServer state. They were migrated from `evo_dash` (formerly `EvoDash.TaskRegistry.*`) to `evo_git` as part of the domain persistence layer migration.
 
+## Routing Table
+
+None — leaf directory (all modules at this level).
+
 ## API Surface
 
 | Module | File | Purpose |
@@ -22,7 +26,3 @@ Support modules extracted from `EvoGit.TaskRegistry` GenServer to keep the main 
 - `Diagnostics`: logging only — never modifies state or raises.
 - `TaskExecutor`: runs OUTSIDE the GenServer process (under `Task.Supervisor`).
 - `RuntimeOpts` and `ResumeContext`: pure builders — no side effects.
-
-## Routing Table
-
-None — leaf directory (all modules at this level).

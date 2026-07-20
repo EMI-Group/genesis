@@ -3,6 +3,10 @@
 ## Intent
 Provides platform-specific sandboxing for agent-executed commands. Dispatches to the appropriate backend based on `EvoGit.Platform.sandbox_backend/0`.
 
+## Routing Table
+
+None — leaf directory (modules: `sandbox.ex`, `behaviour.ex`, `helpers.ex`, `linux.ex`, `macos.ex`, `none.ex`).
+
 ## API Surface
 | Module | Description |
 |---|---|

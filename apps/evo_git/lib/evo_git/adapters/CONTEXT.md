@@ -3,6 +3,10 @@
 ## Intent
 Adapter layer that wraps external tool CLIs, providing a safe and idiomatic Elixir API for the rest of the application. Currently contains only a Git adapter, abstracting all `System.cmd("git", ...)` calls behind structured result tuples.
 
+## Routing Table
+
+None — leaf directory (single file: `git.ex`).
+
 ## API Surface
 
 ### `EvoGit.Adapters` (parent module — `../adapters.ex`)

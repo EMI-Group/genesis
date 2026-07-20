@@ -1,13 +1,16 @@
 # ReviewComponents — Sub-Components
-## Intent
-Sub-component modules extracted from `EvoDashWeb.ReviewComponents` to keep each component focused.
-## Modules
-- `DiffViewer` — Diff viewer system (file tree sidebar, syntax-highlighted split-view diffs, split/commit layouts)
-- `Header` — Review header, task summary, and agent summary
-- `Actions` — Action buttons (merge/reject/continue/create PR) and skills extraction modal
-- `Stats` — Diff stats bar and commit list
 
-## DiffViewer — Syntax Highlighting (file-level primary, hunk-level fallback)
+## Intent
+
+Sub-component modules extracted from `EvoDashWeb.ReviewComponents` to keep each component focused: `DiffViewer` (diff viewer system with syntax highlighting), `Header` (review header, task summary, agent summary), `Actions` (action buttons and skills extraction modal), `Stats` (diff stats bar and commit list).
+
+## Routing Table
+
+None — leaf directory (four module files).
+
+## API Surface
+
+### `DiffViewer` — Syntax Highlighting (file-level primary, hunk-level fallback)
 
 The diff viewer highlights code via Tree-sitter (Lumis). It uses a **file-level-primary / hunk-level-fallback** design:
 
@@ -40,4 +43,21 @@ Key functions:
 - Hunk headers (`@@ -x,y +a,b @@`) and expand bars span all 4 columns via `grid-column: 1 / -1`.
 
 ### Full-content fields
+
 `EvoGit.Review.FileInfo` carries `full_new_content` (content at the head/new commit) and `full_old_content` (content at the base/old commit), both nil by default. These are populated by `ReviewLive` on initial lazy-load (`maybe_load_review_diff`/`maybe_load_commit_diff`) via `Review.get_file_content/3`, and preserved across context-expansion (`expand_context` passes `:preserve` so the existing values are carried forward — content doesn't change, only the diff context window).
+
+### Other Modules
+
+- **`Header`** — Review header, task summary, and agent summary.
+- **`Actions`** — Action buttons (merge/reject/continue/create PR) and skills extraction modal.
+- **`Stats`** — Diff stats bar and commit list.
+
+## Constraints
+
+### `try/rescue` Policy
+
+`try/rescue` is normally an anti-pattern in Elixir. Within these component files:
+
+- **Do NOT** wrap `String.to_existing_atom/1` in `try/rescue`. When normalizing potentially untrusted DB-sourced data (e.g., agent archive maps after a Jason.decode round-trip), use an explicit **whitelist map lookup** (`@known_agent_keys` in `normalize_agent_keys/1`) with `Map.get/3` defaulting to the original key. This avoids dynamic atom creation AND avoids try/rescue.
+- **The ONLY justified `try/rescue`** in this subtree is `highlight_code_block/2` in `diff_viewer.ex`, which wraps `Lumis.highlight!/2` for syntax highlighting (called once for the full file in file-level mode, or per code block in hunk-level fallback). It is justified because: (1) the non-bang `Lumis.highlight/2` also raises internally (does not return `{:error, _}`), so `case`/`with` cannot replace it; (2) falling back to raw un-highlighted code is the correct graceful degradation for a single file/hunk failure. This rescue **must** carry the inline justification comment — do not remove it.
+- If any new `try/rescue` is introduced, it MUST include a clear inline comment explaining why it is justified.

@@ -4,6 +4,10 @@
 
 LiveComponents (`use EvoDashWeb, :live_component`) rendered within parent LiveViews. Currently contains the `NodeSelectorComponent` for the SSH Remote Development feature — rendered in the navbar next to the brand logo via `Layouts.app/1`.
 
+## Routing Table
+
+None — leaf directory (single file: `node_selector_component.ex`).
+
 ## API Surface
 
 ### `EvoDashWeb.NodeSelectorComponent` (`node_selector_component.ex`)
@@ -23,7 +27,3 @@ A LiveComponent that renders a compact navbar dropdown for switching between loc
 - All domain logic stays in `EvoDash.NodeContext`; component is pure presentation + event routing.
 - Uses Gettext for i18n.
 - Connection management (add/edit/connect/disconnect/delete) is handled on the Settings page — this component only selects nodes and links to Settings.
-
-## Routing Table
-
-None — leaf directory (single file: `node_selector_component.ex`).
