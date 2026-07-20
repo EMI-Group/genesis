@@ -9,12 +9,20 @@ Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightwei
 - `EvoGit.AgentScheduler.RemoteAPI` — a read-only RPC API over the scheduler's ETS state, designed to be called via `:erpc.call/4` from the local dashboard. All returns are serialization-safe plain maps/lists/scalars (no struct references or PIDs cross-node). Distribution is enabled via Mix release env vars (`RELEASE_DISTRIBUTION`/`RELEASE_NODE`); the existing `Phoenix.PubSub` PG2 adapter already uses `:pg` (OTP 26+), which supports multi-node out of the box — no Redis or third-party PubSub required.
 
 ## Routing Table
-| Directory | Purpose |
-|---|---|
-| `./lib/` | Application source (agents, core domain, adapters, runtime, scheduler, config) |
-| `./test/` | ExUnit test suite using real git operations on temp directories |
+- `./lib/` → Application source (agents, core domain, adapters, runtime, scheduler, config)
+- `./test/` → ExUnit test suite using real git operations on temp directories
+- `./lib/evo_git/core/` → `ContextNode` (spatial) and `PhyloGraphNode` (temporal) data structures
+- `./lib/evo_git/adapters/` → `Git` CLI adapter — thin wrapper around `System.cmd("git", ...)`
+- `./lib/evo_git/agent/` → Agent behaviour, tool library, context compression, subagent processing, usage tracking
+- `./lib/evo_git/agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, Extractor, Evaluator)
+- `./lib/evo_git/runtime/` → Genesis, Evolution, and Prompts (LLM templates)
+- `./lib/evo_git/agent_scheduler/` → `AgentState`, `SchedMeta`, `Slots`, `Worktrees`, `RemoteAPI` — ETS schemas, helper logic, and RPC-readable state API for remote (SSH) dashboard connections
+- `./lib/evo_git/config/` → `EvoGit.Config` — defaults, user TOML, credentials, API keys
+- `./lib/evo_git/sandbox/` → `EvoGit.Sandbox` — multi-platform sandbox backends (Linux, macOS, None)
+- `./lib/evo_git/store/` → `EvoGit.Store.Codec` — pure serialization for the SQLite store
+- `./lib/evo_git/task_registry/` → `EvoGit.TaskRegistry` support modules — `Cleanup`, `Diagnostics`, `Lease`, `ResumeContext`, `RuntimeOpts`, `TaskExecutor`
 
-## Top-Level Modules
+## API Surface
 | Module | Description |
 |---|---|
 | `EvoGit` | Sandboxed command execution via `EvoGit.Sandbox` (`sandbox_run/4`, `sandbox_args/4` delegates to platform backend) |
@@ -45,20 +53,6 @@ Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightwei
 | `EvoGit.RecentProject` | Struct for recent-project records (path, name, last_opened_at). |
 | `EvoGit.TaskRegistry` | GenServer managing task lifecycle: creation, execution (via `Task.Supervisor`), lease/heartbeat reconciliation, cleanup of expired tasks, and status tracking. Broadcasts task status on `EvoGit.PubSub` topic `"tasks"`. Registers running task wrapper processes in `EvoGit.TaskRegistry.ProcessRegistry` (unique Registry). Migrated from evo_dash so the headless remote daemon can manage tasks. Started in `EvoGit.Application` supervision tree. |
 | `EvoGit.RemoteNode` | Core-runtime cross-node RPC helper for remote (SSH) dashboard connections. Wraps `:erpc.call/5` with bounded timeout. Functions: `call_remote/4`, `list_agents/1`, `get_agent_history/2`, `get_agent_state/2`, `get_config/1`, `get_config_status/1`, `paused?/1`, `llm_test/3` (test the REMOTE node's LLM connection). Local node calls go directly to `EvoGit.AgentScheduler.RemoteAPI` / `EvoGit.AgentScheduler` / `EvoGit.Config` / `EvoGit.SystemCheck`; remote calls route through `:erpc`. Extracted from `EvoDash.NodeContext` (which retains the graceful-degradation wrappers and connection-target management). |
-
-## Subdirectories
-| Directory | Purpose |
-|---|---|
-| `./lib/evo_git/core/` | `ContextNode` (spatial) and `PhyloGraphNode` (temporal) data structures |
-| `./lib/evo_git/adapters/` | `Git` CLI adapter — thin wrapper around `System.cmd("git", ...)` |
-| `./lib/evo_git/agent/` | Agent behaviour, tool library, context compression, subagent processing, usage tracking |
-| `./lib/evo_git/agents/` | Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, Extractor, Evaluator) |
-| `./lib/evo_git/runtime/` | Genesis, Evolution, and Prompts (LLM templates) |
-| `./lib/evo_git/agent_scheduler/` | `AgentState`, `SchedMeta`, `Slots`, `Worktrees`, `RemoteAPI` — ETS schemas, helper logic, and RPC-readable state API for remote (SSH) dashboard connections |
-| `./lib/evo_git/config/` | `EvoGit.Config` — defaults, user TOML, credentials, API keys |
-| `./lib/evo_git/sandbox/` | `EvoGit.Sandbox` — multi-platform sandbox backends (Linux, macOS, None) |
-| `./lib/evo_git/store/` | `EvoGit.Store.Codec` — pure serialization for the SQLite store |
-| `./lib/evo_git/task_registry/` | `EvoGit.TaskRegistry` support modules — `Cleanup`, `Diagnostics`, `Lease`, `ResumeContext`, `RuntimeOpts`, `TaskExecutor` |
 
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
