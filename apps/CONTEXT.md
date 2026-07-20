@@ -9,6 +9,15 @@ Contains the two child applications of the EvoGit umbrella project. The core run
 - `./evo_git/` → Core runtime — agent execution, Git interactions, dual-dimension architecture, CLI
 - `./evo_dash/` → Phoenix LiveView dashboard — real-time visualization of Context Tree, agent activity, task management
 
+## API Surface
+
+This directory contains no source files — it is a container for the two umbrella child applications:
+
+| App | Directory | Purpose |
+|-----|-----------|---------|
+| `:evo_git` | `./evo_git/` | Core runtime — agent execution, Git interactions, CLI |
+| `:evo_dash` | `./evo_dash/` | Phoenix LiveView dashboard — real-time visualization and task management |
+
 ## Constraints
 
 - Part of an **umbrella project** — build artifacts, deps, and lockfile live at the repository root.
