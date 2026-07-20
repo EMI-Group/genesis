@@ -4,6 +4,10 @@
 
 CI/CD workflow definitions for the Genesis project. Two pipelines: a lightweight CI gate on PRs/pushes to `main` and a comprehensive desktop-app release build triggered by GitHub releases.
 
+## Routing Table
+
+None — leaf directory (two workflow files: `ci.yml`, `build-desktop.yml`).
+
 ## API Surface
 
 ### `ci.yml` — Continuous Integration
