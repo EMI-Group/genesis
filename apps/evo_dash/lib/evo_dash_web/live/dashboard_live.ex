@@ -543,12 +543,15 @@ defmodule EvoDashWeb.DashboardLive do
 
     # Preserve resume_from from URL query param (e.g. ?resume_from=task_id)
     # and auto-expand the Advanced Options so the user sees it's filled in.
+    # Also restore foreign_repos from the original task so the "continue from
+    # here" workflow preserves multi-repo configuration.
     socket =
       case params["resume_from"] do
         task_id when is_binary(task_id) and task_id != "" ->
           socket
           |> assign(:task_resume_from, task_id)
           |> assign(:show_advanced, true)
+          |> maybe_restore_foreign_repos_from_task(task_id)
 
         _ ->
           socket
@@ -1230,6 +1233,59 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   # --- Private Helpers ---
+
+  # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
+  #
+  # Looks up the task by id, extracts `task.opts[:foreign_repos]`, and converts the
+  # values to `%ForeignRepo{}` structs. Handles both:
+  #   - Fresh `%ForeignRepo{}` structs (from an in-memory task)
+  #   - Maps with `"root"` key (Jason-decoded from the DB, via `@derive {Jason.Encoder}`)
+  #   - Maps with `"path"` key (sessionStorage serialization format, as a fallback)
+  defp maybe_restore_foreign_repos_from_task(socket, task_id) do
+    case TaskRegistry.get_task(task_id) do
+      nil ->
+        socket
+
+      task ->
+        case task.opts[:foreign_repos] do
+          nil ->
+            socket
+
+          [] ->
+            socket
+
+          repos when is_list(repos) ->
+            converted =
+              Enum.map(repos, fn
+                %ForeignRepo{} = repo ->
+                  repo
+
+                repo when is_map(repo) ->
+                  id = Map.get(repo, "id") || Map.get(repo, :id) || "primary"
+                  root = Map.get(repo, "root") || Map.get(repo, "path") || Map.get(repo, :root)
+                  desc = Map.get(repo, "description") || Map.get(repo, :description)
+
+                  opts = if is_binary(desc) and desc != "", do: [description: desc], else: []
+                  ForeignRepo.new(id, root, opts)
+
+                _ ->
+                  nil
+              end)
+              |> Enum.reject(&is_nil/1)
+
+            if converted != [] do
+              sorted =
+                Enum.sort_by(converted, fn repo ->
+                  {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
+                end)
+
+              assign(socket, :foreign_repos, sorted)
+            else
+              socket
+            end
+        end
+    end
+  end
 
   defp activate_project(socket, path) do
     name = Path.basename(path)
