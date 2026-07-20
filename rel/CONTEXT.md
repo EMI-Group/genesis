@@ -1,8 +1,13 @@
-# `rel/` — Mix Release Overlays
+# Rel — Mix Release Overlays
 
 ## Intent
 
 Release configuration overlays for the Mix release system. These files are copied into each release at build time via the `:overlays` key in `mix.exs`. Two release variants are supported: the full `genesis` release and the headless `genesis_remote` daemon.
+
+## Routing Table
+
+- `./genesis/` → Per-release overlay copies for the `genesis` release (vm.args, env.sh, env.bat)
+- `./remote/` → Per-release overlay copies for the `genesis_remote` headless daemon (vm.args, env.sh, env.bat)
 
 ## API Surface
 
@@ -27,8 +32,3 @@ Contains per-release copies of `vm.args.eex`, `env.sh.eex`, `env.bat.eex` used s
 - The top-level `.eex` files are fallbacks; per-release directories (`genesis/`, `remote/`) take precedence.
 - VM args templates: do NOT set `-mode`, `-name`, `-sname`, or `-setcookie` — these are configured via env vars.
 - Shell env templates: use `export` for variables consumed by the VM/release boot scripts.
-
-## Routing Table
-
-- `./genesis/` → Per-release overlay copies for the `genesis` release (vm.args, env.sh, env.bat)
-- `./remote/` → Per-release overlay copies for the `genesis_remote` headless daemon (vm.args, env.sh, env.bat)
