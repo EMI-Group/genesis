@@ -44,6 +44,16 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 | `agent_type/0` | `:read_write` | `:read` or `:read_write` — controls spatial contract validation |
 | `delegation_level/0` | `:high` | `:high` or `:low` — controls turn-budget warning frequency for delegation reminders |
 
+## Constraints
+- All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` outside adapters.
+- Agents are transient modules using `EvoGit.Agent` behaviour; persistent state lives in ETS.
+- System prompts MUST NOT contain dynamic state, objectives, or context trees.
+- Worktrees are persistent per-agent (created on dispatch, reused on retry, deleted on recycle).
+- Agents commit before delegating subagents (auto-commit fallback enforced by scheduler).
+- Tool outputs truncated at 128KB; agent loop has 30-min LLM budget with graduated warnings.
+- Cross-repo subagents commit to their foreign repo's worktree — changes are NOT merged into the primary repo.
+- 3-level configuration: `EvoGit.Config` merges defaults → user TOML → runtime overrides.
+
 ## First User Prompt Assembly
 The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's first user message as two distinct, XML-delimited blocks separated by a markdown horizontal rule, so the LLM can cleanly distinguish environment from objective:
 
@@ -63,13 +73,3 @@ The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's firs
 
 - **`build_dynamic_context/1`** and **`build_foreign_repos_section/1`** produce the section bodies (unchanged by framing); only how the sections are delimited relative to each other is structured.
 - Blank sections (e.g. no foreign repos, or no objective) are dropped entirely — no dangling rules, empty headers, or empty XML blocks are ever emitted. The `---` delimiter appears only between two non-blank blocks.
-
-## Constraints
-- All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` outside adapters.
-- Agents are transient modules using `EvoGit.Agent` behaviour; persistent state lives in ETS.
-- System prompts MUST NOT contain dynamic state, objectives, or context trees.
-- Worktrees are persistent per-agent (created on dispatch, reused on retry, deleted on recycle).
-- Agents commit before delegating subagents (auto-commit fallback enforced by scheduler).
-- Tool outputs truncated at 128KB; agent loop has 30-min LLM budget with graduated warnings.
-- Cross-repo subagents commit to their foreign repo's worktree — changes are NOT merged into the primary repo.
-- 3-level configuration: `EvoGit.Config` merges defaults → user TOML → runtime overrides.
