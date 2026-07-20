@@ -5,6 +5,8 @@ Contains all reusable UI component modules and layout templates for the EvoDash 
 
 ## Routing Table
 - `layouts/` → HTML layout templates (root layout shell with meta tags, CSRF, theme persistence)
+- `review_components/` → Sub-components extracted from `ReviewComponents`: `DiffViewer`, `Header`, `Actions`, `Stats`
+- `settings_components/` → Sub-components extracted from `SettingsComponents`: `CategoryMetadata`, `SettingCard`, `ModelProfilesEditor`, `Sidebar`, `SearchResults`
 
 ## API Surface
 
