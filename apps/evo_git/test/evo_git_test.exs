@@ -15,7 +15,7 @@ defmodule EvoGitTest do
       assert Enum.take(args, 3) == ["--user", "--slice=evogit", "--wait"]
       assert "-p" in args
       refute "PrivatePIDs=yes" in args
-      assert "ProtectProc=invisible" in args
+      refute "ProtectProc=invisible" in args
       assert "--slice=evogit" in args
       # Per-process resource limits are applied per-command; slice-level limits are separate
       refute "CPUWeight=30" in args
