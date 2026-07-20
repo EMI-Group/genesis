@@ -63,15 +63,15 @@ defmodule EvoDashWeb.CoreComponents do
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       phx-hook="AutoClearFlash"
       role="alert"
-      class={"fixed right-4 z-[60] w-80 sm:w-96 animate-fade-in-up top-20"}
+      class={"fixed right-4 z-[60] w-80 sm:w-96 top-20"}
       {@rest}
     >
       <div class={[
-        "relative w-full overflow-hidden rounded-lg shadow-xl ring-1 p-4 backdrop-blur-sm",
-        @kind == :info && "bg-info/85 text-info ring-info/50",
-        @kind == :success && "bg-success/85 text-success ring-success/50",
-        @kind == :error && "bg-error/85 text-error ring-error/50",
-        @kind == :warning && "bg-warning/85 text-warning ring-warning/50"
+        "relative w-full overflow-hidden rounded-lg shadow-lg ring-1 p-4",
+        @kind == :info && "bg-info/15 text-info ring-info/50",
+        @kind == :success && "bg-success/15 text-success ring-success/50",
+        @kind == :error && "bg-error/15 text-error ring-error/50",
+        @kind == :warning && "bg-warning/15 text-warning ring-warning/50"
       ]}>
         <div class="flex items-start gap-3">
           <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0 text-info" />
