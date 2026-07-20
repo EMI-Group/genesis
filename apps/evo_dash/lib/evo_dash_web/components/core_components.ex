@@ -68,10 +68,10 @@ defmodule EvoDashWeb.CoreComponents do
     >
       <div class={[
         "relative w-full overflow-hidden rounded-lg shadow-xl ring-1 p-4 backdrop-blur-sm",
-        @kind == :info && "bg-info/15 text-info ring-info/30",
-        @kind == :success && "bg-success/15 text-success ring-success/30",
-        @kind == :error && "bg-error/15 text-error ring-error/30",
-        @kind == :warning && "bg-warning/15 text-warning ring-warning/30"
+        @kind == :info && "bg-info/85 text-info ring-info/50",
+        @kind == :success && "bg-success/85 text-success ring-success/50",
+        @kind == :error && "bg-error/85 text-error ring-error/50",
+        @kind == :warning && "bg-warning/85 text-warning ring-warning/50"
       ]}>
         <div class="flex items-start gap-3">
           <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0 text-info" />
