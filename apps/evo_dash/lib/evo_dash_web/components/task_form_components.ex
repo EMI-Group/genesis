@@ -39,7 +39,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         <div class="bg-base-200/50 rounded-xl p-4 border border-base-300">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- Task Mode -->
-            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div class="flex flex-col md:flex-row md:items-center gap-3">
               <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
                 <.icon name="hero-cpu-chip" class="size-5 text-base-content/60" />
                 {gettext("Task Mode")}
@@ -47,7 +47,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               <select
                 name="mode"
                 phx-change="task_change"
-                class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
+                class="select select-bordered select-md w-full md:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
               >
                 <option value="genesis_existing" selected={@mode == "genesis_existing"}>
                   {gettext("Initialize Existing Codebase")}
@@ -67,7 +67,7 @@ defmodule EvoDashWeb.TaskFormComponents do
 
             <!-- Model -->
             <%= if @model_profiles != [] do %>
-              <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div class="flex flex-col md:flex-row md:items-center gap-3">
                 <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
                   <.icon name="hero-cpu-chip" class="size-5 text-base-content/60" />
                   {gettext("Model")}
@@ -75,7 +75,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <select
                   name="model_id"
                   phx-change="select_model"
-                  class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
+                  class="select select-bordered select-md w-full md:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
                 >
                   <%= for profile <- @model_profiles do %>
                     <option value={profile.id} selected={@selected_model_id == profile.id}>
@@ -91,7 +91,7 @@ defmodule EvoDashWeb.TaskFormComponents do
           </div>
 
           <%= if String.starts_with?(@mode, "genesis") do %>
-            <div class="flex flex-col sm:flex-row sm:items-center gap-3 mt-4">
+            <div class="flex flex-col md:flex-row md:items-center gap-3 mt-4">
               <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
                 <.icon name="hero-cog-6-tooth" class="size-5 text-base-content/60" />
                 {gettext("Build System")}
@@ -99,7 +99,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               </label>
               <select
                 name="build_system"
-                class="select select-bordered select-md w-full sm:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
+                class="select select-bordered select-md w-full md:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
               >
                 <option value="">{gettext("None (no build system)")}</option>
                 <%= for bs <- @build_systems do %>
@@ -239,7 +239,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         </div>
 
         <!-- Inline execute button -->
-        <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+        <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
           <label class="label cursor-pointer flex items-center gap-3 justify-start">
             <input
               type="checkbox"
@@ -253,7 +253,7 @@ defmodule EvoDashWeb.TaskFormComponents do
           </label>
           <button
             type="submit"
-            class="btn btn-primary w-full sm:w-auto"
+            class="btn btn-primary w-full md:w-auto"
             disabled={@disabled}
           >
             <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Execute Task")}
