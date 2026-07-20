@@ -4,8 +4,7 @@
 </p>
 
 <p align="center">
-  Evolutionary software development, powered by AI agents.<br>
-  Give it a goal — it plans, builds, and evolves your codebase autonomously.
+  The evolutionary agentic <strong>system</strong>.
 </p>
 
 <p align="center">
