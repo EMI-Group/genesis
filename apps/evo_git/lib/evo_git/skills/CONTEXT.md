@@ -7,7 +7,13 @@ Each file has YAML frontmatter (name, description, parameters) and a markdown bo
 (typically a bash code block). Skills are loaded at runtime as LLM-callable tools,
 enabling project-specific automation without modifying EvoGit source.
 
-## Module Structure
+## Routing Table
+
+None — leaf directory (modules: `skills.ex`, `skill.ex`, `executor.ex`, `crud.ex`, `context_integration.ex`).
+
+## API Surface
+
+### Module Structure
 
 | Module | Purpose |
 |--------|---------|
@@ -16,8 +22,6 @@ enabling project-specific automation without modifying EvoGit source.
 | `EvoGit.Skills.Executor` | Skill execution — find, extract bash block, substitute params, run script |
 | `EvoGit.Skills.CRUD` | Skill file management — create, read, update, delete, validate |
 | `EvoGit.Skills.ContextIntegration` | Hierarchical enablement via CONTEXT.md frontmatter |
-
-## API Surface
 
 ### `EvoGit.Skills` — Key Functions
 
@@ -64,6 +68,14 @@ The agent loop (`EvoGit.Agent`, lines ~120-131) loads skills at startup: `load_s
 
 Fields: `name`, `description`, `parameters` (list of `{name, type, description, required, default}` maps), `body`, `file_path`.
 
+## Constraints
+
+- Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive); files named `{name}.md`
+- Skills reload on every `load_skills/1` call (no caching); case-insensitive fallback lookup
+- YAML frontmatter parsed with `yaml_elixir`; bash scripts run in repo root
+- Skill tool calls are dispatched dynamically: `EvoGit.Agent.Tools.execute_tool/5` has a catch-all clause that reloads skills via `load_skills/1` and calls `execute/4` when the tool name matches a skill. The statically-named `skill_*` management tools (skill_add, skill_edit, etc.) are dispatched by name first.
+- Skill management tools live in `./lib/evo_git/agent/tools/skill/` (SkillAdd, SkillEdit, SkillRemove, SkillRead, SkillList, SkillEnable, SkillDisable, SkillWhere)
+
 ## Skill File Format
 
 YAML frontmatter delimited by `---`, containing `name` (required), `description`, and `parameters` list. Body is free-form markdown; the first ```bash fenced block is the executable script. `{{param_name}}` placeholders are substituted with argument values at runtime.
@@ -75,21 +87,3 @@ YAML frontmatter delimited by `---`, containing `name` (required), `description`
 3. **Substitute** `{{param_name}}` placeholders with actual arguments
 4. **Execute** the script via bash in the repo directory
 5. **Return** stdout/stderr; if no bash block found, return body text as-is
-
-## Constraints
-
-- Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive); files named `{name}.md`
-- Skills reload on every `load_skills/1` call (no caching); case-insensitive fallback lookup
-- YAML frontmatter parsed with `yaml_elixir`; bash scripts run in repo root
-- Skill tool calls are dispatched dynamically: `EvoGit.Agent.Tools.execute_tool/5` has a catch-all clause that reloads skills via `load_skills/1` and calls `execute/4` when the tool name matches a skill. The statically-named `skill_*` management tools (skill_add, skill_edit, etc.) are dispatched by name first.
-- Skill management tools live in `./lib/evo_git/agent/tools/skill/` (SkillAdd, SkillEdit, SkillRemove, SkillRead, SkillList, SkillEnable, SkillDisable, SkillWhere)
-
-## Routing Table
-
-| File | Module |
-|------|--------|
-| `skills.ex` | `EvoGit.Skills` — top-level API |
-| `skill.ex` | `EvoGit.Skills.Skill` — struct |
-| `executor.ex` | `EvoGit.Skills.Executor` — execution |
-| `crud.ex` | `EvoGit.Skills.CRUD` — file management |
-| `context_integration.ex` | `EvoGit.Skills.ContextIntegration` — hierarchical enablement |
