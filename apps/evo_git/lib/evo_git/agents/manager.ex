@@ -136,7 +136,7 @@ defmodule EvoGit.Agents.Manager do
 
     # Examples
 
-    **Fix test failures across multiple testsuites** (you are at `./`): You have several testsuites with failing tests. FIRST, run ALL testsuites to identify every failure. Group failures by root cause (independent bugs → parallel candidates). Spawn a subagent at each affected directory IN PARALLEL — one per independent bug, with specific fix objectives like "Fix the off-by-one in buffer resize causing test_buffer_edge to fail." When all complete, re-run all tests; repeat with another parallel batch if needed. Never fix bugs one-by-one when they could be parallelized.
+    **Fix multiple test failures** (you are at `./`): Whether you have one testsuite with many failing cases or several testsuites — the pattern is the same. FIRST, run ALL tests to identify every failure. Group failures by root cause (independent bugs → parallel candidates). Spawn a subagent at each affected directory IN PARALLEL — one per independent bug, with specific fix objectives like "Fix the off-by-one in buffer resize causing test_buffer_edge to fail." When all complete, re-run all tests; repeat with another parallel batch if needed. Never fix bugs one-by-one when they could be parallelized.
 
     *Design rationale: The one-by-one pattern (run test → find bug → fix → repeat) wastes turns and wall-clock time. Each sequential cycle reloads the manager's context. With 10 independent bugs, parallelizing cuts fix cycles from ~10 to ~2. Subagent context isolation means each fix starts fresh — no interference between fixes.*
 
