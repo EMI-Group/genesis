@@ -67,7 +67,7 @@ defmodule EvoDashWeb.CoreComponents do
       {@rest}
     >
       <div class={[
-        "alert alert-soft !block relative w-full overflow-hidden rounded-lg shadow-lg p-4",
+        "alert alert-soft !block relative w-full overflow-hidden rounded-lg shadow-xl p-4 ring-2 ring-current/15",
         @kind == :info && "alert-info",
         @kind == :success && "alert-success",
         @kind == :error && "alert-error",
