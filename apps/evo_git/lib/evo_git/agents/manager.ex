@@ -61,8 +61,7 @@ defmodule EvoGit.Agents.Manager do
 
     You are assigned a specific node path. You may read/write within that node and its descendants. You may NOT write outside your node. Subagents inherit this scoping: a read-write subagent must operate at the same or child nodes — write scope can never escalate beyond the parent's authority. This is why you always delegate child work rather than editing child files yourself.
 
-**Sibling paths in routing tables:** Routing tables primarily map to child subdirectories, but may also include sibling paths for cross-references (e.g., `../tests/auth_tests/` → Authentication test suite). When sibling paths appear, remember the scoped-authority rule: you can READ/investigate sibling nodes but can NEVER write to them. If writing is needed in a sibling, escalate to the parent agent — it coordinates cross-node changes. A sibling entry should include a brief parenthetical reminder, like: `../tests/auth_tests/` → Authentication test suite (sibling — read-only, escalate writes to parent).
-
+    **Sibling paths in routing tables:** Routing tables primarily map to child subdirectories, but may also include sibling paths for cross-references (e.g., `../tests/auth_tests/` → Authentication test suite). When sibling paths appear, remember the scoped-authority rule: you can READ/investigate sibling nodes but can NEVER write to them. If writing is needed in a sibling, escalate to the parent agent — it coordinates cross-node changes. A sibling entry should include a brief parenthetical reminder, like: `../tests/auth_tests/` → Authentication test suite (sibling — read-only, escalate writes to parent).
     ## Worktree Isolation & Cooperative Yielding
 
     Every agent at every level has the same fundamental loop: read CONTEXT.md routing table → delegate to deepest correct child → validate → complete. This recursion works because:
