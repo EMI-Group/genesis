@@ -180,9 +180,55 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     end
   end
 
+  @doc """
+  Converts milliseconds to a human-readable duration string.
+
+  ## Examples
+
+      iex> format_duration(0)
+      "0 ms"
+
+      iex> format_duration(456)
+      "456 ms"
+
+      iex> format_duration(1234)
+      "1.23 s"
+
+      iex> format_duration(65000)
+      "1m 5s"
+
+      iex> format_duration(3723000)
+      "1h 2m 3s"
+
+  """
+  def format_duration(ms) when is_integer(ms) and ms >= 0 do
+    cond do
+      ms < 1000 ->
+        "#{ms} ms"
+
+      ms < 60_000 ->
+        seconds = ms / 1000
+        "#{:erlang.float_to_binary(seconds, decimals: 2)} s"
+
+      ms < 3_600_000 ->
+        minutes = div(ms, 60_000)
+        seconds = div(rem(ms, 60_000), 1000)
+        "#{minutes}m #{seconds}s"
+
+      true ->
+        hours = div(ms, 3_600_000)
+        remaining = rem(ms, 3_600_000)
+        minutes = div(remaining, 60_000)
+        seconds = div(rem(remaining, 60_000), 1000)
+        "#{hours}h #{minutes}m #{seconds}s"
+    end
+  end
+
   defp do_execute(command, repo_path, repo_root, timeout, max_bytes) do
     shell = Platform.shell()
     shell_args = Platform.shell_args(command)
+
+    start = System.monotonic_time(:millisecond)
 
     case EvoGit.Sandbox.run_with_partial(
            repo_path,
@@ -193,16 +239,19 @@ defmodule EvoGit.Agent.Tools.ShellTool do
            max_bytes
          ) do
       {:ok, output, exit_code} ->
+        elapsed = System.monotonic_time(:millisecond) - start
+        timing = format_duration(elapsed)
+
         base =
           cond do
             exit_code == 0 ->
-              "Command executed successfully.\nOutput:\n#{output}"
+              "[Took: #{timing}]\n\nCommand executed successfully.\nOutput:\n#{output}"
 
             desc = describe_exit_code(exit_code) ->
-              "#{desc.header}\n#{desc.description}\nOutput:\n#{output}"
+              "[Took: #{timing}]\n\n#{desc.header}\n#{desc.description}\nOutput:\n#{output}"
 
             true ->
-              "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+              "[Took: #{timing}]\n\nCommand failed with exit code #{exit_code}.\nOutput:\n#{output}"
           end
 
         case detect_cd_warnings(command, repo_path, repo_root) do
@@ -211,7 +260,9 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         end
 
       {:timeout, partial_output} ->
-        base = "Command timed out after #{timeout}ms. Partial output:\n#{partial_output}"
+        elapsed = System.monotonic_time(:millisecond) - start
+        timing = format_duration(elapsed)
+        base = "Command timed out after #{timeout}ms (actual: #{timing}). Partial output:\n#{partial_output}"
 
         case detect_cd_warnings(command, repo_path, repo_root) do
           nil -> base
