@@ -5,8 +5,10 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 
 ## Routing Table
 - `live/` → Phoenix LiveView pages (Dashboard, Agents, Settings, System & Config)
+- `live_hooks/` → On-mount hooks: `SetLocale` (locale), `NodeAware` (node-aware dashboard)
 - `components/` → Reusable HEEx UI components and layout templates
 - `controllers/` → Classic HTTP controllers and error handlers
+- `plugs/` → HTTP middleware plugs (Locale)
 
 ## API Surface
 
