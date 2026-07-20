@@ -67,17 +67,17 @@ defmodule EvoDashWeb.CoreComponents do
       {@rest}
     >
       <div class={[
-        "relative w-full overflow-hidden rounded-lg shadow-lg ring-1 p-4",
-        @kind == :info && "bg-info text-info-content ring-info/30",
-        @kind == :success && "bg-success text-success-content ring-success/30",
-        @kind == :error && "bg-error text-error-content ring-error/30",
-        @kind == :warning && "bg-warning text-warning-content ring-warning/30"
+        "alert alert-soft !block relative w-full overflow-hidden rounded-lg shadow-lg p-4",
+        @kind == :info && "alert-info",
+        @kind == :success && "alert-success",
+        @kind == :error && "alert-error",
+        @kind == :warning && "alert-warning"
       ]}>
         <div class="flex items-start gap-3">
-          <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0 text-info-content" />
-          <.icon :if={@kind == :success} name="hero-check-circle" class="size-5 shrink-0 text-success-content" />
-          <.icon :if={@kind == :error} name="hero-x-circle" class="size-5 shrink-0 text-error-content" />
-          <.icon :if={@kind == :warning} name="hero-exclamation-triangle" class="size-5 shrink-0 text-warning-content" />
+          <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0 text-current" />
+          <.icon :if={@kind == :success} name="hero-check-circle" class="size-5 shrink-0 text-current" />
+          <.icon :if={@kind == :error} name="hero-x-circle" class="size-5 shrink-0 text-current" />
+          <.icon :if={@kind == :warning} name="hero-exclamation-triangle" class="size-5 shrink-0 text-current" />
           <div class="flex-1">
             <p :if={@title} class="text-sm font-semibold">{@title}</p>
             <p class="text-sm">{msg}</p>
