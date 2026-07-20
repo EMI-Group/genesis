@@ -17,7 +17,8 @@ defmodule EvoGit.Agent.Tools.Context do
         "Reads a CONTEXT.md file from a directory. CONTEXT.md files serve two purposes: " <>
           "1) Documentation - describe the directory's purpose (Intent), what it exposes (API Surface), " <>
           "and rules for code within it (Constraints). " <>
-          "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories, " <>
+          "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories " <>
+          "(may also include sibling paths for cross-references like related test directories), " <>
           "so parent agents know where to delegate work. " <>
           "Use this to read the context to understand the semantic meaning and expectations for a directory. " <>
           "IMPORTANT: Prefer spawning a subagent (subagent_manager or subagent_codebase_investigator) at " <>
@@ -50,7 +51,8 @@ defmodule EvoGit.Agent.Tools.Context do
         "Creates or updates a CONTEXT.md file for a directory. CONTEXT.md serves two purposes: " <>
           "1) Documentation - describe the directory's purpose (Intent), what it exposes (API Surface), " <>
           "and rules for code within it (Constraints). " <>
-          "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories, " <>
+          "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories " <>
+          "(may also include sibling paths for cross-references like related test directories), " <>
           "so parent agents know where to delegate work. " <>
           "The context should be simple, concise, and clear. " <>
           "Use this to document a directory after analyzing its contents or establishing its design, or update existing context. " <>
@@ -67,7 +69,7 @@ defmodule EvoGit.Agent.Tools.Context do
           "content" => %{
             "type" => "string",
             "description" =>
-              "The full markdown content for the CONTEXT.md file. Common sections: Intent (purpose), API Surface (what it exposes), Constraints (rules for code), and Routing Table (areas → child subdirectories). Additional sections may be included as appropriate — Design Decisions (why choices were made), Known Issues (gotchas/problems future agents should know), Notes for Agents (hints to prevent wasted investigation), Dependencies (external system packages, services, tool versions), Test Strategy (how to test, known gaps), See Also (cross-references to related modules), and Status (what's complete vs pending). The goal: capture all knowledge future agents will need to work effectively in this directory."
+              "The full markdown content for the CONTEXT.md file. Common sections: Intent (purpose), API Surface (what it exposes), Constraints (rules for code), and Routing Table (areas → child subdirectories; may include sibling paths for cross-references). Additional sections may be included as appropriate — Design Decisions (why choices were made), Known Issues (gotchas/problems future agents should know), Notes for Agents (hints to prevent wasted investigation), Dependencies (external system packages, services, tool versions), Test Strategy (how to test, known gaps), See Also (cross-references to related modules), and Status (what's complete vs pending). The goal: capture all knowledge future agents will need to work effectively in this directory."
           },
           "commit" => %{
             "type" => "boolean",

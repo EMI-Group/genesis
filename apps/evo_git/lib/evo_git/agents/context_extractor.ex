@@ -47,10 +47,11 @@ defmodule EvoGit.Agents.ContextExtractor do
        - Status: What's complete vs. still pending (useful during initial codebase creation).
        
        Not all sections apply to every directory. The goal is to capture knowledge that future agents will need — if a section would save an agent from re-investigating or re-discovering something, include it.
-    2. **Routing Table** — A simple markdown list mapping each area/module/feature to its owning child subdirectory. This allows parent agents to quickly determine where to delegate work without investigating the subtree. Example:
+    2. **Routing Table** — A simple markdown list mapping each area/module/feature to its owning child subdirectory. May also include sibling paths for cross-references (e.g., related test directories in another subtree, shared utilities). Sibling entries should include a reminder about the read-only constraint (agents can READ/investigate siblings but can NEVER write to them — escalate writes to the parent). This allows parent agents to quickly determine where to delegate work without investigating the subtree. Example:
        - `src/auth/` → Authentication & authorization logic
        - `src/api/` → REST API endpoints and middleware
        - `src/db/` → Database models and migrations
+       - `../tests/auth_tests/` → Authentication test suite (sibling — read-only, escalate writes to parent)
 
     These are just examples; you do not need to strictly follow this format, as long as the context file effectively communicates the necessary information about the directory. The context file should be simple and concise. Do not attempt to document sub-file context (like function docstrings or inline comments), as the system relies on natural code structure for file-level comprehension.
 
