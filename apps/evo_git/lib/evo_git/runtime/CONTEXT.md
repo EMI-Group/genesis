@@ -3,6 +3,10 @@
 ## Intent
 Implements the two-phase execution engine of EvoGit: **Genesis** (initial codebase creation or analysis of an existing codebase) and **Evolution** (iterative modification loop). A shared `PullRequest` module handles post-phase PR creation. The design doc's centralized `EvoGit.Runtime.Prompts` module was never implemented — prompts live in agent `system_prompt/0` callbacks and inline strings.
 
+## Routing Table
+
+None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evolution.ex`, `pull_request.ex`, `worktree_init_script.ex`, `skill_extraction.ex`).
+
 ## API Surface
 
 ### Modules
