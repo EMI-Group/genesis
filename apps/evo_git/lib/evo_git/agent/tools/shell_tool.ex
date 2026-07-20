@@ -245,13 +245,13 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         base =
           cond do
             exit_code == 0 ->
-              "[Took: #{timing}]\n\nCommand executed successfully.\nOutput:\n#{output}"
+              "[Took: #{timing}] Command executed successfully. Output:\n#{output}"
 
             desc = describe_exit_code(exit_code) ->
-              "[Took: #{timing}]\n\n#{desc.header}\n#{desc.description}\nOutput:\n#{output}"
+              "[Took: #{timing}] #{desc.header} #{desc.description} Output:\n#{output}"
 
             true ->
-              "[Took: #{timing}]\n\nCommand failed with exit code #{exit_code}.\nOutput:\n#{output}"
+              "[Took: #{timing}] Command failed with exit code #{exit_code}. Output:\n#{output}"
           end
 
         case detect_cd_warnings(command, repo_path, repo_root) do
