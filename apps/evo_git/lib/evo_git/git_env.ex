@@ -31,7 +31,14 @@ defmodule EvoGit.GitEnv do
   """
   @spec git_env() :: %{String.t() => String.t()}
   def git_env do
-    %{"LC_ALL" => "C", "GIT_EDITOR" => resolve_true_executable()}
+    %{
+      "LC_ALL" => "C",
+      "GIT_EDITOR" => resolve_true_executable(),
+      "GIT_AUTHOR_NAME" => "Genesis Test",
+      "GIT_AUTHOR_EMAIL" => "test@genesis.local",
+      "GIT_COMMITTER_NAME" => "Genesis Test",
+      "GIT_COMMITTER_EMAIL" => "test@genesis.local"
+    }
   end
 
   @doc """
