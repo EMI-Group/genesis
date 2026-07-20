@@ -164,7 +164,7 @@ button, a, input, textarea, select, summary,
 /* Entrance: fade in + slide up */
 @keyframes fade-in-up {
   0% {
-    opacity: 0;
+    opacity: 0.5;
     transform: translateY(12px);
   }
   100% {
@@ -268,7 +268,7 @@ button, a, input, textarea, select, summary,
 
 /* Utility classes */
 .animate-fade-in-up {
-  animation: fade-in-up 0.4s ease-out both;
+  animation: fade-in-up 0.15s ease-out both;
 }
 
 .animate-scale-in {
