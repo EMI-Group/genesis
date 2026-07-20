@@ -3,7 +3,10 @@
 ## Intent
 Environment-based Elixir configuration for the EvoGit umbrella project. Follows standard Phoenix `Config` patterns with compile-time overrides per environment and runtime secret management. This directory handles **infrastructure-level** application config only — LLM, scheduler, and agent configuration is managed by `EvoGit.Config` via TOML files.
 
-## Config Files
+## Routing Table
+None — leaf directory (Elixir config files only).
+
+## API Surface
 
 | File | Purpose | Phase |
 |------|---------|-------|
@@ -12,6 +15,15 @@ Environment-based Elixir configuration for the EvoGit umbrella project. Follows 
 | `test.exs` | Test overrides — port 4002, server disabled, warning-level logger | Compile |
 | `prod.exs` | Production overrides — static cache manifest, info-level logger | Compile |
 | `runtime.exs` | Secrets & dynamic config — `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`, `PHX_SERVER`, `PHX_IP`; desktop-mode detection via compile-time `:desktop_release` flag (from `genesis_desktop` release in `mix.exs`) OR `EVOGIT_DESKTOP` env var (sets `localhost`/`http`/`check_origin: false` for Tauri WebView). Desktop bind address defaults to loopback (127.0.0.1) for security; `PHX_IP` env var overrides (e.g. `0.0.0.0` for remote access) | Runtime |
+
+## Constraints
+- **Load order**: `config.exs` imports `{env}.exs` at the bottom — env files override base.
+- **Runtime vs compile-time**: Only `runtime.exs` references environment variables; all others are compile-time only.
+- **No business logic**: Directory contains only Elixir config files.
+- **`dev.local.exs`**: Optional, git-ignored, for developer-specific overrides.
+- **Umbrella layout**: Asset paths reference `apps/evo_dash/assets`.
+- **LLM config split**: Elixir config handles HTTP timeouts/infrastructure; TOML handles model selection, concurrency, API keys. These are separate systems that don't overlap.
+- **Backward compat**: `EvoGit.Defaults` module delegates all calls to `EvoGit.Config.resolve/1`
 
 ## LLM-Related Configuration
 
@@ -58,12 +70,3 @@ The **3-level configuration system** (resolved at runtime, not via Elixir `Confi
 - **`evo_dash`** — Phoenix endpoint (Bandit adapter, LiveView signing salt, PubSub), asset builders pointing at `apps/evo_dash/assets`
 - **`req_llm`** — HTTP timeouts for the LLM HTTP client library
 - **`evo_git`** — Infrastructure-level settings only (sandbox mode); all runtime defaults managed by `EvoGit.Config`
-
-## Constraints
-- **Load order**: `config.exs` imports `{env}.exs` at the bottom — env files override base.
-- **Runtime vs compile-time**: Only `runtime.exs` references environment variables; all others are compile-time only.
-- **No business logic**: Directory contains only Elixir config files.
-- **`dev.local.exs`**: Optional, git-ignored, for developer-specific overrides.
-- **Umbrella layout**: Asset paths reference `apps/evo_dash/assets`.
-- **LLM config split**: Elixir config handles HTTP timeouts/infrastructure; TOML handles model selection, concurrency, API keys. These are separate systems that don't overlap.
-- **Backward compat**: `EvoGit.Defaults` module delegates all calls to `EvoGit.Config.resolve/1`
