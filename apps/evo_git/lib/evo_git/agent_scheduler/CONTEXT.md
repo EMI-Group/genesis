@@ -4,6 +4,10 @@
 
 Contains data structs and extracted helper modules used internally by `EvoGit.AgentScheduler` GenServer. The data structs back two ETS tables (`:evogit_agent_state` and `:evogit_sched_meta`) tracking agent execution state and scheduling metadata. Helper modules encapsulate slot management, worktree lifecycle, agent dispatching, subagent management, and agent lifecycle logic.
 
+## Routing Table
+
+None — leaf directory (modules: `state.ex`, `agent_state.ex`, `sched_meta.ex`, `slots.ex`, `worktrees.ex`, `worktree_manager.ex`, `dispatch.ex`, `subagents.ex`, `lifecycle.ex`).
+
 ## API Surface
 
 | Module | Description |

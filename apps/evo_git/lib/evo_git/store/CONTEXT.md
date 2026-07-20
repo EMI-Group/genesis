@@ -1,10 +1,14 @@
-# Store — SQLite Persistence Codec
+# EvoGit.Store — SQLite Persistence Codec
 
 ## Intent
 
 Contains `EvoGit.Store.Codec` — pure serialization/deserialization functions for the `EvoGit.Store` SQLite persistence layer. This module has NO GenServer and NO I/O; it is stateless and functional.
 
 The module was migrated from `evo_dash` (formerly `EvoDash.Store.Codec`) to `evo_git` as part of the domain persistence layer migration.
+
+## Routing Table
+
+None — leaf directory (single file: `codec.ex`).
 
 ## API Surface
 
@@ -43,7 +47,3 @@ The module was migrated from `evo_dash` (formerly `EvoDash.Store.Codec`) to `evo
 - Column order matters — `@task_columns` and `@project_columns` define positional encoding/decoding.
 - JSON encoding via Jason; complex fields stored as JSON TEXT in SQLite columns.
 - Known-atom whitelists must stay in sync with the application's valid status/review_status/type atoms.
-
-## Routing Table
-
-None — leaf directory (single file: `codec.ex`).

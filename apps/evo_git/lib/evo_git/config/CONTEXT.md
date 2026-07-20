@@ -3,6 +3,10 @@
 ## Intent
 Contains `EvoGit.Config`, the single source of truth for non-project configuration. Merges application defaults with user config (`~/.config/genesis/config.toml`), loads API keys from credentials into ReqLLM's key store, and provides write capability for persisting user config changes plus a diagnostic function for configuration completeness.
 
+## Routing Table
+
+- `./schema/` → Config schema definitions — pure data describing config keys, types, defaults, and validation rules
+
 ## API Surface
 
 ### `EvoGit.Config`

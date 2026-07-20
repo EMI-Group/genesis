@@ -4,6 +4,10 @@
 
 Foundational domain models: **Spatial Dimension** (ContextNode — directory/file tree with CONTEXT.md contracts), **Temporal Dimension** (PhyloGraphNode — evolutionary git operations), and **multi-repo references** (ForeignRepo — cross-repository path resolution). All git operations delegate to `EvoGit.Adapters.Git`.
 
+## Routing Table
+
+None — leaf directory (modules: `context_node.ex`, `phylo_graph_node.ex`, `foreign_repo.ex`).
+
 ## API Surface
 
 ### `EvoGit.Core.ContextNode` (`context_node.ex`)
