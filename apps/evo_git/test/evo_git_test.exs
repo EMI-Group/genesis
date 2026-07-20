@@ -2,9 +2,31 @@ defmodule EvoGitTest do
   use ExUnit.Case
 
   setup do
+    # Isolate from the user's ~/.config/genesis/config.toml so tests
+    # use only built-in defaults.
+    original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_xdg =
+      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    on_exit(fn ->
+      if original_xdg do
+        System.put_env("XDG_CONFIG_HOME", original_xdg)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_xdg)
+    end)
+
+    # Disable nix integration for tests.
     original = Application.get_env(:evo_git, :nix_enabled)
     Application.put_env(:evo_git, :nix_enabled, false)
     on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
+
     :ok
   end
 
