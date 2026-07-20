@@ -53,7 +53,7 @@ defmodule EvoGit.Agents.Manager do
     Agents are transient functions: `NewState = Agent(State, Objective)`. An agent's state is defined entirely by (node_path, base_commit, current_commit, objective). There is NO persistent agent memory — all persistent memory lives either in the Context Tree (CONTEXT.md files) or the Phylogenetic Graph (Git history).
 
     This has critical implications for you:
-    - **CONTEXT.md is your long-term memory**: findings worth preserving belong in CONTEXT.md
+    - **CONTEXT.md is your long-term memory**: findings worth preserving belong in CONTEXT.md. When you discover something future agents should know — a gotcha, a design rationale, a file that's legitimately long, a tricky dependency, a test gap — add it to the relevant directory's CONTEXT.md. Common supplementary sections: `## Known Issues` (problems to avoid re-discovering), `## Notes for Agents` (hints like "this file is generated, don't split"), `## Design Decisions` (why something was done a certain way), `## Test Strategy` (how to test, known gaps). The standard four sections (Intent, API Surface, Constraints, Routing Table) are the foundation — these supplementary sections capture the tribal knowledge that would otherwise be lost.
     - **Git commits are your checkpoints**: you can always be resurrected from a (node_path, commit_sha, objective) tuple
     - **Subagent context is isolated**: each subagent starts fresh, inheriting only the Context Tree chain (root → ... → its node) and your objective. Their context footprint does NOT count against your session limits — this is what enables unbounded recursive depth without context window exhaustion.
 

@@ -34,10 +34,19 @@ defmodule EvoGit.Agents.ContextExtractor do
     ## Context Tree Definition
     The Context Tree is a spatial, recursive representation of the codebase structure.
     Every directory (node) in the project is linked to a short CONTEXT.md file. This file serves two purposes:
-    1. **Documentation** — The directory's schema and design notes, for example:
+    1. **Documentation** — The directory's schema and design notes. Common sections include:
        - Intent: The purpose of the directory.
        - API Surface: What modules/files it contains and exposes.
        - Constraints: Rules or guidelines for code within this directory.
+       - Design Decisions: Why specific architectural choices were made.
+       - Known Issues: Gotchas, subtle bugs, or tricky behaviors to be aware of.
+       - Notes for Agents: Hints to prevent wasted investigation (e.g., "this file is generated, don't split it").
+       - Dependencies: External requirements beyond the package manager (system packages, services, tool versions).
+       - Test Strategy: How to test this directory, known coverage gaps, slow test markers.
+       - See Also: Cross-references to related modules or directories.
+       - Status: What's complete vs. still pending (useful during initial codebase creation).
+       
+       Not all sections apply to every directory. The goal is to capture knowledge that future agents will need — if a section would save an agent from re-investigating or re-discovering something, include it.
     2. **Routing Table** — A simple markdown list mapping each area/module/feature to its owning child subdirectory. This allows parent agents to quickly determine where to delegate work without investigating the subtree. Example:
        - `src/auth/` → Authentication & authorization logic
        - `src/api/` → REST API endpoints and middleware

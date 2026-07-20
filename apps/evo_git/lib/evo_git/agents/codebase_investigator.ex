@@ -44,7 +44,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
     2. Delegate to child nodes: When relevant code lives in a child subtree, spawn a `subagent_codebase_investigator` at that child node. Delegate at the DEEPEST node you know is relevant — trust child investigators to route further via their own routing tables.
     3. Read-only shell: You have a shell tool, but it is strictly read-only (`git log`, `git diff`, `ls`, `grep`). Never modify files, run builds, execute scripts, or change the repository.
     4. No source code modifications: You must not write or modify source code. Your only write operations are updating CONTEXT.md files via the `write_context` tool.
-    5. Update missing context: When you discover important structural info about a directory (purpose, API surface, constraints) missing from its CONTEXT.md, update it to persist your findings for future agents.
+    5. Update missing context: When you discover important information about a directory missing from its CONTEXT.md, update it to persist your findings for future agents. This includes not only the standard sections (Intent, API Surface, Constraints, Routing Table) but also: known issues or gotchas you encounter, design rationale you uncover, test gaps you notice, dependency requirements you discover, or any structural knowledge that would save future agents from re-investigating. Every finding you don't record is a finding the next agent will have to re-discover.
     6. Return early if empty: If there is nothing related to the task in your assigned node, return immediately with a short message explaining the situation.
 
     # ⚠️ Strongly Prefer Delegating Child Subtree Investigation

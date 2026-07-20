@@ -67,7 +67,7 @@ defmodule EvoGit.Agent.Tools.Context do
           "content" => %{
             "type" => "string",
             "description" =>
-              "The full markdown content for the CONTEXT.md file. Should include sections for Intent, API Surface, Constraints, and a Routing Table mapping areas to child subdirectories."
+              "The full markdown content for the CONTEXT.md file. Common sections: Intent (purpose), API Surface (what it exposes), Constraints (rules for code), and Routing Table (areas → child subdirectories). Additional sections may be included as appropriate — Design Decisions (why choices were made), Known Issues (gotchas/problems future agents should know), Notes for Agents (hints to prevent wasted investigation), Dependencies (external system packages, services, tool versions), Test Strategy (how to test, known gaps), See Also (cross-references to related modules), and Status (what's complete vs pending). The goal: capture all knowledge future agents will need to work effectively in this directory."
           },
           "commit" => %{
             "type" => "boolean",
