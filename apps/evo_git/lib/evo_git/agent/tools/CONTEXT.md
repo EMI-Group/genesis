@@ -3,7 +3,10 @@
 ## Intent
 LLM tool definitions and implementations for EvoGit agents. Each tool module defines a schema (via `ReqLLM.tool/2`) and an `execute` function. Tools are the primary interface for agent interaction with the filesystem, git, the web, and system resources.
 
-## Tool Modules
+## Routing Table
+- `./skill/` → Skill management tool modules (SkillAdd, SkillEdit, SkillRemove, SkillList, SkillRead)
+
+## API Surface
 
 | Tool Name | Purpose | Type | Sandboxed |
 |-----------|---------|------|-----------|
@@ -25,14 +28,6 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `complete_task` | Agent completion (injected separately, not in standard schemas) | Special | No |
 | *(utility)* `Shared` | Argument parsing, path validation, scope checking | — | — |
 
-## Execution Flow
-1. **Registration**: `Tools.schemas/0` aggregates schemas → injected into agent's `available_tools/0`
-2. **Dispatch**: Agent loop calls `Tools.execute(tool_name, args, repo_path, repo_root, node_path)`
-3. **Pattern match**: Private `execute_tool/5` dispatches to the correct module's `execute` function
-4. **Write tools**: Validate spatial scope via `Shared.validate_file_scope/3` before writing
-5. **Sandboxed tools**: Call `EvoGit.sandbox_run/4` which wraps commands in `systemd-run`
-6. **Result**: All execute functions return a string (success or error message)
-
 ## Constraints
 - All tool execution results must be strings.
 - Sandboxed tools use `EvoGit.sandbox_run/4` (`systemd-run`); file tools use Elixir `File` directly.
@@ -42,3 +37,11 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 - Write tools receive 4 args (including `node_path` for scope); read tools receive 3.
 - `Git` and `Curl` schemas are commented out in `schemas/0`; agents use `run_bash` for git operations.
 - New tools must: follow module pattern (schema + execute), be aliased in `tools.ex`, have a dispatch clause, and be added to `schemas/0`.
+
+## Execution Flow
+1. **Registration**: `Tools.schemas/0` aggregates schemas → injected into agent's `available_tools/0`
+2. **Dispatch**: Agent loop calls `Tools.execute(tool_name, args, repo_path, repo_root, node_path)`
+3. **Pattern match**: Private `execute_tool/5` dispatches to the correct module's `execute` function
+4. **Write tools**: Validate spatial scope via `Shared.validate_file_scope/3` before writing
+5. **Sandboxed tools**: Call `EvoGit.sandbox_run/4` which wraps commands in `systemd-run`
+6. **Result**: All execute functions return a string (success or error message)
