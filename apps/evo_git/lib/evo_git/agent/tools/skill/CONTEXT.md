@@ -7,6 +7,10 @@ directory at runtime. Skills are YAML-frontmatter markdown files that encode reu
 behaviors, instructions, or bash commands. These tools provide full CRUD (create, read, update,
 delete, list) operations on the skills directory.
 
+## Routing Table
+
+This is a leaf module — no child subdirectories.
+
 ## API Surface
 
 ### Tool Modules (3-arity)
@@ -43,7 +47,3 @@ All tools depend on `EvoGit.Skills` (at `../../skills.ex`) which provides:
 - **Tools return string results** suitable for LLM consumption (success messages or error strings)
 - **Skill names use lowercase letters, numbers, hyphens, and underscores** — validated by `EvoGit.Skills.validate_skill_text/1`
 - **Skill files live in `.agents/skills/`** — this path is hardcoded in `EvoGit.Skills` and not configurable by the tool layer
-
-## Routing Table
-
-This is a leaf module — no child subdirectories.
