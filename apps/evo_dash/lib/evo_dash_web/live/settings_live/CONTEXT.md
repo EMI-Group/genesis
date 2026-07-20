@@ -4,6 +4,10 @@
 
 Support modules extracted from `EvoDashWeb.SettingsLive` to keep the main LiveView module focused on lifecycle callbacks and event handlers.
 
+## Routing Table
+
+None — leaf directory (two module files: `model_profile_helpers.ex`, `config_io.ex`).
+
 ## API Surface
 
 ### `EvoDashWeb.SettingsLive.ModelProfileHelpers` (`model_profile_helpers.ex`)
@@ -39,7 +43,3 @@ Only `update_runtime_from_file_config/2` touches the socket — all other functi
 - Both modules follow the project's `try/rescue` anti-pattern policy: whitelist `Map` lookups for atom conversion, no defensive rescuing of core runtime calls.
 - `ModelProfileHelpers` delegates shared utilities to `EvoDash.SettingsUtils`.
 - `ConfigIO` delegates to `EvoGit.Config`, `EvoGit.AgentScheduler`, and `EvoGit.Config.Schema` — never calls them through `try/rescue`.
-
-## Routing Table
-
-None — leaf directory.

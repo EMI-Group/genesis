@@ -1,13 +1,14 @@
-# `apps/evo_dash/assets/` — Frontend Assets for EvoDash
+# Frontend Assets
 
 ## Intent
 
 This directory holds all frontend source assets (JavaScript, CSS, vendor libraries, and editor config) for the EvoDash Phoenix web application. It is the single source of truth for client-side code, compiled by **esbuild** (JS) and **Tailwind CSS 4** (styles) via Mix aliases (`assets.build`, `assets.deploy`).
 
 ## Routing Table
-- `js/` → JavaScript source (LiveSocket setup, hooks, topbar)
-- `css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes)
-- `vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar)
+
+- `./js/` → JavaScript source (LiveSocket setup, hooks, topbar)
+- `./css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes)
+- `./vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar)
 
 ## API Surface
 

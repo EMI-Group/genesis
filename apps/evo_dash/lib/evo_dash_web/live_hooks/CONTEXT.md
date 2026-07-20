@@ -4,6 +4,10 @@
 
 Phoenix LiveView on-mount hooks registered globally via the `live_view/0` macro in `evo_dash_web.ex`. Both hooks apply to ALL LiveViews automatically — no per-LiveView opt-in required.
 
+## Routing Table
+
+None — leaf directory (two module files: `set_locale.ex`, `node_aware.ex`).
+
 ## API Surface
 
 ### `EvoDashWeb.LiveHooks.SetLocale` (`set_locale.ex`)
@@ -39,7 +43,3 @@ The "spatial glue" for SSH Remote Development node-aware navigation. Provides on
 - Domain logic is delegated to `EvoDash.NodeContext` — hooks are thin wrappers.
 - Safe fallbacks everywhere: locale defaults to `"en"`, node resolution falls back to `:local` on all failure paths.
 - Node name fallback: "Local" when no remote node is active.
-
-## Routing Table
-
-None — leaf directory.
