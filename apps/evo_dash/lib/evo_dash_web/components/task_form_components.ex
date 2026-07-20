@@ -37,7 +37,7 @@ defmodule EvoDashWeb.TaskFormComponents do
       <div class={["p-4 sm:p-5 space-y-4", @disabled && "opacity-50 pointer-events-none select-none"]}>
         <!-- Task mode & model selectors in one card -->
         <div class="bg-base-200/50 rounded-xl p-4 border border-base-300">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 min-w-0">
             <!-- Task Mode -->
             <div class="flex flex-col md:flex-row md:items-center gap-3">
               <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
