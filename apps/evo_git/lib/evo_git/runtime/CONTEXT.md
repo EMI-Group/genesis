@@ -55,6 +55,40 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 7. **Create PR** via `Git.create_pull_request/5`.
 8. **Returns** PR URL on success, `nil` on any failure (never raises).
 
+## Constraints
+
+- Both phases follow the same pattern: ensure repo → create phylo node → load context node → build spec → run agent → handle result.
+- Agent changes go to **isolated branches** (`evogit/genesis_<hex>` / `evogit/evolve_<hex>`), never directly to the working tree. PR creation is optional (requires `gh` CLI).
+- `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — both phases delegate to `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"` or `"evolve"`.
+- No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
+- PR creation is best-effort and never fails the overall phase — all PR errors are logged and return `nil`.
+- `node_path` validation in Evolution requires a `CONTEXT.md` at the target directory (except root).
+
+### Task Status & Event Emission (Dashboard Contract)
+`EvoGit.TaskRegistry` (in `:evo_git`, started by `EvoGit.Application`) tracks task status via TWO mechanisms:
+1. **PubSub** on topic `"tasks"`: the ONLY emitter is `Helpers.notify_finalizing/1` (`helpers.ex:102`, broadcast at line 104), broadcasting `{:task_status, task_id, :finalizing}`. This is called ONLY on the `{:ok, _}` success arm, immediately after `AgentScheduler.run_agent/1` returns and BEFORE `merge_and_report/3`. No `:failed`, `:completed`, or `:running` is EVER broadcast on `"tasks"` from the evo_git runtime. (`AgentScheduler.PubSub` broadcasts on *different* topics — `@agent_topic` (`"agents"`) / `@config_topic` (`"scheduler_config"`) — with different message shapes: `{:agents_updated}` and `{:scheduler_config_updated}`.) Callers of `notify_finalizing/1`: `genesis.ex:51` (Mode A) & `:78` (Mode B); `evolution.ex:58`; `skill_extraction.ex:34`.
+2. **Task monitor exit** (`Task.Supervisor.async_nolink` in `EvoGit.TaskRegistry`): when the runtime process exits, ANY non-`{:ok, _}` result (including `{:error, _}`) is mapped to `:failed`.
+
+**Critical implication**: Every runtime entry point (`Genesis.run/2`, `Evolution.run/2`, `SkillExtraction.run/1`) returns whatever `AgentScheduler.run_agent/1` returns on the `error` arm — propagating `{:error, _}` to the dashboard, which marks the task `:failed`. The scheduler replies `{:error, _}` to the top-level caller in two cases:
+- Top-level agent permanently failed (crashed `agent_max_retries` times) → `{:error, :agent_max_retries_exceeded}` (lifecycle.ex:238).
+- Top-level agent cancelled → `{:error, :cancelled}` (lifecycle.ex:72).
+A graceful agent return of `{:error, :recovery_failed}` / `{:error, :path_not_exist}` also flows through and is mapped to `:failed` (these exit the Task `:normal` but are non-`{:ok, _}`). See `agent_scheduler/lifecycle.ex` and the `:DOWN` handler (`agent_scheduler.ex:826`) for the full crash→retry→permanent-failure cascade.
+
+### Spurious `:failed` Hazard — ETS Ownership & Crash Cascade (FIXED)
+
+⚠️ **The original bug described below has been FIXED in current HEAD** (commit `5f30b0dd`, "fix(evo_git): move ETS table creation to Application to survive AgentScheduler crashes"). The three scheduler ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`) are now created in **`EvoGit.Application.start/2`** (`application.ex:13-15`) via the idempotent `ensure_ets_table/2` helper, owned by the long-lived application process. `AgentScheduler.init/1` now only performs a defensive check (warning if a table is missing). The tables survive an `AgentScheduler` crash/restart.
+
+For historical reference, the ORIGINAL (now-fixed) cascade was: the three ETS tables were created in `AgentScheduler.init/1` and therefore owned by the GenServer process (no `:heir`). If the `AgentScheduler` GenServer crashed and its supervisor restarted it, the tables were destroyed and recreated empty, triggering:
+1. `AgentScheduler` crashes → ETS tables destroyed.
+2. The EvoDash wrapper process's blocking `GenServer.call(__MODULE__, {:run_agent, spec}, :infinity)` (`agent_scheduler.ex:76-78`) raised (caller died) → wrapper process crashed.
+3. EvoDash `TaskRegistry`'s `:DOWN` handler (`task_registry.ex:907`) checked `sched_meta_has_active_agents?(task_id)` against the now-empty/missing ETS table → returned `false`.
+4. Task prematurely marked `:failed` (`task_registry.ex:939`) even though the agent processes were still alive under `EvoGit.TaskSupervisor` and would eventually commit their work.
+
+**Note on the supervision restructure**: `EvoGit.AgentGroupSupervisor` (commit `fbe3b0fe`) uses `strategy: :one_for_all` wrapping `EvoGit.TaskSupervisor` and `EvoGit.AgentScheduler`. This means if the `AgentScheduler` GenServer crashes, the `TaskSupervisor` is ALSO killed and restarted, which tears down ALL running agent Task processes. So after the ETS fix, an AgentScheduler crash no longer leaves orphaned agents running (the `one_for_all` strategy tears them down together). Agent Tasks are spawned via `Task.Supervisor.async_nolink/4` (monitored by the scheduler, NOT linked to the wrapper).
+
+A **second, related trigger** was fixed in `f0d01679` ("handle git failures gracefully in merge_and_report/3", IN `HEAD`): the old `merge_and_report/3` used strict matches (`{:ok, base_sha} = Git.rev_parse(...)` and `{:ok, _} = Git.create_branch(...)`) that raised `MatchError` if git failed under concurrent load, crashing the runtime wrapper → task marked `:failed`. The current `helpers.ex:11-100` uses `with`/graceful `else` clauses and always returns `{:ok, _}` (the agent's committed work is valid even if branch creation fails).
+- Foreign repos are registered with `AgentScheduler` at the start of each phase if provided.
+
 ## Agent Spawning & Coordination
 
 ### How Agents Are Spawned
@@ -154,37 +188,3 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Adapters.Git` | All git CLI operations |
 | `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |
 | `ReqLLM` | LLM streaming for PR title generation in `PullRequest` |
-
-## Constraints
-
-- Both phases follow the same pattern: ensure repo → create phylo node → load context node → build spec → run agent → handle result.
-- Agent changes go to **isolated branches** (`evogit/genesis_<hex>` / `evogit/evolve_<hex>`), never directly to the working tree. PR creation is optional (requires `gh` CLI).
-- `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — both phases delegate to `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"` or `"evolve"`.
-- No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
-- PR creation is best-effort and never fails the overall phase — all PR errors are logged and return `nil`.
-- `node_path` validation in Evolution requires a `CONTEXT.md` at the target directory (except root).
-
-### Task Status & Event Emission (Dashboard Contract)
-`EvoGit.TaskRegistry` (in `:evo_git`, started by `EvoGit.Application`) tracks task status via TWO mechanisms:
-1. **PubSub** on topic `"tasks"`: the ONLY emitter is `Helpers.notify_finalizing/1` (`helpers.ex:102`, broadcast at line 104), broadcasting `{:task_status, task_id, :finalizing}`. This is called ONLY on the `{:ok, _}` success arm, immediately after `AgentScheduler.run_agent/1` returns and BEFORE `merge_and_report/3`. No `:failed`, `:completed`, or `:running` is EVER broadcast on `"tasks"` from the evo_git runtime. (`AgentScheduler.PubSub` broadcasts on *different* topics — `@agent_topic` (`"agents"`) / `@config_topic` (`"scheduler_config"`) — with different message shapes: `{:agents_updated}` and `{:scheduler_config_updated}`.) Callers of `notify_finalizing/1`: `genesis.ex:51` (Mode A) & `:78` (Mode B); `evolution.ex:58`; `skill_extraction.ex:34`.
-2. **Task monitor exit** (`Task.Supervisor.async_nolink` in `EvoGit.TaskRegistry`): when the runtime process exits, ANY non-`{:ok, _}` result (including `{:error, _}`) is mapped to `:failed`.
-
-**Critical implication**: Every runtime entry point (`Genesis.run/2`, `Evolution.run/2`, `SkillExtraction.run/1`) returns whatever `AgentScheduler.run_agent/1` returns on the `error` arm — propagating `{:error, _}` to the dashboard, which marks the task `:failed`. The scheduler replies `{:error, _}` to the top-level caller in two cases:
-- Top-level agent permanently failed (crashed `agent_max_retries` times) → `{:error, :agent_max_retries_exceeded}` (lifecycle.ex:238).
-- Top-level agent cancelled → `{:error, :cancelled}` (lifecycle.ex:72).
-A graceful agent return of `{:error, :recovery_failed}` / `{:error, :path_not_exist}` also flows through and is mapped to `:failed` (these exit the Task `:normal` but are non-`{:ok, _}`). See `agent_scheduler/lifecycle.ex` and the `:DOWN` handler (`agent_scheduler.ex:826`) for the full crash→retry→permanent-failure cascade.
-
-### Spurious `:failed` Hazard — ETS Ownership & Crash Cascade (FIXED)
-
-⚠️ **The original bug described below has been FIXED in current HEAD** (commit `5f30b0dd`, "fix(evo_git): move ETS table creation to Application to survive AgentScheduler crashes"). The three scheduler ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`) are now created in **`EvoGit.Application.start/2`** (`application.ex:13-15`) via the idempotent `ensure_ets_table/2` helper, owned by the long-lived application process. `AgentScheduler.init/1` now only performs a defensive check (warning if a table is missing). The tables survive an `AgentScheduler` crash/restart.
-
-For historical reference, the ORIGINAL (now-fixed) cascade was: the three ETS tables were created in `AgentScheduler.init/1` and therefore owned by the GenServer process (no `:heir`). If the `AgentScheduler` GenServer crashed and its supervisor restarted it, the tables were destroyed and recreated empty, triggering:
-1. `AgentScheduler` crashes → ETS tables destroyed.
-2. The EvoDash wrapper process's blocking `GenServer.call(__MODULE__, {:run_agent, spec}, :infinity)` (`agent_scheduler.ex:76-78`) raised (caller died) → wrapper process crashed.
-3. EvoDash `TaskRegistry`'s `:DOWN` handler (`task_registry.ex:907`) checked `sched_meta_has_active_agents?(task_id)` against the now-empty/missing ETS table → returned `false`.
-4. Task prematurely marked `:failed` (`task_registry.ex:939`) even though the agent processes were still alive under `EvoGit.TaskSupervisor` and would eventually commit their work.
-
-**Note on the supervision restructure**: `EvoGit.AgentGroupSupervisor` (commit `fbe3b0fe`) uses `strategy: :one_for_all` wrapping `EvoGit.TaskSupervisor` and `EvoGit.AgentScheduler`. This means if the `AgentScheduler` GenServer crashes, the `TaskSupervisor` is ALSO killed and restarted, which tears down ALL running agent Task processes. So after the ETS fix, an AgentScheduler crash no longer leaves orphaned agents running (the `one_for_all` strategy tears them down together). Agent Tasks are spawned via `Task.Supervisor.async_nolink/4` (monitored by the scheduler, NOT linked to the wrapper).
-
-A **second, related trigger** was fixed in `f0d01679` ("handle git failures gracefully in merge_and_report/3", IN `HEAD`): the old `merge_and_report/3` used strict matches (`{:ok, base_sha} = Git.rev_parse(...)` and `{:ok, _} = Git.create_branch(...)`) that raised `MatchError` if git failed under concurrent load, crashing the runtime wrapper → task marked `:failed`. The current `helpers.ex:11-100` uses `with`/graceful `else` clauses and always returns `{:ok, _}` (the agent's committed work is valid even if branch creation fails).
-- Foreign repos are registered with `AgentScheduler` at the start of each phase if provided.
