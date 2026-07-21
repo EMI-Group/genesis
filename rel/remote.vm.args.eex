@@ -1,0 +1,9 @@
+<%= if @release.name == :genesis_remote do %>
+## Remote shell — EPMD-less distribution over pinned port (for SSH tunneling)
+-start_epmd false
+-dist_listen true
+-kernel inet_dist_listen_min 9000 inet_dist_listen_max 9000
+<% else %>
+## Disable the Erlang Port Mapper Daemon
+-start_epmd false
+<% end %>

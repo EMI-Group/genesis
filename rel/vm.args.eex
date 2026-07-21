@@ -7,11 +7,7 @@
 ## Tweak GC to run more often
 ##-env ERL_FULLSWEEP_AFTER 10
 
-## Enable deployment without epmd
-## (requires changing both vm.args and remote.vm.args)
-##-start_epmd false -erl_epmd_port 6789
-
-<%= if @release.name == "genesis_remote" do %>
+<%= if @release.name == :genesis_remote do %>
 ## Remote Daemon — EPMD-less distribution over pinned port (for SSH tunneling)
 -start_epmd false
 -dist_listen true
@@ -20,8 +16,6 @@
 ## Disable the Erlang Port Mapper Daemon (Prevents lingering background processes)
 -start_epmd false
 <% end %>
-
-## -----------------------------------------------------------------------------
 
 ## -----------------------------------------------------------------------------
 ## Desktop Optimization Flags
