@@ -78,9 +78,12 @@ defmodule EvoGit.Distribution do
     end
   end
 
-  defp start_epmd_if_configured(node_config) do
-    if Map.get(node_config, :start_epmd, true) do
+  @doc false
+  def start_epmd_if_configured(node_config) do
+    if Map.get(node_config, :start_epmd, false) do
       start_epmd()
+    else
+      :ok
     end
   end
 
@@ -116,6 +119,22 @@ defmodule EvoGit.Distribution do
   end
 
   defp enable_distribution(node_config) do
+    # Configure EPMD-less distribution: set the listen port range so that
+    # :net_kernel.start uses inet_dist without EPMD. Only set these if not
+    # already configured (e.g. via vm.args). The remote daemon listens on
+    # port 9000 by default, so we use the same port locally for outgoing
+    # connections to succeed (EPMD-less requires the connect port to match
+    # the listen port of the remote).
+    dist_port = Map.get(node_config, :dist_port, 9000)
+
+    if Application.get_env(:kernel, :inet_dist_listen_min) == nil do
+      Application.put_env(:kernel, :inet_dist_listen_min, dist_port)
+    end
+
+    if Application.get_env(:kernel, :inet_dist_listen_max) == nil do
+      Application.put_env(:kernel, :inet_dist_listen_max, dist_port)
+    end
+
     name = node_name_from_config(node_config) |> String.to_atom()
     mode = if Map.get(node_config, :shortnames, false), do: :shortnames, else: :longnames
 
@@ -134,8 +153,9 @@ defmodule EvoGit.Distribution do
     end
   end
 
-  defp set_cookie(node_config) do
-    cookie = Map.get(node_config, :cookie, "genesis_cookie")
+  @doc false
+  def set_cookie(node_config) do
+    cookie = Map.get(node_config, :cookie, "genesis_remote_cookie")
     Node.set_cookie(String.to_atom(cookie))
     :ok
   end
