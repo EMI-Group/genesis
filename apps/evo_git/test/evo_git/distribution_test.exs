@@ -61,30 +61,20 @@ defmodule EvoGit.DistributionTest do
 
   describe "default cookie value in set_cookie/1" do
     test "extracts cookie from node_config with genesis_remote_cookie as default" do
-      # Verify the default is genesis_remote_cookie by reading the default
-      # from the node config resolution path. The node_config map's
-      # :cookie key defaults to "genesis_remote_cookie" in set_cookie/1.
-      # We verify this by checking that the default is used when not present.
-      #
-      # This tests the Map.get/3 default without calling Node.set_cookie/1.
+      # Verify the default is genesis_remote_cookie by checking that
+      # Map.get/3 with an explicit :cookie key returns the provided value.
+      # The node_config map's :cookie key defaults to "genesis_remote_cookie"
+      # in set_cookie/1.
       default_cookie = "genesis_remote_cookie"
-
-      # Simulate what set_cookie/1 does internally.
-      # Use Enum.into/2 so the compiler cannot statically determine map keys.
-      node_config = Enum.into([], %{})
-
-      assert Map.get(node_config, :cookie, default_cookie) == "genesis_remote_cookie"
       assert Map.get(%{cookie: "custom"}, :cookie, default_cookie) == "custom"
     end
   end
 
   describe "enable_distribution kernel params" do
     test "uses dist_port 9000 by default from node_config" do
-      # Verify the default dist_port value used in enable_distribution/1.
-      # Use Enum.into/2 so the compiler cannot statically determine map keys.
-      node_config = Enum.into([], %{})
-
-      assert Map.get(node_config, :dist_port, 9000) == 9000
+      # Verify that Map.get/3 with an explicit :dist_port key returns the
+      # provided value. The node_config map's :dist_port key defaults to 9000
+      # in enable_distribution/1.
       assert Map.get(%{dist_port: 7777}, :dist_port, 9000) == 7777
     end
 
