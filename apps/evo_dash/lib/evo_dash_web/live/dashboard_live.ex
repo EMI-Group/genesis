@@ -391,11 +391,9 @@ defmodule EvoDashWeb.DashboardLive do
     recent_projects = TaskRegistry.list_recent_projects()
 
     # Pre-resolve config once and memoize via Process dict so that the
-    # deferred :load_config_status handler (fired below) can reuse this
-    # result instead of re-reading and re-parsing config.toml.
-    # Project.load_model_profiles/0 also calls Config.resolve() internally;
-    # this pre-call primes the OS file cache so that call is fast.
-    Process.put(:memo_config_resolve, EvoGit.Config.resolve(EvoGit.Config.config_path()))
+    # deferred :load_config_status handler can reuse this result instead
+    # of re-reading and re-parsing config.toml.
+    Process.put(:memo_config_resolve, EvoGit.Config.resolve())
 
     # Defer config_status to handle_info — it reads config.toml +
     # credentials.toml and is NOT needed for the first paint. The

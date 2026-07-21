@@ -20,7 +20,7 @@ defmodule EvoDashWeb.DashboardLive.Project do
   are configured, returns `{[], nil}`.
   """
   def load_model_profiles do
-    config = Config.resolve()
+    config = Process.get(:memo_config_resolve) || Config.resolve()
     profiles = Schema.model_profiles(config)
 
     selected_id =
