@@ -60,9 +60,12 @@ config :req_llm,
 
 # The genesis_remote release is a headless evo_git-only daemon for SSH remote
 # development. It has NO Phoenix/evo_dash, so SECRET_KEY_BASE and endpoint config
-# are not needed. The compile-time `:remote_release` flag is baked into sys.config
-# by the genesis_remote release definition in mix.exs.
-if config_env() == :prod and not Application.get_env(:evo_git, :remote_release, false) do
+# are not needed. Detection uses RELEASE_NAME env var (automatically set by the
+# release boot script) as the primary signal; the compile-time `remote_release`
+# config flag from mix.exs serves as a secondary fallback.
+if config_env() == :prod and
+     not (System.get_env("RELEASE_NAME") == "genesis_remote" or
+            Application.get_env(:evo_git, :remote_release, false)) do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want
