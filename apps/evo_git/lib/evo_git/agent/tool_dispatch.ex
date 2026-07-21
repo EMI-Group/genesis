@@ -644,7 +644,9 @@ defmodule EvoGit.Agent.ToolDispatch do
         max_retries: agent_state.max_retries,
         max_agent_depth: agent_state.max_depth,
         foreign_repos: agent_state.foreign_repos,
-        compression_threshold: EvoGit.Defaults.compression_threshold_tokens()
+        compression_threshold: EvoGit.Defaults.compression_threshold_tokens(),
+        agent_type: agent_type_from_module(state.agent_module),
+        context_node_path: state.node_path
       )
 
     {:complete, final_result}
@@ -881,5 +883,9 @@ defmodule EvoGit.Agent.ToolDispatch do
   @doc false
   def subagent_module_for(tool_name, subagent_mods) do
     Enum.find(subagent_mods, fn mod -> mod.subagent_tool_name() == tool_name end)
+  end
+
+  defp agent_type_from_module(module) when is_atom(module) do
+    module |> Module.split() |> List.last() |> Macro.underscore()
   end
 end

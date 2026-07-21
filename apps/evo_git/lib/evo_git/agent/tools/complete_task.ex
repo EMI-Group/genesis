@@ -148,7 +148,9 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         objective: objective,
         result: result,
         usage: format_usage_for_note(Keyword.get(opts, :usage)),
-        completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
+        completed_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+        agent_type: Keyword.get(opts, :agent_type),
+        context_node_path: Keyword.get(opts, :context_node_path)
       })
     end
 
@@ -171,7 +173,9 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         max_turns: Keyword.get(opts, :max_turns),
         max_retries: Keyword.get(opts, :max_retries),
         max_agent_depth: Keyword.get(opts, :max_agent_depth),
-        foreign_repos: Keyword.get(opts, :foreign_repos, [])
+        foreign_repos: Keyword.get(opts, :foreign_repos, []),
+        agent_type: Keyword.get(opts, :agent_type),
+        context_node_path: Keyword.get(opts, :context_node_path)
       })
     end
 
@@ -322,7 +326,9 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         max_retries: data[:max_retries],
         max_agent_depth: data[:max_agent_depth]
       },
-      foreign_repos: format_foreign_repos(data[:foreign_repos])
+      foreign_repos: format_foreign_repos(data[:foreign_repos]),
+      agent_type: data[:agent_type],
+      context_node_path: data[:context_node_path]
     }
 
     # Write to the archive records ETS table (if it exists)
