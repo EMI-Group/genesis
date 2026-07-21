@@ -12,6 +12,8 @@ defmodule EvoDashWeb.DashboardLive.Project do
   alias EvoGit.ProjectConfig
   import Phoenix.LiveView, only: [put_flash: 3]
 
+  require Logger
+
   @doc """
   Loads available model profiles from the resolved config and selects the
   default (first) profile. Returns `{profiles, selected_id}`. If no profiles
@@ -102,14 +104,28 @@ defmodule EvoDashWeb.DashboardLive.Project do
   """
   def load_project_config(project_root) do
     config = ProjectConfig.read(project_root)
+    load_project_config(project_root, config)
+  end
 
+  @doc """
+  Same as `load_project_config/1` but accepts an already-parsed config map
+  (from `ProjectConfig.read/1`) to avoid re-reading the file from disk.
+  """
+  def load_project_config(_project_root, config) do
     worktree_script =
       case config do
         %{"worktree" => %{"script" => script}} when is_binary(script) -> script
         _ -> nil
       end
 
-    commands = ProjectConfig.commands(project_root)
+    commands =
+      case config do
+        %{"commands" => cmds} when is_map(cmds) ->
+          cmds |> Enum.filter(fn {_k, v} -> is_binary(v) end) |> Map.new()
+
+        _ ->
+          %{}
+      end
 
     {config, worktree_script, commands}
   end
@@ -119,7 +135,16 @@ defmodule EvoDashWeb.DashboardLive.Project do
   Returns a sorted list of `ForeignRepo` structs.
   """
   def load_foreign_repos(repo_path) do
-    repos = ProjectConfig.foreign_repos(repo_path)
+    config = ProjectConfig.read(repo_path)
+    load_foreign_repos(repo_path, config)
+  end
+
+  @doc """
+  Same as `load_foreign_repos/1` but accepts an already-parsed config map
+  (from `ProjectConfig.read/1`) to avoid re-reading the file from disk.
+  """
+  def load_foreign_repos(_repo_path, config) do
+    repos = extract_foreign_repos(config)
 
     Enum.sort_by(repos, fn repo ->
       {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
@@ -180,5 +205,42 @@ defmodule EvoDashWeb.DashboardLive.Project do
       _ ->
         {"Task finished", objective}
     end
+  end
+
+  # ── Private helpers ──────────────────────────────────────────────────────
+
+  defp extract_foreign_repos(nil), do: []
+
+  defp extract_foreign_repos(config) when is_map(config) do
+    case config do
+      %{"foreign_repos" => repos} when is_map(repos) ->
+        repos
+        |> Enum.flat_map(fn {id_str, cfg} ->
+          case build_foreign_repo(id_str, cfg) do
+            {:ok, repo} -> [repo]
+            {:error, reason} ->
+              Logger.warning("Failed to parse foreign_repos '#{id_str}': #{reason}")
+              []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp build_foreign_repo(id_str, config) when is_map(config) do
+    case Map.fetch(config, "path") do
+      {:ok, path} ->
+        description = Map.get(config, "description")
+        {:ok, ForeignRepo.new(id_str, path, description: description)}
+
+      :error ->
+        {:error, "missing required 'path' key"}
+    end
+  end
+
+  defp build_foreign_repo(_id_str, _config) do
+    {:error, "invalid config (expected a TOML table)"}
   end
 end

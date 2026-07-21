@@ -11,6 +11,7 @@ defmodule EvoDashWeb.DashboardLive do
   alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns}
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Platform
+  alias EvoGit.ProjectConfig
   use EvoDashWeb.ModalHelpers
 
   @impl true
@@ -1304,9 +1305,11 @@ defmodule EvoDashWeb.DashboardLive do
 
     tasks = TaskRegistry.list_tasks_by_path(path)
 
-    # Load project settings eagerly
-    {project_config, worktree_script, commands} = Project.load_project_config(path)
-    foreign_repos = Project.load_foreign_repos(path)
+    # Load project settings eagerly — read genesis.toml once and thread
+    # through all consumers to avoid redundant disk reads.
+    config = ProjectConfig.read(path)
+    {project_config, worktree_script, commands} = Project.load_project_config(path, config)
+    foreign_repos = Project.load_foreign_repos(path, config)
 
     socket
     |> assign(
