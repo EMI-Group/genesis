@@ -13,8 +13,12 @@
 -dist_listen true
 -kernel inet_dist_listen_min 9000 inet_dist_listen_max 9000
 <% else %>
-## Disable the Erlang Port Mapper Daemon (Prevents lingering background processes)
+## Local Dashboard — EPMD-less distribution for SSH tunneling to remote
+## The dashboard only initiates outgoing connections (Node.connect)
+## and never accepts incoming distribution connections.
 -start_epmd false
+-dist_listen false
+-kernel inet_dist_listen_min 9000 inet_dist_listen_max 9000
 <% end %>
 
 ## -----------------------------------------------------------------------------
