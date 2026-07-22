@@ -248,6 +248,18 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.paused?(node)
   end
 
+  @doc """
+  Triggers a config reload on the given node, re-reading the config file
+  from disk and applying relevant settings to the running scheduler.
+
+  Delegates to `EvoGit.RemoteNode.reload_config/1`. Returns `:ok` on
+  success or an error tuple.
+  """
+  @spec reload_remote_config(node()) :: :ok | {:error, term()}
+  def reload_remote_config(node) do
+    EvoGit.RemoteNode.reload_config(node)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning
