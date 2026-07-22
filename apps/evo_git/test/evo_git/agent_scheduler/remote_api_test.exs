@@ -469,12 +469,133 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     end
   end
 
-  # ── get_config/0 and paused?/0 ────────────────────────────────────
+  # ── get_config/0, reload_config/0, and paused?/0 ──────────────────
 
-  # These two functions delegate to `EvoGit.AgentScheduler.get_config/0` and
+  # These functions delegate to `EvoGit.AgentScheduler.get_config/0`,
+  # `EvoGit.AgentScheduler.update_config/1`, and
   # `EvoGit.AgentScheduler.paused?/0`, which are GenServer.call/2 to the
   # running scheduler. Starting the full scheduler in a test requires a
   # complete config + worktree pool + git repo, which is too heavy for this
   # unit test. We verify delegation at the source level (they call the exact
   # functions) rather than booting a scheduler.
+
+  # `build_reload_opts/1` is the pure extraction helper — it is tested
+  # thoroughly below since it has its own logic.
+
+  # ── build_reload_opts/1 ─────────────────────────────────────────────
+
+  describe "build_reload_opts/1" do
+    test "returns model_profiles + scheduler keys from a populated config" do
+      config = %{
+        scheduler: %{
+          max_concurrency: 5,
+          max_tool_concurrency: 3,
+          agent_max_retries: 5,
+          max_agent_depth: 10,
+          max_retries: 20,
+          max_turns: 64,
+          max_turns_root: 64
+        },
+        llm: %{
+          model: "anthropic:claude-sonnet-4-20250514",
+          models: [
+            %{id: "default", model: "anthropic:claude-sonnet-4-20250514", concurrency: 5},
+            %{id: "fast", model: "openai:gpt-4o-mini", concurrency: 10}
+          ]
+        },
+        sandbox: %{
+          mode: :auto,
+          resources: %{cpu_quota: "1000%"},
+          process: %{memory_max: "8G"}
+        }
+      }
+
+      opts = RemoteAPI.build_reload_opts(config)
+
+      # Model profiles from [[llm.models]]
+      assert Keyword.has_key?(opts, :model_profiles)
+      profiles = opts[:model_profiles]
+      assert length(profiles) == 2
+      assert Enum.at(profiles, 0)[:id] == "default"
+      assert Enum.at(profiles, 1)[:id] == "fast"
+
+      # Scheduler settings
+      assert opts[:max_tool_concurrency] == 3
+      assert opts[:agent_max_retries] == 5
+      assert opts[:max_depth] == 10
+      assert opts[:max_retries] == 20
+      assert opts[:max_turns] == 64
+      assert opts[:max_turns_root] == 64
+
+      # Sandbox settings
+      assert opts[:sandbox_mode] == :auto
+      assert opts[:sandbox_resources] == %{cpu_quota: "1000%"}
+      assert opts[:sandbox_process_resources] == %{memory_max: "8G"}
+    end
+
+    test "synthesizes legacy default profile when models list is empty" do
+      config = %{
+        scheduler: %{max_concurrency: 4},
+        llm: %{model: "google:gemini-2.0-flash-exp"}
+      }
+
+      opts = RemoteAPI.build_reload_opts(config)
+
+      assert Keyword.has_key?(opts, :model_profiles)
+      profiles = opts[:model_profiles]
+      assert length(profiles) == 1
+      assert hd(profiles)[:id] == "default"
+      assert hd(profiles)[:model] == "google:gemini-2.0-flash-exp"
+      assert hd(profiles)[:concurrency] == 4
+    end
+
+    test "synthesizes legacy default profile when llm section is missing" do
+      config = %{
+        scheduler: %{max_concurrency: 2}
+      }
+
+      opts = RemoteAPI.build_reload_opts(config)
+
+      profiles = opts[:model_profiles]
+      assert length(profiles) == 1
+      assert hd(profiles)[:id] == "default"
+      assert hd(profiles)[:model] == nil
+      assert hd(profiles)[:concurrency] == 2
+    end
+
+    test "empty config returns keyword list with defaults" do
+      opts = RemoteAPI.build_reload_opts(%{})
+
+      assert Keyword.has_key?(opts, :model_profiles)
+      profiles = opts[:model_profiles]
+      assert length(profiles) == 1
+      assert hd(profiles)[:id] == "default"
+      assert hd(profiles)[:model] == nil
+      assert hd(profiles)[:concurrency] == 3
+    end
+
+    test "rejects nil values from the keyword list" do
+      config = %{
+        scheduler: %{
+          max_tool_concurrency: 2,
+          agent_max_retries: nil,
+          max_agent_depth: nil,
+          max_retries: 15
+        }
+      }
+
+      opts = RemoteAPI.build_reload_opts(config)
+
+      # Nil values are rejected
+      refute Keyword.has_key?(opts, :agent_max_retries)
+      refute Keyword.has_key?(opts, :max_depth)
+
+      # Non-nil values are kept
+      assert opts[:max_tool_concurrency] == 2
+      assert opts[:max_retries] == 15
+
+      # Model profiles still present
+      assert Keyword.has_key?(opts, :model_profiles)
+    end
+  end
 end

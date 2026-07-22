@@ -140,6 +140,28 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Triggers a config reload on the given node's AgentScheduler.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.reload_config/0`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec reload_config(node()) :: :ok | {:error, term()}
+  def reload_config(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.reload_config()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :reload_config, []) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
   Returns the config health status on the given node.
 
   On the local node, calls `EvoGit.Config.config_status/0` directly. On a

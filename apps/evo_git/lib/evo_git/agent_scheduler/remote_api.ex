@@ -124,6 +124,79 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Re-reads the config file from disk and applies the relevant settings to
+  the running AgentScheduler.
+
+  Calls `EvoGit.Config.resolve/0` to get a fresh config from disk, extracts
+  scheduler-relevant keys (model profiles, concurrency limits, retry/turn
+  settings, sandbox configuration), and delegates to
+  `EvoGit.AgentScheduler.update_config/1` to apply them.
+
+  Node-level distribution settings (`[node]` section) are intentionally
+  skipped — they cannot be changed at runtime.
+
+  Returns `:ok` on success, or `{:error, reason}` if the update fails.
+  """
+  @spec reload_config() :: :ok | {:error, String.t()}
+  def reload_config do
+    config = EvoGit.Config.resolve()
+    opts = build_reload_opts(config)
+    EvoGit.AgentScheduler.update_config(opts)
+  end
+
+  @doc false
+  # Builds the keyword list passed to `AgentScheduler.update_config/1` from
+  # a resolved config map. Extracted for testability.
+  #
+  # Follows the same model-profile construction as `AgentScheduler.init/1`:
+  # when `[[llm.models]]` is empty/unset, a single legacy "default" profile
+  # is synthesized from the flat `llm.model` / `scheduler.max_concurrency`.
+  @spec build_reload_opts(map()) :: keyword()
+  def build_reload_opts(config) when is_map(config) do
+    scheduler = Map.get(config, :scheduler, %{})
+
+    # Build model profiles (same pattern as AgentScheduler.init/1)
+    raw_model_profiles = EvoGit.Config.Schema.model_profiles(config)
+
+    model_profiles =
+      case raw_model_profiles do
+        [] ->
+          legacy_model =
+            case Map.get(config, :llm) do
+              llm when is_map(llm) -> Map.get(llm, :model)
+              _ -> nil
+            end
+
+          [
+            %{
+              id: "default",
+              model: legacy_model,
+              concurrency: Map.get(scheduler, :max_concurrency, 3)
+            }
+          ]
+
+        profiles ->
+          profiles
+      end
+
+    sandbox = Map.get(config, :sandbox, %{})
+
+    [
+      model_profiles: model_profiles,
+      max_tool_concurrency: Map.get(scheduler, :max_tool_concurrency),
+      agent_max_retries: Map.get(scheduler, :agent_max_retries),
+      max_depth: Map.get(scheduler, :max_agent_depth),
+      max_retries: Map.get(scheduler, :max_retries),
+      max_turns: Map.get(scheduler, :max_turns),
+      max_turns_root: Map.get(scheduler, :max_turns_root),
+      sandbox_mode: Map.get(sandbox, :mode),
+      sandbox_resources: Map.get(sandbox, :resources),
+      sandbox_process_resources: Map.get(sandbox, :process)
+    ]
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+  end
+
+  @doc """
   Returns the config health status.
 
   Delegates to `EvoGit.Config.config_status/0` and returns it directly.
