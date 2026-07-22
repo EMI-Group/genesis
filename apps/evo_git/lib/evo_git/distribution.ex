@@ -138,7 +138,7 @@ defmodule EvoGit.Distribution do
     name = node_name_from_config(node_config) |> String.to_atom()
     mode = if Map.get(node_config, :shortnames, false), do: :shortnames, else: :longnames
 
-    case :net_kernel.start({name, mode}) do
+    case :net_kernel.start([name, mode]) do
       {:ok, _pid} ->
         :ok
 
