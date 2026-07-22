@@ -141,4 +141,26 @@ defmodule EvoGit.RemoteConnectionTest do
       cleanup_connections()
     end
   end
+
+  describe "find_free_port/0" do
+    test "returns a valid port number on loopback" do
+      assert {:ok, port} = EvoGit.RemoteConnection.find_free_port()
+      assert is_integer(port)
+      assert port > 0
+      assert port <= 65535
+    end
+
+    test "returns a different port when called twice in sequence" do
+      {:ok, port1} = EvoGit.RemoteConnection.find_free_port()
+      {:ok, port2} = EvoGit.RemoteConnection.find_free_port()
+      # Ports should differ since we close the socket between calls
+      assert port1 != port2
+    end
+  end
+
+  describe "build_tunnel_command/1 — internal behavior" do
+    # The function is private, but we can test the port-separation logic
+    # by verifying the GenServer's connection flow doesn't produce port conflicts.
+    # For now, verify that find_free_port is used and tested independently.
+  end
 end

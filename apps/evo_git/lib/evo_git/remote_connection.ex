@@ -53,8 +53,13 @@ defmodule EvoGit.RemoteConnection do
   @scp_timeout_ms 120_000
 
   # The remote daemon always binds loopback; the SSH tunnel forwards the dist
-  # port to loopback on both sides, so the node name is fixed.
-  @remote_node_name "genesis_remote@127.0.0.1"
+  # port to loopback on both sides. The remote daemon listens on port 9000 by
+  # default (hardcoded in rel/genesis_remote/vm.args.eex, overridable via
+  # GENESIS_REMOTE_DIST_PORT env var). The local end of the tunnel uses a
+  # dynamically-assigned free port to avoid conflicts with the local node's
+  # own distribution port.
+  @remote_node_base "genesis_remote@127.0.0.1"
+  @default_remote_dist_port 9000
 
   # ── State ──────────────────────────────────────────────────────────
 
@@ -62,6 +67,7 @@ defmodule EvoGit.RemoteConnection do
             node: nil,
             phase: :disconnected,
             ssh_tunnel_port: nil,
+            tunnel_local_port: nil,
             last_error: nil,
             heartbeat_ref: nil,
             bootstrap_stage: nil
@@ -75,6 +81,7 @@ defmodule EvoGit.RemoteConnection do
           node: String.t() | nil,
           phase: phase(),
           ssh_tunnel_port: port() | nil,
+          tunnel_local_port: non_neg_integer() | nil,
           last_error: String.t() | nil,
           heartbeat_ref: reference() | nil,
           bootstrap_stage: bootstrap_stage() | nil
@@ -191,7 +198,7 @@ defmodule EvoGit.RemoteConnection do
   @impl true
   def init(target) do
     Process.flag(:trap_exit, true)
-    {:ok, %__MODULE__{target: target, node: @remote_node_name}}
+    {:ok, %__MODULE__{target: target, node: @remote_node_base}}
   end
 
   @impl true
@@ -296,32 +303,50 @@ defmodule EvoGit.RemoteConnection do
 
     Node.set_cookie(cookie)
 
-    cmd = build_tunnel_command(target)
-    port = Port.open({:spawn, cmd}, [:binary, :exit_status, :stream])
+    # Remote port: the port the remote daemon actually listens on.
+    # Defaults to 9000 (hardcoded in rel/genesis_remote/vm.args.eex).
+    remote_port = Map.get(target, :dist_port) || @default_remote_dist_port
 
-    # Give the SSH tunnel time to establish.
-    Process.sleep(@tunnel_settle_ms)
+    # Find a free local port for the SSH tunnel so we never conflict with
+    # the local node's own Erlang distribution port.
+    case find_free_port() do
+      {:ok, local_port} ->
+        cmd = build_tunnel_command(target, local_port, remote_port)
+        port = Port.open({:spawn, cmd}, [:binary, :exit_status, :stream])
 
-    remote = String.to_atom(state.node)
+        # Give the SSH tunnel time to establish.
+        Process.sleep(@tunnel_settle_ms)
 
-    case Node.connect(remote) do
-      true ->
-        ref = schedule_heartbeat()
+        # Build a ported node name so that Node.connect reaches the remote
+        # daemon through the SSH tunnel's local port (rather than using the
+        # local node's own distribution port as the connect target).
+        remote_node = :"#{@remote_node_base}:#{local_port}"
 
-        new_state = %__MODULE__{
-          connecting
-          | phase: :connected,
-            ssh_tunnel_port: port,
-            heartbeat_ref: ref,
-            last_error: nil
-        }
+        case Node.connect(remote_node) do
+          true ->
+            ref = schedule_heartbeat()
 
-        broadcast_status(state.target, new_state)
-        {:ok, new_state}
+            new_state = %__MODULE__{
+              connecting
+              | phase: :connected,
+                ssh_tunnel_port: port,
+                tunnel_local_port: local_port,
+                node: Atom.to_string(remote_node),
+                heartbeat_ref: ref,
+                last_error: nil
+            }
 
-      result when result in [false, :ignored] ->
-        close_port(port)
-        reason = {:node_connect_failed, state.node}
+            broadcast_status(state.target, new_state)
+            {:ok, new_state}
+
+          result when result in [false, :ignored] ->
+            close_port(port)
+            reason = {:node_connect_failed, inspect(remote_node)}
+            new_state = %{connecting | phase: :error, last_error: format_error(reason)}
+            {:error, reason, new_state}
+        end
+
+      {:error, reason} ->
         new_state = %{connecting | phase: :error, last_error: format_error(reason)}
         {:error, reason, new_state}
     end
@@ -602,6 +627,7 @@ defmodule EvoGit.RemoteConnection do
       | phase: :error,
         last_error: error_msg,
         ssh_tunnel_port: nil,
+        tunnel_local_port: nil,
         heartbeat_ref: nil
     }
 
@@ -620,6 +646,7 @@ defmodule EvoGit.RemoteConnection do
       state
       | phase: :disconnected,
         ssh_tunnel_port: nil,
+        tunnel_local_port: nil,
         heartbeat_ref: nil
     }
   end
@@ -654,14 +681,13 @@ defmodule EvoGit.RemoteConnection do
 
   # ── Command builders ───────────────────────────────────────────────
 
-  defp build_tunnel_command(target) do
-    dist_port = Map.get(target, :dist_port) || 9000
+  defp build_tunnel_command(target, local_port, remote_port) do
     ssh_target = target.ssh_target
 
     parts =
       [
         "ssh",
-        "-L #{dist_port}:127.0.0.1:#{dist_port}",
+        "-L #{local_port}:127.0.0.1:#{remote_port}",
         "-N",
         "-o ServerAliveInterval=30",
         "-o ServerAliveCountMax=3",
@@ -669,6 +695,27 @@ defmodule EvoGit.RemoteConnection do
       ]
 
     Enum.join(parts, " ")
+  end
+
+  # ── Port utilities ─────────────────────────────────────────────────
+
+  @doc """
+  Finds a free TCP port on loopback by binding to port 0 and reading the
+  assigned port number.
+
+  Returns `{:ok, port}` or `{:error, reason}`.
+  """
+  @spec find_free_port() :: {:ok, non_neg_integer()} | {:error, term()}
+  def find_free_port do
+    case :gen_tcp.listen(0, [:inet, {:ip, {127, 0, 0, 1}}, {:reuseaddr, true}]) do
+      {:ok, socket} ->
+        {:ok, port} = :inet.port(socket)
+        :gen_tcp.close(socket)
+        {:ok, port}
+
+      {:error, reason} ->
+        {:error, {:port_bind_failed, reason}}
+    end
   end
 
   # ── Helpers ────────────────────────────────────────────────────────
