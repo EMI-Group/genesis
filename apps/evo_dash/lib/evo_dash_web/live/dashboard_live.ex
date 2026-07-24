@@ -1181,7 +1181,7 @@ defmodule EvoDashWeb.DashboardLive do
       task_mode_info: mode_info,
       show_open_project_form: false,
       show_new_project_form: false,
-      show_project_settings: true,
+      show_project_settings: false,
       project_config: project_config,
       worktree_script: worktree_script,
       commands: commands,
