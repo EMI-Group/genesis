@@ -5,6 +5,8 @@
 
 Genesis utilizes the BEAM (Erlang VM) actor model. Processes communicate via message passing, and a supervision tree handles fault tolerance.
 
+The actor model, first proposed by Hewitt et al. (1973) and later developed into a complete theory of concurrent computation by Agha (1986), provides the foundation for this architecture: independent computational agents communicate exclusively through asynchronous message passing, with no shared mutable state — the same isolation principle that Genesis applies at the architectural level through Git worktrees.
+
 ```text
 EvoGit.AgentGroupSupervisor (one_for_all)
 ├── Task.Supervisor         — Agent Task supervisor (spawns/kills agents)
@@ -13,6 +15,8 @@ EvoGit.AgentGroupSupervisor (one_for_all)
 ```
 
 If an agent process crashes (e.g., unparseable LLM output), the `Task.Supervisor` kills it. The `AgentScheduler` detects the `DOWN` message, safely releases the agent's slots and worktree, and queues it for a retry from its last safe Git commit.
+
+Armstrong (2003) codified the "let it crash" philosophy underlying Erlang's supervision trees: instead of defensive programming that anticipates and handles every possible failure, build systems where isolated processes are supervised by parent processes that detect failures and restart components from known-good states. Genesis adopts this philosophy directly — when an agent process crashes due to unparseable LLM output, the supervisor kills it and the scheduler resurrects it from its last safe Git commit.
 
 ### 5.2 The Git Worktree Mechanism
 
