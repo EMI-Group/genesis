@@ -2,10 +2,14 @@ defmodule EvoDashWeb.ProjectComponents do
   @moduledoc """
   Project selection and settings components for the dashboard.
 
-  Both `project_selector/1` (header + open/new forms) and
+  `project_selector/1` renders as a slim, full-width **top bar** — a compact
+  horizontal layout (folder icon + name/path + Change/New buttons) suitable
+  for the top of the single-column dashboard. The inline Open/New project
+  forms expand below the bar when toggled.
+
   `project_settings_panel/1` (genesis.toml status, worktree script, dev
-  commands, foreign repos) are designed for a narrow left column in a
-  two-column dashboard layout.
+  commands, foreign repos) is a collapsible accordion that works at any
+  width within the centered hero column.
   """
   use EvoDashWeb, :html
   alias EvoGit.Core.ForeignRepo
@@ -27,17 +31,17 @@ defmodule EvoDashWeb.ProjectComponents do
     <div>
       <!-- Active project header / empty state -->
       <%= if @active_project do %>
-        <div class="rounded-xl bg-base-100 border border-base-200 shadow-sm p-4">
-          <div class="flex items-center justify-between gap-3">
-            <div class="min-w-0 flex items-center gap-3">
-              <div class="bg-primary/10 text-primary p-2.5 rounded-lg shrink-0">
-                <.icon name="hero-folder" class="size-5" />
+        <div class="rounded-xl bg-base-100 border border-base-200 shadow-sm">
+          <div class="flex items-center justify-between gap-3 py-2.5 px-4">
+            <div class="min-w-0 flex items-center gap-2.5">
+              <div class="bg-primary/10 text-primary p-2 rounded-lg shrink-0">
+                <.icon name="hero-folder" class="size-4" />
               </div>
               <div class="min-w-0">
-                <h2 class="text-lg font-bold text-base-content truncate leading-tight">
+                <h2 class="text-base font-bold text-base-content truncate leading-tight">
                   {@active_project.name}
                 </h2>
-                <p class="text-xs text-base-content/50 font-mono truncate mt-0.5">
+                <p class="text-xs text-base-content/50 font-mono truncate">
                   {@active_project.path}
                 </p>
               </div>
@@ -54,13 +58,13 @@ defmodule EvoDashWeb.ProjectComponents do
             </div>
           </div>
 
-          <!-- Recent projects quick-select pills -->
+          <!-- Recent projects quick-select pills (inline below the bar) -->
           <%= if @recent_projects != [] and !@show_open_form and !@show_new_project_form do %>
-            <div class="mt-3 pt-3 border-t border-base-200">
-              <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-2">
-                {gettext("Recent")}
-              </p>
-              <div class="flex flex-wrap gap-1.5">
+            <div class="px-4 pb-2.5 pt-0 border-t border-base-200/60">
+              <div class="flex flex-wrap items-center gap-1.5 pt-2">
+                <span class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mr-1">
+                  {gettext("Recent")}
+                </span>
                 <%= for project <- Enum.take(@recent_projects, 6) do %>
                   <button
                     type="button"
@@ -77,25 +81,31 @@ defmodule EvoDashWeb.ProjectComponents do
           <% end %>
         </div>
       <% else %>
-        <div class="rounded-xl bg-base-100 border border-base-200 border-dashed p-8 text-center">
-          <div class="animate-float">
-            <.icon name="hero-folder-open" class="size-14 mx-auto mb-3 text-base-content/30" />
-          </div>
-          <h2 class="text-lg font-semibold text-base-content/60">
-            {gettext("No project selected")}
-          </h2>
-          <p class="text-sm text-base-content/40 mt-1 mb-4">
-            {gettext("Open a project to get started")}
-          </p>
-          <div class="flex gap-2 justify-center">
-            <button class="btn btn-primary gap-1" phx-click="toggle_open_project_form">
-              <.icon name="hero-folder-open" class="size-5" />
-              {gettext("Open Project")}
-            </button>
-            <button class="btn btn-outline btn-primary gap-1" phx-click="toggle_new_project_form">
-              <.icon name="hero-plus-circle" class="size-5" />
-              {gettext("New")}
-            </button>
+        <div class="rounded-xl bg-base-100 border border-base-200 shadow-sm py-3 px-4">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-center gap-2.5">
+              <div class="animate-float">
+                <.icon name="hero-folder-open" class="size-5 text-base-content/40" />
+              </div>
+              <div>
+                <h2 class="text-base font-semibold text-base-content/70">
+                  {gettext("No project selected")}
+                </h2>
+                <p class="text-xs text-base-content/40">
+                  {gettext("Open a project to get started")}
+                </p>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-sm btn-primary gap-1" phx-click="toggle_open_project_form">
+                <.icon name="hero-folder-open" class="size-4" />
+                {gettext("Open Project")}
+              </button>
+              <button class="btn btn-sm btn-outline btn-primary gap-1" phx-click="toggle_new_project_form">
+                <.icon name="hero-plus-circle" class="size-4" />
+                {gettext("New")}
+              </button>
+            </div>
           </div>
         </div>
       <% end %>
@@ -219,11 +229,12 @@ defmodule EvoDashWeb.ProjectComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # project_settings_panel/1 — Collapsible settings accordion (left column)
+  # project_settings_panel/1 — Collapsible settings accordion
   #
   # Uses a native <details> element with open={@show} for the toggle.
   # Styled identically to the Advanced Options accordion in
-  # TaskFormComponents for visual consistency.
+  # TaskFormComponents for visual consistency. Works at any width within
+  # the centered hero column layout.
   # ---------------------------------------------------------------------------
 
   attr(:active_project, :string, required: true)
