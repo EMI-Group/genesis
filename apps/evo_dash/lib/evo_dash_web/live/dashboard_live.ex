@@ -160,10 +160,11 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               <% end %>
             <% else %>
-            <!-- Two-column immersive layout: left sidebar (project context) + right (task composer) -->
-            <div class="flex flex-col lg:flex-row gap-6 mt-2">
-              <!-- LEFT COLUMN: Project Context Panel -->
-              <aside class="flex flex-col w-full lg:w-80 shrink-0 gap-4 animate-fade-in-up">
+            <!-- Single-column immersive layout -->
+            <div class="mt-2 space-y-6">
+
+              <!-- A) Project Header / Selector -->
+              <div class="animate-fade-in-up">
                 <EvoDashWeb.ProjectComponents.project_selector
                   active_project={@active_project}
                   recent_projects={@recent_projects}
@@ -173,9 +174,11 @@ defmodule EvoDashWeb.DashboardLive do
                   tauri_detected={@tauri_detected}
                   platform={@platform}
                 />
+              </div>
 
-                <!-- Project Settings (collapsible, only when a project is active) -->
-                <%= if @active_project do %>
+              <!-- B) Project Settings (collapsible, between header and task form) -->
+              <%= if @active_project do %>
+                <div class="animate-fade-in-up animation-delay-100">
                   <EvoDashWeb.ProjectComponents.project_settings_panel
                     active_project={@active_project_path}
                     show={@show_project_settings}
@@ -190,41 +193,27 @@ defmodule EvoDashWeb.DashboardLive do
                     tauri_detected={@tauri_detected}
                     platform={@platform}
                   />
-                <% end %>
-              </aside>
-
-              <!-- RIGHT COLUMN: Immersive Task Composer -->
-              <main class="flex-1 min-w-0 lg:flex lg:items-center lg:justify-center">
-                <div class="w-full max-w-3xl animate-fade-in-up animation-delay-100 py-4 lg:py-0">
-                  <!-- Slim header: active project breadcrumb + mode badge -->
-                  <%= if @active_project do %>
-                    <div class="flex items-center gap-2 mb-5 text-sm text-base-content/50">
-                      <.icon name="hero-folder" class="size-4" />
-                      <span class="font-medium truncate">{@active_project.name}</span>
-                      <span class="text-base-content/30">/</span>
-                      <span class="badge badge-ghost badge-sm font-mono">
-                        {task_mode_label(@task_mode)}
-                      </span>
-                    </div>
-                  <% end %>
-
-                  <EvoDashWeb.TaskFormComponents.task_form
-                    prompt={@task_prompt}
-                    mode={@task_mode}
-                    mode_info={@task_mode_info}
-                    node_path={@task_node_path}
-                    starting_commit={@task_starting_commit}
-                    resume_from={@task_resume_from}
-                    show_advanced={@show_advanced}
-                    disabled={is_nil(@active_project)}
-                    archive={@task_archive}
-                    model_profiles={@model_profiles}
-                    selected_model_id={@selected_model_id}
-                    build_systems={@build_systems}
-                    selected_build_system={@task_build_system}
-                  />
                 </div>
-              </main>
+              <% end %>
+
+              <!-- C) Task Form (full width, hero of the page) -->
+              <div class="animate-fade-in-up animation-delay-100">
+                <EvoDashWeb.TaskFormComponents.task_form
+                  prompt={@task_prompt}
+                  mode={@task_mode}
+                  mode_info={@task_mode_info}
+                  node_path={@task_node_path}
+                  starting_commit={@task_starting_commit}
+                  resume_from={@task_resume_from}
+                  show_advanced={@show_advanced}
+                  disabled={is_nil(@active_project)}
+                  archive={@task_archive}
+                  model_profiles={@model_profiles}
+                  selected_model_id={@selected_model_id}
+                  build_systems={@build_systems}
+                  selected_build_system={@task_build_system}
+                />
+              </div>
             </div>
 
             <!-- Full Result Modal -->

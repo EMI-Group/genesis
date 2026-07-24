@@ -198,7 +198,7 @@ defmodule EvoDashWeb.Layouts do
 
       <!-- Main Content Area -->
       <div class="flex-1 flex flex-col overflow-auto min-w-0">
-        <main class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full mx-auto max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1920px] bg-white dark:bg-slate-900">
+        <main class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full mx-auto bg-white dark:bg-slate-900">
           {render_slot(@inner_block)}
         </main>
       </div>

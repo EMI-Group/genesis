@@ -99,7 +99,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                   {gettext("Open a project to get started")}
                 </p>
                 <p class="text-sm text-base-content/35 mt-0.5">
-                  {gettext("Select or create a project from the sidebar")}
+                  {gettext("Select or create a project to get started")}
                 </p>
               </div>
             </div>
@@ -109,7 +109,7 @@ defmodule EvoDashWeb.TaskFormComponents do
             name="prompt"
             id="prompt"
             phx-update="ignore"
-            class="w-full min-h-[220px] p-5 text-base leading-relaxed rounded-2xl border border-base-300 bg-base-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 resize-y placeholder:text-base-content/30 transition-all"
+            class="w-full min-h-[360px] p-5 text-base leading-relaxed rounded-2xl border border-base-300 bg-base-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 resize-y placeholder:text-base-content/30 transition-all"
             placeholder={
               cond do
                 @mode == "genesis_existing" ->
