@@ -162,8 +162,8 @@ defmodule EvoDashWeb.DashboardLive do
             <% else %>
             <!-- Two-column immersive layout: left sidebar (project context) + right (task composer) -->
             <div class="flex flex-col lg:flex-row gap-6 mt-2">
-              <!-- LEFT COLUMN: Project Context Panel (hidden on mobile) -->
-              <aside class="hidden lg:flex lg:flex-col w-80 shrink-0 gap-4 animate-fade-in-up">
+              <!-- LEFT COLUMN: Project Context Panel -->
+              <aside class="flex flex-col w-full lg:w-80 shrink-0 gap-4 animate-fade-in-up">
                 <EvoDashWeb.ProjectComponents.project_selector
                   active_project={@active_project}
                   recent_projects={@recent_projects}
@@ -194,8 +194,8 @@ defmodule EvoDashWeb.DashboardLive do
               </aside>
 
               <!-- RIGHT COLUMN: Immersive Task Composer -->
-              <main class="flex-1 min-w-0 flex items-center justify-center">
-                <div class="w-full max-w-3xl animate-fade-in-up animation-delay-100">
+              <main class="flex-1 min-w-0 lg:flex lg:items-center lg:justify-center">
+                <div class="w-full max-w-3xl animate-fade-in-up animation-delay-100 py-4 lg:py-0">
                   <!-- Slim header: active project breadcrumb + mode badge -->
                   <%= if @active_project do %>
                     <div class="flex items-center gap-2 mb-5 text-sm text-base-content/50">
