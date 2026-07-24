@@ -51,7 +51,6 @@ defmodule EvoDashWeb.DashboardLive do
           data-project={@active_project_path}
           data-task-mode={@task_mode}
         >
-          <div id="welcome-check" phx-hook="WelcomeCheck" class="hidden"></div>
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
           <div id="browser-notifications" phx-hook="BrowserNotifications">
@@ -313,13 +312,13 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def mount(_params, session, socket) do
-    # On the dead render (initial HTTP request), check the session cookie for the
-    # onboarding flag and redirect to /welcome if not completed. The cookie is set
-    # by the welcome_dismissed JS event handler (via WelcomeCheck hook).
+    # On the dead render (initial HTTP request), check the session for the
+    # onboarding flag and redirect to /welcome if not completed. The session
+    # is set by WelcomeController.complete/2 when the user finishes onboarding.
     #
-    # For WebSocket-connected mounts (e.g. push_navigate), the WelcomeCheck
-    # JS hook handles onboarding detection via localStorage — the session cookie
-    # won't reflect a just-completed onboarding, so we skip the check here.
+    # For WebSocket-connected mounts (e.g. push_navigate after redirect),
+    # the session cookie already reflects completed onboarding, so we skip
+    # the check here.
     if !connected?(socket) and session["onboarding_completed"] != true do
       {:ok, push_navigate(socket, to: "/welcome")}
     else
@@ -508,13 +507,6 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     {:noreply, socket}
-  end
-
-  # --- Onboarding Redirect ---
-
-  @impl true
-  def handle_event("show_welcome", _, socket) do
-    {:noreply, push_navigate(socket, to: "/welcome")}
   end
 
   # --- Project Management Events ---
