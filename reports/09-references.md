@@ -63,3 +63,13 @@
 31. Agha, G. (1986). Actors: A Model of Concurrent Computation in Distributed Systems. *MIT Press*.
 
 32. Armstrong, J. (2003). Making Reliable Distributed Systems in the Presence of Software Errors. *PhD Thesis, Royal Institute of Technology (KTH), Stockholm*.
+
+33. Rozière, B., Gehring, J., Gloeckle, F., Sootla, S., Gat, I., Tan, X. E., Adi, Y., Liu, J., Sauvestre, R., Remez, T., et al. (2024). Code Llama: Open Foundation Models for Code. *arXiv preprint arXiv:2308.12950*.
+
+34. Li, R., Allal, L. B., Zi, Y., Muennighoff, N., Kocetkov, D., Mou, C., Marone, M., Akiki, C., Li, J., Chim, J., et al. (2023). StarCoder: May the Source Be With You! *Transactions on Machine Learning Research (TMLR)*.
+
+35. Guo, D., Zhu, Q., Yang, D., Xie, Z., Dong, K., Zhang, W., Chen, G., Bi, X., Wu, Y., Li, Y. K., et al. (2024). DeepSeek-Coder: When the Large Language Model Meets Programming — The Rise of Code Intelligence. *arXiv preprint arXiv:2401.14196*.
+
+36. Xu, F. F., Vasilescu, B., & Neubig, G. (2022). In-IDE Code Generation from Natural Language: Promise and Challenges. *ACM Transactions on Software Engineering and Methodology (TOSEM)*, 31(2), 1–47.
+
+37. Newell, A., & Simon, H. A. (1976). Computer Science as Empirical Inquiry: Symbols and Search. *Communications of the ACM*, 19(3), 113–126.
