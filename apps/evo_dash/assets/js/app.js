@@ -117,16 +117,19 @@ const DirectoryPicker = {
 
     this.el.addEventListener("click", async () => {
       // 1. Tauri native dialog (desktop app)
+      // In Tauri v2 with withGlobalTauri: true, window.__TAURI__ exposes the
+      // core API but NOT plugin-specific JS APIs (the @tauri-apps/plugin-dialog
+      // JS package is not bundled in a Phoenix-served app). So we always invoke
+      // the dialog plugin's Rust command directly via core.invoke. The open
+      // command expects the options wrapped under an "options" key.
       if (window.__TAURI__) {
         try {
-          let selected;
-          if (window.__TAURI__.dialog && window.__TAURI__.dialog.open) {
-            selected = await window.__TAURI__.dialog.open({directory: true});
-          } else {
-            selected = await window.__TAURI__.core.invoke('plugin:dialog|open', {directory: true});
-          }
+          const result = await window.__TAURI__.core.invoke('plugin:dialog|open', {
+            options: {directory: true, multiple: false, title: "Select Directory"}
+          });
+          // result is a string path (or array of paths when multiple: true)
+          const selected = Array.isArray(result) ? result[0] : result;
           if (selected) {
-            // Tauri returns the full path
             this.fillInput(selected);
           }
         } catch (_err) {
@@ -434,7 +437,11 @@ const AgentHistoryAutoScroll = {
 // TauriDetect hook: pushes tauri_detected event on mount
 const TauriDetect = {
   mounted() {
-    this.pushEvent("tauri_detected", {tauri: !!window.__TAURI__});
+    // In Tauri v2 with withGlobalTauri: true, window.__TAURI__ exposes the
+    // core global. window.__TAURI_OS_INTERNALS__ is a secondary detection
+    // signal present in the Tauri webview. Check both for robustness.
+    const isTauri = !!(window.__TAURI__ || window.__TAURI_OS_INTERNALS__);
+    this.pushEvent("tauri_detected", {tauri: isTauri});
   }
 };
 
