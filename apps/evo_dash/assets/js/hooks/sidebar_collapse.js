@@ -35,6 +35,7 @@ const SidebarCollapse = {
     // Stable selectors using data attributes — work in both collapsed and expanded states
     const bottomBar = sidebar.querySelector('[data-sidebar-bottom-bar]');
     const bottomGroups = sidebar.querySelectorAll('[data-sidebar-bottom-group]');
+    const taskLinks = sidebar.querySelectorAll('[data-sidebar-task-link]');
     
     if (collapsed) {
       sidebar.classList.add('w-16');
@@ -46,6 +47,11 @@ const SidebarCollapse = {
       sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.add('hidden'));
       // Show collapsed-only elements (compact task indicators)
       sidebar.querySelectorAll('.sidebar-collapsed-only').forEach(el => el.classList.remove('hidden'));
+      // Center the lone status dot in each task row within the 64px sidebar
+      taskLinks.forEach(el => {
+        el.classList.add('justify-center');
+        el.classList.remove('px-3');
+      });
       // Stack bottom bar vertically so all buttons are visible in 64px
       if (bottomBar) {
         bottomBar.classList.remove('flex', 'items-center', 'justify-between');
@@ -71,6 +77,11 @@ const SidebarCollapse = {
       sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.remove('hidden'));
       // Hide collapsed-only elements
       sidebar.querySelectorAll('.sidebar-collapsed-only').forEach(el => el.classList.add('hidden'));
+      // Restore left-aligned content in task rows
+      taskLinks.forEach(el => {
+        el.classList.remove('justify-center');
+        el.classList.add('px-3');
+      });
       // Restore horizontal flex layout
       if (bottomBar) {
         bottomBar.classList.add('flex', 'items-center', 'justify-between');

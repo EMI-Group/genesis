@@ -153,11 +153,13 @@ defmodule EvoDashWeb.Layouts do
                   <% is_running = task.status in [:running, :pending, :finalizing] %>
                   <.link
                     navigate={if is_running, do: with_node_param(~p"/agents", @current_node_id), else: with_node_param(~p"/review/#{task.id}", @current_node_id)}
+                    data-sidebar-task-link
+                    title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
                     class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
                   >
                     <span class={["w-2.5 h-2.5 rounded-full shrink-0", task_status_dot_color(task), is_running && "animate-pulse"]} title={if is_running, do: gettext("Running"), else: gettext("Pending Review")}></span>
-                    <div class="min-w-0 flex-1">
-                      <span class="block truncate sidebar-label group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                    <div class="min-w-0 flex-1 sidebar-label">
+                      <span class="block truncate group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
                         {task_label(task)}
                       </span>
                       <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
@@ -168,11 +170,6 @@ defmodule EvoDashWeb.Layouts do
                         <% end %>
                       </span>
                     </div>
-                    <!-- Collapsed-only content -->
-                    <span class="sidebar-collapsed-only hidden flex items-center gap-1.5 shrink-0">
-                      <span class={["w-2.5 h-2.5 rounded-full", task_status_dot_color(task)]}></span>
-                      <span class="font-mono text-[10px] text-slate-400 dark:text-slate-500"><%= String.slice(task.id, 0, 6) %></span>
-                    </span>
                   </.link>
                 <% end %>
               <% end %>
