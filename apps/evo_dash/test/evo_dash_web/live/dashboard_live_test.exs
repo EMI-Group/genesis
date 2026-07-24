@@ -2,7 +2,9 @@ defmodule EvoDashWeb.DashboardLiveTest do
   use EvoDashWeb.ConnCase
   import Phoenix.LiveViewTest
 
-  setup do
+  setup [:setup_temp_dir, :set_onboarding_completed]
+
+  defp setup_temp_dir(%{} = context) do
     tmp_dir =
       Path.join(System.tmp_dir!(), "evogit_test_" <> to_string(System.unique_integer()))
 
@@ -19,7 +21,11 @@ defmodule EvoDashWeb.DashboardLiveTest do
       File.rm_rf!(tmp_dir)
     end)
 
-    {:ok, %{tmp_dir: tmp_dir}}
+    {:ok, Map.put(context, :tmp_dir, tmp_dir)}
+  end
+
+  defp set_onboarding_completed(%{conn: conn} = _context) do
+    {:ok, conn: Plug.Test.init_test_session(conn, onboarding_completed: true)}
   end
 
   describe "dashboard without active project" do
