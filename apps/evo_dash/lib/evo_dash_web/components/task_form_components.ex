@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.TaskFormComponents do
   @moduledoc """
-  Task form component for the dashboard — mode selector, model dropdown,
-  advanced options, prompt textarea, archive checkbox, and execute button.
+  Task form component for the dashboard — an immersive, ChatGPT/Gemini-style
+  prompt composer with slim inline controls and a prominent prompt hero.
   """
 
   # zh_CN: Evolution → "演进", Prompt → "提示词", Commit → "提交", Branch → "分支"
@@ -9,7 +9,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
-  # task_form/1 — Modern card with gradient hero, tooltips, and better UX
+  # task_form/1 — Immersive prompt composer (centered, spacious, ChatGPT-like)
   # ---------------------------------------------------------------------------
 
   attr(:prompt, :string, default: "")
@@ -28,203 +28,88 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   def task_form(assigns) do
     ~H"""
-    <.form
-      for={%{}}
-      phx-submit="task_submit"
-      class="bg-base-100 rounded-2xl shadow-sm border border-base-200"
-    >
-      <!-- Body -->
-      <div class={["p-4 sm:p-5 space-y-4", @disabled && "opacity-50 pointer-events-none select-none"]}>
-        <!-- Task mode & model selectors in one card -->
-        <div class="bg-base-200/50 rounded-xl p-4 border border-base-300">
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 min-w-0">
-            <!-- Task Mode -->
-            <div class="flex flex-col md:flex-row md:items-center gap-3">
-              <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
-                <.icon name="hero-cpu-chip" class="size-5 text-base-content/60" />
-                {gettext("Task Mode")}
-              </label>
-              <select
-                name="mode"
-                phx-change="task_change"
-                class="select select-bordered select-md w-full md:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
-              >
-                <option value="genesis_existing" selected={@mode == "genesis_existing"}>
-                  {gettext("Initialize Existing Codebase")}
-                </option>
-                <option value="genesis_new" selected={@mode == "genesis_new"}>
-                  {gettext("Create New Codebase")}
-                </option>
-                <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-                  <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
-                </option>
-              </select>
-              <div class="hidden sm:block">
-                <.tip text={mode_description(@mode)} />
-              </div>
-              <p class="text-sm text-base-content/60 mt-1 sm:hidden">{mode_description(@mode)}</p>
-            </div>
-
-            <!-- Model -->
-            <%= if @model_profiles != [] do %>
-              <div class="flex flex-col md:flex-row md:items-center gap-3">
-                <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
-                  <.icon name="hero-cpu-chip" class="size-5 text-base-content/60" />
-                  {gettext("Model")}
-                </label>
-                <select
-                  name="model_id"
-                  phx-change="select_model"
-                  class="select select-bordered select-md w-full md:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
-                >
-                  <%= for profile <- @model_profiles do %>
-                    <option value={profile.id} selected={@selected_model_id == profile.id}>
-                      {profile.id <> " (" <> profile_model_label(profile) <> ")"}
-                    </option>
-                  <% end %>
-                </select>
-                <div class="hidden sm:block">
-                  <.tip text={gettext("Select which model profile to use for this task")} />
-                </div>
-              </div>
-            <% end %>
+    <.form for={%{}} phx-submit="task_submit" class="w-full">
+      <div class={["transition-opacity", @disabled && "opacity-40 pointer-events-none select-none"]}>
+        <!-- Slim controls row — task mode + model + build system (unobtrusive) -->
+        <div class="flex flex-wrap items-center gap-2 mb-5">
+          <!-- Task Mode -->
+          <div class="flex items-center gap-1.5">
+            <select
+              name="mode"
+              phx-change="task_change"
+              class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="genesis_existing" selected={@mode == "genesis_existing"}>
+                {gettext("Initialize Existing")}
+              </option>
+              <option value="genesis_new" selected={@mode == "genesis_new"}>
+                {gettext("Create New")}
+              </option>
+              <option value="evolve_simple" selected={@mode == "evolve_simple"}>
+                <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
+              </option>
+            </select>
+            <.tip text={mode_description(@mode)} />
           </div>
 
-          <%= if String.starts_with?(@mode, "genesis") do %>
-            <div class="flex flex-col md:flex-row md:items-center gap-3 mt-4">
-              <label class="text-base font-bold text-base-content whitespace-nowrap flex items-center gap-2">
-                <.icon name="hero-cog-6-tooth" class="size-5 text-base-content/60" />
-                {gettext("Build System")}
-                <.tip text={gettext("Pre-configured worktree init scripts for your tech stack")} />
-              </label>
+          <!-- Model -->
+          <%= if @model_profiles != [] do %>
+            <div class="flex items-center gap-1.5">
               <select
-                name="build_system"
-                class="select select-bordered select-md w-full md:w-auto flex-1 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-semibold bg-base-100 shadow-sm"
+                name="model_id"
+                phx-change="select_model"
+                class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
               >
-                <option value="">{gettext("None (no build system)")}</option>
-                <%= for bs <- @build_systems do %>
-                  <option value={to_string(bs.id)} selected={@selected_build_system == to_string(bs.id)}>
-                    {bs.name}
+                <%= for profile <- @model_profiles do %>
+                  <option value={profile.id} selected={@selected_model_id == profile.id}>
+                    {profile.id <> " (" <> profile_model_label(profile) <> ")"}
                   </option>
                 <% end %>
               </select>
-              <div class="hidden sm:block">
-                <.tip text={gettext("Pre-configured worktree init scripts for your tech stack")} />
-              </div>
+              <.tip text={gettext("Select which model profile to use for this task")} />
             </div>
+          <% end %>
+
+          <!-- Build System (genesis modes only) -->
+          <%= if String.starts_with?(@mode, "genesis") do %>
+            <select
+              name="build_system"
+              class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="">{gettext("No build system")}</option>
+              <%= for bs <- @build_systems do %>
+                <option value={to_string(bs.id)} selected={@selected_build_system == to_string(bs.id)}>
+                  {bs.name}
+                </option>
+              <% end %>
+            </select>
           <% end %>
         </div>
 
-        <%= if String.starts_with?(@mode, "evolve") do %>
-          <div class="rounded-xl border border-base-200 bg-base-200/30">
-            <button
-              type="button"
-              class={"w-full px-4 py-3 cursor-pointer hover:bg-base-200/50 transition-colors flex items-center gap-2 rounded-t-xl #{if @show_advanced, do: "", else: "rounded-b-xl"}"}
-              phx-click="toggle_advanced"
-            >
-              <.icon name="hero-adjustments-horizontal" class="size-4 text-base-content/60" />
-              <span class="text-sm font-semibold text-base-content">{gettext("Advanced Options")}</span>
-              <.icon
-                name="hero-chevron-down"
-                class={"size-4 text-base-content/40 ml-auto transition-transform #{if @show_advanced, do: "rotate-180", else: ""}"}
-              />
-            </button>
-            <%= if @show_advanced do %>
-              <div class="px-4 pb-4 pt-2 space-y-4 border-t border-base-200 rounded-b-xl">
-                <div class="flex flex-col md:flex-row gap-4">
-                  <div class="form-control flex-1">
-                    <label class="label">
-                      <span class="label-text font-semibold text-base-content">{gettext(
-                        "Starting Node"
-                      )}
-                      <%!-- zh_CN: evolution → "演进" --%>
-                      <.tip text={
-                        gettext(
-                          "The subdirectory within the project to start evolution from. Use './' for root."
-                        )
-                      } /></span>
-                    </label>
-                    <input
-                      type="text"
-                      name="node_path"
-                      value={@node_path}
-                      class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-base-content/20 bg-base-200/30"
-                      placeholder={gettext("e.g., ./src/components")}
-                    />
-                    <label class="label">
-                      <span class="label-text-alt text-base-content/50"><%!-- zh_CN: evolution → "演进" --%>{gettext(
-                        "Subdirectory to start evolution from (optional)"
-                      )}</span>
-                    </label>
-                  </div>
-                  <div class="form-control flex-1">
-                    <label class="label">
-                      <span class="label-text font-semibold text-base-content"><%!-- zh_CN: Commit → "提交" --%>{gettext(
-                        "Starting Commit"
-                      )}
-                      <%!-- zh_CN: commit → "提交", branch → "分支" --%>
-                      <.tip text={
-                        gettext(
-                          "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
-                        )
-                      } /></span>
-                    </label>
-                    <input
-                      type="text"
-                      name="starting_commit"
-                      value={@starting_commit}
-                      class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-base-content/20 bg-base-200/30"
-                      placeholder={gettext("e.g., abc1234 or HEAD")}
-                    />
-                    <label class="label">
-                      <span class="label-text-alt text-base-content/50"><%!-- zh_CN: Commit → "提交" --%>{gettext(
-                        "Commit SHA or ref to start from (defaults to HEAD)"
-                      )}</span>
-                    </label>
-                  </div>
+        <!-- Prompt hero — the centerpiece -->
+        <div class="relative">
+          <!-- Welcome hint overlay when disabled (no project active) -->
+          <%= if @disabled do %>
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div class="text-center">
+                <div class="animate-float">
+                  <.icon name="hero-sparkles" class="size-12 mx-auto mb-2 text-base-content/40" />
                 </div>
-                <div class="form-control">
-                  <label class="label">
-                    <span class="label-text font-semibold text-base-content">{gettext("Resume from")}
-                    <.tip text={
-                      gettext(
-                        "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
-                      )
-                    } /></span>
-                  </label>
-                  <input
-                    type="text"
-                    name="resume_from"
-                    value={@resume_from}
-                    class="input input-bordered w-full font-mono text-sm focus:outline-none focus:ring-2 focus:ring-base-content/20 bg-base-200/30"
-                    placeholder="a1b2c3d4"
-                  />
-                  <label class="label">
-                    <span class="label-text-alt text-base-content/50">{gettext(
-                      "Previous task ID to continue from (optional)"
-                    )}</span>
-                  </label>
-                </div>
+                <p class="text-base font-medium text-base-content/50">
+                  {gettext("Open a project to get started")}
+                </p>
+                <p class="text-sm text-base-content/35 mt-0.5">
+                  {gettext("Select or create a project from the sidebar")}
+                </p>
               </div>
-            <% end %>
-          </div>
-        <% end %>
+            </div>
+          <% end %>
 
-        <div class="form-control">
-          <label class="label">
-            <span class="label-text font-semibold text-base-content">
-              <%= if String.starts_with?(@mode, "evolve") do %>
-                {gettext("Objective")}
-              <% else %>
-                <%!-- zh_CN: Prompt → "提示词" --%>{gettext("Prompt")}
-              <% end %>
-            </span>
-          </label>
           <textarea
             name="prompt"
             id="prompt"
             phx-update="ignore"
-            class="textarea textarea-bordered w-full min-h-[160px] sm:min-h-[240px] text-base leading-relaxed focus:outline-none focus:ring-2 focus:ring-base-content/20 resize-y bg-base-200/30"
+            class="w-full min-h-[220px] p-5 text-base leading-relaxed rounded-2xl border border-base-300 bg-base-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 resize-y placeholder:text-base-content/30 transition-all"
             placeholder={
               cond do
                 @mode == "genesis_existing" ->
@@ -238,24 +123,109 @@ defmodule EvoDashWeb.TaskFormComponents do
           ><%= @prompt %></textarea>
         </div>
 
-        <!-- Inline execute button -->
-        <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-          <label class="label cursor-pointer flex items-center gap-3 justify-start">
-            <input
-              type="checkbox"
-              name="archive"
-              value="true"
-              class="checkbox checkbox-sm checkbox-primary"
-            />
-            <span class="label-text text-sm font-medium text-base-content/70">{gettext(
-              "Archive agent details"
-            )}</span>
+        <!-- Prompt label (below textarea, subtle) -->
+        <div class="px-1 mt-2">
+          <%= if String.starts_with?(@mode, "evolve") do %>
+            <span class="text-xs text-base-content/40">
+              <%!-- zh_CN: evolution → "演进" --%>
+              {gettext("Objective — describe the changes you want")}
+            </span>
+          <% else %>
+            <span class="text-xs text-base-content/40">
+              <%!-- zh_CN: Prompt → "提示词" --%>
+              {gettext("Prompt — describe what to build")}
+            </span>
+          <% end %>
+        </div>
+
+        <!-- Advanced options (evolve only, collapsible below prompt) -->
+        <%= if String.starts_with?(@mode, "evolve") do %>
+          <div class="mt-3">
+            <button
+              type="button"
+              class="flex items-center gap-2 px-1 py-1.5 text-sm font-medium text-base-content/60 hover:text-base-content transition-colors"
+              phx-click="toggle_advanced"
+            >
+              <.icon name="hero-adjustments-horizontal" class="size-4" />
+              {gettext("Advanced Options")}
+              <.icon
+                name="hero-chevron-down"
+                class={"size-3.5 transition-transform #{if @show_advanced, do: "rotate-180", else: ""}"}
+              />
+            </button>
+            <%= if @show_advanced do %>
+              <div class="mt-2 p-4 rounded-xl border border-base-200 bg-base-200/30 space-y-4 animate-slide-down">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div class="form-control">
+                    <label class="label pb-1">
+                      <span class="label-text font-medium text-sm">{gettext(
+                        "Starting Node"
+                      )}
+                      <%!-- zh_CN: evolution → "演进" --%>
+                      <.tip text={
+                        gettext(
+                          "The subdirectory within the project to start evolution from. Use './' for root."
+                        )
+                      } /></span>
+                    </label>
+                    <input
+                      type="text"
+                      name="node_path"
+                      value={@node_path}
+                      class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+                      placeholder={gettext("e.g., ./src/components")}
+                    />
+                  </div>
+                  <div class="form-control">
+                    <label class="label pb-1">
+                      <span class="label-text font-medium text-sm"><%!-- zh_CN: Commit → "提交" --%>{gettext(
+                        "Starting Commit"
+                      )}
+                      <%!-- zh_CN: commit → "提交", branch → "分支" --%>
+                      <.tip text={
+                        gettext(
+                          "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
+                        )
+                      } /></span>
+                    </label>
+                    <input
+                      type="text"
+                      name="starting_commit"
+                      value={@starting_commit}
+                      class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+                      placeholder={gettext("e.g., abc1234 or HEAD")}
+                    />
+                  </div>
+                </div>
+                <div class="form-control">
+                  <label class="label pb-1">
+                    <span class="label-text font-medium text-sm">{gettext("Resume from")}
+                    <.tip text={
+                      gettext(
+                        "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
+                      )
+                    } /></span>
+                  </label>
+                  <input
+                    type="text"
+                    name="resume_from"
+                    value={@resume_from}
+                    class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+                    placeholder="a1b2c3d4"
+                  />
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+
+        <!-- Execute button + archive toggle -->
+        <div class="flex items-center justify-between gap-4 mt-5">
+          <label class="label cursor-pointer flex items-center gap-2 py-0">
+            <input type="checkbox" name="archive" value="true" class="toggle toggle-sm toggle-primary" />
+            <span class="text-sm text-base-content/60">{gettext("Archive agent details")}</span>
           </label>
-          <button
-            type="submit"
-            class="btn btn-primary w-full md:w-auto"
-            disabled={@disabled}
-          >
+          <button type="submit" class="btn btn-primary gap-2 px-6" disabled={@disabled}>
             <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Execute Task")}
           </button>
         </div>
