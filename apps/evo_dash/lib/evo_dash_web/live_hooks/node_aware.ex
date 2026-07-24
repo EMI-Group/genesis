@@ -13,7 +13,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   import Phoenix.Component, only: [assign: 3, assign_new: 3]
 
+  alias EvoGit.TaskRegistry
+
   @remote_connections_topic "remote_connections"
+  @tasks_topic "tasks"
 
   @doc """
   On-mount hook — sets initial node-context assigns and subscribes to
@@ -27,13 +30,48 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> assign_new(:current_node_id, fn -> nil end)
       |> assign_new(:remote_targets, fn -> EvoDash.NodeContext.list_targets() end)
       |> assign_new(:connection_statuses, fn -> EvoDash.NodeContext.connection_status() end)
+      |> assign_new(:running_tasks, fn -> [] end)
+      |> assign_new(:pending_tasks, fn -> [] end)
 
     if Phoenix.LiveView.connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, @remote_connections_topic)
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, @tasks_topic)
     end
+
+    # Load initial running/pending tasks for all live views
+    socket = load_running_and_pending_tasks(socket)
 
     {:cont, socket}
   end
+
+  @doc """
+  Loads all tasks from EvoGit.TaskRegistry and assigns running/pending task lists
+  to the socket. Same logic as DashboardLive.Assigns.assign_running_and_pending_tasks/1.
+  """
+  def load_running_and_pending_tasks(socket) do
+    all_tasks = TaskRegistry.list_tasks()
+
+    running_tasks =
+      Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
+
+    pending_tasks =
+      all_tasks
+      |> Enum.filter(fn task ->
+        task.status == :completed and is_nil(task.review_status) and
+          show_review_button?(task)
+      end)
+      |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
+
+    socket
+    |> Phoenix.Component.assign(:running_tasks, running_tasks)
+    |> Phoenix.Component.assign(:pending_tasks, pending_tasks)
+  end
+
+  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
+       when is_binary(branch) and branch != "",
+       do: true
+
+  defp show_review_button?(_), do: false
 
   @doc """
   Resolves the `?node=` query param into node-context assigns.
@@ -121,6 +159,14 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   """
   def handle_connection_status(socket, _message) do
     {:noreply, assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())}
+  end
+
+  @doc """
+  Handles task-related PubSub messages by reloading running/pending tasks.
+  Returns `{:noreply, socket}`.
+  """
+  def handle_task_info(socket, _message) do
+    {:noreply, load_running_and_pending_tasks(socket)}
   end
 
   @doc """

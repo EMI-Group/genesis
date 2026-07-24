@@ -18,6 +18,8 @@ defmodule EvoDashWeb.WelcomeLive do
       simple_nav={false}
       current_node_id={@current_node_id}
       current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
     >
       <div class="flex flex-col items-center justify-center min-h-[80vh] px-4">
         <!-- Skip link -->

@@ -133,35 +133,45 @@ defmodule EvoDashWeb.Layouts do
           >{gettext("System")}</.sidebar_nav_link>
 
           <!-- Task Indicators Section -->
-          <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-4 mt-3 border-t border-slate-200 dark:border-slate-800">
-            <div class="px-3 mb-2">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
+          <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4 border-t border-slate-200 dark:border-slate-800">
+            <div class="px-3 mb-3 mt-1">
+              <span class="text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
                 {gettext("Active Tasks")}
               </span>
             </div>
-            <div class="space-y-0.5">
+            <div class="space-y-1">
               <!-- Running tasks: green dot -->
               <%= for task <- @running_tasks do %>
                 <.link
-                  navigate={~p"/tasks?task_id=#{task.id}"}
-                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                  navigate={with_node_param(~p"/agents", @current_node_id)}
+                  class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
                 >
-                  <span class="w-2 h-2 rounded-full bg-green-500 shrink-0 animate-pulse" title={gettext("Running")}></span>
-                  <span class="truncate sidebar-label group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
-                    {String.slice(task.id, 0, 8)}
-                  </span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0 animate-pulse" title={gettext("Running")}></span>
+                  <div class="min-w-0 flex-1">
+                    <span class="block truncate sidebar-label group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                      {task_label(task)}
+                    </span>
+                    <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                      {format_elapsed(task.started_at)}
+                    </span>
+                  </div>
                 </.link>
               <% end %>
               <!-- Pending review tasks: amber dot -->
               <%= for task <- @pending_tasks do %>
                 <.link
-                  navigate={~p"/tasks?task_id=#{task.id}"}
-                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                  navigate={with_node_param(~p"/review/#{task.id}", @current_node_id)}
+                  class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
                 >
-                  <span class="w-2 h-2 rounded-full bg-amber-500 shrink-0" title={gettext("Pending Review")}></span>
-                  <span class="truncate sidebar-label group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
-                    {String.slice(task.id, 0, 8)}
-                  </span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" title={gettext("Pending Review")}></span>
+                  <div class="min-w-0 flex-1">
+                    <span class="block truncate sidebar-label group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                      {task_label(task)}
+                    </span>
+                    <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                      {gettext("completed")} {format_elapsed(task.finished_at)}
+                    </span>
+                  </div>
                 </.link>
               <% end %>
             </div>
@@ -236,6 +246,30 @@ defmodule EvoDashWeb.Layouts do
   # so nav links preserve the node context across pages. No-op for local node.
   defp with_node_param(path, nil), do: path
   defp with_node_param(path, node_id), do: path <> "?node=" <> node_id
+
+  # Extract a display label for a task: objective > prompt > truncated task ID
+  defp task_label(task) do
+    label = task.opts[:objective] || task.opts[:prompt] || String.slice(task.id, 0, 8)
+    if String.length(label) > 30 do
+      String.slice(label, 0, 30) <> "..."
+    else
+      label
+    end
+  end
+
+  # Format a DateTime as a relative elapsed string like "2m ago", "1h ago"
+  defp format_elapsed(nil), do: ""
+
+  defp format_elapsed(dt) do
+    diff = DateTime.diff(DateTime.utc_now(), dt)
+    cond do
+      diff < 30 -> gettext("just now")
+      diff < 60 -> "#{diff}s ago"
+      diff < 3600 -> "#{div(diff, 60)}m ago"
+      diff < 86400 -> "#{div(diff, 3600)}h ago"
+      true -> "#{div(diff, 86400)}d ago"
+    end
+  end
 
   attr(:navigate, :string, required: true)
   attr(:current, :boolean, default: false)

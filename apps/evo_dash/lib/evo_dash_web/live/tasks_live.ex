@@ -12,7 +12,7 @@ defmodule EvoDashWeb.TasksLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:tasks} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:tasks} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
       <!-- Filter Bar -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
         <form id="task-filters" phx-submit="noop">
@@ -312,14 +312,16 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_info({:tasks_updated}, socket) do
-    {:noreply, reload_current_page(socket)}
+    socket = reload_current_page(socket)
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
   end
 
   @impl true
   def handle_info({:task_status, _task_id, _status}, socket) do
     # Task status transitions (e.g. :finalizing, :running) are broadcast on the
     # "tasks" PubSub topic. Re-fetch the current page so the UI reflects the change.
-    {:noreply, reload_current_page(socket)}
+    socket = reload_current_page(socket)
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
   end
 
   @impl true
