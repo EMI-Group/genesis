@@ -160,52 +160,71 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               <% end %>
             <% else %>
-            <!-- Project Selector (always visible) -->
-            <EvoDashWeb.ProjectComponents.project_selector
-              active_project={@active_project}
-              recent_projects={@recent_projects}
-              show_open_form={@show_open_project_form}
-              show_new_project_form={@show_new_project_form}
-              path_suggestions={@path_suggestions}
-              tauri_detected={@tauri_detected}
-              platform={@platform}
-            />
+            <!-- Two-column immersive layout: left sidebar (project context) + right (task composer) -->
+            <div class="flex flex-col lg:flex-row gap-6 mt-2">
+              <!-- LEFT COLUMN: Project Context Panel (hidden on mobile) -->
+              <aside class="hidden lg:flex lg:flex-col w-80 shrink-0 gap-4 animate-fade-in-up">
+                <EvoDashWeb.ProjectComponents.project_selector
+                  active_project={@active_project}
+                  recent_projects={@recent_projects}
+                  show_open_form={@show_open_project_form}
+                  show_new_project_form={@show_new_project_form}
+                  path_suggestions={@path_suggestions}
+                  tauri_detected={@tauri_detected}
+                  platform={@platform}
+                />
 
-            <!-- Task Form (always visible, disabled when no project) -->
-            <div class="mt-6 mb-6 animate-fade-in-up animation-delay-100">
-              <EvoDashWeb.TaskFormComponents.task_form
-                prompt={@task_prompt}
-                mode={@task_mode}
-                mode_info={@task_mode_info}
-                node_path={@task_node_path}
-                starting_commit={@task_starting_commit}
-                resume_from={@task_resume_from}
-                show_advanced={@show_advanced}
-                disabled={is_nil(@active_project)}
-                archive={@task_archive}
-                model_profiles={@model_profiles}
-                selected_model_id={@selected_model_id}
-                build_systems={@build_systems}
-                selected_build_system={@task_build_system}
-              />
-            </div>
+                <!-- Project Settings (collapsible, only when a project is active) -->
+                <%= if @active_project do %>
+                  <EvoDashWeb.ProjectComponents.project_settings_panel
+                    active_project={@active_project_path}
+                    show={@show_project_settings}
+                    project_config={@project_config}
+                    worktree_script={@worktree_script}
+                    commands={@commands}
+                    foreign_repos={@foreign_repos}
+                    show_add_foreign_repo={@show_add_foreign_repo_form}
+                    new_repo_id={@new_repo_id}
+                    new_repo_path={@new_repo_path}
+                    new_repo_description={@new_repo_description}
+                    tauri_detected={@tauri_detected}
+                    platform={@platform}
+                  />
+                <% end %>
+              </aside>
 
-            <!-- Project Settings (always in DOM, collapsible) -->
-            <div class="mb-6 animate-fade-in-up animation-delay-200">
-              <EvoDashWeb.ProjectComponents.project_settings_panel
-                active_project={@active_project_path}
-                show={@show_project_settings}
-                project_config={@project_config}
-                worktree_script={@worktree_script}
-                commands={@commands}
-                foreign_repos={@foreign_repos}
-                show_add_foreign_repo={@show_add_foreign_repo_form}
-                new_repo_id={@new_repo_id}
-                new_repo_path={@new_repo_path}
-                new_repo_description={@new_repo_description}
-                tauri_detected={@tauri_detected}
-                platform={@platform}
-              />
+              <!-- RIGHT COLUMN: Immersive Task Composer -->
+              <main class="flex-1 min-w-0 flex items-center justify-center">
+                <div class="w-full max-w-3xl animate-fade-in-up animation-delay-100">
+                  <!-- Slim header: active project breadcrumb + mode badge -->
+                  <%= if @active_project do %>
+                    <div class="flex items-center gap-2 mb-5 text-sm text-base-content/50">
+                      <.icon name="hero-folder" class="size-4" />
+                      <span class="font-medium truncate">{@active_project.name}</span>
+                      <span class="text-base-content/30">/</span>
+                      <span class="badge badge-ghost badge-sm font-mono">
+                        {task_mode_label(@task_mode)}
+                      </span>
+                    </div>
+                  <% end %>
+
+                  <EvoDashWeb.TaskFormComponents.task_form
+                    prompt={@task_prompt}
+                    mode={@task_mode}
+                    mode_info={@task_mode_info}
+                    node_path={@task_node_path}
+                    starting_commit={@task_starting_commit}
+                    resume_from={@task_resume_from}
+                    show_advanced={@show_advanced}
+                    disabled={is_nil(@active_project)}
+                    archive={@task_archive}
+                    model_profiles={@model_profiles}
+                    selected_model_id={@selected_model_id}
+                    build_systems={@build_systems}
+                    selected_build_system={@task_build_system}
+                  />
+                </div>
+              </main>
             </div>
 
             <!-- Full Result Modal -->
@@ -1088,6 +1107,11 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   # --- Private Helpers ---
+
+  defp task_mode_label("genesis_new"), do: gettext("Create New")
+  defp task_mode_label("genesis_existing"), do: gettext("Init Existing")
+  defp task_mode_label("evolve_simple"), do: gettext("Evolution")
+  defp task_mode_label(other), do: other
 
   # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
   #
