@@ -171,8 +171,8 @@ defmodule EvoDashWeb.Layouts do
         <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
           <div class="flex items-center justify-between gap-1">
             <div class="flex items-center gap-1">
-              <.language_selector />
-              <.theme_toggle_compact />
+              <.language_selector drop_up={true} />
+              <.theme_toggle_compact drop_up={true} />
             </div>
             <button
               id="sidebar-collapse-toggle"
@@ -325,16 +325,22 @@ defmodule EvoDashWeb.Layouts do
 
   # Compact theme toggle for sidebar bottom bar — a single button with a dropdown
   # containing the three theme options: system, light, dark.
+  attr(:drop_up, :boolean, default: false)
+
   defp theme_toggle_compact(assigns) do
     ~H"""
-    <details class="dropdown dropdown-end">
+    <details class={["dropdown", "dropdown-end", @drop_up && "dropdown-top"]}>
       <summary
         class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         title={gettext("Change theme")}
       >
         <.icon name="hero-swatch" class="size-4" />
       </summary>
-      <div class="dropdown-content mt-2 z-50 w-40 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-1">
+      <div class={[
+        "dropdown-content",
+        (@drop_up && "mb-2") || "mt-2",
+        "z-50 w-40 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-1"
+      ]}>
         <div class="flex flex-col gap-0.5">
           <button
             class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
