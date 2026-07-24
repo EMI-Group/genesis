@@ -329,7 +329,7 @@ defmodule EvoDashWeb.Layouts do
 
   defp theme_toggle_compact(assigns) do
     ~H"""
-    <details class={["dropdown", "dropdown-end", @drop_up && "dropdown-top"]}>
+    <details class={["dropdown", !@drop_up && "dropdown-end", @drop_up && "dropdown-top"]}>
       <summary
         class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         title={gettext("Change theme")}
@@ -503,7 +503,7 @@ defmodule EvoDashWeb.Layouts do
     assigns = assign(assigns, :languages, languages)
 
     ~H"""
-    <details class={["dropdown", "dropdown-end", @drop_up && "dropdown-top"]}>
+    <details class={["dropdown", !@drop_up && "dropdown-end", @drop_up && "dropdown-top"]}>
       <summary
         class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         title={gettext("Change language")}
