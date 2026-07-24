@@ -26,6 +26,11 @@ defmodule EvoDashWeb.Layouts do
 
   attr(:config_status, :map, default: nil)
 
+  attr(:simple_nav, :boolean,
+    default: false,
+    doc: "when true, shows simplified nav (brand only)"
+  )
+
   attr(:current_node, :any, default: nil)
   attr(:current_node_id, :string, default: nil)
   attr(:current_node_name, :string, default: "Local")
@@ -75,6 +80,7 @@ defmodule EvoDashWeb.Layouts do
             </div>
 
             <!-- Right: Desktop Nav Links + Theme Toggle -->
+            <%= if !@simple_nav do %>
             <div class="hidden lg:flex items-center gap-2">
               <div class="flex items-center gap-1">
                 <.nav_link
@@ -108,8 +114,10 @@ defmodule EvoDashWeb.Layouts do
               <div class="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-2"></div>
               <.theme_toggle />
             </div>
+            <% end %>
 
             <!-- Mobile: Hamburger button -->
+            <%= if !@simple_nav do %>
             <div class="flex lg:hidden items-center">
               <label
                 for="mobile-nav-drawer"
@@ -118,6 +126,7 @@ defmodule EvoDashWeb.Layouts do
                 <.icon name="hero-bars-3" class="w-6 h-6" />
               </label>
             </div>
+            <% end %>
           </nav>
         </header>
 
@@ -134,6 +143,7 @@ defmodule EvoDashWeb.Layouts do
       ></label>
 
       <!-- Drawer Sidebar -->
+      <%= if !@simple_nav do %>
       <div class="fixed top-0 right-0 z-50 h-dvh w-72 bg-white dark:bg-slate-900 shadow-2xl transform translate-x-full peer-checked:translate-x-0 transition-transform duration-300 ease-in-out lg:hidden border-l border-slate-200 dark:border-slate-800 flex flex-col">
         <div class="flex items-center justify-between h-16 px-4 border-b border-slate-200 dark:border-slate-800">
           <span class="text-lg font-bold text-slate-900 dark:text-white">Menu</span>
@@ -180,6 +190,7 @@ defmodule EvoDashWeb.Layouts do
           </div>
         </div>
       </div>
+      <% end %>
 
       <!-- Config Warning Banner -->
       <%= if @config_status && not @config_status.ok? do %>
@@ -292,6 +303,7 @@ defmodule EvoDashWeb.Layouts do
   def current_page(:settings), do: "/settings"
   def current_page(:system), do: "/system"
   def current_page(:review), do: "/review/:task_id"
+  def current_page(:welcome), do: "/welcome"
 
   @doc """
   Shows the flash group with standard titles and content.
