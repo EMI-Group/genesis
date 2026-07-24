@@ -7,7 +7,7 @@ Current AI coding tools — from Copilot to Devin — demonstrate remarkable cod
 ---
 ## 1. Philosophy: The Neuro-Symbolic Design
 
-The current AI-assisted programming landscape is rich and evolving rapidly. Tools like GitHub Copilot, Cursor, Cline, Aider, Devin (Cognition AI), and research systems like SWE-agent have moved far beyond simple "prompt → code" generation. The newest entrants — Claude Code (Anthropic, launched 2025), an agentic coding CLI built into the Claude ecosystem, and Codex CLI (OpenAI, launched 2025), a terminal-based coding agent — push the frontier further still, with polished tool orchestration and deep editor integration. Yet, despite their recency and increasing sophistication, all of these tools share the same fundamental architecture. They integrate deeply with developer workflows: file systems, LSP-based code intelligence, terminal access, browser automation, Git history, and structured tool protocols like Anthropic's Model Context Protocol (MCP) (Anthropic, 2024). The ReAct loop (Yao et al., 2023) — reason, act, observe, repeat — is the de facto architecture: the LLM reasons about the task, invokes tools (read file, run test, search code), observes the results, and iterates. This is "vibe coding" in practice (Karpathy, 2025): describing intent in natural language and watching the AI manifest code. On benchmarks like SWE-bench (Jimenez et al., 2024), state-of-the-art systems now resolve a significant fraction of real-world GitHub issues.
+The current AI-assisted programming landscape is rich and evolving rapidly. Tools like GitHub Copilot, Cursor, Cline, Aider, Devin (Cognition AI), and research systems like SWE-agent have moved far beyond simple "prompt → code" generation. The newest entrants — Claude Code (Anthropic, launched 2025), an agentic coding CLI built into the Claude ecosystem, and Codex CLI (OpenAI, launched 2025), a terminal-based coding agent — push the frontier further still, with polished tool orchestration and deep editor integration. Yet, despite their recency and increasing sophistication, all of these tools share the same fundamental architecture. They integrate deeply with developer workflows: file systems, LSP-based code intelligence, terminal access, browser automation, Git history, and structured tool protocols like Anthropic's Model Context Protocol (MCP) (Anthropic, 2024). The ReAct loop (Yao et al., 2023) — reason, act, observe, repeat — is the de facto architecture: the LLM reasons about the task, invokes tools (read file, run test, search code), observes the results, and iterates. This is "vibe coding" in practice: describing intent in natural language and watching the AI manifest code. On benchmarks like SWE-bench (Jimenez et al., 2024), state-of-the-art systems now resolve a significant fraction of real-world GitHub issues.
 
 This progress has been accelerated by a parallel trend: the emergence of code-specialized large language models. Unlike general-purpose LLMs, code models are trained predominantly on code corpora — GitHub repositories, programming textbooks, and structured technical documentation. This specialized training yields distinct capabilities: superior syntax-level correctness, cross-file dependency tracking, and repository-level semantic understanding. Models like Codex (Chen et al., 2021), Code Llama (Rozière et al., 2024), StarCoder (Li et al., 2023), and DeepSeek-Coder (Guo et al., 2024) have each demonstrated that code-specific pretraining produces qualitatively different behavior from general models — lower hallucination rates on API usage, stronger type-consistency, and better alignment with compiler feedback. Xu et al. (2022) further argued that coding within an IDE context is a fundamentally distinct challenge from general text generation: the need to reason about incomplete code, leverage compiler and linter feedback, and maintain consistency with existing project conventions places demands on a model that go well beyond what is measured by standard language generation benchmarks.
 
@@ -341,54 +341,52 @@ Genesis mirrors well-engineered human software organizations. This alignment is 
 
 11. Kamradt, G. (2023). Needle In A Haystack — Pressure Testing LLMs. *GitHub repository*. https://github.com/gkamradt/LLMTest_NeedleInAHaystack
 
-12. Karpathy, A. (2025). Vibe Coding. *X/Twitter post*.
+12. Anthropic. (2024). Model Context Protocol Specification. https://modelcontextprotocol.io/
 
-13. Anthropic. (2024). Model Context Protocol Specification. https://modelcontextprotocol.io/
+13. Valmeekam, K., Olmo, A., Sreedharan, S., & Kambhampati, S. (2023). On the Planning Abilities of Large Language Models: A Critical Investigation. *Advances in Neural Information Processing Systems 36 (NeurIPS)*.
 
-14. Valmeekam, K., Olmo, A., Sreedharan, S., & Kambhampati, S. (2023). On the Planning Abilities of Large Language Models: A Critical Investigation. *Advances in Neural Information Processing Systems 36 (NeurIPS)*.
+14. Hsieh, C.-P., Sun, S., Kriman, S., Acharya, S., Rekesh, D., Jia, F., & Ginsburg, B. (2024). RULER: What's the Real Context Size of Your Long-Context Language Models? *Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP)*.
 
-15. Hsieh, C.-P., Sun, S., Kriman, S., Acharya, S., Rekesh, D., Jia, F., & Ginsburg, B. (2024). RULER: What's the Real Context Size of Your Long-Context Language Models? *Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP)*.
+15. Levy, M., Jacoby, A., & Goldberg, Y. (2024). Same Task, More Tokens: The Impact of Input Length on the Reasoning Performance of Large Language Models. *Findings of the Association for Computational Linguistics: ACL 2024*.
 
-16. Levy, M., Jacoby, A., & Goldberg, Y. (2024). Same Task, More Tokens: The Impact of Input Length on the Reasoning Performance of Large Language Models. *Findings of the Association for Computational Linguistics: ACL 2024*.
+16. Tay, Y., Dehghani, M., Bahri, D., & Metzler, D. (2022). Efficient Transformers: A Survey. *ACM Computing Surveys*, 55(6), 1–28.
 
-17. Tay, Y., Dehghani, M., Bahri, D., & Metzler, D. (2022). Efficient Transformers: A Survey. *ACM Computing Surveys*, 55(6), 1–28.
+17. Zhang, Y., Li, Y., Cui, L., Cai, D., Liu, L., Fu, T., Huang, X., Zhao, E., Zhang, Y., Chen, Y., et al. (2023). Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models. *arXiv preprint arXiv:2309.01219*.
 
-18. Zhang, Y., Li, Y., Cui, L., Cai, D., Liu, L., Fu, T., Huang, X., Zhao, E., Zhang, Y., Chen, Y., et al. (2023). Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models. *arXiv preprint arXiv:2309.01219*.
+18. Marcus, G. (2020). The Next Decade in AI: Four Steps Towards Robust Artificial Intelligence. *arXiv preprint arXiv:2002.06177*.
 
-19. Marcus, G. (2020). The Next Decade in AI: Four Steps Towards Robust Artificial Intelligence. *arXiv preprint arXiv:2002.06177*.
+19. Hitzler, P., & Sarker, M. K. (Eds.). (2022). Neuro-Symbolic Artificial Intelligence: The State of the Art. *IOS Press*.
 
-20. Hitzler, P., & Sarker, M. K. (Eds.). (2022). Neuro-Symbolic Artificial Intelligence: The State of the Art. *IOS Press*.
+20. Mao, J., Gan, C., Kohli, P., Tenenbaum, J. B., & Wu, J. (2019). The Neuro-Symbolic Concept Learner: Interpreting Scenes, Words, and Sentences From Natural Supervision. *Proceedings of the International Conference on Learning Representations (ICLR)*.
 
-21. Mao, J., Gan, C., Kohli, P., Tenenbaum, J. B., & Wu, J. (2019). The Neuro-Symbolic Concept Learner: Interpreting Scenes, Words, and Sentences From Natural Supervision. *Proceedings of the International Conference on Learning Representations (ICLR)*.
+21. Tarski, A. (1955). A Lattice-Theoretical Fixpoint Theorem and Its Applications. *Pacific Journal of Mathematics*, 5(2), 285–309.
 
-22. Tarski, A. (1955). A Lattice-Theoretical Fixpoint Theorem and Its Applications. *Pacific Journal of Mathematics*, 5(2), 285–309.
+22. Simon, H. A. (1962). The Architecture of Complexity. *Proceedings of the American Philosophical Society*, 106(6), 467–482.
 
-23. Simon, H. A. (1962). The Architecture of Complexity. *Proceedings of the American Philosophical Society*, 106(6), 467–482.
+23. Kleene, S. C. (1952). Introduction to Metamathematics. *D. Van Nostrand Company*.
 
-24. Kleene, S. C. (1952). Introduction to Metamathematics. *D. Van Nostrand Company*.
+24. Scott, D. (1976). Data Types as Lattices. *SIAM Journal on Computing*, 5(3), 522–587.
 
-25. Scott, D. (1976). Data Types as Lattices. *SIAM Journal on Computing*, 5(3), 522–587.
+25. Bellman, R. (1957). Dynamic Programming. *Princeton University Press*.
 
-26. Bellman, R. (1957). Dynamic Programming. *Princeton University Press*.
+26. Nielson, F., Nielson, H. R., & Hankin, C. (1999). Principles of Program Analysis. *Springer*.
 
-27. Nielson, F., Nielson, H. R., & Hankin, C. (1999). Principles of Program Analysis. *Springer*.
+27. Parnas, D. L. (1972). On the Criteria To Be Used in Decomposing Systems into Modules. *Communications of the ACM*, 15(12), 1053–1058.
 
-28. Parnas, D. L. (1972). On the Criteria To Be Used in Decomposing Systems into Modules. *Communications of the ACM*, 15(12), 1053–1058.
+28. Conway, M. E. (1968). How Do Committees Invent? *Datamation*, 14(4), 28–31.
 
-29. Conway, M. E. (1968). How Do Committees Invent? *Datamation*, 14(4), 28–31.
+29. Hewitt, C., Bishop, P., & Steiger, R. (1973). A Universal Modular ACTOR Formalism for Artificial Intelligence. *Proceedings of the 3rd International Joint Conference on Artificial Intelligence (IJCAI '73)*, 235–245.
 
-30. Hewitt, C., Bishop, P., & Steiger, R. (1973). A Universal Modular ACTOR Formalism for Artificial Intelligence. *Proceedings of the 3rd International Joint Conference on Artificial Intelligence (IJCAI '73)*, 235–245.
+30. Agha, G. (1986). Actors: A Model of Concurrent Computation in Distributed Systems. *MIT Press*.
 
-31. Agha, G. (1986). Actors: A Model of Concurrent Computation in Distributed Systems. *MIT Press*.
+31. Armstrong, J. (2003). Making Reliable Distributed Systems in the Presence of Software Errors. *PhD Thesis, Royal Institute of Technology (KTH), Stockholm*.
 
-32. Armstrong, J. (2003). Making Reliable Distributed Systems in the Presence of Software Errors. *PhD Thesis, Royal Institute of Technology (KTH), Stockholm*.
+32. Rozière, B., Gehring, J., Gloeckle, F., Sootla, S., Gat, I., Tan, X. E., Adi, Y., Liu, J., Sauvestre, R., Remez, T., et al. (2024). Code Llama: Open Foundation Models for Code. *arXiv preprint arXiv:2308.12950*.
 
-33. Rozière, B., Gehring, J., Gloeckle, F., Sootla, S., Gat, I., Tan, X. E., Adi, Y., Liu, J., Sauvestre, R., Remez, T., et al. (2024). Code Llama: Open Foundation Models for Code. *arXiv preprint arXiv:2308.12950*.
+33. Li, R., Allal, L. B., Zi, Y., Muennighoff, N., Kocetkov, D., Mou, C., Marone, M., Akiki, C., Li, J., Chim, J., et al. (2023). StarCoder: May the Source Be With You! *Transactions on Machine Learning Research (TMLR)*.
 
-34. Li, R., Allal, L. B., Zi, Y., Muennighoff, N., Kocetkov, D., Mou, C., Marone, M., Akiki, C., Li, J., Chim, J., et al. (2023). StarCoder: May the Source Be With You! *Transactions on Machine Learning Research (TMLR)*.
+34. Guo, D., Zhu, Q., Yang, D., Xie, Z., Dong, K., Zhang, W., Chen, G., Bi, X., Wu, Y., Li, Y. K., et al. (2024). DeepSeek-Coder: When the Large Language Model Meets Programming — The Rise of Code Intelligence. *arXiv preprint arXiv:2401.14196*.
 
-35. Guo, D., Zhu, Q., Yang, D., Xie, Z., Dong, K., Zhang, W., Chen, G., Bi, X., Wu, Y., Li, Y. K., et al. (2024). DeepSeek-Coder: When the Large Language Model Meets Programming — The Rise of Code Intelligence. *arXiv preprint arXiv:2401.14196*.
+35. Xu, F. F., Vasilescu, B., & Neubig, G. (2022). In-IDE Code Generation from Natural Language: Promise and Challenges. *ACM Transactions on Software Engineering and Methodology (TOSEM)*, 31(2), 1–47.
 
-36. Xu, F. F., Vasilescu, B., & Neubig, G. (2022). In-IDE Code Generation from Natural Language: Promise and Challenges. *ACM Transactions on Software Engineering and Methodology (TOSEM)*, 31(2), 1–47.
-
-37. Newell, A., & Simon, H. A. (1976). Computer Science as Empirical Inquiry: Symbols and Search. *Communications of the ACM*, 19(3), 113–126.
+36. Newell, A., & Simon, H. A. (1976). Computer Science as Empirical Inquiry: Symbols and Search. *Communications of the ACM*, 19(3), 113–126.
