@@ -144,7 +144,7 @@ defmodule EvoDashWeb.WelcomeLive do
   @impl true
   def mount(_params, session, socket) do
     if session["onboarding_completed"] == true do
-      {:halt, push_navigate(socket, to: "/")}
+      {:ok, push_navigate(socket, to: "/")}
     else
       {:ok,
        assign(socket,
