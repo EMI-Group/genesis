@@ -3,7 +3,6 @@ defmodule EvoDashWeb.WelcomeLive do
   Onboarding tutorial with step-by-step guidance for new users.
 
   Covers LLM configuration, a dashboard interface tour, and getting started.
-  Redirects to the dashboard if the user has already completed onboarding.
   """
 
   use EvoDashWeb, :live_view
@@ -16,7 +15,7 @@ defmodule EvoDashWeb.WelcomeLive do
     <EvoDashWeb.Layouts.app
       flash={@flash}
       current_page={:welcome}
-      simple_nav={true}
+      simple_nav={false}
       current_node_id={@current_node_id}
       current_node_name={@current_node_name}
     >
@@ -142,28 +141,24 @@ defmodule EvoDashWeb.WelcomeLive do
   end
 
   @impl true
-  def mount(_params, session, socket) do
-    if session["onboarding_completed"] == true do
-      {:ok, push_navigate(socket, to: "/")}
-    else
-      {:ok,
-       assign(socket,
-         step: 1,
-         total_steps: @total_steps,
-         prompt: "",
-         mode: "genesis_new",
-         mode_info: "",
-         node_path: "",
-         starting_commit: "",
-         resume_from: "",
-         show_advanced: false,
-         archive: false,
-         model_profiles: [],
-         selected_model_id: nil,
-         build_systems: [],
-         selected_build_system: nil
-       )}
-    end
+  def mount(_params, _session, socket) do
+    {:ok,
+     assign(socket,
+       step: 1,
+       total_steps: @total_steps,
+       prompt: "",
+       mode: "genesis_new",
+       mode_info: "",
+       node_path: "",
+       starting_commit: "",
+       resume_from: "",
+       show_advanced: false,
+       archive: false,
+       model_profiles: [],
+       selected_model_id: nil,
+       build_systems: [],
+       selected_build_system: nil
+     )}
   end
 
   @impl true
