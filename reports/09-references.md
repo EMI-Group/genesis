@@ -62,7 +62,7 @@
 
 31. Armstrong, J. (2003). Making Reliable Distributed Systems in the Presence of Software Errors. *PhD Thesis, Royal Institute of Technology (KTH), Stockholm*.
 
-32. Rozière, B., Gehring, J., Gloeckle, F., Sootla, S., Gat, I., Tan, X. E., Adi, Y., Liu, J., Sauvestre, R., Remez, T., et al. (2024). Code Llama: Open Foundation Models for Code. *arXiv preprint arXiv:2308.12950*.
+32. Rozière, B., Gehring, J., Gloeckle, F., Sootla, S., Gat, I., Tan, X. E., Adi, Y., Liu, J., Sauvestre, R., Remez, T., et al. (2023). Code Llama: Open Foundation Models for Code. *arXiv preprint arXiv:2308.12950*.
 
 33. Li, R., Allal, L. B., Zi, Y., Muennighoff, N., Kocetkov, D., Mou, C., Marone, M., Akiki, C., Li, J., Chim, J., et al. (2023). StarCoder: May the Source Be With You! *Transactions on Machine Learning Research (TMLR)*.
 
