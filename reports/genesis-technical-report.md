@@ -5,7 +5,6 @@
 Current AI coding tools — from Copilot to Devin — demonstrate remarkable code generation capabilities through ReAct-style agent loops. Yet they remain limited by shallow symbolic scaffolds: flat context windows, no hierarchical abstraction, and no convergence guarantees. Genesis is a neuro-symbolic framework that addresses these limitations through recursive hierarchical decomposition. It marries the pattern-recognition capabilities of large language models (the *neuro* component) with a principled evolutionary architecture grounded in fixed-point theory (the *symbolic* component). The system models a codebase along two orthogonal dimensions — a **spatial** Context Tree capturing hierarchical structure and a **temporal** phylogenetic DAG capturing evolutionary history. Through the iterative application of a *summary–code fixed-point operator*, Genesis guarantees that every level of the codebase reaches semantic convergence: each module's implementation faithfully realizes its declared intent, and each summary accurately reflects its implementation. This paper presents the framework's mathematical foundation, architectural design, and implementation, showing how the recursive application of a simple fixed-point principle yields a system capable of autonomously building and refining arbitrarily complex software.
 
 ---
-
 ## 1. Philosophy: The Neuro-Symbolic Design
 
 The current AI-assisted programming landscape is rich and evolving rapidly. Tools like GitHub Copilot, Cursor, Cline, Aider, Devin (Cognition AI), and research systems like SWE-agent have moved far beyond simple "prompt → code" generation. The newest entrants — Claude Code (Anthropic, launched 2025), an agentic coding CLI built into the Claude ecosystem, and Codex CLI (OpenAI, launched 2025), a terminal-based coding agent — push the frontier further still, with polished tool orchestration and deep editor integration. Yet, despite their recency and increasing sophistication, all of these tools share the same fundamental architecture. They integrate deeply with developer workflows: file systems, LSP-based code intelligence, terminal access, browser automation, Git history, and structured tool protocols like Anthropic's Model Context Protocol (MCP) (Anthropic, 2024). The ReAct loop (Yao et al., 2023) — reason, act, observe, repeat — is the de facto architecture: the LLM reasons about the task, invokes tools (read file, run test, search code), observes the results, and iterates. This is "vibe coding" in practice (Karpathy, 2025): describing intent in natural language and watching the AI manifest code. On benchmarks like SWE-bench (Jimenez et al., 2024), state-of-the-art systems now resolve a significant fraction of real-world GitHub issues.
@@ -316,7 +315,6 @@ Genesis mirrors well-engineered human software organizations. This alignment is 
 * **Incremental progress:** There is no "all or nothing" threshold. Because every verified step moves up the poset, every node in the temporal DAG represents a deployable, stable state.
 
 ---
-
 ## References
 
 1. d'Avila Garcez, A., & Lamb, L. C. (2023). Neurosymbolic AI: The 3rd Wave. *Artificial Intelligence Review*, 56(11), 12387–12406.
@@ -340,3 +338,45 @@ Genesis mirrors well-engineered human software organizations. This alignment is 
 10. Austin, J., Odena, A., Nye, M., Bosma, M., Michalewski, H., Dohan, D., Jiang, E., Cai, C., Terry, M., Le, Q., & Sutton, C. (2021). Program Synthesis with Large Language Models. *arXiv preprint arXiv:2108.07732*.
 
 11. Kamradt, G. (2023). Needle In A Haystack — Pressure Testing LLMs. *GitHub repository*. https://github.com/gkamradt/LLMTest_NeedleInAHaystack
+
+12. Karpathy, A. (2025). Vibe Coding. *X/Twitter post*.
+
+13. Anthropic. (2024). Model Context Protocol Specification. https://modelcontextprotocol.io/
+
+14. Valmeekam, K., Olmo, A., Sreedharan, S., & Kambhampati, S. (2023). On the Planning Abilities of Large Language Models: A Critical Investigation. *Advances in Neural Information Processing Systems 36 (NeurIPS)*.
+
+15. Hsieh, C.-P., Sun, S., Kriman, S., Acharya, S., Rekesh, D., Jia, F., & Ginsburg, B. (2024). RULER: What's the Real Context Size of Your Long-Context Language Models? *Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP)*.
+
+16. Levy, M., Jacoby, A., & Goldberg, Y. (2024). Same Task, More Tokens: The Impact of Input Length on the Reasoning Performance of Large Language Models. *Findings of the Association for Computational Linguistics: ACL 2024*.
+
+17. Tay, Y., Dehghani, M., Bahri, D., & Metzler, D. (2022). Efficient Transformers: A Survey. *ACM Computing Surveys*, 55(6), 1–28.
+
+18. Zhang, Y., Li, Y., Cui, L., Cai, D., Liu, L., Fu, T., Huang, X., Zhao, E., Zhang, Y., Chen, Y., et al. (2023). Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models. *arXiv preprint arXiv:2309.01219*.
+
+19. Marcus, G. (2020). The Next Decade in AI: Four Steps Towards Robust Artificial Intelligence. *arXiv preprint arXiv:2002.06177*.
+
+20. Hitzler, P., & Sarker, M. K. (Eds.). (2022). Neuro-Symbolic Artificial Intelligence: The State of the Art. *IOS Press*.
+
+21. Mao, J., Gan, C., Kohli, P., Tenenbaum, J. B., & Wu, J. (2019). The Neuro-Symbolic Concept Learner: Interpreting Scenes, Words, and Sentences From Natural Supervision. *Proceedings of the International Conference on Learning Representations (ICLR)*.
+
+22. Tarski, A. (1955). A Lattice-Theoretical Fixpoint Theorem and Its Applications. *Pacific Journal of Mathematics*, 5(2), 285–309.
+
+23. Simon, H. A. (1962). The Architecture of Complexity. *Proceedings of the American Philosophical Society*, 106(6), 467–482.
+
+24. Kleene, S. C. (1952). Introduction to Metamathematics. *D. Van Nostrand Company*.
+
+25. Scott, D. (1976). Data Types as Lattices. *SIAM Journal on Computing*, 5(3), 522–587.
+
+26. Bellman, R. (1957). Dynamic Programming. *Princeton University Press*.
+
+27. Nielson, F., Nielson, H. R., & Hankin, C. (1999). Principles of Program Analysis. *Springer*.
+
+28. Parnas, D. L. (1972). On the Criteria To Be Used in Decomposing Systems into Modules. *Communications of the ACM*, 15(12), 1053–1058.
+
+29. Conway, M. E. (1968). How Do Committees Invent? *Datamation*, 14(4), 28–31.
+
+30. Hewitt, C., Bishop, P., & Steiger, R. (1973). A Universal Modular ACTOR Formalism for Artificial Intelligence. *Proceedings of the 3rd International Joint Conference on Artificial Intelligence (IJCAI '73)*, 235–245.
+
+31. Agha, G. (1986). Actors: A Model of Concurrent Computation in Distributed Systems. *MIT Press*.
+
+32. Armstrong, J. (2003). Making Reliable Distributed Systems in the Presence of Software Errors. *PhD Thesis, Royal Institute of Technology (KTH), Stockholm*.
