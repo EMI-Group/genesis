@@ -38,7 +38,7 @@ Because agents are stateless, they can be paused, preempted, and resumed at any 
 
 ### 3.2 The Context Tree: Spatial Dimension
 
-The codebase is a rooted tree $\mathcal{T} = (V, E)$ where nodes are directories containing a `CONTEXT.md` file. The `CONTEXT.md` contains the module's Intent, API Surface, Constraints, and a Routing Table mapping concerns to child subdirectories. Parent agents do not read child code; they read child summaries.
+The codebase is a rooted tree $\mathcal{T} = (V, E)$ where nodes are directories containing a `CONTEXT.md` file. The `CONTEXT.md` contains the module's Intent, API Surface, Constraints, and a Routing Table mapping concerns to child subdirectories. Parent agents do not read child code; they read child summaries. This is the principle of information hiding elevated to an architectural mandate — a direct extension of Parnas (1972), who established that modules should encapsulate design decisions likely to change, exposing only their interfaces to the rest of the system.
 
 ### 3.3 The Phylogenetic Graph: Temporal Dimension
 
