@@ -36,6 +36,16 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 | `unknown_provider_help/0` | Returns guidance text with links to llmdb.xyz and ReqLLM docs |
 | `known_credential_keys/0` | Returns all unique credential key names from the catalog |
 
+### `EvoGit.Config.VersionState` (upgrade detection)
+Tracks the last-seen Genesis version in `version_state.toml` (in the config dir) so the dashboard can detect upgrades. Defaults to `"0.8.0"` when no file exists (avoids spurious upgrade detection for users already on 0.8.0).
+| Function | Description |
+|----------|-------------|
+| `get_version/0` | Returns the recorded version string (defaults to `"0.8.0"` if file absent/unparseable/missing key) |
+| `current_version/0` | Returns runtime version via `Application.spec(:evo_git, :vsn) \|> to_string()` |
+| `save_version/1` | Persists a version string to the file. `:ok \| {:error, reason}`. Also callable as `save_version/0` (persists `current_version/0`). |
+| `upgraded?/0` | Returns `true` if recorded version differs from current version |
+| `record_current_version/0` | Convenience — persists `current_version/0`. Call after showing update log. |
+
 ### `EvoGit.Defaults` (backward-compatibility shim)
 Delegates all calls to `EvoGit.Config.resolve/1`. Functions: `max_concurrency`, `max_tool_concurrency`, `max_retries`, `agent_max_retries`, `max_agent_depth`, `llm_model`, `github_username`, `compression_threshold_tokens`, `sandbox`.
 
