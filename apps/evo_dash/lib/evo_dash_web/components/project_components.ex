@@ -31,8 +31,8 @@ defmodule EvoDashWeb.ProjectComponents do
     <div>
       <!-- Active project header / empty state -->
       <%= if @active_project do %>
-        <div class="rounded-xl bg-base-100 border border-base-200 shadow-sm">
-          <div class="flex items-center justify-between gap-3 py-2.5 px-4">
+        <div>
+          <div class="flex items-center justify-between gap-3 py-2 px-1">
             <div class="min-w-0 flex items-center gap-2.5">
               <div class="bg-primary/10 text-primary p-2 rounded-lg shrink-0">
                 <.icon name="hero-folder" class="size-4" />
@@ -60,7 +60,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
           <!-- Recent projects quick-select pills (inline below the bar) -->
           <%= if @recent_projects != [] and !@show_open_form and !@show_new_project_form do %>
-            <div class="px-4 pb-2.5 pt-0 border-t border-base-200/60">
+            <div class="px-1 pb-2.5 pt-0">
               <div class="flex flex-wrap items-center gap-1.5 pt-2">
                 <span class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mr-1">
                   {gettext("Recent")}

@@ -160,8 +160,8 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               <% end %>
             <% else %>
-            <!-- Top bar: project selector (full width, compact horizontal bar) -->
-            <div class="mb-6 animate-fade-in-up">
+            <!-- Immersive project selector (flush to top-left, minimal margin) -->
+            <div class="mb-4 animate-fade-in-up">
               <EvoDashWeb.ProjectComponents.project_selector
                 active_project={@active_project}
                 recent_projects={@recent_projects}
@@ -173,9 +173,27 @@ defmodule EvoDashWeb.DashboardLive do
               />
             </div>
 
-            <!-- Centered hero area: project settings + prompt composer -->
-            <div class="max-w-4xl mx-auto space-y-4 animate-fade-in-up animation-delay-100">
-              <!-- Project Settings (collapsible accordion, above the prompt) -->
+            <!-- Full-width prompt + toolbar (task form) -->
+            <div class="animate-fade-in-up animation-delay-100">
+              <EvoDashWeb.TaskFormComponents.task_form
+                prompt={@task_prompt}
+                mode={@task_mode}
+                mode_info={@task_mode_info}
+                node_path={@task_node_path}
+                starting_commit={@task_starting_commit}
+                resume_from={@task_resume_from}
+                show_advanced={@show_advanced}
+                disabled={is_nil(@active_project)}
+                archive={@task_archive}
+                model_profiles={@model_profiles}
+                selected_model_id={@selected_model_id}
+                build_systems={@build_systems}
+                selected_build_system={@task_build_system}
+              />
+            </div>
+
+            <!-- Side-by-side: Project Settings + Advanced Options -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 animate-fade-in-up animation-delay-100">
               <%= if @active_project do %>
                 <EvoDashWeb.ProjectComponents.project_settings_panel
                   active_project={@active_project_path}
@@ -192,22 +210,13 @@ defmodule EvoDashWeb.DashboardLive do
                   platform={@platform}
                 />
               <% end %>
-
-              <!-- The hero prompt form (visual centerpiece) -->
-              <EvoDashWeb.TaskFormComponents.task_form
-                prompt={@task_prompt}
-                mode={@task_mode}
-                mode_info={@task_mode_info}
+              <EvoDashWeb.TaskFormComponents.advanced_options
+                show_advanced={@show_advanced}
                 node_path={@task_node_path}
                 starting_commit={@task_starting_commit}
                 resume_from={@task_resume_from}
-                show_advanced={@show_advanced}
+                mode={@task_mode}
                 disabled={is_nil(@active_project)}
-                archive={@task_archive}
-                model_profiles={@model_profiles}
-                selected_model_id={@selected_model_id}
-                build_systems={@build_systems}
-                selected_build_system={@task_build_system}
               />
             </div>
 
