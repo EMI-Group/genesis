@@ -44,7 +44,16 @@ defmodule EvoDashWeb.DashboardLive do
         ></iframe>
       </EvoDashWeb.Layouts.app>
     <% else %>
-      <EvoDashWeb.Layouts.app flash={@flash} current_page={:dashboard} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
+      <EvoDashWeb.Layouts.app
+        flash={@flash}
+        current_page={:dashboard}
+        config_status={@config_status}
+        current_node_id={@current_node_id}
+        current_node_name={@current_node_name}
+        tasks={@tasks}
+        running_tasks={@running_tasks}
+        pending_tasks={@pending_tasks}
+      >
         <div
           id="dashboard-root"
           phx-hook="StatePersistence"
@@ -196,89 +205,6 @@ defmodule EvoDashWeb.DashboardLive do
                 platform={@platform}
               />
             </div>
-
-            <!-- Running Tasks Section -->
-            <%= if @running_tasks != [] do %>
-              <div class="mt-6 animate-fade-in-up">
-                <div class="flex items-center gap-2 mb-4">
-                  <div class="bg-success/15 text-success p-2 rounded-lg">
-                    <.icon name="hero-play-circle" class="size-5" />
-                  </div>
-                  <h2 class="text-lg font-semibold text-base-content/80">
-                    {gettext("Active Tasks")}
-                  </h2>
-                  <span class="badge badge-success">{length(@running_tasks)}</span>
-                </div>
-                <div class="space-y-3">
-                  <%= for task <- Enum.sort_by(@running_tasks, & &1.started_at, {:asc, DateTime}) do %>
-                    <div class={[
-                      "relative z-10 has-[[open]]:z-30 rounded-2xl",
-                      if(task.status == :finalizing,
-                        do: "animate-pulse-glow-warning",
-                        else: "animate-pulse-glow"
-                      )
-                    ]}>
-                      <EvoDashWeb.TaskCardComponents.task_card
-                        task={task}
-                        show_details={MapSet.member?(@expanded_task_ids, task.id)}
-                      />
-                    </div>
-                  <% end %>
-                </div>
-              </div>
-            <% end %>
-
-            <!-- Pending Review Tasks Section -->
-            <%= if @pending_tasks != [] do %>
-              <div class="mt-6 animate-fade-in-up animation-delay-100">
-                <div class="flex items-center gap-2 mb-4">
-                  <div class="bg-warning/15 text-warning p-2 rounded-lg">
-                    <.icon name="hero-exclamation-circle" class="size-5" />
-                  </div>
-                  <h2 class="text-lg font-semibold text-base-content/80">
-                    {gettext("Pending Review")}
-                  </h2>
-                  <span class="badge badge-ghost">{length(@pending_tasks)}</span>
-                </div>
-                <div class="space-y-3">
-                  <%= for task <- @pending_tasks do %>
-                    <EvoDashWeb.TaskCardComponents.task_card
-                      task={task}
-                      show_details={MapSet.member?(@expanded_task_ids, task.id)}
-                    />
-                  <% end %>
-                </div>
-              </div>
-            <% end %>
-
-            <!-- Empty State -->
-            <%= if @running_tasks == [] and @pending_tasks == [] do %>
-              <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
-                <div class="animate-float">
-                  <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
-                </div>
-                <p class="text-base font-medium">{gettext("No tasks yet")}</p>
-                <p class="text-sm mt-1">
-                  <%= if @active_project do %>
-                    {gettext("Configure and execute a task above to get started.")}
-                  <% else %>
-                    {gettext("Open a project to get started.")}
-                  <% end %>
-                </p>
-              </div>
-            <% end %>
-
-            <!-- View All Tasks Link -->
-            <%= if @running_tasks != [] or @pending_tasks != [] do %>
-              <div class="mt-4 text-center animate-fade-in-up animation-delay-200">
-                <.link navigate={~p"/tasks"} class="btn btn-ghost gap-2 hover-lift">
-                  <.icon name="hero-clipboard-document-list" class="size-4" /> {gettext(
-                    "View Full Task History"
-                  )}
-                  <.icon name="hero-arrow-right" class="size-4" />
-                </.link>
-              </div>
-            <% end %>
 
             <!-- Full Result Modal -->
             <%= if @selected_result do %>
