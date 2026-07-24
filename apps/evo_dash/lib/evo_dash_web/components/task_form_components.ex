@@ -2,6 +2,10 @@ defmodule EvoDashWeb.TaskFormComponents do
   @moduledoc """
   Task form component for the dashboard — an immersive, ChatGPT/Gemini-style
   prompt composer with slim inline controls and a prominent prompt hero.
+
+  Layout: a clean toolbar row (mode / model / build system) sits above the
+  prompt textarea (the visual hero), followed by the execute button and an
+  collapsible advanced-options accordion (evolve modes only).
   """
 
   # zh_CN: Evolution → "演进", Prompt → "提示词", Commit → "提交", Branch → "分支"
@@ -9,7 +13,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
-  # task_form/1 — Immersive prompt composer (centered, spacious, ChatGPT-like)
+  # task_form/1 — Immersive prompt composer (hero textarea + toolbar controls)
   # ---------------------------------------------------------------------------
 
   attr(:prompt, :string, default: "")
@@ -30,59 +34,81 @@ defmodule EvoDashWeb.TaskFormComponents do
     ~H"""
     <.form for={%{}} phx-submit="task_submit" class="w-full">
       <div class={["transition-opacity", @disabled && "opacity-40 pointer-events-none select-none"]}>
-        <!-- Slim controls row — task mode + model + build system (unobtrusive) -->
-        <div class="flex flex-wrap items-center gap-2 mb-5">
+        <!-- Controls toolbar — labeled select groups (mode, model, build system) -->
+        <div class="flex flex-wrap items-end gap-x-5 gap-y-2.5 mb-4">
           <!-- Task Mode -->
-          <div class="flex items-center gap-1.5">
-            <select
-              name="mode"
-              phx-change="task_change"
-              class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="genesis_existing" selected={@mode == "genesis_existing"}>
-                {gettext("Initialize Existing")}
-              </option>
-              <option value="genesis_new" selected={@mode == "genesis_new"}>
-                {gettext("Create New")}
-              </option>
-              <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-                <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
-              </option>
-            </select>
-            <.tip text={mode_description(@mode)} />
+          <div class="flex flex-col gap-1">
+            <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
+              {gettext("Mode")}
+            </label>
+            <div class="flex items-center gap-1.5">
+              <select
+                name="mode"
+                phx-change="task_change"
+                class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9rem]"
+              >
+                <option value="genesis_existing" selected={@mode == "genesis_existing"}>
+                  {gettext("Initialize Existing")}
+                </option>
+                <option value="genesis_new" selected={@mode == "genesis_new"}>
+                  {gettext("Create New")}
+                </option>
+                <option value="evolve_simple" selected={@mode == "evolve_simple"}>
+                  <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
+                </option>
+              </select>
+              <.tip text={mode_description(@mode)} />
+            </div>
           </div>
 
           <!-- Model -->
           <%= if @model_profiles != [] do %>
-            <div class="flex items-center gap-1.5">
-              <select
-                name="model_id"
-                phx-change="select_model"
-                class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
-              >
-                <%= for profile <- @model_profiles do %>
-                  <option value={profile.id} selected={@selected_model_id == profile.id}>
-                    {profile.id <> " (" <> profile_model_label(profile) <> ")"}
-                  </option>
-                <% end %>
-              </select>
-              <.tip text={gettext("Select which model profile to use for this task")} />
+            <div class="flex flex-col gap-1">
+              <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
+                {gettext("Model")}
+              </label>
+              <div class="flex items-center gap-1.5">
+                <select
+                  name="model_id"
+                  phx-change="select_model"
+                  class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[10rem]"
+                >
+                  <%= for profile <- @model_profiles do %>
+                    <option value={profile.id} selected={@selected_model_id == profile.id}>
+                      {profile.id <> " (" <> profile_model_label(profile) <> ")"}
+                    </option>
+                  <% end %>
+                </select>
+                <.tip text={gettext("Select which model profile to use for this task")} />
+              </div>
             </div>
           <% end %>
 
           <!-- Build System (genesis modes only) -->
           <%= if String.starts_with?(@mode, "genesis") do %>
-            <select
-              name="build_system"
-              class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">{gettext("No build system")}</option>
-              <%= for bs <- @build_systems do %>
-                <option value={to_string(bs.id)} selected={@selected_build_system == to_string(bs.id)}>
-                  {bs.name}
-                </option>
-              <% end %>
-            </select>
+            <div class="flex flex-col gap-1">
+              <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
+                {gettext("Build System")}
+              </label>
+              <select
+                name="build_system"
+                class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+              >
+                <option value="">{gettext("No build system")}</option>
+                <%= for bs <- @build_systems do %>
+                  <option value={to_string(bs.id)} selected={@selected_build_system == to_string(bs.id)}>
+                    {bs.name}
+                  </option>
+                <% end %>
+              </select>
+            </div>
+          <% end %>
+
+          <%!-- Mode info message (subtle hint, inline) --%>
+          <%= if @mode_info && @mode_info != "" do %>
+            <span class="text-xs text-base-content/40 italic ml-auto self-end pb-1.5">
+              {@mode_info}
+            </span>
           <% end %>
         </div>
 
@@ -90,7 +116,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         <div class="relative">
           <!-- Welcome hint overlay when disabled (no project active) -->
           <%= if @disabled do %>
-            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
               <div class="text-center">
                 <div class="animate-float">
                   <.icon name="hero-sparkles" class="size-12 mx-auto mb-2 text-base-content/40" />
@@ -138,23 +164,23 @@ defmodule EvoDashWeb.TaskFormComponents do
           <% end %>
         </div>
 
-        <!-- Advanced options (evolve only, collapsible below prompt) -->
+        <!-- Advanced options (evolve only) — accordion styled identically to
+             project_settings_panel's <details> for visual consistency -->
         <%= if String.starts_with?(@mode, "evolve") do %>
-          <div class="mt-3">
-            <button
-              type="button"
-              class="flex items-center gap-2 px-1 py-1.5 text-sm font-medium text-base-content/60 hover:text-base-content transition-colors"
-              phx-click="toggle_advanced"
-            >
-              <.icon name="hero-adjustments-horizontal" class="size-4" />
-              {gettext("Advanced Options")}
-              <.icon
-                name="hero-chevron-down"
-                class={"size-3.5 transition-transform #{if @show_advanced, do: "rotate-180", else: ""}"}
-              />
-            </button>
-            <%= if @show_advanced do %>
-              <div class="mt-2 p-4 rounded-xl border border-base-200 bg-base-200/30 space-y-4 animate-slide-down">
+          <div class="mt-4">
+            <details class="group rounded-xl bg-base-100 border border-base-200 shadow-sm overflow-hidden" open={@show_advanced}>
+              <summary
+                class="p-3.5 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-2 list-none [&::-webkit-details-marker]:hidden"
+                phx-click="toggle_advanced"
+              >
+                <.icon name="hero-adjustments-horizontal" class="size-4 text-base-content/60" />
+                <span class="text-sm font-semibold flex-1">{gettext("Advanced Options")}</span>
+                <.icon
+                  name="hero-chevron-down"
+                  class="size-4 text-base-content/40 group-open:rotate-180 transition-transform"
+                />
+              </summary>
+              <div class="p-4 pt-2 space-y-4 border-t border-base-200">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div class="form-control">
                     <label class="label pb-1">
@@ -215,7 +241,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                   />
                 </div>
               </div>
-            <% end %>
+            </details>
           </div>
         <% end %>
 

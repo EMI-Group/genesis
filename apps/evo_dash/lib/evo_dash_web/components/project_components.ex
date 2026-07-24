@@ -1,12 +1,17 @@
 defmodule EvoDashWeb.ProjectComponents do
   @moduledoc """
   Project selection and settings components for the dashboard.
+
+  Both `project_selector/1` (header + open/new forms) and
+  `project_settings_panel/1` (genesis.toml status, worktree script, dev
+  commands, foreign repos) are designed for a narrow left column in a
+  two-column dashboard layout.
   """
   use EvoDashWeb, :html
   alias EvoGit.Core.ForeignRepo
 
   # ---------------------------------------------------------------------------
-  # project_selector/1 — Left sidebar project context panel
+  # project_selector/1 — Project header / empty state + open/new forms
   # ---------------------------------------------------------------------------
 
   attr(:active_project, :map, default: nil)
@@ -22,25 +27,54 @@ defmodule EvoDashWeb.ProjectComponents do
     <div>
       <!-- Active project header / empty state -->
       <%= if @active_project do %>
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div class="min-w-0">
-            <h1 class="text-2xl font-bold text-base-content truncate">
-              {@active_project.name}
-            </h1>
-            <p class="text-sm text-base-content/50 font-mono truncate mt-0.5">
-              {@active_project.path}
-            </p>
+        <div class="rounded-xl bg-base-100 border border-base-200 shadow-sm p-4">
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0 flex items-center gap-3">
+              <div class="bg-primary/10 text-primary p-2.5 rounded-lg shrink-0">
+                <.icon name="hero-folder" class="size-5" />
+              </div>
+              <div class="min-w-0">
+                <h2 class="text-lg font-bold text-base-content truncate leading-tight">
+                  {@active_project.name}
+                </h2>
+                <p class="text-xs text-base-content/50 font-mono truncate mt-0.5">
+                  {@active_project.path}
+                </p>
+              </div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_open_project_form">
+                <.icon name="hero-arrow-path" class="size-4" />
+                <span class="hidden sm:inline">{gettext("Change")}</span>
+              </button>
+              <button class="btn btn-sm btn-outline btn-primary gap-1" phx-click="toggle_new_project_form">
+                <.icon name="hero-plus" class="size-4" />
+                <span class="hidden sm:inline">{gettext("New")}</span>
+              </button>
+            </div>
           </div>
-          <div class="flex items-center gap-2 shrink-0">
-            <button class="btn btn-sm btn-primary gap-1" phx-click="toggle_open_project_form">
-              <.icon name="hero-folder-open" class="size-4" />
-              {gettext("Change")}
-            </button>
-            <button class="btn btn-sm btn-outline btn-primary gap-1" phx-click="toggle_new_project_form">
-              <.icon name="hero-plus-circle" class="size-4" />
-              {gettext("New")}
-            </button>
-          </div>
+
+          <!-- Recent projects quick-select pills -->
+          <%= if @recent_projects != [] and !@show_open_form and !@show_new_project_form do %>
+            <div class="mt-3 pt-3 border-t border-base-200">
+              <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+                {gettext("Recent")}
+              </p>
+              <div class="flex flex-wrap gap-1.5">
+                <%= for project <- Enum.take(@recent_projects, 6) do %>
+                  <button
+                    type="button"
+                    phx-click="select_project"
+                    phx-value-path={project.path}
+                    class="btn btn-xs btn-ghost font-medium normal-case text-base-content/60 hover:bg-base-200 gap-1"
+                  >
+                    <.icon name="hero-clock" class="size-3 opacity-50" />
+                    {project.name}
+                  </button>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
         </div>
       <% else %>
         <div class="rounded-xl bg-base-100 border border-base-200 border-dashed p-8 text-center">
@@ -66,126 +100,130 @@ defmodule EvoDashWeb.ProjectComponents do
         </div>
       <% end %>
 
-        <!-- Inline Open Project Form -->
-        <%= if @show_open_form do %>
-          <div class="mt-2 p-3 rounded-lg border border-base-200 bg-base-200/20 animate-slide-down">
-            <!-- Recent projects quick-select -->
-            <%= if @recent_projects != [] do %>
-              <div class="mb-3">
-                <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-1.5">
-                  {gettext("Recent Projects")}
-                </p>
-                <div class="flex flex-wrap gap-1.5">
-                  <%= for project <- Enum.take(@recent_projects, 8) do %>
-                    <button
-                      type="button"
-                      phx-click="select_project"
-                      phx-value-path={project.path}
-                      class="btn btn-xs btn-ghost font-medium normal-case text-base-content/70 hover:bg-base-200"
-                    >
-                      {project.name}
-                    </button>
-                  <% end %>
-                </div>
+      <!-- Inline Open Project Form -->
+      <%= if @show_open_form do %>
+        <div class="mt-2 p-3 rounded-xl border border-base-200 bg-base-100 shadow-sm animate-slide-down">
+          <!-- Recent projects quick-select -->
+          <%= if @recent_projects != [] do %>
+            <div class="mb-3">
+              <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-1.5">
+                {gettext("Recent Projects")}
+              </p>
+              <div class="flex flex-wrap gap-1.5">
+                <%= for project <- Enum.take(@recent_projects, 8) do %>
+                  <button
+                    type="button"
+                    phx-click="select_project"
+                    phx-value-path={project.path}
+                    class="btn btn-xs btn-ghost font-medium normal-case text-base-content/70 hover:bg-base-200"
+                  >
+                    {project.name}
+                  </button>
+                <% end %>
               </div>
-            <% end %>
-            <.form for={%{}} phx-submit="open_project" class="flex flex-col gap-2">
-              <div class="flex-1 flex items-center gap-2">
+            </div>
+          <% end %>
+          <.form for={%{}} phx-submit="open_project" class="flex flex-col gap-2">
+            <div class="flex-1 flex items-center gap-2">
+              <%= if @tauri_detected do %>
+                <button type="button" id="project-path-browse-button" class="btn btn-sm btn-warning gap-1 shrink-0" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="project">
+                  <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
+                </button>
+              <% end %>
+              <div class="picker-container flex-1">
+                <input
+                  type="text"
+                  name="path"
+                  class="input input-bordered input-sm w-full pr-8 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+                  placeholder={platform_placeholder(@platform)}
+                  autofocus
+                  phx-hook="PathAutocomplete"
+                  phx-change="path_input"
+                  phx-debounce="150"
+                  id="project-path-input"
+                  list="path-suggestions"
+                />
+                <datalist id="path-suggestions">
+                  <%= for suggestion <- @path_suggestions do %>
+                    <option value={suggestion}></option>
+                  <% end %>
+                </datalist>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button type="submit" class="btn btn-primary btn-sm flex-1 gap-1">
+                <.icon name="hero-check" class="size-4" /> {gettext("Open")}
+              </button>
+              <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_open_project_form">
+                {gettext("Cancel")}
+              </button>
+            </div>
+          </.form>
+        </div>
+      <% end %>
+
+      <!-- Inline New Project Form -->
+      <%= if @show_new_project_form do %>
+        <div class="mt-2 p-3 rounded-xl border border-base-200 bg-base-100 shadow-sm animate-slide-down">
+          <.form for={%{}} phx-submit="create_project" class="flex flex-col gap-2">
+            <!-- Location (parent directory) -->
+            <div>
+              <label class="label py-1">
+                <span class="label-text text-xs font-medium">{gettext("Location (parent directory)")}</span>
+              </label>
+              <div class="flex items-center gap-2">
                 <%= if @tauri_detected do %>
-                  <button type="button" id="project-path-browse-button" class="btn btn-sm btn-warning gap-1 shrink-0" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="project">
+                  <button type="button" id="new-project-location-browse-button" class="btn btn-sm btn-warning gap-1 shrink-0" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="new-project">
                     <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
                   </button>
                 <% end %>
                 <div class="picker-container flex-1">
                   <input
                     type="text"
-                    name="path"
-                    class="input input-bordered input-sm w-full pr-8 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
-                    placeholder={platform_placeholder(@platform)}
+                    name="location"
+                    class="input input-bordered input-sm w-full focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+                    placeholder={platform_parent_placeholder(@platform)}
                     autofocus
-                    phx-hook="PathAutocomplete"
-                    phx-change="path_input"
-                    phx-debounce="150"
-                    id="project-path-input"
-                    list="path-suggestions"
+                    id="new-project-location-input"
                   />
-                  <datalist id="path-suggestions">
-                    <%= for suggestion <- @path_suggestions do %>
-                      <option value={suggestion}></option>
-                    <% end %>
-                  </datalist>
                 </div>
               </div>
-              <div class="flex gap-2">
-                <button type="submit" class="btn btn-primary btn-sm flex-1 gap-1">
-                  <.icon name="hero-check" class="size-4" /> {gettext("Open")}
-                </button>
-                <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_open_project_form">
-                  {gettext("Cancel")}
-                </button>
-              </div>
-            </.form>
-          </div>
-        <% end %>
+            </div>
 
-        <!-- Inline New Project Form -->
-        <%= if @show_new_project_form do %>
-          <div class="mt-2 p-3 rounded-lg border border-base-200 bg-base-200/20 animate-slide-down">
-            <.form for={%{}} phx-submit="create_project" class="flex flex-col gap-2">
-              <!-- Location (parent directory) -->
-              <div>
-                <label class="label py-1">
-                  <span class="label-text text-xs font-medium">{gettext("Location (parent directory)")}</span>
-                </label>
-                <div class="flex items-center gap-2">
-                  <%= if @tauri_detected do %>
-                    <button type="button" id="new-project-location-browse-button" class="btn btn-sm btn-warning gap-1 shrink-0" phx-click="pick_directory" phx-hook="DirectoryPicker" data-picker-id="new-project">
-                      <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
-                    </button>
-                  <% end %>
-                  <div class="picker-container flex-1">
-                    <input
-                      type="text"
-                      name="location"
-                      class="input input-bordered input-sm w-full focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
-                      placeholder={platform_parent_placeholder(@platform)}
-                      autofocus
-                      id="new-project-location-input"
-                    />
-                  </div>
-                </div>
-              </div>
+            <!-- Project name -->
+            <div>
+              <label class="label py-1">
+                <span class="label-text text-xs font-medium">{gettext("Project name")}</span>
+              </label>
+              <input
+                type="text"
+                name="name"
+                class="input input-bordered input-sm w-full font-mono text-sm"
+                placeholder="my-new-project"
+              />
+            </div>
 
-              <!-- Project name -->
-              <div>
-                <label class="label py-1">
-                  <span class="label-text text-xs font-medium">{gettext("Project name")}</span>
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  class="input input-bordered input-sm w-full font-mono text-sm"
-                  placeholder="my-new-project"
-                />
-              </div>
-
-              <div class="flex gap-2">
-                <button type="submit" class="btn btn-primary btn-sm flex-1 gap-1">
-                  <.icon name="hero-check" class="size-4" /> {gettext("Create")}
-                </button>
-                <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_new_project_form">
-                  {gettext("Cancel")}
-                </button>
-              </div>
-            </.form>
-          </div>
-        <% end %>
+            <div class="flex gap-2">
+              <button type="submit" class="btn btn-primary btn-sm flex-1 gap-1">
+                <.icon name="hero-check" class="size-4" /> {gettext("Create")}
+              </button>
+              <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_new_project_form">
+                {gettext("Cancel")}
+              </button>
+            </div>
+          </.form>
+        </div>
+      <% end %>
     </div>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # project_settings_panel/1 — Collapsible project settings (fits narrow panel)
+  # project_settings_panel/1 — Collapsible settings accordion (left column)
+  #
+  # Uses a native <details> element with open={@show} for the toggle.
+  # Styled identically to the Advanced Options accordion in
+  # TaskFormComponents for visual consistency.
   # ---------------------------------------------------------------------------
 
   attr(:active_project, :string, required: true)
@@ -204,7 +242,7 @@ defmodule EvoDashWeb.ProjectComponents do
   def project_settings_panel(assigns) do
     ~H"""
     <details class="group rounded-xl bg-base-100 border border-base-200 shadow-sm overflow-hidden" open={@show}>
-      <summary class="p-3.5 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-2 list-none">
+      <summary class="p-3.5 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-2 list-none [&::-webkit-details-marker]:hidden">
         <.icon name="hero-cog-6-tooth" class="size-4 text-base-content/60" />
         <span class="text-sm font-semibold flex-1">{gettext("Project Settings")}</span>
         <!-- Config status indicator -->
@@ -224,14 +262,6 @@ defmodule EvoDashWeb.ProjectComponents do
       </summary>
 
       <div class="p-4 pt-2 space-y-4 border-t border-base-200">
-        <!-- Project Root -->
-        <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
-          <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">
-            {gettext("Project Root")}
-          </p>
-          <p class="text-xs font-mono mt-0.5 truncate">{@active_project}</p>
-        </div>
-
         <!-- Config status -->
         <p class="text-sm">
           <%= if @project_config do %>
@@ -249,9 +279,17 @@ defmodule EvoDashWeb.ProjectComponents do
           <% end %>
         </p>
 
+        <!-- Project Root -->
+        <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
+          <p class="text-[11px] text-base-content/50 font-medium uppercase tracking-wide">
+            {gettext("Project Root")}
+          </p>
+          <p class="text-xs font-mono mt-0.5 truncate">{@active_project}</p>
+        </div>
+
         <%= if @worktree_script do %>
           <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
-            <p class="text-xs text-base-content/50 font-medium uppercase tracking-wide">
+            <p class="text-[11px] text-base-content/50 font-medium uppercase tracking-wide">
               {gettext("Worktree Init Script")}
             </p>
             <p class="text-xs font-mono mt-0.5">{@worktree_script}</p>

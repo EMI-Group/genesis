@@ -160,11 +160,12 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               <% end %>
             <% else %>
-            <!-- Single-column immersive layout -->
-            <div class="mt-2 space-y-6">
+            <!-- Two-column responsive layout: settings sidebar (left) + main content (right) -->
+            <div class="mt-2 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
 
-              <!-- A) Project Header / Selector -->
-              <div class="animate-fade-in-up">
+              <!-- LEFT: project selector + unified settings (lg:col-span-1) -->
+              <div class="lg:col-span-1 space-y-4 animate-fade-in-up">
+                <!-- A) Project Header / Selector -->
                 <EvoDashWeb.ProjectComponents.project_selector
                   active_project={@active_project}
                   recent_projects={@recent_projects}
@@ -174,30 +175,31 @@ defmodule EvoDashWeb.DashboardLive do
                   tauri_detected={@tauri_detected}
                   platform={@platform}
                 />
+
+                <!-- B) Project Settings (collapsible, same accordion style as Advanced Options) -->
+                <%= if @active_project do %>
+                  <div class="animate-fade-in-up animation-delay-100">
+                    <EvoDashWeb.ProjectComponents.project_settings_panel
+                      active_project={@active_project_path}
+                      show={@show_project_settings}
+                      project_config={@project_config}
+                      worktree_script={@worktree_script}
+                      commands={@commands}
+                      foreign_repos={@foreign_repos}
+                      show_add_foreign_repo={@show_add_foreign_repo_form}
+                      new_repo_id={@new_repo_id}
+                      new_repo_path={@new_repo_path}
+                      new_repo_description={@new_repo_description}
+                      tauri_detected={@tauri_detected}
+                      platform={@platform}
+                    />
+                  </div>
+                <% end %>
               </div>
 
-              <!-- B) Project Settings (collapsible, between header and task form) -->
-              <%= if @active_project do %>
-                <div class="animate-fade-in-up animation-delay-100">
-                  <EvoDashWeb.ProjectComponents.project_settings_panel
-                    active_project={@active_project_path}
-                    show={@show_project_settings}
-                    project_config={@project_config}
-                    worktree_script={@worktree_script}
-                    commands={@commands}
-                    foreign_repos={@foreign_repos}
-                    show_add_foreign_repo={@show_add_foreign_repo_form}
-                    new_repo_id={@new_repo_id}
-                    new_repo_path={@new_repo_path}
-                    new_repo_description={@new_repo_description}
-                    tauri_detected={@tauri_detected}
-                    platform={@platform}
-                  />
-                </div>
-              <% end %>
-
-              <!-- C) Task Form (full width, hero of the page) -->
-              <div class="animate-fade-in-up animation-delay-100">
+              <!-- RIGHT: prompt composer + task history (lg:col-span-2) -->
+              <div class="lg:col-span-2 space-y-6 animate-fade-in-up animation-delay-100">
+                <!-- C) Task Form (full width, hero of the page) -->
                 <EvoDashWeb.TaskFormComponents.task_form
                   prompt={@task_prompt}
                   mode={@task_mode}
@@ -213,7 +215,26 @@ defmodule EvoDashWeb.DashboardLive do
                   build_systems={@build_systems}
                   selected_build_system={@task_build_system}
                 />
+
+                <!-- D) Task History (below prompt, only when project active & tasks exist) -->
+                <%= if @active_project && @tasks != [] do %>
+                  <div class="animate-fade-in-up">
+                    <div class="flex items-center gap-2 mb-3">
+                      <.icon name="hero-clock" class="size-5 text-base-content/60" />
+                      <h2 class="text-lg font-bold text-base-content">
+                        {gettext("Task History")}
+                      </h2>
+                      <span class="badge badge-ghost badge-sm">{length(@tasks)}</span>
+                    </div>
+                    <div class="space-y-3">
+                      <%= for task <- @tasks do %>
+                        <EvoDashWeb.TaskCardComponents.task_card task={task} show_details={true} />
+                      <% end %>
+                    </div>
+                  </div>
+                <% end %>
               </div>
+
             </div>
 
             <!-- Full Result Modal -->
