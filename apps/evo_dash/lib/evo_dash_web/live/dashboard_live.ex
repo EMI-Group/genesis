@@ -313,85 +313,85 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def mount(_params, session, socket) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
-      send(self(), :load_config_status)
-    end
-
-    recent_projects = TaskRegistry.list_recent_projects()
-
-    # Pre-resolve config once and memoize via Process dict so that the
-    # deferred :load_config_status handler can reuse this result instead
-    # of re-reading and re-parsing config.toml.
-    Process.put(:memo_config_resolve, EvoGit.Config.resolve())
-
-    # Defer config_status to handle_info — it reads config.toml +
-    # credentials.toml and is NOT needed for the first paint. The
-    # config warning banner can appear a frame later.
-    config_status = nil
-
-    {model_profiles, selected_model_id} = Project.load_model_profiles()
-
-    build_systems = EvoGit.Runtime.WorktreeInitScript.build_systems()
-
-    socket =
-      assign(socket,
-        active_project: nil,
-        active_project_path: nil,
-        show_open_project_form: false,
-        show_new_project_form: false,
-        recent_projects: recent_projects,
-        path_suggestions: [],
-        expanded_task_ids: MapSet.new(),
-        selected_result: nil,
-        selected_options: nil,
-        show_project_settings: false,
-        project_config: nil,
-        worktree_script: nil,
-        commands: %{},
-        foreign_repos: [],
-        show_add_foreign_repo_form: false,
-        new_repo_id: "",
-        new_repo_path: "",
-        new_repo_description: "",
-        tasks: [],
-        model_profiles: model_profiles,
-        selected_model_id: selected_model_id,
-        build_systems: build_systems,
-        tauri_detected: false,
-        platform: "linux",
-        notified_task_ids:
-          TaskRegistry.list_tasks()
-          |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
-          |> Enum.map(& &1.id)
-          |> MapSet.new()
-      )
-
-    socket = Assigns.assign_form_defaults(socket)
-
-    socket =
-      assign(socket,
-        show_advanced: false,
-        task_resume_from: "",
-        task_build_system: nil,
-        config_status: config_status,
-        remote?: false,
-        remote_agents: []
-      )
-
-    socket = Assigns.assign_running_and_pending_tasks(socket)
-
-    # On the dead render (initial HTTP request), check the session for the
-    # onboarding flag and redirect to /welcome if not completed. The flag is
-    # set via a cookie by the welcome_dismissed JS event handler, so it only
-    # appears on full-page reloads after onboarding.
+    # On the dead render (initial HTTP request), check the session cookie for the
+    # onboarding flag and redirect to /welcome if not completed. The cookie is set
+    # by the welcome_dismissed JS event handler (via WelcomeCheck hook).
     #
     # For WebSocket-connected mounts (e.g. push_navigate), the WelcomeCheck
-    # JS hook handles onboarding detection via localStorage.
+    # JS hook handles onboarding detection via localStorage — the session cookie
+    # won't reflect a just-completed onboarding, so we skip the check here.
     if !connected?(socket) and session["onboarding_completed"] != true do
       {:ok, push_navigate(socket, to: "/welcome")}
     else
+      if connected?(socket) do
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
+        send(self(), :load_config_status)
+      end
+
+      recent_projects = TaskRegistry.list_recent_projects()
+
+      # Pre-resolve config once and memoize via Process dict so that the
+      # deferred :load_config_status handler can reuse this result instead
+      # of re-reading and re-parsing config.toml.
+      Process.put(:memo_config_resolve, EvoGit.Config.resolve())
+
+      # Defer config_status to handle_info — it reads config.toml +
+      # credentials.toml and is NOT needed for the first paint. The
+      # config warning banner can appear a frame later.
+      config_status = nil
+
+      {model_profiles, selected_model_id} = Project.load_model_profiles()
+
+      build_systems = EvoGit.Runtime.WorktreeInitScript.build_systems()
+
+      socket =
+        assign(socket,
+          active_project: nil,
+          active_project_path: nil,
+          show_open_project_form: false,
+          show_new_project_form: false,
+          recent_projects: recent_projects,
+          path_suggestions: [],
+          expanded_task_ids: MapSet.new(),
+          selected_result: nil,
+          selected_options: nil,
+          show_project_settings: false,
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [],
+          show_add_foreign_repo_form: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tasks: [],
+          model_profiles: model_profiles,
+          selected_model_id: selected_model_id,
+          build_systems: build_systems,
+          tauri_detected: false,
+          platform: "linux",
+          notified_task_ids:
+            TaskRegistry.list_tasks()
+            |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+            |> Enum.map(& &1.id)
+            |> MapSet.new()
+        )
+
+      socket = Assigns.assign_form_defaults(socket)
+
+      socket =
+        assign(socket,
+          show_advanced: false,
+          task_resume_from: "",
+          task_build_system: nil,
+          config_status: config_status,
+          remote?: false,
+          remote_agents: []
+        )
+
+      socket = Assigns.assign_running_and_pending_tasks(socket)
+
       {:ok, socket}
     end
   end
