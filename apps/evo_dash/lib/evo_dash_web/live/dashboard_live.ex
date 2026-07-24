@@ -51,7 +51,6 @@ defmodule EvoDashWeb.DashboardLive do
           data-project={@active_project_path}
           data-task-mode={@task_mode}
         >
-          <div id="welcome-check" phx-hook="WelcomeCheck" class="hidden"></div>
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
           <div id="browser-notifications" phx-hook="BrowserNotifications">
@@ -306,154 +305,94 @@ defmodule EvoDashWeb.DashboardLive do
             <%!-- end of @remote? else branch --%>
           </div>
         </div>
-        <%= if @show_welcome do %>
-          <div class="modal modal-open bg-black/50" id="welcome-modal">
-            <div class="modal-box max-w-lg">
-              <div class="flex items-center gap-3 mb-4">
-                <div class="bg-primary/15 text-primary p-3 rounded-xl">
-                  <.icon name="hero-sparkles" class="size-6" />
-                </div>
-                <h3 class="font-bold text-lg">{gettext("Welcome to EvoGit!")}</h3>
-              </div>
-              <p class="text-sm text-base-content/70 leading-relaxed mb-6">
-                {gettext(
-                  "EvoGit uses AI agents to build and evolve codebases. To get started, you'll need to configure an LLM model and API key. Would you like to set that up now?"
-                )} <% # zh_CN: "智能体", "演进" %>
-              </p>
-              <div class="mb-4">
-                <div class="text-xs font-medium text-base-content/50 mb-1.5">
-                  {gettext("Language")}
-                </div>
-                <details class="dropdown">
-                  <summary class="btn btn-sm btn-outline gap-2 w-full justify-between">
-                    <span class="flex items-center gap-2">
-                      <.icon name="hero-language" class="size-4" />
-                      {Enum.find_value(EvoDashWeb.Layouts.supported_languages(), "English", fn {code,
-                                                                                                name} ->
-                        if code == @welcome_locale, do: name
-                      end)}
-                    </span>
-                    <.icon name="hero-chevron-down" class="size-4 opacity-60" />
-                  </summary>
-                  <div class="dropdown-content mt-1 z-50 w-full rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
-                    <div class="max-h-48 overflow-y-auto flex flex-col gap-0.5">
-                      <button
-                        :for={{code, name} <- EvoDashWeb.Layouts.supported_languages()}
-                        class={[
-                          "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-                          @welcome_locale == code &&
-                            "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
-                          @welcome_locale != code &&
-                            "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-                        ]}
-                        phx-click="set_welcome_language"
-                        phx-value-locale={code}
-                      >
-                        <span class="flex-1 text-left">{name}</span>
-                        <.icon
-                          :if={@welcome_locale == code}
-                          name="hero-check-solid"
-                          class="size-4 text-indigo-500 shrink-0"
-                        />
-                      </button>
-                    </div>
-                  </div>
-                </details>
-              </div>
-              <div class="modal-action">
-                <button class="btn btn-ghost" phx-click="dismiss_welcome">
-                  {gettext("Skip")}
-                </button>
-                <button class="btn btn-primary gap-2" phx-click="welcome_configure_llm">
-                  <.icon name="hero-sparkles" class="size-4" />
-                  {gettext("Configure LLM")}
-                </button>
-              </div>
-            </div>
-            <div class="modal-backdrop" phx-click="dismiss_welcome">
-              <button class="cursor-default">{gettext("close")}</button>
-            </div>
-          </div>
-        <% end %>
       </EvoDashWeb.Layouts.app>
     <% end %>
     """
   end
 
   @impl true
-  def mount(_params, _session, socket) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
-      send(self(), :load_config_status)
+  def mount(_params, session, socket) do
+    # On the dead render (initial HTTP request), check the session for the
+    # onboarding flag and redirect to /welcome if not completed. The session
+    # is set by WelcomeController.complete/2 when the user finishes onboarding.
+    #
+    # For WebSocket-connected mounts (e.g. push_navigate after redirect),
+    # the session cookie already reflects completed onboarding, so we skip
+    # the check here.
+    if !connected?(socket) and session["onboarding_completed"] != true do
+      {:ok, push_navigate(socket, to: "/welcome")}
+    else
+      if connected?(socket) do
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
+        send(self(), :load_config_status)
+      end
+
+      recent_projects = TaskRegistry.list_recent_projects()
+
+      # Pre-resolve config once and memoize via Process dict so that the
+      # deferred :load_config_status handler can reuse this result instead
+      # of re-reading and re-parsing config.toml.
+      Process.put(:memo_config_resolve, EvoGit.Config.resolve())
+
+      # Defer config_status to handle_info — it reads config.toml +
+      # credentials.toml and is NOT needed for the first paint. The
+      # config warning banner can appear a frame later.
+      config_status = nil
+
+      {model_profiles, selected_model_id} = Project.load_model_profiles()
+
+      build_systems = EvoGit.Runtime.WorktreeInitScript.build_systems()
+
+      socket =
+        assign(socket,
+          active_project: nil,
+          active_project_path: nil,
+          show_open_project_form: false,
+          show_new_project_form: false,
+          recent_projects: recent_projects,
+          path_suggestions: [],
+          expanded_task_ids: MapSet.new(),
+          selected_result: nil,
+          selected_options: nil,
+          show_project_settings: false,
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [],
+          show_add_foreign_repo_form: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tasks: [],
+          model_profiles: model_profiles,
+          selected_model_id: selected_model_id,
+          build_systems: build_systems,
+          tauri_detected: false,
+          platform: "linux",
+          notified_task_ids:
+            TaskRegistry.list_tasks()
+            |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+            |> Enum.map(& &1.id)
+            |> MapSet.new()
+        )
+
+      socket = Assigns.assign_form_defaults(socket)
+
+      socket =
+        assign(socket,
+          show_advanced: false,
+          task_resume_from: "",
+          task_build_system: nil,
+          config_status: config_status,
+          remote?: false,
+          remote_agents: []
+        )
+
+      socket = Assigns.assign_running_and_pending_tasks(socket)
+
+      {:ok, socket}
     end
-
-    recent_projects = TaskRegistry.list_recent_projects()
-
-    # Pre-resolve config once and memoize via Process dict so that the
-    # deferred :load_config_status handler can reuse this result instead
-    # of re-reading and re-parsing config.toml.
-    Process.put(:memo_config_resolve, EvoGit.Config.resolve())
-
-    # Defer config_status to handle_info — it reads config.toml +
-    # credentials.toml and is NOT needed for the first paint. The
-    # config warning banner can appear a frame later.
-    config_status = nil
-
-    {model_profiles, selected_model_id} = Project.load_model_profiles()
-
-    build_systems = EvoGit.Runtime.WorktreeInitScript.build_systems()
-
-    socket =
-      assign(socket,
-        active_project: nil,
-        active_project_path: nil,
-        show_open_project_form: false,
-        show_new_project_form: false,
-        recent_projects: recent_projects,
-        path_suggestions: [],
-        expanded_task_ids: MapSet.new(),
-        selected_result: nil,
-        selected_options: nil,
-        show_project_settings: false,
-        project_config: nil,
-        worktree_script: nil,
-        commands: %{},
-        foreign_repos: [],
-        show_add_foreign_repo_form: false,
-        new_repo_id: "",
-        new_repo_path: "",
-        new_repo_description: "",
-        tasks: [],
-        model_profiles: model_profiles,
-        selected_model_id: selected_model_id,
-        build_systems: build_systems,
-        tauri_detected: false,
-        platform: "linux",
-        notified_task_ids:
-          TaskRegistry.list_tasks()
-          |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
-          |> Enum.map(& &1.id)
-          |> MapSet.new()
-      )
-
-    socket = Assigns.assign_form_defaults(socket)
-
-    socket =
-      assign(socket,
-        show_advanced: false,
-        task_resume_from: "",
-        task_build_system: nil,
-        config_status: config_status,
-        show_welcome: false,
-        welcome_locale: Gettext.get_locale(EvoDashWeb.Gettext),
-        remote?: false,
-        remote_agents: []
-      )
-
-    socket = Assigns.assign_running_and_pending_tasks(socket)
-
-    {:ok, socket}
   end
 
   @impl true
@@ -568,38 +507,6 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     {:noreply, socket}
-  end
-
-  # --- Welcome Modal Events ---
-
-  @impl true
-  def handle_event("show_welcome", _params, socket) do
-    # Only show the welcome modal if no model profile is configured.
-    # If at least one [[llm.models]] profile (or legacy [llm].model) is set,
-    # the user has already configured their LLM and doesn't need the onboarding.
-    show = socket.assigns.model_profiles == []
-    {:noreply, assign(socket, :show_welcome, show)}
-  end
-
-  @impl true
-  def handle_event("dismiss_welcome", _params, socket) do
-    {:noreply, socket |> assign(:show_welcome, false) |> push_event("welcome_dismissed", %{})}
-  end
-
-  @impl true
-  def handle_event("welcome_configure_llm", _params, socket) do
-    socket = socket |> push_event("welcome_dismissed", %{})
-    {:noreply, push_navigate(socket, to: "/settings?category=llm")}
-  end
-
-  @impl true
-  def handle_event("set_welcome_language", %{"locale" => code}, socket) do
-    Gettext.put_locale(EvoDashWeb.Gettext, code)
-
-    {:noreply,
-     socket
-     |> assign(:welcome_locale, code)
-     |> push_event("persist_locale", %{locale: code})}
   end
 
   # --- Project Management Events ---

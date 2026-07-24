@@ -455,19 +455,6 @@ const PlatformDetect = {
   }
 };
 
-// WelcomeCheck hook: detects first visit and shows welcome modal
-const WelcomeCheck = {
-  mounted() {
-    if (!localStorage.getItem("evogit:welcomed")) {
-      // Small delay to let the page render first
-      setTimeout(() => this.pushEvent("show_welcome", {}), 500);
-    }
-    this.handleEvent("welcome_dismissed", () => {
-      localStorage.setItem("evogit:welcomed", "true");
-    });
-  }
-};
-
 // DialogModal hook: opens/closes <dialog class="modal"> elements in the
 // browser's top layer, immune to parent CSS containing blocks (backdrop-filter,
 // transform, etc.). Pushes "dialog_closed" when the dialog is dismissed via ESC
@@ -494,7 +481,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, WelcomeCheck, DialogModal},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal},
 })
 
 // Show progress bar on live navigation and form submits
