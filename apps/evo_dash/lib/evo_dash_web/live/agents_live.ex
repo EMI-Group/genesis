@@ -160,6 +160,16 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  def handle_info({:tasks_updated}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :tasks_updated)
+  end
+
+  @impl true
+  def handle_info({:task_status, _task_id, _status}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :task_status)
+  end
+
+  @impl true
   def handle_info(:remote_poll, socket) do
     current_node = socket.assigns.current_node
 

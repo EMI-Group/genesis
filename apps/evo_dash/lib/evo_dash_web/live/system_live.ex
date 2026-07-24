@@ -22,7 +22,7 @@ defmodule EvoDashWeb.SystemLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
       <!-- Scheduler Control banner -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="flex items-center gap-3">
@@ -731,6 +731,16 @@ defmodule EvoDashWeb.SystemLive do
      |> assign(:sandbox_check, result[:sandbox])
      |> assign(:supervisor_check, result[:supervisor])
      |> assign(:nix_check, result[:nix])}
+  end
+
+  @impl true
+  def handle_info({:tasks_updated}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :tasks_updated)
+  end
+
+  @impl true
+  def handle_info({:task_status, _task_id, _status}, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :task_status)
   end
 
   # --- Private Helpers ---

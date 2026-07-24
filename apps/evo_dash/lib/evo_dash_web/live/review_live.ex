@@ -12,7 +12,7 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name}>
+    <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
       <%= if @error do %>
         <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
@@ -532,12 +532,14 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_info({:tasks_updated}, socket) do
-    {:noreply, load_task_data(socket, socket.assigns.task_id)}
+    socket = load_task_data(socket, socket.assigns.task_id)
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
   end
 
   @impl true
   def handle_info({:task_status, _task_id, _status}, socket) do
-    {:noreply, load_task_data(socket, socket.assigns.task_id)}
+    socket = load_task_data(socket, socket.assigns.task_id)
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
   end
 
   @impl true

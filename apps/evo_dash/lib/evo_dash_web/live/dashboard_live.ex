@@ -24,6 +24,8 @@ defmodule EvoDashWeb.DashboardLive do
         config_status={@config_status}
         current_node_id={@current_node_id}
         current_node_name={@current_node_name}
+        running_tasks={@running_tasks}
+        pending_tasks={@pending_tasks}
       >
         <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
           <div class="bg-info/15 text-info p-3 rounded-xl">
