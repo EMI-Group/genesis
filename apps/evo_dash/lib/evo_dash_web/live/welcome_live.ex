@@ -145,32 +145,7 @@ defmodule EvoDashWeb.WelcomeLive do
                     </span>
                   </div>
 
-                  <!-- Model save form (hidden model info) -->
-                  <form phx-submit="save_quick_setup" class="mb-4">
-                    <input type="hidden" name="model_string" value={@selected_entry.model_string} />
-                    <input type="hidden" name="provider_id" value={Atom.to_string(@selected_entry.provider_id)} />
-                    <input type="hidden" name="variant_id" value={@selected_entry.variant_id && Atom.to_string(@selected_entry.variant_id) || ""} />
-
-                    <%= if @selected_entry.requires_base_url do %>
-                      <div class="form-control mb-3">
-                        <label class="label">
-                          <span class="label-text font-bold text-sm mb-2 block">
-                            {gettext("Base URL")}
-                            <span class="text-error">*</span>
-                          </span>
-                        </label>
-                        <input
-                          type="text"
-                          name="base_url"
-                          placeholder="https://..."
-                          class="input input-bordered w-full rounded-xl shadow-sm bg-base-100 font-mono text-sm"
-                        />
-                      </div>
-                    <% end %>
-
-                    <!-- API key form (separate submit — credentials are stored independently) -->
-                  </form>
-
+                  <!-- API key form (credentials are stored independently of model config) -->
                   <form phx-submit="save_api_key">
                     <input type="hidden" name="credential_key" value={@selected_entry.credential_key} />
                     <label class="label">
