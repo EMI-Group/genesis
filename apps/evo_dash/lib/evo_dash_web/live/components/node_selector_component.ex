@@ -26,7 +26,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
         title={gettext("Switch node")}
       >
         <span class={dot_color_class(@current_node_id, @connection_statuses)}></span>
-        <span class="text-sm font-medium text-slate-700 dark:text-slate-300">
+        <span class="text-sm font-medium text-slate-700 dark:text-slate-300 sidebar-label">
           {@current_node_name}
         </span>
       </summary>

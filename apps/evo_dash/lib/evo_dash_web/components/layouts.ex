@@ -65,6 +65,7 @@ defmodule EvoDashWeb.Layouts do
       <aside
         id="sidebar"
         data-sidebar-collapsed="false"
+        phx-hook="SidebarCollapse"
         class="fixed lg:relative z-50 lg:z-auto h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-hidden"
       >
         <!-- Branding -->
@@ -228,63 +229,6 @@ defmodule EvoDashWeb.Layouts do
       <.flash_group flash={@flash} />
     </div>
 
-    <script>
-      (() => {
-        const sidebar = document.getElementById('sidebar');
-        const overlay = document.getElementById('sidebar-overlay');
-        const mobileToggle = document.getElementById('sidebar-mobile-toggle');
-        const collapseToggle = document.getElementById('sidebar-collapse-toggle');
-
-        if (!sidebar) return;
-
-        const isCollapsed = () => localStorage.getItem('sidebar-collapsed') === 'true';
-
-        const applyCollapsed = (collapsed) => {
-          if (collapsed) {
-            sidebar.classList.add('w-16');
-            sidebar.classList.remove('w-60');
-            sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.add('hidden'));
-            if (collapseToggle) {
-              collapseToggle.innerHTML = collapseToggle.innerHTML.replace(/hero-chevron-double-left/g, 'hero-chevron-double-right');
-            }
-          } else {
-            sidebar.classList.remove('w-16');
-            sidebar.classList.add('w-60');
-            sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.remove('hidden'));
-            if (collapseToggle) {
-              collapseToggle.innerHTML = collapseToggle.innerHTML.replace(/hero-chevron-double-right/g, 'hero-chevron-double-left');
-            }
-          }
-        };
-
-        // Init collapsed state
-        applyCollapsed(isCollapsed());
-
-        // Collapse toggle (desktop only)
-        if (collapseToggle) {
-          collapseToggle.addEventListener('click', () => {
-            const next = !isCollapsed();
-            localStorage.setItem('sidebar-collapsed', String(next));
-            applyCollapsed(next);
-          });
-        }
-
-        // Mobile toggle
-        const openMobile = () => {
-          sidebar.classList.remove('-translate-x-full');
-          overlay.classList.add('opacity-100', 'pointer-events-auto');
-          overlay.classList.remove('opacity-0', 'pointer-events-none');
-        };
-        const closeMobile = () => {
-          sidebar.classList.add('-translate-x-full');
-          overlay.classList.remove('opacity-100', 'pointer-events-auto');
-          overlay.classList.add('opacity-0', 'pointer-events-none');
-        };
-
-        if (mobileToggle) mobileToggle.addEventListener('click', openMobile);
-        if (overlay) overlay.addEventListener('click', closeMobile);
-      })();
-    </script>
     """
   end
 
