@@ -44,6 +44,8 @@ const SidebarCollapse = {
       sidebar.classList.remove('overflow-hidden');
       // Hide all sidebar-labels (text spans that should collapse)
       sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.add('hidden'));
+      // Show collapsed-only elements (compact task indicators)
+      sidebar.querySelectorAll('.sidebar-collapsed-only').forEach(el => el.classList.remove('hidden'));
       // Stack bottom bar vertically so all buttons are visible in 64px
       if (bottomBar) {
         bottomBar.classList.remove('flex', 'items-center', 'justify-between');
@@ -67,6 +69,8 @@ const SidebarCollapse = {
       sidebar.classList.remove('overflow-visible');
       // Show all sidebar-labels
       sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.remove('hidden'));
+      // Hide collapsed-only elements
+      sidebar.querySelectorAll('.sidebar-collapsed-only').forEach(el => el.classList.add('hidden'));
       // Restore horizontal flex layout
       if (bottomBar) {
         bottomBar.classList.add('flex', 'items-center', 'justify-between');

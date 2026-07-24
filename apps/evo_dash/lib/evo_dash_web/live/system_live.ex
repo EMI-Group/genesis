@@ -24,7 +24,7 @@ defmodule EvoDashWeb.SystemLive do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
       <!-- Scheduler Control banner -->
-      <div class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div class="p-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="flex items-center gap-3">
           <.icon
             name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
@@ -70,7 +70,7 @@ defmodule EvoDashWeb.SystemLive do
       </div>
 
       <!-- System Control section (destructive actions) -->
-      <div class="rounded-lg border border-error/30 bg-error/5 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div class="border border-error/30 bg-error/5 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="flex items-start gap-3">
           <.icon name="hero-power" class="size-5 text-error shrink-0" />
           <div>
@@ -110,7 +110,7 @@ defmodule EvoDashWeb.SystemLive do
 
       <!-- System Self-Check -->
       <div>
-        <div class="rounded-lg border border-base-200 bg-base-100 p-4">
+        <div class="p-4 border-b border-slate-200 dark:border-slate-800">
           <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-3">
               <.icon name="hero-shield-check" class="size-5 text-success" />
@@ -311,79 +311,87 @@ defmodule EvoDashWeb.SystemLive do
 
       <!-- Example Configuration -->
       <div class="mt-6">
-        <.collapsible_card
-          id="config-reference"
-          title={gettext("Example Configuration")}
-          icon="hero-book-open"
-          color={:info}
-        >
-          <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
-        </.collapsible_card>
+        <details id="config-reference" open class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
+          <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+            <.icon name="hero-book-open" class="size-5 shrink-0 text-info" />
+            <span class="font-semibold flex-1">{gettext("Example Configuration")}</span>
+            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+          </summary>
+          <div class="p-4">
+            <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
+          </div>
+        </details>
       </div>
 
       <!-- Example Usage -->
       <div class="mt-6">
-        <.collapsible_card
-          id="usage-reference"
-          title={gettext("Example Usage")}
-          icon="hero-command-line"
-          color={:success}
-        >
-          <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
-        </.collapsible_card>
+        <details id="usage-reference" open class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
+          <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+            <.icon name="hero-command-line" class="size-5 shrink-0 text-success" />
+            <span class="font-semibold flex-1">{gettext("Example Usage")}</span>
+            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+          </summary>
+          <div class="p-4">
+            <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
+          </div>
+        </details>
       </div>
 
       <!-- FAQ -->
       <div class="mt-6">
-        <.collapsible_card
-          id="faq"
-          title={gettext("Frequently Asked Questions")}
-          icon="hero-question-mark-circle"
-          color={:accent}
-        >
-          <div class="space-y-4">
-            <%= for {{question, answer}, idx} <- Enum.with_index(@faq_content) do %>
-              <details class="group rounded-lg border border-base-200 overflow-hidden bg-base-100/50">
-                <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none hover:bg-base-200/50 transition-colors list-none">
-                  <.icon
-                    name="hero-chevron-down"
-                    class="size-4.5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
-                  />
-                  <span class="font-semibold text-sm">{question}</span>
-                </summary>
-                <div class="px-4 py-3 text-sm text-base-content/70 leading-relaxed border-t border-base-200">
-                  <p id={"faq-answer-#{idx}"}>{answer}</p>
-                </div>
-              </details>
-            <% end %>
+        <details id="faq" open class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
+          <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+            <.icon name="hero-question-mark-circle" class="size-5 shrink-0 text-accent" />
+            <span class="font-semibold flex-1">{gettext("Frequently Asked Questions")}</span>
+            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+          </summary>
+          <div class="p-4">
+            <div class="space-y-4">
+              <%= for {{question, answer}, idx} <- Enum.with_index(@faq_content) do %>
+                <details class="group rounded-lg border border-base-200 overflow-hidden bg-base-100/50">
+                  <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none hover:bg-base-200/50 transition-colors list-none">
+                    <.icon
+                      name="hero-chevron-down"
+                      class="size-4.5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
+                    />
+                    <span class="font-semibold text-sm">{question}</span>
+                  </summary>
+                  <div class="px-4 py-3 text-sm text-base-content/70 leading-relaxed border-t border-base-200">
+                    <p id={"faq-answer-#{idx}"}>{answer}</p>
+                  </div>
+                </details>
+              <% end %>
+            </div>
           </div>
-        </.collapsible_card>
+        </details>
       </div>
 
       <!-- Credentials Reference -->
       <div class="mt-6">
-        <.collapsible_card
-          id="credentials-reference"
-          title={gettext("Credentials Reference")}
-          icon="hero-key"
-          color={:accent}
-        >
-          <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
-          <div class="mt-4 space-y-2">
-            <p class="text-sm text-base-content/60 flex items-start gap-2.5">
-              <.icon name="hero-arrows-right-left" class="size-4.5 shrink-0 mt-0.5" />
-              <span>{gettext(
-                "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
-              )}</span>
-            </p>
-            <p class="text-sm text-base-content/60 flex items-start gap-2.5">
-              <.icon name="hero-shield-check" class="size-4.5 shrink-0 mt-0.5" />
-              <span>{gettext(
-                "For security, credentials cannot be edited from this page. Edit the file directly on your system."
-              )}</span>
-            </p>
+        <details id="credentials-reference" open class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
+          <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+            <.icon name="hero-key" class="size-5 shrink-0 text-accent" />
+            <span class="font-semibold flex-1">{gettext("Credentials Reference")}</span>
+            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+          </summary>
+          <div class="p-4">
+            <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
+            <div class="mt-4 space-y-2">
+              <p class="text-sm text-base-content/60 flex items-start gap-2.5">
+                <.icon name="hero-arrows-right-left" class="size-4.5 shrink-0 mt-0.5" />
+                <span>{gettext(
+                  "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
+                )}</span>
+              </p>
+              <p class="text-sm text-base-content/60 flex items-start gap-2.5">
+                <.icon name="hero-shield-check" class="size-4.5 shrink-0 mt-0.5" />
+                <span>{gettext(
+                  "For security, credentials cannot be edited from this page. Edit the file directly on your system."
+                )}</span>
+              </p>
+            </div>
           </div>
-        </.collapsible_card>
+        </details>
       </div>
 
       <!-- Restart confirmation modal -->

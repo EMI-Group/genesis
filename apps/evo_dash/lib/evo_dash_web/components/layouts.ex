@@ -140,39 +140,41 @@ defmodule EvoDashWeb.Layouts do
               </span>
             </div>
             <div class="space-y-1">
-              <!-- Running tasks: green dot -->
-              <%= for task <- @running_tasks do %>
-                <.link
-                  navigate={with_node_param(~p"/agents", @current_node_id)}
-                  class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
-                >
-                  <span class="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0 animate-pulse" title={gettext("Running")}></span>
-                  <div class="min-w-0 flex-1">
-                    <span class="block truncate sidebar-label group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
-                      {task_label(task)}
+              <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
+                <!-- Project group header -->
+                <div class="px-3 pt-2 pb-1 first:pt-0">
+                  <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
+                    <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
+                    {project_name}
+                  </span>
+                </div>
+                <!-- Tasks in this group -->
+                <%= for task <- tasks do %>
+                  <% is_running = task.status in [:running, :pending, :finalizing] %>
+                  <.link
+                    navigate={if is_running, do: with_node_param(~p"/agents", @current_node_id), else: with_node_param(~p"/review/#{task.id}", @current_node_id)}
+                    class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                  >
+                    <span class={["w-2.5 h-2.5 rounded-full shrink-0", task_status_dot_color(task), is_running && "animate-pulse"]} title={if is_running, do: gettext("Running"), else: gettext("Pending Review")}></span>
+                    <div class="min-w-0 flex-1">
+                      <span class="block truncate sidebar-label group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                        {task_label(task)}
+                      </span>
+                      <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                        <%= if is_running do %>
+                          {format_elapsed(task.started_at)}
+                        <% else %>
+                          {gettext("completed")} {format_elapsed(task.finished_at)}
+                        <% end %>
+                      </span>
+                    </div>
+                    <!-- Collapsed-only content -->
+                    <span class="sidebar-collapsed-only hidden flex items-center gap-1.5 shrink-0">
+                      <span class={["w-2.5 h-2.5 rounded-full", task_status_dot_color(task)]}></span>
+                      <span class="font-mono text-[10px] text-slate-400 dark:text-slate-500"><%= String.slice(task.id, 0, 6) %></span>
                     </span>
-                    <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                      {format_elapsed(task.started_at)}
-                    </span>
-                  </div>
-                </.link>
-              <% end %>
-              <!-- Pending review tasks: amber dot -->
-              <%= for task <- @pending_tasks do %>
-                <.link
-                  navigate={with_node_param(~p"/review/#{task.id}", @current_node_id)}
-                  class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
-                >
-                  <span class="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" title={gettext("Pending Review")}></span>
-                  <div class="min-w-0 flex-1">
-                    <span class="block truncate sidebar-label group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
-                      {task_label(task)}
-                    </span>
-                    <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                      {gettext("completed")} {format_elapsed(task.finished_at)}
-                    </span>
-                  </div>
-                </.link>
+                  </.link>
+                <% end %>
               <% end %>
             </div>
           </div>
@@ -199,7 +201,7 @@ defmodule EvoDashWeb.Layouts do
 
       <!-- Main Content Area -->
       <div class="flex-1 flex flex-col overflow-auto min-w-0">
-        <main class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full mx-auto max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1920px]">
+        <main class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full mx-auto max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1920px] bg-white dark:bg-slate-900">
           {render_slot(@inner_block)}
         </main>
       </div>
@@ -268,6 +270,54 @@ defmodule EvoDashWeb.Layouts do
       diff < 3600 -> "#{div(diff, 60)}m ago"
       diff < 86400 -> "#{div(diff, 3600)}h ago"
       true -> "#{div(diff, 86400)}d ago"
+    end
+  end
+
+  # Returns a Tailwind color class for a task status dot
+  defp task_status_dot_color(%{status: :running}), do: "bg-green-500"
+  defp task_status_dot_color(%{status: :finalizing}), do: "bg-orange-500"
+  defp task_status_dot_color(%{status: :pending}), do: "bg-amber-500"
+  defp task_status_dot_color(%{status: :completed}), do: "bg-blue-500"
+  defp task_status_dot_color(%{status: :failed}), do: "bg-red-500"
+  defp task_status_dot_color(%{status: :cancelled}), do: "bg-amber-500"
+  defp task_status_dot_color(_), do: "bg-slate-400"
+
+  # Groups running and pending tasks by project name for sidebar display.
+  # Returns a list of {project_name, tasks} tuples sorted alphabetically by
+  # project name, with unpathed tasks at the top as "Other".
+  defp group_tasks_by_project(running_tasks, pending_tasks) do
+    all = running_tasks ++ pending_tasks
+
+    grouped =
+      Enum.group_by(all, fn task ->
+        case task.opts[:path] do
+          nil -> nil
+          path -> Path.basename(path)
+        end
+      end)
+
+    {others, named} = Map.pop(grouped, nil, [])
+
+    sorted_named =
+      Enum.sort(named, fn {a, _}, {b, _} ->
+        String.downcase(a) <= String.downcase(b)
+      end)
+
+    sorted_groups =
+      Enum.map(sorted_named, fn {name, tasks} ->
+        {running, pending} =
+          Enum.split_with(tasks, &(&1.status in [:running, :pending, :finalizing]))
+
+        {name, running ++ pending}
+      end)
+
+    if others != [] do
+      {running, pending} =
+        Enum.split_with(others, &(&1.status in [:running, :pending, :finalizing]))
+
+      [{"Other", running ++ pending} | sorted_groups]
+    else
+      sorted_groups
     end
   end
 

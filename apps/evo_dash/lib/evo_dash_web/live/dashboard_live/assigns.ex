@@ -26,7 +26,7 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   Assigns `:running_tasks` and `:pending_tasks` from `socket.assigns.tasks`.
   """
   def assign_running_and_pending_tasks(socket) do
-    all_tasks = socket.assigns.tasks
+    all_tasks = TaskRegistry.list_tasks()
 
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))

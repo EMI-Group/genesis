@@ -14,7 +14,7 @@ defmodule EvoDashWeb.SettingsLive do
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
       <%= if @active_category != :remote_connections do %>
         <%!-- Config file path display --%>
-        <div class="mb-4 rounded-lg border border-base-200 bg-base-100 p-3 flex items-center gap-3">
+        <div class="mb-4 p-3 flex items-center gap-3 border-b border-slate-200 dark:border-slate-800">
           <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
           <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext("Configuration file")}</span>
           <code class="font-mono text-sm text-base-content/80 flex-1 truncate">{@config_path}</code>
@@ -107,7 +107,7 @@ defmodule EvoDashWeb.SettingsLive do
         <% end %>
 
         <%!-- Two-column sidebar + content layout --%>
-        <div class="flex flex-col md:flex-row bg-base-100 rounded-lg border border-base-200 shadow-sm overflow-hidden">
+        <div class="flex flex-col md:flex-row bg-white dark:bg-slate-900">
           <%!-- Sidebar --%>
           <EvoDashWeb.SettingsComponents.settings_sidebar
             categories={@schemas_by_category}
