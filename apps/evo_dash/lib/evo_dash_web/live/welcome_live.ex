@@ -114,18 +114,12 @@ defmodule EvoDashWeb.WelcomeLive do
 
   @impl true
   def handle_event("skip", _, socket) do
-    {:noreply,
-     socket
-     |> push_event("welcome_dismissed", %{})
-     |> push_navigate(to: "/")}
+    {:noreply, redirect(socket, to: "/welcome/complete")}
   end
 
   @impl true
   def handle_event("get_started", _, socket) do
-    {:noreply,
-     socket
-     |> push_event("welcome_dismissed", %{})
-     |> push_navigate(to: "/")}
+    {:noreply, redirect(socket, to: "/welcome/complete")}
   end
 
   defp step_emoji(1), do: "🚀"
