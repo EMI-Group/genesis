@@ -2,7 +2,7 @@ defmodule EvoDashWeb.WelcomeLive do
   @moduledoc """
   Onboarding tutorial with step-by-step guidance for new users.
 
-  Covers LLM configuration, project setup, and getting started.
+  Covers LLM configuration, a dashboard interface tour, and getting started.
   Redirects to the dashboard if the user has already completed onboarding.
   """
 
