@@ -32,20 +32,23 @@ const SidebarCollapse = {
 
   applyCollapsed(collapsed) {
     const sidebar = this.el;
-    const bottomBar = sidebar.querySelector('.flex.items-center.justify-between');
+    // Stable selectors using data attributes — work in both collapsed and expanded states
+    const bottomBar = sidebar.querySelector('[data-sidebar-bottom-bar]');
+    const bottomGroups = sidebar.querySelectorAll('[data-sidebar-bottom-group]');
     
     if (collapsed) {
       sidebar.classList.add('w-16');
       sidebar.classList.remove('w-60');
+      // Allow dropdown menus to extend beyond the collapsed 64px sidebar
+      sidebar.classList.add('overflow-visible');
+      sidebar.classList.remove('overflow-hidden');
       // Hide all sidebar-labels (text spans that should collapse)
       sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.add('hidden'));
       // Stack bottom bar vertically so all buttons are visible in 64px
       if (bottomBar) {
         bottomBar.classList.remove('flex', 'items-center', 'justify-between');
         bottomBar.classList.add('flex-col', 'items-center');
-        // Remove the gap-1 on the inner left group divs and make them flex-col too
-        const groups = bottomBar.querySelectorAll('.flex.items-center.gap-1');
-        groups.forEach(g => {
+        bottomGroups.forEach(g => {
           g.classList.remove('flex', 'items-center', 'gap-1');
           g.classList.add('flex-col', 'items-center');
         });
@@ -59,14 +62,16 @@ const SidebarCollapse = {
     } else {
       sidebar.classList.remove('w-16');
       sidebar.classList.add('w-60');
+      // Restore overflow clipping when sidebar is full width
+      sidebar.classList.add('overflow-hidden');
+      sidebar.classList.remove('overflow-visible');
       // Show all sidebar-labels
       sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.remove('hidden'));
       // Restore horizontal flex layout
       if (bottomBar) {
         bottomBar.classList.add('flex', 'items-center', 'justify-between');
         bottomBar.classList.remove('flex-col');
-        const groups = bottomBar.querySelectorAll('.flex-col.items-center');
-        groups.forEach(g => {
+        bottomGroups.forEach(g => {
           g.classList.add('flex', 'items-center', 'gap-1');
           g.classList.remove('flex-col');
         });

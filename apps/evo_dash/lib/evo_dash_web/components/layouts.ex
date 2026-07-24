@@ -170,8 +170,8 @@ defmodule EvoDashWeb.Layouts do
 
         <!-- Bottom section: Language + Theme + Collapse -->
         <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
-          <div class="flex items-center justify-between gap-1">
-            <div class="flex items-center gap-1">
+          <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
+            <div data-sidebar-bottom-group class="flex items-center gap-1">
               <.language_selector drop_up={true} />
               <.theme_toggle_compact drop_up={true} />
             </div>
