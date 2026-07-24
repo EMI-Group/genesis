@@ -1,7 +1,6 @@
 defmodule EvoDashWeb.ProjectComponents do
   @moduledoc """
-  Project selection and settings components for the dashboard, designed as
-  a self-contained left sidebar panel (Project Context Panel).
+  Project selection and settings components for the dashboard.
   """
   use EvoDashWeb, :html
   alias EvoGit.Core.ForeignRepo
@@ -35,11 +34,7 @@ defmodule EvoDashWeb.ProjectComponents do
           <div class="flex items-center gap-2 shrink-0">
             <button class="btn btn-sm btn-primary gap-1" phx-click="toggle_open_project_form">
               <.icon name="hero-folder-open" class="size-4" />
-              <%= if @active_project do %>
-                {gettext("Change")}
-              <% else %>
-                {gettext("Open Project")}
-              <% end %>
+              {gettext("Change")}
             </button>
             <button class="btn btn-sm btn-outline btn-primary gap-1" phx-click="toggle_new_project_form">
               <.icon name="hero-plus-circle" class="size-4" />
@@ -70,8 +65,6 @@ defmodule EvoDashWeb.ProjectComponents do
           </div>
         </div>
       <% end %>
-
-      <div>
 
         <!-- Inline Open Project Form -->
         <%= if @show_open_form do %>
@@ -187,7 +180,6 @@ defmodule EvoDashWeb.ProjectComponents do
             </.form>
           </div>
         <% end %>
-      </div>
     </div>
     """
   end

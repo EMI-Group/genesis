@@ -1095,13 +1095,6 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply, assign(socket, :config_status, config_status())}
   end
 
-  # --- Private Helpers ---
-
-  defp task_mode_label("genesis_new"), do: gettext("Create New")
-  defp task_mode_label("genesis_existing"), do: gettext("Init Existing")
-  defp task_mode_label("evolve_simple"), do: gettext("Evolution")
-  defp task_mode_label(other), do: other
-
   # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
   #
   # Looks up the task by id, extracts `task.opts[:foreign_repos]`, and converts the
