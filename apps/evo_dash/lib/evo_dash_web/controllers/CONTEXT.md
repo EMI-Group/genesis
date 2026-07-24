@@ -10,9 +10,11 @@ Classic Phoenix HTTP controllers and error handlers for the EvoDash web interfac
 
 ### Modules
 - **`EvoDashWeb.PageController`** — Standard Phoenix controller with a single `home/2` action that renders the home page.
+- **`EvoDashWeb.WelcomeController`** — Mini controller with a single `complete/2` action. Sets `onboarding_completed: true` in the Plug session and redirects to `/`. Used by `WelcomeLive` to persist onboarding completion (LiveView cannot write to the Plug session directly — only a controller/Plug pipeline can).
 - **`EvoDashWeb.ErrorHTML`** — HTML error handler invoked by the endpoint. Defaults to returning plain-text status messages derived from template names (e.g., `"404.html"` → `"Not Found"`). Custom error page templates can be enabled by uncommenting `embed_templates "error_html/*"` and adding `.heex` files to an `error_html/` subdirectory.
 - **`EvoDashWeb.ErrorJSON`** — JSON error handler returning `%{errors: %{detail: message}}`. Individual status codes can be customized by adding pattern-matched `render/2` clauses.
 - **`EvoDashWeb.PageHTML`** — HTML template module that embeds all templates from `page_html/*` via `use EvoDashWeb, :html`.
+- **`EvoDashWeb.TaskExportController`** — JSON download endpoint for task archive metadata (`GET /tasks/:task_id/export`).
 
 ### Templates
 - **`page_html/home.html.heex`** — The default Phoenix welcome/home page template with links to docs, source, changelog, and community resources.
