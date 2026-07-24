@@ -2,18 +2,47 @@
 
 ## Abstract
 
-Genesis is a neuro-symbolic framework that automates the creation and evolution of software through recursive hierarchical decomposition. It marries the pattern-recognition capabilities of large language models (the *neuro* component) with a principled evolutionary architecture grounded in fixed-point theory (the *symbolic* component). The system models a codebase along two orthogonal dimensions — a **spatial** Context Tree capturing hierarchical structure and a **temporal** phylogenetic DAG capturing evolutionary history. Through the iterative application of a *summary–code fixed-point operator*, Genesis guarantees that every level of the codebase reaches semantic convergence: each module's implementation faithfully realizes its declared intent, and each summary accurately reflects its implementation. This paper presents the framework's mathematical foundation, architectural design, and implementation, showing how the recursive application of a simple fixed-point principle yields a system capable of autonomously building and refining arbitrarily complex software.
+Current AI coding tools — from Copilot to Devin — demonstrate remarkable code generation capabilities through ReAct-style agent loops. Yet they remain limited by shallow symbolic scaffolds: flat context windows, no hierarchical abstraction, and no convergence guarantees. Genesis is a neuro-symbolic framework that addresses these limitations through recursive hierarchical decomposition. It marries the pattern-recognition capabilities of large language models (the *neuro* component) with a principled evolutionary architecture grounded in fixed-point theory (the *symbolic* component). The system models a codebase along two orthogonal dimensions — a **spatial** Context Tree capturing hierarchical structure and a **temporal** phylogenetic DAG capturing evolutionary history. Through the iterative application of a *summary–code fixed-point operator*, Genesis guarantees that every level of the codebase reaches semantic convergence: each module's implementation faithfully realizes its declared intent, and each summary accurately reflects its implementation. This paper presents the framework's mathematical foundation, architectural design, and implementation, showing how the recursive application of a simple fixed-point principle yields a system capable of autonomously building and refining arbitrarily complex software.
 
 ---
 
 ## 1. Philosophy: The Neuro-Symbolic Design
 
-The current paradigm of AI-assisted programming is dominated by end-to-end Large Language Models (LLMs). While LLMs excel at "vibe coding" — generating localized, contextually plausible snippets based on human prompts — they fundamentally fail at autonomous software engineering for large-scale systems. This failure stems from two inherent limitations of purely neural architectures:
+The current AI-assisted programming landscape is rich and evolving rapidly. Tools like GitHub Copilot, Cursor, Cline, Aider, Devin (Cognition AI), and research systems like SWE-agent have moved far beyond simple "prompt → code" generation. The newest entrants — Claude Code (Anthropic, launched 2025), an agentic coding CLI built into the Claude ecosystem, and Codex CLI (OpenAI, launched 2025), a terminal-based coding agent — push the frontier further still, with polished tool orchestration and deep editor integration. Yet, despite their recency and increasing sophistication, all of these tools share the same fundamental architecture. They integrate deeply with developer workflows: file systems, LSP-based code intelligence, terminal access, browser automation, Git history, and structured tool protocols like Anthropic's Model Context Protocol (MCP) (Anthropic, 2024). The ReAct loop (Yao et al., 2023) — reason, act, observe, repeat — is the de facto architecture: the LLM reasons about the task, invokes tools (read file, run test, search code), observes the results, and iterates. This is "vibe coding" in practice (Karpathy, 2025): describing intent in natural language and watching the AI manifest code. On benchmarks like SWE-bench (Jimenez et al., 2024), state-of-the-art systems now resolve a significant fraction of real-world GitHub issues.
 
-1. **The Context Window Bottleneck:** End-to-end models require all relevant information to be packed into a finite context window. For a trivial script, this works. For an enterprise application, it is impossible. As the codebase grows, the LLM loses track of distant dependencies, global architectural constraints, and subtle state invariants.
-2. **Error Compounding:** Software is a rigid, symbolic domain. A single hallucinated API call or a type mismatch breaks the entire build. In a purely neural generative process, slight probabilistic errors compound over time, inevitably leading to a divergent, uncompilable state.
+It is critical to distinguish between *tool-level* improvements and *structural* ones. Language servers (LSP), MCP, browser automation, terminal access — these are all tool-level improvements. They give the agent better eyes and hands: go-to-definition, find-references, run commands, browse documentation. They make the agent more capable at *interacting* with a codebase, but they do not change the *architectural structure* of the agent loop itself. The ReAct loop is still a flat iteration regardless of how many sophisticated tools it has access to. Tool quality is not structural understanding. What is missing from all of these systems is a *symbolic model of the codebase itself* — hierarchical decomposition into modules and submodules, explicit interface contracts between components, formal dependency constraints, and convergence guarantees that the system is making measurable progress toward a well-defined goal. These are system-level, architectural concerns, not tool-level concerns. A tool can tell you where a function is defined or what tests exist; a structure can tell you that editing this module requires satisfying invariants at every dependent call site, that this subtree inherits constraints from its ancestors, and that the current state is measurably closer to or farther from a well-defined target. No amount of tooling provides this — it requires an explicit, persistent symbolic representation of the codebase's architecture.
 
-Genesis solves this by adopting a **Neuro-Symbolic** architecture. It delegates the fuzzy, creative task of writing specific logic and translating natural language to the LLM (the *neuro* component). However, it wraps this generation within a rigid, deterministic scaffold (the *symbolic* component). The symbolic layer enforces the directory structure, manages the temporal version control (Git), executes the tools, isolates dependencies, and mathematically verifies progress. By bounding the LLM's operation to strictly defined local modules and orchestrating those modules via a hierarchical graph, Genesis prevents error compounding and bypasses the context window limit entirely.
+The benchmarks used to evaluate these tools, however, reflect a narrow conception of software engineering. Standard benchmarks like HumanEval (Chen et al., 2021) and MBPP (Austin et al., 2021) measure the ability to generate isolated functions from docstrings — typically 5–20 lines of self-contained Python. SWE-bench (Jimenez et al., 2024) raises the bar by testing whether a system can resolve real GitHub issues, but even this frames programming as a single-patch activity: locate the right file, make a targeted edit, pass the existing test suite. Missing from the evaluation landscape is any standardized benchmark for *project-level generation* — the task of creating an entire multi-file, multi-module codebase from a natural language specification. Individual researchers and developers have conducted informal, small-scale comparisons of LLMs on project-generation tasks (e.g., asking different models to build the same application from scratch and comparing build correctness, code organization, and architectural coherence), but these experiments remain ad hoc, unstandardized, and absent from the mainstream evaluation canon. The field lacks a rigorous, widely adopted benchmark for the kind of end-to-end software synthesis that Genesis targets.
+
+But beneath the sophistication of these tools lies a surprisingly simple loop. The ReAct pattern — however augmented with better tools, better prompts, or better models — is fundamentally a flat, memoryless iteration: (1) serialize state into a prompt, (2) ask the LLM what to do, (3) execute the chosen tool, (4) repeat. MCP and LSP, for all their utility, are tool-layer improvements, not structural ones. They make tools more interoperable (MCP standardizes how tools are described and invoked) and code intelligence more precise (LSP provides go-to-definition, find-references, diagnostics), but the loop itself — serialize state → prompt LLM → execute tool → repeat — remains unchanged. Valmeekam et al. (2023) demonstrated through the PlanBench benchmark that LLMs — including GPT-4 — achieve only ~35% accuracy on complex planning tasks, with performance collapsing as plan length and constraint density increase. This directly undermines the assumption that a flat ReAct loop can reliably orchestrate large-scale software engineering. The agent still has no persistent hierarchical model of the codebase. Claude Code, Codex CLI, and similar products add genuine polish: better system prompts, richer tool palettes, more refined UX. But they do not escape the flat ReAct paradigm. They are sophisticated tool orchestrators, not neuro-symbolic architectures. There is no deep symbolic model of the codebase being modified. The "state" is whatever fits in the context window. There is no persistent hierarchical understanding — the agent doesn't know that `src/auth/oauth/` is a child of `src/auth/` with inherited constraints. There is no mathematical notion of progress or convergence — the agent just keeps looping until it runs out of budget or declares success. When it fails, it fails silently, often producing plausible-looking but incorrect code. The symbolic layer in these tools is shallow: a tool dispatcher, a file system, and a Git wrapper.
+
+The distinction matters. A tool can answer "what file defines function X?" (LSP) or "what tests exercise this module?" (terminal + grep), but a structure can answer "module Y depends on module Z via interface I, and editing Z requires satisfying contract C at every call site in Y." A tool can tell you that a file exists; a structure can tell you that this file lives in a subtree that inherits constraints from its ancestors, that it exposes a specific API to its siblings, and that modifying it may violate invariants declared three levels up in the hierarchy. No amount of tooling gives you the latter — it requires an explicit symbolic representation of the codebase's architecture: interfaces, dependencies, constraints, and the rules that govern how they compose. There is no structural verification, no fixed-point check, no guarantee that the implementation matches the intent.
+
+This shallow symbolic scaffold makes current tools brittle for autonomous, large-scale software engineering:
+
+1. **The Context Window Bottleneck (Reframed):** Current tools pack all relevant state into a flat context window. As the codebase grows, the agent must either omit critical context (losing awareness of distant dependencies and architectural constraints) or exceed the window. The ReAct loop has no mechanism for hierarchical abstraction — every detail competes for attention at the same level.
+
+   This bottleneck is not merely about the raw token limit — it is a compound problem spanning model capability, economic cost, and structural degradation:
+
+   **Performance degradation under long contexts.** Although newer models advertise context windows of 128K, 200K, or even 1M tokens, empirical studies show that model performance degrades significantly as input length grows. Liu et al. (2024) demonstrated in their "Lost in the Middle" study that LLMs struggle to attend to information positioned in the middle of long inputs — retrieval accuracy drops substantially when relevant facts are located away from the beginning or end of the context. The "needle-in-a-haystack" pressure test (Kamradt, 2023) reveals that even state-of-the-art models miss key details buried within large contexts: a single fact injected into a 100K-token document may go entirely unnoticed by the model. In software engineering, this means that as a codebase grows beyond a few thousand lines, the model's effective recall of architectural constraints, type signatures, and cross-module dependencies deteriorates — even if those details are technically within the context window. The model may "see" every line of code yet fail to synthesize them into a coherent understanding of the system. Hsieh et al. (2024) reinforced these findings with RULER, a synthetic benchmark demonstrating that even models advertising 128K+ context windows exhibit sharp accuracy declines beyond 8K–32K tokens in retrieval and multi-hop reasoning tasks. Levy et al. (2024) showed that long contexts disproportionately degrade performance on tasks requiring fine-grained cross-reference across distant passages — precisely the scenario faced by coding agents tracking type definitions, imports, and call sites scattered across a large project.
+
+   **Economic cost of long contexts.** The transformer architecture's self-attention mechanism (Vaswani et al., 2017) means that each generated token must attend to every input token — the computational cost of producing output scales directly with the length of the input. Tay et al. (2022) surveyed the landscape of efficient transformer variants, cataloging dozens of approaches — sparse attention, linear attention, kernel methods, recurrence — all attempting to mitigate this fundamental quadratic complexity. Yet none eliminate it entirely; the trade-off between context fidelity and computational cost remains an open problem. This is reflected in how API providers bill: per input token and per output token. A longer prompt costs more not only because you are sending more data, but because generating each output token becomes more expensive when the model must attend to a larger context. Even with caching optimizations — providers like OpenAI and Anthropic offer discounted "cached input" pricing for repeated prompt prefixes — the fundamental scaling remains: longer context is never free, it comes with additional cost at every generation step. A single ReAct loop iteration over a modest project of 50,000 lines can consume hundreds of thousands of input tokens once file contents, tool outputs, and conversation history are serialized. Over dozens or hundreds of iterations, the cost becomes prohibitive for sustained autonomous development. The economic pressure to truncate context directly conflicts with the need for comprehensive codebase awareness.
+
+   **Structural flattening.** Writing a software project is not merely about generating correct code — it is about organizing that code into a coherent, maintainable structure: modules, interfaces, separation of concerns, dependency direction, and architectural invariants. In a flat ReAct loop, code, tool-call outputs, error messages, file paths, conversation history, and structural metadata are all serialized into a single undifferentiated token stream. There is no explicit representation of the project's hierarchical structure, no principled separation between *what* a module does (its interface) and *how* it does it (its implementation), and no mechanism to enforce that local edits preserve global invariants. The model must implicitly reconstruct the project's architecture from a flattened text dump on every iteration — a task that becomes combinatorially harder as the project grows. The result is code that may pass unit tests but suffers from architectural decay: duplicated logic, broken abstractions, circular dependencies, and inconsistent conventions that accumulate silently across iterations.
+
+2. **Error Compounding Without Convergence:** Without a mathematical notion of progress, errors compound. A hallucinated API call or a type mismatch breaks the build. In a flat ReAct loop, there is no structural guarantee that the system moves toward correctness — it just keeps sampling and hoping. The agent may fix one bug while introducing two more, with no way to verify that the overall state is improving. Zhang et al. (2023) surveyed hallucination in large language models and found that even state-of-the-art systems generate factually incorrect content 15–25% of the time across various benchmarks — a rate that, when compounded across dozens of interdependent code edits in a flat ReAct loop, virtually guarantees eventual divergence.
+
+Genesis addresses this by taking the neuro-symbolic architecture seriously — building a *deep* symbolic scaffold rather than a shallow one. Marcus (2020) argued for neuro-symbolic integration as the path to robust AI, identifying compositionality, systematicity, and causal reasoning as capabilities that purely neural systems cannot acquire from data alone. Like current tools, it uses LLMs as the "neuro" component for pattern recognition, code generation, and natural language understanding. But unlike them, it embeds this within a principled symbolic framework (Hitzler & Sarker, 2022). The neuro-symbolic concept learner (Mao et al., 2019) demonstrated that combining neural perception with symbolic program execution yields stronger generalization than either component alone — a principle that Genesis extends from visual reasoning to software architecture.
+
+- **Hierarchical decomposition (the Context Tree):** The codebase is organized as a rooted tree where each node carries a CONTEXT.md — a formal summary declaring intent, API surface, and constraints. Parent agents do not read child code; they read child summaries. This is hierarchical abstraction: each level only needs to know what its children *promise* to do, not how they do it. No flat context window can match this.
+
+- **Temporal evolution with convergence guarantees:** The Phylogenetic Graph (Git DAG) models evolution. Each commit is a measurable improvement over its parent. The system iterates toward a fixed point where the implementation matches the specification at every level — a mathematical notion of "done" that flat ReAct loops lack.
+
+- **Persistent spatial and temporal memory:** Memory lives in the Context Tree (spatial) and Git history (temporal) — not in a volatile context window. Agents are stateless functions that read from and write to these persistent structures.
+
+- **Deterministic symbolic verification:** The runtime enforces invariants deterministically — spatial authority (agents can only write within their assigned node), tool budgets, sandboxing. The symbolic layer doesn't just dispatch tools; it *governs* the entire process.
+
+The rest of this paper formalizes this architecture: the fixed-point mathematics (Section 2), the spatial and temporal dimensions (Section 3), the agent delegation model (Sections 4–5), and the implementation (Section 6).
 
 ---
 
@@ -34,6 +63,8 @@ $$c = \Gamma(\Sigma(c))$$
 
 This is a **fixed-point equation**. The codebase $c$ is a fixed point of the composite operator $\Gamma \circ \Sigma$. Equivalently, the summary $s = \Sigma(c)$ satisfies $s = \Sigma(\Gamma(s))$, meaning the summary is a fixed point of $\Sigma \circ \Gamma$.
 
+This formulation draws on the foundational fixed-point theory established by Tarski (1955), who proved that every monotone function on a complete lattice has a complete lattice of fixed points — a result that underpins the semantics of recursive definitions across computer science. Cousot & Cousot (1977) applied this fixed-point framework to program analysis through abstract interpretation, showing how concrete program semantics can be systematically approximated by abstract domains — a conceptual precursor to the summary–code abstraction at the heart of Genesis.
+
 ### 2.2 The Iterative Convergence Process
 
 The fixed-point equation $c = \Gamma(\Sigma(c))$ is not directly solvable — we cannot compute $\Gamma(\Sigma(c))$ in one step for a nontrivial codebase because $\Gamma$ itself is intractable. We therefore introduce time and iterate:
@@ -46,6 +77,8 @@ Starting from an initial codebase $c_0$, we repeatedly: (1) extract the summary 
 
 The fixed-point property can be enforced **hierarchically**. A codebase is a set of modules $\{m_1, m_2, \ldots, m_n\}$ organized in a tree $\mathcal{T}$. Each module $m_i$ has a **local summary** $s_i$, a **local implementation** $b_i$, and a **decomposition** into child modules $\{m_j : j \in \text{children}(i)\}$.
 
+Simon (1962) identified hierarchical decomposition as a universal principle of complex systems, arguing that hierarchy is not merely an organizational convenience but a fundamental strategy for managing complexity — systems organized hierarchically evolve faster and adapt more readily than non-hierarchical systems of comparable scale.
+
 For a module $m_i$, define:
 
 * **Local summary operator** $\sigma_i$: given $b_i$ and child summaries $\{s_j\}_{j \in \text{children}(i)}$, produce a summary $s_i$.
@@ -57,19 +90,23 @@ $$(b_i, \{s_j\}) = \gamma_i(\sigma_i(b_i, \{s_j\}))$$
 
 Every module is self-consistent *given* the summaries of its children. This is a recursive fixed point: the root delegates to children, children delegate to grandchildren, down to the leaves.
 
+This recursive construction is grounded in Kleene's first recursion theorem (Kleene, 1952), which provides the classical semantics for recursive definitions via least fixed points in complete partial orders. Scott (1976) developed domain theory — the mathematical framework of complete partial orders and continuous functions — which provides the formal underpinning for reasoning about convergence and approximation in hierarchical systems like Genesis.
+
 ### 2.4 Spatiotemporal Dynamics
 
 Let $m_i^{(t)}$ denote module $i$ at time $t$. The evolution of module $i$ is governed by:
 
 $$(b_i^{(t+1)}, \{s_j^{(t+1)}\}_{j \in \text{children}(i)}) = \gamma_i\left(\sigma_i\left(b_i^{(t)}, \{s_j^{(t)}\}_{j \in \text{children}(i)}\right)\right)$$
 
-This is analogous to the Bellman equation. The correctness of a module depends on the correctness of its children. Every point in the iteration $(c_t)$ is a valid, potentially deployable state, modeling the *partial progress acceptance* principle.
+This is analogous to the Bellman equation (Bellman, 1957). The correctness of a module depends on the correctness of its children. Every point in the iteration $(c_t)$ is a valid, potentially deployable state, modeling the *partial progress acceptance* principle.
 
 ### 2.5 Partial Order and Convergence Guarantees
 
 To rigorously define "progress," we must establish a way to compare codebases. However, it is mathematically and practically meaningless to compare two entirely unrelated codebases (e.g., comparing the Chrome repository to the Linux kernel).
 
 Therefore, we restrict our comparison to "similar" codebases. We define $\mathcal{C}$ as a **partially ordered set (poset)** equipped with a relation $\preceq$. We declare that $c_1 \preceq c_2$ (meaning $c_2$ is greater than or equal to $c_1$ in quality/completeness) **if and only if** $c_2$ is exactly one evolutionary step (one Git commit) away from $c_1$ and represents a measurable improvement (e.g., passing tests, fulfilling a missing sub-summary).
+
+The poset framework for program semantics is standard in the abstract interpretation literature (Nielson et al., 1999), where partial orders capture the relative precision of program analyses and Galois connections formalize the relationship between concrete and abstract domains.
 
 Under this constrained poset definition, convergence guarantees become clear:
 
@@ -117,7 +154,7 @@ Because agents are stateless, they can be paused, preempted, and resumed at any 
 
 ### 3.2 The Context Tree: Spatial Dimension
 
-The codebase is a rooted tree $\mathcal{T} = (V, E)$ where nodes are directories containing a `CONTEXT.md` file. The `CONTEXT.md` contains the module's Intent, API Surface, Constraints, and a Routing Table mapping concerns to child subdirectories. Parent agents do not read child code; they read child summaries.
+The codebase is a rooted tree $\mathcal{T} = (V, E)$ where nodes are directories containing a `CONTEXT.md` file. The `CONTEXT.md` contains the module's Intent, API Surface, Constraints, and a Routing Table mapping concerns to child subdirectories. Parent agents do not read child code; they read child summaries. This is the principle of information hiding elevated to an architectural mandate — a direct extension of Parnas (1972), who established that modules should encapsulate design decisions likely to change, exposing only their interfaces to the rest of the system.
 
 ### 3.3 The Phylogenetic Graph: Temporal Dimension
 
@@ -181,6 +218,8 @@ Skills are an extension of the Context Tree. While `CONTEXT.md` is eagerly loade
 
 Genesis utilizes the BEAM (Erlang VM) actor model. Processes communicate via message passing, and a supervision tree handles fault tolerance.
 
+The actor model, first proposed by Hewitt et al. (1973) and later developed into a complete theory of concurrent computation by Agha (1986), provides the foundation for this architecture: independent computational agents communicate exclusively through asynchronous message passing, with no shared mutable state — the same isolation principle that Genesis applies at the architectural level through Git worktrees (Hewitt et al., 1973; Agha, 1986).
+
 ```text
 EvoGit.AgentGroupSupervisor (one_for_all)
 ├── Task.Supervisor         — Agent Task supervisor (spawns/kills agents)
@@ -189,6 +228,8 @@ EvoGit.AgentGroupSupervisor (one_for_all)
 ```
 
 If an agent process crashes (e.g., unparseable LLM output), the `Task.Supervisor` kills it. The `AgentScheduler` detects the `DOWN` message, safely releases the agent's slots and worktree, and queues it for a retry from its last safe Git commit.
+
+Armstrong (2003) codified the "let it crash" philosophy underlying Erlang's supervision trees: instead of defensive programming that anticipates and handles every possible failure, build systems where isolated processes are supervised by parent processes that detect failures and restart components from known-good states. Genesis adopts this philosophy directly — when an agent process crashes due to unparseable LLM output, the supervisor kills it and the scheduler resurrects it from its last safe Git commit (Armstrong, 2003).
 
 ### 5.2 The Git Worktree Mechanism
 
@@ -266,7 +307,7 @@ Agents have access to deterministic tools: File I/O (`read_file`, `write_file`),
 
 ### 7.1 Relationship to Classical Software Engineering
 
-Genesis mirrors well-engineered human software organizations. The Context Tree represents the team hierarchy: a tech lead defines the architecture (summaries) and delegates modules to senior engineers, who further decompose and delegate to junior engineers (executors). The Phylogenetic Graph represents version control. The fixed-point framework captures the engineering intuition that a project is "done" only when the implementation matches the specification at every level.
+Genesis mirrors well-engineered human software organizations. This alignment is not merely metaphorical. Conway (1968) famously observed that the structure of a software system reflects the communication structure of the organization that built it — "organizations which design systems are constrained to produce designs which are copies of the communication structures of these organizations." Genesis inverts this principle: by designing the organizational structure first (through the Context Tree hierarchy), the system ensures that the resulting software architecture mirrors a well-designed communication topology. The Context Tree represents the team hierarchy: a tech lead defines the architecture (summaries) and delegates modules to senior engineers, who further decompose and delegate to junior engineers (executors). The Phylogenetic Graph represents version control. The fixed-point framework captures the engineering intuition that a project is "done" only when the implementation matches the specification at every level. Parnas (1972) established that the criterion for decomposing a system into modules should be the encapsulation of design decisions likely to change. Genesis operationalizes this principle: each module's CONTEXT.md declares its stable interface (the summary) while isolating the volatile implementation details within the module boundary — a direct realization of Parnas's information-hiding principle at the architectural level.
 
 ### 7.2 Scalability Properties
 
@@ -278,7 +319,24 @@ Genesis mirrors well-engineered human software organizations. The Context Tree r
 
 ## References
 
-1. Garcez, A. d'Avila, & Lamb, L. C. (2020). *Neurosymbolic AI: The 3rd Wave*. Artificial Intelligence Review, 56(1), 1-20.
-2. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., & Cao, Y. (2022). *ReAct: Synergizing Reasoning and Acting in Language Models*. arXiv preprint arXiv:2210.03629.
-3. Jimenez, C. E., et al. (2023). *SWE-bench: Can Language Models Resolve Real-World GitHub Issues?* arXiv preprint arXiv:2310.06770.
-4. Cousot, P., & Cousot, R. (1977). *Abstract Interpretation: A Unified Lattice Model for Static Analysis of Programs by Construction or Approximation of Fixpoints*. POPL '77.
+1. d'Avila Garcez, A., & Lamb, L. C. (2023). Neurosymbolic AI: The 3rd Wave. *Artificial Intelligence Review*, 56(11), 12387–12406.
+
+2. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., & Cao, Y. (2023). ReAct: Synergizing Reasoning and Acting in Language Models. *Proceedings of the Eleventh International Conference on Learning Representations (ICLR)*.
+
+3. Jimenez, C. E., Yang, J., Wettig, A., Yao, S., Pei, K., Press, O., & Narasimhan, K. (2024). SWE-bench: Can Language Models Resolve Real-World GitHub Issues? *Proceedings of the Twelfth International Conference on Learning Representations (ICLR)*.
+
+4. Cousot, P., & Cousot, R. (1977). Abstract Interpretation: A Unified Lattice Model for Static Analysis of Programs by Construction or Approximation of Fixpoints. *Proceedings of the 4th ACM SIGACT-SIGPLAN Symposium on Principles of Programming Languages (POPL '77)*, 238–252.
+
+5. Wei, J., Wang, X., Schuurmans, D., Bosma, M., Ichter, B., Xia, F., Chi, E. H., Le, Q. V., & Zhou, D. (2022). Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. *Advances in Neural Information Processing Systems 35 (NeurIPS)*.
+
+6. Yang, J., Jimenez, C. E., Wettig, A., Lieret, K., Yao, S., Narasimhan, K., & Press, O. (2024). SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering. *Advances in Neural Information Processing Systems 37 (NeurIPS)*.
+
+7. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017). Attention Is All You Need. *Advances in Neural Information Processing Systems 30 (NeurIPS)*.
+
+8. Liu, N. F., Lin, K., Hewitt, J., Paranjape, A., Bevilacqua, M., Petroni, F., & Liang, P. (2024). Lost in the Middle: How Language Models Use Long Contexts. *Transactions of the Association for Computational Linguistics (TACL)*, 12, 1571–1593.
+
+9. Chen, M., Tworek, J., Jun, H., Yuan, Q., Pinto, H. P. d. O., Kaplan, J., Edwards, H., Burda, Y., Joseph, N., Brockman, G., et al. (2021). Evaluating Large Language Models Trained on Code. *arXiv preprint arXiv:2107.03374*.
+
+10. Austin, J., Odena, A., Nye, M., Bosma, M., Michalewski, H., Dohan, D., Jiang, E., Cai, C., Terry, M., Le, Q., & Sutton, C. (2021). Program Synthesis with Large Language Models. *arXiv preprint arXiv:2108.07732*.
+
+11. Kamradt, G. (2023). Needle In A Haystack — Pressure Testing LLMs. *GitHub repository*. https://github.com/gkamradt/LLMTest_NeedleInAHaystack
