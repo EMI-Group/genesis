@@ -298,65 +298,6 @@ defmodule EvoDashWeb.Layouts do
   attr(:icon, :string, required: true)
   slot(:inner_block, required: true)
 
-  defp nav_link(assigns) do
-    ~H"""
-    <.link
-      navigate={@navigate}
-      class={[
-        "group flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
-        @current &&
-          "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm ring-1 ring-slate-200 dark:ring-slate-700",
-        !@current &&
-          "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white"
-      ]}
-      aria-current={if @current, do: "page", else: false}
-    >
-      <.icon
-        name={@icon}
-        class={
-        "w-4 h-4 transition-colors " <>
-        if(@current, do: "text-indigo-600 dark:text-indigo-400", else: "text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-400")
-      }
-      />
-      {render_slot(@inner_block)}
-    </.link>
-    """
-  end
-
-  attr(:navigate, :string, required: true)
-  attr(:current, :boolean, default: false)
-  attr(:icon, :string, required: true)
-  slot(:inner_block, required: true)
-
-  defp mobile_nav_link(assigns) do
-    ~H"""
-    <.link
-      navigate={@navigate}
-      class={[
-        "flex items-center gap-3 px-4 py-3 rounded-xl text-base font-medium transition-colors",
-        @current && "bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400",
-        !@current &&
-          "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white"
-      ]}
-      aria-current={if @current, do: "page", else: false}
-    >
-      <.icon
-        name={@icon}
-        class={
-        "w-5 h-5 " <>
-        if(@current, do: "text-indigo-600 dark:text-indigo-400", else: "text-slate-400 dark:text-slate-500")
-      }
-      />
-      {render_slot(@inner_block)}
-    </.link>
-    """
-  end
-
-  attr(:navigate, :string, required: true)
-  attr(:current, :boolean, default: false)
-  attr(:icon, :string, required: true)
-  slot(:inner_block, required: true)
-
   defp sidebar_nav_link(assigns) do
     ~H"""
     <.link
