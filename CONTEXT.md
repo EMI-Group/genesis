@@ -107,8 +107,10 @@ Genesis supports a VSCode Remote-SSH-like workflow: a lightweight headless daemo
 **Key modules:**
 | Module | App | Purpose |
 |--------|-----|---------|
+| `EvoGit.EpmdDist` | evo_git | Custom EPMD-less distribution module (implements the `erl_epmd` interface). Uses `:persistent_term` as a node→port registry. VM calls `port_please/2` to resolve remote node ports; `register_target/2` populates the registry before `Node.connect/1`. |
+| `EvoGit.Distribution` | evo_git | Runtime distribution enablement. `maybe_enable/0` for config-based `[node] enabled` path; `enable_for_remote/1` for on-demand startup when a user initiates an SSH connection. |
 | `EvoGit.RemoteConnections` | evo_git | TOML-based SSH target persistence (`~/.config/genesis/remote_connections.toml`). Schema: `ssh_target` (SSH host string), `local_binary_path` (path to local release tarball), `dist_port`, `remote_path`, `name`, `id`, `last_connected`. No SSH config parsing — port/keys handled by `~/.ssh/config`. |
-| `EvoGit.RemoteConnection` | evo_git | GenServer — bootstrap (CLI `scp` + `ssh`) + connection lifecycle (CLI `ssh -L` tunnel), heartbeat |
+| `EvoGit.RemoteConnection` | evo_git | GenServer — bootstrap (CLI `scp` + `ssh`) + connection lifecycle (CLI `ssh -L` tunnel), heartbeat, auto-enables local distribution on connect |
 | `EvoGit.AgentScheduler.RemoteAPI` | evo_git | Read-only RPC API over scheduler ETS (list_agents, get_agent_history, get_config, etc.) |
 | `EvoDash.NodeContext` | evo_dash | Thin client — wraps RemoteConnections + RemoteConnection + cross-node RPC helpers |
 | `EvoDashWeb.LiveHooks.NodeAware` | evo_dash | On-mount hook — resolves `?node=` param to remote BEAM node name for RPC routing |
