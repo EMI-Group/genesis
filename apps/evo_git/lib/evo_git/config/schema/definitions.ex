@@ -651,7 +651,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:node, :cookie],
         type: :string,
-        default: "genesis_cookie",
+        default: "genesis_remote_cookie",
         validation: [],
         category: :node,
         sub_category: nil,

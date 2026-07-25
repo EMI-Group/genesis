@@ -286,7 +286,14 @@ defmodule EvoGit.RemoteConnection do
 
   defp do_connect(%__MODULE__{} = state) do
     if node() == :nonode@nohost do
-      {:error, :local_node_not_distributed, state}
+      # Auto-enable distribution on-demand instead of failing.
+      case EvoGit.Distribution.enable_for_remote(state.target) do
+        :ok ->
+          do_connect_distributed(state)
+
+        {:error, reason} ->
+          {:error, {:distribution_failed, reason}, state}
+      end
     else
       do_connect_distributed(state)
     end
@@ -304,7 +311,6 @@ defmodule EvoGit.RemoteConnection do
     Node.set_cookie(cookie)
 
     # Remote port: the port the remote daemon actually listens on.
-    # Defaults to 9000 (hardcoded in rel/genesis_remote/vm.args.eex).
     remote_port = Map.get(target, :dist_port) || @default_remote_dist_port
 
     # Find a free local port for the SSH tunnel so we never conflict with
@@ -317,10 +323,14 @@ defmodule EvoGit.RemoteConnection do
         # Give the SSH tunnel time to establish.
         Process.sleep(@tunnel_settle_ms)
 
-        # Build a ported node name so that Node.connect reaches the remote
-        # daemon through the SSH tunnel's local port (rather than using the
-        # local node's own distribution port as the connect target).
-        remote_node = :"#{@remote_node_base}:#{local_port}"
+        # Register the SSH tunnel's local port with our EPMD-less module so
+        # that when Node.connect asks port_please for this node name, EpmdDist
+        # returns local_port (which the SSH tunnel forwards to remote_port 9000).
+        EvoGit.EpmdDist.register_target(@remote_node_base, local_port)
+
+        # The node name is just name@host — NO port suffix. The port is
+        # resolved by EpmdDist.port_please/2 via the registration above.
+        remote_node = :"#{@remote_node_base}"
 
         case Node.connect(remote_node) do
           true ->
@@ -340,6 +350,7 @@ defmodule EvoGit.RemoteConnection do
             {:ok, new_state}
 
           result when result in [false, :ignored] ->
+            EvoGit.EpmdDist.unregister_target(@remote_node_base)
             close_port(port)
             reason = {:node_connect_failed, inspect(remote_node)}
             new_state = %{connecting | phase: :error, last_error: format_error(reason)}
@@ -351,7 +362,6 @@ defmodule EvoGit.RemoteConnection do
         {:error, reason, new_state}
     end
   end
-
   # ── Bootstrap ──────────────────────────────────────────────────────
 
   defp do_bootstrap(%__MODULE__{} = state) do
