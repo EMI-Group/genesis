@@ -142,6 +142,53 @@ defmodule EvoGit.AgentScheduler.Store do
     PubSub.broadcast_agents_updated()
   end
 
+  @doc """
+  Appends a user message to an agent's pending message queue.
+
+  Called through the AgentScheduler GenServer (serialized), so concurrent
+  appends are safe. The message will be drained and injected into the agent's
+  context at the top of its next turn by `drain_pending_user_messages/1`.
+  """
+  @spec append_pending_user_message(pos_integer(), String.t()) :: :ok | {:error, :not_found}
+  def append_pending_user_message(agent_id, message) when is_binary(message) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        updated = %{agent_state | pending_user_messages: agent_state.pending_user_messages ++ [message]}
+        put_agent_state(agent_id, updated)
+
+      :error ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Drains and returns the list of pending user messages for an agent.
+
+  Reads the latest agent state from ETS, extracts the pending messages, and
+  resets the `pending_user_messages` field to `[]`. Returns the drained list.
+  Returns `[]` if the agent doesn't exist or has no pending messages.
+
+  Called by the agent process at the top of its turn loop (before the LLM call).
+  The re-read of the full struct ensures we get the latest context/turn/etc.
+  from the agent's own writes, minimizing the race window.
+  """
+  @spec drain_pending_user_messages(pos_integer()) :: [String.t()]
+  def drain_pending_user_messages(agent_id) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        messages = agent_state.pending_user_messages
+
+        if messages != [] do
+          put_agent_state(agent_id, %{agent_state | pending_user_messages: []})
+        end
+
+        messages
+
+      :error ->
+        []
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # ETS Helpers (Agent History Table)
   # ---------------------------------------------------------------------------
@@ -330,7 +377,8 @@ defmodule EvoGit.AgentScheduler.Store do
     :max_retries,
     :max_depth,
     :max_turns,
-    :task_local_id
+    :task_local_id,
+    :pending_user_messages
   ]
 
   defp sched_meta_changes(old, new) do

@@ -220,6 +220,25 @@ defmodule EvoGit.RemoteNode do
     end
   end
 
+  @doc """
+  Sends a user message to a running agent on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.send_agent_message/2` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `{:ok, result}` on success or `{:error, reason}` on failure (including
+  RPC failures such as node down or timeout).
+  """
+  @spec send_agent_message(node(), pos_integer(), String.t()) :: {:ok, term()} | {:error, term()}
+  def send_agent_message(node, agent_id, message) do
+    if node == node() do
+      {:ok, EvoGit.AgentScheduler.RemoteAPI.send_agent_message(agent_id, message)}
+    else
+      call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :send_agent_message, [agent_id, message])
+    end
+  end
+
   # Safe degraded config-status map returned when a remote config-status RPC
   # fails. Matches the shape of EvoGit.Config.config_status/0 so callers see a
   # well-formed (but unhealthy) status rather than a crash.

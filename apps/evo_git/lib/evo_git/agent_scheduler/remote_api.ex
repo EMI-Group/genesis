@@ -224,6 +224,25 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     EvoGit.AgentScheduler.paused?()
   end
 
+  @doc """
+  Sends a user message to a running agent via RPC.
+
+  Routes the append through `AgentScheduler.send_user_message/2` (GenServer call)
+  so appends are serialized. Returns `:ok` on success, `{:error, :not_found}` if
+  the agent doesn't exist, or `{:error, :scheduler_not_started}` if the scheduler
+  hasn't started yet.
+
+  Designed to be called via `:erpc.call/5` from the local dashboard for a remote
+  node.
+  """
+  @spec send_agent_message(pos_integer(), String.t()) :: :ok | {:error, term()}
+  def send_agent_message(agent_id, message) when is_binary(message) do
+    case :ets.whereis(:evogit_agent_state) do
+      :undefined -> {:error, :scheduler_not_started}
+      _ -> EvoGit.AgentScheduler.send_user_message(agent_id, message)
+    end
+  end
+
   # ── Private: ETS access ────────────────────────────────────────────
 
   # Reads all `{key, value}` pairs from a named ETS table.

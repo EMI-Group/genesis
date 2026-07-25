@@ -215,6 +215,27 @@ defmodule EvoGit.Agent.Runner do
     end
   end
 
+  defp drain_and_inject_user_messages(%LoopState{agent_id: agent_id, context: context} = state) do
+    messages = EvoGit.AgentScheduler.Store.drain_pending_user_messages(agent_id)
+
+    case messages do
+      [] ->
+        state
+
+      _ ->
+        new_context =
+          Enum.reduce(messages, context, fn msg, ctx ->
+            tagged = EvoGit.Agent.ContextBuilder.tag_message_turn(user(msg), state.turn)
+            ReqLLM.Context.append(ctx, tagged)
+          end)
+
+        # Sync updated context to ETS for dashboard visibility
+        EvoGit.Agent.ContextBuilder.sync_context_to_ets(agent_id, new_context)
+
+        %{state | context: new_context}
+    end
+  end
+
   defp loop(%LoopState{} = state) do
     context_before = state.context
 
@@ -232,6 +253,10 @@ defmodule EvoGit.Agent.Runner do
       EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
       EvoGit.Agent.ContextBuilder.sync_total_tokens_to_ets(state.agent_id, state.total_tokens)
     end
+
+    # Drain any pending user messages (injected externally via dashboard/RPC)
+    # and append them to the context as user-role messages before the next LLM call.
+    state = drain_and_inject_user_messages(state)
 
     cond do
       EvoGit.Agent.trigger_turn_limit_recovery?(state) ->

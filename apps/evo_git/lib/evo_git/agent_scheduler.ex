@@ -227,6 +227,21 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Sends a user message to a running agent.
+
+  The message is appended to the agent's `pending_user_messages` queue and will
+  be injected into the agent's LLM context at the top of its next turn (as a
+  user-role message). This serializes the append through the GenServer to avoid
+  concurrent-write races.
+
+  Returns `:ok` on success, or `{:error, :not_found}` if the agent doesn't exist.
+  """
+  @spec send_user_message(pos_integer(), String.t()) :: :ok | {:error, :not_found}
+  def send_user_message(agent_id, message) when is_binary(message) do
+    GenServer.call(__MODULE__, {:send_user_message, agent_id, message})
+  end
+
+  @doc """
   Returns the foreign repo commits map for the given agent's SchedMeta.
   Used by agents to track the latest known commit per foreign repo from
   previous subagent completions.
@@ -726,6 +741,12 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call(:paused?, _from, %State{} = state) do
     {:reply, state.paused, state}
+  end
+
+  @impl true
+  def handle_call({:send_user_message, agent_id, message}, _from, %State{} = state) do
+    result = Store.append_pending_user_message(agent_id, message)
+    {:reply, result, state}
   end
 
   @impl true
