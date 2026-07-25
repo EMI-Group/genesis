@@ -123,7 +123,7 @@ Genesis supports a VSCode Remote-SSH-like workflow: a lightweight headless daemo
 - When viewing a remote node: Agents page shows remote agents via RPC, Settings is read-only, System controls are disabled (restart/stop), config banner shows remote config status.
 - SSH targets are persisted and remembered across sessions.
 
-**Design constraint — single active remote connection:** The current architecture uses a fixed distribution node name (`genesis_remote@127.0.0.1`) and a single SSH tunnel binding a fixed local port (default 9000). This means only one remote connection is active at a time — `Node.connect` to the same fixed name cannot address two hosts. This is the intended product behavior for the initial implementation.
+**Design constraint — single active remote connection:** The current architecture uses a fixed distribution node name (`genesis_remote@127.0.0.1`) and a single SSH tunnel. This means only one remote connection is active at a time — `Node.connect` to the same fixed name cannot address two hosts. The SSH tunnel uses a dynamically-assigned local port (via `find_free_port/0`) that forwards to the remote daemon's fixed port 9000. The custom `EvoGit.EpmdDist` module maps the node name to this local port via `:persistent_term` so the VM's `port_please/2` callback resolves it correctly without an external EPMD process. This is the intended product behavior for the initial implementation.
 
 ### Desktop App Build Pipeline
 
