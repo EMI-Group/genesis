@@ -260,6 +260,16 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.reload_config(node)
   end
 
+  @doc """
+  Sends a user message to an agent on the given node.
+
+  Delegates to `EvoGit.RemoteNode.send_agent_message/3`.
+  """
+  @spec send_user_message(node(), pos_integer(), String.t()) :: {:ok, term()} | {:error, term()}
+  def send_user_message(node, agent_id, message) do
+    EvoGit.RemoteNode.send_agent_message(node, agent_id, message)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning

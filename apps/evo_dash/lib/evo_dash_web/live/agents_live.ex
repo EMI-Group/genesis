@@ -38,6 +38,8 @@ defmodule EvoDashWeb.AgentsLive do
         selected_history_entry: nil,
         selected_objective: nil,
         show_usage: false,
+        send_message_agent_id: nil,
+        send_message_text: "",
         agents: agents,
         id_to_display: id_to_display,
         repo_trees: build_repo_trees(agents),
@@ -499,6 +501,41 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_event("close_objective_modal", _params, socket) do
     {:noreply, assign(socket, :selected_objective, nil)}
+  end
+
+  @impl true
+  def handle_event("open_send_message", %{"id" => id}, socket) do
+    agent_id = String.to_integer(id)
+    {:noreply, assign(socket, send_message_agent_id: agent_id, send_message_text: "")}
+  end
+
+  @impl true
+  def handle_event("close_send_message", _params, socket) do
+    {:noreply, assign(socket, send_message_agent_id: nil, send_message_text: "")}
+  end
+
+  @impl true
+  def handle_event("validate_send_message", %{"message" => message}, socket) do
+    {:noreply, assign(socket, :send_message_text, message)}
+  end
+
+  @impl true
+  def handle_event("send_agent_message", %{"agent_id" => id, "message" => message}, socket) do
+    agent_id = String.to_integer(id)
+    node = socket.assigns.current_node
+
+    case EvoDash.NodeContext.send_user_message(node, agent_id, message) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Message sent to agent"))
+         |> assign(send_message_agent_id: nil, send_message_text: "")}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Failed to send message: %{reason}", reason: inspect(reason)))}
+    end
   end
 
   # ---------------------------------------------------------------------------
