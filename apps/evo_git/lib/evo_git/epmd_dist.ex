@@ -41,7 +41,13 @@ defmodule EvoGit.EpmdDist do
 
   @doc false
   def port_please(node_name, _host) do
-    case :persistent_term.get({:evogit_epmd, node_name}, nil) do
+    # The VM's distribution layer splits the node name at @ and calls this
+    # callback with just the name part (before @). The argument type varies
+    # by OTP version and calling context (string, charlist, or atom), so
+    # normalize it before lookup.
+    normalized = normalize_node_name(node_name)
+
+    case :persistent_term.get({:evogit_epmd, normalized}, nil) do
       nil -> :noport
       port -> {:port, port, 5}
     end
@@ -57,8 +63,12 @@ defmodule EvoGit.EpmdDist do
     # When the local node registers itself at VM boot, store its own listen
     # port. We read the actual distribution listen port from the kernel
     # application env (set to 9100-9200 range in vm.args for the local side).
+    #
+    # The VM calls this with just the node's name part (before @), so
+    # normalize to be safe regardless of the input form.
     listen_port = Application.get_env(:kernel, :inet_dist_listen_min, 9100)
-    :persistent_term.put({:evogit_epmd, node_name}, listen_port)
+    normalized = normalize_node_name(node_name)
+    :persistent_term.put({:evogit_epmd, normalized}, listen_port)
     {:ok, 0}
   end
 
@@ -75,8 +85,14 @@ defmodule EvoGit.EpmdDist do
   """
   @spec register_target(String.t(), non_neg_integer()) :: :ok
   def register_target(node_string, port) do
-    node_atom = String.to_atom(node_string)
-    :persistent_term.put({:evogit_epmd, node_atom}, port)
+    # Extract the name part before @ — the VM's port_please callback receives
+    # just the name part, not the full "name@host". Store under both the short
+    # name and the full name (as atoms) for robustness.
+    short_name = node_string |> String.split("@") |> List.first() |> String.to_atom()
+    full_atom = String.to_atom(node_string)
+
+    :persistent_term.put({:evogit_epmd, short_name}, port)
+    :persistent_term.put({:evogit_epmd, full_atom}, port)
     :ok
   end
 
@@ -89,13 +105,30 @@ defmodule EvoGit.EpmdDist do
   """
   @spec unregister_target(String.t()) :: :ok
   def unregister_target(node_string) do
-    node_atom = String.to_atom(node_string)
-    key = {:evogit_epmd, node_atom}
+    short_name = node_string |> String.split("@") |> List.first() |> String.to_atom()
+    full_atom = String.to_atom(node_string)
 
+    erase_if_exists({:evogit_epmd, short_name})
+    erase_if_exists({:evogit_epmd, full_atom})
+    :ok
+  end
+
+  @doc false
+  defp erase_if_exists(key) do
     if :persistent_term.get(key, nil) != nil do
       :persistent_term.erase(key)
     end
-
-    :ok
   end
+
+  # Normalize any input form (string, charlist, atom) to an atom of just the
+  # name part (before @). The VM may pass the node name in any of these forms
+  # depending on OTP version and calling context.
+  defp normalize_node_name(node_name) when is_atom(node_name),
+    do: normalize_node_name(Atom.to_string(node_name))
+
+  defp normalize_node_name(node_name) when is_list(node_name),
+    do: normalize_node_name(to_string(node_name))
+
+  defp normalize_node_name(node_name) when is_binary(node_name),
+    do: node_name |> String.split("@") |> List.first() |> String.to_atom()
 end
