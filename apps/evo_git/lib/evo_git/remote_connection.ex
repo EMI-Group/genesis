@@ -362,6 +362,7 @@ defmodule EvoGit.RemoteConnection do
         {:error, reason, new_state}
     end
   end
+
   # ── Bootstrap ──────────────────────────────────────────────────────
 
   defp do_bootstrap(%__MODULE__{} = state) do
