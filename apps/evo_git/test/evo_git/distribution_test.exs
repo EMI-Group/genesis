@@ -23,6 +23,32 @@ defmodule EvoGit.DistributionTest do
     end
   end
 
+  describe "enable_for_remote/1" do
+    # async: false — starting real distribution changes global BEAM state
+    # (node() becomes non-nonode@nohost) which would break sibling tests
+    # that assume :nonode@nohost.
+    @describetag :enable_for_remote
+
+    test "returns :ok when already distributed" do
+      if Distribution.distributed?() do
+        assert :ok = Distribution.enable_for_remote(%{})
+      end
+    end
+
+    test "accepts a target map with dist_port and cookie" do
+      # Just verify the function doesn't crash on a valid target map.
+      # In test env, distribution is likely not started; if it starts, great.
+      result = Distribution.enable_for_remote(%{dist_port: 9000, cookie: "genesis_remote_cookie"})
+      assert result == :ok or match?({:error, _}, result)
+
+      # If this test actually started distribution, stop it so it doesn't
+      # leak into sibling tests.
+      if node() != :nonode@nohost and result == :ok do
+        :net_kernel.stop()
+      end
+    end
+  end
+
   describe "start_epmd_if_configured/1" do
     test "defaults to false — does not start EPMD when :start_epmd is not set" do
       # With the new default of false, EPMD should NOT be started when

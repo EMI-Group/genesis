@@ -651,7 +651,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:node, :cookie],
         type: :string,
-        default: "genesis_cookie",
+        default: "genesis_remote_cookie",
         validation: [],
         category: :node,
         sub_category: nil,
@@ -671,12 +671,12 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:node, :start_epmd],
         type: :boolean,
-        default: true,
+        default: false,
         validation: [],
         category: :node,
         sub_category: nil,
         description:
-          "Whether to start EPMD (Erlang Port Mapper Daemon) explicitly from the running ERTS. Set to false for EPMD-less distribution where nodes connect directly on a pinned port."
+          "Whether to start EPMD (Erlang Port Mapper Daemon) explicitly from the running ERTS. Default is false — distribution uses a custom EPMD module (EvoGit.EpmdDist) that does not require an external epmd process. Set to true only if you need the standard Erlang EPMD daemon."
       }
     ]
   end

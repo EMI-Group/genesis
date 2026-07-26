@@ -53,6 +53,24 @@ defmodule EvoGit.Distribution do
     node() != :nonode@nohost
   end
 
+  @doc """
+  Enables distribution on-demand for SSH remote connection.
+
+  Called by `EvoGit.RemoteConnection` when the local node is not yet
+  distributed. Sets up EPMD-less distribution with a free port range for
+  the local side (9100-9200) and the cookie matching the remote daemon.
+
+  Returns `:ok` or `{:error, reason}`.
+  """
+  @spec enable_for_remote(map()) :: :ok | {:error, term()}
+  def enable_for_remote(target) do
+    if distributed?() do
+      :ok
+    else
+      enable_for_connection(target)
+    end
+  end
+
   defp enable(node_config) do
     cond do
       distributed?() ->
@@ -78,6 +96,39 @@ defmodule EvoGit.Distribution do
     end
   end
 
+  defp enable_for_connection(target) do
+    # Configure EPMD-less distribution listen ports for the local side.
+    # The remote daemon listens on 9000; we use 9100-9200 locally to avoid
+    # conflict. The SSH tunnel forwards local_port → remote_port 9000.
+    unless Application.get_env(:kernel, :inet_dist_listen_min) do
+      Application.put_env(:kernel, :inet_dist_listen_min, 9100)
+    end
+
+    unless Application.get_env(:kernel, :inet_dist_listen_max) do
+      Application.put_env(:kernel, :inet_dist_listen_max, 9200)
+    end
+
+    case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
+      {:ok, _pid} ->
+        # Set the distribution cookie to match the remote daemon. Must be
+        # done after :net_kernel.start succeeds — set_cookie/1 crashes on
+        # a non-distributed node (:nonode@nohost).
+        cookie = Map.get(target, :cookie, "genesis_remote_cookie") |> String.to_atom()
+        Node.set_cookie(cookie)
+        Logger.info("Distribution enabled for remote connection: #{node()}")
+        :ok
+
+      {:error, {:already_started, _pid}} ->
+        :ok
+
+      {:error, {:already_started, _pid}, _mode} ->
+        :ok
+
+      {:error, reason} = error ->
+        Logger.warning("Failed to enable distribution for remote: #{inspect(reason)}")
+        error
+    end
+  end
   @doc false
   def start_epmd_if_configured(node_config) do
     if Map.get(node_config, :start_epmd, false) do

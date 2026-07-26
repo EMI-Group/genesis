@@ -1,6 +1,9 @@
 ## Remote Daemon — Distribution ENABLED
-## EPMD-less distribution over a pinned port (for SSH tunneling)
--start_epmd false -erl_epmd_port 9000
+## EPMD-less distribution over a pinned port (for SSH tunneling).
+## Uses a custom EPMD module (EvoGit.EpmdDist) that doesn't require an external
+## epmd process. The daemon listens on port 9000; SSH tunnels forward to it.
+-start_epmd false
+-epmd_module Elixir.EvoGit.EpmdDist
 -dist_listen true
 -kernel inet_dist_listen_min 9000 inet_dist_listen_max 9000
 
