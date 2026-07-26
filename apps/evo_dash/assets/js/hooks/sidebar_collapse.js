@@ -1,9 +1,13 @@
 // SidebarCollapse hook: manages desktop sidebar collapse state with
-// cross-session localStorage persistence. The updated() callback is
-// essential — LiveView morphdom patches reset server-rendered sidebar
-// classes after every navigation, so we must re-apply on every update.
+// cross-session localStorage persistence, AND mobile sidebar open/close
+// (hamburger toggle). The updated() callback is essential — LiveView
+// morphdom patches reset server-rendered sidebar classes after every
+// navigation, so we must re-apply on every update.
 const SidebarCollapse = {
   mounted() {
+    this.mobileOpen = false;
+
+    // --- Desktop collapse state ---
     this.applyCollapsed(this.isCollapsed());
     this.collapseToggle = document.getElementById('sidebar-collapse-toggle');
     if (this.collapseToggle) {
@@ -14,20 +18,90 @@ const SidebarCollapse = {
       };
       this.collapseToggle.addEventListener('click', this._clickHandler);
     }
+
+    // --- Mobile sidebar: hamburger open + overlay close ---
+    this.mobileToggle = document.getElementById('sidebar-mobile-toggle');
+    this.overlay = document.getElementById('sidebar-overlay');
+
+    if (this.mobileToggle) {
+      this._mobileToggleHandler = () => {
+        if (!this.isMobile()) return;
+        if (this.mobileOpen) this.closeMobile();
+        else this.openMobile();
+      };
+      this.mobileToggle.addEventListener('click', this._mobileToggleHandler);
+    }
+
+    if (this.overlay) {
+      this._overlayHandler = () => {
+        if (!this.isMobile()) return;
+        this.closeMobile();
+      };
+      this.overlay.addEventListener('click', this._overlayHandler);
+    }
+
+    // Close mobile sidebar when any nav link inside it is clicked.
+    // Event delegation on the sidebar element survives LiveView morphdom
+    // re-renders (no need to re-attach per-link listeners in updated()).
+    this._sidebarNavHandler = (e) => {
+      if (!this.mobileOpen || !this.isMobile()) return;
+      if (e.target.closest('a')) this.closeMobile();
+    };
+    this.el.addEventListener('click', this._sidebarNavHandler);
   },
 
   updated() {
     this.applyCollapsed(this.isCollapsed());
+    // Re-apply mobile open/close state — morphdom resets the sidebar's
+    // translate classes after every LiveView navigation patch.
+    this.applyMobileState(this.mobileOpen);
   },
 
   destroyed() {
-    if (this.collapseToggle && this._clickHandler) {
+    if (this.collapseToggle && this._clickHandler)
       this.collapseToggle.removeEventListener('click', this._clickHandler);
-    }
+    if (this.mobileToggle && this._mobileToggleHandler)
+      this.mobileToggle.removeEventListener('click', this._mobileToggleHandler);
+    if (this.overlay && this._overlayHandler)
+      this.overlay.removeEventListener('click', this._overlayHandler);
+    this.el.removeEventListener('click', this._sidebarNavHandler);
   },
 
   isCollapsed() {
     return localStorage.getItem('sidebar-collapsed') === 'true';
+  },
+
+  isMobile() {
+    return window.matchMedia('(max-width: 1023.98px)').matches;
+  },
+
+  openMobile() {
+    this.mobileOpen = true;
+    this.applyMobileState(true);
+    document.body.classList.add('overflow-hidden');
+  },
+
+  closeMobile() {
+    this.mobileOpen = false;
+    this.applyMobileState(false);
+    document.body.classList.remove('overflow-hidden');
+  },
+
+  // Toggles the mobile sidebar translate + overlay visibility classes.
+  // On desktop these are harmless — lg:translate-x-0 and lg:hidden in the
+  // server-rendered markup override them at the lg breakpoint.
+  applyMobileState(open) {
+    if (open) {
+      this.el.classList.remove('-translate-x-full');
+      if (this.overlay) {
+        this.overlay.classList.remove('opacity-0', 'pointer-events-none');
+      }
+    } else {
+      this.el.classList.add('-translate-x-full');
+      if (this.overlay) {
+        this.overlay.classList.add('opacity-0', 'pointer-events-none');
+      }
+    }
   },
 
   applyCollapsed(collapsed) {
