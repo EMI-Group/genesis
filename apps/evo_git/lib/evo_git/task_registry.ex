@@ -23,6 +23,11 @@ defmodule EvoGit.TaskRegistry do
 
   @max_recent_projects 10
 
+  # Maximum number of log entries retained per task. Logs grow on every
+  # update_task_log call and are stored as a JSON array in SQLite; without a
+  # cap, each subsequent decode/encode in task_get grows unboundedly.
+  @max_log_entries 500
+
   @lease_duration 120
   @heartbeat_interval 60_000
   # One-shot lease sweep delay: longer than the lease duration so the lease has
@@ -220,15 +225,29 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @impl true
-  def handle_call(:list_tasks, _from, state) do
-    tasks = select_all_tasks(state)
-    {:reply, tasks, state}
+  def handle_call(:list_tasks, from, state) do
+    # Delegate the heavy decode to a short-lived Task process so the large
+    # decoded terms are allocated and discarded on that process's heap rather
+    # than ratcheting up this GenServer's heap.
+    Task.start(fn ->
+      tasks = EvoGit.Store.safe_select_all_tasks(state.task_store)
+      GenServer.reply(from, tasks)
+    end)
+
+    {:noreply, state}
   end
 
   @impl true
-  def handle_call({:list_tasks_paginated, opts}, _from, state) do
-    result = select_paginated_tasks(state, opts)
-    {:reply, result, state}
+  def handle_call({:list_tasks_paginated, opts}, from, state) do
+    # Delegate the heavy decode to a short-lived Task process so the large
+    # decoded terms are allocated and discarded on that process's heap rather
+    # than ratcheting up this GenServer's heap.
+    Task.start(fn ->
+      result = EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
+      GenServer.reply(from, result)
+    end)
+
+    {:noreply, state}
   end
 
   @impl true
@@ -305,8 +324,8 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_call(:get_unique_paths, _from, state) do
     paths =
-      select_all_tasks(state)
-      |> Enum.map(fn task -> task.opts[:path] end)
+      EvoGit.Store.select_task_paths(state.task_store)
+      |> Enum.map(fn opts -> opts[:path] end)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
 
@@ -315,10 +334,7 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call(:clear_finished_tasks, _from, state) do
-    task_ids =
-      select_all_tasks(state)
-      |> Enum.filter(fn task -> task.status not in [:running, :pending] end)
-      |> Enum.map(fn task -> task.id end)
+    task_ids = EvoGit.Store.select_finished_task_ids(state.task_store)
 
     EvoGit.Store.delete_tasks(state.task_store, task_ids)
 
@@ -375,7 +391,7 @@ defmodule EvoGit.TaskRegistry do
   def handle_cast({:append_log, task_id, log_entry}, state) do
     case task_get(state, task_id) do
       %TaskInfo{logs: logs} = task ->
-        updated = %{task | logs: [log_entry | logs]}
+        updated = %{task | logs: [log_entry | logs] |> Enum.take(@max_log_entries)}
         EvoGit.Store.put_task(state.task_store, updated)
 
       nil ->
@@ -501,10 +517,6 @@ defmodule EvoGit.TaskRegistry do
 
   defp select_all_tasks(state) do
     EvoGit.Store.safe_select_all_tasks(state.task_store)
-  end
-
-  defp select_paginated_tasks(state, opts) do
-    EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
   end
 
   defp select_all_projects(state) do
@@ -901,17 +913,14 @@ defmodule EvoGit.TaskRegistry do
   def handle_info(:heartbeat, state) do
     now = System.system_time(:second)
 
-    # Renew leases for owned tasks (those in task_refs).
+    # Renew leases for owned tasks using lightweight queries — avoids full
+    # decode (task_get) + full re-encode (put_task) for every owned task on
+    # every heartbeat.
     Enum.each(state.task_refs, fn {task_id, _ref} ->
-      case task_get(state, task_id) do
-        %TaskInfo{status: s} = task when s in [:running, :pending] ->
-          EvoGit.Store.put_task(state.task_store, %{
-            task
-            | lease_expires_at: now + @lease_duration
-          })
+      status = EvoGit.Store.get_task_status(state.task_store, task_id)
 
-        _ ->
-          :ok
+      if status in [:running, :pending] do
+        EvoGit.Store.update_lease_expires_at(state.task_store, task_id, now + @lease_duration)
       end
     end)
 
@@ -928,35 +937,45 @@ defmodule EvoGit.TaskRegistry do
   def handle_info(:lease_sweep, state) do
     owned_ids = MapSet.new(Map.keys(state.task_refs))
 
-    # Track whether any task was actually marked failed so we only
-    # broadcast/cleanup when something changed.
+    # Use the lightweight query — only id, status, and lease_expires_at are
+    # decoded, avoiding the full struct decode for every task in the table.
+    # We only need to task_get (full decode) for the very few tasks (usually
+    # 0-1) that actually need to be marked :failed.
     changed =
-      select_all_tasks(state)
-      |> Enum.filter(fn task ->
-        task.status == :running and
-          task.id not in owned_ids and
-          not Lease.lease_valid?(task.lease_expires_at)
+      EvoGit.Store.select_running_lease_info(state.task_store)
+      |> Enum.filter(fn %{id: id, status: status, lease_expires_at: lease} ->
+        status == :running and
+          id not in owned_ids and
+          not Lease.lease_valid?(lease)
       end)
-      |> Enum.reduce(false, fn task, acc ->
-        if Lease.sched_meta_has_active_agents?(task.id) do
+      |> Enum.reduce(false, fn %{id: id, lease_expires_at: lease}, acc ->
+        if Lease.sched_meta_has_active_agents?(id) do
           # Same VM, agents still active — skip (handled by :recheck_task)
           acc
         else
-          Diagnostics.log_failed_transition(task.id, :lease_sweep, task.status,
+          Diagnostics.log_failed_transition(id, :lease_sweep, :running,
             result: "Lease expired; owning instance no longer renewing",
-            extra: [lease_expires_at: inspect(task.lease_expires_at)]
+            extra: [lease_expires_at: inspect(lease)]
           )
 
-          updated = %{
-            task
-            | status: :failed,
-              lease_expires_at: nil,
-              finished_at: DateTime.utc_now(),
-              result: "Lease expired; owning instance no longer renewing"
-          }
+          # Full decode only for this specific task (to build the write-back
+          # struct) — there should be very few of these (0-1 in normal use).
+          case task_get(state, id) do
+            %TaskInfo{} = task ->
+              updated = %{
+                task
+                | status: :failed,
+                  lease_expires_at: nil,
+                  finished_at: DateTime.utc_now(),
+                  result: "Lease expired; owning instance no longer renewing"
+              }
 
-          EvoGit.Store.put_task(state.task_store, updated)
-          true
+              EvoGit.Store.put_task(state.task_store, updated)
+              true
+
+            nil ->
+              acc
+          end
         end
       end)
 
