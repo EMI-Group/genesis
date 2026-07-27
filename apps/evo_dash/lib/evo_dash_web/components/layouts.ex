@@ -417,7 +417,7 @@ defmodule EvoDashWeb.Layouts do
 
   def flash_group(assigns) do
     ~H"""
-    <div id={@id} aria-live="polite">
+    <div id={@id} aria-live="polite" class="fixed top-4 right-4 z-[60] flex flex-col gap-2 w-80 sm:w-96 pointer-events-none">
       <.flash kind={:info} flash={@flash} />
       <.flash kind={:success} flash={@flash} />
       <.flash kind={:error} flash={@flash} />
