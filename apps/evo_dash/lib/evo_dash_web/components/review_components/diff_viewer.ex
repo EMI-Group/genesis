@@ -952,7 +952,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       name: segment,
       status: file.status,
       additions: file.additions,
-      deletions: file.deletions
+      deletions: file.deletions,
+      file_count: 1
     }
 
     Map.put(tree, segment, file_node)
