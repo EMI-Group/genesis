@@ -17,63 +17,59 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           {gettext("Changed Files")}
         </h3>
       </div>
-      <%= for {group, files} <- group_files_by_dir(@files) do %>
-        <%= if group == :root do %>
-          <%= for file <- files do %>
-            <button
-              phx-click="select_file"
-              phx-value-path={file.path}
-              class={["file-item", @selected_file == file.path && "file-selected"]}
-            >
-              <.icon
-                name={file_status_icon(file.status)}
-                class={"size-3.5 shrink-0 #{file_status_color(file.status)}"}
-              />
-              <span class="font-mono truncate flex-1 text-xs" title={file.path}>
-                {Path.basename(file.path)}
-              </span>
-              <span class="text-[10px] text-success font-mono leading-none">+{file.additions}</span>
-              <span class="text-[10px] text-error font-mono leading-none">-{file.deletions}</span>
-            </button>
-          <% end %>
-        <% else %>
-          <details open class="dir-group">
-            <summary class="dir-group-header">
-              <span class="dir-icon">📁</span>
-              <span class="dir-name font-mono text-xs truncate" title={group}>{group}/</span>
-              <% {group_additions, group_deletions} = dir_stats(files) %>
-              <span class="dir-stats">
-                {ngettext("%{count} file", "%{count} files", length(files), count: length(files))}
-                <span class="text-success">+{group_additions}</span>
-                <span class="text-error">-{group_deletions}</span>
-              </span>
-            </summary>
-            <div class="dir-files">
-              <%= for file <- files do %>
-                <button
-                  phx-click="select_file"
-                  phx-value-path={file.path}
-                  class={[
-                    "file-item file-item-indented",
-                    @selected_file == file.path && "file-selected"
-                  ]}
-                >
-                  <.icon
-                    name={file_status_icon(file.status)}
-                    class={"size-3.5 shrink-0 #{file_status_color(file.status)}"}
-                  />
-                  <span class="font-mono truncate flex-1 text-xs" title={file.path}>
-                    {Path.basename(file.path)}
-                  </span>
-                  <span class="text-[10px] text-success font-mono leading-none">+{file.additions}</span>
-                  <span class="text-[10px] text-error font-mono leading-none">-{file.deletions}</span>
-                </button>
-              <% end %>
-            </div>
-          </details>
-        <% end %>
+      <%= for node <- build_file_tree(@files) do %>
+        <.tree_node node={node} depth={0} selected_file={@selected_file} />
       <% end %>
     </div>
+    """
+  end
+
+  attr(:node, :map, required: true)
+  attr(:depth, :integer, required: true)
+  attr(:selected_file, :string, default: nil)
+
+  def tree_node(%{node: %{type: :dir}} = assigns) do
+    ~H"""
+    <details open class="dir-group">
+      <summary
+        class="dir-group-header"
+        style={"padding-left: #{0.75 + @depth * 0.75}rem"}
+      >
+        <span class="dir-icon">📁</span>
+        <span class="dir-name font-mono text-xs truncate">
+          {@node.name}/
+        </span>
+        <span class="dir-stats">
+          {ngettext("%{count} file", "%{count} files", @node.file_count, count: @node.file_count)}
+          <span class="text-success">+{@node.additions}</span>
+          <span class="text-error">-{@node.deletions}</span>
+        </span>
+      </summary>
+      <%= for child <- @node.children do %>
+        <.tree_node node={child} depth={@depth + 1} selected_file={@selected_file} />
+      <% end %>
+    </details>
+    """
+  end
+
+  def tree_node(%{node: %{type: :file}} = assigns) do
+    ~H"""
+    <button
+      phx-click="select_file"
+      phx-value-path={@node.path}
+      class={["file-item", @selected_file == @node.path && "file-selected"]}
+      style={"padding-left: #{0.75 + @depth * 0.75}rem"}
+    >
+      <.icon
+        name={file_status_icon(@node.status)}
+        class={"size-3.5 shrink-0 #{file_status_color(@node.status)}"}
+      />
+      <span class="font-mono truncate flex-1 text-xs" title={@node.path}>
+        {@node.name}
+      </span>
+      <span class="text-[10px] text-success font-mono leading-none">+{@node.additions}</span>
+      <span class="text-[10px] text-error font-mono leading-none">-{@node.deletions}</span>
+    </button>
     """
   end
 
@@ -935,26 +931,80 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   defp file_status_color("modified"), do: "text-info"
   defp file_status_color(_), do: "text-base-content/50"
 
-  # Group files by their parent directory. Returns a list of {group_key, files} tuples
-  # sorted alphabetically, with :root first for files at the top level.
-  defp group_files_by_dir(files) do
+  # Build a recursive nested tree from file paths. Each node is either a
+  # directory node (%{type: :dir, ...}) or a file node (%{type: :file, ...}).
+  # Directory nodes carry aggregate additions/deletions/file_count for the
+  # entire subtree. Children are sorted: directories first (alphabetically),
+  # then files (alphabetically) — matching GitHub's behavior.
+  defp build_file_tree(files) do
     files
-    |> Enum.group_by(fn file ->
-      case Path.dirname(file.path) do
-        "." -> :root
-        dir -> dir
-      end
+    |> Enum.reduce(%{}, fn file, tree ->
+      segments = String.split(file.path, "/")
+      insert_into_tree(tree, segments, file)
     end)
-    |> Enum.sort_by(fn
-      {:root, _} -> {0, ""}
-      {dir, _} -> {1, dir}
-    end)
+    |> children_to_sorted_list()
   end
 
-  # Calculate total additions and deletions for a group of files
-  defp dir_stats(files) do
-    additions = Enum.sum(Enum.map(files, & &1.additions))
-    deletions = Enum.sum(Enum.map(files, & &1.deletions))
-    {additions, deletions}
+  defp insert_into_tree(tree, [segment], file) do
+    file_node = %{
+      type: :file,
+      path: file.path,
+      name: segment,
+      status: file.status,
+      additions: file.additions,
+      deletions: file.deletions,
+      file_count: 1
+    }
+
+    Map.put(tree, segment, file_node)
+  end
+
+  defp insert_into_tree(tree, [segment | rest], file) do
+    raw_children =
+      case Map.get(tree, segment) do
+        %{children: children} -> children
+        nil -> %{}
+      end
+
+    updated_children = insert_into_tree(raw_children, rest, file)
+    Map.put(tree, segment, %{type: :dir, children: updated_children})
+  end
+
+  # Convert a raw tree map (%{name => node}) into a sorted list of finalized
+  # nodes with computed aggregate stats for directories.
+  defp children_to_sorted_list(tree) do
+    tree
+    |> Enum.map(fn {name, node} -> finalize_node(name, node) end)
+    |> sort_nodes()
+  end
+
+  defp finalize_node(_name, %{type: :file} = node), do: node
+
+  defp finalize_node(name, %{type: :dir, children: raw_children}) do
+    children = children_to_sorted_list(raw_children)
+
+    {additions, deletions, file_count} =
+      Enum.reduce(children, {0, 0, 0}, fn child, {a, d, c} ->
+        {a + child.additions, d + child.deletions, c + child.file_count}
+      end)
+
+    %{
+      type: :dir,
+      name: name,
+      children: children,
+      additions: additions,
+      deletions: deletions,
+      file_count: file_count
+    }
+  end
+
+  # Sort directories first (alphabetically by name), then files (alphabetically)
+  defp sort_nodes(nodes) do
+    Enum.sort_by(nodes, fn node ->
+      case node.type do
+        :dir -> {0, node.name}
+        :file -> {1, node.name}
+      end
+    end)
   end
 end

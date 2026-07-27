@@ -73,8 +73,6 @@ defmodule EvoDashWeb.ReviewLive do
                 finished_at={@finished_at}
               />
 
-              <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
-
               <!-- Unified review card: tab bar + content -->
               <div class="review-card">
                 <!-- Tab Bar (sticky header of the card) -->
@@ -128,6 +126,11 @@ defmodule EvoDashWeb.ReviewLive do
                         <EvoDashWeb.ReviewComponents.extract_skills_modal
                           show={@show_extract_modal}
                         />
+                      </div>
+
+                    <% @review_tab == :objective -> %>
+                      <div class="p-4 sm:p-6 lg:p-8">
+                        <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
                       </div>
 
                     <% @review_tab == :commits -> %>
@@ -254,6 +257,10 @@ defmodule EvoDashWeb.ReviewLive do
     {:noreply, assign(socket, :review_tab, :conversation)}
   end
 
+  def handle_event("switch_tab", %{"tab" => "objective"}, socket) do
+    {:noreply, assign(socket, :review_tab, :objective)}
+  end
+
   def handle_event("switch_tab", %{"tab" => "files_changed"}, socket) do
     {:noreply, assign(socket, :review_tab, :files_changed)}
   end
@@ -273,6 +280,11 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_event("toggle_summary_view", %{"mode" => mode}, socket) do
     {:noreply, assign(socket, :summary_raw, mode == "raw")}
+  end
+
+  @impl true
+  def handle_event("copied", _params, socket) do
+    {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
   end
 
   @impl true

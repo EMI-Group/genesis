@@ -287,36 +287,33 @@ defmodule EvoDashWeb.ReviewComponents.Header do
   end
 
   # ---------------------------------------------------------------------------
-  # agent_summary/1 — Collapsible panel showing agent result (markdown/raw toggle)
+  # agent_summary/1 — Static panel showing agent result (markdown/raw toggle)
   # ---------------------------------------------------------------------------
 
   attr(:summary, :string, required: true)
-  attr(:open, :boolean, default: true)
   attr(:summary_raw, :boolean, default: false)
 
   def agent_summary(assigns) do
     ~H"""
     <div class="bg-base-100 border-b border-base-200 ">
       <div class="relative">
-        <details open={@open}>
-          <summary class="p-5 md:p-6 pr-44 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-4 list-none">
-            <div class="bg-success/15 text-success p-2.5">
-              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
-            </div>
-            <span class="font-semibold text-base-content/80">{gettext("Agent Summary")}</span>
-            <div class="flex-1"></div>
-            <.icon name="hero-chevron-down" class="size-4 text-base-content/40" />
-          </summary>
-          <div class="px-5 md:px-6 pb-5 md:pb-6">
-            <%= if @summary_raw do %>
-              <pre class="text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@summary}</pre>
-            <% else %>
-              <div class="md-content text-sm leading-relaxed">
-                {raw(EvoDash.MarkdownRender.render(@summary))}
-              </div>
-            <% end %>
+        <!-- static header -->
+        <div class="p-5 md:p-6 pr-44 flex items-center gap-4">
+          <div class="bg-success/15 text-success p-2.5">
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
           </div>
-        </details>
+          <span class="font-semibold text-base-content/80">{gettext("Agent Summary")}</span>
+        </div>
+        <!-- content -->
+        <div class="px-5 md:px-6 pb-5 md:pb-6">
+          <%= if @summary_raw do %>
+            <pre class="text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@summary}</pre>
+          <% else %>
+            <div class="md-content text-sm leading-relaxed">
+              {raw(EvoDash.MarkdownRender.render(@summary))}
+            </div>
+          <% end %>
+        </div>
         <!-- Markdown / Raw toggle + copy button -->
         <div class="absolute top-3 right-3 z-10 flex items-center gap-1">
           <div class="join shadow-sm">
