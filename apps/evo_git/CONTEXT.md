@@ -68,10 +68,15 @@ There is **NO existing inbox/pending-message concept** — the only dynamic cont
 ## Sandbox / Test Interaction (important findings)
 
 **How `Tools.execute/5` reaches the sandbox** — `execute/5` (`apps/evo_git/lib/evo_git/agent/tools.ex:120`) is a pure dispatcher; it does NOT call the sandbox itself. Each tool decides its own execution path:
-- `run_bash` / `run_powershell` → `ShellTool.execute/3` (`tools/shell_tool.ex:164`) → `EvoGit.Sandbox.run_with_partial/6` (`tools/shell_tool.ex:233`). **This is the only tool that goes through the sandbox.**
-- `run_git` (Git tool, currently commented out of `schemas/0` at `tools.ex:64`) → `Tools.Git.execute` → `EvoGit.sandbox_run/4` (`tools/git.ex:67`).
-- File tools (`read_file`, `write_file`, `edit_file`, `create_files`, `make_dir`) and Context tools (`read/write/edit_context`) → use Elixir `File.*` stdlib directly. **No sandbox.**
-- When Context/make_dir tools run with `commit: true`, they call `Shared.do_git_commit/3` (`tools/shared.ex:431`) → `EvoGit.Adapters.Git.run/commit` (`adapters/git.ex:18,95`), which uses **raw `System.cmd("git", ...)`** — NOT the sandbox.
+- `run_bash` / `run_powershell` → `ShellTool.execute/3` (`tools/shell_tool.ex:164`) → `EvoGit.Sandbox.run_with_partial/6` (`tools/shell_tool.ex:233`). **This is the only tool that goes through the sandbox dispatch (`run_with_partial/6`).**
+- `run_git` (Git tool, currently commented out of `schemas/0` at `tools.ex:64`) → `Tools.Git.execute` → `EvoGit.sandbox_run/4` (`tools/git.ex:67`). **This goes through the sandbox dispatch (`EvoGit.Sandbox.run/4`).**
+- `write_context` with `commit: true` → `Context.execute_write` → `do_context_write` (`tools/context.ex:250`) → **`EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root)` + `EvoGit.sandbox_run(repo_path, "git", ["commit", ...], repo_root)`** (`context.ex:273,276`). **⚠️ This DOES go through the sandbox dispatch (`EvoGit.Sandbox.run/4`) — it does NOT use `Shared.do_git_commit`.**
+- `edit_context` with `commit: true` → `Context.execute_edit` (`context.ex:195`) → **`EvoGit.sandbox_run(...)` for git add + commit** (`context.ex:209,212`). **Same as write_context — goes through the sandbox dispatch, NOT `Shared.do_git_commit`.**
+- `make_dir` with `commit: true` → `MakeDir.execute` → `do_commit/3` (`tools/make_dir.ex:171`) → **`Shared.do_git_commit/3`** (`make_dir.ex:182`) → `EvoGit.Adapters.Git.run/commit` (`adapters/git.ex:18,95`), which uses **raw `System.cmd("git", ...)`**. **make_dir is the ONLY committing tool that bypasses the sandbox.**
+- File tools (`read_file`, `write_file`, `edit_file`, `create_files`) → use Elixir `File.*` stdlib directly. **No sandbox.** (They do not commit.)
+- Context read tools (`read_context`) → `File.read/1`. **No sandbox.**
+
+**⚠️ CRITICAL CORRECTION (vs. earlier CONTEXT.md version):** An earlier version of this file claimed the write_context/edit_context commit path goes through `Shared.do_git_commit` → `Adapters.Git` (raw `System.cmd`), making the commit tests platform-independent. **This is FALSE.** The actual code (`context.ex:273,276` and `context.ex:209,212`) calls `EvoGit.sandbox_run/4` directly. This means on a Linux host with systemd available (`Linux.enabled?/0` → `:auto` → `true`), these commit operations shell out to **`systemd-run`** — the same latency/permission implications apply as to `run_bash`. Only `make_dir` commits are genuinely unsandboxed (via `Shared.do_git_commit` → `Adapters.Git` raw `System.cmd`).
 
 **`tools_test.exs` exercises NO sandbox path at all** (`test/evo_git/agent/tools_test.exs`, 750 lines):
 - Has **no `setup` block** — relies on `@moduletag :tmp_dir` (ExUnit built-in that auto-creates a temp dir).
