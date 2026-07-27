@@ -10,13 +10,27 @@ defmodule EvoGit.Sandbox.Linux do
 
   alias EvoGit.{Nix, Platform, Sandbox.Helpers}
 
+  # Compile-time Mix env — safe in releases (Mix.env/0 is evaluated at compile
+  # time; in prod releases it resolves to :prod). Used to skip systemd-run
+  # execution entirely in the test environment, where the user D-Bus session
+  # bus is typically unavailable (CI containers, nested sandboxes).
+  @mix_env Mix.env()
+
   @doc "Returns true when sandbox mode allows systemd-run on Linux."
   @spec enabled?() :: boolean()
   def enabled? do
-    case EvoGit.Defaults.sandbox() do
-      :enabled -> true
-      :disabled -> false
-      :auto -> Platform.systemd_available?()
+    cond do
+      # Tests never need systemd sandboxing, and the user bus is typically
+      # unavailable in CI/local test environments. Skip systemd-run execution.
+      @mix_env == :test ->
+        false
+
+      true ->
+        case EvoGit.Defaults.sandbox() do
+          :enabled -> true
+          :disabled -> false
+          :auto -> Platform.systemd_available?()
+        end
     end
   end
 

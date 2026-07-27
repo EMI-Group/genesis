@@ -61,17 +61,14 @@ defmodule EvoGitTest do
   end
 
   describe "sandbox_run/4" do
-    test "runs command directly when sandbox is disabled" do
-      # Temporarily disable sandbox
-      original = Application.get_env(:evo_git, :sandbox, :auto)
-      Application.put_env(:evo_git, :sandbox, :disabled)
-
+    test "runs command when sandbox is disabled (test env bypasses systemd-run)" do
+      # In test env, EvoGit.Sandbox.Linux.enabled?/0 returns false (via the
+      # compile-time @mix_env gate), so sandbox_run falls through to the
+      # disabled path which wraps commands in bash -c. This ensures tests
+      # never depend on a live systemd user session bus.
       {output, exit_code} = EvoGit.sandbox_run("/tmp", "echo", ["hello"])
       assert exit_code == 0
       assert output =~ "hello"
-
-      # Restore original config
-      Application.put_env(:evo_git, :sandbox, original)
     end
   end
 
