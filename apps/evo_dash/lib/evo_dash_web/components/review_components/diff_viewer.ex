@@ -12,7 +12,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   def file_tree_sidebar(assigns) do
     ~H"""
     <div class="diff-file-sidebar">
-      <div class="p-3 border-b border-base-200 bg-base-200/30 sticky top-0 z-10">
+      <div class="p-3 border-b border-base-200 bg-base-100 sticky top-0 z-10">
         <h3 class="font-semibold text-xs text-base-content/60 uppercase tracking-wider">
           {gettext("Changed Files")}
         </h3>

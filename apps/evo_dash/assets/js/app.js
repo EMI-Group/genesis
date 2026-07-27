@@ -309,28 +309,19 @@ const ScrollToFile = {
         const target = document.getElementById(target_id);
         if (!target) return;
 
-        const fullscreenLayout = target.closest('.diff-fullscreen-layout');
-        if (fullscreenLayout) {
-          // Fullscreen mode — scroll the page to the target
-          const rect = target.getBoundingClientRect();
-          window.scrollTo({
-            top: window.scrollY + rect.top - 116, // 108px sticky offset + 8px padding
+        // The main content area is the scroll container (not window)
+        const scrollContainer = document.getElementById('main-scroll');
+        if (scrollContainer) {
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          const scrollOffset = targetRect.top - containerRect.top + scrollContainer.scrollTop;
+          scrollContainer.scrollTo({
+            top: scrollOffset,
             behavior: "smooth"
           });
         } else {
-          // Normal mode — scroll within the diff container
-          const container = target.closest('.diff-main-content');
-          if (container) {
-            const containerRect = container.getBoundingClientRect();
-            const targetRect = target.getBoundingClientRect();
-            const scrollOffset = targetRect.top - containerRect.top + container.scrollTop;
-            container.scrollTo({
-              top: scrollOffset - 8,
-              behavior: "smooth"
-            });
-          } else {
-            target.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
+          // Fallback
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       }, 50);
     });

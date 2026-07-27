@@ -602,8 +602,8 @@ button, a, input, textarea, select, summary,
 @media (min-width: 768px) {
   .diff-fullscreen-layout .diff-file-sidebar {
     position: sticky;
-    top: 108px;
-    height: calc(100dvh - 108px);
+    top: 0;
+    height: 100dvh;
     overflow-y: auto;
   }
 }
@@ -615,7 +615,7 @@ button, a, input, textarea, select, summary,
 
 /* File headers stick below tab bar in fullscreen */
 .diff-fullscreen-layout .diff-file-header {
-  top: 108px;
+  top: 0;
   z-index: 20;
 }
 

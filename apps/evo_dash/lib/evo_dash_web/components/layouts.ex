@@ -197,7 +197,7 @@ defmodule EvoDashWeb.Layouts do
       </aside>
 
       <!-- Main Content Area -->
-      <div class="flex-1 flex flex-col overflow-auto min-w-0">
+      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0">
         <main class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900">
           {render_slot(@inner_block)}
         </main>
