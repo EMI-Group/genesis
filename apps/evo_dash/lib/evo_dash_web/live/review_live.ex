@@ -68,9 +68,12 @@ defmodule EvoDashWeb.ReviewLive do
                 agent_count={@agent_count}
                 task_type={@task_type}
                 status={@task_status}
+                model_id={@model_id}
                 started_at={@started_at}
                 finished_at={@finished_at}
               />
+
+              <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
 
               <!-- Unified review card: tab bar + content -->
               <div class="review-card">
@@ -92,7 +95,10 @@ defmodule EvoDashWeb.ReviewLive do
                       <div class="space-y-4 p-4 sm:p-6 lg:p-8">
                         <!-- Agent Summary -->
                         <%= if @agent_summary do %>
-                          <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
+                          <EvoDashWeb.ReviewComponents.agent_summary
+                            summary={@agent_summary}
+                            summary_raw={@summary_raw}
+                          />
                         <% end %>
 
                         <!-- Diff Stats -->
@@ -217,6 +223,8 @@ defmodule EvoDashWeb.ReviewLive do
         task_usage: nil,
         agent_count: nil,
         task_status: nil,
+        model_id: nil,
+        summary_raw: false,
         started_at: nil,
         finished_at: nil
       )
@@ -260,6 +268,11 @@ defmodule EvoDashWeb.ReviewLive do
 
   def handle_event("switch_tab", _params, socket) do
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_summary_view", %{"mode" => mode}, socket) do
+    {:noreply, assign(socket, :summary_raw, mode == "raw")}
   end
 
   @impl true
@@ -570,6 +583,7 @@ defmodule EvoDashWeb.ReviewLive do
           task_usage: nil,
           agent_count: nil,
           task_status: nil,
+          model_id: nil,
           started_at: nil,
           finished_at: nil
         )
@@ -686,6 +700,7 @@ defmodule EvoDashWeb.ReviewLive do
           task_usage: task.usage,
           agent_count: task.agent_count,
           task_status: task.status,
+          model_id: task.model_id,
           started_at: task.started_at,
           finished_at: task.finished_at
         )

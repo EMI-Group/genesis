@@ -12,6 +12,7 @@ defmodule EvoDashWeb.ReviewComponents do
   defdelegate review_header(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate task_summary(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate agent_summary(assigns), to: EvoDashWeb.ReviewComponents.Header
+  defdelegate objective_section(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate action_buttons(assigns), to: EvoDashWeb.ReviewComponents.Actions
   defdelegate extract_skills_modal(assigns), to: EvoDashWeb.ReviewComponents.Actions
   defdelegate diff_stats_bar(assigns), to: EvoDashWeb.ReviewComponents.Stats
