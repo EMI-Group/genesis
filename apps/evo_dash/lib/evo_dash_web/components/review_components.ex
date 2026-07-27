@@ -41,8 +41,16 @@ defmodule EvoDashWeb.ReviewComponents do
         phx-value-tab="conversation"
         class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :conversation && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
-        <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
-        {gettext("Conversation")}
+        <.icon name="hero-document-report" class="size-4 mr-2" />
+        {gettext("Agent Report")}
+      </button>
+      <button
+        phx-click="switch_tab"
+        phx-value-tab="objective"
+        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :objective && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+      >
+        <.icon name="hero-bullseye" class="size-4 mr-2" />
+        {gettext("Objective")}
       </button>
       <button
         phx-click="switch_tab"
