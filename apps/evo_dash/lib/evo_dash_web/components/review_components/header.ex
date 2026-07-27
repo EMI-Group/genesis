@@ -316,9 +316,9 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         </div>
         <!-- Markdown / Raw toggle + copy button -->
         <div class="absolute top-3 right-3 z-10 flex items-center gap-1">
-          <div class="join shadow-sm">
+          <div class="flex gap-0">
             <button
-              class={["btn btn-xs join-item border-base-300", !@summary_raw && "btn-active btn-primary"]}
+              class={["btn btn-xs rounded-r-none border-base-300", !@summary_raw && "btn-active btn-primary"]}
               phx-click="toggle_summary_view"
               phx-value-mode="markdown"
               title={gettext("Rendered Markdown")}
@@ -327,7 +327,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
               {gettext("Markdown")}
             </button>
             <button
-              class={["btn btn-xs join-item border-base-300", @summary_raw && "btn-active btn-primary"]}
+              class={["btn btn-xs rounded-l-none border-base-300", @summary_raw && "btn-active btn-primary"]}
               phx-click="toggle_summary_view"
               phx-value-mode="raw"
               title={gettext("Raw Text")}
