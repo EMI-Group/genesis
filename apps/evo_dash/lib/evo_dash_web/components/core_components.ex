@@ -63,7 +63,7 @@ defmodule EvoDashWeb.CoreComponents do
       phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       phx-hook="AutoClearFlash"
       role="alert"
-      class={"fixed right-4 z-[60] w-80 sm:w-96 top-20"}
+      class="w-full pointer-events-auto"
       {@rest}
     >
       <div class={[
