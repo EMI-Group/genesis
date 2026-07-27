@@ -79,10 +79,13 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "/home/user/my-project"
 
       # Submit the form with a path
-      html =
-        view
-        |> element("form[phx-submit='open_project']")
-        |> render_submit(%{path: tmp_dir})
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
+      html = render(view)
 
       # Project should be active — task form enabled
       assert html =~ "Execute Task"
@@ -127,6 +130,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
       html = render(view)
 
       # Empty directory has no genesis.toml — shows defaults message
@@ -142,6 +147,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
       html = render(view)
 
       # The Foreign Repos section should be visible
@@ -157,6 +164,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
       html = render(view)
 
       # No foreign repos registered (scheduler not running in tests)
@@ -230,18 +239,21 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       # Simulate session restore with foreign repos (as they'd arrive from sessionStorage JSON).
       # The project must be a real directory so activate_project runs.
-      html =
-        render_hook(view, "restore_state", %{
-          "project" => tmp_dir,
-          "foreign_repos" => [
-            %{
-              "id" => "original",
-              "path" => "/Source/original-proj",
-              "description" => "The original"
-            },
-            %{"id" => "reference", "path" => "/Source/ref", "description" => nil}
-          ]
-        })
+      render_hook(view, "restore_state", %{
+        "project" => tmp_dir,
+        "foreign_repos" => [
+          %{
+            "id" => "original",
+            "path" => "/Source/original-proj",
+            "description" => "The original"
+          },
+          %{"id" => "reference", "path" => "/Source/ref", "description" => nil}
+        ]
+      })
+
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
+      html = render(view)
 
       # Foreign repos should be restored and visible in the project settings.
       # The component renders repo.id and repo.root for each foreign repo.
@@ -254,11 +266,14 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      html =
-        render_hook(view, "restore_state", %{
-          "project" => tmp_dir,
-          "foreign_repos" => []
-        })
+      render_hook(view, "restore_state", %{
+        "project" => tmp_dir,
+        "foreign_repos" => []
+      })
+
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
+      html = render(view)
 
       # No repos restored — shows the empty state message
       assert html =~ "No foreign repositories registered"

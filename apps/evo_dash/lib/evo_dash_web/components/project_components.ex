@@ -252,8 +252,12 @@ defmodule EvoDashWeb.ProjectComponents do
 
   def project_settings_panel(assigns) do
     ~H"""
-    <details class="group rounded-xl bg-base-100 border border-base-200 shadow-sm overflow-hidden" open={@show}>
-      <summary class="p-3.5 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-2 list-none [&::-webkit-details-marker]:hidden">
+    <div class="group rounded-xl bg-base-100 border border-base-200 shadow-sm overflow-hidden">
+      <div
+        class="p-3.5 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-2"
+        phx-click="toggle_project_settings"
+        phx-value-project={@active_project}
+      >
         <.icon name="hero-cog-6-tooth" class="size-4 text-base-content/60" />
         <span class="text-sm font-semibold flex-1">{gettext("Project Settings")}</span>
         <!-- Config status indicator -->
@@ -268,11 +272,11 @@ defmodule EvoDashWeb.ProjectComponents do
         <% end %>
         <.icon
           name="hero-chevron-down"
-          class="size-4 text-base-content/40 group-open:rotate-180 transition-transform"
+          class={"size-4 text-base-content/40 transition-transform " <> if(@show, do: "rotate-180", else: "")}
         />
-      </summary>
+      </div>
 
-      <div class="p-4 pt-2 space-y-4 border-t border-base-200">
+      <div :if={@show} class="p-4 pt-2 space-y-4 border-t border-base-200">
         <!-- Config status -->
         <p class="text-sm">
           <%= if @project_config do %>
@@ -459,7 +463,7 @@ defmodule EvoDashWeb.ProjectComponents do
           <% end %>
         </div>
       </div>
-    </details>
+    </div>
     """
   end
 

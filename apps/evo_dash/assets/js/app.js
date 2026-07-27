@@ -189,11 +189,6 @@ const StatePersistence = {
 
     // Listen for save requests from the server (still needed for task_mode changes, project switches, task starts)
     this.handleEvent("persist_state", (state) => {
-      // Also capture current DOM state for HTML-managed toggles
-      const detailsEl = this.el.querySelector('details');
-      if (detailsEl) {
-        state.show_project_settings = detailsEl.open;
-      }
       sessionStorage.setItem('dashboard_state', JSON.stringify(state));
     });
 
@@ -216,11 +211,6 @@ const StatePersistence = {
           task_starting_commit: this.el.querySelector('[name="starting_commit"]')?.value || '',
           selected_model_id: this.el.querySelector('[name="model_id"]')?.value || '',
         });
-        // Also capture project settings toggle state
-        const detailsEl = this.el.querySelector('details');
-        if (detailsEl) {
-          state.show_project_settings = detailsEl.open;
-        }
         sessionStorage.setItem('dashboard_state', JSON.stringify(state));
       }, 300);
     };
