@@ -677,9 +677,9 @@ defmodule EvoDashWeb.DashboardLive do
 
       opts =
         if task_type == :genesis do
-          Keyword.put(opts, :prompt, prompt)
+          Keyword.put(opts, :prompt, String.trim(prompt))
         else
-          Keyword.put(opts, :objective, prompt)
+          Keyword.put(opts, :objective, String.trim(prompt))
         end
 
       build_system_param = params["build_system"]

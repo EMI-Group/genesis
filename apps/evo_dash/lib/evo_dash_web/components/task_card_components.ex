@@ -79,7 +79,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
         <!-- Middle row: Objective text -->
         <div class="pr-2 -mt-2">
-          <% objective_text = @task.opts[:prompt] || @task.opts[:objective] || "" %>
+          <% objective_text = (@task.opts[:prompt] || @task.opts[:objective] || "") |> String.trim() %>
           <%= if objective_text != "" do %>
             <p
               class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2"

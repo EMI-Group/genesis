@@ -620,7 +620,7 @@ defmodule EvoDashWeb.ReviewLive do
               {nil, nil, nil, nil, nil}
           end
 
-        objective = task.opts[:prompt] || task.opts[:objective]
+        objective = (task.opts[:prompt] || task.opts[:objective]) |> to_string() |> String.trim()
 
         title = pr_title || objective || branch_name || gettext("Review Changes")
 
