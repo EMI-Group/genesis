@@ -34,8 +34,8 @@ permissions:
 # tarball alongside the desktop installers.
 #
 # Jobs:
-#   build-linux-x64     ubuntu-24.04      deb, rpm, AppImage, tarball
-#   build-linux-arm64   ubuntu-24.04-arm  deb, rpm
+#   build-linux-x64     ubuntu-22.04      deb, rpm, AppImage, tarball
+#   build-linux-arm64   ubuntu-22.04-arm  deb, rpm
 #   build-macos-arm64   macos-14          dmg, app
 #   build-windows-x64   windows-2022      msi, exe (NSIS)
 
@@ -43,7 +43,7 @@ jobs:
   # ── Linux x86_64 ────────────────────────────────────────────────────────
   build-linux-x64:
     name: Linux (x86_64)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -182,7 +182,7 @@ jobs:
   # ── Linux ARM64 ────────────────────────────────────────────────────────
   build-linux-arm64:
     name: Linux (ARM64)
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-22.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -190,7 +190,7 @@ jobs:
       # GitHub-hosted ARM runners report an ImageOS value that setup-beam does
       # not recognise.  Override it to the base value before setup-beam runs.
       - name: Fix ImageOS for ARM runner
-        run: echo "ImageOS=ubuntu24" >> $GITHUB_ENV
+        run: echo "ImageOS=ubuntu22" >> $GITHUB_ENV
 
       - name: Install Linux system dependencies
         run: |
