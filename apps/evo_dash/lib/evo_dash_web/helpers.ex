@@ -326,13 +326,13 @@ defmodule EvoDashWeb.Helpers do
   Returns a short description string for a task map based on its type and opts.
   """
   def task_description(%{type: :genesis, opts: opts}) do
-    prompt = opts[:prompt] || ""
+    prompt = (opts[:prompt] || "") |> String.trim()
     # zh_CN: Prompt → "提示词"
     gettext("Mode: %{mode} | %{prompt}", mode: opts[:mode], prompt: String.slice(prompt, 0, 200))
   end
 
   def task_description(%{type: :evolve, opts: opts}) do
-    objective = opts[:objective] || ""
+    objective = (opts[:objective] || "") |> String.trim()
 
     # zh_CN: Prompt → "提示词"
     gettext("Mode: %{mode} | %{prompt}",
