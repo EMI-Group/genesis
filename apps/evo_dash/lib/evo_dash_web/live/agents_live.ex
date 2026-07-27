@@ -864,6 +864,7 @@ defmodule EvoDashWeb.AgentsLive do
         worktree: summary[:worktree],
         retries: summary[:retries] || 0,
         agent_module: parse_agent_module(summary[:agent_module]),
+        model_id: summary[:model_id],
         objective: summary[:objective] || "",
         context_path: summary[:context_path],
         current_commit: summary[:current_commit],

@@ -119,6 +119,14 @@
                       {inspect(agent.agent_module)}
                     </code>
                   </div>
+                  <div class="shrink-0 min-w-[130px]">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                      <%= gettext("Model") %>
+                    </h4>
+                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                      {agent.model_id || gettext("N/A")}
+                    </code>
+                  </div>
                   <div class="flex-1 min-w-[150px]">
                     <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
                       <%= gettext("Context Path") %>
