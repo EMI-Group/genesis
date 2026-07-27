@@ -61,10 +61,11 @@ defmodule EvoDashWeb.DashboardLive do
           phx-hook="StatePersistence"
           data-project={@active_project_path}
           data-task-mode={@task_mode}
+          class="flex flex-col min-h-full"
         >
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
-          <div id="browser-notifications" phx-hook="BrowserNotifications">
+          <div id="browser-notifications" phx-hook="BrowserNotifications" class="flex-1 flex flex-col min-h-0">
             <%= if @remote? do %>
               <!-- Remote node view: show the remote node's active agents.
                    The local task list and project management are LOCAL
@@ -161,7 +162,7 @@ defmodule EvoDashWeb.DashboardLive do
               <% end %>
             <% else %>
             <!-- Immersive project selector (flush to top-left, minimal margin) -->
-            <div class="mb-4 animate-fade-in-up">
+            <div class="mb-4 animate-fade-in-up shrink-0">
               <EvoDashWeb.ProjectComponents.project_selector
                 active_project={@active_project}
                 recent_projects={@recent_projects}
@@ -174,7 +175,7 @@ defmodule EvoDashWeb.DashboardLive do
             </div>
 
             <!-- Full-width prompt + toolbar (task form) -->
-            <div class="animate-fade-in-up animation-delay-100">
+            <div class="animate-fade-in-up animation-delay-100 flex-1 flex flex-col min-h-0">
               <EvoDashWeb.TaskFormComponents.task_form
                 prompt={@task_prompt}
                 mode={@task_mode}
@@ -193,7 +194,7 @@ defmodule EvoDashWeb.DashboardLive do
             </div>
 
             <!-- Side-by-side: Project Settings + Advanced Options -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 animate-fade-in-up animation-delay-100">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 items-start shrink-0 animate-fade-in-up animation-delay-100">
               <%= if @active_project do %>
                 <EvoDashWeb.ProjectComponents.project_settings_panel
                   active_project={@active_project_path}
