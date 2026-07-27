@@ -132,6 +132,72 @@ defmodule EvoGit.Store do
     GenServer.call(store, :clear_tasks)
   end
 
+  ## Public API — Lightweight task queries
+
+  @doc """
+  Returns the `opts` keyword list for every task row, without decoding the
+  full struct. Each element is a keyword list (or nil for rows with no opts).
+
+  Used by TaskRegistry.get_unique_paths to avoid a full decode of all tasks
+  just to extract `opts[:path]`.
+  """
+  def select_task_paths(store \\ __MODULE__) do
+    GenServer.call(store, :select_task_paths)
+  end
+
+  @doc """
+  Returns the ids of all tasks whose status is NOT running or pending.
+
+  Used by TaskRegistry.clear_finished_tasks to avoid decoding all tasks just
+  to filter by status — the status filtering happens in SQL.
+  """
+  def select_finished_task_ids(store \\ __MODULE__) do
+    GenServer.call(store, :select_finished_task_ids)
+  end
+
+  @doc """
+  Returns lightweight lease info for all tasks: `%{id, status, lease_expires_at}`.
+  Only the `status` column is decoded (a lightweight atom); no heavy JSON
+  fields (logs, result, usage, archive_metadata) are touched.
+
+  Used by TaskRegistry.lease_sweep to avoid a full decode of all tasks just to
+  check status == :running and lease validity.
+  """
+  def select_running_lease_info(store \\ __MODULE__) do
+    GenServer.call(store, :select_running_lease_info)
+  end
+
+  @doc """
+  Updates only the `lease_expires_at` column for a task, avoiding a full
+  read-modify-write of the entire row.
+
+  Returns `:ok`. Used by TaskRegistry.heartbeat to renew leases without
+  decoding + re-encoding the whole task struct.
+  """
+  def update_lease_expires_at(store \\ __MODULE__, task_id, expires_at) do
+    GenServer.call(store, {:update_lease_expires_at, task_id, expires_at})
+  end
+
+  @doc """
+  Returns the decoded status atom for a single task (or nil if not found).
+  Reads only the `status` column — no heavy JSON decode.
+  """
+  def get_task_status(store \\ __MODULE__, task_id) do
+    GenServer.call(store, {:get_task_status, task_id})
+  end
+
+  @doc """
+  Returns lightweight cleanup info for all tasks: `%{id, finished_at}`.
+  Only `id` (raw string) and `finished_at` (decoded DateTime or nil) are returned
+  — no heavy JSON fields (logs, result, usage, archive_metadata) are decoded.
+
+  Used by `TaskRegistry.Cleanup` to avoid a full decode of all tasks just to
+  check finished_at against age/count limits.
+  """
+  def select_cleanup_info(store \\ __MODULE__) do
+    GenServer.call(store, :select_cleanup_info)
+  end
+
   ## Public API — Projects
 
   @doc "Inserts or replaces a project. Validates that path is present."
@@ -383,6 +449,96 @@ defmodule EvoGit.Store do
   def handle_call(:clear_tasks, _from, state) do
     {:ok, _} = XqliteNIF.execute(state.conn, "DELETE FROM tasks", [])
     {:reply, :ok, state}
+  end
+
+  # Lightweight query: reads only the opts column and decodes just opts for
+  # each row. No full task decode (skips logs, result, usage, archive_metadata).
+  @impl true
+  def handle_call(:select_task_paths, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT opts FROM tasks", []) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [opts] -> Codec.decode_opts(opts) end)
+
+        _ ->
+          []
+      end
+
+    {:reply, reply, state}
+  end
+
+  # Lightweight query: status filtering in SQL, returns raw id strings.
+  # No decode at all.
+  @impl true
+  def handle_call(:select_finished_task_ids, _from, state) do
+    reply =
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT id FROM tasks WHERE status NOT IN ('running', 'pending')",
+             []
+           ) do
+        {:ok, %{rows: rows}} -> Enum.map(rows, fn [id] -> id end)
+        _ -> []
+      end
+
+    {:reply, reply, state}
+  end
+
+  # Lightweight query: reads only id, status, lease_expires_at. The status is
+  # decoded via the non-crashing Codec.decode_atom/1 (returns nil on unknown).
+  @impl true
+  def handle_call(:select_running_lease_info, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT id, status, lease_expires_at FROM tasks", []) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [id, status, lease_expires_at] ->
+            %{id: id, status: Codec.decode_atom(status), lease_expires_at: lease_expires_at}
+          end)
+
+        _ ->
+          []
+      end
+
+    {:reply, reply, state}
+  end
+
+  # Lightweight write: updates only the lease_expires_at column.
+  @impl true
+  def handle_call({:update_lease_expires_at, task_id, expires_at}, _from, state) do
+    {:ok, _} =
+      XqliteNIF.execute(
+        state.conn,
+        "UPDATE tasks SET lease_expires_at = ?1 WHERE id = ?2",
+        [expires_at, task_id]
+      )
+
+    {:reply, :ok, state}
+  end
+
+  # Lightweight read: returns only the decoded status atom (or nil).
+  @impl true
+  def handle_call({:get_task_status, task_id}, _from, state) do
+    reply = read_task_status(state.conn, task_id)
+    {:reply, reply, state}
+  end
+
+  # Lightweight query: reads only id and finished_at. The finished_at column is
+  # decoded via the non-crashing Codec.decode_datetime/1 (returns nil on bad
+  # data). No heavy JSON fields are decoded.
+  @impl true
+  def handle_call(:select_cleanup_info, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT id, finished_at FROM tasks", []) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [id, finished_at] ->
+            %{id: id, finished_at: Codec.decode_datetime(finished_at)}
+          end)
+
+        _ ->
+          []
+      end
+
+    {:reply, reply, state}
   end
 
   ## GenServer — Project handlers
