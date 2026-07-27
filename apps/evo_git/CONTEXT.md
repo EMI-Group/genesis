@@ -117,10 +117,11 @@ The sandbox mode is resolved via **`EvoGit.Config.resolve([:sandbox, :mode])`**,
 
 **Test env sandbox mode resolution:** Test setup (`evo_git_test.exs:7-13`, `test_helper.exs`) redirects `XDG_CONFIG_HOME` to a temp dir with no `config.toml`, so `Config.resolve([:sandbox, :mode])` returns the schema default **`:auto`** (`definitions.exs:256`).
 
-**⚠️ `Linux.enabled?/0` has NO test-env gate — unlike SandboxSlice/Registry.** This is a latent inconsistency:
-- `EvoGit.Sandbox.Linux.enabled?/0` (`sandbox/linux.ex:15-21`) reads `Defaults.sandbox()` → `Config.resolve([:sandbox, :mode])` directly with **no `@mix_env` short-circuit**. On Linux with systemd available (`Platform.systemd_available?()` true), `:auto` mode → `enabled?()` returns **`true` even in test env.**
-- By contrast, `EvoGit.SandboxSlice.sandbox_enabled?/0` (`sandbox_slice.ex:177-191`) and `EvoGit.SandboxProcessRegistry.sandbox_enabled?/0` (`sandbox_process_registry.ex:149-163`) both have a **compile-time `@mix_env == :test → false` gate as the FIRST cond branch** (so the systemd user-slice and orphan-unit cleanup are never invoked in tests).
-- **Net effect:** if a test invoked `Linux.run/4` (or `Sandbox.run/4` → Linux backend) on a systemd host in test env, it **would actually shell out to `systemd-run`** (after a no-op `ensure_initialized` since SandboxSlice is gated). However, `Linux.run` calls `SandboxProcessRegistry.register()/unregister()` which still work (the registry runs, it just skips `stop_unit` cleanup). **No test currently does this** — see below — so the inconsistency is latent, not actively breaking tests.
+**✅ `Linux.enabled?/0` now HAS a test-env gate — consistent with SandboxSlice/Registry.** All three Linux sandbox modules use the same `@mix_env Mix.env()` compile-time gate:
+- `EvoGit.Sandbox.Linux.enabled?/0` (`sandbox/linux.ex`) checks `@mix_env == :test -> false` as its first cond branch. In test env, the Linux backend falls through to its disabled path (wraps commands in `bash -c` with stdin redirect — identical to the `None` backend behavior).
+- `EvoGit.SandboxSlice.sandbox_enabled?/0` (`sandbox_slice.ex`) — same gate (private function).
+- `EvoGit.SandboxProcessRegistry.sandbox_enabled?/0` (`sandbox_process_registry.ex`) — same gate (private function).
+- **Net effect:** in test env, `Linux.run/4` and `Linux.run_with_partial/6` always take the disabled `bash -c` path. No `systemd-run` is ever invoked in tests. This ensures tests pass in CI containers and restricted environments where the systemd user bus (`DBUS_SESSION_BUS_ADDRESS`) is unavailable.
 
 **What tests actually exercise (NOT the real sandbox):**
 - `test/evo_git/sandbox/linux_test.exs` — tests **only `Linux.args/4`** (pure systemd-run arg-list generation, no command execution). Never calls `Linux.run/4` or `Linux.run_with_partial/6`.
