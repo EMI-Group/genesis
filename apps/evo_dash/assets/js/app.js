@@ -267,6 +267,8 @@ const ClipboardCopy = {
       const content = this.el.dataset.content;
       if (content && navigator.clipboard) {
         navigator.clipboard.writeText(content).then(() => {
+          // Push event so the LiveView shows a flash message
+          this.pushEvent("copied", {});
           // Visual feedback: briefly show checkmark icon
           const iconEl = this.el.querySelector("svg");
           if (iconEl) {
