@@ -65,6 +65,24 @@ The agent turn loop has a clear single entry point per iteration where context i
 
 There is **NO existing inbox/pending-message concept** — the only dynamic context additions are turn-limit warnings and recovery messages, both injected in `loop/1`. `AgentState` (ETS) and `LoopState` (in-memory, threaded through the loop) are the two places state could carry a pending message; `AgentState` is the cross-process writable surface (dashboard writes via scheduler → ETS → agent reads at top of loop).
 
+## Sandbox / Test Interaction (important findings)
+
+**How `Tools.execute/5` reaches the sandbox** — `execute/5` (`apps/evo_git/lib/evo_git/agent/tools.ex:120`) is a pure dispatcher; it does NOT call the sandbox itself. Each tool decides its own execution path:
+- `run_bash` / `run_powershell` → `ShellTool.execute/3` (`tools/shell_tool.ex:164`) → `EvoGit.Sandbox.run_with_partial/6` (`tools/shell_tool.ex:233`). **This is the only tool that goes through the sandbox.**
+- `run_git` (Git tool, currently commented out of `schemas/0` at `tools.ex:64`) → `Tools.Git.execute` → `EvoGit.sandbox_run/4` (`tools/git.ex:67`).
+- File tools (`read_file`, `write_file`, `edit_file`, `create_files`, `make_dir`) and Context tools (`read/write/edit_context`) → use Elixir `File.*` stdlib directly. **No sandbox.**
+- When Context/make_dir tools run with `commit: true`, they call `Shared.do_git_commit/3` (`tools/shared.ex:431`) → `EvoGit.Adapters.Git.run/commit` (`adapters/git.ex:18,95`), which uses **raw `System.cmd("git", ...)`** — NOT the sandbox.
+
+**`tools_test.exs` exercises NO sandbox path at all** (`test/evo_git/agent/tools_test.exs`, 750 lines):
+- Has **no `setup` block** — relies on `@moduletag :tmp_dir` (ExUnit built-in that auto-creates a temp dir).
+- Does **NOT** call `Application.put_env(:evo_git, :sandbox, ...)` anywhere. The only `put_env` is `Application.put_env(:req_llm, :tavily_api_key, ...)` for the WebSearch tests.
+- Has **no `@tag :skip`** or conditional exclusions.
+- Has **no `run_bash`/`run_git`/`run_powershell` tests** — so no test executes a real command through the sandbox backend.
+- The only real command execution is via **raw `System.cmd("git", ...)` in test bodies** (git init/config/add/commit/log) for the commit-related `make_dir`/`write_context`/`edit_context` tests — these set up the repo, not exercise the agent's git path.
+- ⚠️ **MISLEADING TEST NAME**: `"writes CONTEXT.md and commits in systemd-run sandbox"` (`tools_test.exs:318`). The name implies systemd-run, but `write_context` with `commit: true` actually goes through `Shared.do_git_commit` → `EvoGit.Adapters.Git` (raw `System.cmd`), **not** through the sandbox. The test name reflects a historical/incorrect assumption. It passes regardless of platform because the commit path is unsandboxed.
+
+**Both `sandbox_enabled?` private helpers gate on the test env at compile time.** `SandboxSlice.sandbox_enabled?/0` (`sandbox_slice.ex:177`) and `SandboxProcessRegistry.sandbox_enabled?/0` (`sandbox_process_registry.ex:149`) both check `@mix_env Mix.env() == :test` FIRST → returns `false` in test env unconditionally, before ever consulting `Config.resolve([:sandbox, :mode])`. In non-test env, they read `Config.resolve([:sandbox, :mode])`: `:enabled`→true, `:disabled`→false, `:auto`→`EvoGit.Platform.systemd_available?()`. So in `:auto` mode on a Linux box with systemd, both are enabled and will create/manage the `evogit.slice` systemd user slice. This means tests never create systemd slices or spawn `systemd-run` cleanup tasks even on Linux.
+
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.
