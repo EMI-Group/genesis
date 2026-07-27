@@ -309,16 +309,23 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @impl true
-  def handle_call({:list_tasks_by_path, path}, _from, state) do
+  def handle_call({:list_tasks_by_path, path}, from, state) do
     expanded = Path.expand(path)
 
-    tasks =
-      select_all_tasks(state)
-      |> Enum.filter(fn task ->
-        task.opts[:path] && Path.expand(task.opts[:path]) == expanded
-      end)
+    # Delegate the heavy decode to a short-lived Task process so the large
+    # decoded terms are allocated and discarded on that process's heap rather
+    # than ratcheting up this GenServer's heap.
+    Task.start(fn ->
+      tasks =
+        select_all_tasks(state)
+        |> Enum.filter(fn task ->
+          task.opts[:path] && Path.expand(task.opts[:path]) == expanded
+        end)
 
-    {:reply, tasks, state}
+      GenServer.reply(from, tasks)
+    end)
+
+    {:noreply, state}
   end
 
   @impl true

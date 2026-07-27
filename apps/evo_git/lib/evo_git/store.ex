@@ -186,6 +186,18 @@ defmodule EvoGit.Store do
     GenServer.call(store, {:get_task_status, task_id})
   end
 
+  @doc """
+  Returns lightweight cleanup info for all tasks: `%{id, finished_at}`.
+  Only `id` (raw string) and `finished_at` (decoded DateTime or nil) are returned
+  — no heavy JSON fields (logs, result, usage, archive_metadata) are decoded.
+
+  Used by `TaskRegistry.Cleanup` to avoid a full decode of all tasks just to
+  check finished_at against age/count limits.
+  """
+  def select_cleanup_info(store \\ __MODULE__) do
+    GenServer.call(store, :select_cleanup_info)
+  end
+
   ## Public API — Projects
 
   @doc "Inserts or replaces a project. Validates that path is present."
@@ -507,6 +519,25 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:get_task_status, task_id}, _from, state) do
     reply = read_task_status(state.conn, task_id)
+    {:reply, reply, state}
+  end
+
+  # Lightweight query: reads only id and finished_at. The finished_at column is
+  # decoded via the non-crashing Codec.decode_datetime/1 (returns nil on bad
+  # data). No heavy JSON fields are decoded.
+  @impl true
+  def handle_call(:select_cleanup_info, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT id, finished_at FROM tasks", []) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [id, finished_at] ->
+            %{id: id, finished_at: Codec.decode_datetime(finished_at)}
+          end)
+
+        _ ->
+          []
+      end
+
     {:reply, reply, state}
   end
 
