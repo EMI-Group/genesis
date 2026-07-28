@@ -421,18 +421,20 @@ defmodule EvoGit.RemoteConnection do
 
             case chmod_executable(ssh_target, launcher_path) do
               :ok ->
-                # :copying_config stage
-                state = %{state | bootstrap_stage: :copying_config}
-                broadcast_status(target, state)
-
-                copy_config_to_remote(ssh_target)
-
-                # :detecting_os stage
+                # :detecting_os stage (runs before config copy so we know the
+                # correct platform-specific config directory)
                 state = %{state | bootstrap_stage: :detecting_os}
                 broadcast_status(target, state)
 
                 case detect_os(ssh_target) do
                   {:ok, os} ->
+                    # :copying_config stage (uses the detected OS to compute
+                    # the platform-specific remote config directory)
+                    state = %{state | bootstrap_stage: :copying_config}
+                    broadcast_status(target, state)
+
+                    copy_config_to_remote(ssh_target, os)
+
                     # :starting_daemon stage
                     state = %{state | bootstrap_stage: :starting_daemon}
                     broadcast_status(target, state)
@@ -519,8 +521,9 @@ defmodule EvoGit.RemoteConnection do
   # Copies local config.toml and credentials.toml to the remote host.
   # Best-effort: missing local files are skipped; copy errors are logged but
   # do not fail the bootstrap (the daemon boots fine without config).
-  defp copy_config_to_remote(ssh_target) do
-    remote_config_dir = "~/.config/genesis"
+  # Files that already exist on the remote are NOT overwritten.
+  defp copy_config_to_remote(ssh_target, os) do
+    remote_config_dir = remote_config_dir(os)
 
     # Ensure the remote config directory exists.
     run_cmd("ssh #{ssh_target} 'mkdir -p #{remote_config_dir}'", @cmd_timeout_ms)
@@ -528,16 +531,42 @@ defmodule EvoGit.RemoteConnection do
     for path <- [EvoGit.Config.config_path(), EvoGit.Config.credentials_path()] do
       if File.exists?(path) do
         remote_file = Path.join(remote_config_dir, Path.basename(path))
-        cmd = "scp #{path} #{ssh_target}:#{remote_file}"
 
-        case run_cmd(cmd, @cmd_timeout_ms) do
-          {:ok, _output, 0} -> :ok
-          _ -> Logger.warning("Failed to copy #{Path.basename(path)} to remote; continuing.")
+        if remote_file_exists?(ssh_target, remote_file) do
+          # The remote already has this file; don't overwrite.
+          :ok
+        else
+          cmd = "scp #{path} #{ssh_target}:#{remote_file}"
+
+          case run_cmd(cmd, @cmd_timeout_ms) do
+            {:ok, _output, 0} -> :ok
+            _ -> Logger.warning("Failed to copy #{Path.basename(path)} to remote; continuing.")
+          end
         end
       end
     end
 
     :ok
+  end
+
+  # Computes the remote config directory for a given OS. Mirrors the
+  # platform logic in `EvoGit.Config.config_dir/0`.
+  defp remote_config_dir("Darwin") do
+    Path.join(["~", "Library", "Application Support", "genesis"])
+  end
+
+  defp remote_config_dir(_os) do
+    Path.join("~/.config", "genesis")
+  end
+
+  # Checks whether a file exists on the remote host.
+  defp remote_file_exists?(ssh_target, remote_file) do
+    cmd = "ssh #{ssh_target} 'test -f #{remote_file} && echo yes || echo no'"
+
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, output, 0} -> String.trim(output) == "yes"
+      _ -> false
+    end
   end
 
   # Detects the remote OS via `ssh <target> 'uname -s'`.
