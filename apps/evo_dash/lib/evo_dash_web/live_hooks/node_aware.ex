@@ -80,7 +80,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   or `"local"`, the context falls back to the local BEAM node. When a target id
   is given, it is looked up via `EvoDash.NodeContext.get_target/1`; if the
   target exists AND is currently connected, the context is set to that target.
-  Otherwise it falls back to local.
+  If the target exists but is not yet connected, the context is "pending" —
+  data comes from the local node but `@current_node_id` is preserved so that
+  `handle_connection_status/2` can re-resolve once the connection completes.
+  Unknown ids fall back to local.
   """
   def assign_node(socket, params) do
     node_param = params["node"]
@@ -101,15 +104,28 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
         |> assign(:current_node, remote_node)
         |> assign(:current_node_name, target.name)
         |> assign(:current_node_id, node_param)
+
+      {:pending, target} ->
+        # A known target that exists but isn't connected yet (e.g. a
+        # connection was just initiated). Data still comes from the local node
+        # until the connection completes, but we MUST preserve the target id in
+        # `@current_node_id` so that `handle_connection_status/2` can match it
+        # later and re-resolve `@current_node` to the remote BEAM node.
+        socket
+        |> assign(:current_node, node())
+        |> assign(:current_node_name, target.name)
+        |> assign(:current_node_id, node_param)
     end
   end
 
-  # Resolves a node param string into `:local` or
-  # `{:remote, target_map, remote_node_atom}`.
+  # Resolves a node param string into `:local`, `{:remote, target_map,
+  # remote_node_atom}`, or `{:pending, target_map}`.
   #
-  # Falls back to `:local` for nil, "local", unknown ids, disconnected targets,
-  # or connected targets whose connection manager has not yet reported a node
-  # name (the `:node` field is nil until distribution completes).
+  # Falls back to `:local` for nil, "local", and unknown ids.
+  # Returns `{:pending, target}` for known-but-disconnected targets so the
+  # caller can preserve the target id until the connection completes.
+  # Returns `{:remote, ...}` for connected targets whose connection manager has
+  # reported a node name (the `:node` field is nil until distribution completes).
   defp resolve_node_context(nil), do: :local
   defp resolve_node_context("local"), do: :local
 
@@ -124,7 +140,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
             {:remote, target, String.to_atom(remote_node)}
 
           _ ->
-            :local
+            # Known target that isn't connected yet — keep the target id so
+            # `handle_connection_status` can re-resolve once connected.
+            {:pending, target}
         end
 
       {:error, :not_found} ->
