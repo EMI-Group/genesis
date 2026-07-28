@@ -261,29 +261,45 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
-  Saves a user config map to the config file on the given node, then returns.
+  Saves a user config map to the config file on the given node.
 
   On the local node, calls `EvoGit.Config.save_user_config/1` directly. On a
-  remote node, routes the call through `:erpc` via `EvoGit.RemoteNode.save_user_config/2`.
+  remote node, routes the call through `:erpc` via `call_remote/4` to
+  `EvoGit.Config.save_user_config/1` on the remote BEAM node.
 
   Returns `:ok` on success or `{:error, reason}` on failure.
   """
   @spec save_user_config(node(), map()) :: :ok | {:error, term()}
   def save_user_config(node, config) do
-    EvoGit.RemoteNode.save_user_config(node, config)
+    if node == node() do
+      EvoGit.Config.save_user_config(config)
+    else
+      case call_remote(node, EvoGit.Config, :save_user_config, [config]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
   end
 
   @doc """
   Saves credentials to the credentials file on the given node.
 
   On the local node, calls `EvoGit.Config.save_credentials/1` directly. On a
-  remote node, routes the call through `:erpc` via `EvoGit.RemoteNode.save_credentials/2`.
+  remote node, routes the call through `:erpc` via `call_remote/4` to
+  `EvoGit.Config.save_credentials/1` on the remote BEAM node.
 
   Returns `:ok` on success or `{:error, reason}` on failure.
   """
   @spec save_credentials(node(), map()) :: :ok | {:error, term()}
   def save_credentials(node, credentials) do
-    EvoGit.RemoteNode.save_credentials(node, credentials)
+    if node == node() do
+      EvoGit.Config.save_credentials(credentials)
+    else
+      case call_remote(node, EvoGit.Config, :save_credentials, [credentials]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
   end
 
   @doc """
