@@ -100,7 +100,7 @@ defmodule EvoDashWeb.AgentsLive do
     # schedule overlapping timers on repeated handle_params calls.
     socket =
       if current_node != node() and connected?(socket) and
-           not socket.assigns[:remote_poll_timer] do
+           !socket.assigns[:remote_poll_timer] do
         Process.send_after(self(), :remote_poll, 3_000)
         assign(socket, :remote_poll_timer, true)
       else
