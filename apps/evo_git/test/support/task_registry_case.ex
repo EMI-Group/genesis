@@ -49,29 +49,10 @@ defmodule EvoGit.TaskRegistryCase do
     {:ok, %{data_dir: root, sqlite_path: sqlite_path}}
   end
 
-  # Helper: trigger cleanup_expired_tasks by inserting a task in :running state
-  # and transitioning it to :completed (which calls cleanup_expired_tasks()),
-  # then synchronizing with a synchronous call.
+  # Helper: trigger cleanup_expired_tasks directly (cleanup is now periodic,
+  # not on every status transition).
   def trigger_cleanup! do
-    trigger_id = "cleanup_trigger_#{System.unique_integer([:positive])}"
-
-    trigger = %TaskInfo{
-      id: trigger_id,
-      type: :genesis,
-      status: :running,
-      opts: [path: "/tmp/test"],
-      ref: nil,
-      started_at: DateTime.utc_now(),
-      finished_at: nil,
-      logs: [],
-      result: nil
-    }
-
-    EvoGit.Store.put_task(EvoGit.Store, trigger)
-    # update_task_status transitions to :completed which triggers cleanup_expired_tasks()
-    TaskRegistry.update_task_status(trigger_id, :completed, nil)
-    # Sync with a call to ensure all prior casts have been processed
-    TaskRegistry.list_tasks()
+    EvoGit.TaskRegistry.Cleanup.cleanup_expired_tasks(EvoGit.Store)
     :ok
   end
 
