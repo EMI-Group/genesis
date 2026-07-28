@@ -135,11 +135,10 @@ defmodule EvoGit.Store do
   ## Public API — Lightweight task queries
 
   @doc """
-  Returns the `opts` keyword list for every task row, without decoding the
-  full struct. Each element is a keyword list (or nil for rows with no opts).
+  Returns the distinct non-nil `project_path` values from all task rows.
 
-  Used by TaskRegistry.get_unique_paths to avoid a full decode of all tasks
-  just to extract `opts[:path]`.
+  This is a lightweight query — only the `project_path` column is read, no
+  JSON blobs are decoded. Used by TaskRegistry.get_unique_paths/0.
   """
   def select_task_paths(store \\ __MODULE__) do
     GenServer.call(store, :select_task_paths)
@@ -176,6 +175,24 @@ defmodule EvoGit.Store do
   """
   def update_lease_expires_at(store \\ __MODULE__, task_id, expires_at) do
     GenServer.call(store, {:update_lease_expires_at, task_id, expires_at})
+  end
+
+  @doc """
+  Performs a targeted UPDATE of specific columns for a task, avoiding a full
+  read-modify-write of the entire row.
+
+  `columns` is a keyword list mapping column name atoms to their new values.
+  Only the specified columns are updated; all others are left untouched.
+
+  Column values that need encoding (atoms, datetimes, usage, result,
+  archive_metadata, opts) are passed through the appropriate `Codec.encode_*`
+  function. Scalar values (strings, integers, nil) are used directly.
+
+  Returns `:ok`. Used by TaskRegistry for partial updates like setting
+  review_status, appending logs, and status transitions.
+  """
+  def update_task_columns(store \\ __MODULE__, task_id, columns) when is_list(columns) do
+    GenServer.call(store, {:update_task_columns, task_id, columns})
   end
 
   @doc """
@@ -356,8 +373,8 @@ defmodule EvoGit.Store do
               INSERT OR REPLACE INTO tasks
               (id, type, status, opts, started_at, finished_at, logs,
                result, review_status, usage, agent_count, base_sha, commit_sha,
-               archive_metadata, lease_expires_at, model_id)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+               archive_metadata, lease_expires_at, model_id, project_path, branch_name)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
               """,
               values
             )
@@ -452,17 +469,18 @@ defmodule EvoGit.Store do
     {:reply, :ok, state}
   end
 
-  # Lightweight query: reads only the opts column and decodes just opts for
-  # each row. No full task decode (skips logs, result, usage, archive_metadata).
+  # Lightweight query: reads only the project_path column, returning distinct
+  # non-null paths. No full task decode — no JSON blobs are touched.
   @impl true
   def handle_call(:select_task_paths, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, "SELECT opts FROM tasks", []) do
-        {:ok, %{rows: rows}} ->
-          Enum.map(rows, fn [opts] -> Codec.decode_opts(opts) end)
-
-        _ ->
-          []
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT DISTINCT project_path FROM tasks WHERE project_path IS NOT NULL",
+             []
+           ) do
+        {:ok, %{rows: rows}} -> Enum.map(rows, fn [path] -> path end)
+        _ -> []
       end
 
     {:reply, reply, state}
@@ -511,6 +529,21 @@ defmodule EvoGit.Store do
         state.conn,
         "UPDATE tasks SET lease_expires_at = ?1 WHERE id = ?2",
         [expires_at, task_id]
+      )
+
+    {:reply, :ok, state}
+  end
+
+  # Lightweight write: updates only the specified columns for a task.
+  @impl true
+  def handle_call({:update_task_columns, task_id, columns}, _from, state) do
+    {set_clauses, values} = build_update_set(columns, 1)
+
+    {:ok, _} =
+      XqliteNIF.execute(
+        state.conn,
+        "UPDATE tasks SET #{set_clauses} WHERE id = ?#{length(values) + 1}",
+        values ++ [task_id]
       )
 
     {:reply, :ok, state}
@@ -688,7 +721,9 @@ defmodule EvoGit.Store do
           commit_sha TEXT,
           archive_metadata TEXT,
           lease_expires_at INTEGER,
-          model_id TEXT
+          model_id TEXT,
+          project_path TEXT,
+          branch_name TEXT
         )
         """,
         []
@@ -725,6 +760,7 @@ defmodule EvoGit.Store do
     {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)", [])
     {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_finished_at ON tasks(finished_at)", [])
     {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_lease_expires_at ON tasks(lease_expires_at)", [])
+    {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_project_path ON tasks(project_path)", [])
 
     :ok
   end
@@ -748,6 +784,22 @@ defmodule EvoGit.Store do
         XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN model_id TEXT", [])
     end
 
+    if "project_path" not in columns do
+      {:ok, _} =
+        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN project_path TEXT", [])
+
+      # Backfill project_path from opts JSON for existing rows.
+      backfill_project_path(conn)
+    end
+
+    if "branch_name" not in columns do
+      {:ok, _} =
+        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN branch_name TEXT", [])
+
+      # Backfill branch_name from result JSON for existing rows.
+      backfill_branch_name(conn)
+    end
+
     if "pid" in columns do
       # SQLite 3.35.0+ supports DROP COLUMN. Older versions don't — if this
       # fails, the column is simply left unused and ignored by the codec
@@ -765,6 +817,82 @@ defmodule EvoGit.Store do
               Exception.message(e)
           )
       end
+    end
+
+    :ok
+  end
+
+  # Backfills the project_path column for existing rows by reading opts,
+  # extracting :path, and writing it back via targeted UPDATE.
+  defp backfill_project_path(conn) do
+    {:ok, %{rows: rows}} =
+      XqliteNIF.query(
+        conn,
+        "SELECT id, opts FROM tasks WHERE project_path IS NULL AND opts IS NOT NULL",
+        []
+      )
+
+    count =
+      Enum.reduce(rows, 0, fn [id, opts_json], acc ->
+        path =
+          case Codec.decode_opts(opts_json) do
+            opts when is_list(opts) -> Keyword.get(opts, :path)
+            _ -> nil
+          end
+
+        if is_binary(path) do
+          {:ok, _} =
+            XqliteNIF.execute(conn, "UPDATE tasks SET project_path = ?1 WHERE id = ?2", [
+              path,
+              id
+            ])
+
+          acc + 1
+        else
+          acc
+        end
+      end)
+
+    if count > 0 do
+      Logger.info("Store: backfilled project_path for #{count} existing tasks")
+    end
+
+    :ok
+  end
+
+  # Backfills the branch_name column for existing rows by reading result,
+  # extracting branch_name, and writing it back via targeted UPDATE.
+  defp backfill_branch_name(conn) do
+    {:ok, %{rows: rows}} =
+      XqliteNIF.query(
+        conn,
+        "SELECT id, result FROM tasks WHERE branch_name IS NULL AND result IS NOT NULL",
+        []
+      )
+
+    count =
+      Enum.reduce(rows, 0, fn [id, result_json], acc ->
+        branch =
+          case Codec.decode_result(result_json) do
+            {:ok, data} when is_map(data) -> Map.get(data, :branch_name)
+            _ -> nil
+          end
+
+        if is_binary(branch) do
+          {:ok, _} =
+            XqliteNIF.execute(conn, "UPDATE tasks SET branch_name = ?1 WHERE id = ?2", [
+              branch,
+              id
+            ])
+
+          acc + 1
+        else
+          acc
+        end
+      end)
+
+    if count > 0 do
+      Logger.info("Store: backfilled branch_name for #{count} existing tasks")
     end
 
     :ok
@@ -791,6 +919,44 @@ defmodule EvoGit.Store do
 
   defp pk_column("tasks"), do: "id"
   defp pk_column("projects"), do: "path"
+
+  # Builds the SET clause and value list for a targeted UPDATE from a keyword
+  # list of column names to values. Each value is encoded through the
+  # appropriate Codec.encode_* function based on column semantics:
+  # atoms, datetimes, lists/maps get encoded; scalars pass through as-is.
+  defp build_update_set(columns, start_idx) do
+    {clauses, values, _idx} =
+      Enum.reduce(columns, {[], [], start_idx}, fn {col, value}, {clauses, values, idx} ->
+        encoded = encode_column_value(col, value)
+        clause = "#{col} = ?#{idx}"
+        {[clause | clauses], [encoded | values], idx + 1}
+      end)
+
+    {Enum.join(Enum.reverse(clauses), ", "), Enum.reverse(values)}
+  end
+
+  # Encodes a column value for an UPDATE SET clause. Uses the same Codec
+  # functions as encode_task for consistency.
+  defp encode_column_value(_col, nil), do: nil
+
+  defp encode_column_value(:status, value), do: Codec.encode_atom(value)
+  defp encode_column_value(:type, value), do: Codec.encode_atom(value)
+  defp encode_column_value(:review_status, value), do: Codec.encode_atom(value)
+  defp encode_column_value(:started_at, value), do: Codec.encode_datetime(value)
+  defp encode_column_value(:finished_at, value), do: Codec.encode_datetime(value)
+  defp encode_column_value(:logs, value), do: Codec.encode_logs(value)
+  defp encode_column_value(:result, value), do: Codec.encode_result(value)
+  defp encode_column_value(:usage, value), do: Codec.encode_usage(value)
+  defp encode_column_value(:opts, value), do: Codec.encode_opts(value)
+  defp encode_column_value(:archive_metadata, value), do: Codec.encode_archive(value)
+  defp encode_column_value(:project_path, value), do: value
+  defp encode_column_value(:branch_name, value), do: value
+  defp encode_column_value(:agent_count, value), do: value
+  defp encode_column_value(:lease_expires_at, value), do: value
+  defp encode_column_value(:model_id, value), do: value
+  defp encode_column_value(:base_sha, value), do: value
+  defp encode_column_value(:commit_sha, value), do: value
+  defp encode_column_value(_col, value), do: value
 
   # Reads only the status column for a task id. Returns the decoded atom status
   # or nil if the row doesn't exist. Uses the same XqliteNIF.query pattern as
@@ -898,17 +1064,15 @@ defmodule EvoGit.Store do
           {["status = ?1"], [status], 2}
       end
 
-    # project_path filter — matches the "path" key embedded in opts JSON
+    # project_path filter — matches the denormalized project_path column
     {clauses, params, idx} =
       case Keyword.get(filters, :project_path, "all") do
         "all" ->
           {clauses, params, idx}
 
         path ->
-          pattern = "%" <> "\"path\",\"#{escape_like(path)}\"" <> "%"
-
-          {clauses ++ ["opts LIKE ?" <> Integer.to_string(idx) <> " ESCAPE '\\'"],
-           params ++ [pattern], idx + 1}
+          {clauses ++ ["project_path = ?" <> Integer.to_string(idx)],
+           params ++ [path], idx + 1}
       end
 
     # review_status filter ("pending" is a composite of completed + null review + branch)
@@ -922,16 +1086,16 @@ defmodule EvoGit.Store do
           # branch_name (meaning they're awaiting review).
           c1 = "status = ?" <> Integer.to_string(idx)
           c2 = "review_status IS NULL"
-          c3 = "result LIKE ?" <> Integer.to_string(idx + 1)
+          c3 = "branch_name IS NOT NULL"
 
           {clauses ++ [c1, c2, c3],
-           params ++ ["completed", "%" <> "\"branch_name\"" <> "%"], idx + 2}
+           params ++ ["completed"], idx + 1}
 
         rs ->
           {clauses ++ ["review_status = ?" <> Integer.to_string(idx)], params ++ [rs], idx + 1}
       end
 
-    # search filter — matches id or the raw opts JSON text
+    # search filter — matches id, raw opts JSON text, or project_path
     {clauses, params, _idx} =
       case Keyword.get(filters, :search) do
         nil ->
@@ -944,7 +1108,8 @@ defmodule EvoGit.Store do
           pat = "%#{escape_like(search)}%"
           c1 = "id LIKE ?" <> Integer.to_string(idx) <> " ESCAPE '\\'"
           c2 = "opts LIKE ?" <> Integer.to_string(idx + 1) <> " ESCAPE '\\'"
-          {clauses ++ ["(#{c1} OR #{c2})"], params ++ [pat, pat], idx + 2}
+          c3 = "project_path LIKE ?" <> Integer.to_string(idx + 2) <> " ESCAPE '\\'"
+          {clauses ++ ["(#{c1} OR #{c2} OR #{c3})"], params ++ [pat, pat, pat], idx + 3}
       end
 
     case clauses do

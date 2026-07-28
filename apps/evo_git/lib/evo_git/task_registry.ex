@@ -326,11 +326,9 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call(:get_unique_paths, _from, state) do
-    paths =
-      EvoGit.Store.select_task_paths(state.task_store)
-      |> Enum.map(fn opts -> opts[:path] end)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
+    # select_task_paths now returns distinct non-nil project_path values
+    # directly from the denormalized column — no per-row decode needed.
+    paths = EvoGit.Store.select_task_paths(state.task_store)
 
     {:reply, paths, state}
   end
@@ -393,9 +391,9 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_cast({:append_log, task_id, log_entry}, state) do
     case task_get(state, task_id) do
-      %TaskInfo{logs: logs} = task ->
-        updated = %{task | logs: [log_entry | logs] |> Enum.take(@max_log_entries)}
-        EvoGit.Store.put_task(state.task_store, updated)
+      %TaskInfo{logs: logs} ->
+        updated_logs = [log_entry | logs] |> Enum.take(@max_log_entries)
+        EvoGit.Store.update_task_columns(state.task_store, task_id, logs: updated_logs)
 
       nil ->
         :ok
@@ -415,9 +413,8 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
     case task_get(state, task_id) do
-      %TaskInfo{} = task ->
-        updated = %{task | review_status: status}
-        EvoGit.Store.put_task(state.task_store, updated)
+      %TaskInfo{} = _task ->
+        EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status)
 
       nil ->
         :ok
@@ -430,9 +427,11 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
     case task_get(state, task_id) do
-      %TaskInfo{} = task ->
-        updated = %{task | base_sha: base_sha, commit_sha: commit_sha}
-        EvoGit.Store.put_task(state.task_store, updated)
+      %TaskInfo{} = _task ->
+        EvoGit.Store.update_task_columns(state.task_store, task_id,
+          base_sha: base_sha,
+          commit_sha: commit_sha
+        )
 
       nil ->
         :ok
@@ -479,22 +478,34 @@ defmodule EvoGit.TaskRegistry do
                 do: DateTime.utc_now(),
                 else: task.finished_at
 
-            updated = %{task | status: status, result: result, finished_at: finished_at}
-            updated = if usage, do: %{updated | usage: usage}, else: updated
-            updated = if agent_count, do: %{updated | agent_count: agent_count}, else: updated
-            updated = if commit_sha, do: %{updated | commit_sha: commit_sha}, else: updated
+            lease_expires_at =
+              if status in [:completed, :failed, :cancelled], do: nil, else: task.lease_expires_at
 
-            updated =
-              if archive_records,
-                do: %{updated | archive_metadata: archive_records},
-                else: updated
+            project_path = Keyword.get(task.opts, :path)
 
-            updated =
-              if status in [:completed, :failed, :cancelled],
-                do: %{updated | lease_expires_at: nil},
-                else: updated
+            branch_name =
+              case result do
+                {:ok, data} when is_map(data) -> Map.get(data, :branch_name)
+                _ -> nil
+              end
 
-            EvoGit.Store.put_task(state.task_store, updated)
+            # Build a keyword list of exactly what changed — only these columns
+            # are written, avoiding re-encoding opts/logs/json blobs.
+            update_cols =
+              [
+                status: status,
+                result: result,
+                finished_at: finished_at,
+                lease_expires_at: lease_expires_at,
+                project_path: project_path,
+                branch_name: branch_name
+              ] ++
+                if(usage, do: [usage: usage], else: []) ++
+                if(agent_count, do: [agent_count: agent_count], else: []) ++
+                if(commit_sha, do: [commit_sha: commit_sha], else: []) ++
+                if(archive_records, do: [archive_metadata: archive_records], else: [])
+
+            EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols)
 
             if status in [:completed, :failed, :cancelled] do
               %{state | task_refs: Map.delete(state.task_refs, task_id)}

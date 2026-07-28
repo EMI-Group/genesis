@@ -19,7 +19,9 @@ defmodule EvoGit.TaskInfo do
     commit_sha: nil,
     archive_metadata: nil,
     lease_expires_at: nil,
-    model_id: nil
+    model_id: nil,
+    project_path: nil,
+    branch_name: nil
   ]
 
   @type t :: %__MODULE__{
@@ -39,6 +41,8 @@ defmodule EvoGit.TaskInfo do
           commit_sha: String.t() | nil,
           archive_metadata: [map()] | nil,
           lease_expires_at: integer() | nil,
-          model_id: String.t() | nil
+          model_id: String.t() | nil,
+          project_path: String.t() | nil,
+          branch_name: String.t() | nil
         }
 end

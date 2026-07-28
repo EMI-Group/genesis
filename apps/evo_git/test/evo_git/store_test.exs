@@ -1312,6 +1312,8 @@ defmodule EvoGit.StoreTest do
           "sha2",
           nil,
           nil,
+          nil,
+          nil,
           nil
         ])
         |> Map.new()

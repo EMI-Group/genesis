@@ -28,7 +28,7 @@ defmodule EvoGit.Store.Codec do
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
-  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id)
+  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name)
   @project_columns ~w(path name last_opened_at)
 
   @usage_fields [
@@ -80,9 +80,30 @@ defmodule EvoGit.Store.Codec do
       task.commit_sha,
       encode_archive(task.archive_metadata),
       task.lease_expires_at,
-      task.model_id
+      task.model_id,
+      task.project_path || extract_project_path(task.opts),
+      task.branch_name || extract_branch_name(task.result)
     ]
   end
+
+  # Extracts the :path value from opts for denormalization into the project_path
+  # column. Returns nil if opts is nil or doesn't contain a :path key.
+  defp extract_project_path(nil), do: nil
+
+  defp extract_project_path(opts) when is_list(opts) do
+    Keyword.get(opts, :path)
+  end
+
+  # Extracts the :branch_name from a {:ok, %{branch_name: name}} result tuple
+  # for denormalization into the branch_name column. Returns nil for all other
+  # result shapes.
+  defp extract_branch_name(nil), do: nil
+
+  defp extract_branch_name({:ok, data}) when is_map(data) do
+    Map.get(data, :branch_name)
+  end
+
+  defp extract_branch_name(_other), do: nil
 
   def encode_project(%RecentProject{} = project) do
     [
@@ -111,7 +132,9 @@ defmodule EvoGit.Store.Codec do
       commit_sha,
       archive_metadata,
       lease_expires_at,
-      model_id
+      model_id,
+      project_path,
+      branch_name
     ] = row
 
     %TaskInfo{
@@ -131,7 +154,9 @@ defmodule EvoGit.Store.Codec do
       commit_sha: commit_sha,
       archive_metadata: decode_archive(archive_metadata),
       lease_expires_at: lease_expires_at,
-      model_id: model_id
+      model_id: model_id,
+      project_path: project_path,
+      branch_name: branch_name
     }
   end
 
