@@ -155,8 +155,42 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   @doc """
   Handles a `{:remote_connection_status, _target_id, _status}` broadcast by
-  refreshing the `@connection_statuses` assign. Returns `{:noreply, socket}`.
+  refreshing the `@connection_statuses` assign. When the status change is for
+  the currently selected node, it also re-resolves the node context so
+  `@current_node` updates: switching from local to the remote BEAM node when
+  the connection reaches `:connected`, or falling back to local on
+  disconnect/error. Returns `{:noreply, socket}`.
   """
+  def handle_connection_status(socket, {:remote_connection_status, target_id, status}) do
+    socket = assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())
+
+    # If the status change is for the currently selected node, re-resolve the
+    # node context so @current_node updates. When the connection reaches
+    # :connected, @current_node switches from local to the remote BEAM node.
+    # When it disconnects/errors, fall back to local.
+    current_node_id = socket.assigns[:current_node_id]
+
+    socket =
+      if current_node_id == target_id do
+        case status do
+          %{phase: :connected, node: remote_node} when is_binary(remote_node) ->
+            assign(socket, :current_node, String.to_atom(remote_node))
+
+          _ ->
+            # Disconnected, connecting, error — fall back to local node context
+            # so the page doesn't show stale remote data.
+            socket
+            |> assign(:current_node, node())
+            |> assign(:current_node_name, "Local")
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  # Fallback for unexpected message shapes — just refresh statuses.
   def handle_connection_status(socket, _message) do
     {:noreply, assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())}
   end

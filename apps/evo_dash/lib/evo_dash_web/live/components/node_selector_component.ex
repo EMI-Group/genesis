@@ -105,6 +105,15 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
   @impl true
   def handle_event("select_node", %{"node" => node_id}, socket) do
+    # For a remote target that isn't connected yet, initiate the connection
+    # asynchronously. The GenServer handles it in the background; the page
+    # shows "connecting" status until the status broadcast triggers re-resolution.
+    if node_id != "local" do
+      unless EvoDash.NodeContext.connected?(node_id) do
+        EvoDash.NodeContext.connect(node_id)
+      end
+    end
+
     # The parent LiveView handles navigation via :node_selected, which triggers
     # push_patch → handle_params → re-render. The re-render closes the dropdown.
     send(self(), {:node_selected, node_id})
