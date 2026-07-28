@@ -24,8 +24,39 @@ defmodule EvoDashWeb.DashboardLiveTest do
     {:ok, Map.put(context, :tmp_dir, tmp_dir)}
   end
 
+  # The DashboardLive mount redirects first-time users to /welcome via
+  # server-based detection (EvoGit.Config.VersionState.onboarding_needed?/0,
+  # which is true when no version-state file exists). To keep the dashboard
+  # tests deterministic regardless of host state, isolate the config dir to a
+  # temp directory and mark onboarding complete by writing a version-state
+  # file there. This mirrors WelcomeLiveTest's XDG isolation approach.
   defp set_onboarding_completed(%{conn: conn} = _context) do
-    {:ok, conn: Plug.Test.init_test_session(conn, onboarding_completed: true)}
+    tmp_config =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_dashboard_test_config_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(tmp_config)
+    original = System.get_env("XDG_CONFIG_HOME")
+    System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+    # Create the version-state file so onboarding_needed?/0 returns false.
+    if Code.ensure_loaded?(EvoGit.Config.VersionState) do
+      EvoGit.Config.VersionState.complete_onboarding()
+    end
+
+    on_exit(fn ->
+      if original do
+        System.put_env("XDG_CONFIG_HOME", original)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_config)
+    end)
+
+    {:ok, conn: Plug.Test.init_test_session(conn, %{})}
   end
 
   describe "dashboard without active project" do

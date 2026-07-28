@@ -26,9 +26,9 @@ defmodule EvoDashWeb.WelcomeLive do
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
     >
-      <div class="flex flex-col items-center justify-center min-h-[80vh] px-4 py-8">
+      <div class="flex flex-col items-center justify-center min-h-screen px-4 py-8">
         <!-- Main card -->
-        <div class="w-full max-w-2xl bg-base-100 rounded-xl border border-base-200 shadow-sm p-8">
+        <div class="w-full max-w-5xl bg-base-100 rounded-xl border border-base-200 shadow-sm p-8">
           <!-- Header -->
           <div class="flex flex-col items-center text-center mb-8">
             <div class="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mb-6 text-4xl">
@@ -108,30 +108,35 @@ defmodule EvoDashWeb.WelcomeLive do
                 {gettext("Choose a model:")}
               </p>
 
-              <!-- Flat grid of all models across providers -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-                <%= for entry <- @flat_models do %>
-                  <% selected = @selected_entry && @selected_entry.model_string == entry.model_string %>
-                  <button
-                    phx-click="select_welcome_model"
-                    phx-value-model_string={entry.model_string}
-                    class={[
-                      "btn btn-sm rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-2.5",
-                      selected && "btn-primary shadow-md",
-                      !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
-                    ]}
-                  >
-                    <span class="font-semibold text-sm">{entry.model_display_name}</span>
-                    <span class={[
-                      "text-[11px] leading-tight",
-                      selected && "text-primary-content/80",
-                      !selected && "text-base-content/50"
-                    ]}>
-                      {entry.provider_display_name}{variant_suffix(entry)}
-                    </span>
-                  </button>
-                <% end %>
-              </div>
+              <!-- Models grouped by provider -->
+              <%= for group <- @grouped_models do %>
+                <div class="mb-5">
+                  <p class="text-sm font-bold text-base-content/70 mb-2.5">{group.provider_display_name}</p>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <%= for entry <- group.models do %>
+                      <% selected = @selected_entry && @selected_entry.model_string == entry.model_string %>
+                      <button
+                        phx-click="select_welcome_model"
+                        phx-value-model_string={entry.model_string}
+                        class={[
+                          "btn btn-sm rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-2.5",
+                          selected && "btn-primary shadow-md",
+                          !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                        ]}
+                      >
+                        <span class="font-semibold text-sm">{entry.model_display_name}</span>
+                        <span class={[
+                          "text-[11px] leading-tight",
+                          selected && "text-primary-content/80",
+                          !selected && "text-base-content/50"
+                        ]}>
+                          {entry.provider_display_name}{variant_suffix(entry)}
+                        </span>
+                      </button>
+                    <% end %>
+                  </div>
+                </div>
+              <% end %>
 
               <!-- Selected model: API key + save -->
               <%= if @selected_entry do %>
@@ -232,6 +237,7 @@ defmodule EvoDashWeb.WelcomeLive do
         credentials: EvoGit.Config.credentials(),
         llm_providers: llm_providers,
         flat_models: flat_models,
+        grouped_models: group_models_by_provider(flat_models),
         selected_entry: nil,
         version_upgraded: version_upgraded,
         current_version: current_version
@@ -376,6 +382,19 @@ defmodule EvoDashWeb.WelcomeLive do
     providers
     |> Enum.reject(&(&1[:custom_model] == true))
     |> Enum.flat_map(&flatten_provider/1)
+  end
+
+  # Groups the flat model list by provider_display_name while preserving the
+  # provider order in which they first appear (catalog order). Returns a list
+  # of `%{provider_display_name: binary(), models: [entry, ...]}` maps. The
+  # flat list is kept as the canonical data source for model lookups.
+  defp group_models_by_provider(flat_models) do
+    grouped = Enum.group_by(flat_models, & &1.provider_display_name)
+
+    flat_models
+    |> Enum.map(& &1.provider_display_name)
+    |> Enum.uniq()
+    |> Enum.map(fn name -> %{provider_display_name: name, models: grouped[name]} end)
   end
 
   defp flatten_provider(provider) do

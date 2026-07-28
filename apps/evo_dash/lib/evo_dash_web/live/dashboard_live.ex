@@ -252,15 +252,21 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def mount(_params, session, socket) do
-    # On the dead render (initial HTTP request), check the session for the
-    # onboarding flag and redirect to /welcome if not completed. The session
-    # is set by WelcomeController.complete/2 when the user finishes onboarding.
-    #
-    # For WebSocket-connected mounts (e.g. push_navigate after redirect),
-    # the session cookie already reflects completed onboarding, so we skip
-    # the check here.
-    if !connected?(socket) and session["onboarding_completed"] != true do
+  def mount(_params, _session, socket) do
+    # On the dead render (initial HTTP request), use server-based detection to
+    # decide whether to redirect first-time users to /welcome. The check is
+    # backed by EvoGit.Config.VersionState.onboarding_needed?/0 (which reports
+    # whether the version-state file has ever been created). It runs ONLY on
+    # the dead render; connected mounts skip it to avoid redirect loops.
+    onboarding_needed =
+      !connected?(socket) and
+        if Code.ensure_loaded?(EvoGit.Config.VersionState) do
+          EvoGit.Config.VersionState.onboarding_needed?()
+        else
+          false
+        end
+
+    if onboarding_needed do
       {:ok, push_navigate(socket, to: "/welcome")}
     else
       if connected?(socket) do
