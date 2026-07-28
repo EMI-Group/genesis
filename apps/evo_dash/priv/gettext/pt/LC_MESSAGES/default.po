@@ -108,7 +108,7 @@ msgstr "há %{count}s"
 msgid "%{n} slots"
 msgstr "%{n} slots"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:750
+#: lib/evo_dash_web/live/dashboard_live.ex:752
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
 msgstr "Tarefa %{type} iniciada com ID: %{id}"
@@ -166,19 +166,17 @@ msgid "API Key"
 msgstr "Chave de API"
 
 #: lib/evo_dash_web/live/settings_live.ex:1148
-#: lib/evo_dash_web/live/welcome_live.ex:340
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "A chave da API não pode estar vazia."
 
 #: lib/evo_dash_web/components/settings_components.ex:335
-#: lib/evo_dash_web/live/welcome_live.ex:170
+#: lib/evo_dash_web/live/welcome_live.ex:225
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "Chave de API já definida"
 
 #: lib/evo_dash_web/live/settings_live.ex:1158
-#: lib/evo_dash_web/live/welcome_live.ex:347
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "Chave da API salva com sucesso."
@@ -428,7 +426,7 @@ msgstr "URL Base"
 
 #: lib/evo_dash_web/live/settings_live.ex:909
 #: lib/evo_dash_web/live/settings_live.ex:992
-#: lib/evo_dash_web/live/welcome_live.ex:299
+#: lib/evo_dash_web/live/welcome_live.ex:430
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "A URL base não pode estar vazia."
@@ -506,7 +504,7 @@ msgstr "Cancelar"
 msgid "Cancelled"
 msgstr "Cancelado"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:935
+#: lib/evo_dash_web/live/dashboard_live.ex:940
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "Não é possível remover o repositório principal."
@@ -583,17 +581,17 @@ msgstr "Limpar todo o histórico de tarefas finalizadas? Esta ação não pode s
 msgid "Close"
 msgstr "Fechar"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1003
+#: lib/evo_dash_web/live/dashboard_live.ex:1008
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "Comando '%{command}' concluído:\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1011
+#: lib/evo_dash_web/live/dashboard_live.ex:1016
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "Comando '%{command}' falhou (código %{code}):\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:976
+#: lib/evo_dash_web/live/dashboard_live.ex:981
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "Comando não encontrado: %{command}"
@@ -1007,8 +1005,8 @@ msgid "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-s
 msgstr "Informe o destino SSH (a mesma string que você digitaria após `ssh`, ex.: `gpu-server` ou `user@host`)."
 
 #: lib/evo_dash_web/components/settings_components.ex:336
-#: lib/evo_dash_web/live/welcome_live.ex:149
-#: lib/evo_dash_web/live/welcome_live.ex:171
+#: lib/evo_dash_web/live/welcome_live.ex:192
+#: lib/evo_dash_web/live/welcome_live.ex:226
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "Insira sua chave de API"
@@ -1029,7 +1027,7 @@ msgstr "Insira sua chave de API. Ela deve começar com"
 msgid "Error"
 msgstr "Erro"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1022
+#: lib/evo_dash_web/live/dashboard_live.ex:1027
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "Erro ao executar '%{command}': %{error}"
@@ -1103,7 +1101,7 @@ msgstr "Extrair Habilidades"
 msgid "Failed"
 msgstr "Falhou"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:790
+#: lib/evo_dash_web/live/dashboard_live.ex:793
 #: lib/evo_dash_web/live/tasks_live.ex:484
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
@@ -1136,7 +1134,7 @@ msgid "Failed to reset key: %{reason}"
 msgstr "Falha ao redefinir chave: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:1165
-#: lib/evo_dash_web/live/welcome_live.ex:354
+#: lib/evo_dash_web/live/welcome_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "Falha ao salvar chave da API: %{reason}"
@@ -1144,7 +1142,7 @@ msgstr "Falha ao salvar chave da API: %{reason}"
 #: lib/evo_dash_web/live/settings_live.ex:676
 #: lib/evo_dash_web/live/settings_live.ex:749
 #: lib/evo_dash_web/live/settings_live.ex:1404
-#: lib/evo_dash_web/live/welcome_live.ex:495
+#: lib/evo_dash_web/live/welcome_live.ex:631
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "Falha ao salvar configuração: %{reason}"
@@ -1159,7 +1157,7 @@ msgstr "Falha ao salvar: %{reason}"
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "Falha ao iniciar extração de habilidade: %{reason}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:765
+#: lib/evo_dash_web/live/dashboard_live.ex:767
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "Falha ao iniciar tarefa: %{reason}"
@@ -1220,12 +1218,12 @@ msgstr "Por segurança, as credenciais não podem ser editadas nesta página. Ed
 msgid "Foreign Repositories"
 msgstr "Repositórios Externos"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:922
+#: lib/evo_dash_web/live/dashboard_live.ex:927
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "Repositório externo '%{repo_id}' registrado com sucesso."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:949
+#: lib/evo_dash_web/live/dashboard_live.ex:954
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "Repositório externo '%{repo_id}' removido com sucesso."
@@ -1537,7 +1535,7 @@ msgstr "Perfis de Modelo"
 
 #: lib/evo_dash_web/live/settings_live.ex:894
 #: lib/evo_dash_web/live/settings_live.ex:959
-#: lib/evo_dash_web/live/welcome_live.ex:282
+#: lib/evo_dash_web/live/welcome_live.ex:418
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "O nome do modelo não pode estar vazio."
@@ -1554,7 +1552,6 @@ msgstr "Perfil de modelo salvo."
 
 #: lib/evo_dash_web/live/settings_live.ex:870
 #: lib/evo_dash_web/live/settings_live.ex:1016
-#: lib/evo_dash_web/live/welcome_live.ex:333
 #, elixir-autogen, elixir-format
 msgid "Model selected and saved."
 msgstr "Modelo selecionado e salvo."
@@ -1787,7 +1784,7 @@ msgstr "O diretório pai não existe: %{path}"
 msgid "Path"
 msgstr "Caminho"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:881
+#: lib/evo_dash_web/live/dashboard_live.ex:886
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "O caminho não pode estar vazio."
@@ -1970,12 +1967,12 @@ msgstr "O gerenciamento de conexão remota não está disponível ao visualizar 
 msgid "Repo"
 msgstr "Repositório"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:897
+#: lib/evo_dash_web/live/dashboard_live.ex:902
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "Repositório '%{id}' já está registrado."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:941
+#: lib/evo_dash_web/live/dashboard_live.ex:946
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "Repositório '%{id}' não encontrado."
@@ -1985,7 +1982,7 @@ msgstr "Repositório '%{id}' não encontrado."
 msgid "Repo ID"
 msgstr "ID do Repo"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:878
+#: lib/evo_dash_web/live/dashboard_live.ex:883
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "O ID do repositório não pode estar vazio."
@@ -2185,7 +2182,6 @@ msgid "Save Changes"
 msgstr "Salvar alterações"
 
 #: lib/evo_dash_web/components/settings_components.ex:344
-#: lib/evo_dash_web/live/welcome_live.ex:179
 #, elixir-autogen, elixir-format
 msgid "Save Key"
 msgstr "Salvar Chave"
@@ -2266,7 +2262,7 @@ msgid "Server"
 msgstr "Servidor"
 
 #: lib/evo_dash_web/components/settings_components.ex:326
-#: lib/evo_dash_web/live/welcome_live.ex:161
+#: lib/evo_dash_web/live/welcome_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "Definir"
@@ -2306,7 +2302,7 @@ msgstr "Mostrando %{start}–%{end} de %{total} tarefas"
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "Tarefa de extração de habilidade iniciada. Você pode acompanhar o progresso no painel."
 
-#: lib/evo_dash_web/live/welcome_live.ex:205
+#: lib/evo_dash_web/live/welcome_live.ex:273
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "Pular"
@@ -2659,7 +2655,7 @@ msgstr "Repositório Desconhecido"
 #: lib/evo_dash_web/live/settings_live.ex:838
 #: lib/evo_dash_web/live/settings_live.ex:891
 #: lib/evo_dash_web/live/settings_live.ex:956
-#: lib/evo_dash_web/live/welcome_live.ex:279
+#: lib/evo_dash_web/live/welcome_live.ex:415
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "Provedor desconhecido."
@@ -3212,7 +3208,7 @@ msgstr "Endereço IP ao qual o painel web se vincula. O padrão é loopback (127
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
 msgstr "Porta na qual o painel web escuta. Deve estar entre 1024 e 65535 (portas privilegiadas abaixo de 1024 não são suportadas por razões de segurança)."
 
-#: lib/evo_dash_web/live/welcome_live.ex:101
+#: lib/evo_dash_web/live/welcome_live.ex:79
 #, elixir-autogen, elixir-format
 msgid "Add your first LLM"
 msgstr "Adicione seu primeiro LLM"
@@ -3227,7 +3223,7 @@ msgstr "Opções avançadas específicas do provedor, mescladas ao mapa de espec
 msgid "Change theme"
 msgstr "Mudar tema"
 
-#: lib/evo_dash_web/live/welcome_live.ex:108
+#: lib/evo_dash_web/live/welcome_live.ex:122
 #, elixir-autogen, elixir-format
 msgid "Choose a model:"
 msgstr "Escolha um modelo:"
@@ -3252,7 +3248,7 @@ msgstr "Criar Novo"
 msgid "Dark"
 msgstr "Escuro"
 
-#: lib/evo_dash_web/live/welcome_live.ex:183
+#: lib/evo_dash_web/live/welcome_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Enter your API key for %{provider}."
 msgstr "Insira sua chave de API para %{provider}."
@@ -3272,17 +3268,17 @@ msgstr "A Configuração Extra deve ser um objeto JSON (mapa)."
 msgid "Extra Config must be valid JSON."
 msgstr "A Configuração Extra deve ser um JSON válido."
 
-#: lib/evo_dash_web/live/welcome_live.ex:212
+#: lib/evo_dash_web/live/welcome_live.ex:279
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr "Genesis %{version}"
 
-#: lib/evo_dash_web/live/welcome_live.ex:49
+#: lib/evo_dash_web/live/welcome_live.ex:44
 #, elixir-autogen, elixir-format
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr "Genesis é um framework de desenvolvimento de software com IA. Vamos configurar seu primeiro LLM para começar."
 
-#: lib/evo_dash_web/live/welcome_live.ex:90
+#: lib/evo_dash_web/live/welcome_live.ex:68
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
 msgstr "Ir para o Painel"
@@ -3323,7 +3319,7 @@ msgstr "Nó"
 msgid "Objective — describe the changes you want"
 msgstr "Objetivo — descreva as alterações que deseja"
 
-#: lib/evo_dash_web/live/welcome_live.ex:93
+#: lib/evo_dash_web/live/welcome_live.ex:71
 #, elixir-autogen, elixir-format
 msgid "Open Settings"
 msgstr "Abrir Configurações"
@@ -3333,12 +3329,12 @@ msgstr "Abrir Configurações"
 msgid "Optional — leave empty and click Execute to initialize an existing codebase"
 msgstr "Opcional — deixe vazio e clique em Executar para inicializar uma base de código existente"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:884
+#: lib/evo_dash_web/live/dashboard_live.ex:889
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "O caminho deve ser absoluto."
 
-#: lib/evo_dash_web/live/welcome_live.ex:104
+#: lib/evo_dash_web/live/welcome_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere."
 msgstr "Escolha um modelo abaixo e insira sua chave de API. As chaves são armazenadas localmente e nunca são enviadas para lugar algum."
@@ -3368,7 +3364,7 @@ msgstr "As Opções do Provedor devem ser um JSON válido."
 msgid "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
 msgstr "Opções específicas do provedor enviadas à API de LLM. Para OpenAI, 'store' assume false automaticamente."
 
-#: lib/evo_dash_web/live/welcome_live.ex:80
+#: lib/evo_dash_web/live/welcome_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Ready to build!"
 msgstr "Pronto para construir!"
@@ -3388,37 +3384,22 @@ msgstr "Selecione ou crie um projeto para começar"
 msgid "Toggle navigation"
 msgstr "Alternar navegação"
 
-#: lib/evo_dash_web/live/welcome_live.ex:190
-#, elixir-autogen, elixir-format
-msgid "Use this model"
-msgstr "Usar este modelo"
-
-#: lib/evo_dash_web/live/welcome_live.ex:41
+#: lib/evo_dash_web/live/welcome_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "Welcome to Genesis"
 msgstr "Bem-vindo ao Genesis"
 
-#: lib/evo_dash_web/live/welcome_live.ex:61
-#, elixir-autogen, elixir-format
-msgid "Welcome to the new version!"
-msgstr "Bem-vindo à nova versão!"
-
-#: lib/evo_dash_web/live/welcome_live.ex:40
+#: lib/evo_dash_web/live/welcome_live.ex:36
 #, elixir-autogen, elixir-format
 msgid "You're All Set!"
 msgstr "Tudo Pronto!"
 
-#: lib/evo_dash_web/live/welcome_live.ex:64
-#, elixir-autogen, elixir-format
-msgid "You're running Genesis %{version}. What's new will be available here soon."
-msgstr "Você está executando o Genesis %{version}. As novidades estarão disponíveis aqui em breve."
-
-#: lib/evo_dash_web/live/welcome_live.ex:46
+#: lib/evo_dash_web/live/welcome_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
 msgstr "Seu LLM está configurado e pronto. Agora você pode começar a construir e evoluir projetos de código com o Genesis."
 
-#: lib/evo_dash_web/live/welcome_live.ex:83
+#: lib/evo_dash_web/live/welcome_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured. You can manage it anytime in Settings."
 msgstr "Seu LLM está configurado. Você pode gerenciá-lo a qualquer momento nas Configurações."
@@ -3493,3 +3474,98 @@ msgstr "Texto Cru"
 #, elixir-autogen, elixir-format
 msgid "Rendered Markdown"
 msgstr "Markdown Renderizado"
+
+#: lib/evo_dash_web/live/welcome_live.ex:589
+#, elixir-autogen, elixir-format
+msgid "Alibaba Cloud (Qwen)"
+msgstr "Alibaba Cloud (Qwen)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:583
+#, elixir-autogen, elixir-format
+msgid "Anthropic"
+msgstr "Anthropic"
+
+#: lib/evo_dash_web/live/welcome_live.ex:587
+#, elixir-autogen, elixir-format
+msgid "DeepSeek"
+msgstr "DeepSeek"
+
+#: lib/evo_dash_web/live/welcome_live.ex:585
+#, elixir-autogen, elixir-format
+msgid "Google"
+msgstr "Google"
+
+#: lib/evo_dash_web/live/welcome_live.ex:593
+#, elixir-autogen, elixir-format
+msgid "MiniMax"
+msgstr "MiniMax"
+
+#: lib/evo_dash_web/live/welcome_live.ex:459
+#, elixir-autogen, elixir-format
+msgid "Model and API key saved. You're all set!"
+msgstr "Modelo e chave de API salvos. Tudo pronto!"
+
+#: lib/evo_dash_web/live/welcome_live.ex:595
+#, elixir-autogen, elixir-format
+msgid "Moonshot AI (Kimi)"
+msgstr "Moonshot AI (Kimi)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:171
+#, elixir-autogen, elixir-format
+msgid "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
+msgstr "Precisa de um modelo diferente, uma URL de API personalizada ou configurações avançadas? Pule esta página e visite a"
+
+#: lib/evo_dash_web/live/welcome_live.ex:130
+#, elixir-autogen, elixir-format
+msgid "No models match your search."
+msgstr "Nenhum modelo corresponde à sua pesquisa."
+
+#: lib/evo_dash_web/live/welcome_live.ex:600
+#, elixir-autogen, elixir-format
+msgid "OpenAI"
+msgstr "OpenAI"
+
+#: lib/evo_dash_web/live/welcome_live.ex:599
+#, elixir-autogen, elixir-format
+msgid "OpenAI-Compatible API"
+msgstr "API compatível com OpenAI"
+
+#: lib/evo_dash_web/live/welcome_live.ex:597
+#, elixir-autogen, elixir-format
+msgid "OpenRouter"
+msgstr "OpenRouter"
+
+#: lib/evo_dash_web/live/welcome_live.ex:364
+#, elixir-autogen, elixir-format
+msgid "Please enter your API key first."
+msgstr "Insira sua chave de API primeiro."
+
+#: lib/evo_dash_web/live/welcome_live.ex:248
+#, elixir-autogen, elixir-format
+msgid "Save & Use this model"
+msgstr "Salvar e usar este modelo"
+
+#: lib/evo_dash_web/live/welcome_live.ex:100
+#, elixir-autogen, elixir-format
+msgid "Search models or providers…"
+msgstr "Pesquisar modelos ou provedores…"
+
+#: lib/evo_dash_web/live/welcome_live.ex:260
+#, elixir-autogen, elixir-format
+msgid "Select a model above to enter your API key."
+msgstr "Selecione um modelo acima para inserir sua chave de API."
+
+#: lib/evo_dash_web/live/welcome_live.ex:175
+#, elixir-autogen, elixir-format
+msgid "Settings page"
+msgstr "página de Configurações"
+
+#: lib/evo_dash_web/live/welcome_live.ex:591
+#, elixir-autogen, elixir-format
+msgid "Z.ai (Zhipu AI)"
+msgstr "Z.ai (Zhipu AI)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:596
+#, elixir-autogen, elixir-format
+msgid "xAI"
+msgstr "xAI"

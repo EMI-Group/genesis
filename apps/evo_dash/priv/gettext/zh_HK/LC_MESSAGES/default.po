@@ -108,7 +108,7 @@ msgstr "%{count} 秒前"
 msgid "%{n} slots"
 msgstr "%{n} 個槽位"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:750
+#: lib/evo_dash_web/live/dashboard_live.ex:752
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
 msgstr "%{type} 任務已啟動，ID：%{id}"
@@ -166,19 +166,17 @@ msgid "API Key"
 msgstr "API 金鑰"
 
 #: lib/evo_dash_web/live/settings_live.ex:1148
-#: lib/evo_dash_web/live/welcome_live.ex:340
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "API 金鑰不能為空。"
 
 #: lib/evo_dash_web/components/settings_components.ex:335
-#: lib/evo_dash_web/live/welcome_live.ex:170
+#: lib/evo_dash_web/live/welcome_live.ex:225
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "API 金鑰已設定"
 
 #: lib/evo_dash_web/live/settings_live.ex:1158
-#: lib/evo_dash_web/live/welcome_live.ex:347
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "API 金鑰儲存成功。"
@@ -428,7 +426,7 @@ msgstr "基礎 URL"
 
 #: lib/evo_dash_web/live/settings_live.ex:909
 #: lib/evo_dash_web/live/settings_live.ex:992
-#: lib/evo_dash_web/live/welcome_live.ex:299
+#: lib/evo_dash_web/live/welcome_live.ex:430
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "基礎 URL 不能為空。"
@@ -506,7 +504,7 @@ msgstr "取消"
 msgid "Cancelled"
 msgstr "已取消"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:935
+#: lib/evo_dash_web/live/dashboard_live.ex:940
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "無法移除主要儲存庫。"
@@ -583,17 +581,17 @@ msgstr "清除所有已完成任務的歷史記錄？此操作無法復原。"
 msgid "Close"
 msgstr "關閉"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1003
+#: lib/evo_dash_web/live/dashboard_live.ex:1008
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "命令「%{command}」已完成：\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1011
+#: lib/evo_dash_web/live/dashboard_live.ex:1016
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "命令「%{command}」失敗（退出碼 %{code}）：\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:976
+#: lib/evo_dash_web/live/dashboard_live.ex:981
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "找不到命令：%{command}"
@@ -1007,8 +1005,8 @@ msgid "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-s
 msgstr "輸入 SSH 目標（與在 `ssh` 後輸入的字串相同，例如 `gpu-server` 或 `user@host`）。"
 
 #: lib/evo_dash_web/components/settings_components.ex:336
-#: lib/evo_dash_web/live/welcome_live.ex:149
-#: lib/evo_dash_web/live/welcome_live.ex:171
+#: lib/evo_dash_web/live/welcome_live.ex:192
+#: lib/evo_dash_web/live/welcome_live.ex:226
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "輸入您的 API 金鑰"
@@ -1029,7 +1027,7 @@ msgstr "請輸入您的 API 金鑰。應以"
 msgid "Error"
 msgstr "錯誤"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1022
+#: lib/evo_dash_web/live/dashboard_live.ex:1027
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "執行「%{command}」時發生錯誤：%{error}"
@@ -1103,7 +1101,7 @@ msgstr "提取技能"
 msgid "Failed"
 msgstr "失敗"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:790
+#: lib/evo_dash_web/live/dashboard_live.ex:793
 #: lib/evo_dash_web/live/tasks_live.ex:484
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
@@ -1136,7 +1134,7 @@ msgid "Failed to reset key: %{reason}"
 msgstr "重設金鑰失敗：%{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:1165
-#: lib/evo_dash_web/live/welcome_live.ex:354
+#: lib/evo_dash_web/live/welcome_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "儲存 API 金鑰失敗：%{reason}"
@@ -1144,7 +1142,7 @@ msgstr "儲存 API 金鑰失敗：%{reason}"
 #: lib/evo_dash_web/live/settings_live.ex:676
 #: lib/evo_dash_web/live/settings_live.ex:749
 #: lib/evo_dash_web/live/settings_live.ex:1404
-#: lib/evo_dash_web/live/welcome_live.ex:495
+#: lib/evo_dash_web/live/welcome_live.ex:631
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "儲存設定失敗：%{reason}"
@@ -1159,7 +1157,7 @@ msgstr "儲存失敗：%{reason}"
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "啟動技能萃取失敗：%{reason}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:765
+#: lib/evo_dash_web/live/dashboard_live.ex:767
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "啟動任務失敗：%{reason}"
@@ -1220,12 +1218,12 @@ msgstr "為安全起見，無法從此頁面編輯憑證。請直接在您的系
 msgid "Foreign Repositories"
 msgstr "外部儲存庫"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:922
+#: lib/evo_dash_web/live/dashboard_live.ex:927
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "外部儲存庫「%{repo_id}」已成功註冊。"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:949
+#: lib/evo_dash_web/live/dashboard_live.ex:954
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "外部儲存庫「%{repo_id}」已成功移除。"
@@ -1537,7 +1535,7 @@ msgstr "模型設定檔"
 
 #: lib/evo_dash_web/live/settings_live.ex:894
 #: lib/evo_dash_web/live/settings_live.ex:959
-#: lib/evo_dash_web/live/welcome_live.ex:282
+#: lib/evo_dash_web/live/welcome_live.ex:418
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "模型名稱不能為空。"
@@ -1554,7 +1552,6 @@ msgstr "模型設定檔已儲存。"
 
 #: lib/evo_dash_web/live/settings_live.ex:870
 #: lib/evo_dash_web/live/settings_live.ex:1016
-#: lib/evo_dash_web/live/welcome_live.ex:333
 #, elixir-autogen, elixir-format
 msgid "Model selected and saved."
 msgstr "模型已選取並儲存。"
@@ -1787,7 +1784,7 @@ msgstr "上層目錄不存在：%{path}"
 msgid "Path"
 msgstr "路徑"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:881
+#: lib/evo_dash_web/live/dashboard_live.ex:886
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "路徑不能為空。"
@@ -1970,12 +1967,12 @@ msgstr "檢視遠端節點時無法使用遠端連線管理功能。"
 msgid "Repo"
 msgstr "儲存庫"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:897
+#: lib/evo_dash_web/live/dashboard_live.ex:902
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "儲存庫「%{id}」已註冊。"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:941
+#: lib/evo_dash_web/live/dashboard_live.ex:946
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "找不到儲存庫「%{id}」。"
@@ -1985,7 +1982,7 @@ msgstr "找不到儲存庫「%{id}」。"
 msgid "Repo ID"
 msgstr "儲存庫 ID"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:878
+#: lib/evo_dash_web/live/dashboard_live.ex:883
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "儲存庫 ID 不能為空。"
@@ -2185,7 +2182,6 @@ msgid "Save Changes"
 msgstr "儲存變更"
 
 #: lib/evo_dash_web/components/settings_components.ex:344
-#: lib/evo_dash_web/live/welcome_live.ex:179
 #, elixir-autogen, elixir-format
 msgid "Save Key"
 msgstr "儲存金鑰"
@@ -2266,7 +2262,7 @@ msgid "Server"
 msgstr "伺服器"
 
 #: lib/evo_dash_web/components/settings_components.ex:326
-#: lib/evo_dash_web/live/welcome_live.ex:161
+#: lib/evo_dash_web/live/welcome_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "設定"
@@ -2306,7 +2302,7 @@ msgstr "顯示第 %{start}–%{end} 項，共 %{total} 項任務"
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "技能萃取任務已啟動。您可以在儀表板上監控其進度。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:205
+#: lib/evo_dash_web/live/welcome_live.ex:273
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "跳過"
@@ -2659,7 +2655,7 @@ msgstr "未知倉庫"
 #: lib/evo_dash_web/live/settings_live.ex:838
 #: lib/evo_dash_web/live/settings_live.ex:891
 #: lib/evo_dash_web/live/settings_live.ex:956
-#: lib/evo_dash_web/live/welcome_live.ex:279
+#: lib/evo_dash_web/live/welcome_live.ex:415
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "未知的服務商。"
@@ -3212,7 +3208,7 @@ msgstr "Web 儀表板綁定的 IP 位址。基於安全考量預設為 loopback�
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
 msgstr "Web 儀表板監聽的連接埠。必須介於 1024 到 65535 之間（基於安全考量，不支援 1024 以下的特權連接埠）。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:101
+#: lib/evo_dash_web/live/welcome_live.ex:79
 #, elixir-autogen, elixir-format
 msgid "Add your first LLM"
 msgstr "新增你的第一個 LLM"
@@ -3227,7 +3223,7 @@ msgstr "進階服務商特定選項，會合併至模型規格映射中。"
 msgid "Change theme"
 msgstr "切換主題"
 
-#: lib/evo_dash_web/live/welcome_live.ex:108
+#: lib/evo_dash_web/live/welcome_live.ex:122
 #, elixir-autogen, elixir-format
 msgid "Choose a model:"
 msgstr "選擇模型："
@@ -3252,7 +3248,7 @@ msgstr "新建"
 msgid "Dark"
 msgstr "深色模式"
 
-#: lib/evo_dash_web/live/welcome_live.ex:183
+#: lib/evo_dash_web/live/welcome_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Enter your API key for %{provider}."
 msgstr "輸入 %{provider} 的 API 金鑰。"
@@ -3272,17 +3268,17 @@ msgstr "額外配置必須是 JSON 物件（映射）。"
 msgid "Extra Config must be valid JSON."
 msgstr "額外配置必須是有效的 JSON。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:212
+#: lib/evo_dash_web/live/welcome_live.ex:279
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr "啟元 %{version}"
 
-#: lib/evo_dash_web/live/welcome_live.ex:49
+#: lib/evo_dash_web/live/welcome_live.ex:44
 #, elixir-autogen, elixir-format
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr "啟元是一款 AI 驅動的軟體開發框架。立即設定你的第一個 LLM，開始使用吧。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:90
+#: lib/evo_dash_web/live/welcome_live.ex:68
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
 msgstr "前往儀表板"
@@ -3323,7 +3319,7 @@ msgstr "節點"
 msgid "Objective — describe the changes you want"
 msgstr "目標 — 描述您想進行的變更"
 
-#: lib/evo_dash_web/live/welcome_live.ex:93
+#: lib/evo_dash_web/live/welcome_live.ex:71
 #, elixir-autogen, elixir-format
 msgid "Open Settings"
 msgstr "開啟設定"
@@ -3333,12 +3329,12 @@ msgstr "開啟設定"
 msgid "Optional — leave empty and click Execute to initialize an existing codebase"
 msgstr "可選 — 留空後點擊執行即可初始化現有程式碼庫"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:884
+#: lib/evo_dash_web/live/dashboard_live.ex:889
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "路徑必須為絕對路徑。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:104
+#: lib/evo_dash_web/live/welcome_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere."
 msgstr "從下方選擇一個模型，然後輸入你的 API 金鑰。金鑰只會儲存在本機，絕不會外傳。"
@@ -3368,7 +3364,7 @@ msgstr "服務商選項必須是有效的 JSON。"
 msgid "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
 msgstr "傳遞給 LLM API 的服務商特定選項。以 OpenAI 為例，'store' 會自動預設為 false。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:80
+#: lib/evo_dash_web/live/welcome_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Ready to build!"
 msgstr "準備好開始建構！"
@@ -3388,37 +3384,22 @@ msgstr "選擇或新建專案以開始使用"
 msgid "Toggle navigation"
 msgstr "切換導航"
 
-#: lib/evo_dash_web/live/welcome_live.ex:190
-#, elixir-autogen, elixir-format
-msgid "Use this model"
-msgstr "使用此模型"
-
-#: lib/evo_dash_web/live/welcome_live.ex:41
+#: lib/evo_dash_web/live/welcome_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "Welcome to Genesis"
 msgstr "歡迎使用啟元"
 
-#: lib/evo_dash_web/live/welcome_live.ex:61
-#, elixir-autogen, elixir-format
-msgid "Welcome to the new version!"
-msgstr "歡迎來到新版本！"
-
-#: lib/evo_dash_web/live/welcome_live.ex:40
+#: lib/evo_dash_web/live/welcome_live.ex:36
 #, elixir-autogen, elixir-format
 msgid "You're All Set!"
 msgstr "一切就緒！"
 
-#: lib/evo_dash_web/live/welcome_live.ex:64
-#, elixir-autogen, elixir-format
-msgid "You're running Genesis %{version}. What's new will be available here soon."
-msgstr "你正在執行啟元 %{version}。新功能說明即將在此顯示。"
-
-#: lib/evo_dash_web/live/welcome_live.ex:46
+#: lib/evo_dash_web/live/welcome_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
 msgstr "你的 LLM 已設定完成，可以開始使用啟元建構與演進程式碼庫了。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:83
+#: lib/evo_dash_web/live/welcome_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured. You can manage it anytime in Settings."
 msgstr "你的 LLM 已設定完成。你隨時可以在設定中管理它。"
@@ -3493,3 +3474,98 @@ msgstr "原始文字"
 #, elixir-autogen, elixir-format
 msgid "Rendered Markdown"
 msgstr "渲染後的 Markdown"
+
+#: lib/evo_dash_web/live/welcome_live.ex:589
+#, elixir-autogen, elixir-format
+msgid "Alibaba Cloud (Qwen)"
+msgstr "阿里雲（通義千問）"
+
+#: lib/evo_dash_web/live/welcome_live.ex:583
+#, elixir-autogen, elixir-format
+msgid "Anthropic"
+msgstr "Anthropic"
+
+#: lib/evo_dash_web/live/welcome_live.ex:587
+#, elixir-autogen, elixir-format
+msgid "DeepSeek"
+msgstr "DeepSeek"
+
+#: lib/evo_dash_web/live/welcome_live.ex:585
+#, elixir-autogen, elixir-format
+msgid "Google"
+msgstr "Google"
+
+#: lib/evo_dash_web/live/welcome_live.ex:593
+#, elixir-autogen, elixir-format
+msgid "MiniMax"
+msgstr "MiniMax"
+
+#: lib/evo_dash_web/live/welcome_live.ex:459
+#, elixir-autogen, elixir-format
+msgid "Model and API key saved. You're all set!"
+msgstr "模型與 API 金鑰已儲存。一切就緒！"
+
+#: lib/evo_dash_web/live/welcome_live.ex:595
+#, elixir-autogen, elixir-format
+msgid "Moonshot AI (Kimi)"
+msgstr "月之暗面（Kimi）"
+
+#: lib/evo_dash_web/live/welcome_live.ex:171
+#, elixir-autogen, elixir-format
+msgid "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
+msgstr "需要其他模型、自訂 API 基礎網址或進階設定？跳過此頁，前往完整的"
+
+#: lib/evo_dash_web/live/welcome_live.ex:130
+#, elixir-autogen, elixir-format
+msgid "No models match your search."
+msgstr "沒有符合搜尋條件的模型。"
+
+#: lib/evo_dash_web/live/welcome_live.ex:600
+#, elixir-autogen, elixir-format
+msgid "OpenAI"
+msgstr "OpenAI"
+
+#: lib/evo_dash_web/live/welcome_live.ex:599
+#, elixir-autogen, elixir-format
+msgid "OpenAI-Compatible API"
+msgstr "相容 OpenAI 的 API"
+
+#: lib/evo_dash_web/live/welcome_live.ex:597
+#, elixir-autogen, elixir-format
+msgid "OpenRouter"
+msgstr "OpenRouter"
+
+#: lib/evo_dash_web/live/welcome_live.ex:364
+#, elixir-autogen, elixir-format
+msgid "Please enter your API key first."
+msgstr "請先輸入您的 API 金鑰。"
+
+#: lib/evo_dash_web/live/welcome_live.ex:248
+#, elixir-autogen, elixir-format
+msgid "Save & Use this model"
+msgstr "儲存並使用此模型"
+
+#: lib/evo_dash_web/live/welcome_live.ex:100
+#, elixir-autogen, elixir-format
+msgid "Search models or providers…"
+msgstr "搜尋模型或服務商…"
+
+#: lib/evo_dash_web/live/welcome_live.ex:260
+#, elixir-autogen, elixir-format
+msgid "Select a model above to enter your API key."
+msgstr "請先在上方選取模型，再輸入 API 金鑰。"
+
+#: lib/evo_dash_web/live/welcome_live.ex:175
+#, elixir-autogen, elixir-format
+msgid "Settings page"
+msgstr "設定頁面"
+
+#: lib/evo_dash_web/live/welcome_live.ex:591
+#, elixir-autogen, elixir-format
+msgid "Z.ai (Zhipu AI)"
+msgstr "智譜AI（Z.ai）"
+
+#: lib/evo_dash_web/live/welcome_live.ex:596
+#, elixir-autogen, elixir-format
+msgid "xAI"
+msgstr "xAI"

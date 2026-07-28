@@ -108,7 +108,7 @@ msgstr "%{count}초 전"
 msgid "%{n} slots"
 msgstr "%{n}개 슬롯"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:750
+#: lib/evo_dash_web/live/dashboard_live.ex:752
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
 msgstr "%{type} 작업이 시작되었습니다 (ID: %{id})"
@@ -166,19 +166,17 @@ msgid "API Key"
 msgstr "API 키"
 
 #: lib/evo_dash_web/live/settings_live.ex:1148
-#: lib/evo_dash_web/live/welcome_live.ex:340
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "API 키는 비워둘 수 없습니다."
 
 #: lib/evo_dash_web/components/settings_components.ex:335
-#: lib/evo_dash_web/live/welcome_live.ex:170
+#: lib/evo_dash_web/live/welcome_live.ex:225
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "API 키가 이미 설정됨"
 
 #: lib/evo_dash_web/live/settings_live.ex:1158
-#: lib/evo_dash_web/live/welcome_live.ex:347
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "API 키가 성공적으로 저장되었습니다."
@@ -428,7 +426,7 @@ msgstr "기본 URL"
 
 #: lib/evo_dash_web/live/settings_live.ex:909
 #: lib/evo_dash_web/live/settings_live.ex:992
-#: lib/evo_dash_web/live/welcome_live.ex:299
+#: lib/evo_dash_web/live/welcome_live.ex:430
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "기본 URL은 비워둘 수 없습니다."
@@ -506,7 +504,7 @@ msgstr "취소"
 msgid "Cancelled"
 msgstr "취소됨"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:935
+#: lib/evo_dash_web/live/dashboard_live.ex:940
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "기본 저장소는 제거할 수 없습니다."
@@ -583,17 +581,17 @@ msgstr "완료된 작업 기록을 모두 지우시겠습니까? 이 작업은 �
 msgid "Close"
 msgstr "닫기"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1003
+#: lib/evo_dash_web/live/dashboard_live.ex:1008
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "'%{command}' 명령이 완료되었습니다:\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1011
+#: lib/evo_dash_web/live/dashboard_live.ex:1016
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "'%{command}' 명령이 실패했습니다 (종료 코드 %{code}):\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:976
+#: lib/evo_dash_web/live/dashboard_live.ex:981
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "명령을 찾을 수 없음: %{command}"
@@ -1007,8 +1005,8 @@ msgid "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-s
 msgstr "SSH 대상을 입력하세요 (`ssh` 다음에 입력하는 문자열, 예: `gpu-server` 또는 `user@host`)."
 
 #: lib/evo_dash_web/components/settings_components.ex:336
-#: lib/evo_dash_web/live/welcome_live.ex:149
-#: lib/evo_dash_web/live/welcome_live.ex:171
+#: lib/evo_dash_web/live/welcome_live.ex:192
+#: lib/evo_dash_web/live/welcome_live.ex:226
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "API 키 입력"
@@ -1029,7 +1027,7 @@ msgstr "API 키를 입력하세요. 다음으로 시작해야 합니다:"
 msgid "Error"
 msgstr "오류"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1022
+#: lib/evo_dash_web/live/dashboard_live.ex:1027
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "'%{command}' 실행 중 오류 발생: %{error}"
@@ -1103,7 +1101,7 @@ msgstr "스킬 추출"
 msgid "Failed"
 msgstr "실패"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:790
+#: lib/evo_dash_web/live/dashboard_live.ex:793
 #: lib/evo_dash_web/live/tasks_live.ex:484
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
@@ -1136,7 +1134,7 @@ msgid "Failed to reset key: %{reason}"
 msgstr "키 초기화 실패: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:1165
-#: lib/evo_dash_web/live/welcome_live.ex:354
+#: lib/evo_dash_web/live/welcome_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "API 키 저장 실패: %{reason}"
@@ -1144,7 +1142,7 @@ msgstr "API 키 저장 실패: %{reason}"
 #: lib/evo_dash_web/live/settings_live.ex:676
 #: lib/evo_dash_web/live/settings_live.ex:749
 #: lib/evo_dash_web/live/settings_live.ex:1404
-#: lib/evo_dash_web/live/welcome_live.ex:495
+#: lib/evo_dash_web/live/welcome_live.ex:631
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "설정 저장 실패: %{reason}"
@@ -1159,7 +1157,7 @@ msgstr "저장 실패: %{reason}"
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "스킬 추출 시작 실패: %{reason}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:765
+#: lib/evo_dash_web/live/dashboard_live.ex:767
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "작업 시작 실패: %{reason}"
@@ -1220,12 +1218,12 @@ msgstr "보안상의 이유로 이 페이지에서 자격 증명을 편집할 �
 msgid "Foreign Repositories"
 msgstr "외부 저장소"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:922
+#: lib/evo_dash_web/live/dashboard_live.ex:927
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "외부 저장소 '%{repo_id}'가 성공적으로 등록되었습니다."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:949
+#: lib/evo_dash_web/live/dashboard_live.ex:954
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "외부 저장소 '%{repo_id}'가 성공적으로 제거되었습니다."
@@ -1537,7 +1535,7 @@ msgstr "모델 프로필"
 
 #: lib/evo_dash_web/live/settings_live.ex:894
 #: lib/evo_dash_web/live/settings_live.ex:959
-#: lib/evo_dash_web/live/welcome_live.ex:282
+#: lib/evo_dash_web/live/welcome_live.ex:418
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "모델 이름은 비워둘 수 없습니다."
@@ -1554,7 +1552,6 @@ msgstr "모델 프로필이 저장되었습니다."
 
 #: lib/evo_dash_web/live/settings_live.ex:870
 #: lib/evo_dash_web/live/settings_live.ex:1016
-#: lib/evo_dash_web/live/welcome_live.ex:333
 #, elixir-autogen, elixir-format
 msgid "Model selected and saved."
 msgstr "모델이 선택되고 저장되었습니다."
@@ -1787,7 +1784,7 @@ msgstr "상위 디렉터리가 존재하지 않습니다: %{path}"
 msgid "Path"
 msgstr "경로"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:881
+#: lib/evo_dash_web/live/dashboard_live.ex:886
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "경로는 비워둘 수 없습니다."
@@ -1970,12 +1967,12 @@ msgstr "원격 노드를 볼 때는 원격 연결 관리를 사용할 수 없습
 msgid "Repo"
 msgstr "저장소"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:897
+#: lib/evo_dash_web/live/dashboard_live.ex:902
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "저장소 '%{id}'는 이미 등록되어 있습니다."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:941
+#: lib/evo_dash_web/live/dashboard_live.ex:946
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "저장소 '%{id}'를 찾을 수 없습니다."
@@ -1985,7 +1982,7 @@ msgstr "저장소 '%{id}'를 찾을 수 없습니다."
 msgid "Repo ID"
 msgstr "저장소 ID"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:878
+#: lib/evo_dash_web/live/dashboard_live.ex:883
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "저장소 ID는 비워둘 수 없습니다."
@@ -2185,7 +2182,6 @@ msgid "Save Changes"
 msgstr "변경사항 저장"
 
 #: lib/evo_dash_web/components/settings_components.ex:344
-#: lib/evo_dash_web/live/welcome_live.ex:179
 #, elixir-autogen, elixir-format
 msgid "Save Key"
 msgstr "키 저장"
@@ -2266,7 +2262,7 @@ msgid "Server"
 msgstr "서버"
 
 #: lib/evo_dash_web/components/settings_components.ex:326
-#: lib/evo_dash_web/live/welcome_live.ex:161
+#: lib/evo_dash_web/live/welcome_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "설정"
@@ -2306,7 +2302,7 @@ msgstr "%{total}개 작업 중 %{start}–%{end}개 표시"
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "스킬 추출 태스크가 시작되었습니다. 대시보드에서 진행 상황을 확인할 수 있습니다."
 
-#: lib/evo_dash_web/live/welcome_live.ex:205
+#: lib/evo_dash_web/live/welcome_live.ex:273
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "건너뛰기"
@@ -2659,7 +2655,7 @@ msgstr "알 수 없는 저장소"
 #: lib/evo_dash_web/live/settings_live.ex:838
 #: lib/evo_dash_web/live/settings_live.ex:891
 #: lib/evo_dash_web/live/settings_live.ex:956
-#: lib/evo_dash_web/live/welcome_live.ex:279
+#: lib/evo_dash_web/live/welcome_live.ex:415
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "알 수 없는 제공자입니다."
@@ -3212,7 +3208,7 @@ msgstr "웹 대시보드가 바인딩되는 IP 주소입니다. 보안상의 이
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
 msgstr "웹 대시보드가 수신 대기하는 포트입니다. 1024에서 65535 사이여야 합니다(보안상의 이유로 1024 미만의 권한 있는 포트는 지원되지 않습니다)."
 
-#: lib/evo_dash_web/live/welcome_live.ex:101
+#: lib/evo_dash_web/live/welcome_live.ex:79
 #, elixir-autogen, elixir-format
 msgid "Add your first LLM"
 msgstr "첫 번째 LLM 추가하기"
@@ -3227,7 +3223,7 @@ msgstr "모델 사양 맵에 병합되는 고급 제공자별 옵션입니다."
 msgid "Change theme"
 msgstr "테마 변경"
 
-#: lib/evo_dash_web/live/welcome_live.ex:108
+#: lib/evo_dash_web/live/welcome_live.ex:122
 #, elixir-autogen, elixir-format
 msgid "Choose a model:"
 msgstr "모델 선택:"
@@ -3252,7 +3248,7 @@ msgstr "새로 만들기"
 msgid "Dark"
 msgstr "다크"
 
-#: lib/evo_dash_web/live/welcome_live.ex:183
+#: lib/evo_dash_web/live/welcome_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Enter your API key for %{provider}."
 msgstr "%{provider}의 API 키를 입력하세요."
@@ -3272,17 +3268,17 @@ msgstr "추가 구성은 JSON 객체(맵)여야 합니다."
 msgid "Extra Config must be valid JSON."
 msgstr "추가 구성은 유효한 JSON이어야 합니다."
 
-#: lib/evo_dash_web/live/welcome_live.ex:212
+#: lib/evo_dash_web/live/welcome_live.ex:279
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr "Genesis %{version}"
 
-#: lib/evo_dash_web/live/welcome_live.ex:49
+#: lib/evo_dash_web/live/welcome_live.ex:44
 #, elixir-autogen, elixir-format
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr "Genesis는 AI 기반 소프트웨어 개발 프레임워크입니다. 시작하려면 첫 번째 LLM을 설정해 주세요."
 
-#: lib/evo_dash_web/live/welcome_live.ex:90
+#: lib/evo_dash_web/live/welcome_live.ex:68
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
 msgstr "대시보드로 이동"
@@ -3323,7 +3319,7 @@ msgstr "노드"
 msgid "Objective — describe the changes you want"
 msgstr "목표 — 원하는 변경 사항을 설명하세요"
 
-#: lib/evo_dash_web/live/welcome_live.ex:93
+#: lib/evo_dash_web/live/welcome_live.ex:71
 #, elixir-autogen, elixir-format
 msgid "Open Settings"
 msgstr "설정 열기"
@@ -3333,12 +3329,12 @@ msgstr "설정 열기"
 msgid "Optional — leave empty and click Execute to initialize an existing codebase"
 msgstr "선택 사항 — 비워두고 실행을 클릭하면 기존 코드베이스를 초기화합니다"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:884
+#: lib/evo_dash_web/live/dashboard_live.ex:889
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "경로는 절대 경로여야 합니다."
 
-#: lib/evo_dash_web/live/welcome_live.ex:104
+#: lib/evo_dash_web/live/welcome_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere."
 msgstr "아래에서 모델을 선택한 후 API 키를 입력하세요. 키는 로컬에 저장되며 외부로 전송되지 않습니다."
@@ -3368,7 +3364,7 @@ msgstr "제공자 옵션은 유효한 JSON이어야 합니다."
 msgid "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
 msgstr "LLM API에 전달되는 제공자별 옵션입니다. OpenAI의 경우 'store'가 자동으로 false로 설정됩니다."
 
-#: lib/evo_dash_web/live/welcome_live.ex:80
+#: lib/evo_dash_web/live/welcome_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Ready to build!"
 msgstr "빌드할 준비 완료!"
@@ -3388,37 +3384,22 @@ msgstr "시작하려면 프로젝트를 선택하거나 생성하세요"
 msgid "Toggle navigation"
 msgstr "네비게이션 전환"
 
-#: lib/evo_dash_web/live/welcome_live.ex:190
-#, elixir-autogen, elixir-format
-msgid "Use this model"
-msgstr "이 모델 사용하기"
-
-#: lib/evo_dash_web/live/welcome_live.ex:41
+#: lib/evo_dash_web/live/welcome_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "Welcome to Genesis"
 msgstr "Genesis에 오신 것을 환영합니다"
 
-#: lib/evo_dash_web/live/welcome_live.ex:61
-#, elixir-autogen, elixir-format
-msgid "Welcome to the new version!"
-msgstr "새 버전을 환영합니다!"
-
-#: lib/evo_dash_web/live/welcome_live.ex:40
+#: lib/evo_dash_web/live/welcome_live.ex:36
 #, elixir-autogen, elixir-format
 msgid "You're All Set!"
 msgstr "모든 준비가 끝났습니다!"
 
-#: lib/evo_dash_web/live/welcome_live.ex:64
-#, elixir-autogen, elixir-format
-msgid "You're running Genesis %{version}. What's new will be available here soon."
-msgstr "현재 Genesis %{version}을(를) 실행 중입니다. 새로운 기능이 곧 이곳에 제공될 예정입니다."
-
-#: lib/evo_dash_web/live/welcome_live.ex:46
+#: lib/evo_dash_web/live/welcome_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
 msgstr "LLM이 설정되어 사용할 준비가 되었습니다. 이제 Genesis로 코드베이스를 구축하고 진화시킬 수 있습니다."
 
-#: lib/evo_dash_web/live/welcome_live.ex:83
+#: lib/evo_dash_web/live/welcome_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured. You can manage it anytime in Settings."
 msgstr "LLM이 설정되었습니다. 언제든지 설정에서 관리할 수 있습니다."
@@ -3493,3 +3474,98 @@ msgstr "원본 텍스트"
 #, elixir-autogen, elixir-format
 msgid "Rendered Markdown"
 msgstr "렌더링된 마크다운"
+
+#: lib/evo_dash_web/live/welcome_live.ex:589
+#, elixir-autogen, elixir-format
+msgid "Alibaba Cloud (Qwen)"
+msgstr "Alibaba Cloud (Qwen)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:583
+#, elixir-autogen, elixir-format
+msgid "Anthropic"
+msgstr "Anthropic"
+
+#: lib/evo_dash_web/live/welcome_live.ex:587
+#, elixir-autogen, elixir-format
+msgid "DeepSeek"
+msgstr "DeepSeek"
+
+#: lib/evo_dash_web/live/welcome_live.ex:585
+#, elixir-autogen, elixir-format
+msgid "Google"
+msgstr "Google"
+
+#: lib/evo_dash_web/live/welcome_live.ex:593
+#, elixir-autogen, elixir-format
+msgid "MiniMax"
+msgstr "MiniMax"
+
+#: lib/evo_dash_web/live/welcome_live.ex:459
+#, elixir-autogen, elixir-format
+msgid "Model and API key saved. You're all set!"
+msgstr "모델과 API 키가 저장되었습니다. 이제 모든 준비가 완료되었어요!"
+
+#: lib/evo_dash_web/live/welcome_live.ex:595
+#, elixir-autogen, elixir-format
+msgid "Moonshot AI (Kimi)"
+msgstr "Moonshot AI (Kimi)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:171
+#, elixir-autogen, elixir-format
+msgid "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
+msgstr "다른 모델, 커스텀 API 기본 URL 또는 고급 설정이 필요하신가요? 이 페이지를 건너뛰고 전체"
+
+#: lib/evo_dash_web/live/welcome_live.ex:130
+#, elixir-autogen, elixir-format
+msgid "No models match your search."
+msgstr "검색 결과와 일치하는 모델이 없습니다."
+
+#: lib/evo_dash_web/live/welcome_live.ex:600
+#, elixir-autogen, elixir-format
+msgid "OpenAI"
+msgstr "OpenAI"
+
+#: lib/evo_dash_web/live/welcome_live.ex:599
+#, elixir-autogen, elixir-format
+msgid "OpenAI-Compatible API"
+msgstr "OpenAI 호환 API"
+
+#: lib/evo_dash_web/live/welcome_live.ex:597
+#, elixir-autogen, elixir-format
+msgid "OpenRouter"
+msgstr "OpenRouter"
+
+#: lib/evo_dash_web/live/welcome_live.ex:364
+#, elixir-autogen, elixir-format
+msgid "Please enter your API key first."
+msgstr "먼저 API 키를 입력해주세요."
+
+#: lib/evo_dash_web/live/welcome_live.ex:248
+#, elixir-autogen, elixir-format
+msgid "Save & Use this model"
+msgstr "이 모델 저장 및 사용"
+
+#: lib/evo_dash_web/live/welcome_live.ex:100
+#, elixir-autogen, elixir-format
+msgid "Search models or providers…"
+msgstr "모델 또는 제공자 검색…"
+
+#: lib/evo_dash_web/live/welcome_live.ex:260
+#, elixir-autogen, elixir-format
+msgid "Select a model above to enter your API key."
+msgstr "위에서 모델을 선택한 후 API 키를 입력하세요."
+
+#: lib/evo_dash_web/live/welcome_live.ex:175
+#, elixir-autogen, elixir-format
+msgid "Settings page"
+msgstr "설정 페이지"
+
+#: lib/evo_dash_web/live/welcome_live.ex:591
+#, elixir-autogen, elixir-format
+msgid "Z.ai (Zhipu AI)"
+msgstr "Z.ai (Zhipu AI)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:596
+#, elixir-autogen, elixir-format
+msgid "xAI"
+msgstr "xAI"

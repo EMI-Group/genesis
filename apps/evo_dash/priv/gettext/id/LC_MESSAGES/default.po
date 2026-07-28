@@ -108,7 +108,7 @@ msgstr "%{count}dtk yang lalu"
 msgid "%{n} slots"
 msgstr "%{n} slot"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:750
+#: lib/evo_dash_web/live/dashboard_live.ex:752
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
 msgstr "Tugas %{type} dimulai dengan ID: %{id}"
@@ -166,19 +166,17 @@ msgid "API Key"
 msgstr "Kunci API"
 
 #: lib/evo_dash_web/live/settings_live.ex:1148
-#: lib/evo_dash_web/live/welcome_live.ex:340
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "Kunci API tidak boleh kosong."
 
 #: lib/evo_dash_web/components/settings_components.ex:335
-#: lib/evo_dash_web/live/welcome_live.ex:170
+#: lib/evo_dash_web/live/welcome_live.ex:225
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "Kunci API sudah diatur"
 
 #: lib/evo_dash_web/live/settings_live.ex:1158
-#: lib/evo_dash_web/live/welcome_live.ex:347
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "Kunci API berhasil disimpan."
@@ -428,7 +426,7 @@ msgstr "URL Dasar"
 
 #: lib/evo_dash_web/live/settings_live.ex:909
 #: lib/evo_dash_web/live/settings_live.ex:992
-#: lib/evo_dash_web/live/welcome_live.ex:299
+#: lib/evo_dash_web/live/welcome_live.ex:430
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "URL dasar tidak boleh kosong."
@@ -506,7 +504,7 @@ msgstr "Batal"
 msgid "Cancelled"
 msgstr "Dibatalkan"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:935
+#: lib/evo_dash_web/live/dashboard_live.ex:940
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "Tidak dapat menghapus repositori utama."
@@ -583,17 +581,17 @@ msgstr "Hapus semua riwayat tugas yang selesai? Tindakan ini tidak dapat dibatal
 msgid "Close"
 msgstr "Tutup"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1003
+#: lib/evo_dash_web/live/dashboard_live.ex:1008
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "Perintah '%{command}' selesai:\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1011
+#: lib/evo_dash_web/live/dashboard_live.ex:1016
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "Perintah '%{command}' gagal (keluar kode %{code}):\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:976
+#: lib/evo_dash_web/live/dashboard_live.ex:981
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "Perintah tidak ditemukan: %{command}"
@@ -1007,8 +1005,8 @@ msgid "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-s
 msgstr "Masukkan target SSH (string yang sama seperti yang Anda ketik setelah `ssh`, mis. `gpu-server` atau `user@host`)."
 
 #: lib/evo_dash_web/components/settings_components.ex:336
-#: lib/evo_dash_web/live/welcome_live.ex:149
-#: lib/evo_dash_web/live/welcome_live.ex:171
+#: lib/evo_dash_web/live/welcome_live.ex:192
+#: lib/evo_dash_web/live/welcome_live.ex:226
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "Masukkan kunci API Anda"
@@ -1029,7 +1027,7 @@ msgstr "Masukkan kunci API Anda. Harus diawali dengan"
 msgid "Error"
 msgstr "Error"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1022
+#: lib/evo_dash_web/live/dashboard_live.ex:1027
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "Kesalahan saat menjalankan '%{command}': %{error}"
@@ -1103,7 +1101,7 @@ msgstr "Ekstrak Keahlian"
 msgid "Failed"
 msgstr "Gagal"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:790
+#: lib/evo_dash_web/live/dashboard_live.ex:793
 #: lib/evo_dash_web/live/tasks_live.ex:484
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
@@ -1136,7 +1134,7 @@ msgid "Failed to reset key: %{reason}"
 msgstr "Gagal mereset kunci: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:1165
-#: lib/evo_dash_web/live/welcome_live.ex:354
+#: lib/evo_dash_web/live/welcome_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "Gagal menyimpan kunci API: %{reason}"
@@ -1144,7 +1142,7 @@ msgstr "Gagal menyimpan kunci API: %{reason}"
 #: lib/evo_dash_web/live/settings_live.ex:676
 #: lib/evo_dash_web/live/settings_live.ex:749
 #: lib/evo_dash_web/live/settings_live.ex:1404
-#: lib/evo_dash_web/live/welcome_live.ex:495
+#: lib/evo_dash_web/live/welcome_live.ex:631
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "Gagal menyimpan konfigurasi: %{reason}"
@@ -1159,7 +1157,7 @@ msgstr "Gagal menyimpan: %{reason}"
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "Gagal memulai ekstraksi keterampilan: %{reason}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:765
+#: lib/evo_dash_web/live/dashboard_live.ex:767
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "Gagal memulai tugas: %{reason}"
@@ -1220,12 +1218,12 @@ msgstr "Demi keamanan, kredensial tidak dapat diedit dari halaman ini. Edit file
 msgid "Foreign Repositories"
 msgstr "Repositori Eksternal"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:922
+#: lib/evo_dash_web/live/dashboard_live.ex:927
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "Repositori asing '%{repo_id}' berhasil didaftarkan."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:949
+#: lib/evo_dash_web/live/dashboard_live.ex:954
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "Repositori asing '%{repo_id}' berhasil dihapus."
@@ -1537,7 +1535,7 @@ msgstr "Profil Model"
 
 #: lib/evo_dash_web/live/settings_live.ex:894
 #: lib/evo_dash_web/live/settings_live.ex:959
-#: lib/evo_dash_web/live/welcome_live.ex:282
+#: lib/evo_dash_web/live/welcome_live.ex:418
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "Nama model tidak boleh kosong."
@@ -1554,7 +1552,6 @@ msgstr "Profil model disimpan."
 
 #: lib/evo_dash_web/live/settings_live.ex:870
 #: lib/evo_dash_web/live/settings_live.ex:1016
-#: lib/evo_dash_web/live/welcome_live.ex:333
 #, elixir-autogen, elixir-format
 msgid "Model selected and saved."
 msgstr "Model dipilih dan disimpan."
@@ -1787,7 +1784,7 @@ msgstr "Direktori induk tidak ditemukan: %{path}"
 msgid "Path"
 msgstr "Jalur"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:881
+#: lib/evo_dash_web/live/dashboard_live.ex:886
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "Path tidak boleh kosong."
@@ -1970,12 +1967,12 @@ msgstr "Pengelolaan koneksi jarak jauh tidak tersedia saat melihat node jarak ja
 msgid "Repo"
 msgstr "Repositori"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:897
+#: lib/evo_dash_web/live/dashboard_live.ex:902
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "Repositori '%{id}' sudah terdaftar."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:941
+#: lib/evo_dash_web/live/dashboard_live.ex:946
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "Repositori '%{id}' tidak ditemukan."
@@ -1985,7 +1982,7 @@ msgstr "Repositori '%{id}' tidak ditemukan."
 msgid "Repo ID"
 msgstr "ID Repo"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:878
+#: lib/evo_dash_web/live/dashboard_live.ex:883
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "ID Repositori tidak boleh kosong."
@@ -2185,7 +2182,6 @@ msgid "Save Changes"
 msgstr "Simpan Perubahan"
 
 #: lib/evo_dash_web/components/settings_components.ex:344
-#: lib/evo_dash_web/live/welcome_live.ex:179
 #, elixir-autogen, elixir-format
 msgid "Save Key"
 msgstr "Simpan Kunci"
@@ -2266,7 +2262,7 @@ msgid "Server"
 msgstr "Server"
 
 #: lib/evo_dash_web/components/settings_components.ex:326
-#: lib/evo_dash_web/live/welcome_live.ex:161
+#: lib/evo_dash_web/live/welcome_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "Atur"
@@ -2306,7 +2302,7 @@ msgstr "Menampilkan %{start}–%{end} dari %{total} tugas"
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "Tugas ekstraksi keterampilan dimulai. Anda dapat memantau perkembangannya di dasbor."
 
-#: lib/evo_dash_web/live/welcome_live.ex:205
+#: lib/evo_dash_web/live/welcome_live.ex:273
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "Lewati"
@@ -2659,7 +2655,7 @@ msgstr "Repo Tidak Dikenal"
 #: lib/evo_dash_web/live/settings_live.ex:838
 #: lib/evo_dash_web/live/settings_live.ex:891
 #: lib/evo_dash_web/live/settings_live.ex:956
-#: lib/evo_dash_web/live/welcome_live.ex:279
+#: lib/evo_dash_web/live/welcome_live.ex:415
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "Penyedia tidak dikenal."
@@ -3212,7 +3208,7 @@ msgstr "Alamat IP yang digunakan dasbor web. Bawaan ke loopback (127.0.0.1) untu
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
 msgstr "Port yang digunakan dasbor web untuk mendengarkan. Harus antara 1024 dan 65535 (port istimewa di bawah 1024 tidak didukung untuk alasan keamanan)."
 
-#: lib/evo_dash_web/live/welcome_live.ex:101
+#: lib/evo_dash_web/live/welcome_live.ex:79
 #, elixir-autogen, elixir-format
 msgid "Add your first LLM"
 msgstr "Tambahkan LLM pertama Anda"
@@ -3227,7 +3223,7 @@ msgstr "Opsi lanjutan khusus penyedia yang digabungkan ke dalam peta spesifikasi
 msgid "Change theme"
 msgstr "Ganti tema"
 
-#: lib/evo_dash_web/live/welcome_live.ex:108
+#: lib/evo_dash_web/live/welcome_live.ex:122
 #, elixir-autogen, elixir-format
 msgid "Choose a model:"
 msgstr "Pilih model:"
@@ -3252,7 +3248,7 @@ msgstr "Buat Baru"
 msgid "Dark"
 msgstr "Gelap"
 
-#: lib/evo_dash_web/live/welcome_live.ex:183
+#: lib/evo_dash_web/live/welcome_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Enter your API key for %{provider}."
 msgstr "Masukkan kunci API untuk %{provider}."
@@ -3272,17 +3268,17 @@ msgstr "Konfigurasi Ekstra harus berupa objek JSON (map)."
 msgid "Extra Config must be valid JSON."
 msgstr "Konfigurasi Ekstra harus berupa JSON yang valid."
 
-#: lib/evo_dash_web/live/welcome_live.ex:212
+#: lib/evo_dash_web/live/welcome_live.ex:279
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr "Genesis %{version}"
 
-#: lib/evo_dash_web/live/welcome_live.ex:49
+#: lib/evo_dash_web/live/welcome_live.ex:44
 #, elixir-autogen, elixir-format
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr "Genesis adalah kerangka kerja pengembangan perangkat lunak berbasis AI. Mari siapkan LLM pertama Anda untuk memulai."
 
-#: lib/evo_dash_web/live/welcome_live.ex:90
+#: lib/evo_dash_web/live/welcome_live.ex:68
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
 msgstr "Buka Dasbor"
@@ -3323,7 +3319,7 @@ msgstr "Node"
 msgid "Objective — describe the changes you want"
 msgstr "Tujuan — jelaskan perubahan yang Anda inginkan"
 
-#: lib/evo_dash_web/live/welcome_live.ex:93
+#: lib/evo_dash_web/live/welcome_live.ex:71
 #, elixir-autogen, elixir-format
 msgid "Open Settings"
 msgstr "Buka Pengaturan"
@@ -3333,12 +3329,12 @@ msgstr "Buka Pengaturan"
 msgid "Optional — leave empty and click Execute to initialize an existing codebase"
 msgstr "Opsional — biarkan kosong dan klik Jalankan untuk menginisialisasi basis kode yang ada"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:884
+#: lib/evo_dash_web/live/dashboard_live.ex:889
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "Jalur harus absolut."
 
-#: lib/evo_dash_web/live/welcome_live.ex:104
+#: lib/evo_dash_web/live/welcome_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere."
 msgstr "Pilih model di bawah, lalu masukkan kunci API Anda. Kunci disimpan secara lokal, tidak pernah dikirim ke mana pun."
@@ -3368,7 +3364,7 @@ msgstr "Opsi Penyedia harus berupa JSON yang valid."
 msgid "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
 msgstr "Opsi khusus penyedia yang diteruskan ke API LLM. Untuk OpenAI, 'store' otomatis bernilai false secara default."
 
-#: lib/evo_dash_web/live/welcome_live.ex:80
+#: lib/evo_dash_web/live/welcome_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Ready to build!"
 msgstr "Siap membangun!"
@@ -3388,37 +3384,22 @@ msgstr "Pilih atau buat proyek untuk memulai"
 msgid "Toggle navigation"
 msgstr "Alihkan navigasi"
 
-#: lib/evo_dash_web/live/welcome_live.ex:190
-#, elixir-autogen, elixir-format
-msgid "Use this model"
-msgstr "Gunakan model ini"
-
-#: lib/evo_dash_web/live/welcome_live.ex:41
+#: lib/evo_dash_web/live/welcome_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "Welcome to Genesis"
 msgstr "Selamat Datang di Genesis"
 
-#: lib/evo_dash_web/live/welcome_live.ex:61
-#, elixir-autogen, elixir-format
-msgid "Welcome to the new version!"
-msgstr "Selamat datang di versi baru!"
-
-#: lib/evo_dash_web/live/welcome_live.ex:40
+#: lib/evo_dash_web/live/welcome_live.ex:36
 #, elixir-autogen, elixir-format
 msgid "You're All Set!"
 msgstr "Semuanya Siap!"
 
-#: lib/evo_dash_web/live/welcome_live.ex:64
-#, elixir-autogen, elixir-format
-msgid "You're running Genesis %{version}. What's new will be available here soon."
-msgstr "Anda menjalankan Genesis %{version}. Fitur baru akan segera tersedia di sini."
-
-#: lib/evo_dash_web/live/welcome_live.ex:46
+#: lib/evo_dash_web/live/welcome_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
 msgstr "LLM Anda sudah dikonfigurasi dan siap digunakan. Anda kini dapat mulai membangun dan melakukan evolusi basis kode dengan Genesis."
 
-#: lib/evo_dash_web/live/welcome_live.ex:83
+#: lib/evo_dash_web/live/welcome_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured. You can manage it anytime in Settings."
 msgstr "LLM Anda sudah dikonfigurasi. Anda dapat mengelolanya kapan saja di Pengaturan."
@@ -3493,3 +3474,98 @@ msgstr "Teks Mentah"
 #, elixir-autogen, elixir-format
 msgid "Rendered Markdown"
 msgstr "Markdown yang Dirender"
+
+#: lib/evo_dash_web/live/welcome_live.ex:589
+#, elixir-autogen, elixir-format
+msgid "Alibaba Cloud (Qwen)"
+msgstr "Alibaba Cloud (Qwen)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:583
+#, elixir-autogen, elixir-format
+msgid "Anthropic"
+msgstr "Anthropic"
+
+#: lib/evo_dash_web/live/welcome_live.ex:587
+#, elixir-autogen, elixir-format
+msgid "DeepSeek"
+msgstr "DeepSeek"
+
+#: lib/evo_dash_web/live/welcome_live.ex:585
+#, elixir-autogen, elixir-format
+msgid "Google"
+msgstr "Google"
+
+#: lib/evo_dash_web/live/welcome_live.ex:593
+#, elixir-autogen, elixir-format
+msgid "MiniMax"
+msgstr "MiniMax"
+
+#: lib/evo_dash_web/live/welcome_live.ex:459
+#, elixir-autogen, elixir-format
+msgid "Model and API key saved. You're all set!"
+msgstr "Model dan kunci API tersimpan. Kamu siap digunakan!"
+
+#: lib/evo_dash_web/live/welcome_live.ex:595
+#, elixir-autogen, elixir-format
+msgid "Moonshot AI (Kimi)"
+msgstr "Moonshot AI (Kimi)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:171
+#, elixir-autogen, elixir-format
+msgid "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
+msgstr "Butuh model lain, URL dasar API kustom, atau pengaturan lanjutan? Lewati halaman ini dan kunjungi"
+
+#: lib/evo_dash_web/live/welcome_live.ex:130
+#, elixir-autogen, elixir-format
+msgid "No models match your search."
+msgstr "Tidak ada model yang cocok dengan pencarian Anda."
+
+#: lib/evo_dash_web/live/welcome_live.ex:600
+#, elixir-autogen, elixir-format
+msgid "OpenAI"
+msgstr "OpenAI"
+
+#: lib/evo_dash_web/live/welcome_live.ex:599
+#, elixir-autogen, elixir-format
+msgid "OpenAI-Compatible API"
+msgstr "API Kompatibel OpenAI"
+
+#: lib/evo_dash_web/live/welcome_live.ex:597
+#, elixir-autogen, elixir-format
+msgid "OpenRouter"
+msgstr "OpenRouter"
+
+#: lib/evo_dash_web/live/welcome_live.ex:364
+#, elixir-autogen, elixir-format
+msgid "Please enter your API key first."
+msgstr "Harap masukkan kunci API Anda terlebih dahulu."
+
+#: lib/evo_dash_web/live/welcome_live.ex:248
+#, elixir-autogen, elixir-format
+msgid "Save & Use this model"
+msgstr "Simpan & Gunakan model ini"
+
+#: lib/evo_dash_web/live/welcome_live.ex:100
+#, elixir-autogen, elixir-format
+msgid "Search models or providers…"
+msgstr "Cari model atau penyedia…"
+
+#: lib/evo_dash_web/live/welcome_live.ex:260
+#, elixir-autogen, elixir-format
+msgid "Select a model above to enter your API key."
+msgstr "Pilih model di atas untuk memasukkan kunci API Anda."
+
+#: lib/evo_dash_web/live/welcome_live.ex:175
+#, elixir-autogen, elixir-format
+msgid "Settings page"
+msgstr "halaman Pengaturan"
+
+#: lib/evo_dash_web/live/welcome_live.ex:591
+#, elixir-autogen, elixir-format
+msgid "Z.ai (Zhipu AI)"
+msgstr "Z.ai (Zhipu AI)"
+
+#: lib/evo_dash_web/live/welcome_live.ex:596
+#, elixir-autogen, elixir-format
+msgid "xAI"
+msgstr "xAI"
