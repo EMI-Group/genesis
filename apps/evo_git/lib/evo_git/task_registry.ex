@@ -154,7 +154,8 @@ defmodule EvoGit.TaskRegistry do
     state = %{
       data_dir: data_dir,
       task_store: task_store,
-      task_refs: %{}
+      task_refs: %{},
+      task_monitors: %{}
     }
 
     # Repair the store from any corrupt (un-deserializable) entries before we
@@ -177,6 +178,9 @@ defmodule EvoGit.TaskRegistry do
     # startup. After that, any new foreign instance does its own pair of checks.
     Process.send_after(self(), :heartbeat, @heartbeat_interval)
     Process.send_after(self(), :lease_sweep, @sweep_after)
+
+    # Periodic cleanup: sweep expired tasks every 5 minutes
+    Process.send_after(self(), :periodic_cleanup, 300_000)
 
     {:ok, state}
   end
@@ -229,12 +233,14 @@ defmodule EvoGit.TaskRegistry do
     # Delegate the heavy decode to a short-lived Task process so the large
     # decoded terms are allocated and discarded on that process's heap rather
     # than ratcheting up this GenServer's heap.
-    Task.start(fn ->
-      tasks = EvoGit.Store.safe_select_all_tasks(state.task_store)
-      GenServer.reply(from, tasks)
-    end)
+    {:ok, task_pid} =
+      Task.start(fn ->
+        tasks = EvoGit.Store.safe_select_all_tasks(state.task_store)
+        GenServer.reply(from, tasks)
+      end)
 
-    {:noreply, state}
+    mref = Process.monitor(task_pid)
+    {:noreply, put_in(state.task_monitors[mref], from)}
   end
 
   @impl true
@@ -242,12 +248,14 @@ defmodule EvoGit.TaskRegistry do
     # Delegate the heavy decode to a short-lived Task process so the large
     # decoded terms are allocated and discarded on that process's heap rather
     # than ratcheting up this GenServer's heap.
-    Task.start(fn ->
-      result = EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
-      GenServer.reply(from, result)
-    end)
+    {:ok, task_pid} =
+      Task.start(fn ->
+        result = EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
+        GenServer.reply(from, result)
+      end)
 
-    {:noreply, state}
+    mref = Process.monitor(task_pid)
+    {:noreply, put_in(state.task_monitors[mref], from)}
   end
 
   @impl true
@@ -286,7 +294,6 @@ defmodule EvoGit.TaskRegistry do
                 }
 
                 EvoGit.Store.put_task(state.task_store, updated)
-                Cleanup.cleanup_expired_tasks(state.task_store)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
               else
@@ -310,22 +317,23 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call({:list_tasks_by_path, path}, from, state) do
-    expanded = Path.expand(path)
+    # Push filtering to SQL via safe_select_paginated_tasks with project_path filter.
+    # This avoids decoding ALL tasks — only matching tasks are decoded by SQLite.
+    # Use a high limit since path-filtered results are typically manageable.
+    {:ok, task_pid} =
+      Task.start(fn ->
+        {tasks, _total} =
+          EvoGit.Store.safe_select_paginated_tasks(
+            state.task_store,
+            filters: [project_path: path],
+            limit: 5000
+          )
 
-    # Delegate the heavy decode to a short-lived Task process so the large
-    # decoded terms are allocated and discarded on that process's heap rather
-    # than ratcheting up this GenServer's heap.
-    Task.start(fn ->
-      tasks =
-        select_all_tasks(state)
-        |> Enum.filter(fn task ->
-          task.opts[:path] && Path.expand(task.opts[:path]) == expanded
-        end)
+        GenServer.reply(from, tasks)
+      end)
 
-      GenServer.reply(from, tasks)
-    end)
-
-    {:noreply, state}
+    mref = Process.monitor(task_pid)
+    {:noreply, put_in(state.task_monitors[mref], from)}
   end
 
   @impl true
@@ -501,7 +509,6 @@ defmodule EvoGit.TaskRegistry do
             EvoGit.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
-              Cleanup.cleanup_expired_tasks(state.task_store)
               %{state | task_refs: Map.delete(state.task_refs, task_id)}
             else
               state
@@ -541,12 +548,18 @@ defmodule EvoGit.TaskRegistry do
     tasks = select_all_tasks(state)
 
     # Normalize each task: backfill fields, reconcile status, persist.
+    # Only write back tasks that were actually modified by reconciliation.
     {state, normalized_tasks} =
       Enum.reduce(tasks, {state, []}, fn %TaskInfo{} = task, {acc_state, acc_tasks} ->
         task = Map.merge(%TaskInfo{}, task)
-        {task, acc_state} = reconcile_task_status(task, acc_state)
-        EvoGit.Store.put_task(state.task_store, %{task | ref: nil})
-        {acc_state, [task | acc_tasks]}
+        {updated_task, acc_state} = reconcile_task_status(task, acc_state)
+
+        # Only write back if the task was actually modified
+        if task != updated_task do
+          EvoGit.Store.put_task(state.task_store, %{updated_task | ref: nil})
+        end
+
+        {acc_state, [updated_task | acc_tasks]}
       end)
 
     # Cleanup expired tasks from the already-loaded list — no second store read.
@@ -682,7 +695,6 @@ defmodule EvoGit.TaskRegistry do
     }
 
     EvoGit.Store.put_task(state.task_store, updated)
-    Cleanup.cleanup_expired_tasks(state.task_store)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
@@ -760,7 +772,6 @@ defmodule EvoGit.TaskRegistry do
             EvoGit.Store.put_task(state.task_store, updated)
 
             if status in [:completed, :failed, :cancelled] do
-              Cleanup.cleanup_expired_tasks(state.task_store)
               %{state | task_refs: Map.delete(state.task_refs, task_id)}
             else
               state
@@ -854,60 +865,70 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
-    task_id =
-      Enum.find_value(state.task_refs, fn {id, %Task{ref: task_ref}} ->
-        if task_ref == ref, do: id
-      end)
+    # Check if this DOWN belongs to an offloaded Task process (list_tasks,
+    # list_tasks_paginated, list_tasks_by_path). If so, reply with an error
+    # to the caller so they don't hang forever.
+    case Map.pop(state.task_monitors, ref) do
+      {from, monitors} when from != nil ->
+        GenServer.reply(from, {:error, "Task process crashed: #{inspect(reason)}"})
+        {:noreply, %{state | task_monitors: monitors}}
 
-    if task_id do
-      case reason do
-        :normal ->
-          # Normal completion via :DOWN (task returned a result and exited cleanly).
-          # The {ref, result} handler should have already processed this, but handle
-          # the edge case where {ref, result} was somehow missed.
-          update_task_status(task_id, :completed)
+      {nil, _monitors} ->
+        task_id =
+          Enum.find_value(state.task_refs, fn {id, %Task{ref: task_ref}} ->
+            if task_ref == ref, do: id
+          end)
 
-        reason ->
-          Logger.warning(
-            "TaskRegistry: Task #{task_id} wrapper process #{inspect(pid)} exited abnormally: #{inspect(reason)}. " <>
-              "Checking if AgentScheduler still has active agents before marking as failed."
-          )
+        if task_id do
+          case reason do
+            :normal ->
+              # Normal completion via :DOWN (task returned a result and exited cleanly).
+              # The {ref, result} handler should have already processed this, but handle
+              # the edge case where {ref, result} was somehow missed.
+              update_task_status(task_id, :completed)
 
-          # Check if the AgentScheduler still has active agents for this task.
-          # If so, the wrapper crashed but the real work is still ongoing — do NOT
-          # mark as failed. The task will complete normally when the scheduler
-          # eventually finishes and the result arrives via a different mechanism.
-          if Lease.sched_meta_has_active_agents?(task_id) do
-            Logger.info(
-              "TaskRegistry: Task #{task_id} still has active agents in AgentScheduler — keeping as :running despite wrapper crash"
-            )
+            reason ->
+              Logger.warning(
+                "TaskRegistry: Task #{task_id} wrapper process #{inspect(pid)} exited abnormally: #{inspect(reason)}. " <>
+                  "Checking if AgentScheduler still has active agents before marking as failed."
+              )
 
-            # Do NOT update status — leave as :running
-          else
-            # No active agents — genuine failure
-            prev_status =
-              case task_get(state, task_id) do
-                %TaskInfo{status: s} -> s
-                nil -> nil
+              # Check if the AgentScheduler still has active agents for this task.
+              # If so, the wrapper crashed but the real work is still ongoing — do NOT
+              # mark as failed. The task will complete normally when the scheduler
+              # eventually finishes and the result arrives via a different mechanism.
+              if Lease.sched_meta_has_active_agents?(task_id) do
+                Logger.info(
+                  "TaskRegistry: Task #{task_id} still has active agents in AgentScheduler — keeping as :running despite wrapper crash"
+                )
+
+                # Do NOT update status — leave as :running
+              else
+                # No active agents — genuine failure
+                prev_status =
+                  case task_get(state, task_id) do
+                    %TaskInfo{status: s} -> s
+                    nil -> nil
+                  end
+
+                Diagnostics.log_failed_transition(task_id, :down_handler, prev_status,
+                  result: "Task process exited: #{inspect(reason)}",
+                  extra: [
+                    pid: inspect(pid),
+                    exit_reason: inspect(reason),
+                    sched_meta_has_active_agents: false
+                  ]
+                )
+
+                update_task_status_with_caller(
+                  task_id,
+                  :failed,
+                  "Task process exited: #{inspect(reason)}",
+                  []
+                )
               end
-
-            Diagnostics.log_failed_transition(task_id, :down_handler, prev_status,
-              result: "Task process exited: #{inspect(reason)}",
-              extra: [
-                pid: inspect(pid),
-                exit_reason: inspect(reason),
-                sched_meta_has_active_agents: false
-              ]
-            )
-
-            update_task_status_with_caller(
-              task_id,
-              :failed,
-              "Task process exited: #{inspect(reason)}",
-              []
-            )
           end
-      end
+        end
     end
 
     {:noreply, state}
@@ -991,6 +1012,15 @@ defmodule EvoGit.TaskRegistry do
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     end
 
+    {:noreply, state}
+  end
+
+  # Periodic cleanup handler: sweeps expired finished tasks to enforce
+  # max_age_days and max_tasks limits. Reschedules itself every 5 minutes.
+  @impl true
+  def handle_info(:periodic_cleanup, state) do
+    Cleanup.cleanup_expired_tasks(state.task_store)
+    Process.send_after(self(), :periodic_cleanup, 300_000)
     {:noreply, state}
   end
 
