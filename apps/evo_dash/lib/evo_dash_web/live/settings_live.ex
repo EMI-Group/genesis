@@ -1568,10 +1568,11 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   defp remote_target_dot_color(target_id, statuses) do
-    status = Map.get(statuses, target_id, :disconnected)
+    status_map = Map.get(statuses, target_id, %{})
+    phase = Map.get(status_map, :phase, :disconnected)
 
-    case status do
-      :connected -> "bg-emerald-500"
+    case phase do
+      :connected -> "bg-blue-500"
       :connecting -> "bg-amber-500 animate-pulse"
       :disconnecting -> "bg-amber-500 animate-pulse"
       :error -> "bg-rose-500"
@@ -1581,13 +1582,15 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   defp remote_connected?(target_id, statuses) do
-    Map.get(statuses, target_id, :disconnected) == :connected
+    status_map = Map.get(statuses, target_id, %{})
+    Map.get(status_map, :phase, :disconnected) == :connected
   end
 
   defp remote_status_badge_class(target_id, statuses) do
-    status = Map.get(statuses, target_id, :disconnected)
+    status_map = Map.get(statuses, target_id, %{})
+    phase = Map.get(status_map, :phase, :disconnected)
 
-    case status do
+    case phase do
       :connected -> "badge badge-success badge-sm"
       :connecting -> "badge badge-warning badge-sm"
       :disconnecting -> "badge badge-warning badge-sm"
@@ -1598,9 +1601,10 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   defp remote_status_label(target_id, statuses) do
-    status = Map.get(statuses, target_id, :disconnected)
+    status_map = Map.get(statuses, target_id, %{})
+    phase = Map.get(status_map, :phase, :disconnected)
 
-    case status do
+    case phase do
       :connected -> gettext("Connected")
       :connecting -> gettext("Connecting...")
       :disconnecting -> gettext("Disconnecting...")

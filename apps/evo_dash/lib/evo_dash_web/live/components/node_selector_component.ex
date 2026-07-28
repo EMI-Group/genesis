@@ -131,10 +131,11 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
   # Returns the Tailwind class for a target's status dot.
   defp target_dot_color(target_id, statuses) do
-    status = Map.get(statuses, target_id, :disconnected)
+    status_map = Map.get(statuses, target_id, %{})
+    phase = Map.get(status_map, :phase, :disconnected)
 
-    case status do
-      :connected -> "bg-emerald-500"
+    case phase do
+      :connected -> "bg-blue-500"
       :connecting -> "bg-amber-500 animate-pulse"
       :disconnecting -> "bg-amber-500 animate-pulse"
       :error -> "bg-rose-500"
