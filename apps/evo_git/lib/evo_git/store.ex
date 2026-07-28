@@ -295,7 +295,7 @@ defmodule EvoGit.Store do
     dir = Path.dirname(data_dir)
     File.mkdir_p!(dir)
 
-    case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -2000) do
+    case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -8000) do
       {:ok, conn} ->
         create_tables(conn)
         migrate_schema(conn)
@@ -686,6 +686,11 @@ defmodule EvoGit.Store do
         "CREATE TABLE IF NOT EXISTS projects_quarantine (id TEXT PRIMARY KEY, data TEXT)",
         []
       )
+
+    # Indexes for common query patterns (idempotent — IF NOT EXISTS).
+    {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)", [])
+    {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_finished_at ON tasks(finished_at)", [])
+    {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_lease_expires_at ON tasks(lease_expires_at)", [])
 
     :ok
   end
