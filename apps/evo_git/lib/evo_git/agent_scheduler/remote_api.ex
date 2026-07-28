@@ -1,6 +1,6 @@
 defmodule EvoGit.AgentScheduler.RemoteAPI do
   @moduledoc """
-  RPC-accessible read-only API over scheduler ETS state.
+  RPC-accessible API over scheduler ETS state (read-only state queries + config write).
 
   This module exposes pure functions that read the scheduler's global ETS
   tables (`:evogit_sched_meta` and `:evogit_agent_state`) and return
@@ -142,6 +142,22 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     config = EvoGit.Config.resolve()
     opts = build_reload_opts(config)
     EvoGit.AgentScheduler.update_config(opts)
+  end
+
+  @doc """
+  Writes a config map to disk on this node.
+
+  Delegates to `EvoGit.Config.save_user_config/1`, which validates the config,
+  stringifies keys, encodes to TOML, and writes to `~/.config/genesis/config.toml`.
+  This runs on the REMOTE node when called via `:erpc.call/5`, so the file is
+  written to the remote host's filesystem.
+
+  Returns `:ok` on success, or `{:error, reason}` if validation or the file
+  write fails.
+  """
+  @spec save_user_config(map()) :: :ok | {:error, term()}
+  def save_user_config(config) when is_map(config) do
+    EvoGit.Config.save_user_config(config)
   end
 
   @doc false
