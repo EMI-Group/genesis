@@ -854,6 +854,14 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("toggle_project_settings", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_project_settings, !socket.assigns.show_project_settings)
+     |> StatePersistence.maybe_persist_state()}
+  end
+
+  @impl true
   def handle_event("add_foreign_repo", params, socket) do
     repo_id_str = String.trim(params["repo_id"] || "")
     path = String.trim(params["path"] || "")
