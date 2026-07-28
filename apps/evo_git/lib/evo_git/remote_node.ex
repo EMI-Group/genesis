@@ -280,6 +280,133 @@ defmodule EvoGit.RemoteNode do
     end
   end
 
+  @doc """
+  Lists all tasks on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_tasks/0` directly.
+  On a remote node, routes the call through `:erpc` via `call_remote/4`. Returns
+  `[]` if the remote call fails.
+  """
+  @spec list_tasks(node()) :: [EvoGit.TaskInfo.t()]
+  def list_tasks(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_tasks()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks, []) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Returns a paginated slice of tasks on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.list_tasks_paginated/1` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`. Returns `{[], 0}`
+  if the remote call fails.
+  """
+  @spec list_tasks_paginated(node(), keyword()) ::
+          {[EvoGit.TaskInfo.t()], non_neg_integer()}
+  def list_tasks_paginated(node, opts \\ []) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_tasks_paginated(opts)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks_paginated, [
+             opts
+           ]) do
+        {:ok, {list, count}} when is_list(list) -> {list, count}
+        {:ok, _other} -> {[], 0}
+        {:error, _reason} -> {[], 0}
+      end
+    end
+  end
+
+  @doc """
+  Returns the set of unique project paths with tasks on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.get_unique_paths/0`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `[]` if the remote call fails.
+  """
+  @spec get_unique_paths(node()) :: [String.t()]
+  def get_unique_paths(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.get_unique_paths()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :get_unique_paths, []) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Cancels a task on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.cancel_task/1` directly.
+  On a remote node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec cancel_task(node(), String.t()) :: :ok | {:error, term()}
+  def cancel_task(node, task_id) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.cancel_task(task_id)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :cancel_task, [task_id]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Deletes a task on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.delete_task/1` directly.
+  On a remote node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec delete_task(node(), String.t()) :: :ok | {:error, term()}
+  def delete_task(node, task_id) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.delete_task(task_id)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :delete_task, [task_id]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Clears all finished tasks on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.clear_finished_tasks/0`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec clear_finished_tasks(node()) :: :ok | {:error, term()}
+  def clear_finished_tasks(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.clear_finished_tasks()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :clear_finished_tasks, []) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   # Safe degraded config-status map returned when a remote config-status RPC
   # fails. Matches the shape of EvoGit.Config.config_status/0 so callers see a
   # well-formed (but unhealthy) status rather than a crash.

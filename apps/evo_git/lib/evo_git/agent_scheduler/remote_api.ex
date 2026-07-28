@@ -273,6 +273,87 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     end
   end
 
+  @doc """
+  Lists all tasks from the TaskRegistry.
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks/0` (a `GenServer.call`). This
+  runs on the REMOTE node when called via `:erpc.call/5`, returning native
+  `%TaskInfo{}` structs.
+
+  Returns `[%TaskInfo{}]` (empty list when no tasks exist).
+  """
+  @spec list_tasks() :: [EvoGit.TaskInfo.t()]
+  def list_tasks do
+    EvoGit.TaskRegistry.list_tasks()
+  end
+
+  @doc """
+  Returns a paginated slice of tasks with the total count.
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks_paginated/1` (a `GenServer.call`).
+  `opts` is a keyword list accepting `:limit`, `:offset`, and `:filters`. This
+  runs on the REMOTE node when called via `:erpc.call/5`. Both the keyword list
+  opts and the returned `%TaskInfo{}` structs transfer natively via `:erpc`.
+
+  Returns `{[%TaskInfo{}], total_count}`.
+  """
+  @spec list_tasks_paginated(keyword()) :: {[EvoGit.TaskInfo.t()], non_neg_integer()}
+  def list_tasks_paginated(opts \\ []) do
+    EvoGit.TaskRegistry.list_tasks_paginated(opts)
+  end
+
+  @doc """
+  Returns the set of unique project paths that have tasks.
+
+  Delegates to `EvoGit.TaskRegistry.get_unique_paths/0` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `[String.t()]`.
+  """
+  @spec get_unique_paths() :: [String.t()]
+  def get_unique_paths do
+    EvoGit.TaskRegistry.get_unique_paths()
+  end
+
+  @doc """
+  Cancels a running task by id.
+
+  Delegates to `EvoGit.TaskRegistry.cancel_task/1` (a `GenServer.call`). This
+  runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok` on success or `{:error, reason}` if the task can't be cancelled.
+  """
+  @spec cancel_task(String.t()) :: :ok | {:error, term()}
+  def cancel_task(task_id) do
+    EvoGit.TaskRegistry.cancel_task(task_id)
+  end
+
+  @doc """
+  Deletes a task by id.
+
+  Delegates to `EvoGit.TaskRegistry.delete_task/1` (a `GenServer.cast`). This
+  runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok` (fire-and-forget cast).
+  """
+  @spec delete_task(String.t()) :: :ok
+  def delete_task(task_id) do
+    EvoGit.TaskRegistry.delete_task(task_id)
+  end
+
+  @doc """
+  Clears all finished tasks from the registry.
+
+  Delegates to `EvoGit.TaskRegistry.clear_finished_tasks/0` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok`.
+  """
+  @spec clear_finished_tasks() :: :ok
+  def clear_finished_tasks do
+    EvoGit.TaskRegistry.clear_finished_tasks()
+  end
+
   # ── Private: ETS access ────────────────────────────────────────────
 
   # Reads all `{key, value}` pairs from a named ETS table.
