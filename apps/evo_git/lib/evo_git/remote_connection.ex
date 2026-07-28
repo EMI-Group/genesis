@@ -74,7 +74,14 @@ defmodule EvoGit.RemoteConnection do
 
   @type phase :: :disconnected | :bootstrapping | :connecting | :connected | :error
 
-  @type bootstrap_stage :: :uploading | :extracting | :setting_permissions | :detecting_os | :starting_daemon | nil
+  @type bootstrap_stage ::
+          :uploading
+          | :extracting
+          | :setting_permissions
+          | :copying_config
+          | :detecting_os
+          | :starting_daemon
+          | nil
 
   @type t :: %__MODULE__{
           target: map() | nil,
@@ -136,7 +143,12 @@ defmodule EvoGit.RemoteConnection do
   """
   @spec status(String.t()) :: map()
   def status(target_id) do
-    call_registered(target_id, :status, %{phase: :disconnected, node: nil, last_error: nil, target: nil})
+    call_registered(target_id, :status, %{
+      phase: :disconnected,
+      node: nil,
+      last_error: nil,
+      target: nil
+    })
   end
 
   @doc """
@@ -409,6 +421,12 @@ defmodule EvoGit.RemoteConnection do
 
             case chmod_executable(ssh_target, launcher_path) do
               :ok ->
+                # :copying_config stage
+                state = %{state | bootstrap_stage: :copying_config}
+                broadcast_status(target, state)
+
+                copy_config_to_remote(ssh_target)
+
                 # :detecting_os stage
                 state = %{state | bootstrap_stage: :detecting_os}
                 broadcast_status(target, state)
@@ -477,7 +495,8 @@ defmodule EvoGit.RemoteConnection do
 
   # Extracts the uploaded tarball on the remote host.
   defp extract_tarball(ssh_target, remote_tarball, extract_dir) do
-    cmd = "ssh #{ssh_target} 'mkdir -p #{extract_dir} && tar -xzf #{remote_tarball} -C #{extract_dir}'"
+    cmd =
+      "ssh #{ssh_target} 'mkdir -p #{extract_dir} && tar -xzf #{remote_tarball} -C #{extract_dir}'"
 
     case run_cmd(cmd, @scp_timeout_ms) do
       {:ok, _output, 0} -> :ok
@@ -495,6 +514,30 @@ defmodule EvoGit.RemoteConnection do
       {:ok, _output, status} -> {:error, {:chmod_failed, status}}
       :timeout -> {:error, {:chmod_failed, :timeout}}
     end
+  end
+
+  # Copies local config.toml and credentials.toml to the remote host.
+  # Best-effort: missing local files are skipped; copy errors are logged but
+  # do not fail the bootstrap (the daemon boots fine without config).
+  defp copy_config_to_remote(ssh_target) do
+    remote_config_dir = "~/.config/genesis"
+
+    # Ensure the remote config directory exists.
+    run_cmd("ssh #{ssh_target} 'mkdir -p #{remote_config_dir}'", @cmd_timeout_ms)
+
+    for path <- [EvoGit.Config.config_path(), EvoGit.Config.credentials_path()] do
+      if File.exists?(path) do
+        remote_file = Path.join(remote_config_dir, Path.basename(path))
+        cmd = "scp #{path} #{ssh_target}:#{remote_file}"
+
+        case run_cmd(cmd, @cmd_timeout_ms) do
+          {:ok, _output, 0} -> :ok
+          _ -> Logger.warning("Failed to copy #{Path.basename(path)} to remote; continuing.")
+        end
+      end
+    end
+
+    :ok
   end
 
   # Detects the remote OS via `ssh <target> 'uname -s'`.
@@ -525,7 +568,10 @@ defmodule EvoGit.RemoteConnection do
     if daemon_running?(ssh_target, os) do
       :ok
     else
-      start_daemon(ssh_target, launcher_path, os)
+      case start_daemon(ssh_target, launcher_path, os) do
+        :ok -> verify_daemon_healthy(ssh_target, os)
+        {:error, _} = error -> error
+      end
     end
   end
 
@@ -548,15 +594,71 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
+  # Verifies the daemon reached 'active' state after launch. Retries a few
+  # times with a short delay so the BEAM VM has time to boot. Returns :ok or
+  # {:error, {:daemon_not_healthy, details}}.
+  defp verify_daemon_healthy(ssh_target, os) do
+    case wait_daemon_active(ssh_target, os, 3, 1000) do
+      :ok ->
+        :ok
+
+      :not_active ->
+        details = fetch_daemon_status(ssh_target, os)
+        {:error, {:daemon_not_healthy, details}}
+    end
+  end
+
+  defp wait_daemon_active(_ssh_target, _os, 0, _delay), do: :not_active
+
+  defp wait_daemon_active(ssh_target, os, attempts, delay) do
+    Process.sleep(delay)
+
+    if daemon_running?(ssh_target, os) do
+      :ok
+    else
+      wait_daemon_active(ssh_target, os, attempts - 1, delay)
+    end
+  end
+
+  # Fetches diagnostic status output for inclusion in the error reason.
+  defp fetch_daemon_status(ssh_target, "Linux") do
+    cmd = "ssh #{ssh_target} 'systemctl --user status genesis-remote 2>&1 | tail -20'"
+
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, output, _status} -> String.trim(output)
+      :timeout -> "status unavailable (timeout)"
+    end
+  end
+
+  defp fetch_daemon_status(_ssh_target, "Darwin") do
+    "daemon not active after launch (macOS launchctl)"
+  end
+
+  defp fetch_daemon_status(_ssh_target, os) do
+    "daemon not active after launch (os: #{os})"
+  end
+
   # Starts the daemon on the remote.
   # Linux: systemd-run --user --unit=genesis-remote <launcher_path> start
   # macOS: write launchd plist, scp it, load it via launchctl.
   defp start_daemon(ssh_target, launcher_path, "Linux") do
+    # Clear any stale failed/inactive unit so systemd-run can create a fresh one.
+    # reset-failed is idempotent: exits 0 if nothing to clear, non-zero if unit
+    # never existed — both are acceptable here.
+    reset_cmd =
+      "ssh #{ssh_target} 'systemctl --user reset-failed genesis-remote 2>/dev/null; true'"
+
+    run_cmd(reset_cmd, @cmd_timeout_ms)
+
     cmd = "ssh #{ssh_target} 'systemd-run --user --unit=genesis-remote #{launcher_path} start'"
 
     case run_cmd(cmd, @launch_receive_timeout_ms) do
-      {:ok, _output, 0} -> :ok
-      {:ok, _output, status} -> {:error, {:daemon_launch_failed, status}}
+      {:ok, _output, 0} ->
+        :ok
+
+      {:ok, _output, status} ->
+        {:error, {:daemon_launch_failed, status}}
+
       :timeout ->
         # systemd-run may keep the SSH channel open; assume success.
         :ok
@@ -597,7 +699,11 @@ defmodule EvoGit.RemoteConnection do
     </plist>
     """
 
-    tmp_path = Path.join(System.tmp_dir!(), "genesis-remote-plist-#{System.unique_integer([:positive])}.plist")
+    tmp_path =
+      Path.join(
+        System.tmp_dir!(),
+        "genesis-remote-plist-#{System.unique_integer([:positive])}.plist"
+      )
 
     case File.write(tmp_path, plist) do
       :ok -> tmp_path

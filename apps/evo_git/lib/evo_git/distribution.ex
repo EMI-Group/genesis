@@ -108,6 +108,9 @@ defmodule EvoGit.Distribution do
       Application.put_env(:kernel, :inet_dist_listen_max, 9200)
     end
 
+    # Always use our EPMD-less module when starting distribution on-demand.
+    Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
+
     case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
       {:ok, _pid} ->
         # Set the distribution cookie to match the remote daemon. Must be
@@ -129,6 +132,7 @@ defmodule EvoGit.Distribution do
         error
     end
   end
+
   @doc false
   def start_epmd_if_configured(node_config) do
     if Map.get(node_config, :start_epmd, false) do
