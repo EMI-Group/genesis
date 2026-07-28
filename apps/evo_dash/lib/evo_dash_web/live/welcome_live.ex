@@ -26,24 +26,9 @@ defmodule EvoDashWeb.WelcomeLive do
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
     >
-      <div
-        class={[
-          "px-4 py-8",
-          if(@tauri_detected,
-            do: "flex flex-col h-full overflow-hidden",
-            else: "flex flex-col items-center justify-center min-h-screen"
-          )
-        ]}
-      >
-        <!-- Tauri/desktop detection hook -->
-        <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
+      <div class="px-4 py-8 min-h-screen flex flex-col items-center justify-center lg:h-screen lg:overflow-hidden">
         <!-- Main card -->
-        <div
-          class={[
-            "w-full max-w-5xl bg-base-100 rounded-xl border border-base-200 shadow-sm",
-            if(@tauri_detected, do: "p-6 flex flex-col flex-1 min-h-0 overflow-hidden", else: "p-8")
-          ]}
-        >
+        <div class="w-full max-w-5xl bg-base-100 rounded-xl border border-base-200 shadow-sm p-8 lg:p-6 lg:flex lg:flex-col lg:flex-1 lg:min-h-0 lg:overflow-hidden">
           <!-- Header (non-scrolling) -->
           <div class="flex flex-col items-center text-center mb-6 shrink-0">
             <div class="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mb-6 text-4xl">
@@ -139,8 +124,8 @@ defmodule EvoDashWeb.WelcomeLive do
               </label>
             </div>
 
-            <!-- Scrollable model list (desktop) / static list (web) -->
-            <div class={if(@tauri_detected, do: "flex-1 overflow-y-auto min-h-0 pr-1", else: "")}>
+            <!-- Model list: scrolls internally on large screens, page-scrolls on small screens -->
+            <div class="lg:flex-1 lg:overflow-y-auto lg:min-h-0 lg:pr-1">
               <%!-- The "Choose a model:" heading is rendered inside the scroll region
                    so it scrolls away when there are many models. --%>
               <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3 shrink-0">
@@ -204,13 +189,8 @@ defmodule EvoDashWeb.WelcomeLive do
               </div>
             </div>
 
-            <!-- Selected model: API key + save (sticky footer in desktop mode) -->
-            <div class={[
-              if(@tauri_detected,
-                do: "shrink-0 mt-4 pt-4 border-t border-base-200",
-                else: "mt-4"
-              )
-            ]}>
+            <!-- Selected model: API key + save (pinned at bottom on large screens) -->
+            <div class="mt-4 lg:shrink-0 lg:pt-4 lg:border-t lg:border-base-200">
               <%= if @selected_entry do %>
                 <div class="bg-base-50 rounded-xl border border-base-200 p-5">
                   <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %>
@@ -339,7 +319,6 @@ defmodule EvoDashWeb.WelcomeLive do
         search_query: "",
         api_key_input: "",
         selected_entry: nil,
-        tauri_detected: false,
         version_upgraded: version_upgraded,
         current_version: current_version
       )
@@ -351,11 +330,6 @@ defmodule EvoDashWeb.WelcomeLive do
     end
 
     {:ok, socket}
-  end
-
-  @impl true
-  def handle_event("tauri_detected", %{"tauri" => tauri}, socket) do
-    {:noreply, assign(socket, :tauri_detected, tauri)}
   end
 
   @impl true
