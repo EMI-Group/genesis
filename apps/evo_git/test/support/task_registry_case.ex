@@ -14,7 +14,6 @@ defmodule EvoGit.TaskRegistryCase do
   use ExUnit.CaseTemplate
 
   alias EvoGit.TaskRegistry
-  alias EvoGit.TaskInfo
 
   using do
     quote do
