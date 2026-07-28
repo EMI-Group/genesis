@@ -178,7 +178,7 @@ defmodule EvoDashWeb.SettingsLive do
                             class="btn btn-xs btn-ghost gap-1 text-warning"
                             phx-click="disconnect_remote_target"
                             phx-value-id={target.id}
-  >
+                          >
                             <.icon name="hero-arrow-left-end-on-rectangle" class="size-3.5" />
                             {gettext("Disconnect")}
                           </button>
@@ -320,7 +320,7 @@ defmodule EvoDashWeb.SettingsLive do
                             type="button"
                             class="btn btn-ghost btn-sm rounded-lg"
                             phx-click="cancel_edit_remote"
-  >
+                          >
                             {gettext("Cancel")}
                           </button>
                           <button type="submit" class="btn btn-primary btn-sm rounded-lg">
