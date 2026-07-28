@@ -788,16 +788,14 @@ defmodule EvoGit.Store do
       {:ok, _} =
         XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN project_path TEXT", [])
 
-      # Backfill project_path from opts JSON for existing rows.
-      backfill_project_path(conn)
+      # Backfill is now done manually via mix migrate_backfill_task_columns.
     end
 
     if "branch_name" not in columns do
       {:ok, _} =
         XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN branch_name TEXT", [])
 
-      # Backfill branch_name from result JSON for existing rows.
-      backfill_branch_name(conn)
+      # Backfill is now done manually via mix migrate_backfill_task_columns.
     end
 
     if "pid" in columns do
@@ -822,9 +820,14 @@ defmodule EvoGit.Store do
     :ok
   end
 
-  # Backfills the project_path column for existing rows by reading opts,
-  # extracting :path, and writing it back via targeted UPDATE.
-  defp backfill_project_path(conn) do
+  @doc """
+  Backfills the `project_path` column for existing rows by extracting `:path` from
+  the opts JSON. Rows where `project_path` is already set are skipped. Called by
+  the `mix migrate_backfill_task_columns` task.
+
+  Returns `:ok`.
+  """
+  def backfill_project_path(conn) do
     {:ok, %{rows: rows}} =
       XqliteNIF.query(
         conn,
@@ -860,9 +863,14 @@ defmodule EvoGit.Store do
     :ok
   end
 
-  # Backfills the branch_name column for existing rows by reading result,
-  # extracting branch_name, and writing it back via targeted UPDATE.
-  defp backfill_branch_name(conn) do
+  @doc """
+  Backfills the `branch_name` column for existing rows by extracting `:branch_name`
+  from the result JSON. Rows where `branch_name` is already set are skipped. Called
+  by the `mix migrate_backfill_task_columns` task.
+
+  Returns `:ok`.
+  """
+  def backfill_branch_name(conn) do
     {:ok, %{rows: rows}} =
       XqliteNIF.query(
         conn,
