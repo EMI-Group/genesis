@@ -5,8 +5,6 @@ defmodule EvoDashWeb.WelcomeLive do
   The primary onboarding action is configuring a first LLM inline: a flat grid
   of all quick-setup models (across providers), API key entry, and save. When a
   model profile already exists, the page shows a friendly "you're ready" state.
-
-  Version-state tracking shows a "new version" note once per upgrade.
   """
 
   use EvoDashWeb, :live_view
@@ -26,49 +24,29 @@ defmodule EvoDashWeb.WelcomeLive do
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
     >
-      <div class="px-4 py-8 min-h-screen flex flex-col items-center justify-center lg:h-screen lg:overflow-hidden">
-        <!-- Main card -->
-        <div class="w-full max-w-5xl bg-base-100 rounded-xl border border-base-200 shadow-sm p-8 lg:p-6 lg:flex lg:flex-col lg:flex-1 lg:min-h-0 lg:overflow-hidden">
+      <div class="min-h-screen lg:h-screen lg:overflow-hidden max-w-5xl mx-auto px-4 lg:px-6 py-3 lg:py-4 flex flex-col">
           <!-- Header (non-scrolling) -->
-          <div class="flex flex-col items-center text-center mb-6 shrink-0">
-            <div class="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mb-6 text-4xl">
+          <div class="flex items-center gap-3 mb-3 shrink-0">
+            <div class="text-3xl shrink-0">
               {if @has_model?, do: "✨", else: "🚀"}
             </div>
-
-            <h2 class="text-2xl font-bold mb-3">
-              {if @has_model?,
-                do: gettext("You're All Set!"),
-                else: gettext("Welcome to Genesis")}
-            </h2>
-
-            <p class="text-base text-base-content/60 leading-relaxed max-w-md">
-              {if @has_model?,
-                do: gettext(
-                  "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
-                ),
-                else: gettext(
-                  "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
-                )}
-            </p>
-          </div>
-
-          <%= if @version_upgraded do %>
-            <!-- New version note -->
-            <div class="mb-6 bg-info/10 border border-info/20 rounded-xl p-4 flex items-start gap-3 shrink-0">
-              <.icon name="hero-sparkles" class="size-5 text-info shrink-0 mt-0.5" />
-              <div class="text-left">
-                <h4 class="font-bold text-info text-sm mb-1">
-                  {gettext("Welcome to the new version!")}
-                </h4>
-                <p class="text-xs text-base-content/60 leading-relaxed">
-                  {gettext(
-                    "You're running Genesis %{version}. What's new will be available here soon.",
-                    version: @current_version
+            <div class="min-w-0">
+              <h2 class="text-xl font-bold leading-tight">
+                {if @has_model?,
+                  do: gettext("You're All Set!"),
+                  else: gettext("Welcome to Genesis")}
+              </h2>
+              <p class="text-sm text-base-content/60 leading-snug">
+                {if @has_model?,
+                  do: gettext(
+                    "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
+                  ),
+                  else: gettext(
+                    "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
                   )}
-                </p>
-              </div>
+              </p>
             </div>
-          <% end %>
+          </div>
 
           <%= if @has_model? do %>
             <!-- All-set state: ready to go -->
@@ -283,7 +261,6 @@ defmodule EvoDashWeb.WelcomeLive do
               {gettext("Skip")}
             </button>
           </div>
-        </div>
 
         <!-- Version footer -->
         <div class="mt-6 text-xs text-base-content/40 shrink-0">
@@ -301,10 +278,6 @@ defmodule EvoDashWeb.WelcomeLive do
     llm_providers = EvoGit.Config.LLMCatalog.providers()
     flat_models = flatten_models(llm_providers)
 
-    # Version-state tracking (sibling EvoGit.Config.VersionState module — may
-    # not be compiled yet in parallel builds, but the project compiles as a
-    # whole once it lands).
-    version_upgraded = version_state_upgraded?()
     current_version = Application.spec(:evo_git, :vsn) |> to_string()
 
     socket =
@@ -319,15 +292,8 @@ defmodule EvoDashWeb.WelcomeLive do
         search_query: "",
         api_key_input: "",
         selected_entry: nil,
-        version_upgraded: version_upgraded,
         current_version: current_version
       )
-
-    # Record the current version once the user has seen this welcome page, so
-    # the upgrade note is only shown once per upgrade.
-    if connected?(socket) do
-      record_current_version()
-    end
 
     {:ok, socket}
   end
@@ -618,27 +584,6 @@ defmodule EvoDashWeb.WelcomeLive do
   defp t_provider("OpenAI"), do: gettext("OpenAI")
   # Fallback for any provider not explicitly listed above.
   defp t_provider(name), do: name
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Private: version-state
-  # ───────────────────────────────────────────────────────────────────────────
-
-  # Wraps the VersionState call so the welcome page degrades gracefully if the
-  # sibling module is not yet compiled (parallel build). Returns false (no
-  # upgrade note) when unavailable.
-  defp version_state_upgraded? do
-    if Code.ensure_loaded?(EvoGit.Config.VersionState) do
-      EvoGit.Config.VersionState.upgraded?()
-    else
-      false
-    end
-  end
-
-  defp record_current_version do
-    if Code.ensure_loaded?(EvoGit.Config.VersionState) do
-      EvoGit.Config.VersionState.record_current_version()
-    end
-  end
 
   # ───────────────────────────────────────────────────────────────────────────
   # Private: config persistence
