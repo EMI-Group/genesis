@@ -13,6 +13,18 @@ defmodule EvoDashWeb.TasksLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:tasks} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+      <%= if @current_node != node() do %>
+        <!-- Remote node: task history is local-only -->
+        <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
+          <div class="animate-float">
+            <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
+          </div>
+          <p class="text-base font-medium">{gettext("Task history is only available when viewing the local node.")}</p>
+          <p class="text-sm mt-1">
+            {gettext("Remote agents can be viewed on the Agents page.")}
+          </p>
+        </div>
+      <% else %>
       <!-- Filter Bar -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
         <form id="task-filters" phx-submit="noop">
@@ -248,6 +260,7 @@ defmodule EvoDashWeb.TasksLive do
           </:title>
           <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
         </EvoDashWeb.Helpers.modal>
+      <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
