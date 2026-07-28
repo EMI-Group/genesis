@@ -1103,7 +1103,7 @@ defmodule EvoDashWeb.SettingsLive do
         |> maybe_put_gen_opt(:presence_penalty, profile)
 
       parent = self()
-      remote? = socket.assigns.remote_config
+      remote? = socket.assigns.current_node != node()
       node = socket.assigns.current_node
 
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
