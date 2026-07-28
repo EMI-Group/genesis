@@ -26,8 +26,30 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   Assigns `:running_tasks` and `:pending_tasks` from `socket.assigns.tasks`.
   """
   def assign_running_and_pending_tasks(socket) do
-    all_tasks = TaskRegistry.list_tasks()
+    all_tasks = socket.assigns.tasks
 
+    running_tasks =
+      Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
+
+    pending_tasks =
+      all_tasks
+      |> Enum.filter(fn task ->
+        task.status == :completed and is_nil(task.review_status) and
+          show_review_button?(task)
+      end)
+      |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
+
+    socket
+    |> assign(:running_tasks, running_tasks)
+    |> assign(:pending_tasks, pending_tasks)
+  end
+
+  @doc """
+  Assigns `:running_tasks` and `:pending_tasks` from the given unstripped
+  task list. Use this when you have a full (unstripped) task list and want
+  to compute running/pending before stripping heavy fields for `@tasks`.
+  """
+  def assign_running_and_pending_tasks(socket, all_tasks) do
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
 
