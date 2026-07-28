@@ -15,8 +15,7 @@
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
-    <link rel="icon" type="image/svg+xml" href={~p"/images/logo.svg"} />
-    <link rel="icon" type="image/svg+xml" href={~p"/images/logo-alt.svg"} media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href={~p"/images/logo.svg"} id="favicon" />
     <link rel="apple-touch-icon" type="image/svg+xml" href={~p"/images/favicon.svg"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
@@ -30,6 +29,7 @@
           document.documentElement.setAttribute("data-theme", resolved);
           document.documentElement.setAttribute("data-theme-mode", theme);
           updateThemeColor(resolved);
+          updateFavicon(resolved);
         };
 
         const setTheme = (theme) => {
@@ -45,6 +45,13 @@
           const meta = document.querySelector('meta[name="theme-color"]');
           if (meta) {
             meta.content = resolvedTheme === "dark" ? "#020617" : "#f8fafc";
+          }
+        };
+
+        const updateFavicon = (resolvedTheme) => {
+          const favicon = document.getElementById("favicon");
+          if (favicon) {
+            favicon.href = resolvedTheme === "dark" ? "/images/logo-alt.svg" : "/images/logo.svg";
           }
         };
 
