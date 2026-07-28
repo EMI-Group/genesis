@@ -66,7 +66,7 @@ defmodule EvoDashWeb.Layouts do
         id="sidebar"
         data-sidebar-collapsed="false"
         phx-hook="SidebarCollapse"
-        class="fixed lg:relative z-50 lg:z-auto h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-hidden"
+        class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible"
       >
         <!-- Branding -->
         <div class="flex items-center h-14 px-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
@@ -197,7 +197,7 @@ defmodule EvoDashWeb.Layouts do
       </aside>
 
       <!-- Main Content Area -->
-      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0">
+      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0">
         <main class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900">
           {render_slot(@inner_block)}
         </main>
