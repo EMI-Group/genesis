@@ -174,38 +174,65 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   @doc """
   Handles a `{:remote_connection_status, _target_id, _status}` broadcast by
   refreshing the `@connection_statuses` assign. When the status change is for
-  the currently selected node, it also re-resolves the node context so
-  `@current_node` updates: switching from local to the remote BEAM node when
-  the connection reaches `:connected`, or falling back to local on
-  disconnect/error. Returns `{:noreply, socket}`.
+  the currently selected node AND represents a meaningful local↔remote
+  transition, it triggers a `push_patch` to the current path (preserving the
+  `?node=` param) so that `handle_params/3` re-runs and reloads all
+  page-specific node data (remote agents, remote config, remote paused state,
+  etc.). This is the DRYest solution: `handle_params` already contains all the
+  node-specific data loading for every LiveView, so re-running it uniformly
+  reloads everything correctly without per-page duplication.
+
+  Only actual transitions trigger a `push_patch`:
+    * `:connected` with a node name → local→remote (the node just became
+      usable as remote). Only a transition when `@current_node` is currently
+      local (`node()`), i.e. the page was showing pending/local data.
+    * `:disconnected` / `:error` → remote→local (the node was remote but is
+      now gone). Only a transition when `@current_node` is currently NOT
+      local, i.e. the page was showing remote data.
+
+  Non-transition statuses (`:connecting`, `:bootstrapping`, or a status for a
+  node already in the correct state, or a status for a non-selected node) only
+  refresh `@connection_statuses` and do NOT reload page data. Returns
+  `{:noreply, socket}`.
   """
   def handle_connection_status(socket, {:remote_connection_status, target_id, status}) do
     socket = assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())
 
-    # If the status change is for the currently selected node, re-resolve the
-    # node context so @current_node updates. When the connection reaches
-    # :connected, @current_node switches from local to the remote BEAM node.
-    # When it disconnects/errors, fall back to local.
     current_node_id = socket.assigns[:current_node_id]
+    current_node = socket.assigns[:current_node]
 
-    socket =
-      if current_node_id == target_id do
+    transition? =
+      current_node_id == target_id and
         case status do
           %{phase: :connected, node: remote_node} when is_binary(remote_node) ->
-            assign(socket, :current_node, String.to_atom(remote_node))
+            # local → remote: only a transition when the page is currently
+            # showing local/pending data (a duplicate :connected for a node
+            # already in remote state is not a reload-worthy transition).
+            current_node == node()
 
+          %{phase: phase} when phase in [:disconnected, :error] ->
+            # remote → local: only a transition when the page is currently
+            # showing remote data (a disconnect/error for a node already
+            # showing local/pending data is not a reload-worthy transition).
+            current_node != node()
+
+          # :connecting, :bootstrapping, and other phases are not reload-worthy
+          # transitions — the page is already showing local/pending data.
           _ ->
-            # Disconnected, connecting, error — fall back to local node context
-            # so the page doesn't show stale remote data.
-            socket
-            |> assign(:current_node, node())
-            |> assign(:current_node_name, "Local")
+            false
         end
-      else
-        socket
-      end
 
-    {:noreply, socket}
+    if transition? do
+      # Re-invoke handle_params by patching the current path with the ?node=
+      # param. handle_params calls assign_node → resolve_node_context, which
+      # now resolves to {:remote, ...} (on :connected) or :local (on
+      # disconnect/error), and then reloads all page-specific data.
+      path = socket.assigns[:current_path] || "/"
+      to = path <> "?node=" <> current_node_id
+      {:noreply, Phoenix.LiveView.push_patch(socket, to: to)}
+    else
+      {:noreply, socket}
+    end
   end
 
   # Fallback for unexpected message shapes — just refresh statuses.
