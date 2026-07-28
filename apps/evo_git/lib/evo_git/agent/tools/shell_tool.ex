@@ -245,13 +245,13 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         base =
           cond do
             exit_code == 0 ->
-              "[Took: #{timing}] Command executed successfully. Output:\n#{output}"
+              "[Took: #{timing}] [Exit Code: 0] Command executed successfully. Output:\n#{output}"
 
             desc = describe_exit_code(exit_code) ->
-              "[Took: #{timing}] #{desc.header} #{desc.description} Output:\n#{output}"
+              "[Took: #{timing}] [Exit Code: #{exit_code}] #{desc.header} #{desc.description} Output:\n#{output}"
 
             true ->
-              "[Took: #{timing}] Command failed with exit code #{exit_code}. Output:\n#{output}"
+              "[Took: #{timing}] [Exit Code: #{exit_code}] Command failed. Output:\n#{output}"
           end
 
         case detect_cd_warnings(command, repo_path, repo_root) do
@@ -262,7 +262,9 @@ defmodule EvoGit.Agent.Tools.ShellTool do
       {:timeout, partial_output} ->
         elapsed = System.monotonic_time(:millisecond) - start
         timing = format_duration(elapsed)
-        base = "Command timed out after #{timeout}ms (actual: #{timing}). Partial output:\n#{partial_output}"
+
+        base =
+          "Command timed out after #{timeout}ms (actual: #{timing}). Partial output:\n#{partial_output}"
 
         case detect_cd_warnings(command, repo_path, repo_root) do
           nil -> base
