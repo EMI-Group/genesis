@@ -95,9 +95,20 @@ There is **NO existing inbox/pending-message concept** — the only dynamic cont
 ### Distribution & Release Setup (relevant to remote/SSH features)
 - **EPMD-less distribution via custom module.** All `rel/vm.args.eex` files use `-epmd_module Elixir.EvoGit.EpmdDist` with `-start_epmd false`. The `EvoGit.EpmdDist` module implements the `erl_epmd` interface using `:persistent_term` as a node→port registry. No external `epmd` process is needed. Distribution is NOT started at boot for the local dashboard — it is enabled on-demand by `EvoGit.Distribution.enable_for_remote/1` when a user initiates a remote connection. The remote daemon starts distributed at boot (port 9000).
 
-### ⚠️ SSH Remote Bootstrap Failure Modes (diagnosis reference)
+### SSH Remote Bootstrap Failure Modes (diagnosis reference — 3 issues FIXED)
 
-**Problem (a) — Bootstrap fails on a pre-existing failed systemd unit.**
+**✅ FIXED — Problem (a): Bootstrap fails on a pre-existing failed systemd unit.**
+`start_daemon/3` (Linux clause, `remote_connection.ex`) now runs `systemctl --user reset-failed genesis-remote 2>/dev/null; true` BEFORE the `systemd-run` launch command. This clears stale failed/inactive units idempotently (exits 0 if nothing to reset, non-zero if unit never existed — both acceptable). The reset result is ignored (best-effort), so bootstrap proceeds regardless.
+
+**✅ FIXED — Problem (b): No launch health-check.**
+`maybe_start_daemon/3` now calls `verify_daemon_healthy/2` after `start_daemon/3` returns `:ok`. This retries `daemon_running?/2` up to 3 times with 1s sleep between (total ~3s wait for BEAM VM boot). If the daemon never reaches `active`, returns `{:error, {:daemon_not_healthy, details}}` where details includes `systemctl --user status genesis-remote 2>&1 | tail -20` output on Linux. Additionally, bootstrap now has a `:copying_config` stage (`do_bootstrap_with_tarball/3`) that SCPs the local `config.toml` and `credentials.toml` (via `EvoGit.Config.config_path/0` / `credentials_path/0`) to the remote `~/.config/genesis/` directory — best-effort, missing files skipped, copy errors logged but don't fail bootstrap.
+
+**✅ FIXED — Problem (c): `Node.connect` fails — EPMD module not set at runtime.**
+`Distribution.enable_for_connection/1` now sets `Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)` BEFORE `:net_kernel.start/1`. This ensures the VM uses the EPMD-less module even when distribution is started on-demand in dev mode (no release vm.args). Combined with the pre-existing `-epmd_module` in `rel/vm.args.eex`, `port_please/2` now correctly resolves the SSH tunnel port.
+
+**Historical diagnosis (kept for reference — all 3 root causes above are now addressed):**
+
+**Problem (a) — original diagnosis.**
 The bootstrap flow (`RemoteConnection.do_bootstrap_with_tarball/5`, `remote_connection.ex:384`) calls `maybe_start_daemon/3` (`remote_connection.ex:524`) which calls `daemon_running?/2` (`remote_connection.ex:533`). On Linux, `daemon_running?/2` runs:
 ```
 ssh <target> 'systemctl --user is-active genesis-remote 2>/dev/null'
