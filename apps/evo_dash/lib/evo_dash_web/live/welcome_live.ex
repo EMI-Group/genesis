@@ -85,21 +85,33 @@ defmodule EvoDashWeb.WelcomeLive do
 
             <!-- Search box (visible in both desktop and web modes) -->
             <div class="shrink-0 mb-4">
-              <label class="relative">
+              <div class="relative">
                 <.icon
                   name="hero-magnifying-glass"
                   class="size-4 text-base-content/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
                 />
-                <input
-                  type="text"
-                  phx-change="search_models"
-                  phx-debounce="150"
-                  name="search_query"
-                  value={@search_query}
-                  placeholder={gettext("Search models or providers…")}
-                  class="input input-bordered rounded-xl w-full pl-9 shadow-sm bg-base-100"
-                />
-              </label>
+                <form id="welcome-search" class="contents" phx-submit="noop">
+                  <input
+                    type="text"
+                    phx-change="search_models"
+                    phx-debounce="150"
+                    name="search_query"
+                    value={@search_query}
+                    placeholder={gettext("Search models or providers…")}
+                    class="input input-bordered rounded-xl w-full pl-9 pr-9 shadow-sm bg-base-100 hover:bg-base-100/80 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all duration-200"
+                  />
+                </form>
+                <%= if @search_query != "" do %>
+                  <button
+                    type="button"
+                    phx-click="search_models"
+                    phx-value-search_query=""
+                    class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/40 hover:text-base-content transition-colors"
+                  >
+                    <.icon name="hero-x-mark" class="size-4" />
+                  </button>
+                <% end %>
+              </div>
             </div>
 
             <!-- Model list: scrolls internally on large screens, page-scrolls on small screens -->
@@ -302,6 +314,10 @@ defmodule EvoDashWeb.WelcomeLive do
   def handle_event("search_models", %{"search_query" => query}, socket) do
     {:noreply, assign(socket, :search_query, query || "")}
   end
+
+  # Prevents page reload when the user presses Enter inside the search form.
+  @impl true
+  def handle_event("noop", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("api_key_changed", %{"api_key" => key}, socket) do
