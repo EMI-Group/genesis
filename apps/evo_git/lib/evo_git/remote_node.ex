@@ -183,6 +183,26 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Saves a credentials map to the given node's credentials file on disk.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.save_credentials/1`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec save_credentials(node(), map()) :: :ok | {:error, term()}
+  def save_credentials(node, creds) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.save_credentials(creds)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :save_credentials, [creds]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+  @doc """
   Returns the config health status on the given node.
 
   On the local node, calls `EvoGit.Config.config_status/0` directly. On a

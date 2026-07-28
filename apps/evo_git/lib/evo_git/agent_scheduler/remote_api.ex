@@ -160,6 +160,20 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     EvoGit.Config.save_user_config(config)
   end
 
+  @doc """
+  Writes a credentials map to disk on this node.
+
+  Delegates to `EvoGit.Config.save_credentials/1`, which merges and writes to
+  `~/.config/genesis/credentials.toml`. This runs on the REMOTE node when called
+  via `:erpc.call/5`, so the file is written to the remote host's filesystem.
+
+  Returns `:ok` on success, or `{:error, reason}` if the file write fails.
+  """
+  @spec save_credentials(map()) :: :ok | {:error, term()}
+  def save_credentials(creds) when is_map(creds) do
+    EvoGit.Config.save_credentials(creds)
+  end
+
   @doc false
   # Builds the keyword list passed to `AgentScheduler.update_config/1` from
   # a resolved config map. Extracted for testability.
