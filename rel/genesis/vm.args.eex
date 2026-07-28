@@ -19,3 +19,4 @@
 ## connection is established via EPMD-less distribution over an SSH tunnel with
 ## a pinned port, so EPMD is still not needed.
 -start_epmd false
+-epmd_module Elixir.EvoGit.EpmdDist
