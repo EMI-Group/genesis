@@ -181,6 +181,10 @@ defmodule EvoGit.TaskRegistry do
     # Periodic cleanup: sweep expired tasks every 5 minutes
     Process.send_after(self(), :periodic_cleanup, 300_000)
 
+    # Force GC + heap shrink after the expensive normalize_and_cleanup_tasks
+    # decode pass, which temporarily inflates the heap with full task structs.
+    Process.send_after(self(), :hibernate_after_init, 0)
+
     {:ok, state}
   end
 
@@ -1042,6 +1046,14 @@ defmodule EvoGit.TaskRegistry do
           resolve_recheck_task(state, task_id, task)
         end
     end
+  end
+
+  # Forces a full GC and shrinks the heap to minimum after init's expensive
+  # normalize_and_cleanup_tasks decode pass. The :hibernate tuple tells the
+  # GenServer to hibernate (GC + shrink + sleep until next message).
+  @impl true
+  def handle_info(:hibernate_after_init, state) do
+    {:noreply, state, :hibernate}
   end
 
   @impl true
