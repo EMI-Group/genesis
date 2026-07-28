@@ -332,4 +332,16 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ "completed task number 0"
     end
   end
+
+  describe "node-aware behavior" do
+    test "task list UI renders (no remote-only info message)", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "visible task"])
+
+      {:ok, _view, html} = live(conn, ~p"/tasks")
+
+      # The old info message should NOT appear — the full UI always renders.
+      refute html =~ "Task history is only available when viewing the local node"
+      assert html =~ "Search by task ID, prompt, or objective"
+    end
+  end
 end

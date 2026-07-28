@@ -292,6 +292,73 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.send_agent_message(node, agent_id, message)
   end
 
+  @doc """
+  Lists all tasks on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_tasks/1`. Returns `[]` if the remote
+  call fails.
+  """
+  @spec list_tasks(node()) :: [EvoGit.TaskInfo.t()]
+  def list_tasks(node) do
+    EvoGit.RemoteNode.list_tasks(node)
+  end
+
+  @doc """
+  Returns a paginated slice of tasks on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_tasks_paginated/2`. Returns `{[], 0}`
+  if the remote call fails.
+  """
+  @spec list_tasks_paginated(node(), keyword()) ::
+          {[EvoGit.TaskInfo.t()], non_neg_integer()}
+  def list_tasks_paginated(node, opts \\ []) do
+    EvoGit.RemoteNode.list_tasks_paginated(node, opts)
+  end
+
+  @doc """
+  Returns the set of unique project paths with tasks on the given node.
+
+  Delegates to `EvoGit.RemoteNode.get_unique_paths/1`. Returns `[]` if the
+  remote call fails.
+  """
+  @spec get_unique_paths(node()) :: [String.t()]
+  def get_unique_paths(node) do
+    EvoGit.RemoteNode.get_unique_paths(node)
+  end
+
+  @doc """
+  Cancels a task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.cancel_task/2`. Returns `:ok` on success
+  or `{:error, reason}` on failure.
+  """
+  @spec cancel_task(node(), String.t()) :: :ok | {:error, term()}
+  def cancel_task(node, task_id) do
+    EvoGit.RemoteNode.cancel_task(node, task_id)
+  end
+
+  @doc """
+  Deletes a task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.delete_task/2`. Returns `:ok` on success
+  or `{:error, reason}` on failure.
+  """
+  @spec delete_task(node(), String.t()) :: :ok | {:error, term()}
+  def delete_task(node, task_id) do
+    EvoGit.RemoteNode.delete_task(node, task_id)
+  end
+
+  @doc """
+  Clears all finished tasks on the given node.
+
+  Delegates to `EvoGit.RemoteNode.clear_finished_tasks/1`. Returns `:ok` on
+  success or `{:error, reason}` on failure.
+  """
+  @spec clear_finished_tasks(node()) :: :ok | {:error, term()}
+  def clear_finished_tasks(node) do
+    EvoGit.RemoteNode.clear_finished_tasks(node)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning

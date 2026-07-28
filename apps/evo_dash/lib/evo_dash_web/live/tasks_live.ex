@@ -1,10 +1,14 @@
 defmodule EvoDashWeb.TasksLive do
   @moduledoc """
   Cross-project task list with filtering by status, project, and review state.
+
+  Node-aware: reads task history via `EvoDash.NodeContext` so it works for both
+  the local BEAM node and a remote `genesis_remote` daemon (SSH Remote
+  Development, Phase 3). For remote nodes it polls periodically since
+  cross-node PubSub may be unreliable.
   """
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
-  alias EvoGit.TaskRegistry
   use EvoDashWeb.ModalHelpers
 
   @default_page_size 25
@@ -13,18 +17,6 @@ defmodule EvoDashWeb.TasksLive do
   def render(assigns) do
     ~H"""
     <EvoDashWeb.Layouts.app flash={@flash} current_page={:tasks} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
-      <%= if @current_node != node() do %>
-        <!-- Remote node: task history is local-only -->
-        <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
-          <div class="animate-float">
-            <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
-          </div>
-          <p class="text-base font-medium">{gettext("Task history is only available when viewing the local node.")}</p>
-          <p class="text-sm mt-1">
-            {gettext("Remote agents can be viewed on the Agents page.")}
-          </p>
-        </div>
-      <% else %>
       <!-- Filter Bar -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
         <form id="task-filters" phx-submit="noop">
@@ -261,7 +253,6 @@ defmodule EvoDashWeb.TasksLive do
           <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
         </EvoDashWeb.Helpers.modal>
       <% end %>
-      <% end %>
     </EvoDashWeb.Layouts.app>
     """
   end
@@ -274,7 +265,10 @@ defmodule EvoDashWeb.TasksLive do
 
     # Project paths are cheap-ish and needed for the filter dropdown regardless
     # of pagination. Tasks are loaded in handle_params (server-side pagination).
-    project_paths = TaskRegistry.get_unique_paths()
+    # At mount time the node is local (set by the NodeAware on-mount hook before
+    # mount), so we read the node defensively.
+    node = socket.assigns[:current_node] || node()
+    project_paths = EvoDash.NodeContext.get_unique_paths(node)
 
     config_status = config_status()
 
@@ -310,6 +304,22 @@ defmodule EvoDashWeb.TasksLive do
       |> assign(:current_path, ~p"/tasks")
       |> load_page_into_socket(requested_page)
 
+    current_node = socket.assigns.current_node
+
+    # For remote nodes, cross-node PubSub may not deliver task-status events
+    # reliably. Start a periodic poll (reschedules itself in the handler only
+    # while viewing a remote node). For the local node we rely on PubSub, so no
+    # poll is scheduled. Guard with the :remote_poll_timer assign so we don't
+    # schedule overlapping timers on repeated handle_params calls.
+    socket =
+      if current_node != node() and connected?(socket) and
+           !socket.assigns[:remote_poll_timer] do
+        Process.send_after(self(), :remote_poll, 3_000)
+        assign(socket, :remote_poll_timer, true)
+      else
+        socket
+      end
+
     {:noreply, socket}
   end
 
@@ -335,6 +345,20 @@ defmodule EvoDashWeb.TasksLive do
     # "tasks" PubSub topic. Re-fetch the current page so the UI reflects the change.
     socket = reload_current_page(socket)
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+  end
+
+  @impl true
+  def handle_info(:remote_poll, socket) do
+    current_node = socket.assigns.current_node
+
+    if current_node != node() do
+      # Still viewing a remote node — reload the current page and reschedule.
+      Process.send_after(self(), :remote_poll, 3_000)
+      {:noreply, reload_current_page(socket)}
+    else
+      # Switched back to local — stop polling (PubSub handles local updates).
+      {:noreply, assign(socket, :remote_poll_timer, false)}
+    end
   end
 
   @impl true
@@ -421,24 +445,24 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("goto_page", %{"page" => page}, socket) do
-    {:noreply, push_patch(socket, to: ~p"/tasks?page=#{page}")}
+    {:noreply, push_patch(socket, to: tasks_url(socket, page))}
   end
 
   @impl true
   def handle_event("prev_page", _params, socket) do
     page = max(1, socket.assigns.current_page - 1)
-    {:noreply, push_patch(socket, to: ~p"/tasks?page=#{page}")}
+    {:noreply, push_patch(socket, to: tasks_url(socket, page))}
   end
 
   @impl true
   def handle_event("next_page", _params, socket) do
     page = min(socket.assigns.total_pages, socket.assigns.current_page + 1)
-    {:noreply, push_patch(socket, to: ~p"/tasks?page=#{page}")}
+    {:noreply, push_patch(socket, to: tasks_url(socket, page))}
   end
 
   @impl true
   def handle_event("clear_task_history", _params, socket) do
-    TaskRegistry.clear_finished_tasks()
+    EvoDash.NodeContext.clear_finished_tasks(socket.assigns.current_node)
 
     {:noreply,
      socket
@@ -480,7 +504,7 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("cancel_task", %{"task_id" => task_id}, socket) do
-    case TaskRegistry.cancel_task(task_id) do
+    case EvoDash.NodeContext.cancel_task(socket.assigns.current_node, task_id) do
       :ok ->
         expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
 
@@ -501,7 +525,7 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("delete_task", %{"task_id" => task_id}, socket) do
-    TaskRegistry.delete_task(task_id)
+    EvoDash.NodeContext.delete_task(socket.assigns.current_node, task_id)
     expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
 
     {:noreply,
@@ -511,6 +535,19 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   # Helpers
+
+  # Builds a tasks URL with optional node param for pagination navigation.
+  # When viewing a remote node, preserves the ?node= param so navigation
+  # stays on the same node.
+  defp tasks_url(socket, page) do
+    node_id = socket.assigns[:current_node_id]
+
+    if node_id do
+      ~p"/tasks?page=#{page}&node=#{node_id}"
+    else
+      ~p"/tasks?page=#{page}"
+    end
+  end
 
   # Parses the ?page= query param into a positive integer (default 1).
   # Uses Integer.parse/1 (returns :error for non-integers) — no try/rescue,
@@ -532,9 +569,12 @@ defmodule EvoDashWeb.TasksLive do
   # If clamping changes the page, a second fetch is performed for the
   # clamped page. This is at most one extra fetch and only on edge cases
   # (e.g. a stale/high page number).
-  defp load_page(requested_page, page_size, filters) do
+  defp load_page(node, requested_page, page_size, filters) do
     offset = (requested_page - 1) * page_size
-    {tasks, total_count} = TaskRegistry.list_tasks_paginated(limit: page_size, offset: offset, filters: filters)
+
+    {tasks, total_count} =
+      EvoDash.NodeContext.list_tasks_paginated(node, limit: page_size, offset: offset, filters: filters)
+
     total_pages = total_pages(total_count, page_size)
     clamped_page = min(max(1, requested_page), total_pages)
 
@@ -542,7 +582,11 @@ defmodule EvoDashWeb.TasksLive do
       clamped_offset = (clamped_page - 1) * page_size
 
       {clamped_tasks, ^total_count} =
-        TaskRegistry.list_tasks_paginated(limit: page_size, offset: clamped_offset, filters: filters)
+        EvoDash.NodeContext.list_tasks_paginated(node,
+          limit: page_size,
+          offset: clamped_offset,
+          filters: filters
+        )
 
       {clamped_tasks, clamped_page, total_count, total_pages}
     else
@@ -572,16 +616,17 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   defp load_page_into_socket(socket, page) do
+    node = socket.assigns.current_node
     filters = build_filters_from_assigns(socket)
     {tasks, current_page, total_count, total_pages} =
-      load_page(page, socket.assigns.page_size, filters)
+      load_page(node, page, socket.assigns.page_size, filters)
 
     socket
     |> assign(:tasks, tasks)
     |> assign(:current_page, current_page)
     |> assign(:total_count, total_count)
     |> assign(:total_pages, total_pages)
-    |> assign(:project_paths, TaskRegistry.get_unique_paths())
+    |> assign(:project_paths, EvoDash.NodeContext.get_unique_paths(node))
     |> assign(:filtered_tasks, tasks)
   end
 
