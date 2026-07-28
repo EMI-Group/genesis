@@ -27,7 +27,7 @@ defmodule EvoGit.Store do
     * `terminate/2` — graceful connection close during shutdown. GenServer
       terminate/2 must never raise; a crash here could prevent clean
       supervision shutdown.
-    * `safe_select_all_rows`, `safe_decode_rows`, `scan_and_repair` — quarantine/data-recovery
+    * `safe_decode_rows`, `scan_and_repair` — quarantine/data-recovery
       boundaries that deliberately catch decode failures to quarantine corrupt
       rows rather than crashing. The decoder raises by design; quarantine is the
       deliberate recovery boundary.
@@ -45,6 +45,8 @@ defmodule EvoGit.Store do
   alias EvoGit.Store.Codec
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
+
+  @memory_cleanup_interval 300_000  # 5 minutes
 
   ## Child spec & start
 
@@ -295,7 +297,7 @@ defmodule EvoGit.Store do
     dir = Path.dirname(data_dir)
     File.mkdir_p!(dir)
 
-    case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -8000) do
+    case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -2000) do
       {:ok, conn} ->
         create_tables(conn)
         migrate_schema(conn)
@@ -303,7 +305,9 @@ defmodule EvoGit.Store do
         # Best-effort: checkpoint any leftover WAL from a previous ungraceful shutdown
         XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
 
-        {:ok, %{conn: conn, data_dir: data_dir}}
+        state = %{conn: conn, data_dir: data_dir}
+        Process.send_after(self(), :periodic_memory_cleanup, @memory_cleanup_interval)
+        {:ok, state}
 
       {:error, reason} ->
         {:stop, {:failed_to_open_sqlite, reason}}
@@ -435,7 +439,7 @@ defmodule EvoGit.Store do
         _ -> []
       end
 
-    # Reuse the SAME quarantine-safe decode boundary as safe_select_all_rows.
+    # Reuse the SAME quarantine-safe decode boundary as safe_decode_rows.
     tasks = safe_decode_rows(state.conn, "tasks", rows, &Codec.decode_task/1)
 
     # COUNT with the SAME WHERE clause so total_count reflects filtered results.
@@ -608,15 +612,60 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def handle_call(:safe_select_all_tasks, _from, state) do
-    reply = safe_select_all_rows(state.conn, "tasks", &Codec.decode_task/1)
-    {:reply, reply, state}
+  def handle_call(:safe_select_all_tasks, from, state) do
+    columns = table_columns("tasks")
+    col_list = Enum.join(columns, ", ")
+
+    rows =
+      case XqliteNIF.query(state.conn, "SELECT #{col_list} FROM tasks", []) do
+        {:ok, %{rows: rows}} -> rows
+        _ -> []
+      end
+
+    # Offload decode to a short-lived Task so the decoded structs never inflate
+    # the Store process heap. Quarantine is skipped in this path (needs the conn,
+    # which cannot be safely shared across processes with xqlite NIFs).
+    # integrity_check runs at startup and handles quarantine separately.
+    Task.start(fn ->
+      decoded =
+        Enum.flat_map(rows, fn row ->
+          try do
+            [Codec.decode_task(row)]
+          rescue
+            e ->
+              Logger.warning(
+                "Store: skipping undecodable task row (id: #{inspect(hd(row))}): #{Exception.message(e)}"
+              )
+
+              []
+          end
+        end)
+
+      GenServer.reply(from, decoded)
+    end)
+
+    {:noreply, state}
   end
 
   @impl true
-  def handle_call(:safe_select_all_projects, _from, state) do
-    reply = safe_select_all_rows(state.conn, "projects", &Codec.decode_project/1)
-    {:reply, reply, state}
+  def handle_call(:safe_select_all_projects, from, state) do
+    columns = table_columns("projects")
+    col_list = Enum.join(columns, ", ")
+
+    rows =
+      case XqliteNIF.query(state.conn, "SELECT #{col_list} FROM projects", []) do
+        {:ok, %{rows: rows}} -> rows
+        _ -> []
+      end
+
+    # Offload decode to a short-lived Task — same pattern as safe_select_all_tasks
+    # but simpler since projects are tiny and don't need quarantine.
+    Task.start(fn ->
+      decoded = Enum.map(rows, &Codec.decode_project/1)
+      GenServer.reply(from, decoded)
+    end)
+
+    {:noreply, state}
   end
 
   @impl true
@@ -629,6 +678,15 @@ defmodule EvoGit.Store do
   def handle_call(:recover_quarantine, _from, state) do
     reply = do_recover_quarantine(state.conn)
     {:reply, reply, state}
+  end
+
+  ## GenServer — Periodic memory cleanup
+
+  @impl true
+  def handle_info(:periodic_memory_cleanup, state) do
+    XqliteNIF.query(state.conn, "PRAGMA shrink_memory", [])
+    Process.send_after(self(), :periodic_memory_cleanup, @memory_cleanup_interval)
+    {:noreply, state}
   end
 
   ## Private — Schema creation
@@ -932,21 +990,10 @@ defmodule EvoGit.Store do
 
   ## Private — Safe select (quarantine bad rows)
 
-  defp safe_select_all_rows(conn, table, decoder) do
-    columns = table_columns(table)
-    col_list = Enum.join(columns, ", ")
-
-    case XqliteNIF.query(conn, "SELECT #{col_list} FROM #{table}", []) do
-      {:ok, %{rows: rows}} -> safe_decode_rows(conn, table, rows, decoder)
-      {:error, reason} -> Logger.error("Store: query failed for table #{table}: #{inspect(reason)}, returning empty list"); []
-      _ -> Logger.error("Store: unexpected query result for table #{table}, returning empty list"); []
-    end
-  end
-
   # Runs the per-row decode+quarantine loop over an already-fetched list of
-  # rows. Shared by safe_select_all_rows/3 (full-table select) and the
-  # paginated task select handler. Quarantines rows that fail decode rather
-  # than crashing — the same justified try/rescue recovery boundary.
+  # rows. Shared by the paginated task select handler and scan_and_repair.
+  # Quarantines rows that fail decode rather than crashing — the same justified
+  # try/rescue recovery boundary.
   defp safe_decode_rows(conn, table, rows, decoder) do
     columns = table_columns(table)
     pk = pk_column(table)
@@ -1126,7 +1173,7 @@ defmodule EvoGit.Store do
           id = hd(row)
 
           # Justified try/rescue — quarantine/data-recovery boundary (same as
-          # safe_select_all_rows). The decoder raises by design; quarantine is
+          # safe_decode_rows). The decoder raises by design; quarantine is
           # the deliberate recovery boundary.
           try do
             decoder.(row)
