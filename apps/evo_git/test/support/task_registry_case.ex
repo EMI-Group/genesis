@@ -78,18 +78,4 @@ defmodule EvoGit.TaskRegistryCase do
     configured = (config[:task_history] || %{})[:max_age_days] || 14
     max(div(configured, 3), 1)
   end
-
-  # Helper: restart the TaskRegistry so init/1 re-runs and reconcile_task_status
-  # is invoked. Uses stop_supervised/1 to avoid auto-restart conflicts, then
-  # starts a fresh supervised instance pointing at the same Store + data_dir.
-  def restart_registry!(root) do
-    :ok = stop_supervised(EvoGit.TaskRegistry)
-
-    {:ok, _} =
-      start_supervised(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
-      )
-
-    :ok
-  end
 end

@@ -19,8 +19,6 @@ defmodule EvoGit.TaskRegistry do
   alias EvoGit.TaskRegistry.Lease
   alias EvoGit.TaskRegistry.TaskExecutor
 
-  @process_registry EvoGit.TaskRegistry.ProcessRegistry
-
   @max_recent_projects 10
 
   # Maximum number of log entries retained per task. Logs grow on every
@@ -162,12 +160,6 @@ defmodule EvoGit.TaskRegistry do
     # problems rather than raising, so no rescue is needed here.
     EvoGit.Store.integrity_check(task_store)
 
-    # Normalize SQLite entries in place (backfill fields, reset crashed tasks,
-    # and re-monitor any tasks whose processes are still alive under the sibling
-    # TaskSupervisor), AND cleanup expired tasks — in a single pass over the
-    # loaded task list to avoid a second full-table scan that inflates the heap.
-    state = normalize_and_cleanup_tasks(state)
-
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
 
@@ -180,10 +172,6 @@ defmodule EvoGit.TaskRegistry do
 
     # Periodic cleanup: sweep expired tasks every 5 minutes
     Process.send_after(self(), :periodic_cleanup, 300_000)
-
-    # Force GC + heap shrink after the expensive normalize_and_cleanup_tasks
-    # decode pass, which temporarily inflates the heap with full task structs.
-    Process.send_after(self(), :hibernate_after_init, 0)
 
     {:ok, state}
   end
@@ -529,124 +517,8 @@ defmodule EvoGit.TaskRegistry do
     EvoGit.Store.get_task(state.task_store, task_id)
   end
 
-  defp select_all_tasks(state) do
-    EvoGit.Store.safe_select_all_tasks(state.task_store)
-  end
-
   defp select_all_projects(state) do
     EvoGit.Store.safe_select_all_projects(state.task_store)
-  end
-
-  # --- Task Normalization ---
-
-  # Combined normalize + cleanup in a single pass over the loaded task list.
-  # This avoids loading the entire table twice during init (each load decodes
-  # every row into a full %TaskInfo{} struct, inflating the heap). The
-  # normalized tasks (post-reconcile) are passed directly to cleanup so it
-  # doesn't need to re-read from the store.
-  defp normalize_and_cleanup_tasks(state) do
-    tasks = select_all_tasks(state)
-
-    # Normalize each task: backfill fields, reconcile status, persist.
-    # Only write back tasks that were actually modified by reconciliation.
-    {state, normalized_tasks} =
-      Enum.reduce(tasks, {state, []}, fn %TaskInfo{} = task, {acc_state, acc_tasks} ->
-        task = Map.merge(%TaskInfo{}, task)
-        {updated_task, acc_state} = reconcile_task_status(task, acc_state)
-
-        # Only write back if the task was actually modified
-        if task != updated_task do
-          EvoGit.Store.put_task(state.task_store, %{updated_task | ref: nil})
-        end
-
-        {acc_state, [updated_task | acc_tasks]}
-      end)
-
-    # Cleanup expired tasks from the already-loaded list — no second store read.
-    Cleanup.cleanup_expired_tasks(normalized_tasks, state.task_store)
-
-    state
-  end
-
-  # Reconcile a task's status after a registry restart.
-  # Running/pending tasks whose process is still alive in the @process_registry
-  # (i.e. the task process survived under the sibling TaskSupervisor) are kept
-  # as :running and re-monitored. Tasks with no live process are evaluated
-  # using lease-based logic: a running task is only marked :failed if its lease
-  # has ACTUALLY expired (not just because the process is dead/foreign). This
-  # prevents a second BEAM VM instance from incorrectly marking the first
-  # instance's running tasks as :failed. Other statuses are left unchanged.
-  #
-  # The Registry is a sibling under :one_for_one supervision, so it survives
-  # a TaskRegistry restart — meaning Registry.lookup will find task processes
-  # that are still alive after a TaskRegistry crash. After a full VM restart,
-  # both Registry and task processes are gone (lookup returns []), and the
-  # lease/sched_meta logic handles it.
-  defp reconcile_task_status(%TaskInfo{status: status} = task, state)
-       when status in [:running, :pending] do
-    case Registry.lookup(@process_registry, task.id) do
-      [{pid, _}] ->
-        # Task process is still alive under the sibling TaskSupervisor.
-        # Re-monitor, re-own, renew lease.
-        ref = Process.monitor(pid)
-        # Construct a %Task{} matching the shape of a Task.Supervisor task ref
-        # so that the existing pattern matches (%Task{pid:, ref:, owner:}) keep
-        # working. :mfa is required by the struct but unused for re-monitors.
-        task_ref = %Task{pid: pid, ref: ref, owner: self(), mfa: nil}
-
-        Logger.warning("TaskRegistry: re-monitoring still-running task #{task.id} after restart")
-
-        now = System.system_time(:second)
-
-        {%{task | status: :running, ref: nil, lease_expires_at: now + @lease_duration},
-         %{state | task_refs: Map.put(state.task_refs, task.id, task_ref)}}
-
-      [] ->
-        # No live task process — foreign instance, crashed wrapper, or full VM
-        # restart (Registry entries are gone).
-        if Lease.lease_valid?(task.lease_expires_at) do
-          # Lease hasn't expired — the owning instance is still alive.
-          # Do NOT mark failed. Do NOT add to task_refs (we don't own it).
-          # The one-shot :lease_sweep (scheduled in init) will catch it if the
-          # lease eventually expires — no periodic recheck needed.
-          Logger.info(
-            "TaskRegistry: task #{task.id} has no live process but valid lease " <>
-              "(expires_at=#{inspect(task.lease_expires_at)}) — leaving :running for lease sweep"
-          )
-
-          {%{task | status: :running, ref: nil}, state}
-        else
-          # Lease expired (nil or in the past). Check if AgentScheduler still has
-          # active agents (same-VM recovery edge case).
-          if Lease.sched_meta_has_active_agents?(task.id) do
-            Logger.warning(
-              "TaskRegistry: task #{task.id} lease expired but has active agents — scheduling recheck"
-            )
-
-            Process.send_after(self(), {:recheck_task, task.id}, 30_000)
-            {%{task | status: :running, ref: nil}, state}
-          else
-            # Lease expired AND no active agents — the owner is genuinely gone.
-            prev_status = task.status
-
-            Diagnostics.log_failed_transition(task.id, :reconcile, prev_status,
-              result: "Lease expired; process crashed while task was running",
-              extra: [
-                no_live_process: true,
-                lease_expires_at: inspect(task.lease_expires_at),
-                sched_meta_has_active_agents: false
-              ]
-            )
-
-            {%{task | status: :failed, ref: nil, lease_expires_at: nil}
-             |> Lease.set_crash_details(), state}
-          end
-        end
-    end
-  end
-
-  defp reconcile_task_status(%TaskInfo{} = task, state) do
-    {%{task | ref: nil}, state}
   end
 
   # Shared result-recovery logic used by handle_info({:recheck_task, _}). The
@@ -1046,14 +918,6 @@ defmodule EvoGit.TaskRegistry do
           resolve_recheck_task(state, task_id, task)
         end
     end
-  end
-
-  # Forces a full GC and shrinks the heap to minimum after init's expensive
-  # normalize_and_cleanup_tasks decode pass. The :hibernate tuple tells the
-  # GenServer to hibernate (GC + shrink + sleep until next message).
-  @impl true
-  def handle_info(:hibernate_after_init, state) do
-    {:noreply, state, :hibernate}
   end
 
   @impl true

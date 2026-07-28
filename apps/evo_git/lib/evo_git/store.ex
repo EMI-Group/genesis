@@ -46,8 +46,6 @@ defmodule EvoGit.Store do
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
-  @memory_cleanup_interval 300_000  # 5 minutes
-
   ## Child spec & start
 
   def child_spec(opts) do
@@ -306,7 +304,6 @@ defmodule EvoGit.Store do
         XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
 
         state = %{conn: conn, data_dir: data_dir}
-        Process.send_after(self(), :periodic_memory_cleanup, @memory_cleanup_interval)
         {:ok, state}
 
       {:error, reason} ->
@@ -612,7 +609,7 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def handle_call(:safe_select_all_tasks, from, state) do
+  def handle_call(:safe_select_all_tasks, _from, state) do
     columns = table_columns("tasks")
     col_list = Enum.join(columns, ", ")
 
@@ -622,33 +619,25 @@ defmodule EvoGit.Store do
         _ -> []
       end
 
-    # Offload decode to a short-lived Task so the decoded structs never inflate
-    # the Store process heap. Quarantine is skipped in this path (needs the conn,
-    # which cannot be safely shared across processes with xqlite NIFs).
-    # integrity_check runs at startup and handles quarantine separately.
-    Task.start(fn ->
-      decoded =
-        Enum.flat_map(rows, fn row ->
-          try do
-            [Codec.decode_task(row)]
-          rescue
-            e ->
-              Logger.warning(
-                "Store: skipping undecodable task row (id: #{inspect(hd(row))}): #{Exception.message(e)}"
-              )
+    decoded =
+      Enum.flat_map(rows, fn row ->
+        try do
+          [Codec.decode_task(row)]
+        rescue
+          e ->
+            Logger.warning(
+              "Store: skipping undecodable task row (id: #{inspect(hd(row))}): #{Exception.message(e)}"
+            )
 
-              []
-          end
-        end)
+            []
+        end
+      end)
 
-      GenServer.reply(from, decoded)
-    end)
-
-    {:noreply, state}
+    {:reply, decoded, state}
   end
 
   @impl true
-  def handle_call(:safe_select_all_projects, from, state) do
+  def handle_call(:safe_select_all_projects, _from, state) do
     columns = table_columns("projects")
     col_list = Enum.join(columns, ", ")
 
@@ -658,14 +647,8 @@ defmodule EvoGit.Store do
         _ -> []
       end
 
-    # Offload decode to a short-lived Task — same pattern as safe_select_all_tasks
-    # but simpler since projects are tiny and don't need quarantine.
-    Task.start(fn ->
-      decoded = Enum.map(rows, &Codec.decode_project/1)
-      GenServer.reply(from, decoded)
-    end)
-
-    {:noreply, state}
+    decoded = Enum.map(rows, &Codec.decode_project/1)
+    {:reply, decoded, state}
   end
 
   @impl true
@@ -681,13 +664,6 @@ defmodule EvoGit.Store do
   end
 
   ## GenServer — Periodic memory cleanup
-
-  @impl true
-  def handle_info(:periodic_memory_cleanup, state) do
-    XqliteNIF.query(state.conn, "PRAGMA shrink_memory", [])
-    Process.send_after(self(), :periodic_memory_cleanup, @memory_cleanup_interval)
-    {:noreply, state}
-  end
 
   ## Private — Schema creation
 
