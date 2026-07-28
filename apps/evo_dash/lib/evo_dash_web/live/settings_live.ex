@@ -598,16 +598,28 @@ defmodule EvoDashWeb.SettingsLive do
 
     case Schema.validate(config) do
       {:ok, _validated} ->
-        case EvoGit.Config.save_user_config(config) do
+        node = socket.assigns.current_node
+
+        case EvoDash.NodeContext.save_user_config(node, config) do
           :ok ->
-            file_config = ConfigIO.load_file_config()
-            config_status = config_status()
+            {file_config, socket} =
+              if node == node() do
+                # Local save — reload from disk
+                fc = ConfigIO.load_file_config()
+                {fc, assign(socket, :config_status, config_status())}
+              else
+                # Remote save — reload the remote scheduler config and re-fetch
+                EvoDash.NodeContext.reload_remote_config(node)
+                remote_cfg = EvoDash.NodeContext.get_remote_config(node)
+                fc = remote_config_to_file_config(remote_cfg)
+                {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+              end
+
             config_file_exists = File.exists?(socket.assigns.config_path)
 
             socket =
               socket
               |> assign(:file_config, file_config)
-              |> assign(:config_status, config_status)
               |> assign(:config_file_exists, config_file_exists)
               |> assign(:per_category_errors, %{})
               |> put_flash(:info, gettext("Configuration saved successfully."))
@@ -615,7 +627,12 @@ defmodule EvoDashWeb.SettingsLive do
             # Update runtime scheduler when LLM or scheduler categories change
             socket =
               if category in [:scheduler, :llm] do
-                ConfigIO.update_runtime_from_file_config(file_config, socket)
+                if node == node() do
+                  ConfigIO.update_runtime_from_file_config(file_config, socket)
+                else
+                  # Remote scheduler was already reloaded above
+                  socket
+                end
               else
                 socket
               end
@@ -663,16 +680,28 @@ defmodule EvoDashWeb.SettingsLive do
 
     case Schema.validate(config) do
       {:ok, _validated} ->
-        case EvoGit.Config.save_user_config(config) do
+        node = socket.assigns.current_node
+
+        case EvoDash.NodeContext.save_user_config(node, config) do
           :ok ->
-            file_config = ConfigIO.load_file_config()
-            config_status = config_status()
+            {file_config, socket} =
+              if node == node() do
+                # Local save — reload from disk
+                fc = ConfigIO.load_file_config()
+                {fc, assign(socket, :config_status, config_status())}
+              else
+                # Remote save — reload the remote scheduler config and re-fetch
+                EvoDash.NodeContext.reload_remote_config(node)
+                remote_cfg = EvoDash.NodeContext.get_remote_config(node)
+                fc = remote_config_to_file_config(remote_cfg)
+                {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+              end
+
             config_file_exists = File.exists?(socket.assigns.config_path)
 
             socket =
               socket
               |> assign(:file_config, file_config)
-              |> assign(:config_status, config_status)
               |> assign(:config_file_exists, config_file_exists)
               |> assign(:per_category_errors, %{})
               |> put_flash(:info, gettext("Configuration saved successfully."))
@@ -683,7 +712,12 @@ defmodule EvoDashWeb.SettingsLive do
                    all_matching_schemas,
                    &(List.first(&1.key_path) in [:scheduler, :llm])
                  ) do
-                ConfigIO.update_runtime_from_file_config(file_config, socket)
+                if node == node() do
+                  ConfigIO.update_runtime_from_file_config(file_config, socket)
+                else
+                  # Remote scheduler was already reloaded above
+                  socket
+                end
               else
                 socket
               end
@@ -726,17 +760,26 @@ defmodule EvoDashWeb.SettingsLive do
       {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
     else
       config = put_in(socket.assigns.file_config, key_path, schema.default)
+      node = socket.assigns.current_node
 
-      case EvoGit.Config.save_user_config(config) do
+      case EvoDash.NodeContext.save_user_config(node, config) do
         :ok ->
-          file_config = ConfigIO.load_file_config()
-          config_status = config_status()
+          {file_config, socket} =
+            if node == node() do
+              fc = ConfigIO.load_file_config()
+              {fc, assign(socket, :config_status, config_status())}
+            else
+              EvoDash.NodeContext.reload_remote_config(node)
+              remote_cfg = EvoDash.NodeContext.get_remote_config(node)
+              fc = remote_config_to_file_config(remote_cfg)
+              {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+            end
+
           config_file_exists = File.exists?(socket.assigns.config_path)
 
           {:noreply,
            socket
            |> assign(:file_config, file_config)
-           |> assign(:config_status, config_status)
            |> assign(:config_file_exists, config_file_exists)
            |> assign(:per_category_errors, %{})
            |> put_flash(:info, gettext("Reset %{key} to default.", key: path_str))}
@@ -1056,14 +1099,34 @@ defmodule EvoDashWeb.SettingsLive do
     if String.trim(api_key) == "" do
       {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
     else
-      case EvoGit.Config.save_credentials(%{credential_key => String.trim(api_key)}) do
+      node = socket.assigns.current_node
+
+      case EvoDash.NodeContext.save_credentials(node, %{credential_key => String.trim(api_key)}) do
         :ok ->
-          config_status = config_status()
+          # For remote nodes, reload the remote config so the new key takes
+          # effect on the remote scheduler immediately. Re-fetch credentials
+          # from the appropriate node.
+          if node != node() do
+            EvoDash.NodeContext.reload_remote_config(node)
+          end
+
+          config_status =
+            if node == node() do
+              config_status()
+            else
+              EvoDash.NodeContext.get_remote_config_status(node)
+            end
+
+          credentials =
+            case EvoDash.NodeContext.call_remote(node, EvoGit.Config, :credentials, []) do
+              {:ok, creds} when is_map(creds) -> creds
+              _ -> socket.assigns.credentials
+            end
 
           {:noreply,
            socket
            |> assign(:config_status, config_status)
-           |> assign(:credentials, EvoGit.Config.credentials())
+           |> assign(:credentials, credentials)
            |> put_flash(:info, gettext("API key saved successfully."))}
 
         {:error, reason} ->
@@ -1263,22 +1326,42 @@ defmodule EvoDashWeb.SettingsLive do
   defp persist_file_config(file_config, socket, success_msg) do
     # Always update in-memory state so the UI reflects the change immediately
     socket = assign(socket, :file_config, file_config)
+    node = socket.assigns.current_node
 
-    case EvoGit.Config.save_user_config(file_config) do
+    case EvoDash.NodeContext.save_user_config(node, file_config) do
       :ok ->
-        file_config = ConfigIO.load_file_config()
-        config_status = config_status()
-        config_file_exists = File.exists?(socket.assigns.config_path)
+        if node == node() do
+          # Local save — reload from disk and update the local scheduler
+          file_config = ConfigIO.load_file_config()
+          config_status = config_status()
+          config_file_exists = File.exists?(socket.assigns.config_path)
 
-        socket =
-          socket
-          |> assign(:file_config, file_config)
-          |> assign(:config_status, config_status)
-          |> assign(:config_file_exists, config_file_exists)
-          |> assign(:per_category_errors, %{})
-          |> put_flash(:info, success_msg)
+          socket =
+            socket
+            |> assign(:file_config, file_config)
+            |> assign(:config_status, config_status)
+            |> assign(:config_file_exists, config_file_exists)
+            |> assign(:per_category_errors, %{})
+            |> put_flash(:info, success_msg)
 
-        {:noreply, ConfigIO.update_runtime_from_file_config(file_config, socket)}
+          {:noreply, ConfigIO.update_runtime_from_file_config(file_config, socket)}
+        else
+          # Remote save — reload the remote scheduler config and re-fetch
+          EvoDash.NodeContext.reload_remote_config(node)
+          remote_cfg = EvoDash.NodeContext.get_remote_config(node)
+          remote_file_config = remote_config_to_file_config(remote_cfg)
+          config_file_exists = File.exists?(socket.assigns.config_path)
+
+          socket =
+            socket
+            |> assign(:file_config, remote_file_config)
+            |> assign(:config_status, EvoDash.NodeContext.get_remote_config_status(node))
+            |> assign(:config_file_exists, config_file_exists)
+            |> assign(:per_category_errors, %{})
+            |> put_flash(:info, success_msg)
+
+          {:noreply, socket}
+        end
 
       {:error, reason} ->
         {:noreply,
@@ -1299,7 +1382,8 @@ defmodule EvoDashWeb.SettingsLive do
   # On the local node (`socket.assigns.current_node == node()`), config is loaded
   # from the local file system. On a remote node, the resolved scheduler config is
   # fetched via `EvoDash.NodeContext.get_remote_config/1` and displayed — the form
-  # is editable and saves go to the local config file.
+  # is editable and saves go to the REMOTE node's config file (routed via
+  # `EvoDash.NodeContext.save_user_config/2`).
   defp load_node_config(socket) do
     if socket.assigns.current_node == node() do
       # Local node — load from disk exactly as mount/1 does.
