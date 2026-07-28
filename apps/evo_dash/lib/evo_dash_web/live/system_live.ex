@@ -47,26 +47,20 @@ defmodule EvoDashWeb.SystemLive do
             </p>
           </div>
         </div>
-        <%= if @remote? do %>
-          <span class="text-xs text-base-content/50 italic shrink-0 self-center">
-            {gettext("Pause/resume is local-only — switch to the remote node to control its scheduler.")}
-          </span>
-        <% else %>
-          <button
-            type="button"
-            phx-click="toggle_pause"
-            class={[
-              "btn rounded-md font-medium shrink-0",
-              if(@scheduler_paused,
-                do: "bg-success/20 hover:bg-success/30 text-success-content",
-                else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
-              )
-            ]}
-          >
-            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
-            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
-          </button>
-        <% end %>
+        <button
+          type="button"
+          phx-click="toggle_pause"
+          class={[
+            "btn rounded-md font-medium shrink-0",
+            if(@scheduler_paused,
+              do: "bg-success/20 hover:bg-success/30 text-success-content",
+              else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
+            )
+          ]}
+        >
+          <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
+          {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
+        </button>
       </div>
 
       <!-- System Control section (destructive actions) -->
@@ -559,44 +553,43 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("toggle_pause", _params, socket) do
-    # The button is hidden when remote (render), but guard the handler too in
-    # case a stale client fires the event. Never operate on the remote scheduler
-    # from here — there's no clean pause/resume RPC path yet.
-    if socket.assigns.remote? do
+    node = socket.assigns.current_node
+    remote? = node != node()
+
+    if socket.assigns.scheduler_paused do
+      # Resume the scheduler
+      if remote? do
+        EvoDash.NodeContext.call_remote(node, EvoGit.AgentScheduler, :resume, [])
+      else
+        EvoGit.AgentScheduler.resume()
+      end
+
       {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext(
-           "Scheduler controls are local-only. Switch to the remote node to control its scheduler."
-         )
+       socket
+       |> assign(:scheduler_paused, false)
+       # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
+       |> put_flash(
+         :info,
+         gettext("Scheduler resumed. New agents and slots are being granted.")
        )}
     else
-      if socket.assigns.scheduler_paused do
-        EvoGit.AgentScheduler.resume()
-
-        {:noreply,
-         socket
-         |> assign(:scheduler_paused, false)
-         # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
-         |> put_flash(
-           :info,
-           gettext("Scheduler resumed. New agents and slots are being granted.")
-         )}
+      # Pause the scheduler
+      if remote? do
+        EvoDash.NodeContext.call_remote(node, EvoGit.AgentScheduler, :pause, [])
       else
         EvoGit.AgentScheduler.pause()
-
-        {:noreply,
-         socket
-         |> assign(:scheduler_paused, true)
-         |> put_flash(
-           :info,
-           # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
-           gettext(
-             "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
-           )
-         )}
       end
+
+      {:noreply,
+       socket
+       |> assign(:scheduler_paused, true)
+       |> put_flash(
+         :info,
+         # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
+         gettext(
+           "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
+         )
+       )}
     end
   end
 
