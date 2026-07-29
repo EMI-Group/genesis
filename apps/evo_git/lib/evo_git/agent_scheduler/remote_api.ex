@@ -361,6 +361,34 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     EvoGit.TaskRegistry.clear_finished_tasks()
   end
 
+  @doc """
+  Lists recent projects from the TaskRegistry.
+
+  Delegates to `EvoGit.TaskRegistry.list_recent_projects/0` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`, returning native
+  `%EvoGit.RecentProject{}` structs.
+
+  Returns `[%EvoGit.RecentProject{}]` (empty list when no projects exist).
+  """
+  @spec list_recent_projects() :: [EvoGit.RecentProject.t()]
+  def list_recent_projects do
+    EvoGit.TaskRegistry.list_recent_projects()
+  end
+
+  @doc """
+  Adds or updates a recent project entry on the remote node.
+
+  Delegates to `EvoGit.TaskRegistry.add_recent_project/2` (a `GenServer.call`).
+  `path` is the project path (string), `name` is the display name (string). This
+  runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok`.
+  """
+  @spec add_recent_project(String.t(), String.t()) :: :ok
+  def add_recent_project(path, name) do
+    EvoGit.TaskRegistry.add_recent_project(path, name)
+  end
+
   # ── Private: ETS access ────────────────────────────────────────────
 
   # Reads all `{key, value}` pairs from a named ETS table.

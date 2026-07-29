@@ -407,6 +407,48 @@ defmodule EvoGit.RemoteNode do
     end
   end
 
+  @doc """
+  Lists recent projects on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_recent_projects/0`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `[]` if the remote call fails.
+  """
+  @spec list_recent_projects(node()) :: [EvoGit.RecentProject.t()]
+  def list_recent_projects(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_recent_projects()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_recent_projects, []) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Adds or updates a recent project entry on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.add_recent_project/2`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `:ok` even if the remote call fails (fire-and-forget semantics for
+  recent-project tracking).
+
+  Returns `:ok`.
+  """
+  @spec add_recent_project(node(), String.t(), String.t()) :: :ok
+  def add_recent_project(node, path, name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.add_recent_project(path, name)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :add_recent_project, [path, name]) do
+        {:ok, _} -> :ok
+        {:error, _reason} -> :ok
+      end
+    end
+  end
+
   # Safe degraded config-status map returned when a remote config-status RPC
   # fails. Matches the shape of EvoGit.Config.config_status/0 so callers see a
   # well-formed (but unhealthy) status rather than a crash.
