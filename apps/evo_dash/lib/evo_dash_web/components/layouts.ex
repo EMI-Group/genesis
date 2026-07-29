@@ -198,7 +198,7 @@ defmodule EvoDashWeb.Layouts do
 
       <!-- Main Content Area -->
       <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0">
-        <main class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900">
+        <main id="main-content" class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900" phx-hook="NodeSwitchFade" data-node-id={@current_node_id || "local"}>
           {render_slot(@inner_block)}
         </main>
       </div>

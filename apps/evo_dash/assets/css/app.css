@@ -1243,6 +1243,16 @@ button, a, input, textarea, select, summary,
   right: auto;
 }
 
+/* Node switch fade animation — plays on the <main> content area when the
+   node context changes (local ↔ remote switch via the sidebar node selector) */
+@keyframes node-switch-fade {
+  0% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+.node-switch-fade {
+  animation: node-switch-fade 0.25s ease-out;
+}
+
 /* RTL: Shimmer animation direction */
 [dir="rtl"] .task-card-active {
   background-image: linear-gradient(
