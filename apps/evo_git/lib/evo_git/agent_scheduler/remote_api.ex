@@ -157,7 +157,14 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   """
   @spec save_user_config(map()) :: :ok | {:error, term()}
   def save_user_config(config) when is_map(config) do
-    EvoGit.Config.save_user_config(config)
+    case EvoGit.Config.save_user_config(config) do
+      :ok ->
+        reload_config()
+        :ok
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @doc """
