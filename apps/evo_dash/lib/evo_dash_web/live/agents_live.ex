@@ -46,10 +46,14 @@ defmodule EvoDashWeb.AgentsLive do
         previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
         new_agent_ids: MapSet.new(),
         changed_status_ids: MapSet.new(),
-        previous_node: current_node
+        previous_node: current_node,
+        demo_mode: false,
+        last_graph_payload: nil,
+        graph_tasks: [],
+        selected_task_id: nil
       )
 
-    {:ok, socket}
+    {:ok, refresh_graph_tasks(socket)}
   end
 
   @impl true
@@ -105,6 +109,13 @@ defmodule EvoDashWeb.AgentsLive do
         socket
       end
 
+    # ?demo=1 lets the EvolutionGraph hook render a built-in demo tree (UI
+    # walkthrough aid); sync the real agent list into the graph otherwise.
+    socket =
+      socket
+      |> assign(:demo_mode, params["demo"] == "1")
+      |> sync_graph()
+
     {:noreply, socket}
   end
 
@@ -138,7 +149,8 @@ defmodule EvoDashWeb.AgentsLive do
       )
 
     {:noreply,
-     assign(socket,
+     socket
+     |> assign(
        agents: agents,
        id_to_display: id_to_display,
        repo_trees: build_repo_trees(agents),
@@ -146,7 +158,8 @@ defmodule EvoDashWeb.AgentsLive do
        previous_statuses: current_statuses,
        new_agent_ids: new_agent_ids,
        changed_status_ids: changed_status_ids
-     )}
+     )
+     |> sync_graph()}
   end
 
   @impl true
@@ -196,7 +209,8 @@ defmodule EvoDashWeb.AgentsLive do
       Process.send_after(self(), :remote_poll, 3_000)
 
       {:noreply,
-       assign(socket,
+       socket
+       |> assign(
          agents: agents,
          id_to_display: id_to_display,
          repo_trees: build_repo_trees(agents),
@@ -204,7 +218,8 @@ defmodule EvoDashWeb.AgentsLive do
          previous_statuses: current_statuses,
          new_agent_ids: new_agent_ids,
          changed_status_ids: changed_status_ids
-       )}
+       )
+       |> sync_graph()}
     else
       # Switched back to local — stop polling (PubSub handles local updates).
       {:noreply, assign(socket, :remote_poll_timer, false)}
@@ -251,7 +266,8 @@ defmodule EvoDashWeb.AgentsLive do
         )
 
       {:noreply,
-       assign(socket,
+       socket
+       |> assign(
          agents: agents,
          id_to_display: Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end),
          repo_trees: build_repo_trees(agents),
@@ -259,7 +275,8 @@ defmodule EvoDashWeb.AgentsLive do
          previous_statuses: current_statuses,
          new_agent_ids: MapSet.new(),
          changed_status_ids: MapSet.new()
-       )}
+       )
+       |> sync_graph()}
     else
       agent = Enum.at(agents, agent_idx)
 
@@ -343,13 +360,15 @@ defmodule EvoDashWeb.AgentsLive do
         end
 
       {:noreply,
-       assign(socket,
+       socket
+       |> assign(
          agents: agents,
          id_to_display: id_to_display,
          repo_trees: repo_trees,
          previous_statuses: previous_statuses,
          changed_status_ids: changed_status_ids
-       )}
+       )
+       |> sync_graph()}
     end
   end
 
@@ -392,7 +411,8 @@ defmodule EvoDashWeb.AgentsLive do
       repo_trees = build_repo_trees(agents)
 
       {:noreply,
-       assign(socket,
+       socket
+       |> assign(
          agents: agents,
          id_to_display: id_to_display,
          repo_trees: repo_trees,
@@ -400,7 +420,8 @@ defmodule EvoDashWeb.AgentsLive do
          new_agent_ids: new_agent_ids,
          previous_statuses: previous_statuses,
          selected_agent_id: selected_agent_id
-       )}
+       )
+       |> sync_graph()}
     end
   end
 
@@ -440,18 +461,31 @@ defmodule EvoDashWeb.AgentsLive do
         socket
       end
 
-    {:noreply, socket}
+    {:noreply, push_event(socket, "agents:select", %{id: agent_id})}
+  end
+
+  # Switches the evolution graph to another task's tree (one tree per view).
+  @impl true
+  def handle_event("select_tree", %{"task_id" => task_id}, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_task_id, task_id)
+     # Force a re-push even if the filtered payload coincidentally matches.
+     |> assign(:last_graph_payload, nil)
+     |> sync_graph()}
   end
 
   @impl true
   def handle_event("close_details", _params, socket) do
     {:noreply,
-     assign(socket,
+     socket
+     |> assign(
        selected_agent_id: nil,
        selected_history_entry: nil,
        selected_objective: nil,
        show_usage: false
-     )}
+     )
+     |> push_event("agents:deselect", %{})}
   end
 
   @impl true
@@ -559,7 +593,8 @@ defmodule EvoDashWeb.AgentsLive do
 
     agents = reload_selected_agent_history(agents, socket.assigns.selected_agent_id, current_node)
 
-    assign(socket,
+    socket
+    |> assign(
       agents: agents,
       id_to_display: id_to_display,
       repo_trees: build_repo_trees(agents),
@@ -568,6 +603,7 @@ defmodule EvoDashWeb.AgentsLive do
       new_agent_ids: MapSet.new(),
       changed_status_ids: MapSet.new()
     )
+    |> sync_graph()
   end
 
   # Incremental agent registration handler for the LOCAL node. Reads ETS
@@ -664,6 +700,7 @@ defmodule EvoDashWeb.AgentsLive do
       previous_agent_ids: previous_agent_ids,
       new_agent_ids: new_agent_ids
     )
+    |> sync_graph()
   end
 
   defp maybe_update_parent_children(agents, nil), do: agents
@@ -948,5 +985,149 @@ defmodule EvoDashWeb.AgentsLive do
   defp reload_selected_agent_history(agents, selected_agent_id, node) do
     history = load_agent_history(node, selected_agent_id)
     update_agent_in_list(agents, selected_agent_id, fn agent -> %{agent | history: history} end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Evolution graph (任务演化图) — data feed for the EvolutionGraph JS hook
+  # ---------------------------------------------------------------------------
+
+  # Serializes agents into the node payload consumed by the hook. When
+  # `task_id` is given, only that task's tree is included — the canvas shows
+  # one tree at a time (multi-project trees are switched via tabs).
+  # Exposed (not defp) so the companion template can render the initial
+  # data-agents attribute on the hook container.
+  def graph_payload(agents, task_id \\ nil) do
+    agents
+    |> Enum.filter(fn a -> is_nil(task_id) or a.task_id == task_id end)
+    |> Enum.map(fn a ->
+      %{
+        id: to_string(a.id),
+        parent_id: a.parent_id && to_string(a.parent_id),
+        label: graph_label(a),
+        status: to_string(a.status),
+        depth: a.depth,
+        agent: short_module(a.agent_module)
+      }
+    end)
+  end
+
+  # Data source for the graph: ?demo=1 replaces the real agent list with a
+  # built-in two-tree demo set, so the demo exercises the REAL code path
+  # (tabs, tree switching, payload filtering) instead of a client stub.
+  def demo_source(true, _agents), do: demo_agents()
+  def demo_source(false, agents), do: agents
+
+  # Two fully independent trees (two "projects") covering every status.
+  defp demo_agents do
+    [
+      # Tree A — task #1 构建一个 Web 应用
+      %{id: 1, parent_id: nil, task_id: "demo-1", task_number: 1, task_local_id: "1", status: :waiting, depth: 0, objective: "构建一个 Web 应用", agent_module: EvoGit.Agents.Manager},
+      %{id: 2, parent_id: 1, task_id: "demo-1", task_number: 1, task_local_id: "1.1", status: :completed, depth: 1, objective: "需求分析", agent_module: EvoGit.Agents.Generalist},
+      %{id: 3, parent_id: 1, task_id: "demo-1", task_number: 1, task_local_id: "1.2", status: :running, depth: 1, objective: "架构设计", agent_module: EvoGit.Agents.CodebaseLead},
+      %{id: 4, parent_id: 3, task_id: "demo-1", task_number: 1, task_local_id: "1.2.1", status: :completed, depth: 2, objective: "数据模型", agent_module: EvoGit.Agents.Executor},
+      %{id: 5, parent_id: 3, task_id: "demo-1", task_number: 1, task_local_id: "1.2.2", status: :running, depth: 2, objective: "API 实现", agent_module: EvoGit.Agents.Executor},
+      %{id: 6, parent_id: 1, task_id: "demo-1", task_number: 1, task_local_id: "1.3", status: :waiting, depth: 1, objective: "前端页面", agent_module: EvoGit.Agents.Manager},
+      %{id: 7, parent_id: 6, task_id: "demo-1", task_number: 1, task_local_id: "1.3.1", status: :pending, depth: 2, objective: "样式主题", agent_module: EvoGit.Agents.Executor},
+      %{id: 8, parent_id: 6, task_id: "demo-1", task_number: 1, task_local_id: "1.3.2", status: :blocked, depth: 2, objective: "单元测试", agent_module: EvoGit.Agents.Executor},
+      %{id: 9, parent_id: 1, task_id: "demo-1", task_number: 1, task_local_id: "1.4", status: :ready, depth: 1, objective: "代码审查", agent_module: EvoGit.Agents.Evaluator},
+      # Tree B — task #2 开发数据处理管线（完全独立）
+      %{id: 20, parent_id: nil, task_id: "demo-2", task_number: 2, task_local_id: "1", status: :running, depth: 0, objective: "开发数据处理管线", agent_module: EvoGit.Agents.Manager},
+      %{id: 21, parent_id: 20, task_id: "demo-2", task_number: 2, task_local_id: "1.1", status: :completed, depth: 1, objective: "数据源接入", agent_module: EvoGit.Agents.Executor},
+      %{id: 22, parent_id: 20, task_id: "demo-2", task_number: 2, task_local_id: "1.2", status: :failed, depth: 1, objective: "转换层", agent_module: EvoGit.Agents.Generalist},
+      %{id: 23, parent_id: 20, task_id: "demo-2", task_number: 2, task_local_id: "1.3", status: :pending, depth: 1, objective: "报表输出", agent_module: EvoGit.Agents.Executor}
+    ]
+  end
+
+  defp graph_label(a) do
+    objective = (a.objective || "") |> String.trim()
+
+    cond do
+      objective == "" -> to_string(a.task_local_id || a.id)
+      String.length(objective) > 18 -> String.slice(objective, 0, 18) <> "…"
+      true -> objective
+    end
+  end
+
+  # Short badge for the agent module shown under the node ring.
+  defp short_module(nil), do: ""
+
+  defp short_module(mod) when is_atom(mod) do
+    case mod |> Module.split() |> List.last() do
+      "Manager" -> "M"
+      "Executor" -> "E"
+      "Generalist" -> "G"
+      "CodebaseLead" -> "CL"
+      "CodebaseInvestigator" -> "CI"
+      "ContextExtractor" -> "CX"
+      "TaskScheduler" -> "TS"
+      "GenesisPlanner" -> "GP"
+      "Evaluator" -> "Ev"
+      "SkillExtractor" -> "SE"
+      other -> String.slice(other, 0, 1)
+    end
+  end
+
+  defp short_module(_), do: ""
+
+  # Groups agents by task — each task is one tree (one root agent + its
+  # descendants). Fully independent projects get independent tabs so the
+  # canvas only ever renders ONE tree.
+  defp graph_tasks(agents) do
+    agents
+    |> Enum.group_by(& &1.task_id)
+    |> Enum.map(fn {task_id, members} ->
+      root = Enum.find(members, &is_nil(&1.parent_id)) || hd(members)
+
+      %{
+        task_id: task_id,
+        task_number: root.task_number || root.task_id,
+        label: graph_label(root),
+        running?: Enum.any?(members, &(&1.status == :running)),
+        size: length(members)
+      }
+    end)
+    |> Enum.sort_by(fn t -> {not t.running?, -(if(is_integer(t.task_number), do: t.task_number, else: 0))} end)
+  end
+
+  # Recomputes the tab list and makes sure `selected_task_id` still points at
+  # an existing tree (auto-picks the first — running tasks sort first).
+  defp refresh_graph_tasks(socket) do
+    tasks = graph_tasks(demo_source(socket.assigns[:demo_mode] || false, socket.assigns.agents))
+    selected = socket.assigns[:selected_task_id]
+
+    if selected && Enum.any?(tasks, &(&1.task_id == selected)) do
+      assign(socket, :graph_tasks, tasks)
+    else
+      first = List.first(tasks)
+
+      socket
+      |> assign(:graph_tasks, tasks)
+      |> assign(:selected_task_id, first && first.task_id)
+    end
+  end
+
+  # Pushes the current tree's payload to the hook when it changed since the
+  # last sync (the page polls / receives deltas frequently — avoid spamming
+  # identical payloads). No-op while disconnected.
+  defp sync_graph(socket) do
+    socket = refresh_graph_tasks(socket)
+
+    if connected?(socket) do
+      payload =
+        graph_payload(
+          demo_source(socket.assigns[:demo_mode] || false, socket.assigns.agents),
+          socket.assigns.selected_task_id
+        )
+
+      if payload == socket.assigns[:last_graph_payload] do
+        socket
+      else
+        socket
+        |> assign(:last_graph_payload, payload)
+        |> push_event("agents:sync", %{nodes: payload})
+      end
+    else
+      socket
+    end
   end
 end

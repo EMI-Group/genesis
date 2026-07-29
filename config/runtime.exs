@@ -1,5 +1,58 @@
 import Config
 
+# ── Dev-only onboarding reset ────────────────────────────────────────────
+# GENESIS_DEV_RESET_ONBOARDING=1 时（仅 dev 环境），每次启动前把 config.toml
+# 中的 LLM 模型配置剥离（原始文件备份为 config.toml.onboarding-backup），
+# 使应用以"首次配置"状态启动 —— /welcome 始终显示初始设置流程。
+# 注意：runtime.exs 会被每个 mix 命令求值，所以**不做自动还原**（否则一次
+# 不带环境变量的 `mix compile` 就会悄悄还原）。要恢复配置时，手动把
+# config.toml.onboarding-backup 复制回 config.toml 即可。
+if config_env() == :dev do
+  config_dir = EvoGit.Platform.config_dir()
+  config_path = Path.join(config_dir, "config.toml")
+  backup_path = config_path <> ".onboarding-backup"
+
+  # 剥离 [llm] 表中的 model/models 键以及所有 [[llm.models]] 表
+  strip_llm_model_config = fn content ->
+    {out, _section} =
+      content
+      |> String.split("\n")
+      |> Enum.reduce({[], :other}, fn line, {acc, section} ->
+        trimmed = String.trim(line)
+
+        cond do
+          # [[llm.models]] 数组表及其全部子表（如 [llm.models.model]）
+          String.starts_with?(trimmed, "[[llm.models") or
+            String.starts_with?(trimmed, "[llm.models") ->
+            {acc, :llm_models}
+
+          trimmed == "[llm]" ->
+            {acc ++ [line], :llm}
+
+          String.starts_with?(trimmed, "[") ->
+            {acc ++ [line], :other}
+
+          section == :llm_models ->
+            {acc, section}
+
+          section == :llm and
+            (String.starts_with?(trimmed, "model =") or String.starts_with?(trimmed, "models =")) ->
+            {acc, section}
+
+          true ->
+            {acc ++ [line], section}
+        end
+      end)
+
+    Enum.join(out, "\n")
+  end
+
+  if System.get_env("GENESIS_DEV_RESET_ONBOARDING") == "1" and File.exists?(config_path) do
+    unless File.exists?(backup_path), do: File.cp!(config_path, backup_path)
+    File.write!(config_path, strip_llm_model_config.(File.read!(config_path)))
+  end
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

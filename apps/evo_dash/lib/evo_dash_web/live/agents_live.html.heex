@@ -2,70 +2,42 @@
 
   <!-- Fixed viewport layout: no page-level scroll on xl+, panels scroll independently -->
   <div class="agents-page-layout animate-fade-in-up animation-delay-100">
-    <!-- Left Column: Tree + Legend -->
+    <!-- Left Column: Task Evolution Graph -->
     <div class="agents-left-col">
-      <!-- Agent Tree View -->
-      <div class="agents-tree-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
-        <div class="card-body p-4">
-          <h3 class="card-title mb-2">
-            <.icon name="hero-squares-2x2" class="size-5" /> <%= gettext("Agent Tree") %>
-          </h3>
-
-          <%= if @agents == [] do %>
-            <div class="text-center py-16 text-base-content/50">
-              <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
-              <p class="text-lg"><%= gettext("No agents currently registered") %></p>
-              <p class="text-sm mt-2"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
-            </div>
-          <% else %>
-            <div class="space-y-4">
-              <%= for {repo_name, tree_nodes} <- @repo_trees do %>
-                <div>
-                  <!-- Repo Header -->
-                  <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-200">
-                    <.icon name="hero-server-stack" class="size-5 text-primary" />
-                    <span class="font-bold text-base text-base-content"><%= repo_name %></span>
-                    <span class="text-xs text-base-content/50">(<%= length(tree_nodes) %> <%= gettext("directories") %>)</span>
-                  </div>
-                  <div class="space-y-4 font-mono text-sm">
-                    <EvoDashWeb.AgentsComponents.path_tree
-                      nodes={tree_nodes}
-                      depth={0}
-                      selected_id={@selected_agent_id}
-                      new_agent_ids={@new_agent_ids}
-                      changed_status_ids={@changed_status_ids}
-                    />
-                  </div>
-                </div>
-              <% end %>
-            </div>
-          <% end %>
-        </div>
-      </div>
-
-      <!-- Legend — pinned to bottom of left column -->
-      <div class="agents-legend-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
-        <div class="card-body p-2">
-          <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-            <span class="font-semibold text-base-content/70"><%= gettext("Status Legend") %></span>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is queued and waiting to be scheduled for execution.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-base-content/20"></span>
-              <span><%= gettext("Pending") %></span>
-            </div>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is actively executing its assigned task.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-success"></span>
-              <span><%= gettext("Running") %></span>
-            </div>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is waiting for subagents to finish. Nothing to do but wait.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-warning"></span>
-              <span><%= gettext("Waiting") %></span>
-            </div>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is blocked due to insufficient LLM or tool concurrency. Consider increasing concurrency in Settings.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-error"></span>
-              <span><%= gettext("Blocked") %></span>
+      <div class="agents-tree-panel card shadow-sm border border-base-200 rounded-2xl overflow-hidden" style="background:#101010">
+        <%= if @agents == [] and not @demo_mode do %>
+          <div class="text-center py-16 text-base-content/50">
+            <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
+            <p class="text-lg"><%= gettext("No agents currently registered") %></p>
+            <p class="text-sm mt-2"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
+          </div>
+        <% else %>
+          <div class="flex flex-col h-full">
+            <%= if length(@graph_tasks) > 1 do %>
+              <!-- Tree switcher: one task = one tree; the canvas shows ONE tree at a time -->
+              <div class="evo-tabbar flex items-center gap-1 px-3 pt-2 overflow-x-auto shrink-0">
+                <%= for t <- @graph_tasks do %>
+                  <button
+                    phx-click="select_tree"
+                    phx-value-task_id={t.task_id}
+                    class={["evo-tab", t.task_id == @selected_task_id && "evo-tab-active"]}
+                  >
+                    #<%= t.task_number %> · <%= t.label %>
+                    <span class="ml-1 opacity-50">(<%= t.size %>)</span>
+                  </button>
+                <% end %>
+              </div>
+            <% end %>
+            <div
+              id="evolution-graph"
+              phx-hook="EvolutionGraph"
+              phx-update="ignore"
+              data-agents={Jason.encode!(graph_payload(demo_source(@demo_mode, @agents), @selected_task_id))}
+              class="flex-1 min-h-0"
+            >
             </div>
           </div>
-        </div>
+        <% end %>
       </div>
     </div>
 

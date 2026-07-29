@@ -29,6 +29,8 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_display_name(:nix), do: gettext("Nix")
   def category_display_name(:remote_connections), do: gettext("Remote Connections")
   def category_display_name(:node), do: gettext("Node")
+  def category_display_name(:system), do: gettext("System")
+  def category_display_name(:help), do: gettext("Help & Guides")
 
   def category_icon(:scheduler), do: "hero-cog-6-tooth"
   def category_icon(:llm), do: "hero-sparkles"
@@ -42,6 +44,8 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_icon(:nix), do: "brand-nix"
   def category_icon(:remote_connections), do: "hero-globe-alt"
   def category_icon(:node), do: "hero-server-stack"
+  def category_icon(:system), do: "hero-server-stack"
+  def category_icon(:help), do: "hero-book-open"
 
   # Made public because category_section/1 in the parent module calls it.
   # zh_CN: agent → "智能体", concurrency → "并发"
@@ -84,6 +88,12 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_description(:node),
     do: gettext("Configure the local Genesis node identity and distribution settings.")
 
+  def category_description(:system),
+    do: gettext("Pause/resume the scheduler, restart or stop the system, and run system self-checks.")
+
+  def category_description(:help),
+    do: gettext("Usage guides, example configuration, and frequently asked questions.")
+
   def schema_matches?(_schema, ""), do: true
 
   def schema_matches?(schema, search_text) do
@@ -119,7 +129,9 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
       :tools,
       :nix,
       :remote_connections,
-      :node
+      :node,
+      :system,
+      :help
     ]
 
     Enum.sort_by(categories, fn {cat, _} -> Enum.find_index(order, &(&1 == cat)) || 99 end)

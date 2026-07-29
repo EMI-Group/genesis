@@ -88,7 +88,7 @@ defmodule EvoDashWeb.TaskFormComponents do
           <% end %>
         </div>
 
-        <!-- Unified toolbar row: Mode | Model | Build System | Archive | (spacer) | mode_info | Execute -->
+        <!-- Unified toolbar row: Mode | (spacer) | mode_info | Execute -->
         <div class="flex flex-wrap items-end gap-x-5 gap-y-2.5 mt-4">
           <!-- Task Mode -->
           <div class="flex flex-col gap-1">
@@ -113,60 +113,6 @@ defmodule EvoDashWeb.TaskFormComponents do
               </select>
               <.tip text={mode_description(@mode)} />
             </div>
-          </div>
-
-          <!-- Model -->
-          <%= if @model_profiles != [] do %>
-            <div class="flex flex-col gap-1">
-              <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
-                {gettext("Model")}
-              </label>
-              <div class="flex items-center gap-1.5">
-                <select
-                  name="model_id"
-                  phx-change="select_model"
-                  class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[10rem]"
-                >
-                  <%= for profile <- @model_profiles do %>
-                    <option value={profile.id} selected={@selected_model_id == profile.id}>
-                      {profile.id <> " (" <> profile_model_label(profile) <> ")"}
-                    </option>
-                  <% end %>
-                </select>
-                <.tip text={gettext("Select which model profile to use for this task")} />
-              </div>
-            </div>
-          <% end %>
-
-          <!-- Build System (genesis modes only) -->
-          <%= if String.starts_with?(@mode, "genesis") do %>
-            <div class="flex flex-col gap-1">
-              <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
-                {gettext("Build System")}
-              </label>
-              <select
-                name="build_system"
-                class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
-              >
-                <option value="">{gettext("No build system")}</option>
-                <%= for bs <- @build_systems do %>
-                  <option value={to_string(bs.id)} selected={@selected_build_system == to_string(bs.id)}>
-                    {bs.name}
-                  </option>
-                <% end %>
-              </select>
-            </div>
-          <% end %>
-
-          <!-- Archive toggle -->
-          <div class="flex flex-col gap-1">
-            <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
-              {gettext("Archive")}
-            </label>
-            <label class="label cursor-pointer flex items-center gap-2 py-0">
-              <input type="checkbox" name="archive" value="true" class="toggle toggle-sm toggle-primary" />
-              <span class="text-sm text-base-content/60">{gettext("Archive agent details")}</span>
-            </label>
           </div>
 
           <!-- Right-aligned: mode_info + Execute button -->
@@ -287,27 +233,4 @@ defmodule EvoDashWeb.TaskFormComponents do
     """
   end
 
-  # Renders a compact label for a profile's model spec, handling both the new
-  # map format (%{provider: atom, id: string, base_url: ...}) or tuple format
-  # ({:provider, [id: "id", base_url: "..."]) and the legacy
-  # "provider:id" string format. The `<>` binary operator crashes on maps, so we
-  # normalize to a string here.
-  defp profile_model_label(%{model: model} = _profile) when is_map(model) do
-    provider = model[:provider] || model["provider"]
-    id = model[:id] || model["id"]
-
-    cond do
-      provider != nil and id != nil -> "#{provider}:#{id}"
-      id != nil -> to_string(id)
-      true -> ""
-    end
-  end
-
-  defp profile_model_label(%{model: {provider, opts}}) when is_atom(provider) and is_list(opts) do
-    id = Keyword.get(opts, :id)
-    if id && id != "", do: "#{provider}:#{id}"
-  end
-
-  defp profile_model_label(%{model: model}) when is_binary(model), do: model
-  defp profile_model_label(_profile), do: ""
 end

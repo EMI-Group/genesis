@@ -1,12 +1,17 @@
 defmodule EvoDashWeb.SettingsLive do
   @moduledoc """
-  Settings page with two tabs: runtime scheduler/sandbox controls and a
-  GUI editor for the user configuration file (config.toml).
+  Settings page: a GUI editor for the user configuration file (config.toml)
+  organized in schema-driven categories, plus pseudo-categories
+  `:remote_connections` (SSH targets), `:system` (scheduler pause/resume,
+  restart/stop with confirmation, system self-check) and `:help` (guides,
+  example config, FAQ) — the latter two ported from the retired `/system` page.
   """
   use EvoDashWeb, :live_view
   alias EvoGit.Config.Schema
   alias EvoDashWeb.SettingsLive.ConfigIO
+  alias EvoDashWeb.SettingsLive.HelpContent
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
+  alias EvoDashWeb.SettingsLive.SystemSection
 
   @impl true
   def render(assigns) do
@@ -131,7 +136,8 @@ defmodule EvoDashWeb.SettingsLive do
               />
             </.form>
           <% else %>
-            <%= if @active_category == :remote_connections do %>
+            <%= cond do %>
+              <% @active_category == :remote_connections -> %>
               <%!-- Remote Connections UI — same design as category_section but
                    for the special :remote_connections pseudo-category --%>
               <div class="flex-1 flex flex-col min-w-0">
@@ -385,7 +391,24 @@ defmodule EvoDashWeb.SettingsLive do
                   </div>
                 </div>
               </div>
-            <% else %>
+              <% @active_category == :system -> %>
+              <SystemSection.system_category
+                scheduler_paused={@scheduler_paused}
+                remote={@remote?}
+                system_checks_status={@system_checks_status}
+                sys_config_status={@sys_config_status}
+                tool_check={@tool_check}
+                sandbox_check={@sandbox_check}
+                supervisor_check={@supervisor_check}
+                nix_check={@nix_check}
+                show_restart_confirm={@show_restart_confirm}
+                show_stop_confirm={@show_stop_confirm}
+              />
+              <% @active_category == :help -> %>
+              <%= if @help_content do %>
+                <SystemSection.help_category help_content={@help_content} />
+              <% end %>
+              <% true -> %>
             <%!-- category_section renders its own <form phx-submit="save_category">
                  internally. The LLM category's Quick Setup panel and Model
                  Profiles editor contain their own nested forms (save_api_key,
@@ -435,7 +458,11 @@ defmodule EvoDashWeb.SettingsLive do
     models = get_in(file_config, [:llm, :models]) || []
     test_profile_id = if models != [], do: ModelProfileHelpers.profile_id(hd(models))
 
-    schemas_by_category = Map.put(schemas_by_category, :remote_connections, [])
+    schemas_by_category =
+      schemas_by_category
+      |> Map.put(:remote_connections, [])
+      |> Map.put(:system, [])
+      |> Map.put(:help, [])
 
     socket =
       assign(socket,
@@ -460,7 +487,20 @@ defmodule EvoDashWeb.SettingsLive do
         bootstrap_progress: %{},
         remote_targets: EvoDash.NodeContext.list_targets(),
         remote_statuses: EvoDash.NodeContext.connection_status(),
-        remote_form_target: nil
+        remote_form_target: nil,
+        # :system pseudo-category (ported from the retired /system page)
+        remote?: false,
+        scheduler_paused: false,
+        show_restart_confirm: false,
+        show_stop_confirm: false,
+        system_checks_status: :idle,
+        sys_config_status: nil,
+        tool_check: nil,
+        sandbox_check: nil,
+        supervisor_check: nil,
+        nix_check: nil,
+        # :help pseudo-category
+        help_content: nil
       )
 
     {:ok, socket}
@@ -468,11 +508,27 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    previous_remote? = socket.assigns[:remote?]
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/settings")
+      |> assign(:remote?, socket.assigns.current_node != node())
+      |> assign(:scheduler_paused, EvoDash.NodeContext.paused?(socket.assigns.current_node))
       |> load_node_config()
+
+    # Node context changed (e.g. switched Local ↔ remote) — clear stale
+    # restart/stop confirm flags so a modal opened on one node can't be
+    # confirmed on another.
+    socket =
+      if previous_remote? != nil and previous_remote? != socket.assigns.remote? do
+        socket
+        |> assign(:show_restart_confirm, false)
+        |> assign(:show_stop_confirm, false)
+      else
+        socket
+      end
 
     # Map the raw query param to a known category atom via a whitelist lookup
     # built from the existing schemas_by_category map (atom keys). Stringify
@@ -496,6 +552,13 @@ defmodule EvoDashWeb.SettingsLive do
       else
         socket
       end
+
+    # Lazily kick off the (expensive) system self-check only when the :system
+    # category is actually opened; same for the :help content load.
+    socket =
+      socket
+      |> maybe_spawn_system_checks(category)
+      |> maybe_load_help_content(category)
 
     {:noreply, socket}
   end
@@ -551,7 +614,22 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_info({:scheduler_config_updated}, socket) do
-    {:noreply, assign(socket, :scheduler_config, ConfigIO.load_scheduler_config())}
+    {:noreply,
+     socket
+     |> assign(:scheduler_config, ConfigIO.load_scheduler_config())
+     |> assign(:scheduler_paused, load_paused_state())}
+  end
+
+  @impl true
+  def handle_info({:system_checks_result, result}, socket) do
+    {:noreply,
+     socket
+     |> assign(:system_checks_status, :done)
+     |> assign(:sys_config_status, result[:config])
+     |> assign(:tool_check, result[:tools])
+     |> assign(:sandbox_check, result[:sandbox])
+     |> assign(:supervisor_check, result[:supervisor])
+     |> assign(:nix_check, result[:nix])}
   end
 
   @impl true
@@ -1361,6 +1439,175 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
+  # ---------------------------------------------------------------------------
+  # :system pseudo-category events (ported from the retired /system page)
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def handle_event("rerun_checks", _params, socket) do
+    spawn_system_checks(socket)
+
+    socket =
+      assign(socket,
+        system_checks_status: :checking,
+        sys_config_status: nil,
+        tool_check: nil,
+        sandbox_check: nil,
+        supervisor_check: nil,
+        nix_check: nil
+      )
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_pause", _params, socket) do
+    # Never operate on the remote scheduler from here — there's no clean
+    # pause/resume RPC path yet.
+    if socket.assigns.remote? do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext(
+           "Scheduler controls are local-only. Switch to the remote node to control its scheduler."
+         )
+       )}
+    else
+      if socket.assigns.scheduler_paused do
+        EvoGit.AgentScheduler.resume()
+
+        {:noreply,
+         socket
+         |> assign(:scheduler_paused, false)
+         # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
+         |> put_flash(
+           :info,
+           gettext("Scheduler resumed. New agents and slots are being granted.")
+         )}
+      else
+        EvoGit.AgentScheduler.pause()
+
+        {:noreply,
+         socket
+         |> assign(:scheduler_paused, true)
+         |> put_flash(
+           :info,
+           # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
+           gettext(
+             "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
+           )
+         )}
+      end
+    end
+  end
+
+  @impl true
+  def handle_event("request_restart", _params, socket) do
+    if socket.assigns.remote? do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext(
+           "System restart/stop is local-only — this controls the local dashboard VM, not the remote node."
+         )
+       )}
+    else
+      {:noreply, assign(socket, :show_restart_confirm, true)}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_restart", _params, socket) do
+    {:noreply, assign(socket, :show_restart_confirm, false)}
+  end
+
+  @impl true
+  def handle_event("confirm_restart", _params, socket) do
+    # Defense-in-depth: System.restart/0 tears down the LOCAL VM, so we MUST
+    # guard the handler too — a stale modal or crafted event must never
+    # restart the local dashboard VM while the user is viewing a remote node.
+    if socket.assigns.remote? do
+      {:noreply,
+       socket
+       |> assign(:show_restart_confirm, false)
+       |> put_flash(
+         :error,
+         gettext("Cannot restart a remote node from the dashboard")
+       )}
+    else
+      # Spawn a short-lived process so this LiveView can finish replying (and the
+      # browser can close the modal) before the VM tears down.
+      spawn(fn ->
+        Process.sleep(150)
+        System.restart()
+      end)
+
+      {:noreply,
+       socket
+       |> assign(:show_restart_confirm, false)
+       |> put_flash(
+         :info,
+         gettext("System is restarting. Please wait while the Erlang VM comes back up.")
+       )}
+    end
+  end
+
+  @impl true
+  def handle_event("request_stop", _params, socket) do
+    if socket.assigns.remote? do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext(
+           "System restart/stop is local-only — this controls the local dashboard VM, not the remote node."
+         )
+       )}
+    else
+      {:noreply, assign(socket, :show_stop_confirm, true)}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_stop", _params, socket) do
+    {:noreply, assign(socket, :show_stop_confirm, false)}
+  end
+
+  @impl true
+  def handle_event("confirm_stop", _params, socket) do
+    # Defense-in-depth: same rationale as confirm_restart — System.stop/0 shuts
+    # down the LOCAL VM. Guard the handler even though the buttons are disabled
+    # when remote.
+    if socket.assigns.remote? do
+      {:noreply,
+       socket
+       |> assign(:show_stop_confirm, false)
+       |> put_flash(
+         :error,
+         gettext("Cannot stop a remote node from the dashboard")
+       )}
+    else
+      # Spawn a short-lived process so this LiveView can finish replying (and the
+      # browser can close the modal) before the VM shuts down.
+      spawn(fn ->
+        Process.sleep(150)
+        System.stop()
+      end)
+
+      {:noreply,
+       socket
+       |> assign(:show_stop_confirm, false)
+       |> put_flash(
+         :info,
+         gettext(
+           "System is stopping. The Erlang VM will shut down and must be started again manually."
+         )
+       )}
+    end
+  end
+
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Generation params
   # ───────────────────────────────────────────────────────────────────────────
@@ -1608,5 +1855,66 @@ defmodule EvoDashWeb.SettingsLive do
       :disconnected -> gettext("Disconnected")
       _ -> gettext("Unknown")
     end
+  end
+
+  # --- :system / :help private helpers ---
+
+  # Starts the system self-check in the background when the :system category
+  # is opened for the first time (keeps Settings mount cheap).
+  defp maybe_spawn_system_checks(socket, :system) do
+    if socket.assigns.system_checks_status == :idle do
+      spawn_system_checks(socket)
+      assign(socket, :system_checks_status, :checking)
+    else
+      socket
+    end
+  end
+
+  defp maybe_spawn_system_checks(socket, _category), do: socket
+
+  defp maybe_load_help_content(socket, :help) do
+    if socket.assigns.help_content do
+      socket
+    else
+      config_dir = EvoGit.Platform.config_dir()
+      config_path = Path.join(config_dir, "config.toml")
+      credentials_path = Path.join(config_dir, "credentials.toml")
+
+      assign(socket, :help_content, %{
+        config_reference: HelpContent.config_reference(config_path),
+        credentials_reference: HelpContent.credentials_reference(credentials_path),
+        usage_reference: HelpContent.usage_reference(),
+        faq_content: HelpContent.faq_content(config_path, credentials_path)
+      })
+    end
+  end
+
+  defp maybe_load_help_content(socket, _category), do: socket
+
+  defp spawn_system_checks(socket) do
+    parent = self()
+    node = socket.assigns.current_node
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result = safe_system_checks(node)
+      send(parent, {:system_checks_result, result})
+    end)
+  end
+
+  # Runs the system self-check. On a remote node, the config-status row should
+  # reflect the remote node's config (via RPC); tools/sandbox/supervisor/nix are
+  # inherently local to the dashboard VM, so they are NOT fetched remotely.
+  defp safe_system_checks(node) when node != node() do
+    base = EvoGit.SystemCheck.run_all_checks()
+    remote_status = EvoDash.NodeContext.get_remote_config_status(node)
+    Map.put(base, :config, remote_status)
+  end
+
+  defp safe_system_checks(_node) do
+    EvoGit.SystemCheck.run_all_checks()
+  end
+
+  defp load_paused_state do
+    Map.get(EvoGit.AgentScheduler.get_config(), :paused, false)
   end
 end

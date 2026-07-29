@@ -93,16 +93,6 @@ defmodule EvoDashWeb.Layouts do
           </.link>
         </div>
 
-        <!-- Node Selector -->
-        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-800 shrink-0">
-          <.live_component
-            module={EvoDashWeb.NodeSelectorComponent}
-            id="node-selector"
-            current_node_id={@current_node_id}
-            current_node_name={@current_node_name}
-          />
-        </div>
-
         <!-- Navigation Links -->
         <%= if !@simple_nav do %>
         <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
@@ -110,27 +100,17 @@ defmodule EvoDashWeb.Layouts do
             navigate={with_node_param(~p"/", @current_node_id)}
             current={@current_page == :dashboard}
             icon="hero-squares-2x2"
-          >{gettext("Projects")}</.sidebar_nav_link>
+          >{gettext("Tasks")}</.sidebar_nav_link>
           <.sidebar_nav_link
             navigate={with_node_param(~p"/agents", @current_node_id)}
             current={@current_page == :agents}
             icon="hero-server"
           >{gettext("Agents")}</.sidebar_nav_link>
           <.sidebar_nav_link
-            navigate={with_node_param(~p"/tasks", @current_node_id)}
-            current={@current_page == :tasks}
-            icon="hero-clipboard-document-list"
-          >{gettext("Tasks")}</.sidebar_nav_link>
-          <.sidebar_nav_link
             navigate={with_node_param(~p"/settings", @current_node_id)}
             current={@current_page == :settings}
             icon="hero-cog-6-tooth"
           >{gettext("Settings")}</.sidebar_nav_link>
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/system", @current_node_id)}
-            current={@current_page == :system}
-            icon="hero-server-stack"
-          >{gettext("System")}</.sidebar_nav_link>
 
           <!-- Task Indicators Section -->
           <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4 border-t border-slate-200 dark:border-slate-800">
@@ -182,7 +162,7 @@ defmodule EvoDashWeb.Layouts do
           <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
             <div data-sidebar-bottom-group class="flex items-center gap-1">
               <.language_selector drop_up={true} />
-              <.theme_toggle_compact drop_up={true} />
+              <.art_style_selector drop_up={true} />
             </div>
             <button
               id="sidebar-collapse-toggle"
@@ -345,55 +325,6 @@ defmodule EvoDashWeb.Layouts do
       />
       <span class="sidebar-label">{render_slot(@inner_block)}</span>
     </.link>
-    """
-  end
-
-  # Compact theme toggle for sidebar bottom bar — a single button with a dropdown
-  # containing the three theme options: system, light, dark.
-  attr(:drop_up, :boolean, default: false)
-
-  defp theme_toggle_compact(assigns) do
-    ~H"""
-    <details class={["dropdown", !@drop_up && "dropdown-end", @drop_up && "dropdown-top"]}>
-      <summary
-        class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-        title={gettext("Change theme")}
-      >
-        <.icon name="hero-swatch" class="size-4" />
-      </summary>
-      <div class={[
-        "dropdown-content",
-        (@drop_up && "mb-2") || "mt-2",
-        "z-50 w-40 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-1"
-      ]}>
-        <div class="flex flex-col gap-0.5">
-          <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-            phx-click={JS.dispatch("phx:set-theme")}
-            data-phx-theme="system"
-          >
-            <.icon name="hero-computer-desktop-micro" class="w-4 h-4" />
-            <span>{gettext("System")}</span>
-          </button>
-          <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-            phx-click={JS.dispatch("phx:set-theme")}
-            data-phx-theme="light"
-          >
-            <.icon name="hero-sun-micro" class="w-4 h-4" />
-            <span>{gettext("Light")}</span>
-          </button>
-          <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-            phx-click={JS.dispatch("phx:set-theme")}
-            data-phx-theme="dark"
-          >
-            <.icon name="hero-moon-micro" class="w-4 h-4" />
-            <span>{gettext("Dark")}</span>
-          </button>
-        </div>
-      </div>
-    </details>
     """
   end
 
@@ -563,5 +494,80 @@ defmodule EvoDashWeb.Layouts do
       </div>
     </details>
     """
+  end
+
+  @doc """
+  Art style selector dropdown (默认白天 / 默认黑夜 + 23 种艺术风格).
+  Client-side only — persisted to localStorage as `phx:art` and applied as the
+  `data-art` attribute on <html>; choosing a style also drives `data-theme`
+  (default-dark → dark, everything else → light). There is NO separate
+  light/dark toggle anymore. The active option is marked client-side via the
+  `.art-active` class (toggled by the root.html.heex setArt script).
+  """
+  attr(:drop_up, :boolean, default: false)
+
+  def art_style_selector(assigns) do
+    ~H"""
+    <details class={["dropdown", !@drop_up && "dropdown-end", @drop_up && "dropdown-top"]}>
+      <summary
+        class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+        title={gettext("Art style")}
+      >
+        <.icon name="hero-swatch" class="size-5" />
+      </summary>
+      <div class={[
+        "dropdown-content",
+        (@drop_up && "mb-2") || "mt-2",
+        "z-50 w-60 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2"
+      ]}>
+        <div class="max-h-80 overflow-y-auto flex flex-col gap-0.5">
+          <button
+            :for={{id, label, swatch} <- art_styles()}
+            class="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+            phx-click={JS.dispatch("phx:set-art")}
+            data-phx-art={id}
+          >
+            <span class="w-4 h-4 shrink-0 border border-black/25" style={swatch}></span>
+            <span class="flex-1 text-left">{label}</span>
+            <.icon name="hero-check-solid" class="art-check size-4 text-indigo-500 shrink-0" />
+          </button>
+        </div>
+      </div>
+    </details>
+    """
+  end
+
+  # {data-art value, label, swatch inline style}
+  defp art_styles do
+    [
+      {"default", gettext("Default Light"), "background: linear-gradient(135deg, #ffffff 50%, oklch(55% 0.2 265) 50%); border-radius: 50%"},
+      {"default-dark", gettext("Default Dark"), "background: linear-gradient(135deg, oklch(22% 0.015 260) 50%, oklch(70% 0.2 265) 50%); border-radius: 50%"},
+      {"constructivism", gettext("Constructivism"), "background: linear-gradient(135deg, oklch(48% 0.21 28) 50%, oklch(92% 0.025 95) 50%)"},
+      {"swiss", gettext("Swiss International"), "background: #fff; box-shadow: inset 4px 0 0 oklch(54% 0.22 27); border: 1px solid #111"},
+      {"terminal", gettext("Terminal"), "background: #000; box-shadow: inset 0 -3px 0 oklch(85% 0.28 145); border: 1px solid oklch(85% 0.28 145)"},
+      {"ink", gettext("Ink Wash"), "background: oklch(94% 0.02 95); box-shadow: inset -4px -3px 0 oklch(45% 0.16 30); border: 1px solid oklch(45% 0.02 60)"},
+      {"bauhaus", gettext("Bauhaus"), "background: linear-gradient(135deg, oklch(45% 0.18 255) 33%, oklch(55% 0.22 28) 33% 66%, oklch(75% 0.18 90) 66%); border: 1px solid #111"},
+      {"memphis", gettext("Memphis"), "background: linear-gradient(135deg, oklch(55% 0.25 350) 33%, oklch(70% 0.15 190) 33% 66%, oklch(80% 0.18 95) 66%); border: 2px solid #111"},
+      {"brutalism", gettext("Brutalism"), "background: linear-gradient(180deg, #f4f4f4, #dcdcdc); border: 2px outset #fff"},
+      {"glass", gettext("Glassmorphism"), "background: linear-gradient(135deg, oklch(45% 0.15 290), oklch(50% 0.15 330)); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px"},
+      {"neumorphism", gettext("Neumorphism"), "background: oklch(90% 0.012 250); box-shadow: 2px 2px 4px oklch(75% 0.015 250), -2px -2px 4px #fff; border-radius: 4px"},
+      {"cyberpunk", gettext("Cyberpunk"), "background: oklch(12% 0.03 290); box-shadow: inset 0 -3px 0 oklch(85% 0.2 195), inset 3px 0 0 oklch(70% 0.28 330)"},
+      {"vaporwave", gettext("Vaporwave"), "background: linear-gradient(180deg, oklch(30% 0.1 310), oklch(55% 0.18 350))"},
+      {"nord", gettext("Nord"), "background: oklch(24% 0.02 250); box-shadow: inset 0 -3px 0 oklch(75% 0.1 215)"},
+      {"gruvbox", gettext("Gruvbox"), "background: oklch(24% 0.025 70); box-shadow: inset 0 -3px 0 oklch(75% 0.15 90)"},
+      {"solarized-light", gettext("Solarized Light"), "background: oklch(95% 0.025 95); box-shadow: inset 0 -3px 0 oklch(50% 0.12 230)"},
+      {"solarized-dark", gettext("Solarized Dark"), "background: oklch(22% 0.03 220); box-shadow: inset 0 -3px 0 oklch(65% 0.12 230)"},
+      {"mono", gettext("Monochrome"), "background: linear-gradient(135deg, #fff 50%, #111 50%); border: 1px solid #111"},
+      {"blueprint", gettext("Blueprint"), "background: oklch(30% 0.1 255); border: 1px dashed rgba(255,255,255,0.85)"},
+      {"kraft", gettext("Kraft Paper"), "background: oklch(80% 0.05 85); box-shadow: inset -3px -3px 0 oklch(50% 0.14 30); border: 1px solid oklch(45% 0.08 70)"}
+    ] ++
+    [
+      {"botanical", gettext("Botanical"), "background: oklch(95% 0.02 120); box-shadow: inset 0 -3px 0 oklch(40% 0.08 145)"},
+      {"noir", gettext("Film Noir"), "background: #0c0c0c; box-shadow: inset 3px 0 0 #fff"},
+      {"pastel", gettext("Pastel"), "background: oklch(97% 0.015 340); box-shadow: inset 0 -3px 0 oklch(70% 0.1 340); border-radius: 4px"},
+      {"ocean", gettext("Ocean"), "background: oklch(20% 0.05 230); box-shadow: inset 0 -3px 0 oklch(70% 0.14 210)"},
+      {"desert", gettext("Desert"), "background: oklch(90% 0.035 90); box-shadow: inset 0 -3px 0 oklch(48% 0.14 40); border: 1px solid oklch(48% 0.14 40)"},
+      {"artdeco", gettext("Art Deco"), "background: oklch(18% 0.04 220); border: 1px solid oklch(70% 0.12 90)"}
+    ]
   end
 end

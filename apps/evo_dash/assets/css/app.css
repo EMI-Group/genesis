@@ -1257,3 +1257,34 @@ button, a, input, textarea, select, summary,
     transparent 100%
   );
 }
+
+/* === Project tabs（浏览器式项目标签条） === */
+
+.project-tab {
+  @apply flex items-center gap-1.5 px-4 pt-2 pb-1.5 text-sm font-medium whitespace-nowrap transition-colors border border-transparent shrink-0;
+  border-radius: 10px 10px 0 0;
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 100%, 0 100%);
+  margin-bottom: -1px;
+}
+
+.project-tab-active {
+  @apply bg-base-100 text-base-content border-base-content/25 relative z-10 shadow-sm;
+}
+
+.project-tab-idle {
+  @apply bg-base-200/70 text-base-content/55 hover:bg-base-200 hover:text-base-content;
+}
+
+.project-tab-action {
+  @apply p-2 mb-0.5 rounded-lg text-base-content/40 hover:text-base-content hover:bg-base-200 transition-colors shrink-0;
+}
+
+.project-tab-panel {
+  @apply flex items-center gap-2 px-4 py-2.5 bg-base-100 border border-base-content/25 rounded-xl shadow-sm;
+}
+
+/* 任务演化图（/agents EvolutionGraph hook），自带 .evo-graph-root 作用域 */
+@import "./evolution_graph.css";
+
+/* 艺术风格体系（data-art）：构成主义 / 瑞士国际主义 */
+@import "./art_styles.css";

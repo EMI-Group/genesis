@@ -1,0 +1,2787 @@
+/* ==========================================================================
+   艺术风格体系（data-art）
+   - default：现有 DaisyUI 主题（不写任何覆盖）
+   - constructivism：构成主义（红黑奶油色 · 几何块面 · 对角线 · 硬边无圆角）
+   - swiss：瑞士国际主义（严格网格 · Helvetica · 大留白 · 细线规则 · 单一红）
+   每种风格不只换色：圆角/阴影/边框/字体/组件结构一并变化。
+   覆盖用 `:root[data-art="x"]`（0,1,1 优先级，稳压 [data-theme] 变量）。
+   ========================================================================== */
+
+/* ============================ 构成主义 ================================== */
+
+:root[data-art="constructivism"] {
+  /* 调色：奶油纸面 + 墨黑 + 罗琴科红 */
+  --color-base-100: oklch(92% 0.025 95);
+  --color-base-200: oklch(87% 0.03 95);
+  --color-base-300: oklch(80% 0.035 95);
+  --color-base-content: oklch(18% 0.02 60);
+  --color-primary: oklch(48% 0.21 28);
+  --color-primary-content: oklch(93% 0.025 95);
+  --color-secondary: oklch(18% 0.02 60);
+  --color-secondary-content: oklch(92% 0.025 95);
+  --color-accent: oklch(40% 0.18 28);
+  --color-accent-content: oklch(93% 0.025 95);
+  --color-neutral: oklch(22% 0.02 60);
+  --color-neutral-content: oklch(92% 0.025 95);
+  --color-info: oklch(45% 0.1 250);
+  --color-info-content: oklch(93% 0.02 250);
+  --color-success: oklch(45% 0.12 150);
+  --color-success-content: oklch(93% 0.02 150);
+  --color-warning: oklch(60% 0.15 75);
+  --color-warning-content: oklch(18% 0.02 60);
+  --color-error: oklch(48% 0.21 28);
+  --color-error-content: oklch(93% 0.025 95);
+  --radius-selector: 0;
+  --radius-field: 0;
+  --radius-box: 0;
+
+  --con-ink: oklch(18% 0.02 60);
+  --con-red: oklch(48% 0.21 28);
+  --con-cream: oklch(92% 0.025 95);
+
+  color-scheme: light;
+}
+
+/* 硬边：消灭圆角 */
+:root[data-art="constructivism"] :where(
+  .btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content,
+  .menu, .join, .join-item, .alert, .toggle, details, summary,
+  [class*="rounded"]
+) {
+  border-radius: 0 !important;
+}
+
+/* 纸面底 + 墨线边框 */
+:root[data-art="constructivism"] body {
+  background: var(--con-cream);
+  color: var(--con-ink);
+}
+
+/* 标题：粗 condensed 大写，海报感 */
+:root[data-art="constructivism"] h1,
+:root[data-art="constructivism"] h2,
+:root[data-art="constructivism"] h3,
+:root[data-art="constructivism"] .card-title,
+:root[data-art="constructivism"] .step-header h2 {
+  font-family: "Arial Narrow", "Archivo Narrow", "Franklin Gothic Medium",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* 按钮：2px 墨框 + 硬投影（偏移块面），按下平移 */
+:root[data-art="constructivism"] .btn {
+  border: 2px solid var(--con-ink);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  box-shadow: 3px 3px 0 var(--con-ink);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+:root[data-art="constructivism"] .btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--con-ink);
+}
+:root[data-art="constructivism"] .btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--con-ink);
+}
+:root[data-art="constructivism"] .btn-ghost,
+:root[data-art="constructivism"] .btn-outline {
+  box-shadow: none;
+}
+
+/* 卡片：2px 墨框 + 大硬投影 */
+:root[data-art="constructivism"] .card,
+:root[data-art="constructivism"] .modal-box,
+:root[data-art="constructivism"] .dropdown-content {
+  border: 2px solid var(--con-ink) !important;
+  box-shadow: 6px 6px 0 oklch(18% 0.02 60 / 0.85) !important;
+}
+
+/* 输入控件：2px 墨框，聚焦变红 */
+:root[data-art="constructivism"] .input,
+:root[data-art="constructivism"] .select,
+:root[data-art="constructivism"] .textarea,
+:root[data-art="constructivism"] textarea {
+  border: 2px solid var(--con-ink) !important;
+  background: var(--con-cream);
+}
+:root[data-art="constructivism"] .input:focus,
+:root[data-art="constructivism"] .select:focus,
+:root[data-art="constructivism"] textarea:focus {
+  outline: 3px solid var(--con-red);
+  outline-offset: 1px;
+}
+
+/* 步骤条：红色平行四边形 + 黑粗标题 + 斜切 */
+:root[data-art="constructivism"] .step-header {
+  transform: skewY(-0.5deg);
+}
+:root[data-art="constructivism"] .step-badge {
+  background: var(--con-red);
+  color: var(--con-cream);
+  clip-path: polygon(12% 0, 100% 0, 88% 100%, 0 100%);
+  border-radius: 0 !important;
+  font-family: "Arial Narrow", sans-serif;
+  font-size: 1.05rem;
+}
+:root[data-art="constructivism"] .step-header > div {
+  border-top: 3px solid var(--con-ink) !important;
+}
+
+/* 侧栏：墨黑块面 + 奶油字 + 红激活态 */
+:root[data-art="constructivism"] #sidebar {
+  background: var(--con-ink) !important;
+  border-right: 3px solid var(--con-red) !important;
+}
+:root[data-art="constructivism"] #sidebar,
+:root[data-art="constructivism"] #sidebar .sidebar-label,
+:root[data-art="constructivism"] #sidebar nav a,
+:root[data-art="constructivism"] #sidebar button {
+  color: oklch(92% 0.025 95 / 0.85);
+}
+:root[data-art="constructivism"] #sidebar nav a:hover {
+  background: oklch(92% 0.025 95 / 0.12);
+  color: var(--con-cream);
+}
+:root[data-art="constructivism"] #sidebar nav a[aria-current="page"] {
+  background: var(--con-red) !important;
+  color: var(--con-cream) !important;
+  text-transform: uppercase;
+  font-weight: 700;
+  box-shadow: none !important;
+}
+:root[data-art="constructivism"] #sidebar nav a[aria-current="page"] svg {
+  color: var(--con-cream) !important;
+}
+:root[data-art="constructivism"] #sidebar .border-slate-200,
+:root[data-art="constructivism"] #sidebar .dark\:border-slate-800 {
+  border-color: oklch(92% 0.025 95 / 0.2) !important;
+}
+
+/* 主区卡片边框统一墨色 */
+:root[data-art="constructivism"] main :where(.border, .border-2) {
+  border-color: var(--con-ink) !important;
+}
+:root[data-art="constructivism"] main .border-dashed {
+  border-color: var(--con-ink) !important;
+}
+
+/* 项目卡：红框黑影，视觉锚点 */
+:root[data-art="constructivism"] main .border-primary\/30 {
+  border-color: var(--con-red) !important;
+  box-shadow: 5px 5px 0 oklch(18% 0.02 60 / 0.85);
+}
+
+/* ============================ 瑞士国际主义 ============================== */
+
+:root[data-art="swiss"] {
+  /* 白 + 黑 + 瑞士红；零装饰 */
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(97% 0 0);
+  --color-base-300: oklch(92% 0 0);
+  --color-base-content: oklch(15% 0 0);
+  --color-primary: oklch(15% 0 0);
+  --color-primary-content: oklch(100% 0 0);
+  --color-secondary: oklch(54% 0.22 27);
+  --color-secondary-content: oklch(100% 0 0);
+  --color-accent: oklch(54% 0.22 27);
+  --color-accent-content: oklch(100% 0 0);
+  --color-neutral: oklch(25% 0 0);
+  --color-neutral-content: oklch(98% 0 0);
+  --color-info: oklch(15% 0 0);
+  --color-info-content: oklch(100% 0 0);
+  --color-success: oklch(15% 0 0);
+  --color-success-content: oklch(100% 0 0);
+  --color-warning: oklch(15% 0 0);
+  --color-warning-content: oklch(100% 0 0);
+  --color-error: oklch(54% 0.22 27);
+  --color-error-content: oklch(100% 0 0);
+  --radius-selector: 0;
+  --radius-field: 0;
+  --radius-box: 0;
+
+  --sw-ink: oklch(15% 0 0);
+  --sw-red: oklch(54% 0.22 27);
+
+  color-scheme: light;
+}
+
+/* 零圆角、零阴影 */
+:root[data-art="swiss"] :where(
+  .btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content,
+  .menu, .join, .join-item, .alert, .toggle, details, summary,
+  [class*="rounded"]
+) {
+  border-radius: 0 !important;
+}
+:root[data-art="swiss"] :where(.card, .btn, .dropdown-content, .modal-box, [class*="shadow"]) {
+  box-shadow: none !important;
+}
+
+/* Helvetica 体系 + 黑白纸面 */
+:root[data-art="swiss"] body {
+  background: #fff;
+  color: var(--sw-ink);
+  font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+:root[data-art="swiss"] h1,
+:root[data-art="swiss"] h2,
+:root[data-art="swiss"] h3,
+:root[data-art="swiss"] .card-title,
+:root[data-art="swiss"] .step-header h2 {
+  font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* 按钮：1px 黑框或实心黑，小字大写宽字距 */
+:root[data-art="swiss"] .btn {
+  border: 1px solid var(--sw-ink);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+:root[data-art="swiss"] .btn-primary {
+  background: var(--sw-ink);
+  color: #fff;
+}
+:root[data-art="swiss"] .btn-primary:hover {
+  background: var(--sw-red);
+  border-color: var(--sw-red);
+}
+
+/* 卡片：1px 黑框，无阴影 */
+:root[data-art="swiss"] .card,
+:root[data-art="swiss"] .modal-box,
+:root[data-art="swiss"] .dropdown-content {
+  border: 1px solid var(--sw-ink) !important;
+}
+
+/* 输入控件：1px 黑框，聚焦红框 */
+:root[data-art="swiss"] .input,
+:root[data-art="swiss"] .select,
+:root[data-art="swiss"] .textarea,
+:root[data-art="swiss"] textarea {
+  border: 1px solid var(--sw-ink) !important;
+  background: #fff;
+}
+:root[data-art="swiss"] .input:focus,
+:root[data-art="swiss"] .select:focus,
+:root[data-art="swiss"] textarea:focus {
+  outline: 2px solid var(--sw-red);
+  outline-offset: 0;
+}
+
+/* 步骤条：粗顶线规则 + 细框数字 —— 网格秩序感 */
+:root[data-art="swiss"] .step-header {
+  border-top: 3px solid var(--sw-ink);
+  padding-top: 0.5rem;
+}
+:root[data-art="swiss"] .step-badge {
+  background: transparent !important;
+  color: var(--sw-ink) !important;
+  border: 1px solid var(--sw-ink);
+  border-radius: 0 !important;
+  font-weight: 700;
+}
+:root[data-art="swiss"] .step-header > div {
+  border-top: 1px solid var(--sw-ink) !important;
+}
+
+/* 侧栏：白底 + 1px 黑右线 + 红方块激活态 */
+:root[data-art="swiss"] #sidebar {
+  background: #fff !important;
+  border-right: 1px solid var(--sw-ink) !important;
+}
+:root[data-art="swiss"] #sidebar nav a[aria-current="page"] {
+  background: transparent !important;
+  color: var(--sw-ink) !important;
+  font-weight: 700;
+  box-shadow: inset 4px 0 0 var(--sw-red) !important;
+}
+:root[data-art="swiss"] #sidebar nav a[aria-current="page"] svg {
+  color: var(--sw-ink) !important;
+}
+
+/* 主区：细线统一，禁用彩色装饰边 */
+:root[data-art="swiss"] main :where(.border, .border-2, .border-t) {
+  border-color: var(--sw-ink) !important;
+}
+:root[data-art="swiss"] main .border-dashed {
+  border-color: var(--sw-ink) !important;
+}
+
+/* 状态色克制：badge 一律白底黑框 */
+:root[data-art="swiss"] .badge {
+  background: #fff;
+  color: var(--sw-ink);
+  border: 1px solid var(--sw-ink);
+}
+
+/* ============================ 终端（CRT Terminal） ======================= */
+
+:root[data-art="terminal"] {
+  /* 黑底磷光绿，全等宽字体 */
+  --color-base-100: oklch(10% 0.02 145);
+  --color-base-200: oklch(14% 0.03 145);
+  --color-base-300: oklch(18% 0.04 145);
+  --color-base-content: oklch(85% 0.25 145);
+  --color-primary: oklch(85% 0.28 145);
+  --color-primary-content: oklch(8% 0.02 145);
+  --color-secondary: oklch(55% 0.15 145);
+  --color-secondary-content: oklch(8% 0.02 145);
+  --color-accent: oklch(85% 0.28 145);
+  --color-accent-content: oklch(8% 0.02 145);
+  --color-neutral: oklch(18% 0.04 145);
+  --color-neutral-content: oklch(85% 0.25 145);
+  --color-info: oklch(85% 0.28 145);
+  --color-info-content: oklch(8% 0.02 145);
+  --color-success: oklch(85% 0.28 145);
+  --color-success-content: oklch(8% 0.02 145);
+  --color-warning: oklch(80% 0.2 90);
+  --color-warning-content: oklch(8% 0.02 145);
+  --color-error: oklch(60% 0.22 25);
+  --color-error-content: oklch(8% 0.02 145);
+  --radius-selector: 0;
+  --radius-field: 0;
+  --radius-box: 0;
+
+  --term-green: oklch(85% 0.28 145);
+  --term-dim: oklch(55% 0.15 145);
+  --term-bg: oklch(10% 0.02 145);
+
+  color-scheme: dark;
+}
+
+:root[data-art="terminal"] body {
+  background: var(--term-bg);
+  color: var(--term-green);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace;
+}
+
+/* CRT 扫描线 */
+:root[data-art="terminal"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.16) 0 1px,
+    transparent 1px 3px
+  );
+  opacity: 0.55;
+}
+
+/* 零圆角零阴影 */
+:root[data-art="terminal"] :where(
+  .btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content,
+  .menu, .join, .join-item, .alert, .toggle, details, summary,
+  [class*="rounded"]
+) {
+  border-radius: 0 !important;
+}
+:root[data-art="terminal"] :where(.card, .btn, .dropdown-content, .modal-box, [class*="shadow"]) {
+  box-shadow: none !important;
+}
+
+/* 标题：等宽 + 磷光 */
+:root[data-art="terminal"] h1,
+:root[data-art="terminal"] h2,
+:root[data-art="terminal"] h3,
+:root[data-art="terminal"] .card-title,
+:root[data-art="terminal"] .step-header h2 {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace;
+  font-weight: 700;
+  text-shadow: 0 0 8px oklch(85% 0.28 145 / 0.55);
+}
+
+/* 按钮：绿框绿字，主按钮反色实心 */
+:root[data-art="terminal"] .btn {
+  border: 1px solid var(--term-green);
+  background: transparent;
+  color: var(--term-green);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+:root[data-art="terminal"] .btn:hover {
+  background: oklch(85% 0.28 145 / 0.12);
+}
+:root[data-art="terminal"] .btn-primary {
+  background: var(--term-green);
+  color: var(--term-bg);
+}
+:root[data-art="terminal"] .btn-primary:hover {
+  background: oklch(92% 0.25 145);
+}
+
+/* 卡片与控件：1px 绿框 */
+:root[data-art="terminal"] .card,
+:root[data-art="terminal"] .modal-box,
+:root[data-art="terminal"] .dropdown-content {
+  border: 1px solid var(--term-green) !important;
+  background: oklch(12% 0.03 145) !important;
+}
+:root[data-art="terminal"] .input,
+:root[data-art="terminal"] .select,
+:root[data-art="terminal"] .textarea,
+:root[data-art="terminal"] textarea {
+  border: 1px solid var(--term-green) !important;
+  background: oklch(8% 0.02 145) !important;
+  color: var(--term-green);
+}
+:root[data-art="terminal"] .input:focus,
+:root[data-art="terminal"] .select:focus,
+:root[data-art="terminal"] textarea:focus {
+  outline: 1px solid var(--term-green);
+  box-shadow: 0 0 8px oklch(85% 0.28 145 / 0.4);
+}
+:root[data-art="terminal"] ::placeholder {
+  color: var(--term-dim) !important;
+}
+
+/* 步骤条：1px 绿线 + 绿框数字 */
+:root[data-art="terminal"] .step-header {
+  border-top: 1px solid var(--term-green);
+  padding-top: 0.5rem;
+}
+:root[data-art="terminal"] .step-badge {
+  background: transparent !important;
+  color: var(--term-green) !important;
+  border: 1px solid var(--term-green);
+  border-radius: 0 !important;
+}
+:root[data-art="terminal"] .step-header > div {
+  border-top: 1px solid var(--term-dim) !important;
+}
+
+/* 侧栏：黑底 + 绿线 + 反色激活块 */
+:root[data-art="terminal"] #sidebar {
+  background: oklch(8% 0.02 145) !important;
+  border-right: 1px solid var(--term-green) !important;
+}
+:root[data-art="terminal"] #sidebar,
+:root[data-art="terminal"] #sidebar .sidebar-label,
+:root[data-art="terminal"] #sidebar nav a,
+:root[data-art="terminal"] #sidebar button {
+  color: var(--term-dim);
+}
+:root[data-art="terminal"] #sidebar nav a:hover {
+  background: oklch(85% 0.28 145 / 0.1);
+  color: var(--term-green);
+}
+:root[data-art="terminal"] #sidebar nav a[aria-current="page"] {
+  background: var(--term-green) !important;
+  color: var(--term-bg) !important;
+  box-shadow: none !important;
+}
+:root[data-art="terminal"] #sidebar nav a[aria-current="page"] svg {
+  color: var(--term-bg) !important;
+}
+:root[data-art="terminal"] #sidebar .border-slate-200,
+:root[data-art="terminal"] #sidebar .dark\:border-slate-800 {
+  border-color: oklch(85% 0.28 145 / 0.25) !important;
+}
+
+/* 徽章：黑底绿框 */
+:root[data-art="terminal"] .badge {
+  background: transparent;
+  color: var(--term-green);
+  border: 1px solid var(--term-green);
+}
+
+/* 演化图：黑底磷光绿 */
+:root[data-art="terminal"] {
+  --evo-bg: oklch(9% 0.02 145);
+  --evo-brand: oklch(85% 0.28 145);
+  --evo-path: oklch(92% 0.22 145);
+  --evo-link: oklch(65% 0.18 145);
+  --evo-node: oklch(45% 0.12 145);
+  --evo-hud: oklch(85% 0.25 145);
+  --evo-lbl: oklch(75% 0.18 145 / 0.6);
+  --evo-lbl-strong: oklch(95% 0.25 145);
+  --evo-lbl-dim: oklch(55% 0.12 145 / 0.5);
+}
+
+/* ============================ 水墨（新中式） ============================ */
+
+:root[data-art="ink"] {
+  /* 宣纸 + 墨色 + 印章红 */
+  --color-base-100: oklch(94% 0.02 95);
+  --color-base-200: oklch(90% 0.025 95);
+  --color-base-300: oklch(84% 0.03 95);
+  --color-base-content: oklch(25% 0.02 60);
+  --color-primary: oklch(25% 0.02 60);
+  --color-primary-content: oklch(94% 0.02 95);
+  --color-secondary: oklch(45% 0.16 30);
+  --color-secondary-content: oklch(94% 0.02 95);
+  --color-accent: oklch(45% 0.16 30);
+  --color-accent-content: oklch(94% 0.02 95);
+  --color-neutral: oklch(35% 0.02 60);
+  --color-neutral-content: oklch(94% 0.02 95);
+  --color-info: oklch(25% 0.02 60);
+  --color-info-content: oklch(94% 0.02 95);
+  --color-success: oklch(35% 0.08 150);
+  --color-success-content: oklch(94% 0.02 95);
+  --color-warning: oklch(55% 0.12 75);
+  --color-warning-content: oklch(25% 0.02 60);
+  --color-error: oklch(45% 0.16 30);
+  --color-error-content: oklch(94% 0.02 95);
+  --radius-selector: 0;
+  --radius-field: 0;
+  --radius-box: 0;
+
+  --ink-black: oklch(25% 0.02 60);
+  --ink-red: oklch(45% 0.16 30);
+  --ink-paper: oklch(94% 0.02 95);
+
+  color-scheme: light;
+}
+
+:root[data-art="ink"] body {
+  background: var(--ink-paper);
+  color: var(--ink-black);
+}
+
+/* 零圆角零阴影，1.5px 墨线 */
+:root[data-art="ink"] :where(
+  .btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content,
+  .menu, .join, .join-item, .alert, .toggle, details, summary,
+  [class*="rounded"]
+) {
+  border-radius: 0 !important;
+}
+:root[data-art="ink"] :where(.card, .btn, .dropdown-content, .modal-box, [class*="shadow"]) {
+  box-shadow: none !important;
+}
+
+/* 标题：宋楷 serif */
+:root[data-art="ink"] h1,
+:root[data-art="ink"] h2,
+:root[data-art="ink"] h3,
+:root[data-art="ink"] .card-title,
+:root[data-art="ink"] .step-header h2 {
+  font-family: STKaiti, KaiTi, SimSun, "Songti SC", serif;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* 按钮：1.5px 墨框，主按钮墨底宣字 */
+:root[data-art="ink"] .btn {
+  border: 1.5px solid var(--ink-black);
+  background: transparent;
+  color: var(--ink-black);
+  font-family: STKaiti, KaiTi, SimSun, "Songti SC", serif;
+  letter-spacing: 0.06em;
+}
+:root[data-art="ink"] .btn:hover {
+  border-color: var(--ink-red);
+  color: var(--ink-red);
+}
+:root[data-art="ink"] .btn-primary {
+  background: var(--ink-black);
+  color: var(--ink-paper);
+}
+:root[data-art="ink"] .btn
+ {
+  border: 1.5px solid var(--ink-black);
+  background: transparent;
+  color: var(--ink-black);
+  font-family: STKaiti, KaiTi, SimSun, "Songti SC", serif;
+  letter-spacing: 0.06em;
+}
+:root[data-art="ink"] .btn:hover {
+  border-color: var(--ink-red);
+  color: var(--ink-red);
+}
+:root[data-art="ink"] .btn-primary {
+  background: var(--ink-black);
+  color: var(--ink-paper);
+}
+:root[data-art="ink"] .btn-primary:hover {
+  background: var(--ink-red);
+  border-color: var(--ink-red);
+  color: var(--ink-paper);
+}
+
+/* 卡片与控件：1.5px 墨线 */
+:root[data-art="ink"] .card,
+:root[data-art="ink"] .modal-box,
+:root[data-art="ink"] .dropdown-content {
+  border: 1.5px solid var(--ink-black) !important;
+  background: var(--ink-paper) !important;
+}
+:root[data-art="ink"] .input,
+:root[data-art="ink"] .select,
+:root[data-art="ink"] .textarea,
+:root[data-art="ink"] textarea {
+  border: 1.5px solid var(--ink-black) !important;
+  background: var(--ink-paper) !important;
+}
+:root[data-art="ink"] .input:focus,
+:root[data-art="ink"] .select:focus,
+:root[data-art="ink"] textarea:focus {
+  outline: 2px solid var(--ink-red);
+  outline-offset: 0;
+}
+
+/* 步骤条：墨线 + 印章数字 */
+:root[data-art="ink"] .step-header {
+  border-top: 1.5px solid var(--ink-black);
+  padding-top: 0.5rem;
+}
+:root[data-art="ink"] .step-badge {
+  background: var(--ink-red) !important;
+  color: var(--ink-paper) !important;
+  border-radius: 0 !important;
+  font-family: STKaiti, KaiTi, SimSun, serif;
+}
+:root[data-art="ink"] .step-header > div {
+  border-top: 1.5px solid var(--ink-black) !important;
+}
+
+/* 侧栏：宣纸底 + 墨线 + 印章红激活标记 */
+:root[data-art="ink"] #sidebar {
+  background: var(--ink-paper) !important;
+  border-right: 1.5px solid var(--ink-black) !important;
+}
+:root[data-art="ink"] #sidebar nav a[aria-current="page"] {
+  background: transparent !important;
+  color: var(--ink-black) !important;
+  font-weight: 700;
+  box-shadow: inset 4px 0 0 var(--ink-red) !important;
+}
+:root[data-art="ink"] #sidebar nav a[aria-current="page"] svg {
+  color: var(--ink-red) !important;
+}
+
+/* 徽章：宣底墨框 */
+:root[data-art="ink"] .badge {
+  background: var(--ink-paper);
+  color: var(--ink-black);
+  border: 1.5px solid var(--ink-black);
+}
+
+/* 演化图：宣纸底 + 墨线 + 印章红 */
+:root[data-art="ink"] {
+  --evo-bg: oklch(94% 0.02 95);
+  --evo-brand: oklch(45% 0.16 30);
+  --evo-path: oklch(25% 0.02 60);
+  --evo-link: oklch(40% 0.02 60);
+  --evo-node: oklch(55% 0.02 60);
+  --evo-hud: oklch(25% 0.02 60);
+  --evo-lbl: oklch(40% 0.02 60 / 0.75);
+  --evo-lbl-strong: oklch(20% 0.02 60);
+  --evo-lbl-dim: oklch(50% 0.02 60 / 0.5);
+}
+
+/* ================= 既有风格的演化图换色 ================= */
+
+/* 构成主义：奶油画布 + 墨线 + 红 */
+:root[data-art="constructivism"] {
+  --evo-bg: oklch(90% 0.025 95);
+  --evo-brand: oklch(48% 0.21 28);
+  --evo-path: oklch(18% 0.02 60);
+  --evo-link: oklch(35% 0.02 60);
+  --evo-node: oklch(50% 0.02 60);
+  --evo-hud: oklch(18% 0.02 60);
+  --evo-lbl: oklch(40% 0.02 60 / 0.75);
+  --evo-lbl-strong: oklch(15% 0.02 60);
+  --evo-lbl-dim: oklch(50% 0.02 60 / 0.5);
+}
+
+/* 瑞士国际主义：白画布 + 黑线 + 红 */
+:root[data-art="swiss"] {
+  --evo-bg: #fff;
+  --evo-brand: oklch(54% 0.22 27);
+  --evo-path: oklch(15% 0 0);
+  --evo-link: oklch(40% 0 0);
+  --evo-node: oklch(55% 0 0);
+  --evo-hud: oklch(15% 0 0);
+  --evo-lbl: oklch(40% 0 0 / 0.7);
+  --evo-lbl-strong: oklch(10% 0 0);
+  --evo-lbl-dim: oklch(55% 0 0 / 0.5);
+}
+
+/* ================= 主区域底色修正（main / #app-layout） ================= */
+
+:root[data-art="constructivism"] #app-layout,
+:root[data-art="constructivism"] main {
+  background: var(--con-cream) !important;
+}
+
+:root[data-art="swiss"] #app-layout,
+:root[data-art="swiss"] main {
+  background: #fff !important;
+}
+
+:root[data-art="terminal"] #app-layout,
+:root[data-art="terminal"] main {
+  background: var(--term-bg) !important;
+  color: var(--term-green);
+}
+
+:root[data-art="ink"] #app-layout,
+:root[data-art="ink"] main {
+  background: var(--ink-paper) !important;
+}
+
+/* ==========================================================================
+   水墨差异化强化：全 serif + 宣纸纹理 + 灰墨细线 + 朱印点睛
+   （与构成主义的粗黑框/硬投影/condensed 大写拉开距离）
+   ========================================================================== */
+
+:root[data-art="ink"] body,
+:root[data-art="ink"] .btn,
+:root[data-art="ink"] .badge,
+:root[data-art="ink"] input,
+:root[data-art="ink"] select,
+:root[data-art="ink"] textarea {
+  font-family: STKaiti, KaiTi, SimSun, "Songti SC", "Noto Serif SC", serif;
+}
+
+:root[data-art="ink"] body {
+  /* 宣纸纹理：极淡的纵向纤维感 */
+  background-image: repeating-linear-gradient(
+    90deg,
+    oklch(90% 0.02 95 / 0.25) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+/* 灰墨细线（取代原先的 1.5px 浓墨线，更柔） */
+:root[data-art="ink"] .card,
+:root[data-art="ink"] .modal-box,
+:root[data-art="ink"] .dropdown-content {
+  border: 1px solid oklch(45% 0.02 60 / 0.55) !important;
+  background: oklch(96% 0.018 95) !important;
+}
+:root[data-art="ink"] .input,
+:root[data-art="ink"] .select,
+:root[data-art="ink"] .textarea,
+:root[data-art="ink"] textarea {
+  border: 1px solid oklch(45% 0.02 60 / 0.55) !important;
+  background: oklch(96% 0.018 95) !important;
+}
+:root[data-art="ink"] .btn {
+  border: 1px solid oklch(45% 0.02 60 / 0.65);
+  background: transparent;
+  color: var(--ink-black);
+  letter-spacing: 0.12em;
+}
+:root[data-art="ink"] .btn:hover {
+  border-color: var(--ink-red);
+  color: var(--ink-red);
+}
+:root[data-art="ink"] .btn-primary {
+  background: var(--ink-black);
+  color: var(--ink-paper);
+}
+:root[data-art="ink"] .btn-primary:hover {
+  background: var(--ink-red);
+  border-color: var(--ink-red);
+  color: var(--ink-paper);
+}
+:root[data-art="ink"] #sidebar {
+  border-right: 1px solid oklch(45% 0.02 60 / 0.4) !important;
+  background: oklch(95% 0.02 95) !important;
+}
+:root[data-art="ink"] .badge {
+  border: 1px solid oklch(45% 0.02 60 / 0.5);
+  background: transparent;
+}
+/* 朱印步骤块：印章式实心红方 + 白字，微微倾斜 */
+:root[data-art="ink"] .step-badge {
+  background: var(--ink-red) !important;
+  color: var(--ink-paper) !important;
+  transform: rotate(-2deg);
+  box-shadow: 1px 1px 0 oklch(45% 0.02 60 / 0.35);
+}
+:root[data-art="ink"] .step-header {
+  border-top: 1px solid oklch(45% 0.02 60 / 0.5);
+}
+:root[data-art="ink"] .step-header h2 {
+  letter-spacing: 0.14em;
+}
+
+/* ==================== 新风格批量（radius/shadow 基线复位） =============== */
+
+:root[data-art="bauhaus"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="memphis"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="brutalism"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="cyberpunk"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="vaporwave"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="mono"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="blueprint"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="kraft"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="noir"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="desert"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]),
+:root[data-art="artdeco"] :where(.btn, .card, .input, .select, .textarea, .badge, .modal-box, .dropdown-content, .menu, .join, .join-item, .alert, .toggle, details, summary, [class*="rounded"]) {
+  border-radius: 0 !important;
+}
+
+/* ============================ 包豪斯 Bauhaus ============================ */
+
+:root[data-art="bauhaus"] {
+  --color-base-100: oklch(99% 0 0);
+  --color-base-200: oklch(95% 0.01 90);
+  --color-base-300: oklch(90% 0.015 90);
+  --color-base-content: oklch(16% 0.02 260);
+  --color-primary: oklch(45% 0.18 255);
+  --color-primary-content: oklch(99% 0 0);
+  --color-secondary: oklch(55% 0.22 28);
+  --color-secondary-content: oklch(99% 0 0);
+  --color-accent: oklch(75% 0.18 90);
+  --color-accent-content: oklch(16% 0.02 260);
+  --color-neutral: oklch(16% 0.02 260);
+  --color-neutral-content: oklch(99% 0 0);
+  --color-info: oklch(45% 0.18 255);
+  --color-info-content: oklch(99% 0 0);
+  --color-success: oklch(55% 0.15 150);
+  --color-success-content: oklch(99% 0 0);
+  --color-warning: oklch(75% 0.18 90);
+  --color-warning-content: oklch(16% 0.02 260);
+  --color-error: oklch(55% 0.22 28);
+  --color-error-content: oklch(99% 0 0);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --bau-ink: oklch(16% 0.02 260);
+  --bau-red: oklch(55% 0.22 28);
+  --bau-blue: oklch(45% 0.18 255);
+  --bau-yellow: oklch(75% 0.18 90);
+  color-scheme: light;
+  --evo-bg: oklch(99% 0 0);
+  --evo-brand: oklch(55% 0.22 28);
+  --evo-path: oklch(16% 0.02 260);
+  --evo-link: oklch(45% 0.05 260);
+  --evo-node: oklch(55% 0.05 260);
+  --evo-hud: oklch(16% 0.02 260);
+  --evo-lbl: oklch(40% 0.02 260 / 0.7);
+  --evo-lbl-strong: oklch(12% 0.02 260);
+  --evo-lbl-dim: oklch(55% 0.02 260 / 0.5);
+}
+:root[data-art="bauhaus"] #app-layout,
+:root[data-art="bauhaus"] main { background: #fff !important; }
+:root[data-art="bauhaus"] h1,
+:root[data-art="bauhaus"] h2,
+:root[data-art="bauhaus"] h3,
+:root[data-art="bauhaus"] .step-header h2 {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+}
+:root[data-art="bauhaus"] .btn {
+  border: 2px solid var(--bau-ink);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+:root[data-art="bauhaus"] .card,
+:root[data-art="bauhaus"] .modal-box,
+:root[data-art="bauhaus"] .dropdown-content {
+  border: 2px solid var(--bau-ink) !important;
+  box-shadow: none !important;
+}
+:root[data-art="bauhaus"] .input,
+:root[data-art="bauhaus"] .select,
+:root[data-art="bauhaus"] .textarea,
+:root[data-art="bauhaus"] textarea {
+  border: 2px solid var(--bau-ink) !important;
+}
+:root[data-art="bauhaus"] .step-header { border-top: 4px solid var(--bau-ink); padding-top: 0.5rem; }
+:root[data-art="bauhaus"] .step-badge {
+  background: var(--bau-blue) !important;
+  color: #fff !important;
+  border-radius: 0 !important;
+  clip-path: circle(50%);
+}
+:root[data-art="bauhaus"] .step-header > div { border-top: 2px solid var(--bau-ink) !important; }
+:root[data-art="bauhaus"] #sidebar {
+  background: #fff !important;
+  border-right: 3px solid var(--bau-ink) !important;
+}
+:root[data-art="bauhaus"] #sidebar nav a[aria-current="page"] {
+  background: var(--bau-yellow) !important;
+  color: var(--bau-ink) !important;
+  font-weight: 700;
+  box-shadow: none !important;
+}
+:root[data-art="bauhaus"] #sidebar nav a[aria-current="page"] svg { color: var(--bau-ink) !important; }
+:root[data-art="bauhaus"] .badge { border: 2px solid var(--bau-ink); background: #fff; }
+
+/* ============================ 孟菲斯 Memphis ============================ */
+
+:root[data-art="memphis"] {
+  --color-base-100: oklch(99% 0 0);
+  --color-base-200: oklch(96% 0.02 330);
+  --color-base-300: oklch(92% 0.03 330);
+  --color-base-content: oklch(15% 0.02 260);
+  --color-primary: oklch(55% 0.25 350);
+  --color-primary-content: oklch(99% 0 0);
+  --color-secondary: oklch(70% 0.15 190);
+  --color-secondary-content: oklch(15% 0.02 260);
+  --color-accent: oklch(80% 0.18 95);
+  --color-accent-content: oklch(15% 0.02 260);
+  --color-neutral: oklch(15% 0.02 260);
+  --color-neutral-content: oklch(99% 0 0);
+  --color-info: oklch(70% 0.15 190);
+  --color-info-content: oklch(15% 0.02 260);
+  --color-success: oklch(70% 0.15 190);
+  --color-success-content: oklch(15% 0.02 260);
+  --color-warning: oklch(80% 0.18 95);
+  --color-warning-content: oklch(15% 0.02 260);
+  --color-error: oklch(55% 0.25 350);
+  --color-error-content: oklch(99% 0 0);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --mem-ink: oklch(15% 0.02 260);
+  --mem-pink: oklch(55% 0.25 350);
+  --mem-teal: oklch(70% 0.15 190);
+  --mem-yellow: oklch(80% 0.18 95);
+  color-scheme: light;
+  --evo-bg: oklch(99% 0 0);
+  --evo-brand: oklch(55% 0.25 350);
+  --evo-path: oklch(15% 0.02 260);
+  --evo-link: oklch(70% 0.15 190);
+  --evo-node: oklch(55% 0.1 260);
+  --evo-hud: oklch(15% 0.02 260);
+  --evo-lbl: oklch(40% 0.02 260 / 0.7);
+  --evo-lbl-strong: oklch(12% 0.02 260);
+  --evo-lbl-dim: oklch(55% 0.02 260 / 0.5);
+}
+:root[data-art="memphis"] #app-layout,
+:root[data-art="memphis"] main {
+  background: #fff !important;
+  background-image: radial-gradient(oklch(85% 0.1 330 / 0.35) 1.5px, transparent 1.5px) !important;
+  background-size: 18px 18px !important;
+}
+:root[data-art="memphis"] h1,
+:root[data-art="memphis"] h2,
+:root[data-art="memphis"] h3,
+:root[data-art="memphis"] .step-header h2 {
+  font-weight: 800;
+}
+:root[data-art="memphis"] .btn {
+  border: 3px solid var(--mem-ink);
+  font-weight: 800;
+  box-shadow: 4px 4px 0 var(--mem-teal);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+:root[data-art="memphis"] .btn:hover {
+  transform: translate(-1px, -1px) rotate(-0.5deg);
+  box-shadow: 5px 5px 0 var(--mem-teal);
+}
+:root[data-art="memphis"] .card,
+:root[data-art="memphis"] .modal-box,
+:root[data-art="memphis"] .dropdown-content {
+  border: 3px solid var(--mem-ink) !important;
+  box-shadow: 6px 6px 0 oklch(80% 0.18 95 / 0.6) !important;
+}
+:root[data-art="memphis"] .input,
+:root[data-art="memphis"] .select,
+:root[data-art="memphis"] .textarea,
+:root[data-art="memphis"] textarea {
+  border: 3px solid var(--mem-ink) !important;
+}
+:root[data-art="memphis"] .step-header { border-top: 3px solid var(--mem-ink); padding-top: 0.5rem; }
+:root[data-art="memphis"] .step-badge {
+  background: var(--mem-yellow) !important;
+  color: var(--mem-ink) !important;
+  border: 3px solid var(--mem-ink) !important;
+  border-radius: 50% !important;
+  clip-path: none !important;
+  transform: rotate(-6deg);
+}
+:root[data-art="memphis"] .step-header > div { border-top: 3px dashed var(--mem-pink) !important; }
+:root[data-art="memphis"] #sidebar {
+  background: oklch(97% 0.02 330) !important;
+  border-right: 3px solid var(--mem-ink) !important;
+}
+:root[data-art="memphis"] #sidebar nav a[aria-current="page"] {
+  background: var(--mem-pink) !important;
+  color: #fff !important;
+  font-weight: 800;
+  box-shadow: none !important;
+}
+:root[data-art="memphis"] #sidebar nav a[aria-current="page"] svg { color: #fff !important; }
+:root[data-art="memphis"] .badge { border: 2px solid var(--mem-ink); background: #fff; }
+
+/* ============================ 粗野主义 Brutalism ======================= */
+
+:root[data-art="brutalism"] {
+  --color-base-100: oklch(93% 0.005 250);
+  --color-base-200: oklch(88% 0.005 250);
+  --color-base-300: oklch(82% 0.005 250);
+  --color-base-content: oklch(10% 0 0);
+  --color-primary: oklch(45% 0.2 265);
+  --color-primary-content: oklch(99% 0 0);
+  --color-secondary: oklch(40% 0.01 250);
+  --color-secondary-content: oklch(99% 0 0);
+  --color-accent: oklch(45% 0.2 265);
+  --color-accent-content: oklch(99% 0 0);
+  --color-neutral: oklch(30% 0.01 250);
+  --color-neutral-content: oklch(99% 0 0);
+  --color-info: oklch(45% 0.2 265);
+  --color-info-content: oklch(99% 0 0);
+  --color-success: oklch(45% 0.12 150);
+  --color-success-content: oklch(99% 0 0);
+  --color-warning: oklch(65% 0.15 80);
+  --color-warning-content: oklch(10% 0 0);
+  --color-error: oklch(50% 0.2 28);
+  --color-error-content: oklch(99% 0 0);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --bru-gray: oklch(75% 0.005 250);
+  color-scheme: light;
+  --evo-bg: oklch(93% 0.005 250);
+  --evo-brand: oklch(45% 0.2 265);
+  --evo-path: oklch(10% 0 0);
+  --evo-link: oklch(40% 0.02 250);
+  --evo-node: oklch(55% 0.02 250);
+  --evo-hud: oklch(10% 0 0);
+  --evo-lbl: oklch(40% 0.01 250 / 0.75);
+  --evo-lbl-strong: oklch(8% 0 0);
+  --evo-lbl-dim: oklch(50% 0.01 250 / 0.5);
+}
+:root[data-art="brutalism"] body,
+:root[data-art="brutalism"] h1,
+:root[data-art="brutalism"] h2,
+:root[data-art="brutalism"] h3,
+:root[data-art="brutalism"] .step-header h2 {
+  font-family: "Times New Roman", Times, SimSun, serif;
+}
+:root[data-art="brutalism"] #app-layout,
+:root[data-art="brutalism"] main { background: var(--color-base-100) !important; }
+:root[data-art="brutalism"] .btn {
+  background: linear-gradient(180deg, #f4f4f4, #dcdcdc);
+  border: 2px outset #fff;
+  color: #111;
+  font-family: "Times New Roman", Times, SimSun, serif;
+  box-shadow: none !important;
+}
+:root[data-art="brutalism"] .btn:active { border-style: inset; }
+:root[data-art="brutalism"] .btn-primary {
+  background: linear-gradient(180deg, #e8e8ff, #b8b8e8);
+}
+:root[data-art="brutalism"] .card,
+:root[data-art="brutalism"] .modal-box,
+:root[data-art="brutalism"] .dropdown-content {
+  border: 2px solid var(--bru-gray) !important;
+  box-shadow: none !important;
+}
+:root[data-art="brutalism"] .input,
+:root[data-art="brutalism"] .select,
+:root[data-art="brutalism"] .textarea,
+:root[data-art="brutalism"] textarea {
+  border: 2px inset #fff !important;
+  background: #fff !important;
+}
+:root[data-art="brutalism"] .step-header { border-top: 2px solid var(--bru-gray); padding-top: 0.5rem; }
+:root[data-art="brutalism"] .step-badge {
+  background: linear-gradient(180deg, #f4f4f4, #dcdcdc) !important;
+  color: #111 !important;
+  border: 2px outset #fff !important;
+}
+:root[data-art="brutalism"] .step-header > div { border-top: 1px solid var(--bru-gray) !important; }
+:root[data-art="brutalism"] #sidebar {
+  background: var(--color-base-200) !important;
+  border-right: 2px solid var(--bru-gray) !important;
+}
+:root[data-art="brutalism"] #sidebar nav a[aria-current="page"] {
+  background: oklch(45% 0.2 265 / 0.15) !important;
+  color: oklch(35% 0.2 265) !important;
+  text-decoration: underline;
+  box-shadow: none !important;
+}
+:root[data-art="brutalism"] .badge { border: 1px solid var(--bru-gray); background: #fff; }
+
+/* ============================ 玻璃拟态 Glass ========================== */
+
+:root[data-art="glass"] {
+  --color-base-100: oklch(25% 0.08 290);
+  --color-base-200: oklch(30% 0.08 290);
+  --color-base-300: oklch(35% 0.08 290);
+  --color-base-content: oklch(97% 0.01 290);
+  --color-primary: oklch(70% 0.15 265);
+  --color-primary-content: oklch(99% 0 0);
+  --color-secondary: oklch(70% 0.18 330);
+  --color-secondary-content: oklch(99% 0 0);
+  --color-accent: oklch(75% 0.15 200);
+  --color-accent-content: oklch(25% 0.05 290);
+  --color-neutral: oklch(35% 0.08 290);
+  --color-neutral-content: oklch(97% 0.01 290);
+  --color-info: oklch(75% 0.15 200);
+  --color-info-content: oklch(25% 0.05 290);
+  --color-success: oklch(70% 0.15 160);
+  --color-success-content: oklch(25% 0.05 290);
+  --color-warning: oklch(80% 0.15 90);
+  --color-warning-content: oklch(25% 0.05 290);
+  --color-error: oklch(65% 0.2 20);
+  --color-error-content: oklch(99% 0 0);
+  --radius-selector: 0.5rem; --radius-field: 0.75rem; --radius-box: 1rem;
+  color-scheme: dark;
+  --evo-bg: oklch(22% 0.07 290);
+  --evo-brand: oklch(75% 0.15 200);
+  --evo-path: oklch(95% 0.02 290);
+  --evo-link: oklch(70% 0.08 290);
+  --evo-node: oklch(55% 0.06 290);
+  --evo-hud: oklch(97% 0.01 290);
+  --evo-lbl: oklch(90% 0.03 290 / 0.6);
+  --evo-lbl-strong: oklch(99% 0.01 290);
+  --evo-lbl-dim: oklch(70% 0.05 290 / 0.5);
+}
+:root[data-art="glass"] #app-layout {
+  background: linear-gradient(135deg, oklch(35% 0.15 290), oklch(40% 0.15 330), oklch(45% 0.18 265)) !important;
+}
+:root[data-art="glass"] main {
+  background: transparent !important;
+}
+:root[data-art="glass"] .card,
+:root[data-art="glass"] .modal-box,
+:root[data-art="glass"] .dropdown-content {
+  background: oklch(99% 0 0 / 0.12) !important;
+  backdrop-filter: blur(16px);
+  border: 1px solid oklch(99% 0 0 / 0.2) !important;
+  box-shadow: 0 8px 32px oklch(15% 0.05 290 / 0.35) !important;
+}
+:root[data-art="glass"] .btn {
+  background: oklch(99% 0 0 / 0.15);
+  backdrop-filter: blur(8px);
+  border: 1px solid oklch(99% 0 0 / 0.25);
+  color: #fff;
+}
+:root[data-art="glass"] .btn-primary {
+  background: oklch(70% 0.15 265 / 0.85);
+  border-color: transparent;
+}
+:root[data-art="glass"] .input,
+:root[data-art="glass"] .select,
+:root[data-art="glass"] .textarea,
+:root[data-art="glass"] textarea {
+  background: oklch(99% 0 0 / 0.1) !important;
+  border: 1px solid oklch(99% 0 0 / 0.2) !important;
+  color: #fff;
+}
+:root[data-art="glass"] .step-badge {
+  background: oklch(99% 0 0 / 0.2) !important;
+  color: #fff !important;
+  backdrop-filter: blur(8px);
+  border: 1px solid oklch(99% 0 0 / 0.3) !important;
+}
+:root[data-art="glass"] .step-header > div { border-top: 1px solid oklch(99% 0 0 / 0.25) !important; }
+:root[data-art="glass"] #sidebar {
+  background: oklch(99% 0 0 / 0.08) !important;
+  backdrop-filter: blur(16px);
+  border-right: 1px solid oklch(99% 0 0 / 0.15) !important;
+}
+:root[data-art="glass"] #sidebar nav a { color: oklch(95% 0.02 290 / 0.75); }
+:root[data-art="glass"] #sidebar nav a[aria-current="page"] {
+  background: oklch(99% 0 0 / 0.18) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+:root[data-art="glass"] #sidebar nav a[aria-current="page"] svg { color: #fff !important; }
+:root[data-art="glass"] .badge { background: oklch(99% 0 0 / 0.15); border: 1px solid oklch(99% 0 0 / 0.2); color: #fff; }
+
+/* ============================ 新拟态 Neumorphism ====================== */
+
+:root[data-art="neumorphism"] {
+  --color-base-100: oklch(90% 0.012 250);
+  --color-base-200: oklch(87% 0.012 250);
+  --color-base-300: oklch(83% 0.012 250);
+  --color-base-content: oklch(40% 0.03 250);
+  --color-primary: oklch(60% 0.15 265);
+  --color-primary-content: oklch(99% 0 0);
+  --color-secondary: oklch(60% 0.03 250);
+  --color-secondary-content: oklch(99% 0 0);
+  --color-accent: oklch(60% 0.15 265);
+  --color-accent-content: oklch(99% 0 0);
+  --color-neutral: oklch(83% 0.012 250);
+  --color-neutral-content: oklch(40% 0.03 250);
+  --color-info: oklch(65% 0.12 230);
+  --color-info-content: oklch(99% 0 0);
+  --color-success: oklch(65% 0.12 160);
+  --color-success-content: oklch(99% 0 0);
+  --color-warning: oklch(75% 0.14 85);
+  --color-warning-content: oklch(40% 0.03 250);
+  --color-error: oklch(60% 0.18 25);
+  --color-error-content: oklch(99% 0 0);
+  --radius-selector: 0.75rem; --radius-field: 0.875rem; --radius-box: 1.25rem;
+  --neu-bg: oklch(90% 0.012 250);
+  color-scheme: light;
+  --evo-bg: oklch(90% 0.012 250);
+  --evo-brand: oklch(60% 0.15 265);
+  --evo-path: oklch(45% 0.03 250);
+  --evo-link: oklch(60% 0.03 250);
+  --evo-node: oklch(65% 0.03 250);
+  --evo-hud: oklch(40% 0.03 250);
+  --evo-lbl: oklch(50% 0.03 250 / 0.7);
+  --evo-lbl-strong: oklch(35% 0.03 250);
+  --evo-lbl-dim: oklch(60% 0.03 250 / 0.5);
+}
+:root[data-art="neumorphism"] #app-layout,
+:root[data-art="neumorphism"] main { background: var(--neu-bg) !important; }
+:root[data-art="neumorphism"] .card,
+:root[data-art="neumorphism"] .modal-box,
+:root[data-art="neumorphism"] .dropdown-content {
+  background: var(--neu-bg) !important;
+  border: none !important;
+  box-shadow: 8px 8px 16px oklch(75% 0.015 250), -8px -8px 16px oklch(99% 0 0) !important;
+}
+:root[data-art="neumorphism"] .btn {
+  background: var(--neu-bg);
+  border: none;
+  color: var(--color-base-content);
+  box-shadow: 4px 4px 8px oklch(75% 0.015 250), -4px -4px 8px oklch(99% 0 0);
+}
+:root[data-art="neumorphism"] .btn:hover {
+  box-shadow: 2px 2px 4px oklch(75% 0.015 250), -2px -2px 4px oklch(99% 0 0);
+}
+:root[data-art="neumorphism"] .btn:active {
+  box-shadow: inset 4px 4px 8px oklch(75% 0.015 250), inset -4px -4px 8px oklch(99% 0 0);
+}
+:root[data-art="neumorphism"] .btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+:root[data-art="neumorphism"] .input,
+:root[data-art="neumorphism"] .select,
+:root[data-art="neumorphism"] .textarea,
+:root[data-art="neumorphism"] textarea {
+  background: var(--neu-bg) !important;
+  border: none !important;
+  box-shadow: inset 4px 4px 8px oklch(75% 0.015 250), inset -4px -4px 8px oklch(99% 0 0) !important;
+}
+:root[data-art="neumorphism"] .step-badge {
+  background: var(--neu-bg) !important;
+  color: var(--color-primary) !important;
+  box-shadow: 3px 3px 6px oklch(75% 0.015 250), -3px -3px 6px oklch(99% 0 0) !important;
+}
+:root[data-art="neumorphism"] .step-header > div { border-top: 1px solid oklch(80% 0.015 250) !important; }
+:root[data-art="neumorphism"] #sidebar {
+  background: var(--neu-bg) !important;
+  border-right: 1px solid oklch(82% 0.015 250) !important;
+}
+:root[data-art="neumorphism"] #sidebar nav a[aria-current="page"] {
+  background: var(--neu-bg) !important;
+  color: var(--color-primary) !important;
+  box-shadow: inset 3px 3px 6px oklch(75% 0.015 250), inset -3px -3px 6px oklch(99% 0 0) !important;
+}
+:root[data-art="neumorphism"] .badge { background: var(--neu-bg); border: none; box-shadow: 2px 2px 4px oklch(75% 0.015 250); }
+
+/* ============================ 赛博朋克 Cyberpunk ====================== */
+
+:root[data-art="cyberpunk"] {
+  --color-base-100: oklch(10% 0.03 290);
+  --color-base-200: oklch(14% 0.04 290);
+  --color-base-300: oklch(18% 0.05 290);
+  --color-base-content: oklch(90% 0.15 195);
+  --color-primary: oklch(85% 0.2 195);
+  --color-primary-content: oklch(10% 0.03 290);
+  --color-secondary: oklch(70% 0.28 330);
+  --color-secondary-content: oklch(10% 0.03 290);
+  --color-accent: oklch(85% 0.2 100);
+  --color-accent-content: oklch(10% 0.03 290);
+  --color-neutral: oklch(18% 0.05 290);
+  --color-neutral-content: oklch(90% 0.15 195);
+  --color-info: oklch(85% 0.2 195);
+  --color-info-content: oklch(10% 0.03 290);
+  --color-success: oklch(85% 0.2 145);
+  --color-success-content: oklch(10% 0.03 290);
+  --color-warning: oklch(85% 0.2 100);
+  --color-warning-content: oklch(10% 0.03 290);
+  --color-error: oklch(70% 0.28 330);
+  --color-error-content: oklch(10% 0.03 290);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --cy-cyan: oklch(85% 0.2 195);
+  --cy-magenta: oklch(70% 0.28 330);
+  --cy-bg: oklch(10% 0.03 290);
+  color-scheme: dark;
+  --evo-bg: oklch(10% 0.03 290);
+  --evo-brand: oklch(85% 0.2 195);
+  --evo-path: oklch(92% 0.15 195);
+  --evo-link: oklch(60% 0.12 290);
+  --evo-node: oklch(45% 0.08 290);
+  --evo-hud: oklch(90% 0.15 195);
+  --evo-lbl: oklch(80% 0.12 195 / 0.6);
+  --evo-lbl-strong: oklch(95% 0.15 195);
+  --evo-lbl-dim: oklch(60% 0.08 195 / 0.5);
+}
+:root[data-art="cyberpunk"] body { background: var(--cy-bg); }
+:root[data-art="cyberpunk"] #app-layout,
+:root[data-art="cyberpunk"] main { background: var(--cy-bg) !important; color: var(--cy-cyan); }
+:root[data-art="cyberpunk"] h1,
+:root[data-art="cyberpunk"] h2,
+:root[data-art="cyberpunk"] h3,
+:root[data-art="cyberpunk"] .step-header h2 {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 10px oklch(85% 0.2 195 / 0.6), 2px 0 0 oklch(70% 0.28 330 / 0.5);
+}
+:root[data-art="cyberpunk"] .btn {
+  border: 2px solid var(--cy-cyan);
+  background: transparent;
+  color: var(--cy-cyan);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  box-shadow: 0 0 12px oklch(85% 0.2 195 / 0.35);
+}
+:root[data-art="cyberpunk"] .btn:hover { background: oklch(85% 0.2 195 / 0.15); }
+:root[data-art="cyberpunk"] .btn-primary {
+  background: var(--cy-cyan);
+  color: var(--cy-bg);
+}
+:root[data-art="cyberpunk"] .card,
+:root[data-art="cyberpunk"] .modal-box,
+:root[data-art="cyberpunk"] .dropdown-content {
+  border: 2px solid var(--cy-cyan) !important;
+  background: oklch(14% 0.04 290) !important;
+  box-shadow: 0 0 20px oklch(85% 0.2 195 / 0.25) !important;
+}
+:root[data-art="cyberpunk"] .input,
+:root[data-art="cyberpunk"] .select,
+:root[data-art="cyberpunk"] .textarea,
+:root[data-art="cyberpunk"] textarea {
+  border: 2px solid var(--cy-cyan) !important;
+  background: oklch(10% 0.03 290) !important;
+  color: var(--cy-cyan);
+}
+:root[data-art="cyberpunk"] .step-header { border-top: 2px solid var(--cy-magenta); padding-top: 0.5rem; }
+:root[data-art="cyberpunk"] .step-badge {
+  background: var(--cy-magenta) !important;
+  color: #fff !important;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px) !important;
+}
+:root[data-art="cyberpunk"] .step-header > div { border-top: 2px solid oklch(85% 0.2 195 / 0.4) !important; }
+:root[data-art="cyberpunk"] #sidebar {
+  background: oklch(8% 0.02 290) !important;
+  border-right: 2px solid var(--cy-magenta) !important;
+}
+:root[data-art="cyberpunk"] #sidebar,
+:root[data-art="cyberpunk"] #sidebar .sidebar-label,
+:root[data-art="cyberpunk"] #sidebar nav a,
+:root[data-art="cyberpunk"] #sidebar button { color: oklch(85% 0.2 195 / 0.75); }
+:root[data-art="cyberpunk"] #sidebar nav a[aria-current="page"] {
+  background: var(--cy-cyan) !important;
+  color: var(--cy-bg) !important;
+  box-shadow: none !important;
+}
+:root[data-art="cyberpunk"] #sidebar nav a[aria-current="page"] svg { color: var(--cy-bg) !important; }
+:root[data-art="cyberpunk"] .badge { border: 1px solid var(--cy-cyan); color: var(--cy-cyan); background: transparent; }
+
+/* ============================ 蒸汽波 Vaporwave ======================= */
+
+:root[data-art="vaporwave"] {
+  --color-base-100: oklch(20% 0.08 310);
+  --color-base-200: oklch(25% 0.09 310);
+  --color-base-300: oklch(30% 0.1 310);
+  --color-base-content: oklch(90% 0.06 200);
+  --color-primary: oklch(75% 0.18 200);
+  --color-primary-content: oklch(15% 0.06 310);
+  --color-secondary: oklch(70% 0.22 350);
+  --color-secondary-content: oklch(15% 0.06 310);
+  --color-accent: oklch(80% 0.15 330);
+  --color-accent-content: oklch(15% 0.06 310);
+  --color-neutral: oklch(30% 0.1 310);
+  --color-neutral-content: oklch(90% 0.06 200);
+  --color-info: oklch(75% 0.18 200);
+  --color-info-content: oklch(15% 0.06 310);
+  --color-success: oklch(75% 0.18 160);
+  --color-success-content: oklch(15% 0.06 310);
+  --color-warning: oklch(80% 0.16 90);
+  --color-warning-content: oklch(15% 0.06 310);
+  --color-error: oklch(70% 0.22 350);
+  --color-error-content: oklch(15% 0.06 310);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --vap-cyan: oklch(75% 0.18 200);
+  --vap-pink: oklch(70% 0.22 350);
+  color-scheme: dark;
+  --evo-bg: oklch(18% 0.07 310);
+  --evo-brand: oklch(75% 0.18 200);
+  --evo-path: oklch(92% 0.08 200);
+  --evo-link: oklch(60% 0.12 330);
+  --evo-node: oklch(45% 0.1 310);
+  --evo-hud: oklch(90% 0.06 200);
+  --evo-lbl: oklch(80% 0.08 200 / 0.6);
+  --evo-lbl-strong: oklch(95% 0.06 200);
+  --evo-lbl-dim: oklch(60% 0.08 310 / 0.5);
+}
+:root[data-art="vaporwave"] #app-layout {
+  background: linear-gradient(180deg, oklch(22% 0.1 310), oklch(35% 0.14 330)) !important;
+}
+:root[data-art="vaporwave"] main {
+  background: repeating-linear-gradient(0deg, transparent 0 38px, oklch(75% 0.18 200 / 0.12) 38px 39px) !important;
+}
+:root[data-art="vaporwave"] h1,
+:root[data-art="vaporwave"] h2,
+:root[data-art="vaporwave"] h3,
+:root[data-art="vaporwave"] .step-header h2 {
+  font-family: "Times New Roman", SimSun, serif;
+  font-style: italic;
+  text-shadow: 0 0 12px oklch(75% 0.18 200 / 0.7), 3px 3px 0 oklch(70% 0.22 350 / 0.6);
+}
+:root[data-art="vaporwave"] .btn {
+  border: 1px solid var(--vap-cyan);
+  background: linear-gradient(180deg, oklch(75% 0.18 200 / 0.2), oklch(70% 0.22 350 / 0.2));
+  color: #fff;
+  letter-spacing: 0.08em;
+  box-shadow: 0 0 10px oklch(75% 0.18 200 / 0.3);
+}
+:root[data-art="vaporwave"] .btn-primary { background: var(--vap-cyan); color: oklch(15% 0.06 310); }
+:root[data-art="vaporwave"] .card,
+:root[data-art="vaporwave"] .modal-box,
+:root[data-art="vaporwave"] .dropdown-content {
+  border: 1px solid var(--vap-cyan) !important;
+  background: oklch(22% 0.08 310 / 0.9) !important;
+  box-shadow: 0 0 24px oklch(70% 0.22 350 / 0.3) !important;
+}
+:root[data-art="vaporwave"] .input,
+:root[data-art="vaporwave"] .select,
+:root[data-art="vaporwave"] .textarea,
+:root[data-art="vaporwave"] textarea {
+  border: 1px solid var(--vap-cyan) !important;
+  background: oklch(15% 0.06 310) !important;
+  color: #fff;
+}
+:root[data-art="vaporwave"] .step-header { border-top: 1px solid var(--vap-cyan); padding-top: 0.5rem; }
+:root[data-art="vaporwave"] .step-badge {
+  background: linear-gradient(135deg, var(--vap-cyan), var(--vap-pink)) !important;
+  color: #fff !important;
+}
+:root[data-art="vaporwave"] .step-header > div { border-top: 1px solid oklch(75% 0.18 200 / 0.4) !important; }
+:root[data-art="vaporwave"] #sidebar {
+  background: oklch(16% 0.06 310 / 0.95) !important;
+  border-right: 1px solid var(--vap-pink) !important;
+}
+:root[data-art="vaporwave"] #sidebar,
+:root[data-art="vaporwave"] #sidebar .sidebar-label,
+:root[data-art="vaporwave"] #sidebar nav a,
+:root[data-art="vaporwave"] #sidebar button { color: oklch(85% 0.08 200 / 0.8); }
+:root[data-art="vaporwave"] #sidebar nav a[aria-current="page"] {
+  background: linear-gradient(90deg, oklch(75% 0.18 200 / 0.3), oklch(70% 0.22 350 / 0.3)) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+:root[data-art="vaporwave"] #sidebar nav a[aria-current="page"] svg { color: #fff !important; }
+:root[data-art="vaporwave"] .badge { border: 1px solid var(--vap-cyan); color: var(--vap-cyan); background: transparent; }
+
+/* ============================ 北欧极地 Nord ========================== */
+
+:root[data-art="nord"] {
+  --color-base-100: oklch(24% 0.02 250);
+  --color-base-200: oklch(28% 0.025 250);
+  --color-base-300: oklch(32% 0.03 250);
+  --color-base-content: oklch(90% 0.02 250);
+  --color-primary: oklch(75% 0.1 215);
+  --color-primary-content: oklch(20% 0.02 250);
+  --color-secondary: oklch(65% 0.08 230);
+  --color-secondary-content: oklch(20% 0.02 250);
+  --color-accent: oklch(70% 0.1 180);
+  --color-accent-content: oklch(20% 0.02 250);
+  --color-neutral: oklch(32% 0.03 250);
+  --color-neutral-content: oklch(90% 0.02 250);
+  --color-info: oklch(75% 0.1 215);
+  --color-info-content: oklch(20% 0.02 250);
+  --color-success: oklch(70% 0.11 150);
+  --color-success-content: oklch(20% 0.02 250);
+  --color-warning: oklch(80% 0.12 90);
+  --color-warning-content: oklch(20% 0.02 250);
+  --color-error: oklch(60% 0.15 25);
+  --color-error-content: oklch(90% 0.02 250);
+  --radius-selector: 0.375rem; --radius-field: 0.375rem; --radius-box: 0.375rem;
+  --nord-bg: oklch(24% 0.02 250);
+  --nord-frost: oklch(75% 0.1 215);
+  color-scheme: dark;
+  --evo-bg: oklch(22% 0.02 250);
+  --evo-brand: oklch(75% 0.1 215);
+  --evo-path: oklch(90% 0.03 250);
+  --evo-link: oklch(55% 0.04 250);
+  --evo-node: oklch(45% 0.03 250);
+  --evo-hud: oklch(90% 0.02 250);
+  --evo-lbl: oklch(75% 0.03 250 / 0.6);
+  --evo-lbl-strong: oklch(95% 0.02 250);
+  --evo-lbl-dim: oklch(55% 0.03 250 / 0.5);
+}
+:root[data-art="nord"] #app-layout,
+:root[data-art="nord"] main { background: var(--nord-bg) !important; }
+:root[data-art="nord"] .card,
+:root[data-art="nord"] .modal-box,
+:root[data-art="nord"] .dropdown-content {
+  border: 1px solid oklch(90% 0.02 250 / 0.12) !important;
+  background: oklch(28% 0.025 250) !important;
+  box-shadow: none !important;
+}
+:root[data-art="nord"] .btn {
+  background: oklch(32% 0.03 250);
+  border: 1px solid oklch(90% 0.02 250 / 0.15);
+  color: var(--color-base-content);
+}
+:root[data-art="nord"] .btn-primary { background: var(--nord-frost); color: var(--nord-bg); }
+:root[data-art="nord"] .input,
+:root[data-art="nord"] .select,
+:root[data-art="nord"] .textarea,
+:root[data-art="nord"] textarea {
+  background: oklch(28% 0.025 250) !important;
+  border: 1px solid oklch(90% 0.02 250 / 0.15) !important;
+}
+:root[data-art="nord"] .step-badge { background: var(--nord-frost) !important; color: var(--nord-bg) !important; }
+:root[data-art="nord"] .step-header > div { border-top: 1px solid oklch(90% 0.02 250 / 0.15) !important; }
+:root[data-art="nord"] #sidebar {
+  background: oklch(21% 0.02 250) !important;
+  border-right: 1px solid oklch(90% 0.02 250 / 0.1) !important;
+}
+:root[data-art="nord"] #sidebar nav a[aria-current="page"] {
+  background: oklch(75% 0.1 215 / 0.18) !important;
+  color: var(--nord-frost) !important;
+  box-shadow: none !important;
+}
+:root[data-art="nord"] .badge { background: oklch(32% 0.03 250); border: 1px solid oklch(90% 0.02 250 / 0.15); }
+
+/* ============================ 暖棕复古 Gruvbox ======================= */
+
+:root[data-art="gruvbox"] {
+  --color-base-100: oklch(24% 0.025 70);
+  --color-base-200: oklch(28% 0.03 70);
+  --color-base-300: oklch(32% 0.035 70);
+  --color-base-content: oklch(85% 0.06 90);
+  --color-primary: oklch(75% 0.15 90);
+  --color-primary-content: oklch(20% 0.02 70);
+  --color-secondary: oklch(65% 0.14 55);
+  --color-secondary-content: oklch(20% 0.02 70);
+  --color-accent: oklch(70% 0.12 120);
+  --color-accent-content: oklch(20% 0.02 70);
+  --color-neutral: oklch(32% 0.035 70);
+  --color-neutral-content: oklch(85% 0.06 90);
+  --color-info: oklch(70% 0.1 200);
+  --color-info-content: oklch(20% 0.02 70);
+  --color-success: oklch(70% 0.12 120);
+  --color-success-content: oklch(20% 0.02 70);
+  --color-warning: oklch(75% 0.15 90);
+  --color-warning-content: oklch(20% 0.02 70);
+  --color-error: oklch(55% 0.18 30);
+  --color-error-content: oklch(85% 0.06 90);
+  --radius-selector: 0.25rem; --radius-field: 0.25rem; --radius-box: 0.25rem;
+  --gru-bg: oklch(24% 0.025 70);
+  --gru-yellow: oklch(75% 0.15 90);
+  --gru-orange: oklch(65% 0.14 55);
+  color-scheme: dark;
+  --evo-bg: oklch(22% 0.025 70);
+  --evo-brand: oklch(75% 0.15 90);
+  --evo-path: oklch(88% 0.07 90);
+  --evo-link: oklch(55% 0.05 70);
+  --evo-node: oklch(45% 0.04 70);
+  --evo-hud: oklch(85% 0.06 90);
+  --evo-lbl: oklch(75% 0.06 80 / 0.6);
+  --evo-lbl-strong: oklch(92% 0.07 90);
+  --evo-lbl-dim: oklch(55% 0.04 70 / 0.5);
+}
+:root[data-art="gruvbox"] #app-layout,
+:root[data-art="gruvbox"] main { background: var(--gru-bg) !important; }
+:root[data-art="gruvbox"] .card,
+:root[data-art="gruvbox"] .modal-box,
+:root[data-art="gruvbox"] .dropdown-content {
+  border: 1px solid oklch(45% 0.05 70) !important;
+  background: oklch(28% 0.03 70) !important;
+  box-shadow: 0 2px 0 oklch(18% 0.02 70) !important;
+}
+:root[data-art="gruvbox"] .btn {
+  background: oklch(32% 0.035 70);
+  border: 1px solid oklch(45% 0.05 70);
+  color: var(--color-base-content);
+  box-shadow: 0 2px 0 oklch(18% 0.02 70);
+}
+:root[data-art="gruvbox"] .btn-primary { background: var(--gru-yellow); color: var(--gru-bg); border-color: var(--gru-yellow); }
+:root[data-art="gruvbox"] .input,
+:root[data-art="gruvbox"] .select,
+:root[data-art="gruvbox"] .textarea,
+:root[data-art="gruvbox"] textarea {
+  background: oklch(28% 0.03 70) !important;
+  border: 1px solid oklch(45% 0.05 70) !important;
+}
+:root[data-art="gruvbox"] .step-badge { background: var(--gru-orange) !important; color: var(--gru-bg) !important; }
+:root[data-art="gruvbox"] .step-header > div { border-top: 1px solid oklch(45% 0.05 70) !important; }
+:root[data-art="gruvbox"] #sidebar {
+  background: oklch(21% 0.025 70) !important;
+  border-right: 1px solid oklch(45% 0.05 70) !important;
+}
+:root[data-art="gruvbox"] #sidebar nav a[aria-current="page"] {
+  background: oklch(75% 0.15 90 / 0.18) !important;
+  color: var(--gru-yellow) !important;
+  box-shadow: none !important;
+}
+:root[data-art="gruvbox"] .badge { background: oklch(32% 0.035 70); border: 1px solid oklch(45% 0.05 70); }
+
+/* ============================ 日光纸 Solarized Light ================== */
+
+:root[data-art="solarized-light"] {
+  --color-base-100: oklch(95% 0.025 95);
+  --color-base-200: oklch(91% 0.025 95);
+  --color-base-300: oklch(85% 0.03 95);
+  --color-base-content: oklch(40% 0.03 230);
+  --color-primary: oklch(50% 0.12 230);
+  --color-primary-content: oklch(97% 0.02 95);
+  --color-secondary: oklch(55% 0.1 160);
+  --color-secondary-content: oklch(97% 0.02 95);
+  --color-accent: oklch(60% 0.12 60);
+  --color-accent-content: oklch(97% 0.02 95);
+  --color-neutral: oklch(85% 0.03 95);
+  --color-neutral-content: oklch(40% 0.03 230);
+  --color-info: oklch(50% 0.12 230);
+  --color-info-content: oklch(97% 0.02 95);
+  --color-success: oklch(55% 0.1 160);
+  --color-success-content: oklch(97% 0.02 95);
+  --color-warning: oklch(60% 0.12 60);
+  --color-warning-content: oklch(97% 0.02 95);
+  --color-error: oklch(50% 0.16 30);
+  --color-error-content: oklch(97% 0.02 95);
+  --radius-selector: 0.125rem; --radius-field: 0.125rem; --radius-box: 0.125rem;
+  --sol-bg: oklch(95% 0.025 95);
+  --sol-blue: oklch(50% 0.12 230);
+  color-scheme: light;
+  --evo-bg: oklch(95% 0.025 95);
+  --evo-brand: oklch(50% 0.12 230);
+  --evo-path: oklch(40% 0.03 230);
+  --evo-link: oklch(60% 0.03 230);
+  --evo-node: oklch(65% 0.03 230);
+  --evo-hud: oklch(40% 0.03 230);
+  --evo-lbl: oklch(50% 0.03 230 / 0.7);
+  --evo-lbl-strong: oklch(35% 0.03 230);
+  --evo-lbl-dim: oklch(60% 0.03 230 / 0.5);
+}
+:root[data-art="solarized-light"] #app-layout,
+:root[data-art="solarized-light"] main { background: var(--sol-bg) !important; }
+:root[data-art="solarized-light"] .card,
+:root[data-art="solarized-light"] .modal-box,
+:root[data-art="solarized-light"] .dropdown-content {
+  border: 1px solid oklch(85% 0.03 95) !important;
+  background: oklch(97% 0.02 95) !important;
+  box-shadow: none !important;
+}
+:root[data-art="solarized-light"] .btn {
+  background: oklch(91% 0.025 95);
+  border: 1px solid oklch(85% 0.03 95);
+  color: var(--color-base-content);
+}
+:root[data-art="solarized-light"] .btn-primary { background: var(--sol-blue); color: #fff; border-color: var(--sol-blue); }
+:root[data-art="solarized-light"] .input,
+:root[data-art="solarized-light"] .select,
+:root[data-art="solarized-light"] .textarea,
+:root[data-art="solarized-light"] textarea {
+  background: oklch(97% 0.02 95) !important;
+  border: 1px solid oklch(85% 0.03 95) !important;
+}
+:root[data-art="solarized-light"] .step-badge { background: var(--sol-blue) !important; color: #fff !important; }
+:root[data-art="solarized-light"] .step-header > div { border-top: 1px solid oklch(85% 0.03 95) !important; }
+:root[data-art="solarized-light"] #sidebar {
+  background: oklch(93% 0.025 95) !important;
+  border-right: 1px solid oklch(85% 0.03 95) !important;
+}
+:root[data-art="solarized-light"] #sidebar nav a[aria-current="page"] {
+  background: oklch(50% 0.12 230 / 0.12) !important;
+  color: var(--sol-blue) !important;
+  box-shadow: none !important;
+}
+:root[data-art="solarized-light"] .badge { background: oklch(91% 0.025 95); border: 1px solid oklch(85% 0.03 95); }
+
+/* ============================ 夜光蓝 Solarized Dark =================== */
+
+:root[data-art="solarized-dark"] {
+  --color-base-100: oklch(22% 0.03 220);
+  --color-base-200: oklch(26% 0.035 220);
+  --color-base-300: oklch(30% 0.04 220);
+  --color-base-content: oklch(75% 0.04 220);
+  --color-primary: oklch(65% 0.12 230);
+  --color-primary-content: oklch(97% 0.02 95);
+  --color-secondary: oklch(65% 0.1 60);
+  --color-secondary-content: oklch(20% 0.02 220);
+  --color-accent: oklch(65% 0.11 160);
+  --color-accent-content: oklch(20% 0.02 220);
+  --color-neutral: oklch(30% 0.04 220);
+  --color-neutral-content: oklch(75% 0.04 220);
+  --color-info: oklch(65% 0.12 230);
+  --color-info-content: oklch(97% 0.02 95);
+  --color-success: oklch(65% 0.11 160);
+  --color-success-content: oklch(20% 0.02 220);
+  --color-warning: oklch(65% 0.1 60);
+  --color-warning-content: oklch(20% 0.02 220);
+  --color-error: oklch(55% 0.16 30);
+  --color-error-content: oklch(97% 0.02 95);
+  --radius-selector: 0.125rem; --radius-field: 0.125rem; --radius-box: 0.125rem;
+  --sold-bg: oklch(22% 0.03 220);
+  --sold-blue: oklch(65% 0.12 230);
+  color-scheme: dark;
+  --evo-bg: oklch(20% 0.03 220);
+  --evo-brand: oklch(65% 0.12 230);
+  --evo-path: oklch(85% 0.05 220);
+  --evo-link: oklch(50% 0.05 220);
+  --evo-node: oklch(45% 0.04 220);
+  --evo-hud: oklch(75% 0.04 220);
+  --evo-lbl: oklch(70% 0.04 220 / 0.6);
+  --evo-lbl-strong: oklch(90% 0.04 220);
+  --evo-lbl-dim: oklch(50% 0.04 220 / 0.5);
+}
+:root[data-art="solarized-dark"] #app-layout,
+:root[data-art="solarized-dark"] main { background: var(--sold-bg) !important; }
+:root[data-art="solarized-dark"] .card,
+:root[data-art="solarized-dark"] .modal-box,
+:root[data-art="solarized-dark"] .dropdown-content {
+  border: 1px solid oklch(30% 0.04 220) !important;
+  background: oklch(26% 0.035 220) !important;
+  box-shadow: none !important;
+}
+:root[data-art="solarized-dark"] .btn {
+  background: oklch(30% 0.04 220);
+  border: 1px solid oklch(45% 0.05 220);
+  color: var(--color-base-content);
+}
+:root[data-art="solarized-dark"] .btn-primary { background: var(--sold-blue); color: #fff; border-color: var(--sold-blue); }
+:root[data-art="solarized-dark"] .input,
+:root[data-art="solarized-dark"] .select,
+:root[data-art="solarized-dark"] .textarea,
+:root[data-art="solarized-dark"] textarea {
+  background: oklch(26% 0.035 220) !important;
+  border: 1px solid oklch(45% 0.05 220) !important;
+}
+:root[data-art="solarized-dark"] .step-badge { background: var(--sold-blue) !important; color: #fff !important; }
+:root[data-art="solarized-dark"] .step-header > div { border-top: 1px solid oklch(45% 0.05 220) !important; }
+:root[data-art="solarized-dark"] #sidebar {
+  background: oklch(20% 0.03 220) !important;
+  border-right: 1px solid oklch(45% 0.05 220) !important;
+}
+:root[data-art="solarized-dark"] #sidebar nav a[aria-current="page"] {
+  background: oklch(65% 0.12 230 / 0.18) !important;
+  color: var(--sold-blue) !important;
+  box-shadow: none !important;
+}
+:root[data-art="solarized-dark"] .badge { background: oklch(30% 0.04 220); border: 1px solid oklch(45% 0.05 220); }
+
+/* ============================ 单色黑白 Mono ========================== */
+
+:root[data-art="mono"] {
+  --color-base-100: #fff;
+  --color-base-200: oklch(96% 0 0);
+  --color-base-300: oklch(90% 0 0);
+  --color-base-content: oklch(10% 0 0);
+  --color-primary: oklch(10% 0 0);
+  --color-primary-content: #fff;
+  --color-secondary: oklch(40% 0 0);
+  --color-secondary-content: #fff;
+  --color-accent: oklch(10% 0 0);
+  --color-accent-content: #fff;
+  --color-neutral: oklch(30% 0 0);
+  --color-neutral-content: #fff;
+  --color-info: oklch(10% 0 0);
+  --color-info-content: #fff;
+  --color-success: oklch(10% 0 0);
+  --color-success-content: #fff;
+  --color-warning: oklch(10% 0 0);
+  --color-warning-content: #fff;
+  --color-error: oklch(10% 0 0);
+  --color-error-content: #fff;
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --mono-ink: oklch(10% 0 0);
+  color-scheme: light;
+  --evo-bg: #fff;
+  --evo-brand: oklch(10% 0 0);
+  --evo-path: oklch(10% 0 0);
+  --evo-link: oklch(45% 0 0);
+  --evo-node: oklch(60% 0 0);
+  --evo-hud: oklch(10% 0 0);
+  --evo-lbl: oklch(40% 0 0 / 0.7);
+  --evo-lbl-strong: oklch(5% 0 0);
+  --evo-lbl-dim: oklch(55% 0 0 / 0.5);
+}
+:root[data-art="mono"] #app-layout,
+:root[data-art="mono"] main { background: #fff !important; }
+:root[data-art="mono"] .card,
+:root[data-art="mono"] .modal-box,
+:root[data-art="mono"] .dropdown-content {
+  border: 1px solid var(--mono-ink) !important;
+  box-shadow: none !important;
+}
+:root[data-art="mono"] .btn {
+  border: 1px solid var(--mono-ink);
+  background: #fff;
+  color: var(--mono-ink);
+  font-weight: 600;
+}
+:root[data-art="mono"] .btn-primary { background: var(--mono-ink); color: #fff; }
+:root[data-art="mono"] .input,
+:root[data-art="mono"] .select,
+:root[data-art="mono"] .textarea,
+:root[data-art="mono"] textarea {
+  border: 1px solid var(--mono-ink) !important;
+  background: #fff !important;
+}
+:root[data-art="mono"] .step-header { border-top: 2px solid var(--mono-ink); padding-top: 0.5rem; }
+:root[data-art="mono"] .step-badge { background: var(--mono-ink) !important; color: #fff !important; }
+:root[data-art="mono"] .step-header > div { border-top: 1px solid var(--mono-ink) !important; }
+:root[data-art="mono"] #sidebar {
+  background: #fff !important;
+  border-right: 1px solid var(--mono-ink) !important;
+}
+:root[data-art="mono"] #sidebar nav a[aria-current="page"] {
+  background: var(--mono-ink) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+:root[data-art="mono"] #sidebar nav a[aria-current="page"] svg { color: #fff !important; }
+:root[data-art="mono"] .badge { background: #fff; color: var(--mono-ink); border: 1px solid var(--mono-ink); }
+
+/* ============================ 蓝图 Blueprint ========================= */
+
+:root[data-art="blueprint"] {
+  --color-base-100: oklch(30% 0.1 255);
+  --color-base-200: oklch(35% 0.1 255);
+  --color-base-300: oklch(40% 0.1 255);
+  --color-base-content: oklch(95% 0.03 255);
+  --color-primary: oklch(95% 0.03 255);
+  --color-primary-content: oklch(30% 0.1 255);
+  --color-secondary: oklch(75% 0.12 200);
+  --color-secondary-content: oklch(20% 0.08 255);
+  --color-accent: oklch(75% 0.12 200);
+  --color-accent-content: oklch(20% 0.08 255);
+  --color-neutral: oklch(40% 0.1 255);
+  --color-neutral-content: oklch(95% 0.03 255);
+  --color-info: oklch(75% 0.12 200);
+  --color-info-content: oklch(20% 0.08 255);
+  --color-success: oklch(75% 0.14 150);
+  --color-success-content: oklch(20% 0.08 255);
+  --color-warning: oklch(80% 0.15 90);
+  --color-warning-content: oklch(20% 0.08 255);
+  --color-error: oklch(65% 0.18 28);
+  --color-error-content: oklch(95% 0.03 255);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --bp-bg: oklch(30% 0.1 255);
+  --bp-line: oklch(95% 0.03 255 / 0.85);
+  color-scheme: dark;
+  --evo-bg: oklch(28% 0.09 255);
+  --evo-brand: oklch(85% 0.1 200);
+  --evo-path: oklch(95% 0.03 255);
+  --evo-link: oklch(65% 0.08 255);
+  --evo-node: oklch(55% 0.08 255);
+  --evo-hud: oklch(95% 0.03 255);
+  --evo-lbl: oklch(85% 0.05 255 / 0.65);
+  --evo-lbl-strong: oklch(98% 0.02 255);
+  --evo-lbl-dim: oklch(60% 0.06 255 / 0.5);
+}
+:root[data-art="blueprint"] #app-layout,
+:root[data-art="blueprint"] main {
+  background: var(--bp-bg) !important;
+  background-image:
+    linear-gradient(oklch(95% 0.03 255 / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(95% 0.03 255 / 0.08) 1px, transparent 1px) !important;
+  background-size: 24px 24px !important;
+}
+:root[data-art="blueprint"] body,
+:root[data-art="blueprint"] .btn,
+:root[data-art="blueprint"] input,
+:root[data-art="blueprint"] select,
+:root[data-art="blueprint"] textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace;
+}
+:root[data-art="blueprint"] .card,
+:root[data-art="blueprint"] .modal-box,
+:root[data-art="blueprint"] .dropdown-content {
+  border: 1px dashed var(--bp-line) !important;
+  background: oklch(32% 0.1 255) !important;
+  box-shadow: none !important;
+}
+:root[data-art="blueprint"] .btn {
+  border: 1px dashed var(--bp-line);
+  background: transparent;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+:root[data-art="blueprint"] .btn-primary { background: #fff; color: var(--bp-bg); border-style: solid; }
+:root[data-art="blueprint"] .input,
+:root[data-art="blueprint"] .select,
+:root[data-art="blueprint"] .textarea,
+:root[data-art="blueprint"] textarea {
+  border: 1px dashed var(--bp-line) !important;
+  background: oklch(28% 0.09 255) !important;
+  color: #fff;
+}
+:root[data-art="blueprint"] .step-header { border-top: 1px dashed var(--bp-line); padding-top: 0.5rem; }
+:root[data-art="blueprint"] .step-badge { background: transparent !important; border: 1px solid #fff !important; color: #fff !important; }
+:root[data-art="blueprint"] .step-header > div { border-top: 1px dashed oklch(95% 0.03 255 / 0.5) !important; }
+:root[data-art="blueprint"] #sidebar {
+  background: oklch(27% 0.09 255) !important;
+  border-right: 1px dashed var(--bp-line) !important;
+}
+:root[data-art="blueprint"] #sidebar,
+:root[data-art="blueprint"] #sidebar .sidebar-label,
+:root[data-art="blueprint"] #sidebar nav a,
+:root[data-art="blueprint"] #sidebar button { color: oklch(85% 0.05 255 / 0.8); }
+:root[data-art="blueprint"] #sidebar nav a[aria-current="page"] {
+  background: oklch(95% 0.03 255 / 0.15) !important;
+  color: #fff !important;
+  box-shadow: inset 3px 0 0 #fff !important;
+}
+:root[data-art="blueprint"] .badge { border: 1px dashed var(--bp-line); color: #fff; background: transparent; }
+
+/* ============================ 牛皮纸 Kraft ========================== */
+
+:root[data-art="kraft"] {
+  --color-base-100: oklch(80% 0.05 85);
+  --color-base-200: oklch(75% 0.055 85);
+  --color-base-300: oklch(68% 0.06 85);
+  --color-base-content: oklch(30% 0.04 70);
+  --color-primary: oklch(45% 0.1 60);
+  --color-primary-content: oklch(95% 0.02 85);
+  --color-secondary: oklch(50% 0.14 30);
+  --color-secondary-content: oklch(95% 0.02 85);
+  --color-accent: oklch(50% 0.14 30);
+  --color-accent-content: oklch(95% 0.02 85);
+  --color-neutral: oklch(68% 0.06 85);
+  --color-neutral-content: oklch(30% 0.04 70);
+  --color-info: oklch(45% 0.1 60);
+  --color-info-content: oklch(95% 0.02 85);
+  --color-success: oklch(50% 0.1 130);
+  --color-success-content: oklch(95% 0.02 85);
+  --color-warning: oklch(65% 0.13 80);
+  --color-warning-content: oklch(30% 0.04 70);
+  --color-error: oklch(50% 0.14 30);
+  --color-error-content: oklch(95% 0.02 85);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --kra-bg: oklch(80% 0.05 85);
+  --kra-brown: oklch(45% 0.08 70);
+  --kra-red: oklch(50% 0.14 30);
+  color-scheme: light;
+  --evo-bg: oklch(80% 0.05 85);
+  --evo-brand: oklch(50% 0.14 30);
+  --evo-path: oklch(30% 0.04 70);
+  --evo-link: oklch(50% 0.06 75);
+  --evo-node: oklch(55% 0.06 80);
+  --evo-hud: oklch(30% 0.04 70);
+  --evo-lbl: oklch(40% 0.05 70 / 0.75);
+  --evo-lbl-strong: oklch(25% 0.04 70);
+  --evo-lbl-dim: oklch(55% 0.05 75 / 0.5);
+}
+:root[data-art="kraft"] body,
+:root[data-art="kraft"] h1,
+:root[data-art="kraft"] h2,
+:root[data-art="kraft"] h3,
+:root[data-art="kraft"] .step-header h2 {
+  font-family: Georgia, "Times New Roman", SimSun, serif;
+}
+:root[data-art="kraft"] #app-layout,
+:root[data-art="kraft"] main {
+  background: var(--kra-bg) !important;
+  background-image: repeating-linear-gradient(45deg, oklch(75% 0.055 85 / 0.4) 0 2px, transparent 2px 8px) !important;
+}
+:root[data-art="kraft"] .card,
+:root[data-art="kraft"] .modal-box,
+:root[data-art="kraft"] .dropdown-content {
+  border: 2px solid var(--kra-brown) !important;
+  background: oklch(84% 0.045 85) !important;
+  box-shadow: 3px 3px 0 oklch(45% 0.08 70 / 0.4) !important;
+}
+:root[data-art="kraft"] .btn {
+  border: 2px solid var(--kra-brown);
+  background: transparent;
+  color: var(--kra-brown);
+  font-family: Georgia, SimSun, serif;
+  font-weight: 700;
+  box-shadow: 2px 2px 0 oklch(45% 0.08 70 / 0.4);
+}
+:root[data-art="kraft"] .btn-primary { background: var(--kra-red); border-color: var(--kra-red); color: #fff; }
+:root[data-art="kraft"] .input,
+:root[data-art="kraft"] .select,
+:root[data-art="kraft"] .textarea,
+:root[data-art="kraft"] textarea {
+  border: 2px solid var(--kra-brown) !important;
+  background: oklch(84% 0.045 85) !important;
+}
+:root[data-art="kraft"] .step-header { border-top: 2px solid var(--kra-brown); padding-top: 0.5rem; }
+:root[data-art="kraft"] .step-badge {
+  background: var(--kra-red) !important;
+  color: #fff !important;
+  transform: rotate(-3deg);
+  box-shadow: 2px 2px 0 oklch(45% 0.08 70 / 0.4);
+}
+:root[data-art="kraft"] .step-header > div { border-top: 2px dashed var(--kra-brown) !important; }
+:root[data-art="kraft"] #sidebar {
+  background: oklch(77% 0.055 85) !important;
+  border-right: 2px solid var(--kra-brown) !important;
+}
+:root[data-art="kraft"] #sidebar nav a[aria-current="page"] {
+  background: var(--kra-red) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+:root[data-art="kraft"] #sidebar nav a[aria-current="page"] svg { color: #fff !important; }
+:root[data-art="kraft"] .badge { border: 2px solid var(--kra-brown); background: transparent; color: var(--kra-brown); }
+
+/* ============================ 植物绿 Botanical ======================= */
+
+:root[data-art="botanical"] {
+  --color-base-100: oklch(95% 0.02 120);
+  --color-base-200: oklch(91% 0.025 120);
+  --color-base-300: oklch(85% 0.03 120);
+  --color-base-content: oklch(28% 0.05 140);
+  --color-primary: oklch(40% 0.08 145);
+  --color-primary-content: oklch(97% 0.015 120);
+  --color-secondary: oklch(55% 0.09 130);
+  --color-secondary-content: oklch(97% 0.015 120);
+  --color-accent: oklch(60% 0.1 90);
+  --color-accent-content: oklch(28% 0.05 140);
+  --color-neutral: oklch(85% 0.03 120);
+  --color-neutral-content: oklch(28% 0.05 140);
+  --color-info: oklch(55% 0.09 160);
+  --color-info-content: oklch(97% 0.015 120);
+  --color-success: oklch(50% 0.09 145);
+  --color-success-content: oklch(97% 0.015 120);
+  --color-warning: oklch(70% 0.12 90);
+  --color-warning-content: oklch(28% 0.05 140);
+  --color-error: oklch(50% 0.14 35);
+  --color-error-content: oklch(97% 0.015 120);
+  --radius-selector: 0.5rem; --radius-field: 0.625rem; --radius-box: 0.75rem;
+  --bot-bg: oklch(95% 0.02 120);
+  --bot-green: oklch(40% 0.08 145);
+  color-scheme: light;
+  --evo-bg: oklch(95% 0.02 120);
+  --evo-brand: oklch(40% 0.08 145);
+  --evo-path: oklch(28% 0.05 140);
+  --evo-link: oklch(60% 0.05 130);
+  --evo-node: oklch(55% 0.05 135);
+  --evo-hud: oklch(28% 0.05 140);
+  --evo-lbl: oklch(45% 0.05 140 / 0.7);
+  --evo-lbl-strong: oklch(25% 0.05 140);
+  --evo-lbl-dim: oklch(60% 0.04 130 / 0.5);
+}
+:root[data-art="botanical"] #app-layout,
+:root[data-art="botanical"] main { background: var(--bot-bg) !important; }
+:root[data-art="botanical"] .card,
+:root[data-art="botanical"] .modal-box,
+:root[data-art="botanical"] .dropdown-content {
+  border: 1px solid oklch(85% 0.03 120) !important;
+  background: oklch(98% 0.015 120) !important;
+  box-shadow: 0 2px 8px oklch(60% 0.05 130 / 0.12) !important;
+}
+:root[data-art="botanical"] .btn {
+  border: 1px solid var(--bot-green);
+  background: transparent;
+  color: var(--bot-green);
+}
+:root[data-art="botanical"] .btn-primary { background: var(--bot-green); color: #fff; border-color: var(--bot-green); }
+:root[data-art="botanical"] .input,
+:root[data-art="botanical"] .select,
+:root[data-art="botanical"] .textarea,
+:root[data-art="botanical"] textarea {
+  border: 1px solid oklch(80% 0.035 125) !important;
+  background: oklch(98% 0.015 120) !important;
+}
+:root[data-art="botanical"] .step-badge { background: var(--bot-green) !important; color: #fff !important; border-radius: 40% !important; }
+:root[data-art="botanical"] .step-header > div { border-top: 1px solid oklch(85% 0.03 120) !important; }
+:root[data-art="botanical"] #sidebar {
+  background: oklch(93% 0.025 120) !important;
+  border-right: 1px solid oklch(85% 0.03 120) !important;
+}
+:root[data-art="botanical"] #sidebar nav a[aria-current="page"] {
+  background: oklch(40% 0.08 145 / 0.12) !important;
+  color: var(--bot-green) !important;
+  box-shadow: none !important;
+}
+:root[data-art="botanical"] .badge { background: oklch(91% 0.025 120); border: 1px solid oklch(85% 0.03 120); }
+
+/* ============================ 黑色电影 Noir ========================== */
+
+:root[data-art="noir"] {
+  --color-base-100: oklch(8% 0 0);
+  --color-base-200: oklch(12% 0 0);
+  --color-base-300: oklch(16% 0 0);
+  --color-base-content: oklch(95% 0 0);
+  --color-primary: oklch(95% 0 0);
+  --color-primary-content: oklch(8% 0 0);
+  --color-secondary: oklch(70% 0 0);
+  --color-secondary-content: oklch(8% 0 0);
+  --color-accent: oklch(95% 0 0);
+  --color-accent-content: oklch(8% 0 0);
+  --color-neutral: oklch(16% 0 0);
+  --color-neutral-content: oklch(95% 0 0);
+  --color-info: oklch(95% 0 0);
+  --color-info-content: oklch(8% 0 0);
+  --color-success: oklch(95% 0 0);
+  --color-success-content: oklch(8% 0 0);
+  --color-warning: oklch(95% 0 0);
+  --color-warning-content: oklch(8% 0 0);
+  --color-error: oklch(95% 0 0);
+  --color-error-content: oklch(8% 0 0);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --noir-bg: oklch(8% 0 0);
+  --noir-white: oklch(95% 0 0);
+  color-scheme: dark;
+  --evo-bg: oklch(8% 0 0);
+  --evo-brand: oklch(95% 0 0);
+  --evo-path: oklch(98% 0 0);
+  --evo-link: oklch(60% 0 0);
+  --evo-node: oklch(40% 0 0);
+  --evo-hud: oklch(95% 0 0);
+  --evo-lbl: oklch(85% 0 0 / 0.55);
+  --evo-lbl-strong: oklch(99% 0 0);
+  --evo-lbl-dim: oklch(55% 0 0 / 0.5);
+}
+:root[data-art="noir"] body,
+:root[data-art="noir"] h1,
+:root[data-art="noir"] h2,
+:root[data-art="noir"] h3,
+:root[data-art="noir"] .step-header h2 {
+  font-family: Georgia, "Times New Roman", SimSun, serif;
+}
+:root[data-art="noir"] #app-layout,
+:root[data-art="noir"] main { background: var(--noir-bg) !important; }
+:root[data-art="noir"] .card,
+:root[data-art="noir"] .modal-box,
+:root[data-art="noir"] .dropdown-content {
+  border: 1px solid var(--noir-white) !important;
+  background: oklch(12% 0 0) !important;
+  box-shadow: 6px 6px 0 oklch(95% 0 0 / 0.25) !important;
+}
+:root[data-art="noir"] .btn {
+  border: 1px solid var(--noir-white);
+  background: transparent;
+  color: var(--noir-white);
+  font-family: Georgia, SimSun, serif;
+  font-style: italic;
+  box-shadow: 3px 3px 0 oklch(95% 0 0 / 0.3);
+}
+:root[data-art="noir"] .btn-primary { background: var(--noir-white); color: var(--noir-bg); }
+:root[data-art="noir"] .input,
+:root[data-art="noir"] .select,
+:root[data-art="noir"] .textarea,
+:root[data-art="noir"] textarea {
+  border: 1px solid var(--noir-white) !important;
+  background: oklch(8% 0 0) !important;
+  color: var(--noir-white);
+}
+:root[data-art="noir"] .step-header { border-top: 1px solid var(--noir-white); padding-top: 0.5rem; }
+:root[data-art="noir"] .step-badge { background: var(--noir-white) !important; color: var(--noir-bg) !important; }
+:root[data-art="noir"] .step-header > div { border-top: 1px solid oklch(95% 0 0 / 0.4) !important; }
+:root[data-art="noir"] #sidebar {
+  background: oklch(6% 0 0) !important;
+  border-right: 1px solid var(--noir-white) !important;
+}
+:root[data-art="noir"] #sidebar,
+:root[data-art="noir"] #sidebar .sidebar-label,
+:root[data-art="noir"] #sidebar nav a,
+:root[data-art="noir"] #sidebar button { color: oklch(85% 0 0 / 0.8); }
+:root[data-art="noir"] #sidebar nav a[aria-current="page"] {
+  background: var(--noir-white) !important;
+  color: var(--noir-bg) !important;
+  box-shadow: none !important;
+}
+:root[data-art="noir"] #sidebar nav a[aria-current="page"] svg { color: var(--noir-bg) !important; }
+:root[data-art="noir"] .badge { border: 1px solid var(--noir-white); color: var(--noir-white); background: transparent; }
+
+/* ============================ 粉彩 Pastel =========================== */
+
+:root[data-art="pastel"] {
+  --color-base-100: oklch(97% 0.015 340);
+  --color-base-200: oklch(94% 0.02 340);
+  --color-base-300: oklch(90% 0.025 340);
+  --color-base-content: oklch(40% 0.05 300);
+  --color-primary: oklch(70% 0.1 340);
+  --color-primary-content: oklch(99% 0 0);
+  --color-secondary: oklch(75% 0.08 270);
+  --color-secondary-content: oklch(99% 0 0);
+  --color-accent: oklch(78% 0.08 170);
+  --color-accent-content: oklch(40% 0.05 300);
+  --color-neutral: oklch(90% 0.025 340);
+  --color-neutral-content: oklch(40% 0.05 300);
+  --color-info: oklch(75% 0.08 270);
+  --color-info-content: oklch(99% 0 0);
+  --color-success: oklch(78% 0.08 170);
+  --color-success-content: oklch(40% 0.05 300);
+  --color-warning: oklch(82% 0.09 95);
+  --color-warning-content: oklch(40% 0.05 300);
+  --color-error: oklch(70% 0.12 20);
+  --color-error-content: oklch(99% 0 0);
+  --radius-selector: 0.625rem; --radius-field: 0.75rem; --radius-box: 1rem;
+  --pas-bg: oklch(97% 0.015 340);
+  --pas-pink: oklch(70% 0.1 340);
+  color-scheme: light;
+  --evo-bg: oklch(97% 0.015 340);
+  --evo-brand: oklch(70% 0.1 340);
+  --evo-path: oklch(45% 0.05 300);
+  --evo-link: oklch(75% 0.06 300);
+  --evo-node: oklch(65% 0.05 300);
+  --evo-hud: oklch(40% 0.05 300);
+  --evo-lbl: oklch(50% 0.05 300 / 0.7);
+  --evo-lbl-strong: oklch(35% 0.05 300);
+  --evo-lbl-dim: oklch(65% 0.04 300 / 0.5);
+}
+:root[data-art="pastel"] #app-layout,
+:root[data-art="pastel"] main { background: var(--pas-bg) !important; }
+:root[data-art="pastel"] .card,
+:root[data-art="pastel"] .modal-box,
+:root[data-art="pastel"] .dropdown-content {
+  border: 2px solid oklch(90% 0.03 340) !important;
+  background: #fff !important;
+  box-shadow: 0 4px 12px oklch(80% 0.05 340 / 0.2) !important;
+}
+:root[data-art="pastel"] .btn {
+  border: 2px solid var(--pas-pink);
+  background: #fff;
+  color: var(--pas-pink);
+  font-weight: 700;
+}
+:root[data-art="pastel"] .btn-primary { background: var(--pas-pink); color: #fff; border-color: var(--pas-pink); }
+:root[data-art="pastel"] .input,
+:root[data-art="pastel"] .select,
+:root[data-art="pastel"] .textarea,
+:root[data-art="pastel"] textarea {
+  border: 2px solid oklch(90% 0.03 340) !important;
+  background: #fff !important;
+}
+:root[data-art="pastel"] .step-badge { background: var(--pas-pink) !important; color: #fff !important; border-radius: 50% !important; }
+:root[data-art="pastel"] .step-header > div { border-top: 2px dashed oklch(85% 0.04 340) !important; }
+:root[data-art="pastel"] #sidebar {
+  background: oklch(95% 0.02 340) !important;
+  border-right: 2px solid oklch(90% 0.03 340) !important;
+}
+:root[data-art="pastel"] #sidebar nav a[aria-current="page"] {
+  background: oklch(70% 0.1 340 / 0.15) !important;
+  color: var(--pas-pink) !important;
+  box-shadow: none !important;
+}
+:root[data-art="pastel"] .badge { background: #fff; border: 2px solid oklch(90% 0.03 340); }
+
+/* ============================ 深海 Ocean ============================ */
+
+:root[data-art="ocean"] {
+  --color-base-100: oklch(20% 0.05 230);
+  --color-base-200: oklch(24% 0.055 230);
+  --color-base-300: oklch(28% 0.06 230);
+  --color-base-content: oklch(90% 0.04 210);
+  --color-primary: oklch(70% 0.14 210);
+  --color-primary-content: oklch(15% 0.04 230);
+  --color-secondary: oklch(70% 0.14 25);
+  --color-secondary-content: oklch(15% 0.04 230);
+  --color-accent: oklch(65% 0.12 180);
+  --color-accent-content: oklch(15% 0.04 230);
+  --color-neutral: oklch(28% 0.06 230);
+  --color-neutral-content: oklch(90% 0.04 210);
+  --color-info: oklch(70% 0.14 210);
+  --color-info-content: oklch(15% 0.04 230);
+  --color-success: oklch(70% 0.13 160);
+  --color-success-content: oklch(15% 0.04 230);
+  --color-warning: oklch(75% 0.13 90);
+  --color-warning-content: oklch(15% 0.04 230);
+  --color-error: oklch(70% 0.14 25);
+  --color-error-content: oklch(15% 0.04 230);
+  --radius-selector: 0.375rem; --radius-field: 0.5rem; --radius-box: 0.5rem;
+  --oc-bg: oklch(20% 0.05 230);
+  --oc-aqua: oklch(70% 0.14 210);
+  color-scheme: dark;
+  --evo-bg: oklch(18% 0.045 230);
+  --evo-brand: oklch(70% 0.14 210);
+  --evo-path: oklch(92% 0.05 210);
+  --evo-link: oklch(55% 0.08 230);
+  --evo-node: oklch(45% 0.06 230);
+  --evo-hud: oklch(90% 0.04 210);
+  --evo-lbl: oklch(80% 0.06 210 / 0.6);
+  --evo-lbl-strong: oklch(95% 0.04 210);
+  --evo-lbl-dim: oklch(55% 0.06 210 / 0.5);
+}
+:root[data-art="ocean"] #app-layout,
+:root[data-art="ocean"] main { background: var(--oc-bg) !important; }
+:root[data-art="ocean"] .card,
+:root[data-art="ocean"] .modal-box,
+:root[data-art="ocean"] .dropdown-content {
+  border: 1px solid oklch(70% 0.14 210 / 0.3) !important;
+  background: oklch(24% 0.055 230) !important;
+  box-shadow: 0 4px 16px oklch(12% 0.04 230 / 0.5) !important;
+}
+:root[data-art="ocean"] .btn {
+  border: 1px solid var(--oc-aqua);
+  background: transparent;
+  color: var(--oc-aqua);
+}
+:root[data-art="ocean"] .btn-primary { background: var(--oc-aqua); color: var(--oc-bg); border-color: var(--oc-aqua); }
+:root[data-art="ocean"] .input,
+:root[data-art="ocean"] .select,
+:root[data-art="ocean"] .textarea,
+:root[data-art="ocean"] textarea {
+  border: 1px solid oklch(70% 0.14 210 / 0.3) !important;
+  background: oklch(24% 0.055 230) !important;
+}
+:root[data-art="ocean"] .step-badge { background: var(--oc-aqua) !important; color: var(--oc-bg) !important; }
+:root[data-art="ocean"] .step-header > div { border-top: 1px solid oklch(70% 0.14 210 / 0.3) !important; }
+:root[data-art="ocean"] #sidebar {
+  background: oklch(17% 0.045 230) !important;
+  border-right: 1px solid oklch(70% 0.14 210 / 0.3) !important;
+}
+:root[data-art="ocean"] #sidebar nav a[aria-current="page"] {
+  background: oklch(70% 0.14 210 / 0.18) !important;
+  color: var(--oc-aqua) !important;
+  box-shadow: none !important;
+}
+:root[data-art="ocean"] .badge { background: oklch(24% 0.055 230); border: 1px solid oklch(70% 0.14 210 / 0.3); }
+
+/* ============================ 沙漠 Desert =========================== */
+
+:root[data-art="desert"] {
+  --color-base-100: oklch(90% 0.035 90);
+  --color-base-200: oklch(85% 0.04 90);
+  --color-base-300: oklch(78% 0.045 90);
+  --color-base-content: oklch(28% 0.04 60);
+  --color-primary: oklch(48% 0.14 40);
+  --color-primary-content: oklch(96% 0.02 90);
+  --color-secondary: oklch(45% 0.08 110);
+  --color-secondary-content: oklch(96% 0.02 90);
+  --color-accent: oklch(60% 0.1 75);
+  --color-accent-content: oklch(28% 0.04 60);
+  --color-neutral: oklch(78% 0.045 90);
+  --color-neutral-content: oklch(28% 0.04 60);
+  --color-info: oklch(55% 0.1 200);
+  --color-info-content: oklch(96% 0.02 90);
+  --color-success: oklch(45% 0.08 110);
+  --color-success-content: oklch(96% 0.02 90);
+  --color-warning: oklch(60% 0.1 75);
+  --color-warning-content: oklch(28% 0.04 60);
+  --color-error: oklch(48% 0.14 40);
+  --color-error-content: oklch(96% 0.02 90);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --des-bg: oklch(90% 0.035 90);
+  --des-terra: oklch(48% 0.14 40);
+  --des-cactus: oklch(45% 0.08 110);
+  color-scheme: light;
+  --evo-bg: oklch(90% 0.035 90);
+  --evo-brand: oklch(48% 0.14 40);
+  --evo-path: oklch(28% 0.04 60);
+  --evo-link: oklch(55% 0.05 75);
+  --evo-node: oklch(60% 0.05 80);
+  --evo-hud: oklch(28% 0.04 60);
+  --evo-lbl: oklch(40% 0.04 65 / 0.75);
+  --evo-lbl-strong: oklch(25% 0.04 60);
+  --evo-lbl-dim: oklch(55% 0.04 70 / 0.5);
+}
+:root[data-art="desert"] body,
+:root[data-art="desert"] h1,
+:root[data-art="desert"] h2,
+:root[data-art="desert"] h3,
+:root[data-art="desert"] .step-header h2 {
+  font-family: Georgia, "Times New Roman", SimSun, serif;
+}
+:root[data-art="desert"] #app-layout,
+:root[data-art="desert"] main { background: var(--des-bg) !important; }
+:root[data-art="desert"] .card,
+:root[data-art="desert"] .modal-box,
+:root[data-art="desert"] .dropdown-content {
+  border: 2px solid oklch(78% 0.045 90) !important;
+  border-top: 4px solid var(--des-terra) !important;
+  background: oklch(94% 0.03 90) !important;
+  box-shadow: none !important;
+}
+:root[data-art="desert"] .btn {
+  border: 2px solid var(--des-terra);
+  background: transparent;
+  color: var(--des-terra);
+  font-family: Georgia, SimSun, serif;
+  font-weight: 700;
+}
+:root[data-art="desert"] .btn-primary { background: var(--des-terra); color: #fff; border-color: var(--des-terra); }
+:root[data-art="desert"] .input,
+:root[data-art="desert"] .select,
+:root[data-art="desert"] .textarea,
+:root[data-art="desert"] textarea {
+  border: 2px solid oklch(78% 0.045 90) !important;
+  background: oklch(94% 0.03 90) !important;
+}
+:root[data-art="desert"] .step-header { border-top: 4px solid var(--des-terra); padding-top: 0.5rem; }
+:root[data-art="desert"] .step-badge { background: var(--des-cactus) !important; color: #fff !important; }
+:root[data-art="desert"] .step-header > div { border-top: 2px solid oklch(78% 0.045 90) !important; }
+:root[data-art="desert"] #sidebar {
+  background: oklch(86% 0.04 90) !important;
+  border-right: 2px solid oklch(78% 0.045 90) !important;
+}
+:root[data-art="desert"] #sidebar nav a[aria-current="page"] {
+  background: var(--des-terra) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+:root[data-art="desert"] #sidebar nav a[aria-current="page"] svg { color: #fff !important; }
+:root[data-art="desert"] .badge { border: 2px solid var(--des-terra); color: var(--des-terra); background: transparent; }
+
+/* ============================ 装饰艺术 Art Deco ====================== */
+
+:root[data-art="artdeco"] {
+  --color-base-100: oklch(18% 0.04 220);
+  --color-base-200: oklch(22% 0.045 220);
+  --color-base-300: oklch(26% 0.05 220);
+  --color-base-content: oklch(85% 0.06 95);
+  --color-primary: oklch(70% 0.12 90);
+  --color-primary-content: oklch(15% 0.03 220);
+  --color-secondary: oklch(60% 0.08 180);
+  --color-secondary-content: oklch(15% 0.03 220);
+  --color-accent: oklch(70% 0.12 90);
+  --color-accent-content: oklch(15% 0.03 220);
+  --color-neutral: oklch(26% 0.05 220);
+  --color-neutral-content: oklch(85% 0.06 95);
+  --color-info: oklch(60% 0.08 180);
+  --color-info-content: oklch(15% 0.03 220);
+  --color-success: oklch(60% 0.1 150);
+  --color-success-content: oklch(15% 0.03 220);
+  --color-warning: oklch(70% 0.12 90);
+  --color-warning-content: oklch(15% 0.03 220);
+  --color-error: oklch(55% 0.16 30);
+  --color-error-content: oklch(85% 0.06 95);
+  --radius-selector: 0; --radius-field: 0; --radius-box: 0;
+  --ade-bg: oklch(18% 0.04 220);
+  --ade-gold: oklch(70% 0.12 90);
+  color-scheme: dark;
+  --evo-bg: oklch(16% 0.035 220);
+  --evo-brand: oklch(70% 0.12 90);
+  --evo-path: oklch(88% 0.06 95);
+  --evo-link: oklch(55% 0.06 220);
+  --evo-node: oklch(45% 0.05 220);
+  --evo-hud: oklch(85% 0.06 95);
+  --evo-lbl: oklch(75% 0.06 90 / 0.6);
+  --evo-lbl-strong: oklch(92% 0.06 95);
+  --evo-lbl-dim: oklch(55% 0.05 220 / 0.5);
+}
+:root[data-art="artdeco"] body,
+:root[data-art="artdeco"] h1,
+:root[data-art="artdeco"] h2,
+:root[data-art="artdeco"] h3,
+:root[data-art="artdeco"] .step-header h2 {
+  font-family: Georgia, "Times New Roman", SimSun, serif;
+}
+:root[data-art="artdeco"] h1,
+:root[data-art="artdeco"] h2,
+:root[data-art="artdeco"] h3,
+:root[data-art="artdeco"] .step-header h2 {
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--ade-gold);
+}
+:root[data-art="artdeco"] #app-layout,
+:root[data-art="artdeco"] main { background: var(--ade-bg) !important; }
+:root[data-art="artdeco"] .card,
+:root[data-art="artdeco"] .modal-box,
+:root[data-art="artdeco"] .dropdown-content {
+  border: 1px solid var(--ade-gold) !important;
+  outline: 1px solid oklch(70% 0.12 90 / 0.4);
+  outline-offset: 3px;
+  background: oklch(22% 0.045 220) !important;
+  box-shadow: none !important;
+}
+:root[data-art="artdeco"] .btn {
+  border: 1px solid var(--ade-gold);
+  background: transparent;
+  color: var(--ade-gold);
+  font-family: Georgia, SimSun, serif;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+}
+:root[data-art="artdeco"] .btn:hover { background: oklch(70% 0.12 90 / 0.15); }
+:root[data-art="artdeco"] .btn-primary { background: var(--ade-gold); color: var(--ade-bg); }
+:root[data-art="artdeco"] .input,
+:root[data-art="artdeco"] .select,
+:root[data-art="artdeco"] .textarea,
+:root[data-art="artdeco"] textarea {
+  border: 1px solid var(--ade-gold) !important;
+  background: oklch(18% 0.04 220) !important;
+  color: oklch(85% 0.06 95);
+}
+:root[data-art="artdeco"] .step-header { border-top: 1px solid var(--ade-gold); padding-top: 0.5rem; }
+:root[data-art="artdeco"] .step-badge {
+  background: transparent !important;
+  border: 1px solid var(--ade-gold) !important;
+  color: var(--ade-gold) !important;
+}
+:root[data-art="artdeco"] .step-header > div { border-top: 1px solid oklch(70% 0.12 90 / 0.4) !important; }
+:root[data-art="artdeco"] #sidebar {
+  background: oklch(14% 0.035 220) !important;
+  border-right: 1px solid var(--ade-gold) !important;
+}
+:root[data-art="artdeco"] #sidebar,
+:root[data-art="artdeco"] #sidebar .sidebar-label,
+:root[data-art="artdeco"] #sidebar nav a,
+:root[data-art="artdeco"] #sidebar button { color: oklch(85% 0.06 95 / 0.8); }
+:root[data-art="artdeco"] #sidebar nav a[aria-current="page"] {
+  background: oklch(70% 0.12 90 / 0.15) !important;
+  color: var(--ade-gold) !important;
+  box-shadow: inset 3px 0 0 var(--ade-gold) !important;
+}
+:root[data-art="artdeco"] .badge { border: 1px solid var(--ade-gold); color: var(--ade-gold); background: transparent; }
+
+/* 风格切换器：当前项勾选标记（由 setArt 脚本切换 .art-active） */
+.art-check { display: none; }
+.art-active .art-check { display: block; }
+.art-active { background: oklch(55% 0.2 265 / 0.12); }
+
+/* ==========================================================================
+   项目标签条（.project-tab）分风格适配
+   —— 每个风格自己的形态/边界/激活态，不再一刀切梯形
+   ========================================================================== */
+
+/* 构成主义：墨框方块，红底激活，硬投影面板 */
+:root[data-art="constructivism"] .project-tab {
+  clip-path: none; border-radius: 0; border: 2px solid var(--con-ink);
+  font-weight: 700; text-transform: uppercase;
+}
+:root[data-art="constructivism"] .project-tab-idle { background: oklch(87% 0.03 95); color: oklch(40% 0.02 60); }
+:root[data-art="constructivism"] .project-tab-idle:hover { background: oklch(83% 0.03 95); color: var(--con-ink); }
+:root[data-art="constructivism"] .project-tab-active { background: var(--con-red); color: var(--con-cream); box-shadow: none; }
+:root[data-art="constructivism"] .project-tab-action { border: 2px solid var(--con-ink); color: var(--con-ink); border-radius: 0; }
+:root[data-art="constructivism"] .project-tab-panel {
+  border: 2px solid var(--con-ink); border-radius: 0; background: var(--con-cream);
+  box-shadow: 5px 5px 0 oklch(18% 0.02 60 / 0.85);
+}
+
+/* 瑞士：细线矩形，激活加红顶线 */
+:root[data-art="swiss"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid var(--sw-ink);
+  border-bottom: none; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+}
+:root[data-art="swiss"] .project-tab-idle { background: oklch(96% 0 0); color: oklch(45% 0 0); }
+:root[data-art="swiss"] .project-tab-idle:hover { background: #fff; color: var(--sw-ink); }
+:root[data-art="swiss"] .project-tab-active { background: #fff; color: var(--sw-ink); box-shadow: inset 0 3px 0 var(--sw-red); }
+:root[data-art="swiss"] .project-tab-action { border: 1px solid var(--sw-ink); color: var(--sw-ink); border-radius: 0; }
+:root[data-art="swiss"] .project-tab-panel { border: 1px solid var(--sw-ink); border-radius: 0; box-shadow: none; }
+
+/* 终端：绿框黑底，反色激活 */
+:root[data-art="terminal"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid var(--term-green);
+  font-family: inherit; font-size: 11px; letter-spacing: 0.06em;
+}
+:root[data-art="terminal"] .project-tab-idle { background: oklch(10% 0.02 145); color: var(--term-dim); }
+:root[data-art="terminal"] .project-tab-idle:hover { background: oklch(85% 0.28 145 / 0.12); color: var(--term-green); }
+:root[data-art="terminal"] .project-tab-active { background: var(--term-green); color: var(--term-bg); box-shadow: none; }
+:root[data-art="terminal"] .project-tab-action { border: 1px solid var(--term-green); color: var(--term-green); border-radius: 0; }
+:root[data-art="terminal"] .project-tab-panel { border: 1px solid var(--term-green); border-radius: 0; background: oklch(10% 0.02 145); box-shadow: none; }
+
+/* 水墨：灰墨细线 serif，墨底激活 */
+:root[data-art="ink"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid oklch(45% 0.02 60 / 0.55);
+  font-family: STKaiti, KaiTi, SimSun, serif; letter-spacing: 0.1em;
+}
+:root[data-art="ink"] .project-tab-idle { background: oklch(92% 0.022 95); color: oklch(45% 0.02 60 / 0.7); }
+:root[data-art="ink"] .project-tab-idle:hover { background: oklch(96% 0.018 95); color: var(--ink-black); }
+:root[data-art="ink"] .project-tab-active { background: var(--ink-black); color: var(--ink-paper); box-shadow: none; }
+:root[data-art="ink"] .project-tab-action { border: 1px solid oklch(45% 0.02 60 / 0.55); color: var(--ink-black); border-radius: 0; }
+:root[data-art="ink"] .project-tab-panel { border: 1px solid oklch(45% 0.02 60 / 0.55); border-radius: 0; background: oklch(96% 0.018 95); box-shadow: none; }
+
+/* 包豪斯：2px 墨框方块，黄底激活 */
+:root[data-art="bauhaus"] .project-tab {
+  clip-path: none; border-radius: 0; border: 2px solid var(--bau-ink);
+  font-weight: 700; text-transform: uppercase;
+}
+:root[data-art="bauhaus"] .project-tab-idle { background: #fff; color: oklch(45% 0.02 260); }
+:root[data-art="bauhaus"] .project-tab-idle:hover { background: oklch(95% 0.01 90); color: var(--bau-ink); }
+:root[data-art="bauhaus"] .project-tab-active { background: var(--bau-yellow); color: var(--bau-ink); box-shadow: none; }
+:root[data-art="bauhaus"] .project-tab-action { border: 2px solid var(--bau-ink); color: var(--bau-ink); border-radius: 0; }
+:root[data-art="bauhaus"] .project-tab-panel { border: 2px solid var(--bau-ink); border-radius: 0; box-shadow: none; }
+
+/* 孟菲斯：3px 黑框，粉底激活 + 青影 */
+:root[data-art="memphis"] .project-tab {
+  clip-path: none; border-radius: 0; border: 3px solid var(--mem-ink); font-weight: 800;
+}
+:root[data-art="memphis"] .project-tab-idle { background: #fff; color: oklch(40% 0.02 260); box-shadow: 3px 3px 0 oklch(70% 0.15 190 / 0.4); }
+:root[data-art="memphis"] .project-tab-idle:hover { color: var(--mem-ink); transform: rotate(-1deg); }
+:root[data-art="memphis"] .project-tab-active { background: var(--mem-pink); color: #fff; box-shadow: 3px 3px 0 var(--mem-teal); }
+:root[data-art="memphis"] .project-tab-action { border: 3px solid var(--mem-ink); color: var(--mem-ink); border-radius: 0; }
+:root[data-art="memphis"] .project-tab-panel { border: 3px solid var(--mem-ink); border-radius: 0; box-shadow: 5px 5px 0 oklch(80% 0.18 95 / 0.6); }
+
+/* 粗野主义：系统按钮凸起，激活凹陷 */
+:root[data-art="brutalism"] .project-tab {
+  clip-path: none; border-radius: 0; border: 2px outset #fff;
+  background: linear-gradient(180deg, #f4f4f4, #dcdcdc); color: #111;
+  font-family: "Times New Roman", Times, SimSun, serif;
+}
+:root[data-art="brutalism"] .project-tab-idle { opacity: 0.75; }
+:root[data-art="brutalism"] .project-tab-idle:hover { opacity: 1; }
+:root[data-art="brutalism"] .project-tab-active { border-style: inset; box-shadow: none; background: linear-gradient(180deg, #dcdcdc, #f4f4f4); }
+:root[data-art="brutalism"] .project-tab-action { border: 2px outset #fff; color: #111; border-radius: 0; background: linear-gradient(180deg, #f4f4f4, #dcdcdc); }
+:root[data-art="brutalism"] .project-tab-panel { border: 2px solid oklch(75% 0.005 250); border-radius: 0; box-shadow: none; }
+
+/* 玻璃拟态：磨砂胶囊，亮边激活 */
+:root[data-art="glass"] .project-tab {
+  clip-path: none; border-radius: 8px 8px 0 0;
+  background: oklch(99% 0 0 / 0.1); border: 1px solid oklch(99% 0 0 / 0.18);
+  color: oklch(95% 0.02 290 / 0.65); backdrop-filter: blur(8px);
+}
+:root[data-art="glass"] .project-tab-idle:hover { background: oklch(99% 0 0 / 0.16); color: #fff; }
+:root[data-art="glass"] .project-tab-active { background: oklch(99% 0 0 / 0.22); color: #fff; border-color: oklch(99% 0 0 / 0.35); box-shadow: none; }
+:root[data-art="glass"] .project-tab-action { border: 1px solid oklch(99% 0 0 / 0.2); color: #fff; }
+:root[data-art="glass"] .project-tab-panel { background: oklch(99% 0 0 / 0.1); border: 1px solid oklch(99% 0 0 / 0.18); backdrop-filter: blur(12px); box-shadow: none; }
+
+/* 新拟态：软凸起，激活凹陷 */
+:root[data-art="neumorphism"] .project-tab {
+  clip-path: none; border-radius: 10px 10px 0 0; border: none;
+  background: var(--neu-bg); color: var(--color-base-content);
+}
+:root[data-art="neumorphism"] .project-tab-idle { box-shadow: 3px 3px 6px oklch(75% 0.015 250), -3px -3px 6px oklch(99% 0 0); }
+:root[data-art="neumorphism"] .project-tab-active { box-shadow: inset 3px 3px 6px oklch(75% 0.015 250), inset -3px -3px 6px oklch(99% 0 0); color: var(--color-primary); }
+:root[data-art="neumorphism"] .project-tab-action { box-shadow: 3px 3px 6px oklch(75% 0.015 250), -3px -3px 6px oklch(99% 0 0); }
+:root[data-art="neumorphism"] .project-tab-panel { background: var(--neu-bg); border: none; box-shadow: 6px 6px 12px oklch(75% 0.015 250), -6px -6px 12px oklch(99% 0 0); }
+
+/* 赛博朋克：平行四边形青框，反色激活 */
+:root[data-art="cyberpunk"] .project-tab {
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  border-radius: 0; border: 2px solid var(--cy-cyan);
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+}
+:root[data-art="cyberpunk"] .project-tab-idle { background: oklch(12% 0.03 290); color: oklch(85% 0.2 195 / 0.6); }
+:root[data-art="cyberpunk"] .project-tab-idle:hover { background: oklch(85% 0.2 195 / 0.15); color: var(--cy-cyan); }
+:root[data-art="cyberpunk"] .project-tab-active { background: var(--cy-cyan); color: var(--cy-bg); box-shadow: 0 0 12px oklch(85% 0.2 195 / 0.4); }
+:root[data-art="cyberpunk"] .project-tab-action { border: 2px solid var(--cy-cyan); color: var(--cy-cyan); border-radius: 0; }
+:root[data-art="cyberpunk"] .project-tab-panel { border: 2px solid var(--cy-cyan); border-radius: 0; background: oklch(14% 0.04 290); box-shadow: 0 0 20px oklch(85% 0.2 195 / 0.25); }
+
+/* 蒸汽波：青框暗底，渐变激活 */
+:root[data-art="vaporwave"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid var(--vap-cyan);
+  font-style: italic; letter-spacing: 0.06em;
+}
+:root[data-art="vaporwave"] .project-tab-idle { background: oklch(18% 0.07 310); color: oklch(85% 0.08 200 / 0.6); }
+:root[data-art="vaporwave"] .project-tab-idle:hover { color: #fff; background: oklch(75% 0.18 200 / 0.15); }
+:root[data-art="vaporwave"] .project-tab-active { background: linear-gradient(90deg, oklch(75% 0.18 200 / 0.5), oklch(70% 0.22 350 / 0.5)); color: #fff; box-shadow: 0 0 10px oklch(75% 0.18 200 / 0.4); }
+:root[data-art="vaporwave"] .project-tab-action { border: 1px solid var(--vap-cyan); color: var(--vap-cyan); border-radius: 0; }
+:root[data-art="vaporwave"] .project-tab-panel { border: 1px solid var(--vap-cyan); border-radius: 0; background: oklch(22% 0.08 310 / 0.9); box-shadow: 0 0 20px oklch(70% 0.22 350 / 0.25); }
+
+/* 北欧极地：细边圆角，霜蓝淡底激活 */
+:root[data-art="nord"] .project-tab {
+  clip-path: none; border-radius: 6px 6px 0 0;
+  border: 1px solid oklch(90% 0.02 250 / 0.15);
+}
+:root[data-art="nord"] .project-tab-idle { background: oklch(26% 0.025 250); color: oklch(75% 0.03 250 / 0.6); }
+:root[data-art="nord"] .project-tab-idle:hover { color: oklch(90% 0.02 250); }
+:root[data-art="nord"] .project-tab-active { background: oklch(75% 0.1 215 / 0.18); color: var(--nord-frost); box-shadow: none; }
+:root[data-art="nord"] .project-tab-action { border: 1px solid oklch(90% 0.02 250 / 0.15); }
+:root[data-art="nord"] .project-tab-panel { border: 1px solid oklch(90% 0.02 250 / 0.12); background: oklch(28% 0.025 250); box-shadow: none; }
+
+/* 暖棕复古：棕框圆角，黄底激活 + 底部硬影 */
+:root[data-art="gruvbox"] .project-tab {
+  clip-path: none; border-radius: 4px 4px 0 0;
+  border: 1px solid oklch(45% 0.05 70);
+}
+:root[data-art="gruvbox"] .project-tab-idle { background: oklch(28% 0.03 70); color: oklch(75% 0.06 80 / 0.6); }
+:root[data-art="gruvbox"] .project-tab-idle:hover { color: oklch(85% 0.06 90); }
+:root[data-art="gruvbox"] .project-tab-active { background: var(--gru-yellow); color: var(--gru-bg); box-shadow: none; }
+:root[data-art="gruvbox"] .project-tab-action { border: 1px solid oklch(45% 0.05 70); }
+:root[data-art="gruvbox"] .project-tab-panel { border: 1px solid oklch(45% 0.05 70); background: oklch(28% 0.03 70); box-shadow: 0 2px 0 oklch(18% 0.02 70); }
+
+/* 日光纸：细线矩形，蓝顶线激活 */
+:root[data-art="solarized-light"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid oklch(85% 0.03 95);
+}
+:root[data-art="solarized-light"] .project-tab-idle { background: oklch(91% 0.025 95); color: oklch(55% 0.03 230); }
+:root[data-art="solarized-light"] .project-tab-idle:hover { background: oklch(97% 0.02 95); color: var(--sol-blue); }
+:root[data-art="solarized-light"] .project-tab-active { background: oklch(97% 0.02 95); color: var(--sol-blue); box-shadow: inset 0 2px 0 var(--sol-blue); }
+:root[data-art="solarized-light"] .project-tab-action { border: 1px solid oklch(85% 0.03 95); }
+:root[data-art="solarized-light"] .project-tab-panel { border: 1px solid oklch(85% 0.03 95); background: oklch(97% 0.02 95); box-shadow: none; }
+
+/* 夜光蓝：细线矩形，蓝顶线激活（暗） */
+:root[data-art="solarized-dark"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid oklch(45% 0.05 220);
+}
+:root[data-art="solarized-dark"] .project-tab-idle { background: oklch(26% 0.035 220); color: oklch(60% 0.04 220); }
+:root[data-art="solarized-dark"] .project-tab-idle:hover { color: oklch(85% 0.05 220); }
+:root[data-art="solarized-dark"] .project-tab-active { background: oklch(26% 0.035 220); color: var(--sold-blue); box-shadow: inset 0 2px 0 var(--sold-blue); }
+:root[data-art="solarized-dark"] .project-tab-action { border: 1px solid oklch(45% 0.05 220); }
+:root[data-art="solarized-dark"] .project-tab-panel { border: 1px solid oklch(45% 0.05 220); background: oklch(26% 0.035 220); box-shadow: none; }
+
+/* 单色黑白：黑框矩形，黑底激活 */
+:root[data-art="mono"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid var(--mono-ink); font-weight: 600;
+}
+:root[data-art="mono"] .project-tab-idle { background: oklch(96% 0 0); color: oklch(45% 0 0); }
+:root[data-art="mono"] .project-tab-idle:hover { background: #fff; color: var(--mono-ink); }
+:root[data-art="mono"] .project-tab-active { background: var(--mono-ink); color: #fff; box-shadow: none; }
+:root[data-art="mono"] .project-tab-action { border: 1px solid var(--mono-ink); color: var(--mono-ink); border-radius: 0; }
+:root[data-art="mono"] .project-tab-panel { border: 1px solid var(--mono-ink); border-radius: 0; box-shadow: none; }
+
+/* 蓝图：白色虚线框，白底激活 */
+:root[data-art="blueprint"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px dashed var(--bp-line);
+  font-family: inherit; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+:root[data-art="blueprint"] .project-tab-idle { background: transparent; color: oklch(85% 0.05 255 / 0.65); }
+:root[data-art="blueprint"] .project-tab-idle:hover { background: oklch(95% 0.03 255 / 0.1); color: #fff; }
+:root[data-art="blueprint"] .project-tab-active { background: #fff; color: var(--bp-bg); border-style: solid; box-shadow: none; }
+:root[data-art="blueprint"] .project-tab-action { border: 1px dashed var(--bp-line); color: #fff; border-radius: 0; }
+:root[data-art="blueprint"] .project-tab-panel { border: 1px dashed var(--bp-line); border-radius: 0; background: oklch(32% 0.1 255); box-shadow: none; }
+
+/* 牛皮纸：棕框方块，邮票红激活（微倾斜） */
+:root[data-art="kraft"] .project-tab {
+  clip-path: none; border-radius: 0; border: 2px solid var(--kra-brown);
+  font-family: Georgia, SimSun, serif; font-weight: 700;
+}
+:root[data-art="kraft"] .project-tab-idle { background: oklch(77% 0.055 85); color: oklch(45% 0.08 70 / 0.75); }
+:root[data-art="kraft"] .project-tab-idle:hover { background: oklch(84% 0.045 85); color: var(--kra-brown); }
+:root[data-art="kraft"] .project-tab-active { background: var(--kra-red); color: #fff; transform: rotate(-2deg); box-shadow: 2px 2px 0 oklch(45% 0.08 70 / 0.4); }
+:root[data-art="kraft"] .project-tab-action { border: 2px solid var(--kra-brown); color: var(--kra-brown); border-radius: 0; }
+:root[data-art="kraft"] .project-tab-panel { border: 2px solid var(--kra-brown); border-radius: 0; background: oklch(84% 0.045 85); box-shadow: 3px 3px 0 oklch(45% 0.08 70 / 0.4); }
+
+/* 植物绿：胶囊圆角，绿底激活 */
+:root[data-art="botanical"] .project-tab {
+  clip-path: none; border-radius: 10px 10px 0 0; border: 1px solid oklch(80% 0.035 125);
+}
+:root[data-art="botanical"] .project-tab-idle { background: oklch(93% 0.025 120); color: oklch(50% 0.05 135); }
+:root[data-art="botanical"] .project-tab-idle:hover { background: oklch(98% 0.015 120); color: var(--bot-green); }
+:root[data-art="botanical"] .project-tab-active { background: var(--bot-green); color: #fff; box-shadow: none; }
+:root[data-art="botanical"] .project-tab-action { border: 1px solid oklch(80% 0.035 125); color: var(--bot-green); }
+:root[data-art="botanical"] .project-tab-panel { border: 1px solid oklch(85% 0.03 120); background: oklch(98% 0.015 120); box-shadow: 0 2px 8px oklch(60% 0.05 130 / 0.12); }
+
+/* 黑色电影：白框矩形，白底激活 + 白硬影 */
+:root[data-art="noir"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid var(--noir-white);
+  font-family: Georgia, SimSun, serif; font-style: italic;
+}
+:root[data-art="noir"] .project-tab-idle { background: oklch(10% 0 0); color: oklch(85% 0 0 / 0.6); }
+:root[data-art="noir"] .project-tab-idle:hover { color: var(--noir-white); }
+:root[data-art="noir"] .project-tab-active { background: var(--noir-white); color: var(--noir-bg); box-shadow: 3px 3px 0 oklch(95% 0 0 / 0.3); }
+:root[data-art="noir"] .project-tab-action { border: 1px solid var(--noir-white); color: var(--noir-white); border-radius: 0; }
+:root[data-art="noir"] .project-tab-panel { border: 1px solid var(--noir-white); border-radius: 0; background: oklch(12% 0 0); box-shadow: 5px 5px 0 oklch(95% 0 0 / 0.25); }
+
+/* 粉彩：圆头胶囊，粉底激活 */
+:root[data-art="pastel"] .project-tab {
+  clip-path: none; border-radius: 12px 12px 0 0; border: 2px solid oklch(85% 0.04 340);
+  font-weight: 700;
+}
+:root[data-art="pastel"] .project-tab-idle { background: #fff; color: oklch(60% 0.06 340); }
+:root[data-art="pastel"] .project-tab-idle:hover { border-color: var(--pas-pink); color: var(--pas-pink); }
+:root[data-art="pastel"] .project-tab-active { background: var(--pas-pink); color: #fff; border-color: var(--pas-pink); box-shadow: none; }
+:root[data-art="pastel"] .project-tab-action { border: 2px solid oklch(85% 0.04 340); color: var(--pas-pink); border-radius: 8px; }
+:root[data-art="pastel"] .project-tab-panel { border: 2px solid oklch(90% 0.03 340); background: #fff; box-shadow: 0 4px 12px oklch(80% 0.05 340 / 0.2); }
+
+/* 深海：水蓝细边圆角，水蓝激活 */
+:root[data-art="ocean"] .project-tab {
+  clip-path: none; border-radius: 6px 6px 0 0; border: 1px solid oklch(70% 0.14 210 / 0.3);
+}
+:root[data-art="ocean"] .project-tab-idle { background: oklch(24% 0.055 230); color: oklch(80% 0.06 210 / 0.55); }
+:root[data-art="ocean"] .project-tab-idle:hover { color: var(--oc-aqua); }
+:root[data-art="ocean"] .project-tab-active { background: var(--oc-aqua); color: var(--oc-bg); box-shadow: none; }
+:root[data-art="ocean"] .project-tab-action { border: 1px solid oklch(70% 0.14 210 / 0.3); color: var(--oc-aqua); }
+:root[data-art="ocean"] .project-tab-panel { border: 1px solid oklch(70% 0.14 210 / 0.3); background: oklch(24% 0.055 230); box-shadow: 0 4px 16px oklch(12% 0.04 230 / 0.5); }
+
+/* 沙漠：陶土顶边方块，陶土激活 */
+:root[data-art="desert"] .project-tab {
+  clip-path: none; border-radius: 0; border: 2px solid oklch(78% 0.045 90);
+  font-family: Georgia, SimSun, serif; font-weight: 700;
+}
+:root[data-art="desert"] .project-tab-idle { background: oklch(86% 0.04 90); color: oklch(45% 0.05 70); }
+:root[data-art="desert"] .project-tab-idle:hover { background: oklch(94% 0.03 90); color: var(--des-terra); }
+:root[data-art="desert"] .project-tab-active { background: var(--des-terra); color: #fff; border-color: var(--des-terra); box-shadow: none; }
+:root[data-art="desert"] .project-tab-action { border: 2px solid oklch(78% 0.045 90); color: var(--des-terra); border-radius: 0; }
+:root[data-art="desert"] .project-tab-panel { border: 2px solid oklch(78% 0.045 90); border-top: 4px solid var(--des-terra); border-radius: 0; background: oklch(94% 0.03 90); box-shadow: none; }
+
+/* 装饰艺术：金线矩形，金底激活 */
+:root[data-art="artdeco"] .project-tab {
+  clip-path: none; border-radius: 0; border: 1px solid var(--ade-gold);
+  font-family: Georgia, SimSun, serif; text-transform: uppercase; letter-spacing: 0.12em; font-size: 11px;
+}
+:root[data-art="artdeco"] .project-tab-idle { background: oklch(16% 0.035 220); color: oklch(85% 0.06 95 / 0.6); }
+:root[data-art="artdeco"] .project-tab-idle:hover { background: oklch(70% 0.12 90 / 0.12); color: var(--ade-gold); }
+:root[data-art="artdeco"] .project-tab-active { background: var(--ade-gold); color: var(--ade-bg); box-shadow: none; }
+:root[data-art="artdeco"] .project-tab-action { border: 1px solid var(--ade-gold); color: var(--ade-gold); border-radius: 0; }
+:root[data-art="artdeco"] .project-tab-panel { border: 1px solid var(--ade-gold); outline: 1px solid oklch(70% 0.12 90 / 0.4); outline-offset: 2px; border-radius: 0; background: oklch(22% 0.045 220); box-shadow: none; }

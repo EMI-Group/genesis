@@ -26,42 +26,50 @@
           window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 
         const applyTheme = (theme) => {
-          const resolved = theme === "system" ? resolveSystemTheme() : theme;
-          document.documentElement.setAttribute("data-theme", resolved);
+          document.documentElement.setAttribute("data-theme", theme);
           document.documentElement.setAttribute("data-theme-mode", theme);
-          updateThemeColor(resolved);
-        };
-
-        const setTheme = (theme) => {
-          if (theme === "system") {
-            localStorage.removeItem("phx:theme");
-          } else {
-            localStorage.setItem("phx:theme", theme);
-          }
-          applyTheme(theme);
-        };
-
-        const updateThemeColor = (resolvedTheme) => {
           const meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) {
-            meta.content = resolvedTheme === "dark" ? "#020617" : "#f8fafc";
-          }
+          if (meta) meta.content = theme === "dark" ? "#020617" : "#f8fafc";
         };
 
-        // Apply on load
-        applyTheme(localStorage.getItem("phx:theme") || "system");
-
-        // Cross-tab sync
+        // --- Art style（默认白天 / 默认黑夜 / 其他艺术风格，单选，不再独立明暗开关） ---
+        const ART_STYLES = [
+          "default", "default-dark", "constructivism", "swiss", "terminal", "ink",
+          "bauhaus", "memphis", "brutalism", "glass", "neumorphism", "cyberpunk",
+          "vaporwave", "nord", "gruvbox", "solarized-light", "solarized-dark",
+          "mono", "blueprint", "kraft", "botanical", "noir", "pastel", "ocean",
+          "desert", "artdeco"
+        ];
+        const setArt = (art) => {
+          if (!ART_STYLES.includes(art)) art = "default";
+          if (art === "default") {
+            localStorage.removeItem("phx:art");
+          } else {
+            localStorage.setItem("phx:art", art);
+          }
+          document.documentElement.setAttribute("data-art", art);
+          // 风格即主题：默认黑夜 → dark；其余一律 light（各艺术风格自带完整配色）
+          applyTheme(art === "default-dark" ? "dark" : "light");
+          // 标记切换器中的当前项
+          document.querySelectorAll("[data-phx-art]").forEach(b =>
+            b.classList.toggle("art-active", b.dataset.phxArt === art));
+        };
+        // 迁移旧的独立明暗偏好（一次性）
+        if (!localStorage.getItem("phx:art") && localStorage.getItem("phx:theme")) {
+          setArt(localStorage.getItem("phx:theme") === "dark" ? "default-dark" : "default");
+        } else {
+          setArt(localStorage.getItem("phx:art") || "default");
+        }
+        window.addEventListener("phx:set-art", (e) => setArt(e.target.dataset.phxArt || "default"));
         window.addEventListener("storage", (e) => {
-          if (e.key === "phx:theme") setTheme(e.newValue || "system");
+          if (e.key === "phx:art") setArt(e.newValue || "default");
         });
-
-        // Theme toggle buttons
-        window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
-
-        // System theme change — re-resolve when in system mode
-        window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-          if (!localStorage.getItem("phx:theme")) applyTheme("system");
+        // ?art=<style> —— 链接级风格预览（同时写入偏好）
+        const urlArt = new URLSearchParams(window.location.search).get("art");
+        if (urlArt) setArt(urlArt);
+        window.addEventListener("phx:set-art", (e) => setArt(e.target.dataset.phxArt || "default"));
+        window.addEventListener("storage", (e) => {
+          if (e.key === "phx:art") setArt(e.newValue || "default");
         });
 
         // --- Locale ---
