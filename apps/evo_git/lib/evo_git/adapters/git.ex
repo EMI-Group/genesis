@@ -256,6 +256,34 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Lists all file paths in a git tree (recursive).
+  Runs `git ls-tree -r --name-only <treeish>`.
+  Returns `{:ok, [files]}` (empty list if no files) or `{:error, code, msg}`.
+  """
+  def ls_tree_names(repo_path, treeish)
+      when is_binary(repo_path) and is_binary(treeish) do
+    case run(["ls-tree", "-r", "--name-only", treeish], repo_path) do
+      {:ok, ""} -> {:ok, []}
+      {:ok, output} -> {:ok, String.split(output, "\n", trim: true)}
+      error -> error
+    end
+  end
+
+  @doc """
+  Lists file paths changed between two commits.
+  Runs `git diff --name-only <commit_a> <commit_b>`.
+  Returns `{:ok, [files]}` (empty list if no changes) or `{:error, code, msg}`.
+  """
+  def diff_name_only(repo_path, commit_a, commit_b)
+      when is_binary(repo_path) and is_binary(commit_a) and is_binary(commit_b) do
+    case run(["diff", "--name-only", commit_a, commit_b], repo_path) do
+      {:ok, ""} -> {:ok, []}
+      {:ok, output} -> {:ok, String.split(output, "\n", trim: true)}
+      error -> error
+    end
+  end
+
+  @doc """
   Returns a short diff stat summary between two commits.
   Outputs a single line like:
     " 89 files changed, 18628 insertions(+), 0 deletions(-)"
