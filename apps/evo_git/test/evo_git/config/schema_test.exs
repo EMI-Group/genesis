@@ -105,8 +105,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 64 schemas" do
-      assert length(Schema.all_schemas()) == 64
+    test "has exactly 65 schemas" do
+      assert length(Schema.all_schemas()) == 65
     end
   end
 
@@ -232,7 +232,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
       assert length(grouped[:nix]) == 2
-      assert length(grouped[:git]) == 1
+      assert length(grouped[:git]) == 2
       assert length(grouped[:server]) == 2
       assert length(grouped[:tools]) == 8
       assert length(grouped[:node]) == 6
