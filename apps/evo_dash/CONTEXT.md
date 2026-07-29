@@ -109,7 +109,7 @@ When a task is started with the **archive** option enabled (checkbox in the task
 - `DashboardComponents` — Task form, scheduler settings, project tabs, task cards (with "Review" button for completed tasks with branches)
 - `ReviewComponents` — Review page components: review header + task summary/usage strip (tokens, cost, cache hit rate, agent count), commit list (GitHub-style with SHA badges, messages, author, relative time), diff stats bar, file list, diff viewer (Lumis syntax highlighting), action buttons (merge/reject/continue/create PR)
 - `AgentsComponents` — Recursive path tree with connector lines and status coloring
-- `Layouts` — App layout with navbar, theme toggle, flash group
+- `Layouts` — App layout with navbar, theme toggle, flash group. The `<main>` content element carries `phx-hook="NodeSwitchFade"` + `data-node-id={@current_node_id || "local"}`; the `NodeSwitchFade` JS hook (`assets/js/hooks/node_switch_fade.js`) detects changes to `data-node-id` on morphdom updates and plays a subtle 0.25s opacity fade animation (CSS `.node-switch-fade` keyframes in `app.css`) when a node switch occurs, giving visual feedback during local↔remote transitions.
 
 ## Constraints
 
