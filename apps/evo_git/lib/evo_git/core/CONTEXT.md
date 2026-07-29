@@ -55,7 +55,7 @@ Struct: `id` (string), `root` (absolute path), `name` (optional string).
 ## Constraints
 
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd` or shell calls.
-- `ContextNode.build_context/2` truncates file contents at 10,000 characters to bound AI prompt size.
+- `ContextNode.build_context/2` truncates CONTEXT.md content at `context_max_bytes` (default 64 KB) to bound AI prompt size. **⚠️ BUG: the truncation uses raw `binary_part` at a byte boundary — see Known Issue below.**
 - `PhyloGraphNode`: `base_commit` is immutable after creation; only `current_commit` advances.
 - All `ContextNode` paths use `"./"` convention; absolute or `..`-prefixed paths are rejected.
 - File names mirror module names (`context_node.ex` → `ContextNode`).
