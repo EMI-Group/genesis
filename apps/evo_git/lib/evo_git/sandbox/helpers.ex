@@ -67,8 +67,10 @@ defmodule EvoGit.Sandbox.Helpers do
 
       true ->
         half_size = div(@truncate_size, 2)
-        first_part = binary_part(output, 0, half_size)
-        last_part = binary_part(output, size - half_size, half_size)
+        # UTF-8-safe truncation: avoid splitting multi-byte codepoints, which
+        # would produce invalid UTF-8 that crashes Jason.encode! downstream.
+        first_part = EvoGit.UTF8.safe_binary_part(output, 0, half_size)
+        last_part = EvoGit.UTF8.safe_binary_part_from_end(output, half_size)
         omitted = size - @truncate_size
         format_truncation_notice(first_part, last_part, omitted, max_bytes)
     end
@@ -137,10 +139,16 @@ defmodule EvoGit.Sandbox.Helpers do
 
       {:ok, device} = File.open(path, [:read, :raw, :binary])
 
-      {:ok, first_part} = :file.pread(device, 0, half_size)
-      {:ok, last_part} = :file.pread(device, file_size - half_size, half_size)
+      {:ok, raw_first} = :file.pread(device, 0, half_size)
+      {:ok, raw_last} = :file.pread(device, file_size - half_size, half_size)
 
       File.close(device)
+
+      # The pread byte boundaries may split multi-byte UTF-8 codepoints.
+      # Run each part through the UTF-8-safe helpers so the result is always
+      # valid UTF-8 before formatting the truncation notice.
+      first_part = EvoGit.UTF8.safe_binary_part(raw_first, 0, byte_size(raw_first))
+      last_part = EvoGit.UTF8.safe_binary_part_from_end(raw_last, byte_size(raw_last))
 
       format_truncation_notice(first_part, last_part, omitted, max_bytes)
     end

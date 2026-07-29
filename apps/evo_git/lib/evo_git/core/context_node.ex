@@ -186,11 +186,16 @@ defmodule EvoGit.Core.ContextNode do
               # Strip YAML front matter before presenting to agents
               display_content = EvoGit.Skills.strip_front_matter(content)
 
+              # UTF-8-safe truncation: backs up from the cut point to a
+              # valid character boundary so we never split a multi-byte
+              # codepoint (which would produce invalid UTF-8 that crashes
+              # Jason.encode! in the LLM request pipeline).
               truncated_content =
                 if byte_size(display_content) > context_max do
                   require Logger
                   Logger.warning("Content truncated for file: #{file}")
-                  binary_part(display_content, 0, context_max) <> "\n... [Content Truncated] ..."
+                  EvoGit.UTF8.safe_binary_part(display_content, 0, context_max) <>
+                    "\n... [Content Truncated] ..."
                 else
                   display_content
                 end
