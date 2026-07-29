@@ -176,6 +176,12 @@ defmodule EvoGit.Config do
         new_mode = atomize_if_string(mode, [:auto, :enabled, :disabled])
         put_in(acc, [:sandbox, :mode], new_mode)
 
+      # Git CoW worktree creation: "auto" | "enabled" | "disabled" -> :auto | :enabled | :disabled
+      {:git, git_config}, acc when is_map(git_config) ->
+        cow = Map.get(git_config, :cow_worktree_creation)
+        new_cow = atomize_if_string(cow, [:auto, :enabled, :disabled])
+        put_in(acc, [:git, :cow_worktree_creation], new_cow)
+
       # LLM model normalization:
       # 1. Flat [llm].model map → normalize to string or atomized map
       # 2. [[llm.models]] → normalize model maps in each profile; strings pass through
