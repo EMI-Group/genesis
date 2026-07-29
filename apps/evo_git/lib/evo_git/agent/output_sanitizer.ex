@@ -22,9 +22,16 @@ defmodule EvoGit.Agent.OutputSanitizer do
   require Logger
 
   @high_output_tools MapSet.new([
-    "run_bash", "run_powershell", "read_file", "rg", "curl",
-    "run_git", "search_web", "search_context", "search_history"
-  ])
+                       "run_bash",
+                       "run_powershell",
+                       "read_file",
+                       "rg",
+                       "curl",
+                       "run_git",
+                       "search_web",
+                       "search_context",
+                       "search_history"
+                     ])
 
   @ansi_regex ~r/\e\[[0-9;]*[a-zA-Z]|\e\][^\x07]*\x07|\e[()][AB012]|\e\[[0-9;]*m/
   @progress_bar_regex ~r/^[\s\r]*\[[=\->#*_ ]+\]\s*\d*%?\s*$/
@@ -138,8 +145,8 @@ defmodule EvoGit.Agent.OutputSanitizer do
 
       original_size = byte_size(result)
       half_size = div(truncate_size, 2)
-      first_part = EvoGit.UTF8.safe_binary_part(result, 0, half_size)
-      last_part = EvoGit.UTF8.safe_binary_part_from_end(result, half_size)
+      first_part = String.byte_slice(result, 0, half_size)
+      last_part = String.byte_slice(result, -half_size, half_size)
       omitted = original_size - truncate_size
 
       truncated =
@@ -153,7 +160,12 @@ defmodule EvoGit.Agent.OutputSanitizer do
         """
         |> String.trim()
 
-      {truncated, %{reason: :size_exceeded, original_size: original_size, truncated_size: byte_size(truncated)}}
+      {truncated,
+       %{
+         reason: :size_exceeded,
+         original_size: original_size,
+         truncated_size: byte_size(truncated)
+       }}
     end
   end
 

@@ -55,7 +55,7 @@ Struct: `id` (string), `root` (absolute path), `name` (optional string).
 ## Constraints
 
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd` or shell calls.
-- `ContextNode.build_context/2` truncates CONTEXT.md content at `context_max_bytes` (default 64 KB) to bound AI prompt size. Truncation is UTF-8-safe (uses `EvoGit.UTF8.safe_binary_part/3`).
+- `ContextNode.build_context/2` truncates CONTEXT.md content at `context_max_bytes` (default 64 KB) to bound AI prompt size. Truncation is UTF-8-safe (uses `String.byte_slice/3`, the Elixir stdlib function that works on bytes and adjusts to eliminate truncated codepoints).
 - `PhyloGraphNode`: `base_commit` is immutable after creation; only `current_commit` advances.
 - All `ContextNode` paths use `"./"` convention; absolute or `..`-prefixed paths are rejected.
 - File names mirror module names (`context_node.ex` → `ContextNode`).
@@ -68,4 +68,4 @@ A critical crash previously occurred when `build_context/2` truncated large CONT
 %Jason.EncodeError{message: "invalid byte 0xE2 in \"<context>\\n# Context Tree\\n...\""}
 ```
 
-**Fix applied:** `build_context/2` now uses `EvoGit.UTF8.safe_binary_part/3`, which backs up from the byte cut point to a valid UTF-8 character boundary. The same fix was applied to `EvoGit.Sandbox.Helpers.truncate_output/2` and `read_truncated/3` (sandbox output truncation), which had the same byte-boundary bug class. The shared UTF-8-safe logic lives in `EvoGit.UTF8` (`lib/evo_git/utf8.ex`). The old private copies in `EvoGit.Agent.OutputSanitizer` were refactored to delegate to this shared module. **Any new truncation site must use `EvoGit.UTF8.safe_binary_part/3` or `safe_binary_part_from_end/2` — never raw `binary_part/3` on potentially-multibyte content.**
+**Fix applied:** `build_context/2` now uses `String.byte_slice/3` (Elixir stdlib), which works on bytes and then adjusts to eliminate truncated codepoints, avoiding splitting a multi-byte UTF-8 character. The same approach is used in `EvoGit.Sandbox.Helpers.truncate_output/2` and `read_truncated/3` (sandbox output truncation), which had the same byte-boundary bug class. **Any new truncation site must use `String.byte_slice/3` — never raw `binary_part/3` on potentially-multibyte content.**

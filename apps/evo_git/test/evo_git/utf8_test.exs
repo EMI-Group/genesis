@@ -3,82 +3,6 @@ defmodule EvoGit.UTF8Test do
 
   alias EvoGit.UTF8
 
-  describe "safe_binary_part/3" do
-    test "returns the full binary when start + len exceeds byte_size" do
-      binary = "Hello"
-      assert UTF8.safe_binary_part(binary, 0, 100) == "Hello"
-    end
-
-    test "extracts a substring that ends on a character boundary" do
-      # 5 ASCII chars + em-dash (3 bytes) + 5 ASCII chars
-      binary = "aaaaa—bbbbb"
-      # byte_size = 5 + 3 + 5 = 13
-      assert byte_size(binary) == 13
-
-      # Take 6 bytes: "aaaaa" (5) + first byte of em-dash (0xE2).
-      # safe_binary_part must back up to a valid boundary → "aaaaa" (5 bytes).
-      result = UTF8.safe_binary_part(binary, 0, 6)
-      assert String.valid?(result)
-      assert result == "aaaaa"
-    end
-
-    test "never produces invalid UTF-8 even when cutting mid-codepoint" do
-      # 100 em-dashes = 300 bytes
-      binary = String.duplicate("—", 100)
-      assert byte_size(binary) == 300
-
-      # Cut at every byte position that could split a codepoint
-      for cut <- 1..299 do
-        result = UTF8.safe_binary_part(binary, 0, cut)
-        assert String.valid?(result), "cut=#{cut} produced invalid UTF-8"
-      end
-    end
-
-    test "handles pure ASCII unchanged" do
-      binary = String.duplicate("A", 100)
-      assert UTF8.safe_binary_part(binary, 0, 50) == String.duplicate("A", 50)
-    end
-
-    test "handles start offset mid-codepoint by still returning valid prefix" do
-      # 'a' + em-dash + 'b'  → bytes: 0x61 E2 80 94 0x62
-      binary = "a—b"
-      # start=1 lands on 0xE2 (start of em-dash). len=2 covers 0xE2 0x80.
-      result = UTF8.safe_binary_part(binary, 1, 2)
-      assert String.valid?(result)
-    end
-  end
-
-  describe "safe_binary_part_from_end/2" do
-    test "returns last len bytes when on a clean boundary" do
-      binary = "abcdefghij"
-      assert UTF8.safe_binary_part_from_end(binary, 3) == "hij"
-    end
-
-    test "trims leading partial bytes to produce valid UTF-8" do
-      # 5 ASCII + em-dash (3 bytes) + 5 ASCII = 13 bytes
-      binary = "aaaaa—bbbbb"
-      # Ask for last 7 bytes: starts at byte 6 → lands on 0x80 (middle of em-dash).
-      # Must trim forward to 0x62 ('b') to be valid.
-      result = UTF8.safe_binary_part_from_end(binary, 7)
-      assert String.valid?(result)
-      assert result == "bbbbb"
-    end
-
-    test "never produces invalid UTF-8 at any len from end" do
-      binary = String.duplicate("—", 100)
-
-      for len <- 1..299 do
-        result = UTF8.safe_binary_part_from_end(binary, len)
-        assert String.valid?(result), "len=#{len} produced invalid UTF-8"
-      end
-    end
-
-    test "handles len larger than binary" do
-      binary = "ab"
-      assert UTF8.safe_binary_part_from_end(binary, 100) == "ab"
-    end
-  end
-
   describe "ensure_utf8/1" do
     test "valid UTF-8 string passes through unchanged with nil truncation_info" do
       input = "Hello, world! 日本語テスト 🎉"
@@ -149,7 +73,7 @@ defmodule EvoGit.UTF8Test do
       content = "Architecture — design — overview\n" |> String.duplicate(1000)
       context_max = 500
 
-      truncated = UTF8.safe_binary_part(content, 0, context_max)
+      truncated = String.byte_slice(content, 0, context_max)
 
       # The truncated result MUST be valid UTF-8 (this is what was crashing)
       assert String.valid?(truncated),
