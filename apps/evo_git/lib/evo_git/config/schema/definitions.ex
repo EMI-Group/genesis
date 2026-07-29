@@ -515,6 +515,16 @@ defmodule EvoGit.Config.Schema.Definitions do
         description:
           "When true, appends a 'Co-authored-by: Genesis <noreply@evogit.ai>' trailer to all agent-generated git commits. Disable to omit the co-author attribution."
       },
+      %{
+        key_path: [:git, :cow_worktree_creation],
+        type: :atom,
+        default: :auto,
+        validation: [in: [:auto, :enabled, :disabled]],
+        category: :git,
+        sub_category: nil,
+        description:
+          "Controls CoW (copy-on-write) optimized worktree creation. 'auto' enables it on platforms with cp available (Linux/macOS) and falls back to standard git worktree creation otherwise. 'enabled' forces CoW (falls back on failure). 'disabled' always uses standard git worktree creation."
+      },
       # ── Tools ────────────────────────────────────────────────────────────
       %{
         key_path: [:tools, :search, :enabled],
