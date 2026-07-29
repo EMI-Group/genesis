@@ -58,7 +58,6 @@ defmodule EvoGit.RemoteConnection do
   # GENESIS_REMOTE_DIST_PORT env var). The local end of the tunnel uses a
   # dynamically-assigned free port to avoid conflicts with the local node's
   # own distribution port.
-  @remote_node_base "genesis_remote@127.0.0.1"
   @default_remote_dist_port 9000
 
   # ── State ──────────────────────────────────────────────────────────
@@ -210,7 +209,7 @@ defmodule EvoGit.RemoteConnection do
   @impl true
   def init(target) do
     Process.flag(:trap_exit, true)
-    {:ok, %__MODULE__{target: target, node: @remote_node_base}}
+    {:ok, %__MODULE__{target: target, node: remote_node_name(target)}}
   end
 
   @impl true
@@ -338,11 +337,12 @@ defmodule EvoGit.RemoteConnection do
         # Register the SSH tunnel's local port with our EPMD-less module so
         # that when Node.connect asks port_please for this node name, EpmdDist
         # returns local_port (which the SSH tunnel forwards to remote_port 9000).
-        EvoGit.EpmdDist.register_target(@remote_node_base, local_port)
+        node_name = remote_node_name(target)
+        EvoGit.EpmdDist.register_target(node_name, local_port)
 
         # The node name is just name@host — NO port suffix. The port is
         # resolved by EpmdDist.port_please/2 via the registration above.
-        remote_node = :"#{@remote_node_base}"
+        remote_node = String.to_atom(node_name)
 
         case Node.connect(remote_node) do
           true ->
@@ -362,7 +362,7 @@ defmodule EvoGit.RemoteConnection do
             {:ok, new_state}
 
           result when result in [false, :ignored] ->
-            EvoGit.EpmdDist.unregister_target(@remote_node_base)
+            EvoGit.EpmdDist.unregister_target(node_name)
             close_port(port)
             reason = {:node_connect_failed, inspect(remote_node)}
             new_state = %{connecting | phase: :error, last_error: format_error(reason)}
@@ -439,7 +439,7 @@ defmodule EvoGit.RemoteConnection do
                     state = %{state | bootstrap_stage: :starting_daemon}
                     broadcast_status(target, state)
 
-                    case maybe_start_daemon(ssh_target, launcher_path, os) do
+                    case maybe_start_daemon(ssh_target, launcher_path, os, target) do
                       :ok ->
                         EvoGit.RemoteConnections.touch(target.id)
                         completed = %{state | phase: :disconnected, bootstrap_stage: nil}
@@ -593,20 +593,21 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Checks if the daemon is already running; starts it only if not.
-  defp maybe_start_daemon(ssh_target, launcher_path, os) do
-    if daemon_running?(ssh_target, os) do
+  defp maybe_start_daemon(ssh_target, launcher_path, os, target) do
+    if daemon_running?(ssh_target, os, target) do
       :ok
     else
-      case start_daemon(ssh_target, launcher_path, os) do
-        :ok -> verify_daemon_healthy(ssh_target, os)
+      case start_daemon(ssh_target, launcher_path, os, target) do
+        :ok -> verify_daemon_healthy(ssh_target, os, target)
         {:error, _} = error -> error
       end
     end
   end
 
   # Checks if the genesis-remote daemon is already running on the remote.
-  defp daemon_running?(ssh_target, "Linux") do
-    cmd = "ssh #{ssh_target} 'systemctl --user is-active genesis-remote 2>/dev/null'"
+  defp daemon_running?(ssh_target, "Linux", target) do
+    unit = "genesis-remote-#{target.id}"
+    cmd = "ssh #{ssh_target} 'systemctl --user is-active #{unit} 2>/dev/null'"
 
     case run_cmd(cmd, @cmd_timeout_ms) do
       {:ok, output, _status} -> String.trim(output) == "active"
@@ -614,8 +615,9 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  defp daemon_running?(ssh_target, "Darwin") do
-    cmd = "ssh #{ssh_target} 'launchctl list com.genesis.remote 2>/dev/null'"
+  defp daemon_running?(ssh_target, "Darwin", target) do
+    label = "com.genesis.remote.#{target.id}"
+    cmd = "ssh #{ssh_target} 'launchctl list #{label} 2>/dev/null'"
 
     case run_cmd(cmd, @cmd_timeout_ms) do
       {:ok, output, _status} -> String.trim(output) != ""
@@ -626,32 +628,33 @@ defmodule EvoGit.RemoteConnection do
   # Verifies the daemon reached 'active' state after launch. Retries a few
   # times with a short delay so the BEAM VM has time to boot. Returns :ok or
   # {:error, {:daemon_not_healthy, details}}.
-  defp verify_daemon_healthy(ssh_target, os) do
-    case wait_daemon_active(ssh_target, os, 3, 1000) do
+  defp verify_daemon_healthy(ssh_target, os, target) do
+    case wait_daemon_active(ssh_target, os, 3, 1000, target) do
       :ok ->
         :ok
 
       :not_active ->
-        details = fetch_daemon_status(ssh_target, os)
+        details = fetch_daemon_status(ssh_target, os, target)
         {:error, {:daemon_not_healthy, details}}
     end
   end
 
-  defp wait_daemon_active(_ssh_target, _os, 0, _delay), do: :not_active
+  defp wait_daemon_active(_ssh_target, _os, 0, _delay, _target), do: :not_active
 
-  defp wait_daemon_active(ssh_target, os, attempts, delay) do
+  defp wait_daemon_active(ssh_target, os, attempts, delay, target) do
     Process.sleep(delay)
 
-    if daemon_running?(ssh_target, os) do
+    if daemon_running?(ssh_target, os, target) do
       :ok
     else
-      wait_daemon_active(ssh_target, os, attempts - 1, delay)
+      wait_daemon_active(ssh_target, os, attempts - 1, delay, target)
     end
   end
 
   # Fetches diagnostic status output for inclusion in the error reason.
-  defp fetch_daemon_status(ssh_target, "Linux") do
-    cmd = "ssh #{ssh_target} 'systemctl --user status genesis-remote 2>&1 | tail -20'"
+  defp fetch_daemon_status(ssh_target, "Linux", target) do
+    unit = "genesis-remote-#{target.id}"
+    cmd = "ssh #{ssh_target} 'systemctl --user status #{unit} 2>&1 | tail -20'"
 
     case run_cmd(cmd, @cmd_timeout_ms) do
       {:ok, output, _status} -> String.trim(output)
@@ -659,27 +662,32 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  defp fetch_daemon_status(_ssh_target, "Darwin") do
-    "daemon not active after launch (macOS launchctl)"
+  defp fetch_daemon_status(_ssh_target, "Darwin", target) do
+    label = "com.genesis.remote.#{target.id}"
+    "daemon not active after launch (macOS launchctl, label: #{label})"
   end
 
-  defp fetch_daemon_status(_ssh_target, os) do
+  defp fetch_daemon_status(_ssh_target, os, _target) do
     "daemon not active after launch (os: #{os})"
   end
 
   # Starts the daemon on the remote.
-  # Linux: systemd-run --user --unit=genesis-remote <launcher_path> start
-  # macOS: write launchd plist, scp it, load it via launchctl.
-  defp start_daemon(ssh_target, launcher_path, "Linux") do
+  # Linux: systemd-run --user --unit=genesis-remote-<target_id> --setenv=RELEASE_NODE=<node> <launcher_path> start
+  # macOS: write launchd plist (per-target label), scp it, load it via launchctl.
+  defp start_daemon(ssh_target, launcher_path, "Linux", target) do
+    unit = "genesis-remote-#{target.id}"
+    node = remote_node_name(target)
+
     # Clear any stale failed/inactive unit so systemd-run can create a fresh one.
     # reset-failed is idempotent: exits 0 if nothing to clear, non-zero if unit
     # never existed — both are acceptable here.
     reset_cmd =
-      "ssh #{ssh_target} 'systemctl --user reset-failed genesis-remote 2>/dev/null; true'"
+      "ssh #{ssh_target} 'systemctl --user reset-failed #{unit} 2>/dev/null; true'"
 
     run_cmd(reset_cmd, @cmd_timeout_ms)
 
-    cmd = "ssh #{ssh_target} 'systemd-run --user --unit=genesis-remote #{launcher_path} start'"
+    cmd =
+      "ssh #{ssh_target} 'systemd-run --user --unit=#{unit} --setenv=RELEASE_NODE=#{node} #{launcher_path} start'"
 
     case run_cmd(cmd, @launch_receive_timeout_ms) do
       {:ok, _output, 0} ->
@@ -694,32 +702,40 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  defp start_daemon(ssh_target, launcher_path, "Darwin") do
-    plist_path = write_launchd_plist(launcher_path)
+  defp start_daemon(ssh_target, launcher_path, "Darwin", target) do
+    plist_path = write_launchd_plist(launcher_path, target)
 
     if plist_path == nil do
       {:error, {:daemon_launch_failed, :plist_write_failed}}
     else
-      result = deploy_launchd_plist(ssh_target, plist_path)
+      result = deploy_launchd_plist(ssh_target, plist_path, target)
       File.rm(plist_path)
       result
     end
   end
 
   # Writes the launchd plist to a local temp file. Returns the path or nil.
-  defp write_launchd_plist(launcher_path) do
+  defp write_launchd_plist(launcher_path, target) do
+    label = "com.genesis.remote.#{target.id}"
+    node = remote_node_name(target)
+
     plist = """
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0">
     <dict>
         <key>Label</key>
-        <string>com.genesis.remote</string>
+        <string>#{label}</string>
         <key>ProgramArguments</key>
         <array>
             <string>#{launcher_path}</string>
             <string>start</string>
         </array>
+        <key>EnvironmentVariables</key>
+        <dict>
+            <key>RELEASE_NODE</key>
+            <string>#{node}</string>
+        </dict>
         <key>RunAtLoad</key>
         <true/>
         <key>KeepAlive</key>
@@ -741,8 +757,9 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # SCPs the plist to ~/Library/LaunchAgents/ and loads it via launchctl.
-  defp deploy_launchd_plist(ssh_target, plist_path) do
-    remote_plist = "~/Library/LaunchAgents/com.genesis.remote.plist"
+  defp deploy_launchd_plist(ssh_target, plist_path, target) do
+    label = "com.genesis.remote.#{target.id}"
+    remote_plist = "~/Library/LaunchAgents/#{label}.plist"
 
     scp_cmd = "scp #{plist_path} #{ssh_target}:#{remote_plist}"
 
@@ -865,6 +882,10 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # ── Helpers ────────────────────────────────────────────────────────
+
+  defp remote_node_name(target) do
+    "genesis_remote_#{target.id}@127.0.0.1"
+  end
 
   defp via(target_id) do
     {:via, Registry, {@registry, target_id}}
