@@ -241,16 +241,41 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       unless File.exists?(worktree_path) do
         commit_sha = spec.phylo_node.current_commit
         branch_name = "evogit-agent-T#{task_number}-A#{task_local_id}"
+        source_path = resolve_source_path(agent_repo_root, meta)
 
-        case Git.add_worktree(agent_repo_root, worktree_path, commit_sha, branch_name) do
-          {:ok, _} ->
+        # Try CoW-optimized creation first, fall back to standard method
+        cow_result =
+          if EvoGit.Adapters.CowWorktree.enabled?() do
+            EvoGit.Adapters.CowWorktree.create_worktree(
+              agent_repo_root,
+              worktree_path,
+              commit_sha,
+              branch_name,
+              source_path
+            )
+          else
+            {:fallback, :disabled}
+          end
+
+        case cow_result do
+          :ok ->
             Logger.info(
-              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_number}-A#{task_local_id}) on branch #{branch_name}"
+              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_number}-A#{task_local_id}) on branch #{branch_name} via CoW"
             )
 
-          {:error, _, msg} ->
-            Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
-            raise "Failed to create worktree for agent #{agent_id}"
+          {:fallback, reason} ->
+            Logger.debug("AgentScheduler: Falling back to standard worktree creation (#{reason})")
+
+            case Git.add_worktree(agent_repo_root, worktree_path, commit_sha, branch_name) do
+              {:ok, _} ->
+                Logger.info(
+                  "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_number}-A#{task_local_id}) on branch #{branch_name}"
+                )
+
+              {:error, _, msg} ->
+                Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
+                raise "Failed to create worktree for agent #{agent_id}"
+            end
         end
 
         true
@@ -277,6 +302,22 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       Worktrees.run_init_script(agent_repo_root, worktree_path,
         source_worktree_path: parent_worktree || agent_repo_root
       )
+    end
+  end
+
+  defp resolve_source_path(agent_repo_root, meta) do
+    # For subagents: use the parent's worktree path (already has most files at same content)
+    # For top-level agents: use the main repo root
+    if meta.parent_id do
+      case Store.get_sched_meta(meta.parent_id) do
+        {:ok, parent_meta} when parent_meta.worktree != nil ->
+          parent_meta.worktree
+
+        _ ->
+          agent_repo_root
+      end
+    else
+      agent_repo_root
     end
   end
 
