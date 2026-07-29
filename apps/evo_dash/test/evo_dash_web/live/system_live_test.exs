@@ -39,12 +39,14 @@ defmodule EvoDashWeb.SystemLiveTest do
     end
   end
 
-  # NOTE: The "confirm_restart" event handler is intentionally NOT unit-tested.
-  # It calls System.restart/0, which tears down and restarts the entire BEAM VM
-  # and would crash the ExUnit test run (killing all other tests along with it).
-  # Likewise, "confirm_stop" calls System.stop/0 which shuts down the VM and is
-  # also not unit-tested. We only test the surrounding modal open/cancel flows,
-  # which are safe.
+  # NOTE: The LOCAL "confirm_restart"/"confirm_stop" event handlers are
+  # intentionally NOT unit-tested. They call System.restart/0 / System.stop/0,
+  # which tears down / shuts down the entire BEAM VM and would crash the ExUnit
+  # test run (killing all other tests along with it). The REMOTE variants are
+  # tested via direct handle_event/3 invocation with a non-local current_node —
+  # the erpc call to a non-existent remote node fails gracefully inside
+  # restart_remote/stop_remote (which always returns :ok), so it's safe to run.
+  # We also test the surrounding modal open/cancel flows, which are safe.
   describe "scheduler and system controls" do
     test "scheduler control renders with the pause button", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/system")
@@ -111,21 +113,27 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ "Stop System?"
     end
 
-    test "confirm_restart handler is guarded when remote (no System.restart called)" do
-      # BUG 1 fix: confirm_restart must NOT call System.restart/0 when remote.
-      # The entry handler (request_restart) guards, the template disables the
-      # button, and handle_params clears the flag on node switch — but the
-      # confirm handler itself MUST also guard as defense-in-depth (a stale
-      # modal or crafted event could bypass the UI guards).
+    test "confirm_restart restarts the remote node via RPC when remote" do
+      # ISSUE 2 fix: confirm_restart now operates on the REMOTE node via
+      # EvoDash.NodeContext.restart_remote/1 (erpc RPC) instead of refusing.
       #
-      # We test the guard directly by invoking the handle_event/3 callback with
-      # a socket that has remote?: true. This avoids both booting a real remote
-      # node AND calling System.restart/0 (which would tear down the test VM).
-      # The handler should return a flash error and close the modal.
+      # We test by invoking the handle_event/3 callback with a socket that has
+      # remote?: true and a non-local current_node. This avoids calling
+      # System.restart/0 on the LOCAL test VM (which would tear it down). The
+      # erpc call to the non-existent remote node fails gracefully inside
+      # restart_remote/1 (it normalizes the node-down error and always returns
+      # :ok), so this is safe to run. The handler should close the modal and
+      # show an info flash about the remote node restarting.
       alias EvoDashWeb.SystemLive
 
       socket = %Phoenix.LiveView.Socket{
-        assigns: %{__changed__: nil, flash: %{}, remote?: true, show_restart_confirm: true}
+        assigns: %{
+          __changed__: nil,
+          flash: %{},
+          remote?: true,
+          current_node: :nonexistent_remote@host,
+          show_restart_confirm: true
+        }
       }
 
       assert {:noreply, result_socket} =
@@ -133,14 +141,23 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       # Modal closed
       refute result_socket.assigns.show_restart_confirm
+      # Info flash about remote restart (not an error flash)
+      assert %{"info" => _} = result_socket.assigns.flash
     end
 
-    test "confirm_stop handler is guarded when remote (no System.stop called)" do
-      # BUG 1 fix: same defense-in-depth guard for confirm_stop.
+    test "confirm_stop stops the remote node via RPC when remote" do
+      # ISSUE 2 fix: confirm_stop now operates on the REMOTE node via
+      # EvoDash.NodeContext.stop_remote/1 (erpc RPC) instead of refusing.
       alias EvoDashWeb.SystemLive
 
       socket = %Phoenix.LiveView.Socket{
-        assigns: %{__changed__: nil, flash: %{}, remote?: true, show_stop_confirm: true}
+        assigns: %{
+          __changed__: nil,
+          flash: %{},
+          remote?: true,
+          current_node: :nonexistent_remote@host,
+          show_stop_confirm: true
+        }
       }
 
       assert {:noreply, result_socket} =
@@ -148,6 +165,8 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       # Modal closed
       refute result_socket.assigns.show_stop_confirm
+      # Info flash about remote stop (not an error flash)
+      assert %{"info" => _} = result_socket.assigns.flash
     end
   end
 end

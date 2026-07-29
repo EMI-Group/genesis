@@ -364,39 +364,75 @@ defmodule EvoDashWeb.DashboardLive do
         socket
       end
 
+    # Reload recent projects from the correct node on every handle_params run.
+    # When remote, load via RPC; when local, load from the local TaskRegistry.
+    # This ensures the project list refreshes on every node switch
+    # (local→remote and remote→local).
+    socket =
+      if socket.assigns.remote? do
+        assign(
+          socket,
+          :recent_projects,
+          EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
+        )
+      else
+        assign(socket, :recent_projects, TaskRegistry.list_recent_projects())
+      end
+
     project_path = params["project"]
 
     socket =
-      if project_path && project_path != "" do
-        expanded = Path.expand(project_path)
-
-        if File.dir?(expanded) do
-          activate_project(socket, expanded)
-        else
-          # Project path in URL is invalid, clear it
-          all_tasks = TaskRegistry.list_tasks()
-
-          socket
-          |> Assigns.assign_running_and_pending_tasks(all_tasks)
-          |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
-          |> assign(
-            :notified_task_ids,
-            Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
-          )
-          |> assign(
-            active_project: nil,
-            active_project_path: nil
-          )
-        end
+      if socket.assigns.remote? do
+        # Remote node — do not activate local projects or check local file
+        # paths. The remote render branch shows remote agents instead of the
+        # project UI. Clear local project assigns so no stale local state
+        # leaks into the remote view.
+        socket
+        |> assign(:active_project, nil)
+        |> assign(:active_project_path, nil)
       else
-        # No project in URL — try auto-loading most recent project, or load all tasks
-        socket =
-          if is_nil(socket.assigns.active_project) do
-            case List.first(socket.assigns.recent_projects) do
-              %{path: recent_path} when is_binary(recent_path) ->
-                if File.dir?(recent_path) do
-                  activate_project(socket, recent_path)
-                else
+        if project_path && project_path != "" do
+          expanded = Path.expand(project_path)
+
+          if File.dir?(expanded) do
+            activate_project(socket, expanded)
+          else
+            # Project path in URL is invalid, clear it
+            all_tasks = TaskRegistry.list_tasks()
+
+            socket
+            |> Assigns.assign_running_and_pending_tasks(all_tasks)
+            |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+            |> assign(
+              :notified_task_ids,
+              Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+            )
+            |> assign(
+              active_project: nil,
+              active_project_path: nil
+            )
+          end
+        else
+          # No project in URL — try auto-loading most recent project, or load all tasks
+          socket =
+            if is_nil(socket.assigns.active_project) do
+              case List.first(socket.assigns.recent_projects) do
+                %{path: recent_path} when is_binary(recent_path) ->
+                  if File.dir?(recent_path) do
+                    activate_project(socket, recent_path)
+                  else
+                    all_tasks = TaskRegistry.list_tasks()
+
+                    socket
+                    |> Assigns.assign_running_and_pending_tasks(all_tasks)
+                    |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+                    |> assign(
+                      :notified_task_ids,
+                      Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+                    )
+                  end
+
+                _ ->
                   all_tasks = TaskRegistry.list_tasks()
 
                   socket
@@ -406,25 +442,14 @@ defmodule EvoDashWeb.DashboardLive do
                     :notified_task_ids,
                     Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
                   )
-                end
-
-              _ ->
-                all_tasks = TaskRegistry.list_tasks()
-
-                socket
-                |> Assigns.assign_running_and_pending_tasks(all_tasks)
-                |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
-                |> assign(
-                  :notified_task_ids,
-                  Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
-                )
+              end
+            else
+              # We had a project but navigated away and back without it
+              socket
             end
-          else
-            # We had a project but navigated away and back without it
-            socket
-          end
 
-        socket
+          socket
+        end
       end
 
     # Preserve starting_commit from URL query param (e.g. ?starting_commit=abc123)

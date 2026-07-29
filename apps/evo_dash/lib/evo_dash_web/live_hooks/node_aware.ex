@@ -45,11 +45,23 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   end
 
   @doc """
-  Loads all tasks from EvoGit.TaskRegistry and assigns running/pending task lists
-  to the socket. Same logic as DashboardLive.Assigns.assign_running_and_pending_tasks/1.
+  Loads all tasks and assigns running/pending task lists to the socket. Same
+  logic as DashboardLive.Assigns.assign_running_and_pending_tasks/1.
+
+  Node-aware: when `@current_node` is the local BEAM node, tasks are read from
+  the local `EvoGit.TaskRegistry`; when it is a remote node, tasks are fetched
+  via `EvoDash.NodeContext.list_tasks/1` (RPC). The filtering logic is identical
+  either way — only the source of `all_tasks` changes.
   """
   def load_running_and_pending_tasks(socket) do
-    all_tasks = TaskRegistry.list_tasks()
+    current_node = socket.assigns[:current_node] || node()
+
+    all_tasks =
+      if current_node == node() do
+        TaskRegistry.list_tasks()
+      else
+        EvoDash.NodeContext.list_tasks(current_node)
+      end
 
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
@@ -88,34 +100,40 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   def assign_node(socket, params) do
     node_param = params["node"]
 
-    case resolve_node_context(node_param) do
-      :local ->
-        socket
-        |> assign(:current_node, node())
-        |> assign(:current_node_name, "Local")
-        |> assign(:current_node_id, nil)
+    socket =
+      case resolve_node_context(node_param) do
+        :local ->
+          socket
+          |> assign(:current_node, node())
+          |> assign(:current_node_name, "Local")
+          |> assign(:current_node_id, nil)
 
-      {:remote, target, remote_node} ->
-        # The remote BEAM node name is resolved from the connection manager's
-        # status map (`:node` field, e.g. "genesis_remote@127.0.0.1"). We store
-        # it as an atom so `EvoDash.NodeContext.list_agents(@current_node)`
-        # routes `:erpc.call/5` to the correct node.
-        socket
-        |> assign(:current_node, remote_node)
-        |> assign(:current_node_name, target.name)
-        |> assign(:current_node_id, node_param)
+        {:remote, target, remote_node} ->
+          # The remote BEAM node name is resolved from the connection manager's
+          # status map (`:node` field, e.g. "genesis_remote@127.0.0.1"). We store
+          # it as an atom so `EvoDash.NodeContext.list_agents(@current_node)`
+          # routes `:erpc.call/5` to the correct node.
+          socket
+          |> assign(:current_node, remote_node)
+          |> assign(:current_node_name, target.name)
+          |> assign(:current_node_id, node_param)
 
-      {:pending, target} ->
-        # A known target that exists but isn't connected yet (e.g. a
-        # connection was just initiated). Data still comes from the local node
-        # until the connection completes, but we MUST preserve the target id in
-        # `@current_node_id` so that `handle_connection_status/2` can match it
-        # later and re-resolve `@current_node` to the remote BEAM node.
-        socket
-        |> assign(:current_node, node())
-        |> assign(:current_node_name, target.name)
-        |> assign(:current_node_id, node_param)
-    end
+        {:pending, target} ->
+          # A known target that exists but isn't connected yet (e.g. a
+          # connection was just initiated). Data still comes from the local node
+          # until the connection completes, but we MUST preserve the target id in
+          # `@current_node_id` so that `handle_connection_status/2` can match it
+          # later and re-resolve `@current_node` to the remote BEAM node.
+          socket
+          |> assign(:current_node, node())
+          |> assign(:current_node_name, target.name)
+          |> assign(:current_node_id, node_param)
+      end
+
+    # Reload sidebar tasks from the (possibly changed) node so the "Active
+    # Tasks" section always reflects the node being viewed. This runs on every
+    # `handle_params` call, including node switches.
+    load_running_and_pending_tasks(socket)
   end
 
   # Resolves a node param string into `:local`, `{:remote, target_map,

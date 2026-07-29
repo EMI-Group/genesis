@@ -82,8 +82,6 @@ defmodule EvoDashWeb.SystemLive do
           <button
             type="button"
             phx-click="request_restart"
-            disabled={@remote?}
-            title={if(@remote?, do: gettext("Restart is local-only — this controls the local dashboard VM, not the remote node."))}
             class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
           >
             <.icon name="hero-arrow-path" class="size-5" />
@@ -92,8 +90,6 @@ defmodule EvoDashWeb.SystemLive do
           <button
             type="button"
             phx-click="request_stop"
-            disabled={@remote?}
-            title={if(@remote?, do: gettext("Stop is local-only — this controls the local dashboard VM, not the remote node."))}
             class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
           >
             <.icon name="hero-power" class="size-5" />
@@ -399,9 +395,15 @@ defmodule EvoDashWeb.SystemLive do
             </div>
 
             <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext(
-                "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
-              )} <% # zh_CN: "平滑重启" %>
+              <%= if @remote? do %>
+                {gettext(
+                  "This will gracefully restart the remote node's Erlang VM. All applications on the remote node will be torn down and restarted."
+                )}
+              <% else %>
+                {gettext(
+                  "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
+                )} <% # zh_CN: "平滑重启" %>
+              <% end %>
             </p>
             <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
               {gettext(
@@ -417,7 +419,6 @@ defmodule EvoDashWeb.SystemLive do
                 type="button"
                 class="btn btn-error rounded-md px-6 gap-2"
                 phx-click="confirm_restart"
-                disabled={@remote?}
               >
                 <.icon name="hero-arrow-path" class="size-4.5" />
                 {gettext("Restart System")}
@@ -438,9 +439,15 @@ defmodule EvoDashWeb.SystemLive do
             </div>
 
             <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext(
-                "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
-              )}
+              <%= if @remote? do %>
+                {gettext(
+                  "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
+                )}
+              <% else %>
+                {gettext(
+                  "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
+                )}
+              <% end %>
             </p>
             <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
               {gettext(
@@ -456,7 +463,6 @@ defmodule EvoDashWeb.SystemLive do
                 type="button"
                 class="btn btn-error rounded-md px-6 gap-2"
                 phx-click="confirm_stop"
-                disabled={@remote?}
               >
                 <.icon name="hero-power" class="size-4.5" />
                 {gettext("Stop System")}
@@ -595,18 +601,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("request_restart", _params, socket) do
-    if socket.assigns.remote? do
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext(
-           "System restart/stop is local-only — this controls the local dashboard VM, not the remote node."
-         )
-       )}
-    else
-      {:noreply, assign(socket, :show_restart_confirm, true)}
-    end
+    {:noreply, assign(socket, :show_restart_confirm, true)}
   end
 
   @impl true
@@ -616,18 +611,18 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("confirm_restart", _params, socket) do
-    # Defense-in-depth: the entry button (request_restart) and the modal confirm
-    # button are both disabled when remote, and handle_params clears the confirm
-    # flags on a node switch. But System.restart/0 tears down the LOCAL VM, so we
-    # MUST guard the handler too — a stale modal or crafted event must never
-    # restart the local dashboard VM while the user is viewing a remote node.
     if socket.assigns.remote? do
+      # Restart the remote node via RPC. The :erpc call to System.restart/0
+      # tears down the remote VM mid-call, so the RPC failure is expected —
+      # restart_remote/1 always returns :ok.
+      EvoDash.NodeContext.restart_remote(socket.assigns.current_node)
+
       {:noreply,
        socket
        |> assign(:show_restart_confirm, false)
        |> put_flash(
-         :error,
-         gettext("Cannot restart a remote node from the dashboard")
+         :info,
+         gettext("Remote node is restarting. Please wait for it to come back up, then reconnect.")
        )}
     else
       # Spawn a short-lived process so this LiveView can finish replying (and the
@@ -651,18 +646,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("request_stop", _params, socket) do
-    if socket.assigns.remote? do
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext(
-           "System restart/stop is local-only — this controls the local dashboard VM, not the remote node."
-         )
-       )}
-    else
-      {:noreply, assign(socket, :show_stop_confirm, true)}
-    end
+    {:noreply, assign(socket, :show_stop_confirm, true)}
   end
 
   @impl true
@@ -672,17 +656,15 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("confirm_stop", _params, socket) do
-    # Defense-in-depth: same rationale as confirm_restart — System.stop/0 shuts
-    # down the LOCAL VM. Guard the handler even though the buttons are disabled
-    # when remote, so a stale modal or crafted event can never stop the local
-    # dashboard VM while the user is viewing a remote node.
     if socket.assigns.remote? do
+      EvoDash.NodeContext.stop_remote(socket.assigns.current_node)
+
       {:noreply,
        socket
        |> assign(:show_stop_confirm, false)
        |> put_flash(
-         :error,
-         gettext("Cannot stop a remote node from the dashboard")
+         :info,
+         gettext("Remote node is stopping. It will need to be started again on the remote host.")
        )}
     else
       # Spawn a short-lived process so this LiveView can finish replying (and the
