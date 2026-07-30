@@ -311,6 +311,27 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Returns lightweight task summaries for all tasks.
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks_summary/0`. Returns a list of
+  plain maps with only the columns needed for the dashboard sidebar.
+  """
+  @spec list_tasks_summary() :: [map()]
+  def list_tasks_summary do
+    EvoGit.TaskRegistry.list_tasks_summary()
+  end
+
+  @doc """
+  Returns lightweight task summaries filtered to a specific project_path.
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks_summary_by_path/1`.
+  """
+  @spec list_tasks_summary_by_path(String.t()) :: [map()]
+  def list_tasks_summary_by_path(path) do
+    EvoGit.TaskRegistry.list_tasks_summary_by_path(path)
+  end
+
+  @doc """
   Cancels a running task by id.
 
   Delegates to `EvoGit.TaskRegistry.cancel_task/1` (a `GenServer.call`). This
