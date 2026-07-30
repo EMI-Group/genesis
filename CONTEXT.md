@@ -11,7 +11,7 @@ This is an **Elixir umbrella project** with two child applications:
 | `:evo_git` | `./apps/evo_git/` | Core runtime — agent execution, Git interactions, CLI |
 | `:evo_dash` | `./apps/evo_dash/` | Phoenix LiveView dashboard — real-time visualization and task management |
 
-The full design specification is in `AGENTS.md`.
+The full design specification is documented across the CONTEXT.md tree.
 
 ## Routing Table
 
@@ -32,7 +32,6 @@ The full design specification is in `AGENTS.md`.
 | `mix.exs` | Umbrella Mix project — apps_path, three releases: `genesis` (both apps), `genesis_desktop` (standard mix release with `include_erts`, bundled as Tauri resource), `genesis_remote` (headless evo_git-only daemon tarball for SSH remote dev). Version is read dynamically from `VERSION` (single source of truth). |
 | `VERSION` | Single source of truth for the project version (e.g. `0.1.0`). All umbrella `mix.exs` files read this; the desktop manifests are synced by `mix bump.version`. |
 | `flake.nix` | Nix flake — `devShells.default` provides a complete NixOS toolchain (Erlang/OTP 29, Elixir 1.20, Rust, Tauri v2 native deps) for local desktop app builds |
-| `AGENTS.md` | Full EvoGit design specification (dual-dimension architecture, agent model, runtime phases) |
 | `README.md` | User-facing documentation: installation, CLI usage, architecture overview |
 | `.formatter.exs` | Code format configuration |
 | `.tool-versions` | Pinned Erlang/OTP 29 and Elixir 1.20.1 (for asdf/mise/CI) |
