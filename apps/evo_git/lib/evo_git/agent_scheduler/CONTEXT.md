@@ -49,7 +49,7 @@ There is no `running_count` field. The running count is always derived as `map_s
 The scheduler supports multiple concurrent tasks targeting different repos. Repo root resolution follows this priority:
 
 1. **Per-agent ETS** (`AgentState.repo_root`) — set at registration via `Dispatch.resolve_agent_repo_root/2`, derived from spec data. Used by `Lifecycle` for worktree cleanup.
-2. **Process dictionary** (`Process.get(:evogit_repo_root)`) — set at dispatch time in `try_dispatch/2`. Preferred by `current_repo_root/0` for runtime lookups.
+2. **Process dictionary** (`Process.get(:genesis_repo_root)`) — set at dispatch time in `try_dispatch/2`. Preferred by `current_repo_root/0` for runtime lookups.
 
 There is no global `state.repo_root` fallback — repo root resolution is always per-agent. The scheduler tracks which repos have been initialized via the `initialized_repos` map (`%{String.t() => true}`).
 

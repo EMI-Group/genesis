@@ -101,7 +101,7 @@ defmodule EvoGit.Agent.Runner do
 
       # Load skill schemas hierarchically — only skills enabled in the
       # Context Tree (from root to this agent's node) are available.
-      repo_root = Process.get(:evogit_repo_root)
+      repo_root = Process.get(:genesis_repo_root)
 
       skill_schemas =
         if repo_root && is_binary(repo_root) do
@@ -153,7 +153,7 @@ defmodule EvoGit.Agent.Runner do
     Process.put(:evogit_agent_id, agent_id)
     Process.put(:evogit_agent_depth, depth)
     Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
-    Process.put(:evogit_repo_root, repo_root)
+    Process.put(:genesis_repo_root, repo_root)
     Process.put(:evogit_repo_id, repo_id)
     Process.put(:repo_path, worktree_path)
 
