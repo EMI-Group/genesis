@@ -111,7 +111,7 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  # Backward-compatible fallback — enriched deltas (agent_registered/updated/removed) handle most updates
+  # Fallback — full reload when enriched deltas (agent_registered/updated/removed) are not sufficient
   def handle_info({:agents_updated}, socket) do
     agents = load_agents(socket.assigns.current_node)
     current_ids = MapSet.new(agents, & &1.id)

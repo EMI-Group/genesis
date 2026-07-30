@@ -88,7 +88,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   keys and correctly-typed values.
 
   Reads the structured model fields `provider`, `model_id`, and `base_url`
-  (instead of the legacy single `model` string) and composes a ReqLLM-native
+  (instead of the flat single `model` string) and composes a ReqLLM-native
   map model spec `%{provider: atom, id: string}` with `base_url` included only
   when provided/non-empty.
 

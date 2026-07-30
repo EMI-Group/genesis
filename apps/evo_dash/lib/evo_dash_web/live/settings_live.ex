@@ -8,6 +8,7 @@ defmodule EvoDashWeb.SettingsLive do
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
+  alias EvoDashWeb.SettingsLive.SearchEvents
 
   @impl true
   def render(assigns) do
@@ -563,13 +564,11 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("search", %{"value" => text}, socket) do
-    {:noreply, assign(socket, :search_text, text)}
-  end
+  def handle_event("search", params, socket), do: SearchEvents.handle_search(socket, params)
 
   # Prevents page reload when pressing Enter in the search form
   @impl true
-  def handle_event("noop", _params, socket), do: {:noreply, socket}
+  def handle_event("noop", params, socket), do: SearchEvents.handle_noop(socket, params)
 
   @impl true
   def handle_event("save_category", params, socket) do
@@ -750,51 +749,7 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("reset_key", %{"key_path" => path_str}, socket) do
-    key_path = ConfigIO.parse_key_path(path_str, socket.assigns.schemas_by_category)
-    schema = ConfigIO.find_schema(key_path, socket.assigns.schemas_by_category)
-
-    # An unknown or stale key_path / schema means untrusted client input did not
-    # resolve to a known setting — surface a friendly flash instead of crashing
-    # on put_in with a nil path or a nil schema.default.
-    if is_nil(key_path) or is_nil(schema) do
-      {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
-    else
-      config = put_in(socket.assigns.file_config, key_path, schema.default)
-      node = socket.assigns.current_node
-
-      case EvoDash.NodeContext.save_user_config(node, config) do
-        :ok ->
-          {file_config, socket} =
-            if node == node() do
-              fc = ConfigIO.load_file_config()
-              {fc, assign(socket, :config_status, config_status())}
-            else
-              EvoDash.NodeContext.reload_remote_config(node)
-              remote_cfg = EvoDash.NodeContext.get_remote_config(node)
-              fc = remote_config_to_file_config(remote_cfg)
-              {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
-            end
-
-          config_file_exists = File.exists?(socket.assigns.config_path)
-
-          {:noreply,
-           socket
-           |> assign(:file_config, file_config)
-           |> assign(:config_file_exists, config_file_exists)
-           |> assign(:per_category_errors, %{})
-           |> put_flash(:info, gettext("Reset %{key} to default.", key: path_str))}
-
-        {:error, reason} ->
-          {:noreply,
-           socket
-           |> put_flash(
-             :error,
-             gettext("Failed to reset key: %{reason}", reason: inspect(reason))
-           )}
-      end
-    end
-  end
+  def handle_event("reset_key", params, socket), do: SearchEvents.handle_reset_key(socket, params)
 
   @impl true
   def handle_event("select_llm_provider", %{"provider_id" => id_str}, socket) do
@@ -1190,7 +1145,7 @@ defmodule EvoDashWeb.SettingsLive do
   # Only the keys present in the scheduler config are populated; the rest fall
   # back to schema defaults when rendered. This is best-effort display data for
   # the remote config view.
-  defp remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
+  def remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
     scheduler =
       %{}
       |> maybe_put(:max_concurrency, remote_cfg[:max_concurrency])
@@ -1218,7 +1173,7 @@ defmodule EvoDashWeb.SettingsLive do
     |> Map.put(:llm, llm)
   end
 
-  defp remote_config_to_file_config(_), do: %{}
+  def remote_config_to_file_config(_), do: %{}
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
