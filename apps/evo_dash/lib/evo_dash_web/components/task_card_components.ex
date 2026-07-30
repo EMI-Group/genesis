@@ -486,7 +486,7 @@ defmodule EvoDashWeb.TaskCardComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # Public helpers — render_options_full/1 (thin wrapper for backward compat)
+  # Public API — render_options_full/1 renders task options without truncation
   # ---------------------------------------------------------------------------
 
   def render_options_full(opts) do
@@ -728,7 +728,7 @@ defmodule EvoDashWeb.TaskCardComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # Public helpers — render_result_full/1 (thin wrappers for backward compat)
+  # Public API — render_result_full/1 renders full task result without truncation
   # ---------------------------------------------------------------------------
 
   def render_result_full(assigns) do

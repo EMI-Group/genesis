@@ -55,7 +55,7 @@ defmodule EvoDashWeb.SettingsLive do
       <% end %>
 
       <%!-- No LLM Model Warning (local only — remote config_status covers this) --%>
-      <%= if is_nil(get_in(@file_config, [:llm, :model])) do %>
+      <%= if is_nil(get_in(@file_config, [:llm, :models])) or Enum.empty?(get_in(@file_config, [:llm, :models]) || []) do %>
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div>
@@ -841,13 +841,10 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("select_llm_model_shortcut", %{"model_string" => model_string}, socket) do
-    # Add a new model profile using the selected model string, and mirror it to
-    # the flat [:llm, :model] for backward compatibility (older code paths and
-    # the config-status check still read the flat field).
+    # Add a new model profile using the selected model string.
     file_config =
       socket.assigns.file_config
       |> ModelProfileHelpers.add_model_profile(model_string)
-      |> ModelProfileHelpers.mirror_default_model()
 
     persist_file_config(file_config, socket, gettext("Model selected and saved."))
   end
@@ -902,12 +899,9 @@ defmodule EvoDashWeb.SettingsLive do
         {:noreply, put_flash(socket, :error, msg)}
 
       {:ok, model_value} ->
-        # Add a new model profile using the custom model, and mirror it to the
-        # flat [:llm, :model] for backward compatibility.
         file_config =
           socket.assigns.file_config
           |> ModelProfileHelpers.add_model_profile(model_value)
-          |> ModelProfileHelpers.mirror_default_model()
 
         persist_file_config(file_config, socket, gettext("Custom model saved."))
     end
@@ -978,12 +972,9 @@ defmodule EvoDashWeb.SettingsLive do
         {:noreply, put_flash(socket, :error, msg)}
 
       {:ok, model_value} ->
-        # Add a new model profile using the selected model, and mirror it to the
-        # flat [:llm, :model] for backward compatibility.
         file_config =
           socket.assigns.file_config
           |> ModelProfileHelpers.add_model_profile(model_value)
-          |> ModelProfileHelpers.mirror_default_model()
 
         persist_file_config(file_config, socket, gettext("Model selected and saved."))
     end
@@ -1055,7 +1046,6 @@ defmodule EvoDashWeb.SettingsLive do
             file_config =
               socket.assigns.file_config
               |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
-              |> ModelProfileHelpers.mirror_default_model()
 
             socket = socket |> assign(:editing_profile_id, nil)
 
@@ -1087,7 +1077,6 @@ defmodule EvoDashWeb.SettingsLive do
     file_config =
       socket.assigns.file_config
       |> ModelProfileHelpers.put_in_model_profiles(new_models)
-      |> ModelProfileHelpers.mirror_default_model()
 
     socket = socket |> assign(:editing_profile_id, nil)
 

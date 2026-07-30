@@ -73,20 +73,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   end
 
   @doc """
-  Mirrors the first profile's model into the flat `[:llm, :model]` for backward
-  compatibility (the config-status check and older code paths still read the
-  flat field).
-  """
-  def mirror_default_model(file_config) do
-    models = get_in(file_config, [:llm, :models]) || []
-
-    case models do
-      [%{model: model} | _] -> put_in(file_config, [:llm, :model], model)
-      _ -> file_config
-    end
-  end
-
-  @doc """
   Checks whether `new_id` is already used by a profile OTHER than the one
   being edited (`old_id`). Returns `true` on collision.
   """
