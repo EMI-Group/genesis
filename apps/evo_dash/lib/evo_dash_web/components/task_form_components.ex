@@ -287,11 +287,9 @@ defmodule EvoDashWeb.TaskFormComponents do
     """
   end
 
-  # Renders a compact label for a profile's model spec, handling both the new
-  # map format (%{provider: atom, id: string, base_url: ...}) or tuple format
-  # ({:provider, [id: "id", base_url: "..."]) and the legacy
-  # "provider:id" string format. The `<>` binary operator crashes on maps, so we
-  # normalize to a string here.
+  # Renders a compact label for a profile's model spec in the map format
+  # (%{provider: atom, id: string, base_url: ...}). The `<>` binary operator
+  # crashes on maps, so we normalize to a string here.
   defp profile_model_label(%{model: model} = _profile) when is_map(model) do
     provider = model[:provider] || model["provider"]
     id = model[:id] || model["id"]
@@ -303,11 +301,5 @@ defmodule EvoDashWeb.TaskFormComponents do
     end
   end
 
-  defp profile_model_label(%{model: {provider, opts}}) when is_atom(provider) and is_list(opts) do
-    id = Keyword.get(opts, :id)
-    if id && id != "", do: "#{provider}:#{id}"
-  end
-
-  defp profile_model_label(%{model: model}) when is_binary(model), do: model
   defp profile_model_label(_profile), do: ""
 end
