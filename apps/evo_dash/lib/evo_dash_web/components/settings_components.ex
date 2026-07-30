@@ -121,7 +121,9 @@ defmodule EvoDashWeb.SettingsComponents do
                 %>
                 <% has_variants = is_list(variants) and length(variants) > 0 %>
                 <% show_models = not has_variants or @selected_variant_id != nil %>
-                <% current_model = get_in(@file_config, [:llm, :model]) %>
+                <% models = get_in(@file_config, [:llm, :models]) || [] %>
+                <% first_profile = Enum.at(models, 0) %>
+                <% current_model = if first_profile, do: (first_profile[:model] || first_profile["model"]), else: nil %>
                 <% show_custom_input = provider[:custom_model] == true %>
                 <% show_model_buttons = show_models and not show_custom_input %>
                 <%!-- Variant selection (only if provider has variants) --%>

@@ -451,7 +451,6 @@ defmodule EvoDashWeb.WelcomeLive do
         file_config =
           socket.assigns.file_config
           |> ModelProfileHelpers.add_model_profile(model_value)
-          |> ModelProfileHelpers.mirror_default_model()
 
         persist_file_config(
           file_config,

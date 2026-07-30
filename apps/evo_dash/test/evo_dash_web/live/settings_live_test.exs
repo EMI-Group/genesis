@@ -610,8 +610,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # (no overrides) become "provider:id" strings.
       assert hd(models).model == "anthropic:claude-sonnet-4-6"
       assert hd(models).concurrency == 3
-      # Flat [:llm, :model] mirrors the default profile (also normalized to string)
-      assert get_in(assigns(view).file_config, [:llm, :model]) ==
+      # First profile's model (also normalized to string)
+      assert get_in(assigns(view).file_config, [:llm, :models]) |> hd() |> Map.get(:model) ==
                "anthropic:claude-sonnet-4-6"
     end
 
