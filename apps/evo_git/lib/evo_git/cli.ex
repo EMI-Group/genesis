@@ -713,7 +713,7 @@ defmodule EvoGit.CLI do
 
   defp print_help do
     IO.puts("""
-    EvoX Genesis CLI - Evolutionary Software Development
+    Genesis CLI - Evolutionary Software Development
 
     Usage:
       evogit genesis [options] [<prompt>]

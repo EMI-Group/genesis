@@ -45,7 +45,7 @@ None — leaf directory (Elixir config files only).
 ### In TOML files (via `EvoGit.Config` at `apps/evo_git/lib/evo_git/config/config.ex`)
 The **3-level configuration system** (resolved at runtime, not via Elixir `Config`):
 1. **Application defaults** — Hardcoded in `EvoGit.Config.defaults/0`: scheduler settings, empty `llm`/`user` maps, sandbox `:auto`, evolution parameters, truncation limits. **No default model or username is provided.**
-2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant, cross-platform):
+2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant, cross-platform):
    - `[llm]` → `model = "provider:model"` (e.g. `"anthropic:claude-sonnet-4-20250514"`), `compression_threshold_tokens`
    - `[scheduler]` → `max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_agent_depth`, `max_retries`
    - `[user]` → `github_username`
@@ -55,14 +55,14 @@ The **3-level configuration system** (resolved at runtime, not via Elixir `Confi
 3. **Runtime overrides** — CLI flags and dashboard settings, stored in `AgentScheduler` GenServer state
 
 ### Credentials (API keys)
-- Stored in `~/.config/evogit/credentials.toml` (separate from config for security)
+- Stored in `~/.config/genesis/credentials.toml` (separate from config for security)
 - Format: `PROVIDER_API_KEY = "key-value"` (e.g. `ANTHROPIC_API_KEY = "sk-ant-..."`)
 - On load, `EvoGit.Config.credentials/0` reads the file and sets each key-value as an environment variable via `System.put_env/2`
 - Supported providers: Google, Anthropic, OpenAI, ZAI, DeepSeek, Groq, Tavily
 - The provider is determined from the `[llm] model` format `"provider:model"`
 
 ### Per-project config
-- `EvoGit.ProjectConfig` reads `evogit.toml` from the repo root (not from `~/.config/evogit/`)
+- `EvoGit.ProjectConfig` reads `genesis.toml` from the repo root (not from `~/.config/genesis/`)
 - Supports `worktree.script` and `foreign_repos` sections
 
 ## Key Configuration Categories

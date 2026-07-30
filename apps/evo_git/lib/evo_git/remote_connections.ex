@@ -110,9 +110,6 @@ defmodule EvoGit.RemoteConnections do
   def save(target) when is_map(target) do
     conn = atomize_connection(target)
 
-    # Backward compatibility: migrate old host/user fields to ssh_target.
-    conn = migrate_old_fields(conn)
-
     ssh_target = Map.get(conn, :ssh_target)
 
     cond do
@@ -215,40 +212,6 @@ defmodule EvoGit.RemoteConnections do
         )
 
         :error
-    end
-  end
-
-  # Backward compatibility: if a loaded/saved target has the old `host` field
-  # but no `ssh_target`, construct `ssh_target` from the old fields.
-  # If `user` is present → "user@host", else just "host".
-  # Old `port` and `identity_file` are ignored (user should configure these
-  # in ~/.ssh/config).
-  defp migrate_old_fields(conn) do
-    ssh_target = Map.get(conn, :ssh_target)
-    host = Map.get(conn, :host)
-
-    if (is_nil(ssh_target) or ssh_target == "") and is_binary(host) and host != "" do
-      user = Map.get(conn, :user)
-
-      constructed =
-        case user do
-          u when is_binary(u) and u != "" -> "#{u}@#{host}"
-          _ -> host
-        end
-
-      conn
-      |> Map.put(:ssh_target, constructed)
-      |> Map.delete(:host)
-      |> Map.delete(:user)
-      |> Map.delete(:port)
-      |> Map.delete(:identity_file)
-    else
-      # Drop old fields if ssh_target is already present.
-      conn
-      |> Map.delete(:host)
-      |> Map.delete(:user)
-      |> Map.delete(:port)
-      |> Map.delete(:identity_file)
     end
   end
 

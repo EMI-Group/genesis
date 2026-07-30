@@ -27,7 +27,7 @@ defmodule EvoGit.Runtime.PullRequest do
             {:ok, origin_default} -> origin_default
           end
 
-        github_username = EvoGit.Defaults.github_username()
+        github_username = EvoGit.Config.resolve([:user, :github_username])
         pr_title = build_title(head_branch, objective, agent_result)
         pr_body = format_body(github_username, agent_result)
 
@@ -90,7 +90,7 @@ defmodule EvoGit.Runtime.PullRequest do
   """
   @spec generate_title(String.t(), String.t()) :: String.t() | nil
   def generate_title(objective, agent_result) do
-    model = EvoGit.Defaults.llm_model()
+    model = EvoGit.Config.resolve([:llm, :model])
 
     if is_nil(model) or model == "" do
       Logger.debug("No LLM model configured, skipping PR title generation")
