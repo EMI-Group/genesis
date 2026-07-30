@@ -78,6 +78,7 @@ defmodule EvoGit.RemoteConnection do
           | :extracting
           | :setting_permissions
           | :copying_config
+          | :generating_cookie
           | :detecting_os
           | :starting_daemon
           | nil
@@ -315,11 +316,26 @@ defmodule EvoGit.RemoteConnection do
     connecting = %{state | phase: :connecting}
 
     # Set the distribution cookie to match the remote daemon.
-    cookie =
-      System.get_env("RELEASE_COOKIE", "genesis_remote_cookie")
-      |> String.to_atom()
+    # Read from the persisted config; auto-generated during bootstrap.
+    config = EvoGit.Config.resolve()
+    node_cookie = get_in(config, [:node, :cookie])
 
-    Node.set_cookie(cookie)
+    case node_cookie do
+      nil ->
+        Logger.warning(
+          "No distribution cookie configured. Run bootstrap first to auto-generate one. " <>
+            "Node.set_cookie/1 skipped — connection may fail."
+        )
+
+      "" ->
+        Logger.warning(
+          "Distribution cookie is empty. Run bootstrap first to auto-generate one. " <>
+            "Node.set_cookie/1 skipped — connection may fail."
+        )
+
+      cookie when is_binary(cookie) ->
+        Node.set_cookie(String.to_atom(cookie))
+    end
 
     # Remote port: the port the remote daemon actually listens on.
     remote_port = Map.get(target, :dist_port) || @default_remote_dist_port
@@ -435,11 +451,17 @@ defmodule EvoGit.RemoteConnection do
 
                     copy_config_to_remote(ssh_target, os)
 
+                    # :generating_cookie stage
+                    state = %{state | bootstrap_stage: :generating_cookie}
+                    broadcast_status(target, state)
+
+                    cookie = ensure_cookie!()
+
                     # :starting_daemon stage
                     state = %{state | bootstrap_stage: :starting_daemon}
                     broadcast_status(target, state)
 
-                    case maybe_start_daemon(ssh_target, launcher_path, os, target) do
+                    case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie) do
                       :ok ->
                         EvoGit.RemoteConnections.touch(target.id)
                         completed = %{state | phase: :disconnected, bootstrap_stage: nil}
@@ -593,11 +615,11 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Checks if the daemon is already running; starts it only if not.
-  defp maybe_start_daemon(ssh_target, launcher_path, os, target) do
+  defp maybe_start_daemon(ssh_target, launcher_path, os, target, cookie) do
     if daemon_running?(ssh_target, os, target) do
       :ok
     else
-      case start_daemon(ssh_target, launcher_path, os, target) do
+      case start_daemon(ssh_target, launcher_path, os, target, cookie) do
         :ok -> verify_daemon_healthy(ssh_target, os, target)
         {:error, _} = error -> error
       end
@@ -672,9 +694,9 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Starts the daemon on the remote.
-  # Linux: systemd-run --user --unit=genesis-remote-<target_id> --setenv=RELEASE_NODE=<node> <launcher_path> start
+  # Linux: systemd-run --user --unit=genesis-remote-<target_id> --setenv=RELEASE_NODE=<node> --setenv=RELEASE_COOKIE=<cookie> <launcher_path> start
   # macOS: write launchd plist (per-target label), scp it, load it via launchctl.
-  defp start_daemon(ssh_target, launcher_path, "Linux", target) do
+  defp start_daemon(ssh_target, launcher_path, "Linux", target, cookie) do
     unit = "genesis-remote-#{target.id}"
     node = remote_node_name(target)
 
@@ -687,7 +709,7 @@ defmodule EvoGit.RemoteConnection do
     run_cmd(reset_cmd, @cmd_timeout_ms)
 
     cmd =
-      "ssh #{ssh_target} 'systemd-run --user --unit=#{unit} --setenv=RELEASE_NODE=#{node} #{launcher_path} start'"
+      "ssh #{ssh_target} 'systemd-run --user --unit=#{unit} --setenv=RELEASE_NODE=#{node} --setenv=RELEASE_COOKIE=#{cookie} #{launcher_path} start'"
 
     case run_cmd(cmd, @launch_receive_timeout_ms) do
       {:ok, _output, 0} ->
@@ -702,8 +724,8 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  defp start_daemon(ssh_target, launcher_path, "Darwin", target) do
-    plist_path = write_launchd_plist(launcher_path, target)
+  defp start_daemon(ssh_target, launcher_path, "Darwin", target, cookie) do
+    plist_path = write_launchd_plist(launcher_path, target, cookie)
 
     if plist_path == nil do
       {:error, {:daemon_launch_failed, :plist_write_failed}}
@@ -715,7 +737,7 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Writes the launchd plist to a local temp file. Returns the path or nil.
-  defp write_launchd_plist(launcher_path, target) do
+  defp write_launchd_plist(launcher_path, target, cookie) do
     label = "com.genesis.remote.#{target.id}"
     node = remote_node_name(target)
 
@@ -735,6 +757,8 @@ defmodule EvoGit.RemoteConnection do
         <dict>
             <key>RELEASE_NODE</key>
             <string>#{node}</string>
+            <key>RELEASE_COOKIE</key>
+            <string>#{cookie}</string>
         </dict>
         <key>RunAtLoad</key>
         <true/>
@@ -885,6 +909,54 @@ defmodule EvoGit.RemoteConnection do
 
   defp remote_node_name(target) do
     "genesis_remote_#{target.id}@127.0.0.1"
+  end
+
+  # ── Cookie helpers ──────────────────────────────────────────────────
+
+  # Generates a cryptographically secure random cookie string.
+  #
+  # Uses `:crypto.strong_rand_bytes/1` (32 bytes = 64 hex chars) suitable
+  # for Erlang distribution authentication.
+  defp generate_secure_cookie do
+    :crypto.strong_rand_bytes(32) |> Base.encode16(case: :lower)
+  end
+
+  # Ensures a distribution cookie exists in the user config.
+  #
+  # 1. Resolves the current config via `EvoGit.Config.resolve()`
+  # 2. Checks `get_in(config, [:node, :cookie])` — if non-nil and non-empty, return it
+  # 3. If nil/empty: generates a secure cookie, merges it into the resolved config,
+  #    and persists via `EvoGit.Config.save_user_config/1`
+  # 4. Raises `RuntimeError` if save fails — bootstrap must NOT proceed without a persisted cookie
+  defp ensure_cookie! do
+    config = EvoGit.Config.resolve()
+
+    case get_in(config, [:node, :cookie]) do
+      nil ->
+        generate_and_persist_cookie!(config)
+
+      "" ->
+        generate_and_persist_cookie!(config)
+
+      cookie when is_binary(cookie) ->
+        cookie
+    end
+  end
+
+  defp generate_and_persist_cookie!(config) do
+    new_cookie = generate_secure_cookie()
+    updated = put_in(config, [:node, :cookie], new_cookie)
+
+    case EvoGit.Config.save_user_config(updated) do
+      :ok ->
+        Logger.info("Generated and persisted new secure distribution cookie")
+        new_cookie
+
+      {:error, reason} ->
+        raise RuntimeError,
+          "Failed to persist generated distribution cookie: #{inspect(reason)}. " <>
+            "Bootstrap cannot proceed without a persisted cookie."
+    end
   end
 
   defp via(target_id) do
